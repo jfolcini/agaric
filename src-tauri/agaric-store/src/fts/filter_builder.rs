@@ -990,7 +990,7 @@ mod tests {
         let expected_sql = format!("{FTS_PREFIX}{}", renumber_from(&oracle.sql, 6));
         assert_eq!(routed.sql(), expected_sql, "typed Text fragment parity");
         assert!(
-            routed.sql().contains("key = ?6 AND value_text = ?7"),
+            routed.sql().contains("key = ?6 AND (value_text = ?7 OR"),
             "Text compiles to a single value_text column match, got: {}",
             routed.sql()
         );
@@ -998,7 +998,11 @@ mod tests {
             !routed.sql().contains("value_num") && !routed.sql().contains("value_ref"),
             "typed Text must NOT emit the legacy four-column OR"
         );
-        assert_eq!(routed.bind_count(), 2, "key + value");
+        assert_eq!(
+            routed.bind_count(),
+            3,
+            "key + value, for the scalar and a list item"
+        );
         assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "status"));
         assert!(matches!(routed.binds.get(1), Some(ScalarBind::Str(s)) if s == "draft"));
     }
@@ -1013,11 +1017,11 @@ mod tests {
         };
         let routed = projection_property_fragment(&pf, false);
         assert!(
-            routed.sql().contains("key = ?6 AND value_num = ?7"),
+            routed.sql().contains("key = ?6 AND (value_num = ?7 OR"),
             "finite f64 value compiles to a value_num column match, got: {}",
             routed.sql()
         );
-        assert_eq!(routed.bind_count(), 2);
+        assert_eq!(routed.bind_count(), 3);
         assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "score"));
         // The numeric value keeps its REAL affinity (Bind::Real → F64).
         assert!(
@@ -1035,7 +1039,7 @@ mod tests {
         };
         let routed = projection_property_fragment(&pf, false);
         assert!(
-            routed.sql().contains("key = ?6 AND value_date = ?7"),
+            routed.sql().contains("key = ?6 AND (value_date = ?7 OR"),
             "ISO YYYY-MM-DD value compiles to a value_date column match, got: {}",
             routed.sql()
         );
@@ -1086,7 +1090,7 @@ mod tests {
         };
         let routed_val = projection_property_fragment(&pf_val, true);
         assert!(
-            routed_val.sql().contains("NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6 AND value_text = ?7)"),
+            routed_val.sql().contains("NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6 AND (value_text = ?7 OR EXISTS (SELECT 1 FROM json_each(value_list) li WHERE li.type = 'text' AND li.value = ?8)))"),
             "excluded non-empty → Ne (single typed column), got: {}",
             routed_val.sql()
         );
@@ -1457,7 +1461,7 @@ mod tests {
         // ("\n           AND "); the bodies + `?N` numbers below are the exact
         // pre-refactor renumber output over this call sequence.
         let last_edited_body = format!(
-            "COALESCE({}, 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
+            "COALESCE({}, 0) >= (CAST(strftime('%s', 'now', ?33) AS INTEGER) * 1000)",
             crate::filters::last_edited_ms_sql("b.id")
         );
         let (tag_leaf_7, tag_leaf_8) = (tag_leaf(7), tag_leaf(8));
@@ -1473,22 +1477,22 @@ mod tests {
             "(b.todo_state IS NULL OR b.todo_state NOT IN (?16))",
             "(b.priority IN (?17))",
             "(b.priority IS NOT NULL AND b.priority NOT IN (?18))",
-            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?19 AND value_text = ?20)",
-            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?21 AND value_num = ?22)",
-            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?23 AND value_date = ?24)",
-            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?25)",
-            "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?26)",
-            "(b.due_date IS NOT NULL AND b.due_date <= ?27)",
-            "(b.scheduled_date IS NOT NULL AND b.scheduled_date BETWEEN ?28 AND ?29)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?19 AND (value_text = ?20 OR EXISTS (SELECT 1 FROM json_each(value_list) li WHERE li.type = 'text' AND li.value = ?21)))",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?22 AND (value_num = ?23 OR EXISTS (SELECT 1 FROM json_each(value_list) li WHERE li.type IN ('integer', 'real') AND li.value = ?24)))",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?25 AND (value_date = ?26 OR EXISTS (SELECT 1 FROM json_each(value_list) li WHERE li.type = 'text' AND li.value = ?27)))",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?28)",
+            "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?29)",
+            "(b.due_date IS NOT NULL AND b.due_date <= ?30)",
+            "(b.scheduled_date IS NOT NULL AND b.scheduled_date BETWEEN ?31 AND ?32)",
             last_edited_body.as_str(),
         ];
         let expected: String = bodies.iter().map(|b| format!("{FTS_PREFIX}{b}")).collect();
         assert_eq!(fb.sql(), expected, "assembled SQL must be byte-identical");
-        assert_eq!(fb.next_param(), 31, "next free slot after ?30");
+        assert_eq!(fb.next_param(), 34, "next free slot after ?33");
         assert_eq!(
             fb.bind_count(),
-            25,
-            "25 binds appended in placeholder order"
+            28,
+            "28 binds appended in placeholder order"
         );
 
         let bind_vals: Vec<String> = fb
@@ -1516,9 +1520,12 @@ mod tests {
             "S:C",
             "S:status",
             "S:draft",
+            "S:draft",
             "S:score",
             "F:1.5",
+            "F:1.5",
             "S:deadline",
+            "S:2026-05-17",
             "S:2026-05-17",
             "S:notes",
             "S:archived",

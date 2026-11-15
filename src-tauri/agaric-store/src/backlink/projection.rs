@@ -14,7 +14,8 @@
 //! **Byte-identity contract:** every `compile_*` method emits the EXACT
 //! same SQL string + bind order the legacy `compile_backlink_filter` leaf
 //! arm emitted (alias `b`, the `bp` property alias, the per-op
-//! `IS NOT NULL` guards, the ULID-prefix `Created` range). The resolver
+//! `IS NOT NULL` guards, the ULID-prefix `Created` range), the property
+//! leaves with the list half (`list_items_match`, #6741). The resolver
 //! (`resolve_filter_with_candidates`) is the parity oracle for this byte
 //! identity; in production it resolves only the hybrid leaves, since the
 //! flat and grouped surfaces both run `compile_backlink_filters`. A
@@ -28,8 +29,8 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::filters::primitive::{
-    Bind, DatePredicate, Projection, PropertyPredicate, PropertyValue, WhereClause, column_text,
-    compile_column_property,
+    Bind, DatePredicate, Projection, PropertyPredicate, PropertyValue, WhereClause, any_list_item,
+    column_text, compile_column_property,
 };
 use agaric_core::sql_utils::escape_like;
 
@@ -136,7 +137,7 @@ impl Projection for BacklinkProjection {
     ) -> WhereClause {
         // Byte-identical to the backlink `PropertyText`/`Num`/`Date` +
         // `PropertyIsSet`/`IsEmpty` leaves (the `bp` alias, the
-        // `bp.{col} IS NOT NULL` guard, the `<>` for `Ne`).
+        // `bp.{col} IS NOT NULL` guard, the `<>` for `Ne`, the list half).
         if let Some(column) = crate::db::reserved_key_blocks_column(key) {
             let column = format!("b.{column}");
             // `Ne` holds only for a block that holds the key, as the
@@ -372,11 +373,28 @@ fn due_or_scheduled(predicate: &DatePredicate, column: &str) -> WhereClause {
     }
 }
 
-/// Byte-identical reproduction of the backlink `PropertyText`/`Num`/`Date`
-/// leaf body for a single (value-type, comparison) pair. The column is
+/// The list half of a backlink property leaf, over `bp.value_list` (#6741):
+/// one item satisfies `{op} {operand}`, or, for `<>`, the list holds an item
+/// of the value's kind and none equals `operand`, so `<>` still needs the key
+/// as on a scalar row. `prop_cmp` (`?`) and the resolver (`?2`) share it.
+pub(super) fn list_items_match(numeric: bool, op: &str, operand: &str) -> String {
+    if op == "<>" {
+        format!(
+            "({} AND NOT {})",
+            any_list_item("bp.value_list", numeric, "IS NOT NULL"),
+            any_list_item("bp.value_list", numeric, &format!("= {operand}"))
+        )
+    } else {
+        any_list_item("bp.value_list", numeric, &format!("{op} {operand}"))
+    }
+}
+
+/// The backlink `PropertyText`/`Num`/`Date` leaf body for a single
+/// (value-type, comparison) pair, the SQL the resolver's
+/// `resolve_property_string` / `resolve_property_num` run. The column is
 /// chosen by value type (`value_text`/`value_ref`/`value_num`/`value_date`);
 /// `Num` short-circuits a `LIKE` to `1=0` exactly as the resolver returns
-/// the empty set.
+/// the empty set. A row's list matches as [`list_items_match`] says.
 fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
     let col = match value {
         PropertyValue::Text { .. } => "value_text",
@@ -384,7 +402,8 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
         PropertyValue::Date { .. } => "value_date",
         PropertyValue::Num { .. } => "value_num",
     };
-    match cmp {
+    let numeric = matches!(value, PropertyValue::Num { .. });
+    let (op, bind) = match cmp {
         PropCmp::Op(op) => {
             let val_bind = match value {
                 PropertyValue::Num { value } => Bind::Real(*value),
@@ -392,15 +411,7 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
                 | PropertyValue::Ref { value }
                 | PropertyValue::Date { value } => Bind::Text(value.clone()),
             };
-            WhereClause::new(
-                format!(
-                    "EXISTS (SELECT 1 FROM block_properties bp \
-                     WHERE bp.block_id = b.id AND bp.key = ? \
-                       AND bp.{col} IS NOT NULL \
-                       AND bp.{col} {op} ?)"
-                ),
-                vec![Bind::Text(key.to_string()), val_bind],
-            )
+            (op, val_bind)
         }
         PropCmp::Like { contains } => {
             // `LIKE` on a numeric value is meaningless → empty set (`1=0`),
@@ -417,17 +428,20 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
             } else {
                 format!("{escaped}%")
             };
-            WhereClause::new(
-                format!(
-                    "EXISTS (SELECT 1 FROM block_properties bp \
-                     WHERE bp.block_id = b.id AND bp.key = ? \
-                       AND bp.{col} IS NOT NULL \
-                       AND bp.{col} LIKE ? ESCAPE '\\')"
-                ),
-                vec![Bind::Text(key.to_string()), Bind::Text(pattern)],
-            )
+            ("LIKE", Bind::Text(pattern))
         }
-    }
+    };
+    let escape = if op == "LIKE" { " ESCAPE '\\'" } else { "" };
+    let list = list_items_match(numeric, op, &format!("?{escape}"));
+    WhereClause::new(
+        format!(
+            "EXISTS (SELECT 1 FROM block_properties bp \
+             WHERE bp.block_id = b.id AND bp.key = ? \
+               AND ((bp.{col} IS NOT NULL \
+               AND bp.{col} {op} ?{escape}) OR {list}))"
+        ),
+        vec![Bind::Text(key.to_string()), bind.clone(), bind],
+    )
 }
 
 #[cfg(test)]
@@ -443,7 +457,8 @@ mod tests {
 
     // ── Byte-identity: each routed leaf reproduces the PRE-REFACTOR
     //    `compile_backlink_filter` literal SQL + bind order EXACTLY. The
-    //    expected strings are pasted verbatim from the legacy inline arms.
+    //    expected strings are pasted verbatim from the legacy inline arms,
+    //    the property leaves with the list half (#6741) the resolver shares.
 
     #[test]
     fn property_text_eq_byte_identical() {
@@ -459,13 +474,15 @@ mod tests {
             cf.sql,
             "EXISTS (SELECT 1 FROM block_properties bp \
              WHERE bp.block_id = b.id AND bp.key = ? \
-               AND bp.value_text IS NOT NULL \
-               AND bp.value_text = ?)"
+               AND ((bp.value_text IS NOT NULL \
+               AND bp.value_text = ?) OR EXISTS (SELECT 1 FROM json_each(bp.value_list) li \
+               WHERE li.type = 'text' AND li.value = ?)))"
         );
         assert_eq!(
             cf.binds,
             vec![
                 FilterBind::Text("status".into()),
+                FilterBind::Text("done".into()),
                 FilterBind::Text("done".into())
             ]
         );
@@ -485,8 +502,11 @@ mod tests {
             cf.sql,
             "EXISTS (SELECT 1 FROM block_properties bp \
              WHERE bp.block_id = b.id AND bp.key = ? \
-               AND bp.value_text IS NOT NULL \
-               AND bp.value_text <> ?)"
+               AND ((bp.value_text IS NOT NULL \
+               AND bp.value_text <> ?) OR (EXISTS (SELECT 1 FROM json_each(bp.value_list) li \
+               WHERE li.type = 'text' AND li.value IS NOT NULL) \
+               AND NOT EXISTS (SELECT 1 FROM json_each(bp.value_list) li \
+               WHERE li.type = 'text' AND li.value = ?))))"
         );
     }
 
@@ -504,14 +524,17 @@ mod tests {
             cf.sql,
             "EXISTS (SELECT 1 FROM block_properties bp \
              WHERE bp.block_id = b.id AND bp.key = ? \
-               AND bp.value_text IS NOT NULL \
-               AND bp.value_text LIKE ? ESCAPE '\\')"
+               AND ((bp.value_text IS NOT NULL \
+               AND bp.value_text LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 \
+               FROM json_each(bp.value_list) li \
+               WHERE li.type = 'text' AND li.value LIKE ? ESCAPE '\\')))"
         );
         // `%` is escaped, then wrapped `%…%`.
         assert_eq!(
             cf.binds,
             vec![
                 FilterBind::Text("k".into()),
+                FilterBind::Text("%ab\\%c%".into()),
                 FilterBind::Text("%ab\\%c%".into())
             ]
         );
@@ -542,12 +565,17 @@ mod tests {
             cf.sql,
             "EXISTS (SELECT 1 FROM block_properties bp \
              WHERE bp.block_id = b.id AND bp.key = ? \
-               AND bp.value_num IS NOT NULL \
-               AND bp.value_num = ?)"
+               AND ((bp.value_num IS NOT NULL \
+               AND bp.value_num = ?) OR EXISTS (SELECT 1 FROM json_each(bp.value_list) li \
+               WHERE li.type IN ('integer', 'real') AND li.value = ?)))"
         );
         assert_eq!(
             cf.binds,
-            vec![FilterBind::Text("count".into()), FilterBind::Num(3.5)]
+            vec![
+                FilterBind::Text("count".into()),
+                FilterBind::Num(3.5),
+                FilterBind::Num(3.5)
+            ]
         );
     }
 
@@ -577,8 +605,9 @@ mod tests {
             cf.sql,
             "EXISTS (SELECT 1 FROM block_properties bp \
              WHERE bp.block_id = b.id AND bp.key = ? \
-               AND bp.value_date IS NOT NULL \
-               AND bp.value_date < ?)"
+               AND ((bp.value_date IS NOT NULL \
+               AND bp.value_date < ?) OR EXISTS (SELECT 1 FROM json_each(bp.value_list) li \
+               WHERE li.type = 'text' AND li.value < ?)))"
         );
     }
 

@@ -1171,6 +1171,45 @@ pub async fn list_outgoing_links(
 // where a correlated per-row `EXISTS` walked every block in the space in id
 // order until the page filled (#5426).
 
+/// `{bp_alias}`'s block is one whose list under the key bound at
+/// `?{key_param}` holds a string item `li.value {test}` (#6741). A join
+/// rather than a correlated `EXISTS`, so SQLite builds the set once instead
+/// of once per property row.
+fn listed(bp_alias: &str, key_param: usize, test: &str) -> String {
+    format!(
+        "{bp_alias}.block_id IN (SELECT l.block_id FROM block_properties l \
+         JOIN json_each(l.value_list) li \
+         WHERE l.key = ?{key_param} AND li.type = 'text' AND li.value {test})"
+    )
+}
+
+/// `{column} {sql_op} ?{p}` on the row's scalar or on one string item of its
+/// list; `!=` holds when neither the scalar nor any item is equal.
+fn scalar_or_listed(
+    bp_alias: &str,
+    key_param: usize,
+    column: &str,
+    sql_op: &str,
+    p: usize,
+) -> String {
+    if sql_op == "!=" {
+        // Match `pagination::query_by_property`: typed property rows
+        // populate exactly one value column, so NULL in the queried
+        // column represents a value of another type and must satisfy
+        // `neq`. SQLite's bare `NULL != ?` would instead evaluate to
+        // NULL and silently exclude the row.
+        format!(
+            " AND ({bp_alias}.{column} IS NULL OR {bp_alias}.{column} != ?{p}) AND NOT {}",
+            listed(bp_alias, key_param, &format!("= ?{p}"))
+        )
+    } else {
+        format!(
+            " AND ({bp_alias}.{column} {sql_op} ?{p} OR {})",
+            listed(bp_alias, key_param, &format!("{sql_op} ?{p}"))
+        )
+    }
+}
+
 /// Build the value-predicate SQL fragment for one property filter.
 ///
 /// Returns `(fragment, binds)` where `fragment` is the SQL clause to
@@ -1178,7 +1217,8 @@ pub async fn list_outgoing_links(
 /// predicate is supplied — the subquery then matches mere key
 /// presence) and `binds` is the ordered list of values to bind into
 /// the next free placeholder slots (the caller substitutes `?N`
-/// numbering at composition time).
+/// numbering at composition time). `key_param` is the slot the caller bound
+/// the filter's key at.
 ///
 /// Mirror: at most one of `value_text` / `value_text_in` /
 /// `value_date` / `value_date_range` may be set per filter. Mixing
@@ -1187,6 +1227,7 @@ pub async fn list_outgoing_links(
 fn property_value_predicate_sql(
     pf: &PropertyFilter,
     bp_alias: &str,
+    key_param: usize,
     next_param: &mut usize,
     binds: &mut Vec<String>,
 ) -> Result<String, AppError> {
@@ -1215,17 +1256,13 @@ fn property_value_predicate_sql(
         let p = *next_param;
         *next_param += 1;
         binds.push(v.clone());
-        if sql_op == "!=" {
-            // Match `pagination::query_by_property`: typed property rows
-            // populate exactly one value column, so NULL in the queried
-            // column represents a value of another type and must satisfy
-            // `neq`. SQLite's bare `NULL != ?` would instead evaluate to
-            // NULL and silently exclude the row.
-            return Ok(format!(
-                " AND ({bp_alias}.value_text IS NULL OR {bp_alias}.value_text != ?{p})"
-            ));
-        }
-        return Ok(format!(" AND {bp_alias}.value_text {sql_op} ?{p}"));
+        return Ok(scalar_or_listed(
+            bp_alias,
+            key_param,
+            "value_text",
+            sql_op,
+            p,
+        ));
     }
     if !pf.value_text_in.is_empty() {
         let p = *next_param;
@@ -1234,22 +1271,23 @@ fn property_value_predicate_sql(
         // in `pagination/properties.rs::query_by_property`.
         let json = serde_json::to_string(&pf.value_text_in)?;
         binds.push(json);
+        let member = format!("IN (SELECT value FROM json_each(?{p}))");
         return Ok(format!(
-            " AND {bp_alias}.value_text IN (SELECT value FROM json_each(?{p}))"
+            " AND ({bp_alias}.value_text {member} OR {})",
+            listed(bp_alias, key_param, &member)
         ));
     }
     if let Some(v) = &pf.value_date {
         let p = *next_param;
         *next_param += 1;
         binds.push(v.clone());
-        if sql_op == "!=" {
-            // See the value_text branch above: a value in any sibling typed
-            // column is unequal to the requested date rather than unknown.
-            return Ok(format!(
-                " AND ({bp_alias}.value_date IS NULL OR {bp_alias}.value_date != ?{p})"
-            ));
-        }
-        return Ok(format!(" AND {bp_alias}.value_date {sql_op} ?{p}"));
+        return Ok(scalar_or_listed(
+            bp_alias,
+            key_param,
+            "value_date",
+            sql_op,
+            p,
+        ));
     }
     if let Some((from, to)) = &pf.value_date_range {
         let p_from = *next_param;
@@ -1259,7 +1297,12 @@ fn property_value_predicate_sql(
         *next_param += 1;
         binds.push(to.clone());
         return Ok(format!(
-            " AND {bp_alias}.value_date >= ?{p_from} AND {bp_alias}.value_date < ?{p_to}"
+            " AND (({bp_alias}.value_date >= ?{p_from} AND {bp_alias}.value_date < ?{p_to}) OR {})",
+            listed(
+                bp_alias,
+                key_param,
+                &format!(">= ?{p_from} AND li.value < ?{p_to}")
+            )
         ));
     }
     // No value predicate: key presence alone matches.
@@ -1425,7 +1468,7 @@ fn property_filters_sql(
         *next_param += 1;
         binds.push(pf.key.clone());
 
-        let value_pred = property_value_predicate_sql(pf, "bp", next_param, binds)?;
+        let value_pred = property_value_predicate_sql(pf, "bp", key_param, next_param, binds)?;
 
         frag.push_str(&format!(
             " AND b.id IN (SELECT bp.block_id FROM block_properties bp \

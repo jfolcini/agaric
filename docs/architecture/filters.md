@@ -66,6 +66,13 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
   `scheduled_date`, and `space` as `space_id`; `db::reserved_key_blocks_column`),
   with every operand compared as text (`compile_column_property`, #6051): there
   `Contains` / `StartsWith` over a `Num` is a `LIKE` on the number's text.
+- A row whose value is a list (`block_properties.value_list`, #6741) matches a
+  comparison when one of its items does, and `Ne` when none is equal. A
+  `Text` / `Ref` / `Date` value compares the string items, a `Num` the number
+  items (`any_list_item`), so neither kind reaches the other. On the backlink
+  surface `Ne` needs the key, as on a scalar row: a list matches when it holds
+  an item of the value's kind and none is equal. `Exists` / `NotExists` test
+  the key, as before.
 - **`DatePredicate`** (#1280) — a predicate over a TEXT-ISO date column
   (`b.due_date`, `b.scheduled_date`): `IsNull` / `Before` / `After` /
   `OnOrBefore` / `OnOrAfter` / `On` / `Between`. Comparisons are **lexical** —
