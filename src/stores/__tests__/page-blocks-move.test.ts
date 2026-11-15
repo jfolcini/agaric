@@ -203,6 +203,14 @@ describe('mergedTree (#6531)', () => {
     ])
   })
 
+  it('merging a block with no children changes only the target’s text, keeping the gaps a delete left', () => {
+    const [a, b, c] = [row('A', 'PAGE', 1, 0), row('B', 'PAGE', 3, 0), row('C', 'PAGE', 4, 0)]
+
+    const merged = mergedTree(stateOf([a, b, c]), 'C', 'B', 'BC')
+
+    expect(merged).toEqual({ blocks: [a, { ...b, content: 'BC' }], childIds: [] })
+  })
+
   it('refuses a block the page does not hold', () => {
     const state = stateOf([row('A', 'PAGE', 1, 0)])
 

@@ -457,3 +457,24 @@ frontend	src/components/attachments/MeetingDialog.tsx	StringLiteral	31	1	const t
 frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (org.fileId !== null) ids.set(org.fileId, title)
 # #3766 vault-import: orgTitles.get(null) is undefined, as the null branch is; every key is a string
 frontend	src/lib/vault-import.ts	ConditionalExpression	8	1	return target === null ? undefined : orgTitles.get(target)
+# #3766 vault-import: nothing reads a restored file's `type` or `lastModified`; the `VaultFile` IPC payload carries its path and bytes only
+frontend	src/lib/vault-import.ts	ObjectLiteral	43	1	const moved = new File([file], file.name, { type: file.type, lastModified: file.lastModified })
+# #3761 serialize: a node whose index equals `index` returned null on the line above, so `>` and `>=` agree
+frontend	src/lib/search-query/serialize.ts	EqualityOperator	8	1	return node.index > index ? { kind: 'token', index: node.index - 1 } : node
+# #6836 classify-word: a quoted token's text keeps its quotes, so it is never `OR` in any case
+frontend	src/lib/search-query/classify-word.ts	ConditionalExpression	8	1	return tok.kind === 'word' && tok.text.toUpperCase() === 'OR'
+# #6836 classify-word: every caller passes indices into `filters` (`filters.keys()` or an AND run of its tree); the `?.` is for the indexed type
+frontend	src/lib/search-query/classify-word.ts	OptionalChaining	34	1	const last = run.findLast((i) => filters[i]?.kind === kind)
+frontend	src/lib/search-query/classify-word.ts	OptionalChaining	5	1	if (f?.kind !== kind || i === last) continue
+# #3753 export-graph: `{ name: undefined }` and `{}` stringify alike, so the space file is the same bytes
+frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	...(spaceName === undefined ? {} : { name: spaceName }),
+# #5962 page-save: an edit is planned only for a block `state.saved` holds (`planOps` skips any other) and nothing earlier in the save drops a kept block's entry; the `?.` is for Map.get's type
+frontend	src/editor/page-mode/page-save.ts	OptionalChaining	49	1	const refs = await api.edit(op.id, op.markdown, state.saved.get(op.id)?.markdown)
+# #5962 page-save: `runBatch` returns before this line unless `ops` holds two or more; the `?.` is for the indexed type
+frontend	src/editor/page-mode/page-save.ts	OptionalChaining	5	1	if (ops[0]?.kind === 'create') {
+# #5965 template-utils: `ids[null]` is undefined, which the next guard drops; the outer check is for the index type
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorIndex !== null) {
+# #5965 template-utils: `create_blocks_batch` returns one row per spec and `cursorIndex` indexes a spec, so the id is always there; the guard is for the indexed type
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorId !== undefined) context?.onCursorBlock?.(cursorId)
+# #5964 page-tasks: a block with no id draws no metadata row whatever its count (`showMetadata` returns on a null id), so the count read for it is never shown
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	11	1	refCount: id === null ? 0 : this.tasks.refCountOf(id),
