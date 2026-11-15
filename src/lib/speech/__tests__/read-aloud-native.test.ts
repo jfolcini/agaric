@@ -163,6 +163,22 @@ describe('a native reading', () => {
     await vi.waitFor(() => expect(engine.spoken()).toEqual(['first', 'second']))
   })
 
+  it('logs a stop the engine refuses, and speaks the next reading anyway', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const failure = new Error('the engine is gone')
+    const engine = nativeEngine()
+    engine.handlers.stop_speaking.mockImplementationOnce(() => Promise.reject(failure))
+    await supportNative()
+    startReading(UTTERANCES.slice(0, 1), PAGE)
+    await vi.waitFor(() => expect(engine.spoken()).toHaveLength(1))
+    stopReading()
+
+    startReading(UTTERANCES.slice(1), PAGE)
+
+    await vi.waitFor(() => expect(engine.spoken()).toEqual(['first', 'second']))
+    expect(warn).toHaveBeenCalledWith('read-aloud', 'stop_speaking failed', undefined, failure)
+  })
+
   it('leaves the replaced reading’s utterance for the engine to cut, sending no stop', async () => {
     const engine = nativeEngine()
     await supportNative()

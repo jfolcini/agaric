@@ -1,0 +1,11 @@
+# Session 4223 — The differential-fuzz lane reports a divergence instead of timing out
+
+`conformance_fuzz::mock_matches_backend_on_generated_op_chains_4669` was killed at its 120 s leash on TRY 1 of dispatch run 43744488102 (`bench-perf-gates`) and passed on TRY 2 in 44.6 s. It printed nothing but libtest's "running for over 60 seconds".
+
+- **Not load.** Run 138 ran the same lane with the same co-runners at the same timings, and the test passed there in 68.9 s. Here, under the lane's co-runners on 4 cores, seed 1 took 69 s, against 46.9 s alone. Fifteen seeds alone took 45-52 s each, with no case over 0.7 s, so no generated chain is slow on its own.
+- **The cause is a divergence plus an unbounded shrink.** Proptest caps a shrink at `cases × 4` replays with no time limit, and a replay costs a fraction of a second. A seed that finds a divergence shrinks past the leash, the kill drops the report, and the retry draws a new seed. Searching 2048-case runs and 256-case runs found two divergences, both reachable only since `((ref))` indexes its target's first line (#6277 B3):
+  - `purge_block` leaves each referrer's FTS row holding the purged target's first line, which `load_block_ref_titles` documents as stripping to `""`. That is a backend bug, filed as #6843 and deferred. Seed 103 at 2048 cases reproduces it.
+  - `search_blocks` orders by bm25, and the mock's `approximateFtsRank` by match density, so a block matching twice through two `((ref))`s ranks differently. That approximation is documented, so the fuzz `search` read now compares rows unordered, with the reason given, as five other reads already do. Seed 212 at 256 cases reproduces it.
+- **Fix.** A run prints its seed before the first case, so a killed run still names it, and it shrinks for at most `SHRINK_BUDGET_MS` (30 s). The fixed-seed per-PR test gets the same budget.
+
+Ran: seed 212 under nextest's lane profile. Before: TIMEOUT at 121.6 s, with the CI's output. With only the shrink budget: FAIL at 78 s, with the seed, the divergence and the counter-example. With the unordered `search` read: PASS in 50.2 s. Seed 103 at 2048 cases fails with the purge counter-example, fully shrunk. A 20 s leash override showed the seed line in a killed run's stderr. Also ran the two non-ignored `conformance_fuzz` tests, and clippy.

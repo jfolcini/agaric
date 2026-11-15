@@ -15,6 +15,7 @@ import {
   serialize,
   tokenSource,
 } from '@/lib/search-query/serialize'
+import type { FilterToken } from '@/lib/search-query/types'
 
 describe('serialize round-trip', () => {
   const canonicalInputs = [
@@ -184,6 +185,12 @@ describe('serialize round-trip', () => {
     expect(serialize(parse('meeting (tag:#a OR tag:#b)'))).toBe('(tag:#a OR tag:#b) meeting')
     expect(serialize(parse('(cats OR dogs) tag:#a'))).toBe('tag:#a (cats OR dogs)')
     expect(serialize(parse('(cats OR dogs)'))).toBe('cats OR dogs')
+    // An AND tree beside free text needs no parentheses of its own.
+    expect(serialize(parse('meeting state:TODO (tag:#a OR tag:#b)'))).toBe(
+      'state:TODO (tag:#a OR tag:#b) meeting',
+    )
+    // An OR inside a phrase that a `)` closes is no OR, so the free text is not grouped.
+    expect(serialize(parse('tag:#a ("a) OR b")'))).toBe('tag:#a ("a) OR b")')
     // A value ending in `)` is quoted, or it would close a group.
     expect(tokenSource({ kind: 'tag', value: 'a)', span: [0, 0] })).toBe('tag:#"a)"')
   })
@@ -199,6 +206,29 @@ describe('serialize round-trip', () => {
         addFilter(parse('tag:#a OR tag:#b'), { kind: 'state', value: 'DONE', span: [0, 0] }),
       ),
     ).toBe('(tag:#a OR tag:#b) state:DONE')
+  })
+
+  // The chips and the text stay one query: an edit through either reads back as the same tree.
+  it('removeFilterAt leaves the tree the text it serialises parses to', () => {
+    const three = removeFilterAt(parse('tag:#a OR tag:#b OR tag:#c'), 1)
+    expect(serialize(three)).toBe('tag:#a OR tag:#c')
+    expect(three.expr).toEqual(parse('tag:#a OR tag:#c').expr)
+
+    const nested = removeFilterAt(parse('state:TODO (tag:#a OR tag:#b) tag:#c'), 0)
+    expect(serialize(nested)).toBe('(tag:#a OR tag:#b) tag:#c')
+    expect(nested.expr).toEqual(parse('(tag:#a OR tag:#b) tag:#c').expr)
+  })
+
+  it('addFilter leaves the tree the text it serialises parses to', () => {
+    const done: FilterToken = { kind: 'notState', value: 'DONE', span: [0, 0] }
+    for (const [query, added] of [
+      ['state:TODO (tag:#a OR tag:#b)', 'state:TODO (tag:#a OR tag:#b) not-state:DONE'],
+      ['tag:#a OR tag:#b', '(tag:#a OR tag:#b) not-state:DONE'],
+    ] as const) {
+      const next = addFilter(parse(query), done)
+      expect(serialize(next)).toBe(added)
+      expect(next.expr).toEqual(parse(added).expr)
+    }
   })
 
   // Counterexamples the property found. A word whose `"` never closed used

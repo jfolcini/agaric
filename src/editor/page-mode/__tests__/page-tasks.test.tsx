@@ -33,7 +33,7 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, within } from '@testing-library/react'
+import { act, fireEvent, waitFor, within } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { AllSelection, NodeSelection } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
@@ -309,6 +309,26 @@ describe('the metadata row', () => {
     expect(drawn(D)).not.toHaveAttribute('data-properties')
     expect(drawn(E)).toHaveAttribute('data-properties')
     expect(drawn(E)).not.toHaveAttribute('data-priority')
+  })
+
+  it('draws a PDF highlight’s place, though its properties are the app’s own', async () => {
+    const tasks = new FakeTasks()
+    tasks.setProperties(A, [
+      { key: 'pdf_attachment', value: 'PDF' },
+      { key: 'pdf_page', value: '3' },
+    ])
+    mockedInvoke.mockImplementation((cmd: string) =>
+      cmd === 'read_attachment_meta'
+        ? Promise.resolve({ filename: 'paper.pdf' })
+        : strictInvokeFallback(cmd),
+    )
+    const { container } = mount([[A, 0, 'quoted text']], tasks)
+
+    const chip = await findIn(blockEl(container, A), '.pdf-source-chip')
+    await waitFor(() =>
+      expect(chip.textContent).toBe(t('pdfViewer.source', { filename: 'paper.pdf', page: 3 })),
+    )
+    expect(blockEl(container, A).querySelector(ROW)).not.toHaveAttribute('data-properties')
   })
 
   it('the badge cycles the priority, the chips open the date picker, the +N pill the drawer', async () => {

@@ -32,6 +32,26 @@ describe('tokenize', () => {
     expect(tokens[1]).toMatchObject({ kind: 'word', text: 'foo' })
   })
 
+  it("closes a quote before a group's `)`s only when asked to, as a query holding OR asks", () => {
+    const input = '(tag:#a OR (tag:#b OR tag:#"my tag"))'
+    const words = (tokens: ReturnType<typeof tokenize>) => tokens.map(({ text }) => text)
+
+    expect(words(tokenize(input, true))).toEqual([
+      '(tag:#a',
+      'OR',
+      '(tag:#b',
+      'OR',
+      'tag:#"my tag"))',
+    ])
+    expect(tokenize(input, true).at(-1)).toEqual({
+      kind: 'word',
+      text: 'tag:#"my tag"))',
+      span: [22, 37],
+    })
+    // Without OR a `)` is text, so the quote glued to it closes nothing.
+    expect(words(tokenize(input))).toEqual(['(tag:#a', 'OR', '(tag:#b', 'OR', 'tag:#"my', 'tag"))'])
+  })
+
   it('falls back to word when quote is unmatched', () => {
     const tokens = tokenize('"unmatched start')
     const [t0, t1] = tokens

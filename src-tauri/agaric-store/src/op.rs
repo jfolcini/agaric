@@ -513,10 +513,6 @@ impl sqlx::Type<sqlx::Sqlite> for PropertyList {
     fn type_info() -> <sqlx::Sqlite as sqlx::Database>::TypeInfo {
         <&str as sqlx::Type<sqlx::Sqlite>>::type_info()
     }
-
-    fn compatible(ty: &<sqlx::Sqlite as sqlx::Database>::TypeInfo) -> bool {
-        <&str as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
-    }
 }
 
 impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for PropertyList {
@@ -2952,6 +2948,31 @@ mod tests {
         let options = |key| builtin_property_def(key).and_then(BuiltinPropertyDef::options_json);
         assert_eq!(options("priority").as_deref(), Some(r#"["1","2","3"]"#));
         assert_eq!(options("due_date"), None);
+    }
+
+    /// A list value is stored as the JSON array text of `value_list` and read
+    /// back from that text; its string items are what a `ref` list targets and
+    /// what an option rename changes in place.
+    #[tokio::test]
+    async fn property_list_reads_back_the_column_text_it_writes() {
+        let list = PropertyList(vec![
+            PropertyListItem::Text("Smith, John".into()),
+            PropertyListItem::Num(2.5),
+            PropertyListItem::Text("b".into()),
+        ]);
+        assert_eq!(list.to_json(), r#"["Smith, John",2.5,"b"]"#);
+        assert_eq!(list.texts().collect::<Vec<_>>(), ["Smith, John", "b"]);
+        let mut renamed = list.clone();
+        renamed.texts_mut().for_each(|s| s.make_ascii_uppercase());
+        assert_eq!(renamed.to_json(), r#"["SMITH, JOHN",2.5,"B"]"#);
+
+        let (pool, _dir) = crate::test_support::test_pool().await;
+        let read: PropertyList = sqlx::query_scalar("SELECT ?")
+            .bind(list.to_json())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(read, list);
     }
 }
 

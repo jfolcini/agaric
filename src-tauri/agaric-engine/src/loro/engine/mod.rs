@@ -2684,6 +2684,26 @@ mod tests {
             "control: the block really is projected in the settled case"
         );
     }
+
+    /// The fixture seam builds the node a create would, at the slot given:
+    /// a block seeded at slot 0 goes before the siblings already there.
+    #[test]
+    fn seed_block_at_slot_places_the_block_at_that_slot() {
+        use super::LoroEngine;
+        let mut e = LoroEngine::with_peer_id("DEV-SEED").expect("peer");
+        e.seed_block_at_slot("P", "page", "page", None, 0, 1)
+            .expect("seed page");
+        e.seed_block_at_slot("C2", "content", "second", Some("P"), 0, 2)
+            .expect("seed C2");
+        e.seed_block_at_slot("C1", "content", "first", Some("P"), 0, 1)
+            .expect("seed C1");
+
+        assert_eq!(e.list_children_walk("P").unwrap(), ["C1", "C2"]);
+        assert_eq!(
+            e.read_block_content("C1").unwrap().as_deref(),
+            Some("first")
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3351,6 +3371,30 @@ mod sync_vv_tests {
             VersionVector::decode(&sender_vv).unwrap(),
             "receiver vv must match sender vv after delta import"
         );
+    }
+
+    /// `imported_since` answers whether another peer's ops landed after a
+    /// version was read: not for that version itself, nor for our own writes.
+    #[test]
+    fn imported_since_counts_only_another_peers_ops_past_the_version() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("set peer");
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("set peer");
+        b.apply_create_block(BLOCK_A, "text", "from b", None, 0)
+            .expect("create A");
+        a.import(&b.export_snapshot().expect("export"))
+            .expect("import");
+        let read = a.version_vector();
+
+        assert!(!a.imported_since(&read).expect("decode"), "no import since");
+        a.apply_create_block(BLOCK_B, "text", "own", None, 1)
+            .expect("create B");
+        assert!(!a.imported_since(&read).expect("decode"), "an own write");
+
+        b.apply_create_block(BLOCK_C, "text", "later from b", None, 1)
+            .expect("create C");
+        a.import(&b.export_snapshot().expect("export"))
+            .expect("import");
+        assert!(a.imported_since(&read).expect("decode"), "b's later op");
     }
 }
 
