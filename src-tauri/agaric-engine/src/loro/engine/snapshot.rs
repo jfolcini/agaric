@@ -195,19 +195,14 @@ impl LoroEngine {
     ) -> Result<SavedRowsImport, AppError> {
         let before_frontiers = self.doc.oplog_frontiers();
         let import_failed = |e| AppError::validation(format!("loro: import: {e}"));
-        let mut pending = false;
         if let Some(snapshot) = snapshot {
-            pending |= self
-                .doc
-                .import(snapshot)
-                .map_err(import_failed)?
-                .pending
-                .is_some();
+            // A snapshot holds its whole history, so none of it is pending.
+            self.doc.import(snapshot).map_err(import_failed)?;
         }
         // One batch: a row can depend on a later one (a sync import's delta
         // commits after a local write made on top of it), and the batch
         // reports what is pending once all of them are in.
-        pending |= self
+        let pending = self
             .doc
             .import_batch(deltas)
             .map_err(import_failed)?
@@ -1171,22 +1166,21 @@ mod format_version_tests {
     }
 
     /// (b) A doc stamped with a version GREATER than the supported one is
-    /// rejected with a clear "newer than this build supports" error.
+    /// rejected with a clear "newer than this build supports" error, and the
+    /// refusing engine still reads that stamp, which the boot dialog names.
     #[test]
     fn import_rejects_newer_format_version() {
+        let newer = i64::from(ENGINE_FORMAT_VERSION) + 1;
         let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
         a.apply_create_block("x", "content", "X", None, 0).unwrap();
-        // Overwrite the stamp with a future version, then export those bytes.
-        let meta: LoroMap = a.doc.get_map(ENGINE_META_ROOT);
-        meta.insert(
-            FIELD_FORMAT_VERSION,
-            LoroValue::from(i64::from(ENGINE_FORMAT_VERSION) + 1),
-        )
-        .unwrap();
-        a.doc.commit();
-        let bytes = a.doc.export(ExportMode::Snapshot).unwrap();
+        let bytes = a.export_snapshot_as_format(newer).unwrap();
 
         let mut b = LoroEngine::new();
+        assert_eq!(
+            b.format_version_stamp(),
+            None,
+            "a fresh doc carries no stamp"
+        );
         match b.import(&bytes).unwrap_err() {
             AppError::Validation { message: m, .. } => assert!(
                 m.contains("newer than this build supports"),
@@ -1194,6 +1188,7 @@ mod format_version_tests {
             ),
             other => panic!("expected Validation error, got {other:?}"),
         }
+        assert_eq!(b.format_version_stamp(), Some(newer));
     }
 
     /// (b') A present-but-non-integer stamp is rejected as corrupt/unknown.
