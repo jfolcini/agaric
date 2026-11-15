@@ -2184,6 +2184,8 @@ pub async fn purge_block_inner(
     // refcount-aware GC pass — never by unlinking the purged rows' own
     // `fs_path`s, which may be shared with surviving rows.
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
+    // #6843: a `((ref))` to a purged block no longer shows its text.
+    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(PurgeResponse {
         block_id,
@@ -2512,6 +2514,8 @@ pub async fn purge_all_deleted_inner(
     // but the paths those rows held may still be referenced by surviving
     // rows via the #1993 dedup, so only the GC may decide to unlink.
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
+    // #6843: a `((ref))` to a purged block no longer shows its text.
+    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -3190,6 +3194,8 @@ pub async fn purge_blocks_by_ids_inner(
     // + #85 F2 / #3259: post-commit byte reclamation via the refcount-aware
     // GC pass (mirrors `purge_all_deleted_inner`).
     enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
+    // #6843: a `((ref))` to a purged block no longer shows its text.
+    crate::materializer::reindex_restored_cohort_fts(pool, &purge_counts.fts_referrers).await;
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -4395,6 +4401,89 @@ mod saturation_probe_tests {
             "a restored target's name comes back to the blocks that mention it"
         );
         mat.shutdown();
+    }
+
+    // #6843 — a purge takes a `((ref))` target's first line out of the index
+    // text of the blocks that reference it, wherever in the subtree it sits.
+
+    const REF_ROOT: &str = "01HQREFR00T000000000000001";
+    const REF_TARGET: &str = "01HQREFTARGET0000000000001";
+    const REF_NOTE: &str = "01HQREFN0TE000000000000001";
+
+    /// A root with the target under it, and a note outside that names the
+    /// target, linked and indexed the way boot does it.
+    async fn seed_ref_under_root(pool: &SqlitePool) {
+        for (id, parent_id, content) in [
+            (REF_ROOT, None, "root".to_owned()),
+            (REF_TARGET, Some(REF_ROOT), "Plan first\nbody".to_owned()),
+            (REF_NOTE, None, format!("see (({REF_TARGET}))")),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id) \
+                 VALUES (?, 'content', ?, ?)",
+            )
+            .bind(id)
+            .bind(content)
+            .bind(parent_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        agaric_store::cache::reindex_block_links(pool, REF_NOTE)
+            .await
+            .unwrap();
+        agaric_store::fts::rebuild_fts_index(pool).await.unwrap();
+    }
+
+    async fn ref_note_text(pool: &SqlitePool) -> Option<String> {
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(REF_NOTE)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Each of the three purge commands carries its own post-commit re-strip.
+    #[tokio::test]
+    async fn purging_a_block_ref_target_strips_it_from_the_ref_6843() {
+        for purge in ["purge_block", "purge_blocks_by_ids", "purge_all_deleted"] {
+            let (pool, _dir) = test_pool().await;
+            let mat = Materializer::new(pool.clone());
+            seed_ref_under_root(&pool).await;
+            let resp = delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(REF_ROOT))
+                .await
+                .unwrap();
+            assert_eq!(resp.descendants_affected, 2, "{purge}: seed");
+            mat.flush().await.unwrap();
+            assert_eq!(
+                ref_note_text(&pool).await.as_deref(),
+                Some("see Plan first"),
+                "{purge}: a deleted target keeps its first line"
+            );
+
+            let root = BlockId::from_trusted(REF_ROOT);
+            match purge {
+                "purge_block" => {
+                    purge_block_inner(&pool, DEV, &mat, root).await.unwrap();
+                }
+                "purge_blocks_by_ids" => {
+                    purge_blocks_by_ids_inner(&pool, DEV, &mat, vec![root])
+                        .await
+                        .unwrap();
+                }
+                _ => {
+                    purge_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+                }
+            }
+            mat.flush().await.unwrap();
+
+            assert_eq!(
+                ref_note_text(&pool).await.as_deref(),
+                Some("see "),
+                "{purge}: a purged target's first line leaves the block that names it"
+            );
+            mat.shutdown();
+        }
     }
 
     #[tokio::test]

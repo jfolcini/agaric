@@ -708,12 +708,16 @@ async fn delete_purge_ids_derived_rows(conn: &mut SqliteConnection) -> Result<()
 ///
 /// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
 /// deletes nothing the second time (every row is already gone).
+///
+/// Returns the blocks left behind whose `((ref))` or `[[link]]` named a
+/// purged id, as `purge_block_sql_cascade` does, for the caller to re-strip
+/// once the purge commits (#6843).
 pub async fn project_purge_blocks_to_sql(
     conn: &mut SqliteConnection,
     block_ids: &[&str],
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     if block_ids.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     // #4083: the inbound-sync caller now sets this for its WHOLE projection tx
     // (SQLite resets it at COMMIT/ROLLBACK, and setting it twice is idempotent).
@@ -738,6 +742,13 @@ pub async fn project_purge_blocks_to_sql(
             .execute(&mut *conn)
             .await?;
     }
+    let fts_referrers = agaric_store::fts::purged_block_referrers(
+        &mut *conn,
+        "",
+        "SELECT id FROM _purge_ids",
+        None,
+    )
+    .await?;
     // Same DELETE set as the local cascade, joined to `_purge_ids` instead of
     // `_purge_descendants`. Order: child/edge tables before `blocks` so the
     // final `blocks` delete has no dangling references (also covered by
@@ -753,7 +764,7 @@ pub async fn project_purge_blocks_to_sql(
     sqlx::query("DROP TABLE _purge_ids")
         .execute(&mut *conn)
         .await?;
-    Ok(())
+    Ok(fts_referrers)
 }
 
 // ---------------------------------------------------------------------------

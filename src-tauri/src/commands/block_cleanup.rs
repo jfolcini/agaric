@@ -51,7 +51,8 @@ use agaric_core::error::AppError;
 ///
 /// Returns a [`PurgeSubtreeCounts`]: how many `attachments` rows the chain
 /// deleted (a hint the caller uses to decide whether a byte-reclamation GC
-/// pass is worth enqueuing) and the row count of the final `blocks` DELETE.
+/// pass is worth enqueuing), the row count of the final `blocks` DELETE, and
+/// the referrers whose index text the caller re-strips after its commit.
 ///
 /// # Byte reclamation is NOT done here (#3259)
 ///
@@ -95,6 +96,9 @@ pub async fn purge_subtree_tables(
     // `agaric_store::cache::purge_block_satellite_caches`, threading the SAME
     // borrowed connection so the caller's IMMEDIATE tx is preserved. FK checks
     // remain deferred by the caller; `blocks` is deleted last (below).
+    // #6843: read before the satellite purge deletes their `block_links` rows.
+    let fts_referrers =
+        agaric_store::fts::purged_block_referrers(conn, cte_prefix, member_subquery, bind).await?;
     agaric_store::cache::purge_block_satellite_caches(conn, cte_prefix, member_subquery, bind)
         .await?;
 
@@ -151,11 +155,12 @@ pub async fn purge_subtree_tables(
     Ok(PurgeSubtreeCounts {
         attachment_rows,
         blocks: rows,
+        fts_referrers,
     })
 }
 
 /// Row counts produced by one [`purge_subtree_tables`] run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PurgeSubtreeCounts {
     /// `attachments` rows deleted for the member set. Non-zero means the
     /// purge may have orphaned bytes on disk, so the caller enqueues a
@@ -169,6 +174,10 @@ pub struct PurgeSubtreeCounts {
     /// Rows affected by the final `blocks` DELETE — the purge's headline
     /// "how many blocks did this remove" count.
     pub blocks: u64,
+    /// The blocks left behind whose `((ref))` or `[[link]]` named a member
+    /// ([`agaric_store::fts::purged_block_referrers`]). The caller re-strips
+    /// their `fts_blocks` rows once the purge commits (#6843).
+    pub fts_referrers: Vec<String>,
 }
 
 /// Execute one dynamic `DELETE`, optionally binding a single placeholder.

@@ -365,6 +365,33 @@ pub async fn page_and_tag_referrers<S: AsRef<str>>(
     referrers_of(pool, &targets).await
 }
 
+/// #6843 — the blocks outside a purge's member set that link to or `((ref))`
+/// one of its members, read before the cascade deletes the `block_links`
+/// rows that name them. A `((ULID))` indexes its target's first line, which a
+/// purge takes away, so the purge's caller re-strips these once it commits.
+///
+/// `cte_prefix`, `member_subquery` and `bind` are the cascade's own member
+/// set, in the shape `purge_block_satellite_caches` takes.
+pub async fn purged_block_referrers(
+    conn: &mut sqlx::SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    let sql = format!(
+        "{cte_prefix}SELECT source_id FROM block_links \
+         WHERE target_id IN ({member_subquery}) AND source_id NOT IN ({member_subquery}) \
+         UNION SELECT source_id FROM block_links_unresolved \
+         WHERE target_id IN ({member_subquery}) AND source_id NOT IN ({member_subquery})"
+    );
+    // dynamic-sql: the purge cascades' three runtime member-set shapes.
+    let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+    if let Some(bind) = bind {
+        query = query.bind(bind.to_owned());
+    }
+    Ok(query.fetch_all(conn).await?)
+}
+
 /// The blocks that reference any id in `targets_json` (a JSON array), deduped.
 ///
 /// - `block_tags`: explicit tags;

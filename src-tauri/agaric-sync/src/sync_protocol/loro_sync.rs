@@ -1588,12 +1588,15 @@ pub async fn sweep_deferred_purges_if_last(
         .map(String::as_str)
         .filter(|id| registry.spaces_containing(id).is_empty())
         .collect();
-    agaric_engine::loro::projection::project_purge_blocks_to_sql(&mut tx, &unheld).await?;
+    let fts_referrers =
+        agaric_engine::loro::projection::project_purge_blocks_to_sql(&mut tx, &unheld).await?;
     agaric_engine::loro::projection::project_unheld_page_alias_claims(&mut tx, registry).await?;
     sqlx::query!("DELETE FROM sync_deferred_purges")
         .execute(&mut **tx)
         .await?;
     tx.commit().await?;
+    // #6843: a `((ref))` to a purged block no longer shows its text.
+    agaric_engine::materializer::reindex_restored_cohort_fts(pool, &fts_referrers).await;
     Ok(unheld
         .into_iter()
         .map(agaric_core::ulid::BlockId::from_trusted)

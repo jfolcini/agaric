@@ -1320,6 +1320,40 @@ async fn an_arriving_block_ref_target_re_strips_the_ref_6277() {
     mat.shutdown();
 }
 
+/// #6843: a purge takes the target's first line out of its referrers' index
+/// text, here through an applied `PurgeBlock`. The target sits under the
+/// purged root, so the referrers are looked up for the whole subtree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_applied_purge_strips_the_target_from_the_ref_6843() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let root = "01AAAAAAAAAAAAAAAAAAR06843";
+    let target = "01AAAAAAAAAAAAAAAAAATP6843";
+    let note = "01AAAAAAAAAAAAAAAAAANP6843";
+    insert_block_direct(&pool, root, "content", "root").await;
+    seed_block_ref(&mat, &pool, target, note).await;
+    sqlx::query("UPDATE blocks SET parent_id = ? WHERE id = ?")
+        .bind(root)
+        .bind(target)
+        .execute(&pool)
+        .await
+        .unwrap();
+    soft_delete_block_direct(&pool, root).await;
+
+    let purge = make_op_record(
+        &pool,
+        OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id(root),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&purge).await.unwrap();
+    mat.flush().await.unwrap();
+
+    assert_eq!(stripped_fts_text(&pool, note).await, "see ");
+    mat.shutdown();
+}
+
 // ======================================================================
 // #4733 — the delete/restore cohort must move OUT OF and BACK INTO
 // `fts_blocks` as a whole, not one seed at a time.

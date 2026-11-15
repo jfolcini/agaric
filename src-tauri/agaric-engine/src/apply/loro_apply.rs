@@ -1768,7 +1768,7 @@ pub async fn apply_purge_block_via_loro(
     device_id: &str,
     p: &PurgeBlockPayload,
     replay: bool,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     // #2910: is the block being purged ITSELF a registered space? Capture this
     // BEFORE the cascade's final `DELETE FROM blocks` fires migration 0089's
     // `spaces.id -> blocks(id) ON DELETE CASCADE`, which removes the registry
@@ -1830,7 +1830,7 @@ pub async fn apply_purge_block_via_loro(
             .for_space_recording(space_id, device_id, &state.revert)?;
         guard.engine_mut().apply_purge_block(p.block_id.as_str())?;
     }
-    purge_block_sql_cascade(conn, p).await?;
+    let fts_referrers = purge_block_sql_cascade(conn, p).await?;
 
     // #2910: the cascade above deleted this space's `loro_doc_state` row (see
     // `purge_block_sql_cascade`) in the SAME purge transaction. Now evict the
@@ -1848,7 +1848,7 @@ pub async fn apply_purge_block_via_loro(
                 p.block_id.as_str(),
             ));
     }
-    Ok(())
+    Ok(fts_referrers)
 }
 
 /// [`purge_block_sql_cascade`]'s descendant set: materialise it ONCE into the
@@ -2106,18 +2106,29 @@ async fn delete_purge_link_refs_and_doc_state(
 /// rather than being absorbed into a projection. Every row that
 /// descends from the purged block must go. `depth < 100` is the
 /// runaway-recursion guard.
+///
+/// Returns the blocks left behind whose `((ref))` or `[[link]]` named the
+/// subtree, read before their `block_links` rows go, for the caller to
+/// re-strip once the purge commits (#6843).
 // `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
 // `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
 // assert remote-purge SQL == local-purge SQL across every derived table.
 pub async fn purge_block_sql_cascade(
     conn: &mut sqlx::SqliteConnection,
     p: &PurgeBlockPayload,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     let block_id = p.block_id.as_str();
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *conn)
         .await?;
     collect_purge_descendants(conn, block_id).await?;
+    let fts_referrers = agaric_store::fts::purged_block_referrers(
+        conn,
+        "",
+        "SELECT id FROM _purge_descendants",
+        None,
+    )
+    .await?;
     delete_purge_relation_rows(conn).await?;
     delete_purge_derived_rows(conn).await?;
     delete_purge_link_refs_and_doc_state(conn).await?;
@@ -2137,7 +2148,7 @@ pub async fn purge_block_sql_cascade(
     sqlx::query("DROP TABLE _purge_descendants")
         .execute(&mut *conn)
         .await?;
-    Ok(())
+    Ok(fts_referrers)
 }
 
 /// Apply AddTag through the engine then project to SQL.

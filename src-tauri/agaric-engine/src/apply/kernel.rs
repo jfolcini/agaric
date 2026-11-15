@@ -516,6 +516,12 @@ pub struct ApplyEffects {
     /// and widening that field would change what `dispatch_unswept_cohort`
     /// replays and what #4390's skip metric counts.
     pub move_fts_cohort: Vec<String>,
+    /// #6843 — the blocks left behind whose `((ref))` or `[[link]]` named a
+    /// block a `PurgeBlock` took. A `((ULID))` indexes its target's first
+    /// line, so their `fts_blocks` rows are re-stripped once the purge
+    /// commits; the cascade has deleted the `block_links` rows that would
+    /// have found them by then. Empty on every other op type.
+    pub purge_fts_referrers: Vec<String>,
 }
 
 /// One block whose INHERITED tombstone a `MoveBlock`'s un-sweep re-derived,
@@ -702,7 +708,8 @@ pub async fn apply_op_tx_with_mode(
             // which works from post-cascade state — so no pre-cascade
             // affected-pages snapshot is taken here.
             pre_state = PreOpState::Deferred;
-            apply_purge_block_via_loro(conn, state, &record.device_id, &p, replay).await?;
+            effects.purge_fts_referrers =
+                apply_purge_block_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::MoveBlock => {
             pre_state = apply_move_block_op(conn, state, record, &mode, &mut effects).await?;
