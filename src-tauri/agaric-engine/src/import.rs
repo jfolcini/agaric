@@ -4362,11 +4362,13 @@ fn is_property_key(s: &str) -> bool {
 
 /// The key and value of a `key:: value` line: `::` followed by a space or a
 /// tab (Logseq users write either) after a valid `is_property_key`, so a
-/// `::` mid-sentence (`std::vector`) is content, or `::` ending the line, the
-/// value left empty (#5160 P7).
+/// `::` mid-sentence (`std::vector`) is content, or `::` followed by nothing
+/// but spaces and tabs, the value left empty (#5160 P7). Any other
+/// whitespace after `::`, a no-break space, is no separator, else `key::` and
+/// one would read as empty here and as text once a ` ^ID` follows it.
 pub fn split_property_line(line: &str) -> Option<(&str, &str)> {
     let (key, rest) = line.split_once("::")?;
-    let value = if rest.trim().is_empty() {
+    let value = if rest.trim_start_matches([' ', '\t']).is_empty() {
         ""
     } else {
         rest.strip_prefix([' ', '\t'])?
@@ -7640,6 +7642,16 @@ mod tests_source_outline_5140 {
         assert!(!continuation_line_is_ambiguous("std::vector"));
         let block = &parse_document_outline("+ a\n  \\note::\n").blocks[0];
         assert_eq!(block.content, "a\nnote::");
+        assert!(block.properties.is_empty());
+    }
+
+    /// `key::` and then only a no-break space has no separator, so it is
+    /// text, as `key::\u{a0}x` is: an empty value is spaces and tabs only, or
+    /// its anchored line (`key::\u{a0} ^ID`) is text and reads back as a clear.
+    #[test]
+    fn a_no_break_space_after_the_colons_is_text() {
+        let block = &parse_document_outline("+ a\n  note::\u{a0}\n").blocks[0];
+        assert_eq!(block.content, "a\nnote::\u{a0}");
         assert!(block.properties.is_empty());
     }
 
