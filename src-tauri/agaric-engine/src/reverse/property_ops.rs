@@ -74,8 +74,9 @@ pub fn reverse_rewrite_properties(record: &OpRecord) -> Result<OpPayload, AppErr
 /// The key `block_id`'s value of `key` lives under now (#5841): `key` followed
 /// through each rename and merge of the block's space after the op at `after`
 /// (`created_at`, `seq`, `device_id`), in log order. A peer's rename or merge
-/// counts as this device's own does. `value`, a select's string, is followed
-/// through the option renames of the key as walked so far.
+/// counts as this device's own does. `values`, a select's string or the items
+/// of a multi-select (#6741), are each followed through the option renames of
+/// the key as walked so far.
 ///
 /// A rename moves `old_key` to `new_key`, and `new_key` to `old_key`: a
 /// rename's target holds no value, so a walk on it is of a value already gone,
@@ -94,7 +95,7 @@ pub async fn forward_property_key(
     conn: &mut SqliteConnection,
     block_id: &str,
     key: &str,
-    value: Option<&mut String>,
+    values: &mut [&mut String],
     after: (i64, i64, &str),
 ) -> Result<String, AppError> {
     // A space's own block names no space: its renames are its own.
@@ -107,7 +108,7 @@ pub async fn forward_property_key(
     let Some(space) = space else {
         return Ok(key.to_owned());
     };
-    forward_in_space(conn, &space, Some(block_id), key, value, after).await
+    forward_in_space(conn, &space, Some(block_id), key, values, after).await
 }
 
 /// The key `space_id`'s definition of `key` is declared under now (#5841):
@@ -120,7 +121,7 @@ pub async fn forward_definition_key(
     key: &str,
     after: (i64, i64, &str),
 ) -> Result<String, AppError> {
-    forward_in_space(conn, space_id, None, key, None, after).await
+    forward_in_space(conn, space_id, None, key, &mut [], after).await
 }
 
 /// The walk of [`forward_property_key`] over `space`'s log; a merge moves
@@ -130,7 +131,7 @@ async fn forward_in_space(
     space: &str,
     block: Option<&str>,
     key: &str,
-    mut value: Option<&mut String>,
+    values: &mut [&mut String],
     after: (i64, i64, &str),
 ) -> Result<String, AppError> {
     let (created_at, seq, device_id) = after;
@@ -163,11 +164,10 @@ async fn forward_in_space(
             }
             "rename_property_option" => {
                 let p: RenamePropertyOptionPayload = serde_json::from_str(&row.payload)?;
-                if let Some(value) = value
-                    .as_deref_mut()
-                    .filter(|v| p.key == key && **v == p.old_option)
-                {
-                    *value = p.new_option;
+                if p.key == key {
+                    for value in values.iter_mut().filter(|v| ***v == p.old_option) {
+                        value.clone_from(&p.new_option);
+                    }
                 }
             }
             _ => {
@@ -854,7 +854,7 @@ mod option_walk_tests {
         let (pool, _dir) = logged(ops).await;
         let mut conn = pool.acquire().await.unwrap();
         let mut value = value.to_owned();
-        let key = forward_property_key(&mut conn, BLOCK, key, Some(&mut value), AFTER)
+        let key = forward_property_key(&mut conn, BLOCK, key, &mut [&mut value], AFTER)
             .await
             .unwrap();
         (key, value)
@@ -1012,6 +1012,26 @@ mod option_walk_tests {
     }
 
     #[tokio::test]
+    async fn each_item_of_a_list_follows_an_option_rename_6741() {
+        let (pool, _dir) = logged(vec![option_rename("stage", "a", "b")]).await;
+        let mut conn = pool.acquire().await.unwrap();
+        let (mut kept, mut renamed) = ("x".to_owned(), "a".to_owned());
+        let key = forward_property_key(
+            &mut conn,
+            BLOCK,
+            "stage",
+            &mut [&mut kept, &mut renamed],
+            AFTER,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (key.as_str(), kept.as_str(), renamed.as_str()),
+            ("stage", "x", "b")
+        );
+    }
+
+    #[tokio::test]
     async fn a_value_follows_key_and_option_renames_in_either_order_5841() {
         assert_eq!(
             walk(
@@ -1089,7 +1109,7 @@ mod option_walk_tests {
             sqlx::query(sql).execute(&pool).await.unwrap();
         }
         let mut conn = pool.acquire().await.unwrap();
-        let key = forward_property_key(&mut conn, BLOCK, "phase", None, AFTER).await;
+        let key = forward_property_key(&mut conn, BLOCK, "phase", &mut [], AFTER).await;
         assert_eq!(
             key.map_err(|e| e.to_string()),
             Ok("area".to_owned()),

@@ -18,7 +18,7 @@ use agaric_engine::apply::property_defs::{
     apply_rewrite_properties_via_loro, apply_set_property_def_via_loro,
 };
 use agaric_engine::reverse::{forward_definition_key, forward_property_key};
-use agaric_store::op::{OpPayload, OpRef, SetPropertyDefPayload, UndoResult};
+use agaric_store::op::{OpPayload, OpRef, PropertyList, SetPropertyDefPayload, UndoResult};
 use agaric_store::op_log;
 use agaric_store::pagination;
 use agaric_store::pagination::HistoryEntry;
@@ -822,8 +822,9 @@ impl ReverseCohortFanout {
 /// under now, followed through the renames and merges of its space since the
 /// op `reversed` (its `created_at` and ref) ran (#5841), before the prior is
 /// read: under the op's own key it would bring back a key the space renamed.
-/// A set's select value follows the key's option renames the same way, and an
-/// option rename's reverse renames back under the key the definition has now.
+/// A set's select value, or each item of its list, follows the key's option
+/// renames the same way, and an option rename's reverse renames back under the
+/// key the definition has now.
 async fn with_recorded_prior_in_tx(
     tx: &mut CommandTx,
     reverse: &OpPayload,
@@ -834,8 +835,10 @@ async fn with_recorded_prior_in_tx(
     let mut reverse = reverse.clone();
     match &mut reverse {
         OpPayload::SetProperty(p) => {
-            let value = p.value_text.as_mut();
-            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, value, after).await?;
+            let list_items = p.value_list.iter_mut().flat_map(PropertyList::texts_mut);
+            let mut values: Vec<&mut String> = p.value_text.iter_mut().chain(list_items).collect();
+            p.key =
+                forward_property_key(tx, p.block_id.as_str(), &p.key, &mut values, after).await?;
             fit_reverse_to_declared_type(tx, p).await?;
             p.prior = Some(
                 agaric_engine::block_ops::held_property_value(tx, p.block_id.as_str(), &p.key)
@@ -844,7 +847,7 @@ async fn with_recorded_prior_in_tx(
             );
         }
         OpPayload::DeleteProperty(p) => {
-            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, None, after).await?;
+            p.key = forward_property_key(tx, p.block_id.as_str(), &p.key, &mut [], after).await?;
         }
         OpPayload::RenamePropertyOption(p) => {
             p.key = forward_definition_key(tx, p.space_id.as_str(), &p.key, after).await?;
