@@ -298,6 +298,11 @@ Bundles land under `src-tauri/target/release/bundle/`. The exact filenames carry
 
 **No cross-compilation.** Each platform builds natively because of the native webview. Linux artifacts produced on Linux, macOS on macOS, etc.
 
+**Minimum OS versions.** The README's Install table states them; keep the two in step.
+
+- **macOS 13 Ventura**, set as `bundle.macOS.minimumSystemVersion` in `tauri.conf.json`, which Tauri writes as `LSMinimumSystemVersion` (so macOS refuses to open the app on an older system) and as `MACOSX_DEPLOYMENT_TARGET` for the build. The floor is the system WebKit's: the app's CSS (Tailwind 4: `@property`, `color-mix()`) and regex lookbehind need Safari 16.4, and pdf.js 6 reads the `Iterator` global and calls `Promise.withResolvers` as it loads, which needs Safari 18.4. Safari 18 runs on macOS 13 and later; Monterey stops at Safari 17. The Rust targets allow older systems (`x86_64-apple-darwin` 10.12, `aarch64-apple-darwin` 11).
+- **Windows 10**, 64-bit. Rust's tier-1 `x86_64-pc-windows-msvc` target supports Windows 10 and later only, and the WebView2 runtime supports Windows 10 and 11. Tauri's installers have no OS-version setting, so nothing refuses an older system at install time. WebView2 updates itself, so the web features set no separate floor there.
+
 **AppImage icon fix (Linux):** the AppImage bundle's icon mapping is brittle. After `cargo tauri build`, run `scripts/fix-appimage-icons.sh` to repair `.DirIcon` so file managers display the icon. Set `FIX_APPIMAGE_STRICT=1` to fail the build on a missing icon (CI does this).
 
 **Android 16 KB page size (#4425).** Android 15+ devices can boot with a 16 KB page size, and on those the dynamic linker refuses to map a 4 KB-aligned library — the app does not start at all. NDK r27 emits 16 KB-aligned output for its own build systems, but a Rust cross-compile links through cargo's invocation and inherits none of that, so `src-tauri/build.rs` emits `-Wl,-z,max-page-size=16384` whenever `CARGO_CFG_TARGET_OS == "android"`. It lives there rather than in `.cargo/config.toml` because that file is gitignored (see [Speed up Rust builds (Linux)](#speed-up-rust-builds-linux)) and would never reach CI. Verify any APK or `.so` with:

@@ -26,14 +26,14 @@ Agaric runs a local MCP server when MCP is enabled: a Unix domain socket (Linux 
 {
   "mcpServers": {
     "agaric-planner-3kq9vz": {
-      "command": "agaric-mcp",
+      "command": "/Applications/Agaric.app/Contents/MacOS/agaric-mcp",
       "args": ["--socket", "/path/to/mcp.sock", "--token", "agt_…"]
     }
   }
 }
 ```
 
-Settings → Agent access makes that entry for you: add an agent, then use its row's *Copy Claude Desktop config* or *Copy Claude Code command* (`claude mcp add -s user <name> -- agaric-mcp --socket "<path>" --token <token>`). Cursor and Continue use the same command and arguments under their own MCP config keys. While the switch is on, the tab shows the socket's path and its connection count, with *Disconnect all* while any agent is connected.
+Settings → Agent access makes that entry for you: add an agent, then use its row's *Copy Claude Desktop config* or *Copy Claude Code command* (`claude mcp add -s user <name> -- "<bridge>" --socket "<path>" --token <token>`). `<bridge>` is the full path of the `agaric-mcp` that ships beside the app; from an AppImage it is the AppImage file, followed by `agaric-mcp`, which the app hands over to the bridge inside it. Cursor and Continue use the same command and arguments under their own MCP config keys. While the switch is on, the tab shows the socket's path and its connection count, with *Disconnect all* while any agent is connected.
 
 Each agent has:
 

@@ -113,8 +113,8 @@ Download the installer for your system from [**GitHub Releases**](https://github
 | System | Needs | File |
 | --- | --- | --- |
 | **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 24.04, Debian 13, Fedora 40) and `libwebkit2gtk-4.1` | `.deb`, `.rpm` or `.AppImage` |
-| **Windows** (x64) | Windows 10 or later. The installer fetches WebView2 when it is missing | `-setup.exe` or `.msi` |
-| **macOS** | Apple Silicon or Intel | `.dmg` (`aarch64` or `x64`) |
+| **Windows** (x64) | Windows 10 or 11, 64-bit. The installer fetches WebView2 when it is missing | `-setup.exe` or `.msi` |
+| **macOS** | macOS 13 Ventura or later, with Safari's updates installed (Agaric draws with the system's WebKit, which they update), Apple Silicon or Intel | `.dmg` (`aarch64` or `x64`) |
 | **Android** | Android 11 (API 30) or later, 64-bit ARM (`arm64-v8a`) only | `.apk` |
 
 The desktop app updates itself from GitHub Releases. Agaric is in no app store or package repository yet: a winget manifest is written but not submitted ([packaging/winget](packaging/winget/README.md)), and Flathub is not submitted either ([packaging/flathub](packaging/flathub/README.md)).
@@ -135,7 +135,7 @@ The Android `.apk` is signed but distributed outside the Play Store:
 Agaric can serve its notes to MCP clients such as Claude Desktop, Claude Code, Cursor and Continue. It is **off by default**, listens on a local socket (never a network port), and is desktop only.
 
 1. Turn it on in Settings › Agent access and add an agent: a name, read-only or read-write, the spaces it may use. Each agent gets its own token.
-2. Copy the config from the agent's row into your client. It runs the `agaric-mcp` bridge that ships beside the app, with `--socket <path>` and `--token <token>`. The config names the bridge without a path, which works where it is on your `PATH` (`/usr/bin/agaric-mcp` from the `.deb` or `.rpm`). Elsewhere, put its full path in the config's `command`: `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` on macOS, `agaric-mcp.exe` in the install folder on Windows.
+2. Copy the config from the agent's row into your client. It runs the `agaric-mcp` bridge that ships beside the app, by its full path, with `--socket <path>` and `--token <token>`. From an AppImage it runs the AppImage file with `agaric-mcp` as the first argument, so copy it again after moving the file. On macOS, copy it once Agaric runs from Applications: a config copied while it runs from the disk image points into the disk image.
 
 Agents read, search, query and write through the same operations the app uses, so their edits are attributed in History and can be undone. `agaric-mcp call <tool> <json>` runs one tool from a script. Tools and limits: [docs/features/agent-access.md](docs/features/agent-access.md).
 

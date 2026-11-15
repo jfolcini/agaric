@@ -16,7 +16,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { claudeCodeCommand, claudeDesktopConfig } from '@/lib/agent-config'
+import { type BridgeSource, claudeCodeCommand, claudeDesktopConfig } from '@/lib/agent-config'
 import { unwrap } from '@/lib/app-error'
 import { commands, type McpAgent, type SpaceRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
@@ -26,8 +26,8 @@ import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
 export interface AgentListProps {
-  /** The socket the copied configs point the bridge at. */
-  socketPath: string
+  /** The bridge the copied configs run and its socket; null until the status loads. */
+  bridge: BridgeSource | null
 }
 
 function spacesLabel(
@@ -40,7 +40,7 @@ function spacesLabel(
   return names.length > 0 ? names.join(', ') : t('agentAccess.agents.noSpacesLeft')
 }
 
-export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
+export function AgentList({ bridge }: AgentListProps): React.ReactElement {
   const { t } = useTranslation()
   const spaces = useSpaceStore((s) => s.availableSpaces)
   const [agents, setAgents] = useState<McpAgent[] | null>(null)
@@ -160,12 +160,15 @@ export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
                   variant="outline"
                   size="sm"
                   aria-label={t('agentAccess.agents.copyDesktopAria', { name: agent.name })}
-                  onClick={() =>
-                    void copy(
-                      claudeDesktopConfig(agent, socketPath),
-                      'agentAccess.claudeConfigCopied',
-                    )
-                  }
+                  disabled={bridge === null}
+                  onClick={() => {
+                    if (bridge !== null) {
+                      void copy(
+                        claudeDesktopConfig(agent, bridge),
+                        'agentAccess.claudeConfigCopied',
+                      )
+                    }
+                  }}
                 >
                   {t('agentAccess.agents.copyDesktopButton')}
                 </Button>
@@ -173,12 +176,15 @@ export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
                   variant="outline"
                   size="sm"
                   aria-label={t('agentAccess.agents.copyCodeAria', { name: agent.name })}
-                  onClick={() =>
-                    void copy(
-                      claudeCodeCommand(agent, socketPath),
-                      'agentAccess.agents.codeCommandCopied',
-                    )
-                  }
+                  disabled={bridge === null}
+                  onClick={() => {
+                    if (bridge !== null) {
+                      void copy(
+                        claudeCodeCommand(agent, bridge),
+                        'agentAccess.agents.codeCommandCopied',
+                      )
+                    }
+                  }}
                 >
                   {t('agentAccess.agents.copyCodeButton')}
                 </Button>
