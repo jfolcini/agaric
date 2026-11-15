@@ -94,7 +94,7 @@ else
 fi
 
 # ── the review ─────────────────────────────────────────────────────
-if ! raw=$(api "repos/$REPO/pulls/$PR/files?per_page=100") || ! files=$(jq -s '[.[][]?]' <<<"$raw" 2>/dev/null); then
+if ! raw=$(api "repos/$REPO/pulls/$PR/files?per_page=100") || ! files=$(jq -s '[.[][]? | {filename, previous_filename}]' <<<"$raw" 2>/dev/null); then
   files=""
   fail "review: the PR's changed files could not be read"
 elif [ "$(jq 'length' <<<"$files")" -gt 0 ] && jq -e 'all(.[]; .filename | endswith(".md"))' <<<"$files" >/dev/null; then
@@ -180,14 +180,16 @@ else
   fi
   if [ -z "$since" ]; then
     fail "main moved: no base to compare $BASE_REF against could be found"
-  elif ! raw=$(api "repos/$REPO/compare/$since...$BASE_REF?per_page=100") || ! main_files=$(jq -s '[.[].files[]?]' <<<"$raw" 2>/dev/null); then
+  elif ! raw=$(api "repos/$REPO/compare/$since...$BASE_REF?per_page=100") || ! main_files=$(jq -s '[.[].files[]? | {filename, previous_filename}]' <<<"$raw" 2>/dev/null); then
     fail "main moved: the files changed on $BASE_REF since $(short "$since") could not be read"
-  else
-    # A rename counts under both names.
-    overlap=$(jq -nr --argjson pr "$files" --argjson main "$main_files" '
+  # A rename counts under both names. The lists go in on stdin, not as arguments: a compare
+  # with large patches overflowed the argument limit, jq failed, and an empty overlap passed.
+  elif ! overlap=$(printf '%s\n%s\n' "$files" "$main_files" | jq -sr '
       def names: map(.filename, .previous_filename) | map(select(. != null)) | unique;
-      ($pr | names) as $a | ($main | names) as $b | $a - ($a - $b) | .[]')
-    moved=$(jq -s '[.[].files[]?] | length' <<<"$raw")
+      (.[0] | names) as $a | (.[1] | names) as $b | $a - ($a - $b) | .[]'); then
+    fail "main moved: comparing the PR's files with $BASE_REF's failed"
+  else
+    moved=$(jq 'length' <<<"$main_files")
     if [ -z "$overlap" ]; then
       pass "main moved: none of the $moved file(s) changed on $BASE_REF since $BASE_LABEL is a PR file; no re-merge needed"
     else
