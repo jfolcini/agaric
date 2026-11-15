@@ -23,7 +23,7 @@
 1 src-tauri/agaric-store/src/backlink/sort.rs
 11 src-tauri/agaric-store/src/block_descendants.rs
 6 src-tauri/agaric-store/src/cache/agenda.rs
-2 src-tauri/agaric-store/src/cache/block_links.rs
+4 src-tauri/agaric-store/src/cache/block_links.rs
 2 src-tauri/agaric-store/src/cache/block_tag_refs.rs
 5 src-tauri/agaric-store/src/cache/page_id.rs
 2 src-tauri/agaric-store/src/cache/page_links.rs
