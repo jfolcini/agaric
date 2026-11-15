@@ -151,7 +151,7 @@ impl std::fmt::Display for Summary {
 pub(crate) fn report(group: &str, case: &str, scale: &str, samples: &Samples) {
     match samples.summary() {
         Some(summary) => {
-            println!("{group}: {case} @ {scale} = median {summary} (measurement only — no budget)")
+            println!("{group}: {case} @ {scale} = median {summary} (measurement only — no budget)");
         }
         None => println!("{group}: {case} @ {scale} not selected"),
     }
