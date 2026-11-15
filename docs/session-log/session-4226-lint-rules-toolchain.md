@@ -24,6 +24,7 @@ Built the maintainer's decision on the #6841 research as one PR: four oxlint rul
 - **zizmor 1.30's `self-repository` audit is disabled.** It asks for `uses: $/...`, which actionlint v1.7.12, its newest release, rejects as a ref-less action. The maintainer chose to disable that one audit until actionlint parses the form.
 - **The Playwright shard flag goes on the one run that passes `--shard`** (`scheduled-deep-checks.yml`). `_validate.yml` deals files to its three legs itself and never passes `--shard`.
 - **Parallel builders in one tree fill the cloud disk.** `split-debuginfo = "unpacked"` leaves `.dwo` files under `target/debug`; two rounds of deleting them and `target/debug/incremental` freed over 20 GB each time. `CARGO_INCREMENTAL=0` keeps the gates smaller.
+- **`e2e/emoji-picker.spec.ts`'s closing-colon case raced the lazy emoji dataset.** The input rule reads it synchronously and leaves `:joy:` alone while it loads; a busy CI shard missed the 30 ms-per-key window. The case now waits for the popup to list `joy` before typing the colon.
 - **A commit stashes unstaged changes** through prek, so commits waited until every builder in the shared tree had finished.
 
 ## What ran
