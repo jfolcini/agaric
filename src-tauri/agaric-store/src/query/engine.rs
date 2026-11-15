@@ -1553,7 +1553,7 @@ async fn grouped_total_count(
         gkey = key.expr,
         from = ctx.from_clause,
         join = key.join,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
@@ -1650,7 +1650,7 @@ async fn fetch_group_buckets(
          WHERE {pred} GROUP BY gkey{having} \
          ORDER BY gcount DESC, gkey ASC LIMIT ?{limit_pos}",
         from = ctx.from_clause,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: GROUP-BY key + per-group aggregate SELECT + WHERE + keyset HAVING are the runtime GroupKey + AggregateSpec set + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut q = sqlx::query(sqlx::AssertSqlSafe(group_sql.as_str()));
@@ -1758,7 +1758,7 @@ async fn fetch_member_preview(
          ) WHERE __rn <= ?{rn_pos}",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
         from = ctx.from_clause,
-        pred = &ctx.predicate,
+        pred = ctx.predicate,
     );
     // dynamic-sql: windowed member preview over the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
     let mut mq = sqlx::query_as::<_, GroupMemberRow>(sqlx::AssertSqlSafe(member_sql.as_str()));

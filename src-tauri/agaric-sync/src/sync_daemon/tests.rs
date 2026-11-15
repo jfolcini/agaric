@@ -853,7 +853,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
                     && remote_device_id.as_str() == "PEER_UNREACHABLE"
         ),
         "expected SyncEvent::Error mentioning 'Connection failed' for PEER_UNREACHABLE, got: {:?}",
-        &events[1]
+        events[1]
     );
 
     // Scheduler records the failure

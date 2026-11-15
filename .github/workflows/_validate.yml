@@ -302,7 +302,7 @@ jobs:
           # version-sensitive (MSRV-aware resolution), so a floating
           # toolchain could disagree with the committed lock for reasons
           # that have nothing to do with the diff.
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       - name: Verify both Cargo.lock files resolve their manifests
         working-directory: src-tauri
@@ -600,9 +600,9 @@ jobs:
         uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           # sqruff pinned: unpinned resolves to latest via cargo-binstall's
-          # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
-          # this repo pins 1.95.0 (rust-toolchain.toml) — reds the whole lint
-          # job. 0.38.x supports rustc 1.94/1.95. Bump when the rustc pin moves.
+          # from-source fallback, which reds the whole lint job the moment a
+          # sqruff release needs a newer rustc than rust-toolchain.toml pins.
+          # Check its `rust-version` on crates.io when bumping either.
           #
           # zizmor pinned (#3476): unpinned, CI floated to whatever was latest
           # while a dev box kept whatever `cargo install` last fetched, so the
@@ -627,7 +627,7 @@ jobs:
           # shellcheck/shfmt pinned (#6762): the shellcheck hook used to find
           # whatever copy the runner image carried, and actionlint runs that
           # same binary over `run:` blocks. Same pins as setup-hooks.sh.
-          tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
@@ -1066,7 +1066,7 @@ jobs:
         with:
           # prek/typos-cli pinned (#3742) — must match `pinned_version_for`
           # in scripts/setup-hooks.sh and the other tool: lists in this repo.
-          tool: prek@0.3.8,typos-cli@1.46.0
+          tool: prek@0.5.10,typos-cli@1.52.0
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` prek hook is a `local` hook calling the system
@@ -1620,7 +1620,7 @@ jobs:
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

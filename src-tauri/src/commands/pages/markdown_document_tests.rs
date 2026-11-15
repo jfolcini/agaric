@@ -16,7 +16,6 @@
 //! cannot see the reader start one; [`typed_rows`] read text typed with no
 //! blank line.
 
-use proptest::prelude::*;
 use serde_json::{Value, json};
 
 use super::*;

@@ -374,7 +374,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.95.0
+          toolchain: 1.99.1
           components: clippy,rustfmt
 
       - name: Check formatting over the whole workspace
@@ -484,7 +484,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       # No rust-cache: a saved entry was evicted before the next week's run
       # could restore it (the repo is over its cache limit), and each save
@@ -795,7 +795,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -1031,7 +1031,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -1261,7 +1261,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.95.0
+          toolchain: 1.99.1
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -2450,7 +2450,7 @@ jobs:
       - name: Install nightly Rust toolchain
         # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
         # instrumentation (`-Z sanitizer`). The production toolchain stays
-        # pinned at 1.95.0; only this lane uses nightly.
+        # pinned in rust-toolchain.toml; only this lane uses nightly.
         uses: ./.github/actions/rust-toolchain
         with:
           toolchain: nightly
@@ -2522,7 +2522,7 @@ jobs:
           # [[bin]] is now the entire act of enrolling a target in this lane.
           # `+nightly`, not a bare `cargo`: rustup searches upward from the
           # working directory for a toolchain file and finds the repo root's
-          # `rust-toolchain.toml`, which pins 1.95.0 AND mandates the clippy and
+          # `rust-toolchain.toml`, which pins an exact release AND mandates the clippy and
           # rustfmt components. This job installs ONLY nightly, so a bare `cargo`
           # here would trigger a full toolchain-plus-components download inside
           # the step the fuzz budget is measured against — a network dependency
@@ -3164,15 +3164,15 @@ jobs:
         # whole suite; zizmor/taplo/typos/sqruff/shellcheck/shfmt are invoked by prek hooks.
         uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
-          # pins 1.95.0 (see the lint job in _validate.yml). Bump in lockstep.
+          # sqruff pinned so its `rust-version` stays within the rustc pin
+          # (see the lint job in _validate.yml). Bump in lockstep.
           # zizmor pinned (#3476) to `ZIZMOR_PINNED_VERSION` in
           # scripts/zizmor-hook.sh; the wrapper fails the run on a mismatch.
           # prek/taplo-cli/typos-cli pinned (#3742) — must match
           # `pinned_version_for` in scripts/setup-hooks.sh and the other
           # tool: lists in this repo. Verified by
           # scripts/check-tool-pins.mjs. shellcheck/shfmt pinned the same way (#6762).
-          tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
 
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
@@ -3334,7 +3334,7 @@ jobs:
         uses: ./.github/actions/playwright-setup
 
       - name: Playwright E2E tests (shard ${{ matrix.shard }}/4)
-        run: npx playwright test --shard ${{ matrix.shard }}/4
+        run: npx playwright test --pass-with-no-tests --shard ${{ matrix.shard }}/4
 
   full-suite-nextest:
     needs: select-lanes

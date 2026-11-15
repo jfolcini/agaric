@@ -93,7 +93,7 @@ pub const MAX_SQL_PARAMS: usize = 999;
 pub fn now_ms() -> i64 {
     let wall = chrono::Utc::now().timestamp_millis();
     #[cfg(any(test, feature = "test-util"))]
-    if let Ok(last) = DISTINCT_NOW_MS.fetch_update(
+    if let Ok(last) = DISTINCT_NOW_MS.try_update(
         std::sync::atomic::Ordering::SeqCst,
         std::sync::atomic::Ordering::SeqCst,
         |last| (last != 0).then(|| wall.max(last + 1)),
