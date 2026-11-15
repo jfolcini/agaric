@@ -36,6 +36,8 @@ Prefer `getByRole`, then `getByText`, `getByPlaceholderText`, `getByTestId` (moc
 
 `userEvent`, not `fireEvent`; call `userEvent.setup()` before any DOM op, including `.focus()`. `fireEvent` only for non-user events (`blur`, a debounce-bypassing `change`).
 
+A dnd-kit drag goes through `src/__tests__/helpers/pointer-drag.ts` (`dragToTarget`, `moveOver`, `releasePointer`), which aims at element centres: a hand-picked offset near an edge starts the container's auto-scroll and the drop misses.
+
 ## Async patterns
 
 Components that `invoke` on mount, and updates from workers, timers or IPC callbacks (which React 19 does not flush in a bare `await` tick), need one of:
