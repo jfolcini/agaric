@@ -1,4 +1,4 @@
-# Session 4223 — lint rules, a deleted guard and toolchain upgrades (#6841)
+# Session 4226 — lint rules, a deleted guard and toolchain upgrades (#6841)
 
 Built the maintainer's decision on the #6841 research as one PR: four oxlint rules and two clippy lints on with every hit burned down, the `dead-symbol-citations` guard deleted, and every toolchain and tool moved to its newest release at least seven days old.
 
