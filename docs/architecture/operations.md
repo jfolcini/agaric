@@ -108,11 +108,12 @@ The sections above describe how individual paths *bound* memory; this one consol
 What one space's engine costs as it grows, on the engine as #6521 left it: the snapshot in `loro_doc_state`, the writes since in `loro_doc_delta` rows. A space of `n` blocks (a page per 100 blocks, built through the engine's write path), with `m` rounds of one edit to every block:
 
 ```sh
-cd src-tauri && CARGO_PROFILE_BENCH_LTO=off CARGO_PROFILE_BENCH_CODEGEN_UNITS=16 \
-  cargo bench --bench engine_bench -- loro_snapshot 2>&1 | grep '^loro_snapshot_bench'
+just measure-loro            # every scale; `just measure-loro 10000` skips the 100K one
 ```
 
-`LORO_SNAPSHOT_MAX_BLOCKS=10000` skips the 100K scale: a run at both takes about 20 minutes on the container below, and one at 10K about 5. A compile with the two overrides takes about 20 minutes cold; the shipped profile's thin LTO does not finish on a shared box (`src-tauri/benches/AGENTS.md`). The numbers are from `src-tauri/benches/groups/loro_snapshot_bench.rs`, a release build without LTO, on a 4-core cloud container: 10K blocks twice, 100K once. Each cell is the band of the runs' medians, then the lowest and highest sample of either run.
+The recipe runs `scripts/measure-loro.sh`: `cargo bench --bench engine_bench` over the Loro group (`src-tauri/benches/groups/loro_snapshot_bench.rs`) and the pulled-vault group below, in the release profile without LTO (the shipped profile's thin LTO does not finish on a shared box), with the result lines printed and the whole output kept in `src-tauri/measure-loro.log`. Both scales take about 20 minutes on the container below after a compile of about 20 minutes cold; 10K takes about 5. The weekly `bench-slo` lane runs it at 10K and uploads the log and criterion's estimates as the `loro-measurements` artifact. It is informational: nothing gates on these numbers until a few weekly runs have shown their noise band.
+
+The numbers below are from a release build without LTO on a 4-core cloud container: 10K blocks twice, 100K once. Each cell is the band of the runs' medians, then the lowest and highest sample of either run.
 
 | Space | Snapshot | Export | Rehydrate (import + index) | Heap after rehydrate (peak) | Cold first sync (of 120 s) |
 |---|---|---|---|---|---|
@@ -133,12 +134,9 @@ What they say:
 
 **A write on a pulled vault, beside the same write on the vault that wrote it** (#6811). `pulled_vault_bench` builds #6811's vault by commands (a 1,100-block page and 1,900 blocks of filler, about 3K blocks), pulls its space snapshot into a second empty vault with `apply_remote`, then times a split (`create_block_inner` at the middle sibling slot) and a 300-line paste (`create_blocks_batch_inner`) on both, the two arms alternating sample by sample:
 
-```sh
-cd src-tauri && LORO_SNAPSHOT_MAX_BLOCKS=0 CARGO_PROFILE_BENCH_LTO=off CARGO_PROFILE_BENCH_CODEGEN_UNITS=16 \
-  cargo bench --bench engine_bench -- pulled_vault 2>&1 | grep '^pulled_vault_bench'
-```
+The same `just measure-loro` run prints it (`pulled_vault_bench`, about 5 minutes).
 
-(`LORO_SNAPSHOT_MAX_BLOCKS=0` keeps the Loro run's own fixtures out of it; a run takes about 5 minutes.) Two runs, same container and build; each cell is the two runs' medians, then the lowest and highest sample of either run. The page grows by one block per split and 300 per paste, so a run's timings drift up on both arms alike; the pulled-over-written ratio of each pair taken in turn is the figure that cancels it.
+Two runs, same container and build; each cell is the two runs' medians, then the lowest and highest sample of either run. The page grows by one block per split and 300 per paste, so a run's timings drift up on both arms alike; the pulled-over-written ratio of each pair taken in turn is the figure that cancels it.
 
 | Write | App-written | Pulled | Pulled / app-written, median of pairs |
 |---|---|---|---|

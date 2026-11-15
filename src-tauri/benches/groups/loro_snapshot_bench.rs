@@ -36,8 +36,8 @@
 //! difference inside it is not a difference.
 //!
 //! `LORO_SNAPSHOT_MAX_BLOCKS=<n>` skips the scales above `n`, for a run that
-//! must fit a short budget. The command that regenerates the numbers in
-//! `docs/architecture/operations.md` § Loro engine cost is in that section.
+//! must fit a short budget. `just measure-loro` regenerates the numbers in
+//! `docs/architecture/operations.md` § Loro engine cost.
 
 use std::cell::RefCell;
 use std::hint::black_box;

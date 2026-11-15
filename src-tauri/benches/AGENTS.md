@@ -44,6 +44,10 @@ Put the same probe on any non-SLO bench whose fixture can degrade into a cheaper
 
 **Placement:** in the outer bench function's body, after the seeder and outside every `bench_function` / `bench_with_input` / `iter_custom` closure, because only that body runs under both `--test` and a name filter.
 
+## Measurement harnesses: `just measure-loro`
+
+`loro_snapshot_bench` and `pulled_vault_bench` (both in `engine_bench`) measure and gate nothing: what one space's Loro engine costs as it grows (snapshot bytes, export, rehydrate, heap, a cold first sync against the 120 s dispatch limit, the attachment scan), and a split and a 300-line paste on a vault pulled from a peer beside the vault that wrote it. Run them with `just measure-loro [MAX_BLOCKS]` (`scripts/measure-loro.sh`; `10000` skips the 100K scale). Both scales take about 20 minutes plus a cold compile of about 20; `10000` about 5. Every line reads `<case> @ <scale> = median <ms> [<lowest> – <highest>] n=<samples>`: the bracket is the noise band, and a difference inside it is not a difference. `pulled_vault_bench`'s last line per write is the pulled-over-written ratio of each pair taken in turn; a range that holds 1.0 is no gap. The committed numbers, with the container they came from, are in `docs/architecture/operations.md` § Loro engine cost; rerun the recipe on the same kind of box before comparing. The weekly `bench-slo` lane runs it at 10K blocks and uploads the `loro-measurements` artifact. A compile that fails with `expected Pool<Sqlite>, found a different Pool<Sqlite>` is the cargo #6313 race above: run it again. No budget until a few weekly runs have shown the noise band; then it joins `report_measurement_only`'s path to a budget above.
+
 ## Two vault shapes
 
 The `FIXTURE_SIZE` fixtures are an outliner's vault: many blocks under few pages. `interactive_slo`'s `page_heavy` module seeds the other shape once, `PAGES` root pages of `BLOCKS_PER_PAGE` blocks in one space, and runs only the probes whose cost grows with the number of pages on it. Do not run the rest of the SLO list there.
