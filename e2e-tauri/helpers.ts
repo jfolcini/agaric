@@ -55,6 +55,8 @@
 //   - `#new-page-name`                      the New page dialog's title field
 //     (NewPageDialog.tsx), opened by the sidebar's "New Page" button
 //     (`openNewPageDialog`); Enter in it creates the page.
+//   - `[data-testid="view-transition-wrapper"]` App.tsx's pane, which
+//     `navigateTo` waits on to finish fading in.
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
@@ -226,6 +228,16 @@ export async function navigateTo(label: NavLabel): Promise<void> {
     timeout: NAV_TIMEOUT,
     timeoutMsg: `sidebar nav "${label}" never became the active view (aria-current="page")`,
   })
+  // The new view fades in from opacity 0 (App.tsx `fadeVisible`), and WebKit's
+  // `getText` reads anything under an ancestor at computed opacity 0 as "".
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const pane = document.querySelector('[data-testid="view-transition-wrapper"]')
+        return pane !== null && getComputedStyle(pane).opacity === '1'
+      }),
+    { timeout: NAV_TIMEOUT, timeoutMsg: `the ${label} view never faded in` },
+  )
 }
 
 /**
