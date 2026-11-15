@@ -7,10 +7,12 @@
 //
 // Opt-in because it is a measurement with no budget to fail, not an
 // environment precondition (e2e-tauri/AGENTS.md). It fails only when what it
-// times did not happen: a refused write, a missing sample, an undo that took
-// back less than the paste. Debug build under Xvfb: compare runs on one
-// machine. The `enter-merge-latency:` lines are printed and written to
-// `e2e-tauri/artifacts/`; docs/architecture/operations.md records runs.
+// times did not happen: a refused write, a key that logged nothing twice, an
+// undo that took back less than the paste. A key that logs nothing once is
+// counted (`lost_keys`) and pressed again. Debug build under Xvfb: compare
+// runs on one machine. The `enter-merge-latency:` lines are printed and
+// written to `e2e-tauri/artifacts/`; docs/architecture/operations.md records
+// runs.
 //
 // Vault: the issue's page of PAGE_BLOCKS blocks beside FILLER_PAGES pages of
 // BATCH blocks, written by the app with `create_blocks_batch`. Not the 100K
@@ -130,17 +132,49 @@ function loggedSamples(): Sample[] {
   }))
 }
 
-/** Press `key` and return the sample it logged, once the backend has answered. */
+/** Keys that reached no handler, each with where the focus was. */
+const lostKeys: string[] = []
+/** Many times the slowest answer seen: a key with no sample by then reached nothing. */
+const LOST_KEY_MS = 5_000
+
+/**
+ * Press `key` and return the sample it logged, once the backend has answered.
+ * A key that logs nothing is counted lost and pressed again with the editor
+ * focused, so one lost key does not end the run.
+ */
 async function sampleOf(key: string, action: Action, logged: number): Promise<Sample> {
-  await browser.keys([key])
   let samples: Sample[] = []
-  await browser.waitUntil(
-    () => {
-      samples = loggedSamples()
-      return Promise.resolve(samples.length > logged)
-    },
-    { timeout: ACTION_TIMEOUT, interval: 50, timeoutMsg: `${key} logged no latency sample` },
-  )
+  const answered = () =>
+    browser
+      .waitUntil(
+        () => {
+          samples = loggedSamples()
+          return Promise.resolve(samples.length > logged)
+        },
+        { timeout: LOST_KEY_MS, interval: 50 },
+      )
+      .then(
+        () => true,
+        () => false,
+      )
+  await browser.keys([key])
+  if (!(await answered())) {
+    const focus = await browser.execute((selector: string) => {
+      const editor = document.querySelector<
+        HTMLElement & { editor?: { commands: { focus: () => boolean } } }
+      >(selector)
+      const active = document.activeElement
+      const where =
+        active === editor
+          ? 'editor'
+          : `${active?.tagName.toLowerCase() ?? 'none'}${active?.getAttribute('data-testid') ? `[${active.getAttribute('data-testid')}]` : ''}`
+      editor?.editor?.commands.focus()
+      return where
+    }, EDITOR)
+    lostKeys.push(`${key}@${focus}`)
+    await browser.keys([key])
+    if (!(await answered())) throw new Error(`${key} logged no latency sample, pressed twice`)
+  }
   const sample = samples[logged] as Sample
   if (sample.action !== action || !sample.ok || samples.length !== logged + 1) {
     throw new Error(`${key} logged ${JSON.stringify(samples.slice(logged))}, not one ${action}`)
@@ -234,6 +268,7 @@ async function sampleEnterAndMerge(label: string): Promise<void> {
   const enter: Sample[] = []
   const merge: Sample[] = []
   let logged = loggedSamples().length
+  const lostBefore = lostKeys.length
   for (let n = 0; n < SAMPLES; n++) {
     enter.push(await sampleOf('Enter', 'enter-split', logged++))
     // The split-off block opens with the caret at its end, not at the split (#6810).
@@ -247,6 +282,8 @@ async function sampleEnterAndMerge(label: string): Promise<void> {
     record(`${label} ${action} focus_ms ${spread(samples.map((s) => s.focus))}`)
     record(`${label} ${action} answered_ms ${spread(samples.map((s) => s.answered))}`)
   }
+  const lost = lostKeys.slice(lostBefore)
+  record(`${label} lost_keys=${lost.length}${lost.length > 0 ? ` ${lost.join(' ')}` : ''}`)
   // Every split was merged back: the block holds its text again and its editor is still in it.
   await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
   await browser.waitUntil(async () => (await backendText(targetId)) === rowText(TARGET), {
