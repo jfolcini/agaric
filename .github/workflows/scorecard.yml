@@ -2,28 +2,22 @@ name: OpenSSF Scorecard
 
 # PEND-41 R10 — OpenSSF Scorecard supply-chain audit.
 #
-# Why these triggers:
+# Why these triggers: weekly only, never per push (slots are the scarce
+# resource, `.github/AGENTS.md` § Runner slots). The score lags a change by up
+# to a week, and the public badge only ever reflects the tip of main.
+#   * schedule (weekly): Monday 06:00 UTC, clear of `e2e-tauri-weekly.yml`
+#     (Mon 02:43) and `scheduled-deep-checks.yml` (daily 04:17).
 #   * branch_protection_rule: Scorecard's "Branch-Protection" check requires
 #     the workflow to react to changes in branch protection settings so the
-#     score reflects the current ruleset.
-#   * schedule (weekly): keeps the public badge fresh without burning CI on
-#     every push; Monday 06:00 UTC = quiet time, lands before the work week.
-#   * push to main: re-scores immediately when shipping changes that affect
-#     SAST/Dependency-Update-Tool/Pinned-Dependencies posture.
+#     score reflects the current ruleset. It fires only on a ruleset edit.
 #   * workflow_dispatch: manual re-run for debugging or after fixing a flag.
 on:
   branch_protection_rule:
   schedule:
     - cron: '0 6 * * 1'
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# Collapse superseded scans: a rapid stack of merges to main otherwise starts
-# a full Scorecard analysis per commit. Keyed by ref (stable per-branch) so
-# only the latest main HEAD is scored — the public badge reflects the tip of
-# main regardless. cancel-in-progress frees the runner the moment a newer
-# commit lands.
+# One scan per ref at a time: a newer run replaces the one in flight.
 concurrency:
   group: scorecard-${{ github.ref }}
   cancel-in-progress: true

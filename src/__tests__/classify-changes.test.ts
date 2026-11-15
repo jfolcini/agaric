@@ -71,7 +71,6 @@ const FULL_SET = {
   playwright_specs: '',
   real_backend: 'true',
   real_backend_specs: '',
-  codeql_languages: '["actions","javascript-typescript","rust"]',
 }
 
 const DOCS_ONLY = {
@@ -89,7 +88,6 @@ const DOCS_ONLY = {
   playwright_specs: '',
   real_backend: 'false',
   real_backend_specs: '',
-  codeql_languages: '[]',
 }
 
 const CI_ONLY = { ...DOCS_ONLY, docs_only: 'false', docs: 'false', ci: 'true' }
@@ -106,7 +104,7 @@ const LINT_ONLY_RUST = {
 }
 
 describe('classify-changes.sh', () => {
-  it('a docs-only diff runs no suite and no CodeQL language', () => {
+  it('a docs-only diff runs no suite', () => {
     expect(classify(['docs/session-log/session-1.md', 'README.md'])).toEqual(DOCS_ONLY)
   })
 
@@ -140,7 +138,6 @@ describe('classify-changes.sh', () => {
       vitest: 'false',
       playwright: 'false',
       real_backend: 'false',
-      codeql_languages: '["actions"]',
     })
   })
 
@@ -157,7 +154,6 @@ describe('classify-changes.sh', () => {
       playwright: 'false',
       real_backend: 'true',
       real_backend_specs: 'e2e-tauri/history.e2e.ts e2e-tauri/smoke.e2e.ts',
-      codeql_languages: '["javascript-typescript"]',
     })
   })
 
@@ -364,7 +360,6 @@ describe('classify-changes.sh', () => {
       vitest: 'false',
       vitest_e2e_tauri: 'false',
       playwright: 'false',
-      codeql_languages: '["rust"]',
     })
   })
 
@@ -431,7 +426,7 @@ describe('classify-changes.sh', () => {
   })
 
   it.each(['justfile', '.editorconfig', '.vscode/extensions.json'])(
-    '%s alone is ci: no suite and no CodeQL language',
+    '%s alone is ci: no suite',
     (path) => {
       expect(classify([path])).toEqual(CI_ONLY)
     },
@@ -459,7 +454,6 @@ describe('classify-changes.sh', () => {
         vitest: 'true',
         playwright: 'true',
         real_backend: 'true',
-        codeql_languages: '["actions","javascript-typescript","rust"]',
       })
     },
   )
@@ -513,26 +507,7 @@ describe('classify-changes.sh', () => {
       vitest: 'true',
       playwright: 'true',
       real_backend: 'true',
-      codeql_languages: '["actions","javascript-typescript","rust"]',
     })
-  })
-
-  it('a workflow edit analyzes Actions alone; the CodeQL config analyzes every language', () => {
-    expect(classify(['.github/workflows/ci.yml'])['codeql_languages']).toBe('["actions"]')
-    expect(classify(['.github/codeql/codeql-config.yml'])['codeql_languages']).toBe(
-      '["actions","javascript-typescript","rust"]',
-    )
-  })
-
-  it('a config no CodeQL language reads selects none, and index.html is JavaScript', () => {
-    expect(classify(['prek.toml'])['codeql_languages']).toBe('[]')
-    expect(classify(['index.html'])['codeql_languages']).toBe('["javascript-typescript"]')
-  })
-
-  it('CodeQL picks languages by extension, not by directory', () => {
-    expect(classify(['src-tauri/capabilities/desktop.json'])['codeql_languages']).toBe('[]')
-    expect(classify(['scripts/push.sh'])['codeql_languages']).toBe('[]')
-    expect(classify(['src-tauri/src/x.rs'])['codeql_languages']).toBe('["rust"]')
   })
 
   it.each([

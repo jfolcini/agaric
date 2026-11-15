@@ -83,7 +83,7 @@ Enforced by the `tauri-command-sanitize` prek hook: every new `#[tauri::command]
 - `gitleaks` pre-commit hook + GitHub secret scanning.
 - `cargo deny` + `npm audit` pre-push.
 - `zizmor` pre-commit on GitHub Actions workflows (template-injection / artipacked / excessive-permissions baseline; unpinned-uses and cache-poisoning are deferred policy calls).
-- CodeQL on every PR; Dependabot keeps deps current.
+- CodeQL and OpenSSF Scorecard weekly; Dependabot keeps deps current.
 
 ## Observability
 
