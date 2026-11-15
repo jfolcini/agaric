@@ -107,6 +107,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.board.moveTo': 'Move to…',
   'advancedQuery.board.moved': 'Moved to {{column}}',
   'advancedQuery.board.moveFailed': 'Could not move the card',
+  'advancedQuery.board.dragInstructions':
+    'Drag a card onto another column to move it there, or use the card’s Move to… button.',
   'advancedQuery.aggregate.label': 'Summaries',
   'advancedQuery.aggregate.add': 'Add summary',
   'advancedQuery.aggregate.remove': 'Remove summary',

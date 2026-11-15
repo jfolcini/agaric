@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { toast } from '@/__tests__/mocks/sonner'
@@ -542,6 +542,127 @@ describe('QueryBoard', () => {
       expect(ids('TODO')).toEqual(['T1'])
       expect(values).toEqual({ T1: 'TODO' })
       expect(latestUndoEntry('PAGE001')).toBeUndefined()
+    })
+
+    describe('by dragging', () => {
+      // The columns side by side, 300px apart, so dnd-kit finds the one under
+      // the pointer; the DOM here has no layout of its own.
+      let layout: { mockRestore: () => void } | undefined
+      beforeEach(() => {
+        layout = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+          this: Element,
+        ) {
+          const sections = screen.queryAllByTestId('query-board-column')
+          const index = sections.findIndex((section) => section.contains(this))
+          return index === -1 ? new DOMRect() : new DOMRect(index * 300, 0, 280, 600)
+        })
+      })
+      afterEach(async () => {
+        layout?.mockRestore()
+        // dnd-kit swallows the document's clicks until a 50 ms timer after a
+        // drop, and the next test's first click would land inside it.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      function carryOver(name: string): void {
+        const { left } = column(name).getBoundingClientRect()
+        fireEvent.pointerMove(document, { clientX: left + 40, clientY: 40, isPrimary: true })
+      }
+
+      /** Press the first card of `from`, carry it past the 8px threshold and over `to`. */
+      function lift(from: string, to: string): void {
+        const card = cards(from)[0] as HTMLElement
+        const at = { clientX: card.getBoundingClientRect().left + 20, clientY: 20 }
+        fireEvent.pointerDown(card, { ...at, isPrimary: true, button: 0 })
+        fireEvent.pointerMove(document, { ...at, clientX: at.clientX + 20, isPrimary: true })
+        carryOver(to)
+      }
+
+      function drop(): void {
+        fireEvent.pointerUp(document, { isPrimary: true, button: 0 })
+      }
+
+      const writes = () =>
+        mockedInvoke.mock.calls.filter(([cmd]) =>
+          ['set_todo_state', 'set_property', 'delete_property'].includes(cmd),
+        )
+
+      it('makes the menu’s move when a card is dropped on another column', async () => {
+        const values = serveBoard(STATE_COLUMNS, { T1: 'TODO', T2: 'TODO' })
+        renderColumns(STATE_COLUMNS)
+
+        await waitFor(() => expect(ids('TODO')).toEqual(['T1', 'T2']))
+        lift('TODO', 'DONE')
+        drop()
+
+        await waitFor(() => expect(ids('DONE')).toEqual(['T1']))
+        expect(ids('TODO')).toEqual(['T2'])
+        expect(values).toEqual({ T1: 'DONE', T2: 'TODO' })
+        expect(writes()).toEqual([['set_todo_state', { blockId: 'T1', state: 'DONE' }]])
+        expect(movedToast('DONE').action.label).toBe(t('action.undo'))
+        expect(latestUndoEntry('PAGE001')?.refs).toEqual([{ device_id: 'DEV', seq: 1 }])
+        expect(column('TODO')).toHaveFocus()
+      })
+
+      it('clears a select value when a card is dropped on “No value”', async () => {
+        const values = serveBoard(STAGE_COLUMNS, { B1: 'later' })
+        renderColumns(STAGE_COLUMNS)
+        const none = t('advancedQuery.board.noValue')
+
+        await waitFor(() => expect(ids('later')).toEqual(['B1']))
+        lift('later', none)
+        drop()
+
+        await waitFor(() => expect(ids(none)).toEqual(['B1']))
+        expect(values).toEqual({ B1: null })
+        expect(writes()).toEqual([['delete_property', { blockId: 'B1', key: 'stage' }]])
+      })
+
+      it('writes nothing for a drop on the card’s own column or on “Other values”', async () => {
+        const values = serveBoard(STAGE_COLUMNS, { B1: 'later', X1: 'stale' })
+        renderColumns(STAGE_COLUMNS)
+
+        await waitFor(() => expect(ids(t('advancedQuery.board.other'))).toEqual(['X1']))
+        lift('later', 'later')
+        drop()
+        lift('later', t('advancedQuery.board.other'))
+        drop()
+        // The same gesture onto a real target does write: the two above were refused, not lost.
+        lift(t('advancedQuery.board.other'), 'now')
+        drop()
+
+        await waitFor(() => expect(ids('now')).toEqual(['X1']))
+        expect(values).toEqual({ B1: 'later', X1: 'now' })
+        expect(writes()).toHaveLength(1)
+      })
+
+      it('outlines only a column the lifted card can go to, and has no a11y violations', async () => {
+        serveBoard(STAGE_COLUMNS, { B1: 'later', X1: 'stale' })
+        const { baseElement } = renderColumns(STAGE_COLUMNS)
+        const other = t('advancedQuery.board.other')
+        const outlined = () =>
+          screen
+            .getAllByTestId('query-board-column')
+            .filter((c) => c.classList.contains('ring-2'))
+            .map((c) => c.getAttribute('aria-label'))
+
+        await waitFor(() => expect(ids(other)).toEqual(['X1']))
+        lift('later', 'now')
+        expect(await screen.findByTestId('query-board-drag-overlay')).toHaveTextContent('card B1')
+        await waitFor(() => expect(outlined()).toEqual(['now']))
+        await waitFor(async () => {
+          expect(await axe(baseElement)).toHaveNoViolations()
+        })
+
+        // Over its own column, then over "Other values": neither is a target.
+        carryOver('later')
+        await waitFor(() => expect(outlined()).toEqual([]))
+        carryOver('now')
+        await waitFor(() => expect(outlined()).toEqual(['now']))
+        carryOver(other)
+        await waitFor(() => expect(outlined()).toEqual([]))
+        drop()
+      })
     })
 
     it('has no a11y violations with the move menu open', async () => {
