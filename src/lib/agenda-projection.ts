@@ -77,6 +77,10 @@ export function planAgendaProjection(
         spans.scheduled_date = futureSpan(values, today)
         break
       }
+      case 'completedDate':
+      case 'createdDate':
+      case 'property':
+      case 'tag':
       default: {
         return null
       }

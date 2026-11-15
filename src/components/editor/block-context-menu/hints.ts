@@ -28,6 +28,8 @@ export function getTodoLabel(
     case 'CANCELLED': {
       return t('contextMenu.cancelledToClear')
     }
+    case null:
+    case undefined:
     default: {
       return t('contextMenu.setTodo')
     }
@@ -48,6 +50,8 @@ export function getPriorityLabel(
     case '3': {
       return t('contextMenu.priority3ToClear')
     }
+    case null:
+    case undefined:
     default: {
       return t('contextMenu.setPriority1')
     }

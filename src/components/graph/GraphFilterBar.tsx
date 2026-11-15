@@ -299,6 +299,11 @@ function AddFilterForm({
       case 'priority': {
         return priorityValues.length > 0
       }
+      case 'excludeJournal':
+      case 'excludeTemplates':
+      case 'hasBacklinks':
+      case 'hasDueDate':
+      case 'hasScheduledDate':
       default: {
         return true
       }

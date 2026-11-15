@@ -280,6 +280,7 @@ export function buildInlinePropertySetParams(
       if (value !== 'true' && value !== 'false') return null
       return { blockId, key, valueBool: value === 'true' }
     }
+    case undefined:
     default: {
       // No definition yet, text/select, or a ref the backend resolves — all
       // send value_text.

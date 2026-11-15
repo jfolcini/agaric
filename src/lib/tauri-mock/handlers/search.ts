@@ -799,9 +799,11 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
       // rather than papered over with hand-built JSON.
       return Number.isFinite(raw as number) ? { t: 'Real', v: raw as number } : { t: 'Null' }
     }
+    case 'Id':
+    case 'Priority':
+    case 'Title':
     default: {
-      // Id / Priority / Title: this mock represents every one of these as a
-      // string (ULID or plain text).
+      // This mock represents every one of these as a string (ULID or plain text).
       return { t: 'Text', v: raw as string }
     }
   }
@@ -888,6 +890,7 @@ function isCursorValue(v: unknown): v is CursorValue {
     case 'real': {
       return typeof raw === 'number' && Number.isFinite(raw)
     }
+    case 'unit':
     default: {
       return raw === undefined || raw === null
     }

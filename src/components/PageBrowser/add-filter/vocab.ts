@@ -271,6 +271,8 @@ export function propertyValueKindForType(valueType: string | null | undefined): 
     case 'ref': {
       return 'Ref'
     }
+    case null:
+    case undefined:
     default: {
       return 'Text'
     }
