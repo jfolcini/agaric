@@ -232,9 +232,12 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await expect(menu).toBeHidden()
     await expectEditing(page)
 
+    // The title is a text field: no toolbar, and the keyboard it raises on a
+    // phone hides the quick-capture button too (#6789).
     await page.getByLabel('Page title').tap()
     await expect(page.getByLabel('Page title')).toBeFocused()
-    await expectNotEditing(page)
+    await expect(toolbar(page)).toHaveCount(0)
+    await expect(fab(page)).toBeHidden()
 
     await tapInto(page, ids[0])
     await expectEditing(page)

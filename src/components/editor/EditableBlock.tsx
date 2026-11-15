@@ -21,7 +21,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
-import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
+import { useScrollIntoViewOnFocus } from '@/hooks/useScrollIntoViewOnFocus'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
@@ -388,11 +388,7 @@ function EditableBlockInner({
     }
   }, [isFocused, blockId, onContentChange, scheduleContentCommit])
 
-  // Scroll the editor wrapper into view when the block becomes focused, and
-  // keep its caret above the on-screen soft keyboard while focused (#917).
-  // On desktop / where no soft keyboard is present this degrades to the
-  // original `scrollIntoView({ block: 'nearest' })` behavior.
-  useScrollCaretAboveKeyboard(wrapperRef, isFocused)
+  useScrollIntoViewOnFocus(wrapperRef, isFocused)
 
   // Auto-mount the roving editor when focus is set externally (e.g. via
   // PageEditor's t('action.addBlock') button or Enter-to-create) without going

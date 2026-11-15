@@ -35,3 +35,11 @@ export function usePinToolbar(active: boolean): void {
 export function usePinnedToolbarShown(): boolean {
   return useSyncExternalStore(subscribe, () => pinned > 0)
 }
+
+/**
+ * How far up from the window's foot `bar`, a toolbar pinned on touch, reaches; 0 without one.
+ * ProseMirror scrolls the cursor into the window, under it, unless its scroll margins add this.
+ */
+export function pinnedToolbarCover(bar: Element | null | undefined): number {
+  return bar ? Math.max(0, window.innerHeight - bar.getBoundingClientRect().top) : 0
+}

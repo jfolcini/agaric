@@ -21,10 +21,10 @@
  * pinned to the bottom edge (a block, page mode's text or *Edit as Markdown*
  * being edited on touch, `pinned-toolbar.ts`) and while the user scrolls down, and returns on a
  * scroll up, so it never sits on the control under it mid-scroll. It also
- * hides while the on-screen keyboard is up: the keyboard pans the screen, and
- * the button lands on whatever follows the focused field, a form's submit
- * button included. That frees it
- * to sit 1rem from the bottom,
+ * hides while a text field has focus, which on a touch phone means the
+ * on-screen keyboard is up: the screen's foot is then the keyboard's top, and
+ * the button would land on whatever follows the field, a form's submit button
+ * included (#6789). That frees it to sit 1rem from the bottom,
  * stacked on the bottom safe-area inset via `var(--safe-area-bottom)` (see
  * `index.css` — every consumer reads the variable, never `env()` directly).
  */
@@ -37,6 +37,7 @@ import { useTranslation } from 'react-i18next'
 import { usePinnedToolbarShown } from '@/components/FormattingToolbar/pinned-toolbar'
 import { Button } from '@/components/ui/button'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+import { isEditableTarget } from '@/lib/keyboard-config/match'
 import { cn } from '@/lib/utils'
 
 /** Scroll travel (px) that counts as a direction, so jitter does not flicker it. */
@@ -84,26 +85,21 @@ function useScrolledUp(enabled: boolean): boolean {
   return up
 }
 
-/** A visual viewport this much shorter than the layout one is a keyboard, not rounding. */
-const KEYBOARD_MIN_PX = 100
-
-/**
- * Whether the on-screen keyboard is up. Android pans the visual viewport over
- * a layout viewport that keeps its height, so the bottom-overlap that
- * `computeKeyboardInset` measures reads 0 here; the height difference does not.
- * A pinch zoom shortens the visual viewport too, at a scale above 1.
- */
-function useKeyboardUp(enabled: boolean): boolean {
-  const [up, setUp] = useState(false)
+/** Whether focus is in a text field. */
+function useTyping(enabled: boolean): boolean {
+  const [typing, setTyping] = useState(false)
   useEffect(() => {
-    const vv = window.visualViewport
-    if (!enabled || !vv) return
-    const update = () => setUp(vv.scale <= 1 && window.innerHeight - vv.height > KEYBOARD_MIN_PX)
+    if (!enabled) return
+    const update = () => setTyping(isEditableTarget(document.activeElement))
     update()
-    vv.addEventListener('resize', update)
-    return () => vv.removeEventListener('resize', update)
+    document.addEventListener('focusin', update)
+    document.addEventListener('focusout', update)
+    return () => {
+      document.removeEventListener('focusin', update)
+      document.removeEventListener('focusout', update)
+    }
   }, [enabled])
-  return up
+  return typing
 }
 
 export function QuickCaptureFab({
@@ -115,8 +111,8 @@ export function QuickCaptureFab({
   const shouldShowMobileChrome = useShouldShowMobileChrome()
   const toolbarPinned = usePinnedToolbarShown()
   const scrolledUp = useScrolledUp(shouldShowMobileChrome)
-  const keyboardUp = useKeyboardUp(shouldShowMobileChrome)
-  const shown = scrolledUp && !toolbarPinned && !keyboardUp
+  const typing = useTyping(shouldShowMobileChrome)
+  const shown = scrolledUp && !toolbarPinned && !typing
 
   // Desktop (or tablet-with-keyboard) sessions use the OS chord — no FAB.
   if (!shouldShowMobileChrome) return null
