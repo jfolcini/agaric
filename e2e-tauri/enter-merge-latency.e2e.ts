@@ -6,29 +6,32 @@
 //   AGARIC_PERF=1 just e2e-real e2e-tauri/enter-merge-latency.e2e.ts
 //
 // Opt-in because it is a measurement with no budget to fail, not an
-// environment precondition (e2e-tauri/AGENTS.md), and in a debug build its seed
-// and the materializer's catch-up take most of an hour.
-// It fails only when what it times did not happen: a refused write, a missing
-// sample, an undo that took back less than the paste. Debug build under Xvfb:
-// compare runs on one machine. The `enter-merge-latency:` lines are printed and
-// written to `e2e-tauri/artifacts/`; docs/architecture/operations.md records a run.
+// environment precondition (e2e-tauri/AGENTS.md). It fails only when what it
+// times did not happen: a refused write, a missing sample, an undo that took
+// back less than the paste. Debug build under Xvfb: compare runs on one
+// machine. The `enter-merge-latency:` lines are printed and written to
+// `e2e-tauri/artifacts/`; docs/architecture/operations.md records runs.
 //
-// Vault: one page of PAGE_BLOCKS blocks beside filler pages, VAULT_BLOCKS
-// blocks in all, written with `create_blocks_batch`. The Enter is a split in
-// the middle of block TARGET's text (`split_block`), a block inside the rows
-// the page mounts at first (`INITIAL_MOUNT_LIMIT`). Backspace at the start of
-// the block it split off merges it back (`merge_blocks`) and leaves the caret
-// at the join, so the next Enter splits the same text again: SAMPLES of each,
-// each answered before the next key.
+// Vault: the issue's page of PAGE_BLOCKS blocks beside FILLER_PAGES pages of
+// BATCH blocks, written by the app with `create_blocks_batch`. Not the 100K
+// blocks the backend's probe times (`bench_enter_split_and_merge`): in a debug
+// build such a vault takes about 50 minutes to write and index, and the sync
+// half cannot use one, because the peer's pairing is a pull of the app's vault
+// that `e2e_sync_peer` waits 60 s for, and a peer paired before the seed slows
+// every batch of it past WebDriver's timeout (#6811).
+//
+// The Enter is a split in the middle of block TARGET's text (`split_block`), a
+// block inside the rows the page mounts at first (`INITIAL_MOUNT_LIMIT`).
+// Backspace at the start of the block it split off merges it back
+// (`merge_blocks`) and leaves the caret at the join, so the next Enter splits
+// the same text again: SAMPLES of each, each answered before the next key.
 //
 // The times are the app's own (`logLatencySample`, read from the app's log
 // with debug mode on): from the key's handler to the block taking focus, and
 // to the backend's answer. A phone logs the same line (#6513).
 //
-// Under sync, `e2e_sync_peer` rewrites the blocks of a page of its own while
-// the samples run. Every Enter and merge is a local change, and a local change
-// starts a pull from the paired peer (`run_change_round`), so the app applies
-// the peer's edits while it answers the keys.
+// Under sync, `e2e_sync_peer`, paired after the paste, rewrites the blocks of a
+// page of its own while the samples run, and the app pulls them.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -43,6 +46,7 @@ import {
   appVaultDir,
   invoke,
   materializerIdle,
+  navigateTo,
   openNewPage,
   placeCaret,
   reopenPageByTitle,
@@ -61,7 +65,7 @@ import {
   startSyncPeer,
 } from './sync-peer'
 
-const VAULT_BLOCKS = 100_000
+const FILLER_PAGES = 1
 const PAGE_BLOCKS = 2_000
 /** `MAX_BATCH_BLOCK_IDS`: the most blocks one `create_blocks_batch` takes. */
 const BATCH = 1_000
@@ -70,18 +74,18 @@ const SAMPLES = 100
 const PASTE_LINES = 300
 const PASTES = 5
 const PEER_BLOCKS = 20
-/** The seed's derived views (FTS above all) take about half an hour to catch up in a debug build. */
-const SEED_SETTLE_MS = 3_600_000
+const SETTLE_MS = 300_000
 
-const TITLE = runScopedMarker('wdio-latency-page')
+// `a` sorts the measured page before the filler pages in the Pages list.
+const TITLE = runScopedMarker('wdio-latency-a')
 const FILLER = runScopedMarker('wdio-latency-filler')
 const PEER_PAGE = runScopedMarker('wdio-latency-peer')
 const PASTED = runScopedMarker('wdio-latency-paste')
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-/** Every block of the measured page reads `row <n> before` + `after`; Enter splits between them. */
-const rowText = (n: number) => `row ${n} beforeafter`
-const SPLIT_AT = `row ${TARGET} before`.length
+const rowText = (n: number) => `${TITLE} block ${n} lorem ipsum`
+/** Enter splits `ipsum` after its `ip`. */
+const SPLIT_AT = rowText(TARGET).indexOf('ipsum') + 2
 
 type Action = 'enter-split' | 'merge'
 
@@ -92,8 +96,9 @@ interface Sample {
   ok: boolean
 }
 
+let peer: SyncPeer | undefined
 let spaceId = ''
-let vaultBlocks = 0
+const peerBlocks: string[] = []
 let targetId = ''
 const lines: string[] = []
 
@@ -163,8 +168,8 @@ function record(line: string): void {
   lines.push(`enter-merge-latency: ${line}`)
 }
 
-/** Write `blocks` blocks under a new page titled `title`; resolves to their ids in order. */
-async function seedPage(title: string, blocks: number, text: string): Promise<string[]> {
+/** Write `blocks` blocks reading `<title> block <n> lorem ipsum` under a new page `title`; resolves to their ids in order. */
+async function seedPage(title: string, blocks: number): Promise<string[]> {
   const pageId = await invoke<string>('create_page_in_space', {
     parentId: null,
     content: title,
@@ -177,7 +182,7 @@ async function seedPage(title: string, blocks: number, text: string): Promise<st
       async (parentId: string, start: number, count: number, prefix: string) => {
         const specs = Array.from({ length: count }, (_, i) => ({
           blockType: 'content',
-          content: prefix === '' ? `row ${start + i} beforeafter` : `${prefix} ${start + i}`,
+          content: `${prefix} block ${start + i + 1} lorem ipsum`,
           parentId,
           position: null,
         }))
@@ -194,11 +199,10 @@ async function seedPage(title: string, blocks: number, text: string): Promise<st
       pageId,
       from,
       Math.min(BATCH, blocks - from),
-      text,
+      title,
     )
     ids.push(...created)
   }
-  vaultBlocks += ids.length + 1
   return ids
 }
 
@@ -232,7 +236,7 @@ async function sampleEnterAndMerge(label: string): Promise<void> {
   let logged = loggedSamples().length
   for (let n = 0; n < SAMPLES; n++) {
     enter.push(await sampleOf('Enter', 'enter-split', logged++))
-    // The split-off block opens with the caret at its end, not at the split.
+    // The split-off block opens with the caret at its end, not at the split (#6810).
     await placeCaret(0)
     merge.push(await sampleOf('Backspace', 'merge', logged++))
   }
@@ -285,8 +289,6 @@ function getBlockAnswer(id: string): Promise<string> {
 }
 
 describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#6559) @editor @sync @pages', () => {
-  let peer: SyncPeer | undefined
-
   before(function (this: Mocha.Context) {
     if (!process.env['AGARIC_PERF']) this.skip()
   })
@@ -308,24 +310,22 @@ describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#65
     writeFileSync(path.join(dir, 'enter-merge-latency.txt'), `${output}\n`)
   })
 
-  it('seeds a page among filler pages and turns debug mode on', async function (this: Mocha.Context) {
-    this.timeout(SEED_SETTLE_MS + 1_800_000)
+  it('seeds the page and turns debug mode on', async function (this: Mocha.Context) {
+    this.timeout(2 * SETTLE_MS)
     await waitForAppReady()
     const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
     spaceId = (spaces.find((s) => s.name === 'Personal') ?? spaces[0])?.id ?? ''
     const seedStart = Date.now()
-    for (let page = 0; vaultBlocks + PAGE_BLOCKS + 1 < VAULT_BLOCKS; page++) {
-      await seedPage(`${FILLER} ${page}`, BATCH, `${FILLER} ${page}`)
-    }
-    // Last, so the Pages list shows it first.
-    const ids = await seedPage(TITLE, PAGE_BLOCKS, '')
-    targetId = ids[TARGET] ?? ''
+    for (let page = 0; page < FILLER_PAGES; page++) await seedPage(`${FILLER} ${page}`, BATCH)
+    targetId = (await seedPage(TITLE, PAGE_BLOCKS))[TARGET - 1] ?? ''
     expect(await backendText(targetId)).toBe(rowText(TARGET))
     const written = Date.now()
-    await materializerIdle(SEED_SETTLE_MS)
+    await materializerIdle(SETTLE_MS)
+    const seconds = (from: number, to: number) => Math.round((to - from) / 1000)
     record(
-      `vault_blocks=${vaultBlocks} page_blocks=${PAGE_BLOCKS} target=${TARGET} samples=${SAMPLES}` +
-        ` seed_s=${Math.round((written - seedStart) / 1000)} settle_s=${Math.round((Date.now() - written) / 1000)}`,
+      `vault_blocks=${FILLER_PAGES * (BATCH + 1) + PAGE_BLOCKS + 1} page_blocks=${PAGE_BLOCKS}` +
+        ` target=${TARGET} samples=${SAMPLES} seed_s=${seconds(seedStart, written)}` +
+        ` settle_s=${seconds(written, Date.now())}`,
     )
     // `PREFERENCES.debugMode`, as Settings › Debug mode stores it.
     await browser.execute(() => {
@@ -339,80 +339,6 @@ describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#65
   it('times Enter and merge on an idle backend', async function (this: Mocha.Context) {
     this.timeout(600_000)
     await sampleEnterAndMerge('idle')
-  })
-
-  it('times Enter and merge while a peer’s edits sync in', async function (this: Mocha.Context) {
-    this.timeout(900_000)
-    const syncPeer = await startSyncPeer()
-    peer = syncPeer
-    const peerPage = await syncPeer.createInSpace('page', PEER_PAGE)
-    const peerBlocks: string[] = []
-    for (let n = 0; n < PEER_BLOCKS; n++) {
-      peerBlocks.push(await syncPeer.createBlock(peerPage, `${PEER_PAGE} ${n} v0`))
-    }
-
-    await openSyncSettings()
-    await openPairing()
-    const remote = await syncPeer.pair(await readPairingQr())
-    await waitForToast('Device paired successfully')
-    await $('[data-testid="pairing-qr-code"]').waitForExist({
-      reverse: true,
-      timeout: ACTION_TIMEOUT,
-    })
-    await setPeerAddress(remote.deviceId, remote.address)
-    await reopenPageByTitle(TITLE)
-    const sync = $(SYNC_BUTTON)
-    await browser.waitUntil(async () => (await sync.getAttribute('aria-disabled')) === 'false', {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'the app never finished the sync it was running',
-    })
-    await sync.click()
-    await syncPeer.waitPulled()
-    await materializerIdle(SEED_SETTLE_MS)
-
-    // The peer rewrites its blocks round the clock until the samples are done,
-    // and the app pulls them as often as the sidebar's Sync button lets it. A
-    // local write's own pull waits for a pause in writing (`LOCAL_EDIT_DEBOUNCE`),
-    // which keys pressed one after another never leave. `click()` from the page
-    // moves no focus, so the editor keeps it.
-    await browser.execute((selector: string) => {
-      const timer = setInterval(() => {
-        const button = document.querySelector<HTMLElement>(selector)
-        if (button?.getAttribute('aria-disabled') === 'false') button.click()
-      }, 250)
-      Object.assign(window, { __latencyPulls: timer })
-    }, SYNC_BUTTON)
-    const pullsBefore = pullsFinished()
-    let writing = true
-    let edits = 0
-    const writer = (async () => {
-      while (writing) {
-        edits++
-        await syncPeer.editBlock(
-          peerBlocks[edits % PEER_BLOCKS] as string,
-          `${PEER_PAGE} v${edits}`,
-        )
-      }
-    })()
-    try {
-      await sampleEnterAndMerge('sync')
-    } finally {
-      writing = false
-      await writer
-      await browser.execute(() => {
-        clearInterval((window as unknown as { __latencyPulls: number }).__latencyPulls)
-      })
-    }
-    const pulls = pullsFinished() - pullsBefore
-    // What the app held of the peer's writes when the samples ended, before any
-    // pull this spec asks for: the pulls the keys started did apply them.
-    const held = await Promise.all(peerBlocks.map((id) => backendText(id)))
-    const applied = Math.max(...held.map((text) => Number(/ v(\d+)$/.exec(text)?.[1] ?? 0)))
-    record(`sync peer_edits=${edits} pulls=${pulls} newest_applied=v${applied}`)
-    expect(applied).toBeGreaterThan(0)
-    // The paste is timed on an idle backend.
-    await syncPeer.stop()
-    await materializerIdle(SEED_SETTLE_MS)
   })
 
   it('times a 300-line paste in page mode, and one Ctrl+Z takes it back', async function (this: Mocha.Context) {
@@ -489,5 +415,80 @@ describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#65
     record(`paste lines=${PASTE_LINES} runs=${PASTES} save_ms ${spread(saveMs)}`)
     record(`paste lines=${PASTE_LINES} runs=${PASTES} paste_to_saved_ms ${spread(wallMs)}`)
     record(`paste one_ctrl_z_undoes=${undone}/${PASTES}`)
+  })
+  it('times Enter and merge while a peer’s edits sync in', async function (this: Mocha.Context) {
+    this.timeout(900_000)
+    const syncPeer = await startSyncPeer()
+    peer = syncPeer
+    const peerPage = await syncPeer.createInSpace('page', PEER_PAGE)
+    for (let n = 0; n < PEER_BLOCKS; n++) {
+      peerBlocks.push(await syncPeer.createBlock(peerPage, `${PEER_PAGE} ${n} v0`))
+    }
+    await openSyncSettings()
+    await openPairing()
+    const remote = await syncPeer.pair(await readPairingQr())
+    await waitForToast('Device paired successfully')
+    await $('[data-testid="pairing-qr-code"]').waitForExist({
+      reverse: true,
+      timeout: ACTION_TIMEOUT,
+    })
+    await setPeerAddress(remote.deviceId, remote.address)
+    await navigateTo('Pages')
+    const sync = $(SYNC_BUTTON)
+    await browser.waitUntil(async () => (await sync.getAttribute('aria-disabled')) === 'false', {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the app never finished the sync it was running',
+    })
+    await sync.click()
+    await syncPeer.waitPulled()
+    await materializerIdle(SETTLE_MS)
+
+    // The peer rewrites its blocks round the clock until the samples are done,
+    // and the app pulls them as often as the sidebar's Sync button lets it. A
+    // local write's own pull waits for a pause in writing (`LOCAL_EDIT_DEBOUNCE`),
+    // which keys pressed one after another never leave. `click()` from the page
+    // moves no focus, so the editor keeps it.
+    await browser.execute((selector: string) => {
+      const timer = setInterval(() => {
+        const button = document.querySelector<HTMLElement>(selector)
+        if (button?.getAttribute('aria-disabled') === 'false') button.click()
+      }, 250)
+      Object.assign(window, { __latencyPulls: timer })
+    }, SYNC_BUTTON)
+    const pullsBefore = pullsFinished()
+    let writing = true
+    let edits = 0
+    const writer = (async () => {
+      while (writing) {
+        edits++
+        await syncPeer.editBlock(
+          peerBlocks[edits % PEER_BLOCKS] as string,
+          `${PEER_PAGE} v${edits}`,
+        )
+      }
+    })()
+    try {
+      await sampleEnterAndMerge('sync')
+    } finally {
+      writing = false
+      await writer
+      await browser.execute(() => {
+        clearInterval((window as unknown as { __latencyPulls: number }).__latencyPulls)
+      })
+      // The pull in flight applies before the peer goes, so the vault the
+      // reconciliation oracle reads is not mid-pull.
+      await browser.waitUntil(
+        async () => (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false',
+        { timeout: NAV_TIMEOUT, timeoutMsg: 'the pull in flight never finished' },
+      )
+      await syncPeer.stop()
+    }
+    const pulls = pullsFinished() - pullsBefore
+    // The pulls during the samples applied the peer's writes.
+    const held = await Promise.all(peerBlocks.map((id) => backendText(id)))
+    const applied = Math.max(...held.map((text) => Number(/ v(\d+)$/.exec(text)?.[1] ?? 0)))
+    record(`sync peer_edits=${edits} pulls=${pulls} newest_applied=v${applied}`)
+    expect(applied).toBeGreaterThan(0)
+    await materializerIdle(SETTLE_MS)
   })
 })
