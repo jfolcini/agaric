@@ -1,10 +1,12 @@
 /**
  * The drag-to-reorder setup the sidebar's bookmarks and the tab strip share: a
- * dnd-kit sortable list moved by the pointer, or by Space, arrows, Space.
+ * dnd-kit sortable list moved by the pointer, or by Space, arrows, Space. The
+ * query board's cards take the pointer half and the announcements.
  */
 
 import {
   type Announcements,
+  type Data,
   type KeyboardCoordinateGetter,
   KeyboardCode,
   KeyboardSensor,
@@ -67,40 +69,43 @@ const KEYBOARD_SENSOR_OPTIONS: KeyboardSensorOptions = {
 }
 
 /**
- * The block tree's pointer sensors (`use-block-dnd.ts`): on a coarse pointer
+ * The block tree's pointer sensor (`use-block-dnd.ts`): on a coarse pointer
  * the drag waits for the long-press hold, so a swipe still scrolls; on a fine
  * one it waits for 8px of travel, so a click still activates the item.
  */
-export function useReorderSensors() {
+export function usePointerDragSensor() {
   const isTouch = useIsTouch()
-  return useSensors(
-    useSensor(isTouch ? TouchSensor : PointerSensor, {
-      activationConstraint: isTouch
-        ? { delay: LONG_PRESS_DELAY, tolerance: LONG_PRESS_MOVE_THRESHOLD }
-        : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
-    }),
-    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
-  )
+  return useSensor(isTouch ? TouchSensor : PointerSensor, {
+    activationConstraint: isTouch
+      ? { delay: LONG_PRESS_DELAY, tolerance: LONG_PRESS_MOVE_THRESHOLD }
+      : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
+  })
+}
+
+export function useReorderSensors() {
+  return useSensors(usePointerDragSensor(), useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS))
 }
 
 /** Announcements naming items by `titleOf`: dnd-kit's default reads the id, a ULID (#2943). */
 export function reorderAccessibility(
   t: TFunction,
-  titleOf: (id: UniqueIdentifier) => string,
+  titleOf: (id: UniqueIdentifier, data: Data | undefined) => string,
   instructions: string,
 ): { announcements: Announcements; screenReaderInstructions: ScreenReaderInstructions } {
+  const name = (item: { id: UniqueIdentifier; data: { current?: Data | undefined } }) =>
+    titleOf(item.id, item.data.current)
   return {
     announcements: {
-      onDragStart: ({ active }) => t('dnd.pickedUp', { block: titleOf(active.id) }),
+      onDragStart: ({ active }) => t('dnd.pickedUp', { block: name(active) }),
       onDragOver: ({ active, over }) =>
         over
-          ? t('dnd.movedOver', { block: titleOf(active.id), target: titleOf(over.id) })
-          : t('dnd.movedOutside', { block: titleOf(active.id) }),
+          ? t('dnd.movedOver', { block: name(active), target: name(over) })
+          : t('dnd.movedOutside', { block: name(active) }),
       onDragEnd: ({ active, over }) =>
         over
-          ? t('dnd.dropped', { block: titleOf(active.id), target: titleOf(over.id) })
-          : t('dnd.droppedOutside', { block: titleOf(active.id) }),
-      onDragCancel: ({ active }) => t('dnd.cancelled', { block: titleOf(active.id) }),
+          ? t('dnd.dropped', { block: name(active), target: name(over) })
+          : t('dnd.droppedOutside', { block: name(active) }),
+      onDragCancel: ({ active }) => t('dnd.cancelled', { block: name(active) }),
     },
     screenReaderInstructions: { draggable: instructions },
   }

@@ -46,7 +46,6 @@ import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { useRecoveryStatus } from '@/hooks/useRecoveryStatus'
 import { useScrollRestore } from '@/hooks/useScrollRestore'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
-import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { useSyncEvents } from '@/hooks/useSyncEvents'
 import { useSyncExportRefused } from '@/hooks/useSyncExportRefused'
 import { useSyncLocalTextKept } from '@/hooks/useSyncLocalTextKept'
@@ -135,15 +134,12 @@ function preloadSearchOverlays(): void {
  * header and the search field under it (#5931). Bottom-right first moved to
  * the top because it sat on the system navigation bar; the safe-area inset
  * keeps that covered. The offset clears the floating capture button (5rem up,
- * 56 px tall). While the soft keyboard is up the button is under it, so the
- * toasts sit above the keyboard by the 5rem that clears the formatting toolbar
- * pinned there. Its own component so a keyboard resize re-renders only this.
+ * 56 px tall), and with the soft keyboard up, the formatting toolbar pinned on
+ * top of it: the screen's foot is then the keyboard's top (#6790).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   const isMobile = useIsMobile()
-  const keyboardInset = useSoftKeyboardInset(isMobile)
-  const bottom =
-    keyboardInset > 0 ? `calc(${keyboardInset}px + 5rem)` : 'calc(9rem + var(--safe-area-bottom))'
+  const bottom = 'calc(9rem + var(--safe-area-bottom))'
   return (
     <Toaster
       position={isMobile ? 'bottom-center' : 'bottom-right'}

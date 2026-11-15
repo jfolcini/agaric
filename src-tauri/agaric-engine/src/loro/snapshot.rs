@@ -543,15 +543,10 @@ async fn write_pass(
     Ok(written)
 }
 
-/// One production snapshot pass (#5418): [`save_all_engines`], then the apply
-/// cursor moves up to the op-log head the pass persisted, so the next boot
-/// replays only the ops committed after it instead of the whole session.
+/// One snapshot pass that moves the apply cursor (#5418): [`save_all_engines`],
+/// then the cursor moves up to the op-log head the pass persisted, so a
+/// replay boot applies only the ops committed after it.
 ///
-/// Boot owes an op past the cursor its per-block index fan-out (FTS, links,
-/// tag refs; #3298), which lives in the background queue's memory until it
-/// runs, and a replay boot also owes it its engine state, which the pass has
-/// just made durable (bar the late writes `op_log_head` lists). So the queue
-/// is drained before the cursor stops covering those ops.
 /// A pass that wrote nothing moves nothing: a space whose first write failed
 /// has no row for the boot heal's `MIN(applied_through_seq)` to see, and only
 /// the old cursor still replays its ops.
@@ -567,15 +562,31 @@ pub async fn save_engines_and_advance_cursor(
     materializer: &crate::materializer::Materializer,
 ) -> SavePass {
     let pass = save_all_engines(pool, &materializer.loro_state().registry).await;
-    let Some(head) = pass.persisted_through else {
-        return pass;
-    };
+    if let Some(head) = pass.persisted_through {
+        advance_cursor_once_drained(pool, materializer, head).await;
+    }
+    pass
+}
+
+/// Move the apply cursor up to `head` once the background queue has drained.
+///
+/// Boot owes an op past the cursor its per-block index fan-out (FTS, links,
+/// tag refs; #3298), which lives in the queue's memory until it runs, so the
+/// queue is drained before the cursor stops covering it. With the
+/// [`boots_from_saved_rows`](crate::loro::delta::boots_from_saved_rows) marker
+/// set that is all the cursor means; a replay boot first rewinds it to the
+/// lowest row stamp (`recovery::replay::heal_orphaned_apply_cursor`).
+async fn advance_cursor_once_drained(
+    pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    head: i64,
+) {
     if let Err(e) = materializer.flush_background().await {
         tracing::warn!(
             error = %e,
             "loro: background queue did not drain; apply cursor left in place (#5418)",
         );
-        return pass;
+        return;
     }
     let advanced = match pool.acquire().await {
         Ok(mut conn) => crate::apply::kernel::advance_apply_cursor(&mut conn, head).await,
@@ -585,34 +596,84 @@ pub async fn save_engines_and_advance_cursor(
         tracing::warn!(
             error = %e,
             head,
-            "loro: apply cursor advance failed; the next boot replays from the old cursor (#5418)",
+            "loro: apply cursor advance failed; the next boot fans out from the old cursor (#5418)",
         );
     }
-    pass
 }
 
-/// Default cadence for the periodic snapshot task (5 minutes).
+/// A space's `loro_doc_delta` rows, in bytes, past which [`compact_when_due`]
+/// folds them into a snapshot (#6521).
 ///
-/// Restored after the parity flush task — which hosted the
-/// `save_all_engines` call on its tick — was deleted, leaving snapshots
-/// unpersisted (the resulting empty `loro_doc_state` + advancing apply
-/// cursor wedged the materializer). The engine applies at human-typing
-/// rates, so a 5-minute snapshot bounds the boot-replay tail to a
-/// handful of ops while keeping the snapshot cost negligible.
-pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
+/// Boot imports every row (`rehydrate_registry`), and a pass exports each
+/// dirty space whole: the threshold trades the one against the other.
+/// `durability_cost_tests::boot_by_tail_size` measures both: on a 100K-block
+/// space a tail below this size stays within the noise of the snapshot's own
+/// import, and the cost of a longer one grows with it.
+pub const DELTA_COMPACTION_BYTES: i64 = 256 * 1024;
 
-/// Spawn the periodic Loro snapshot task.
+/// The largest total, in bytes, of one space's `loro_doc_delta` rows.
+async fn largest_delta_tail(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(total), 0) AS "bytes!: i64"
+           FROM (SELECT SUM(LENGTH(bytes)) AS total FROM loro_doc_delta GROUP BY space_id)"#
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// What the periodic tick, an OS suspend and the app's exit run (#6521). Every
+/// engine write saves its delta in its own transaction, so no pass is needed
+/// for durability: a space whose rows reach [`DELTA_COMPACTION_BYTES`] gets
+/// one, which folds every dirty space's rows into its snapshot
+/// ([`save_engines_and_advance_cursor`]). Otherwise only the apply cursor
+/// moves, so the next boot does not fan out again the index work that ran.
 ///
-/// Every `interval_secs` it runs [`save_engines_and_advance_cursor`] over the
-/// materializer's engine registry, so the next boot rehydrates without
-/// replaying the full op-log. The task runs for
-/// the app's lifetime and stops once `shutdown` flips. A failed pass is
-/// logged inside [`save_all_engines`], so a transient SQL/Loro failure never
-/// crashes the app.
+/// The pass covers every dirty space, not only the one that reached the
+/// threshold: `write_pass` stamps the rows it does not write as holding the
+/// pass's head, which holds only for a clean engine.
+///
+/// Returns the spaces whose snapshot was written.
+pub async fn compact_when_due(
+    pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> usize {
+    compact_past(pool, materializer, DELTA_COMPACTION_BYTES).await
+}
+
+async fn compact_past(
+    pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+    threshold: i64,
+) -> usize {
+    let due = match largest_delta_tail(pool).await {
+        Ok(bytes) => bytes >= threshold,
+        Err(e) => {
+            tracing::warn!(error = %e, "loro: the delta rows could not be measured; compacting");
+            true
+        }
+    };
+    if due {
+        return save_engines_and_advance_cursor(pool, materializer)
+            .await
+            .saved;
+    }
+    match op_log_head(pool).await {
+        Ok(head) => advance_cursor_once_drained(pool, materializer, head).await,
+        Err(e) => tracing::warn!(error = %e, "loro: apply cursor left in place"),
+    }
+    0
+}
+
+/// How often the periodic task runs [`compact_when_due`] (5 minutes).
+pub const COMPACTION_CHECK_INTERVAL_SECS: u64 = 300;
+
+/// Spawn the task that runs [`compact_when_due`] every `interval_secs` for
+/// the app's lifetime, until `shutdown` flips. A failed pass is logged inside
+/// [`save_all_engines`], so a transient SQL/Loro failure never crashes the app.
 /// `spawn` injects the async executor: the app passes
 /// `|fut| { tauri::async_runtime::spawn(fut); }` (so `agaric-engine` stays
 /// tauri-free), tests pass `|fut| { tokio::spawn(fut); }` (#2621, wave E1).
-pub fn spawn_periodic_snapshot(
+pub fn spawn_periodic_compaction(
     pool: SqlitePool,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     interval_secs: u64,
@@ -622,25 +683,18 @@ pub fn spawn_periodic_snapshot(
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    // Fire-and-forget: the task lives for the process lifetime and stops
-    // when `shutdown` flips. The spawned JoinHandle is intentionally discarded
-    // by the caller-supplied `spawn`.
     spawn(Box::pin(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
-        // Skip the immediate first tick — `tokio::time::interval` fires
-        // once at construction. Boot rehydrate just ran, so there is
-        // nothing new to persist yet.
+        // `tokio::time::interval` fires once at construction, right after boot.
         interval.tick().await;
         loop {
             interval.tick().await;
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
-            let saved = save_engines_and_advance_cursor(&pool, &materializer)
-                .await
-                .saved;
+            let saved = compact_when_due(&pool, &materializer).await;
             if saved > 0 {
-                tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
+                tracing::debug!(spaces = saved, "loro: delta rows compacted into snapshots");
             }
         }
     }));
@@ -1583,44 +1637,165 @@ mod tests {
         }
     }
 
-    /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in
-    /// [`spawn_periodic_snapshot`]. Drives the real spawned task end to
-    /// end: construct a materializer, register + mutate an engine in its
-    /// registry, hand that same materializer to the periodic task with a
-    /// 1-second cadence, then poll `loro_doc_state` until the engine's snapshot row
-    /// appears. The task skips its first `interval.tick()` and reads the
-    /// materializer it was constructed with (#2249: engine state is an
-    /// explicitly threaded value, not a process global), so this exercises
-    /// the spawn, the tick loop, and the snapshot pass the seam exists to
-    /// cover.
+    /// Write a block to `space_id`'s engine and save what it added as one
+    /// `loro_doc_delta` row, as a committed write does. Returns the row's size.
+    async fn write_with_its_delta(
+        pool: &SqlitePool,
+        materializer: &crate::materializer::Materializer,
+        space_id: &str,
+        block: &str,
+    ) -> i64 {
+        let space = SpaceId::from_trusted(space_id);
+        let delta = {
+            let mut g = materializer
+                .loro_state()
+                .registry
+                .for_space(&space, "device-1")
+                .expect("for_space");
+            let (created, delta) = g
+                .engine_mut()
+                .capturing_delta(|e| e.apply_create_block(block, "content", "typed", None, 0))
+                .expect("capture");
+            created.expect("create");
+            delta.expect("the write adds ops")
+        };
+        let mut conn = pool.acquire().await.expect("conn");
+        crate::loro::delta::insert_delta(&mut conn, &space, &delta)
+            .await
+            .expect("insert delta");
+        i64::try_from(delta.len()).expect("size")
+    }
+
+    async fn delta_rows(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_delta")
+            .fetch_one(pool)
+            .await
+            .expect("count deltas")
+    }
+
+    /// #6521 — a space's delta rows stay until they reach the threshold; then
+    /// one pass folds them into its snapshot and deletes them, and the engine
+    /// a boot builds from the rows is the live one either way.
+    #[tokio::test]
+    async fn delta_rows_are_compacted_once_they_reach_the_threshold_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        let first = write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_ONE").await;
+        let second = write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_TWO").await;
+        let threshold = first + second;
+
+        let registry = &materializer.loro_state().registry;
+        write_with_its_delta(&pool, &materializer, SPACE_B, "BLOCK_B").await;
+        assert_eq!(
+            compact_past(&pool, &materializer, threshold + 1).await,
+            0,
+            "below the threshold no snapshot is written"
+        );
+        assert_eq!(delta_rows(&pool).await, 3);
+        assert!(
+            load_snapshot(&pool, &SpaceId::from_trusted(SPACE_A))
+                .await
+                .expect("load")
+                .is_none()
+        );
+        assert!(
+            crate::loro::delta::saved_engine_divergences(&pool, registry)
+                .await
+                .expect("oracle")
+                .is_empty(),
+            "the rows alone rebuild every engine"
+        );
+
+        assert_eq!(
+            compact_past(&pool, &materializer, threshold).await,
+            2,
+            "every dirty space is written, the one under the threshold too"
+        );
+        assert_eq!(delta_rows(&pool).await, 0, "the snapshots hold every row");
+        assert!(
+            crate::loro::delta::saved_engine_divergences(&pool, registry)
+                .await
+                .expect("oracle")
+                .is_empty(),
+            "the snapshots rebuild every engine"
+        );
+        materializer.shutdown();
+    }
+
+    /// #6521 — a write that commits while a compaction runs, after it read
+    /// the delta head and collected the engines, keeps its row: the snapshot
+    /// may lack it, so only the rows at or below the head are folded.
+    #[tokio::test]
+    async fn a_delta_written_during_a_compaction_outlives_it_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        let registry = &materializer.loro_state().registry;
+        write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_ONE").await;
+        let covered = covering(op_log_head(&pool).await.expect("head"));
+        let covered = Covered {
+            delta_id: crate::loro::delta::delta_head(&pool)
+                .await
+                .expect("delta head"),
+            ..covered
+        };
+        let collected = Collected::read(registry);
+        let pairs = registry.snapshot_dirty_engines();
+
+        write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_TWO").await;
+        write_pass(&pool, registry, collected, pairs, covered)
+            .await
+            .expect("the pass commits");
+
+        assert_eq!(delta_rows(&pool).await, 1, "the later write's row stays");
+        assert!(
+            crate::loro::delta::saved_engine_divergences(&pool, registry)
+                .await
+                .expect("oracle")
+                .is_empty(),
+            "the snapshot and the row left rebuild the engine"
+        );
+        materializer.shutdown();
+    }
+
+    /// #6521 — a tick with nothing to compact still moves the apply cursor to
+    /// the op-log head once the queue has drained, so the next boot does not
+    /// fan out again the index work that ran.
+    #[tokio::test]
+    async fn a_tick_below_the_threshold_moves_only_the_cursor_6521() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_ONE").await;
+        seed_op_log_head(&pool, 7).await;
+
+        assert_eq!(compact_when_due(&pool, &materializer).await, 0);
+        assert_eq!(apply_cursor(&pool).await, 7);
+        assert_eq!(delta_rows(&pool).await, 1);
+        materializer.shutdown();
+    }
+
+    /// The `tokio::spawn` seam in [`spawn_periodic_compaction`], driven end to
+    /// end with a 1-second cadence: the task finds a space past the threshold
+    /// through the materializer it was handed and compacts it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn spawn_periodic_snapshot_persists_engine_state() {
+    async fn spawn_periodic_compaction_compacts_a_space_past_the_threshold() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
 
         let (pool, _dir) = fresh_pool().await;
         let space = SpaceId::from_trusted(SPACE_PERIODIC);
-
-        // Fresh per-test state, with an engine registered in it that the
-        // task will find through the materializer passed to it below. Mutate
-        // it so the exported snapshot is non-trivial.
         let materializer = crate::materializer::Materializer::new(pool.clone());
-        {
-            let mut g = materializer
-                .loro_state()
-                .registry
-                .for_space(&space, "device-periodic")
-                .expect("for_space");
-            g.engine_mut()
-                .apply_create_block("BLOCK_PERIODIC", "content", "tick", None, 0)
-                .expect("create");
+        let mut written = 0;
+        let mut block = 0;
+        while written < DELTA_COMPACTION_BYTES {
+            block += 1;
+            written +=
+                write_with_its_delta(&pool, &materializer, SPACE_PERIODIC, &format!("B{block}"))
+                    .await;
         }
 
-        // Spawn the periodic task (1s cadence). The first tick is skipped,
-        // so the first persist lands ~1s in.
         let shutdown = Arc::new(AtomicBool::new(false));
-        spawn_periodic_snapshot(
+        spawn_periodic_compaction(
             pool.clone(),
             shutdown.clone(),
             1,
@@ -1629,30 +1804,20 @@ mod tests {
                 tokio::spawn(fut);
             },
         );
-
-        // Poll for the row rather than sleeping a fixed interval: bounded
-        // loop, ~5s total timeout, short sleeps in between. Deterministic
-        // and non-flaky — succeeds as soon as the snapshot lands.
+        // Polled rather than slept: done as soon as the snapshot lands.
         let mut persisted = false;
         for _ in 0..50 {
-            let row = load_snapshot(&pool, &space).await.expect("load");
-            if row.is_some() {
+            if load_snapshot(&pool, &space).await.expect("load").is_some() {
                 persisted = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-
-        // Stop the task before asserting so a failure doesn't leave it
-        // running against a half-torn-down pool.
         shutdown.store(true, Ordering::Relaxed);
         materializer.shutdown();
 
-        assert!(
-            persisted,
-            "periodic snapshot task should persist a loro_doc_state row \
-             for the space within ~5s"
-        );
+        assert!(persisted, "the periodic task compacts within ~5s");
+        assert_eq!(delta_rows(&pool).await, 0);
     }
 
     // -----------------------------------------------------------------

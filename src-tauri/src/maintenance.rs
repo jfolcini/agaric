@@ -69,9 +69,8 @@
 //!   - [`crate::db::daily_snapshot::daily_snapshot_tick`] — a snapshot of
 //!     the vault beside it, if the local day has none yet (1 h cadence).
 //!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
-//!     `enqueue_rebuild_page_ids`, [`loro_snapshot_if_dirty`], and
-//!     `projected_agenda_midnight_tick` — the remaining materializer-enqueue /
-//!     snapshot / agenda jobs.
+//!     `enqueue_rebuild_page_ids`, and `projected_agenda_midnight_tick` — the
+//!     remaining materializer-enqueue / agenda jobs.
 
 use agaric_core::error::AppError;
 use chrono::Datelike;
@@ -651,24 +650,6 @@ async fn purge_roots_one_at_a_time(
             }
         }
     }
-    Ok(())
-}
-
-/// Issue #157 sub-item I — persist all Loro engine snapshots when
-/// the registry's `dirty_count` proxy indicates at least one engine
-/// has been touched since the last save. Predicate gating
-/// (`dirty_count > 0 && !is_foreground`) lives at the spawn site;
-/// the pass itself resets the dirty counter to 0 on success, and moves the
-/// apply cursor up to what it persisted (#5418).
-pub async fn loro_snapshot_if_dirty(
-    write_pool: &SqlitePool,
-    materializer: &crate::materializer::Materializer,
-) -> Result<(), AppError> {
-    let ok =
-        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(write_pool, materializer)
-            .await
-            .saved;
-    tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
     Ok(())
 }
 
@@ -1951,21 +1932,6 @@ mod tests {
             "and the classifier must actually accept the shape this boundary \
              produces; got {err}"
         );
-    }
-
-    /// Issue #157 sub-item I — `loro_snapshot_if_dirty` is safe to
-    /// call on a fresh, empty engine registry.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn loro_snapshot_if_dirty_smoke_test_no_shared_state_157_i() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let pool = crate::db::init_pool(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let materializer = crate::materializer::Materializer::new(pool.clone());
-        loro_snapshot_if_dirty(&pool, &materializer)
-            .await
-            .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
-        materializer.shutdown();
     }
 
     /// Issue #157 sub-item H — a never-fired atomic (`i32::MIN`) fires on

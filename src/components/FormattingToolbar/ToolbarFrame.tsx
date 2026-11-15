@@ -4,14 +4,14 @@
  * #5160). It lays out the items it is given, collapses the lowest-priority
  * ones into a `MoreHorizontal` overflow popover when the bar is too narrow
  * (`useToolbarOverflow`, measured on an off-screen sentinel), keeps one tab
- * stop with arrow-key roving (#1724), and on touch pins the bar above the
- * soft keyboard (#925 f3). What each item is, and what it does, is the
+ * stop with arrow-key roving (#1724), and on touch pins the bar to the bottom
+ * of the screen, on top of the soft keyboard (#925 f3). What each item is, and what it does, is the
  * caller's `renderItem`.
  */
 
 import { MoreHorizontal } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { usePinToolbar } from '@/components/FormattingToolbar/pinned-toolbar'
@@ -23,7 +23,6 @@ import { Separator } from '@/components/ui/separator'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
-import { computeKeyboardInset } from '@/lib/keyboard-inset'
 import { cn } from '@/lib/utils'
 
 export interface ToolbarFrameProps {
@@ -53,8 +52,8 @@ export function ToolbarFrame({
   const { t } = useTranslation()
   // #925 f3 — on coarse-pointer (touch) devices an inline toolbar scrolls away
   // with its editor and ends up hidden behind the soft keyboard. Pin the touch
-  // instance to the bottom of the layout viewport and lift it above the
-  // keyboard via `visualViewport`. Desktop keeps the inline layout.
+  // instance to the bottom of the layout viewport, which on Android ends at the
+  // keyboard's top (`MainActivity.kt`, #6790). Desktop keeps the inline layout.
   const isTouch = useIsTouch()
   usePinToolbar(isTouch)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
@@ -74,29 +73,6 @@ export function ToolbarFrame({
     containerRef.current = node
     roving.containerRef(node)
   }
-
-  // #925 f3 — keep the pinned (touch) toolbar resting on top of the soft
-  // keyboard. The bar is `position: fixed` at the layout-viewport bottom; we
-  // set its `bottom` to the keyboard inset so it tracks the keyboard as it
-  // shows/hides (visualViewport `resize`) and as the page scrolls under it
-  // (`scroll`). No-op on desktop (fine pointer) — the inline layout stays put.
-  useEffect(() => {
-    if (!isTouch) return
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
-    const apply = () => {
-      const el = containerRef.current
-      if (!el) return
-      el.style.bottom = `${vv ? computeKeyboardInset(vv) : 0}px`
-    }
-    apply()
-    if (!vv) return
-    vv.addEventListener('resize', apply)
-    vv.addEventListener('scroll', apply)
-    return () => {
-      vv.removeEventListener('resize', apply)
-      vv.removeEventListener('scroll', apply)
-    }
-  }, [isTouch])
 
   const { visible, overflowed } = useToolbarOverflow(containerRef, sentinelRef, items)
 
@@ -125,8 +101,7 @@ export function ToolbarFrame({
       aria-controls={controls}
       className={cn(
         'formatting-toolbar flex items-center gap-0.5 border-border/40 bg-muted/30 px-2 py-px',
-        // #925 f3 — touch: pin above the keyboard (fixed, lifted via the
-        // visualViewport effect); desktop: inline, beside its editor.
+        // #925 f3 — touch: pinned to the screen's foot; desktop: inline, beside its editor.
         isTouch
           ? 'fixed inset-x-0 bottom-0 z-30 gap-1 overflow-x-auto border-t py-1.5 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80'
           : // `rounded-t-md` matches the frame it heads (page mode, Edit as Markdown).

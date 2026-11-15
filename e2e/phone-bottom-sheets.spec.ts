@@ -60,15 +60,10 @@ async function openBlockMenu(page: Page): Promise<Locator> {
   return activeMenu(page)
 }
 
-/** Simulate the soft keyboard: `visualViewport` shrinks by `height`, the layout viewport does not. */
+/** Simulate the soft keyboard: on Android the webview ends at its top (#6790), so the viewport shrinks by `height`. */
 async function showKeyboard(page: Page, height: number): Promise<void> {
-  await page.evaluate((kbd) => {
-    const vv = window.visualViewport
-    if (!vv) throw new Error('visualViewport unavailable in test env')
-    Object.defineProperty(vv, 'height', { configurable: true, get: () => window.innerHeight - kbd })
-    Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
-    vv.dispatchEvent(new Event('resize'))
-  }, height)
+  const { width, height: full } = page.viewportSize() ?? { width: 0, height: 0 }
+  await page.setViewportSize({ width, height: full - height })
 }
 
 function overlaps(a: DOMRectLike, b: DOMRectLike): boolean {

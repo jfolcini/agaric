@@ -31,10 +31,10 @@ use super::*;
 ///
 /// The REMOTE / single-op path advances the cursor so
 /// `materialized_through_seq` tracks applied state. The LOCAL command path
-/// deliberately does NOT (#1257): the snapshot pass moves the cursor past
-/// local ops once the engine state holding them is persisted
-/// (`loro::snapshot::save_engines_and_advance_cursor`, #5418), and boot
-/// replay re-applies the ones committed after it.
+/// deliberately does NOT (#1257): the periodic tick moves the cursor past
+/// local ops once their index fan-out has drained
+/// (`loro::snapshot::compact_when_due`, #5418, #6521), and boot fans out
+/// again the ones committed after it.
 ///
 /// Returns the [`ApplyEffects`] from `apply_op_tx` UNCHANGED: the cohorts the
 /// op's cascade reached, already mirrored onto the engine, for the caller's
