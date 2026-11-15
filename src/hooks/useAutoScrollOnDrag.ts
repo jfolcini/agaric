@@ -1,6 +1,7 @@
 /**
  * useAutoScrollOnDrag — auto-scrolls a container when the drag pointer
- * approaches the top or bottom edges of the viewport.
+ * approaches its start or end edge on `axis`: top and bottom for `'y'`, left
+ * and right for `'x'`. The edges come from the container's live rect each frame.
  *
  * Uses requestAnimationFrame for smooth 60fps scrolling with speed that
  * increases proportionally as the pointer gets closer to the edge.
@@ -15,6 +16,7 @@
  *
  * @param containerRef - ref to the scrollable container element
  * @param active - whether a drag is currently in progress
+ * @param axis - the axis to scroll along
  */
 
 import { type RefObject, useEffect, useRef } from 'react'
@@ -30,8 +32,9 @@ export const MAX_SPEED = 15
 export function useAutoScrollOnDrag(
   containerRef: RefObject<HTMLElement | null>,
   active: boolean,
+  axis: 'x' | 'y' = 'y',
 ): void {
-  const pointerY = useRef(0)
+  const pointer = useRef(0)
   const rafId = useRef<number | null>(null)
 
   // Track pointer position via a global pointermove listener while dragging
@@ -39,14 +42,14 @@ export function useAutoScrollOnDrag(
     if (!active) return
 
     const handlePointerMove = (e: PointerEvent) => {
-      pointerY.current = e.clientY
+      pointer.current = axis === 'x' ? e.clientX : e.clientY
     }
 
     document.addEventListener('pointermove', handlePointerMove)
     return () => {
       document.removeEventListener('pointermove', handlePointerMove)
     }
-  }, [active])
+  }, [active, axis])
 
   // Run the auto-scroll RAF loop while dragging
   useEffect(() => {
@@ -65,18 +68,18 @@ export function useAutoScrollOnDrag(
       }
 
       const rect = container.getBoundingClientRect()
-      const y = pointerY.current
+      const at = pointer.current
+      const distFromStart = at - (axis === 'x' ? rect.left : rect.top)
+      const distFromEnd = (axis === 'x' ? rect.right : rect.bottom) - at
 
-      const distFromTop = y - rect.top
-      const distFromBottom = rect.bottom - y
-
-      if (distFromTop < SCROLL_ZONE && distFromTop >= 0) {
-        const speed = ((SCROLL_ZONE - distFromTop) / SCROLL_ZONE) * MAX_SPEED
-        container.scrollTop -= speed
-      } else if (distFromBottom < SCROLL_ZONE && distFromBottom >= 0) {
-        const speed = ((SCROLL_ZONE - distFromBottom) / SCROLL_ZONE) * MAX_SPEED
-        container.scrollTop += speed
+      let speed = 0
+      if (distFromStart < SCROLL_ZONE && distFromStart >= 0) {
+        speed = -((SCROLL_ZONE - distFromStart) / SCROLL_ZONE) * MAX_SPEED
+      } else if (distFromEnd < SCROLL_ZONE && distFromEnd >= 0) {
+        speed = ((SCROLL_ZONE - distFromEnd) / SCROLL_ZONE) * MAX_SPEED
       }
+      if (speed !== 0 && axis === 'x') container.scrollLeft += speed
+      else if (speed !== 0) container.scrollTop += speed
 
       rafId.current = requestAnimationFrame(tick)
     }
@@ -89,5 +92,5 @@ export function useAutoScrollOnDrag(
         rafId.current = null
       }
     }
-  }, [active, containerRef])
+  }, [active, axis, containerRef])
 }
