@@ -57,7 +57,7 @@ test.describe('Paste GFM task line over non-empty block (#1514) @editor', () => 
 
     // Type real content into the block; the caret is now a collapsed cursor at
     // the end of non-empty text (the exact #1514 trigger).
-    await editor.type('keep this text')
+    await editor.pressSequentially('keep this text')
     await expect(editor).toContainText('keep this text')
 
     await pasteText(editor, '- [ ] todo')
@@ -72,7 +72,7 @@ test.describe('Paste GFM task line over non-empty block (#1514) @editor', () => 
     await openPage(page, PAGE)
     const editor = await freshBlock(page)
 
-    await editor.type('hello world')
+    await editor.pressSequentially('hello world')
     await expect(editor).toHaveText('hello world')
 
     // Caret after "hello", not by arrow keys: the editor reads a key-moved caret

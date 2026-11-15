@@ -26,7 +26,7 @@ test.describe('KaTeX math round-trip (#1437) @editor', () => {
     await page.keyboard.press('Delete')
     // Type the inline-math markdown. (Typed verbatim; the round-trip happens on
     // blur when the block serializes to `$a^2$` and the static view re-parses.)
-    await editor.type('energy $a^2$ done')
+    await editor.pressSequentially('energy $a^2$ done')
 
     await saveBlock(page)
 
@@ -43,7 +43,7 @@ test.describe('KaTeX math round-trip (#1437) @editor', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
     // Single-line block-math fence (one line so Enter-to-save still applies).
-    await editor.type('$$ E = mc^2 $$')
+    await editor.pressSequentially('$$ E = mc^2 $$')
 
     await saveBlock(page)
 
@@ -56,7 +56,7 @@ test.describe('KaTeX math round-trip (#1437) @editor', () => {
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type('cost is $5 and $10')
+    await editor.pressSequentially('cost is $5 and $10')
 
     await saveBlock(page)
 
@@ -76,7 +76,7 @@ test.describe('KaTeX math round-trip (#1437) @editor', () => {
     const editor = await focusBlock(page, 1)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type('$x+y$ tail')
+    await editor.pressSequentially('$x+y$ tail')
     // Home sometimes misses while KaTeX is still loading in.
     await expect(editor.locator('.katex')).toBeVisible()
     await page.keyboard.press('Home')

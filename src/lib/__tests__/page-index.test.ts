@@ -42,8 +42,8 @@ beforeEach(() => {
 
 describe('pageIndexQuery', () => {
   it('lists a space once for any number of reads', async () => {
-    const first = await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
-    const second = await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
+    const first = await queryClient.query(pageIndexQuery(PERSONAL))
+    const second = await queryClient.query(pageIndexQuery(PERSONAL))
 
     expect(titles(first)).toContain('Getting Started')
     expect(second).toBe(first)
@@ -51,29 +51,29 @@ describe('pageIndexQuery', () => {
   })
 
   it('keeps one list per space', async () => {
-    const personal = await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
-    const work = await queryClient.fetchQuery(pageIndexQuery(WORK))
+    const personal = await queryClient.query(pageIndexQuery(PERSONAL))
+    const work = await queryClient.query(pageIndexQuery(WORK))
 
     expect(titles(work)).not.toEqual(titles(personal))
     expect(listings).toEqual([PERSONAL, WORK])
   })
 
   it('re-reads after a page is renamed', async () => {
-    await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
+    await queryClient.query(pageIndexQuery(PERSONAL))
     await dispatch('edit_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED, toText: 'Renamed' })
     notifyPageRenamed(SEED_IDS.PAGE_GETTING_STARTED, 'Renamed', PERSONAL)
 
-    const after = await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
+    const after = await queryClient.query(pageIndexQuery(PERSONAL))
 
     expect(titles(after)).toContain('Renamed')
     expect(titles(after)).not.toContain('Getting Started')
   })
 
   it('keeps the list when a tag is renamed', async () => {
-    await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
+    await queryClient.query(pageIndexQuery(PERSONAL))
     notifyTagRenamed('TAG', 'renamed', PERSONAL)
 
-    await queryClient.fetchQuery(pageIndexQuery(PERSONAL))
+    await queryClient.query(pageIndexQuery(PERSONAL))
 
     expect(listings).toEqual([PERSONAL])
   })
@@ -85,7 +85,7 @@ describe('pageIndexQuery', () => {
     )
     const logged = vi.spyOn(logger, 'error').mockImplementation(() => {})
 
-    await expect(queryClient.fetchQuery(pageIndexQuery(PERSONAL))).rejects.toBe(failure)
+    await expect(queryClient.query(pageIndexQuery(PERSONAL))).rejects.toBe(failure)
 
     expect(logged).toHaveBeenCalledWith(
       'page-index',

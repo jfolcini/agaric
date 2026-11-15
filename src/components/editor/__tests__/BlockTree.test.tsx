@@ -4821,7 +4821,9 @@ describe('BlockTree /attach slash command', () => {
 
     // Spy on document.createElement to intercept the file input
     const clickSpy = vi.fn()
-    const origCreateElement = document.createElement.bind(document)
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation(
       (tag: string, options?: ElementCreationOptions) => {
         const el = origCreateElement(tag, options)
@@ -4867,7 +4869,9 @@ describe('BlockTree /attach slash command', () => {
 
     // Capture the file input so we can simulate file selection
     let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = document.createElement.bind(document)
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation(
       (tag: string, options?: ElementCreationOptions) => {
         const el = origCreateElement(tag, options)
@@ -4925,7 +4929,9 @@ describe('BlockTree /attach slash command', () => {
     stubBlockTree()
 
     let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = document.createElement.bind(document)
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation(
       (tag: string, options?: ElementCreationOptions) => {
         const el = origCreateElement(tag, options)
@@ -4984,7 +4990,9 @@ describe('BlockTree /attach slash command', () => {
     })
 
     let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = document.createElement.bind(document)
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation(
       (tag: string, options?: ElementCreationOptions) => {
         const el = origCreateElement(tag, options)

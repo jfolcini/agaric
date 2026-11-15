@@ -42,7 +42,7 @@ test.describe('attachment link (#6032) @attachments @editor', () => {
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type(`read [paper](attachment:${attachmentId}) now`)
+    await editor.pressSequentially(`read [paper](attachment:${attachmentId}) now`)
     await saveBlock(page)
 
     await navigateToView(page, 'Journal')

@@ -405,7 +405,7 @@ export async function expectNoHorizontalOverflow(
       const style = getComputedStyle(node)
       if (style.overflowX !== 'hidden' && style.overflowX !== 'clip') continue
       if (style.textOverflow === 'ellipsis') continue
-      if (style.clipPath !== 'none' || style.clip !== 'auto') continue
+      if (style.clipPath !== 'none' || style.getPropertyValue('clip') !== 'auto') continue
       if (node.dataset['overflowClip'] === 'intentional') continue
       // Name the outermost descendant that reaches furthest past the box.
       let culprit: Element | null = null

@@ -178,7 +178,7 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
             s.borderTopColor !== 'rgba(0, 0, 0, 0)'
           )
         })
-        .map((el) => el.getAttribute('data-testid') ?? el.className),
+        .map((el) => el.getAttribute('data-testid') ?? el.getAttribute('class')),
     )
     expect(surfaces, 'bordered surfaces').toEqual(['graph-view'])
   })

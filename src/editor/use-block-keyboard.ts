@@ -681,6 +681,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // blocks instead of editing the composition. Defer entirely to the
       // browser + ProseMirror until the composition commits. `keyCode === 229`
       // is the legacy signal for engines that don't set `isComposing`.
+      // oxlint-disable-next-line typescript/no-deprecated -- Safari's IME-confirm Enter and Android soft keyboards are marked only by keyCode 229
       if (event.isComposing || event.keyCode === 229) return
 
       // Before the rules below read the caret.

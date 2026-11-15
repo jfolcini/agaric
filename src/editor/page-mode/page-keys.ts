@@ -356,6 +356,7 @@ export const PageKeys = Extension.create<PageKeysOptions>({
           handleDOMEvents: {
             keydown: (view, event) => {
               // Before the keymaps read the caret.
+              // oxlint-disable-next-line typescript/no-deprecated -- Safari's IME-confirm Enter and Android soft keyboards are marked only by keyCode 229
               if (!event.isComposing && event.keyCode !== 229) readDomSelection(view)
               // True skips ProseMirror's handling, keymaps included, and keeps the key's default:
               // a key on a chip is the chip's, but Escape leaves the text from there too.

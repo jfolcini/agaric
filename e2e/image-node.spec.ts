@@ -39,7 +39,7 @@ test.describe('markdown image round-trip (#1434) @attachments @editor', () => {
     await page.keyboard.press('Delete')
     // Type the image markdown verbatim; the round-trip happens on blur when the
     // block serializes to `![a cat](url)` and the static view re-parses.
-    await editor.type(`pic ![a cat](${IMG_URL}) done`)
+    await editor.pressSequentially(`pic ![a cat](${IMG_URL}) done`)
 
     await saveBlock(page)
 

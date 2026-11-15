@@ -48,7 +48,7 @@ test.describe('external image policy — default click (#1492) @attachments @set
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type(`pic ![a cat](${EXTERNAL_URL}) done`)
+    await editor.pressSequentially(`pic ![a cat](${EXTERNAL_URL}) done`)
 
     await saveBlock(page)
 

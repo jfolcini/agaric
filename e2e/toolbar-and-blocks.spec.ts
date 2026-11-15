@@ -72,7 +72,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Clear and type fresh content
     await page.keyboard.press('Control+a')
-    await editor.type('bold test')
+    await editor.pressSequentially('bold test')
 
     // Select "bold" — chars 0..4
     await selectEditorRange(page, 0, 4)
@@ -103,7 +103,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
-    await editor.type('italic test')
+    await editor.pressSequentially('italic test')
 
     // Select "italic" — chars 0..6
     await selectEditorRange(page, 0, 6)
@@ -129,7 +129,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
-    await editor.type('some code here')
+    await editor.pressSequentially('some code here')
 
     // Select "code" — chars 5..9 ("some " is 5 chars)
     await selectEditorRange(page, 5, 9)
@@ -237,7 +237,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
-    await editor.type('emphasis')
+    await editor.pressSequentially('emphasis')
 
     // Select all and apply both marks
     await page.keyboard.press('Control+a')
@@ -363,7 +363,7 @@ test.describe('Link buttons @editor', () => {
 
     // Clear and type fresh content, then trigger [[ picker
     await page.keyboard.press('Control+a')
-    await editor.type('link: ')
+    await editor.pressSequentially('link: ')
     await page.getByRole('button', { name: 'Internal link' }).click()
 
     // Wait for suggestion list and click the first suggestion
@@ -390,7 +390,7 @@ test.describe('Link buttons @editor', () => {
 
     // Clear and type fresh content, then trigger @ picker
     await page.keyboard.press('Control+a')
-    await editor.type('tagged: ')
+    await editor.pressSequentially('tagged: ')
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // Wait for suggestion list and click the first tag
@@ -701,7 +701,7 @@ test.describe('Undo / Redo @editor', () => {
 
     // Type additional text
     await page.keyboard.press('End')
-    await editor.type(' extra')
+    await editor.pressSequentially(' extra')
 
     // Click Undo
     await page.getByRole('button', { name: 'Undo', exact: true }).click()
@@ -716,7 +716,7 @@ test.describe('Undo / Redo @editor', () => {
 
     // Type text
     await page.keyboard.press('End')
-    await editor.type(' extra')
+    await editor.pressSequentially(' extra')
     const withExtra = await editor.textContent()
 
     // Undo
@@ -735,7 +735,7 @@ test.describe('Undo / Redo @editor', () => {
 
     const originalText = await editor.textContent()
     await page.keyboard.press('End')
-    await editor.type(' typed')
+    await editor.pressSequentially(' typed')
 
     await page.keyboard.press('Control+z')
 
@@ -747,7 +747,7 @@ test.describe('Undo / Redo @editor', () => {
     const editor = await focusBlock(page)
 
     await page.keyboard.press('End')
-    await editor.type(' typed')
+    await editor.pressSequentially(' typed')
     const withTyped = await editor.textContent()
 
     await page.keyboard.press('Control+z')

@@ -25,7 +25,7 @@ test.describe('inline image resize (#4712) @attachments', () => {
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type(`pic ![a cat](${IMG_URL}) done`)
+    await editor.pressSequentially(`pic ![a cat](${IMG_URL}) done`)
 
     const img = page.getByTestId('image-node-view').locator('img[alt="a cat"]')
     await expect(img).toHaveCSS('width', '100px')
@@ -64,7 +64,7 @@ test.describe('inline image resize (#4712) @attachments', () => {
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
-    await editor.type(`![a cat](${IMG_URL}) done`)
+    await editor.pressSequentially(`![a cat](${IMG_URL}) done`)
     const nodeView = page.getByTestId('image-node-view')
     await expect(nodeView.locator('img[alt="a cat"]')).toBeVisible()
 

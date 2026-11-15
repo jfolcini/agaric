@@ -1269,7 +1269,6 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
     new KeyboardEvent('keydown', {
       key: 'Unidentified',
       code: 'Tab',
-      keyCode: 9,
       shiftKey: true,
       bubbles: true,
       cancelable: true,
@@ -1523,6 +1522,9 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
   // — which carries a reliable semantic `inputType` — that drives the structural
   // delete/merge/split. These tests assert both halves of the documented
   // contract: keydown swallowed, beforeinput acts.
+  // oxlint-disable-next-line typescript/no-deprecated -- the code under test reads keyCode 229, Gboard's only mark
+  const GBOARD_KEYDOWN: KeyboardEventInit = { keyCode: 229 }
+
   function fireKeydown(target: HTMLElement, key: string, extra?: KeyboardEventInit) {
     const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })
     const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
@@ -1537,7 +1539,7 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
     // 1. The Gboard keydown (keyCode 229) bails before KEY_RULES run: no
     //    callback fires and the event is NOT preventDefault-ed (so the browser
     //    still emits the matching `beforeinput`).
-    const keydownSpy = fireKeydown(container, 'Backspace', { keyCode: 229 })
+    const keydownSpy = fireKeydown(container, 'Backspace', GBOARD_KEYDOWN)
     expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
     expect(keydownSpy).not.toHaveBeenCalled()
 
@@ -1554,7 +1556,7 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
     editor.commands.setTextSelection(1) // caret at the very start
     const container = dom.parentElement as HTMLElement
 
-    const keydownSpy = fireKeydown(container, 'Backspace', { keyCode: 229 })
+    const keydownSpy = fireKeydown(container, 'Backspace', GBOARD_KEYDOWN)
     expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
     expect(keydownSpy).not.toHaveBeenCalled()
 
@@ -1568,7 +1570,7 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
     const { callbacks, dom, cleanup } = setup()
     const container = dom.parentElement as HTMLElement
 
-    const keydownSpy = fireKeydown(container, 'Enter', { keyCode: 229 })
+    const keydownSpy = fireKeydown(container, 'Enter', GBOARD_KEYDOWN)
     expect(callbacks._calls['onEnterSave']).toBeUndefined()
     expect(keydownSpy).not.toHaveBeenCalled()
 
