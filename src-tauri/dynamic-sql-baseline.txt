@@ -33,7 +33,7 @@
 1 src-tauri/agaric-store/src/cross_space_validation.rs
 2 src-tauri/agaric-store/src/fts/index.rs
 1 src-tauri/agaric-store/src/fts/search/fetch.rs
-2 src-tauri/agaric-store/src/fts/strip.rs
+1 src-tauri/agaric-store/src/fts/strip.rs
 2 src-tauri/agaric-store/src/fts/toggle_filter.rs
 3 src-tauri/agaric-store/src/link_metadata/mod.rs
 2 src-tauri/agaric-store/src/op_log/bypass.rs

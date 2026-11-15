@@ -6,7 +6,6 @@
 
 use regex::Regex;
 use sqlx::SqlitePool;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -48,37 +47,115 @@ static MARKUP_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Strip inline markup (bold/italic/strike/highlight) from `content`.
 ///
-/// Applies [`MARKUP_RE`] iteratively until the result no longer changes,
-/// which strips nested cases like `**bold *italic***`. Each
-/// iteration only modifies the string when a match is found
-/// (`replace_all` returns `Cow::Borrowed` on no-match), so plain-text
-/// input runs the regex exactly once and never allocates.
+/// Applies [`MARKUP_RE`] until nothing matches, which strips nested cases
+/// like `**bold *italic***`. Plain-text input runs the regex exactly once
+/// and is returned as is.
 ///
 /// Iteration is bounded: every replacement strictly shrinks the input
 /// (the captured group is always shorter than its surrounding
 /// delimiters), so the loop terminates in at most `O(content.len())`
 /// iterations. In practice 1-2 iterations cover every realistic
 /// nesting depth.
-fn strip_inline_markup(content: &str) -> String {
-    let mut current: Cow<'_, str> = Cow::Borrowed(content);
-    loop {
-        let next = MARKUP_RE.replace_all(&current, |caps: &regex::Captures<'_>| {
-            // Exactly one of groups 1-4 matched; return its inner text.
-            for i in 1..=4 {
-                if let Some(m) = caps.get(i) {
-                    return m.as_str().to_owned();
-                }
-            }
-            String::new()
-        });
-        // No more matches → the regex returns Cow::Borrowed and the
-        // pointer/len match `current`. Break to avoid an infinite loop.
-        if next.as_ref() == current.as_ref() {
-            break;
-        }
-        current = Cow::Owned(next.into_owned());
+fn strip_inline_markup(content: Shown) -> Shown {
+    let mut current = content;
+    // Exactly one of groups 1-4 matched; its inner text stays.
+    while let Some(next) = current.replace_all(&MARKUP_RE, |caps, _| {
+        Replacement::Group((1..=4).find(|&i| caps.get(i).is_some()).unwrap_or(0))
+    }) {
+        current = next;
     }
-    current.into_owned()
+    current
+}
+
+/// Text the strip produced and, for each of its bytes, the byte range of the
+/// raw content that byte shows, so a match in the shown text maps back to
+/// the raw content the frontend renders. A byte copied from the content maps
+/// to itself; a resolved name (a tag's, a page's, a block ref's first line)
+/// has no raw counterpart and maps to the whole token it replaced. Every pass
+/// keeps the order of the text, so the ranges never go backwards.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Shown {
+    pub(crate) text: String,
+    origin: Vec<(usize, usize)>,
+}
+
+/// What a [`Shown::replace_all`] match becomes.
+enum Replacement<'a> {
+    /// The capture group's text, which keeps its own origin.
+    Group(usize),
+    /// New text, which shows the whole match.
+    Text(String),
+    /// A piece, which keeps the origin it was stored with.
+    Piece(&'a Shown),
+}
+
+impl Shown {
+    /// `text`, a resolved name that shows the raw range `span`.
+    fn resolved(text: &str, span: (usize, usize)) -> Shown {
+        let mut shown = Shown::default();
+        shown.push_str(text, span);
+        shown
+    }
+
+    fn push_str(&mut self, s: &str, origin: (usize, usize)) {
+        self.text.push_str(s);
+        self.origin.extend(std::iter::repeat_n(origin, s.len()));
+    }
+
+    /// Push `s`, the content's text at byte `at`.
+    fn push_verbatim(&mut self, s: &str, at: usize) {
+        self.text.push_str(s);
+        self.origin.extend((at..at + s.len()).map(|b| (b, b + 1)));
+    }
+
+    fn push_slice(&mut self, from: &Shown, range: std::ops::Range<usize>) {
+        self.text.push_str(&from.text[range.clone()]);
+        self.origin.extend_from_slice(&from.origin[range]);
+    }
+
+    /// The raw-content byte range `range` of the shown text shows. Both ends
+    /// land on the content's char boundaries when `range`'s do.
+    pub(crate) fn raw_range(&self, range: std::ops::Range<usize>) -> (usize, usize) {
+        let origin = &self.origin[range];
+        match (origin.first(), origin.last()) {
+            (Some(first), Some(last)) => (first.0, last.1),
+            _ => (0, 0),
+        }
+    }
+
+    /// `regex::Regex::replace_all` that carries the origin along; `None`
+    /// when nothing matched. `replace` gets each match's captures and the
+    /// raw range the match shows.
+    fn replace_all<'p>(
+        &self,
+        re: &Regex,
+        mut replace: impl FnMut(&regex::Captures<'_>, (usize, usize)) -> Replacement<'p>,
+    ) -> Option<Shown> {
+        let mut out: Option<Shown> = None;
+        let mut last = 0;
+        for caps in re.captures_iter(&self.text) {
+            let Some(whole) = caps.get(0) else { continue };
+            let out = out.get_or_insert_with(|| Shown {
+                text: String::with_capacity(self.text.len()),
+                origin: Vec::with_capacity(self.origin.len()),
+            });
+            out.push_slice(self, last..whole.start());
+            let span = self.raw_range(whole.range());
+            match replace(&caps, span) {
+                Replacement::Group(i) => {
+                    if let Some(group) = caps.get(i) {
+                        out.push_slice(self, group.range());
+                    }
+                }
+                Replacement::Text(text) => out.push_str(&text, span),
+                Replacement::Piece(piece) => out.push_slice(piece, 0..piece.text.len()),
+            }
+            last = whole.end();
+        }
+        let mut out = out?;
+        out.push_slice(self, last..self.text.len());
+        Some(out)
+    }
 }
 
 // `TAG_REF_RE` and `PAGE_LINK_RE` were canonicalised in
@@ -137,31 +214,7 @@ pub fn strip_for_fts_with_maps(
     page_titles: &HashMap<String, String>,
     block_titles: &HashMap<String, String>,
 ) -> String {
-    let mut pieces = Vec::new();
-    let masked = mask_shown_spans(content, block_titles, &mut pieces);
-    let result = strip_inline_markup(&masked);
-
-    // A resolved name is a piece too, so every placeholder in the text is
-    // one this strip wrote.
-    let result = TAG_REF_RE.replace_all(&result, |caps: &regex::Captures| {
-        let name = tag_names.get(&caps[1]).cloned().unwrap_or_default();
-        piece(&mut pieces, name)
-    });
-
-    // A labelled link shows its label (#5160 D9), else the page's title.
-    let result = PAGE_LINK_RE.replace_all(&result, |caps: &regex::Captures| {
-        match crate::cache::page_link_label(caps) {
-            Some(label) => label.to_string(),
-            None => {
-                let title = page_titles.get(&caps[1]).cloned().unwrap_or_default();
-                piece(&mut pieces, title)
-            }
-        }
-    });
-    let result = PIECE_RE.replace_all(&result, |caps: &regex::Captures| {
-        let index = caps[1].parse::<usize>().ok();
-        index.and_then(|i| pieces.get(i)).map_or("", String::as_str)
-    });
+    let result = shown_text(content, tag_names, page_titles, block_titles).text;
 
     // NFC-normalise the stripped output before it enters
     // the FTS index. macOS volume content tends to land NFD (filename
@@ -195,8 +248,50 @@ static BLOCK_REF_AT_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!("^(?:{})", BLOCK_REF_RE.as_str())).expect("invalid block-ref regex")
 });
 
+/// The text the editor shows for `content`, mapped back to `content`: what
+/// [`strip_for_fts_with_maps`] indexes, before NFC and the cap. Highlighting
+/// matches this text and maps each match back (#6795).
+pub(crate) fn shown_text(
+    content: &str,
+    tag_names: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+    block_titles: &HashMap<String, String>,
+) -> Shown {
+    let mut pieces = Vec::new();
+    let masked = mask_shown_spans(content, block_titles, &mut pieces);
+    let result = strip_inline_markup(masked);
+
+    // A resolved name is a piece too, so every placeholder in the text is
+    // one this strip wrote.
+    let result = result
+        .replace_all(&TAG_REF_RE, |caps, span| {
+            let name = tag_names.get(&caps[1]).map_or("", String::as_str);
+            Replacement::Text(piece(&mut pieces, Shown::resolved(name, span)))
+        })
+        .unwrap_or(result);
+
+    // A labelled link shows its label (#5160 D9), else the page's title.
+    let result = result
+        .replace_all(&PAGE_LINK_RE, |caps, span| {
+            if crate::cache::page_link_label(caps).is_some() {
+                return Replacement::Group(2);
+            }
+            let title = page_titles.get(&caps[1]).map_or("", String::as_str);
+            Replacement::Text(piece(&mut pieces, Shown::resolved(title, span)))
+        })
+        .unwrap_or(result);
+    result
+        .replace_all(&PIECE_RE, |caps, _| {
+            let index = caps[1].parse::<usize>().ok();
+            index
+                .and_then(|i| pieces.get(i))
+                .map_or(Replacement::Text(String::new()), Replacement::Piece)
+        })
+        .unwrap_or(result)
+}
+
 /// Store `shown` and return the placeholder that stands for it.
-fn piece(pieces: &mut Vec<String>, shown: String) -> String {
+fn piece(pieces: &mut Vec<Shown>, shown: Shown) -> String {
     pieces.push(shown);
     format!("{PIECE_OPEN}{}{PIECE_CLOSE}", pieces.len() - 1)
 }
@@ -210,56 +305,69 @@ fn piece(pieces: &mut Vec<String>, shown: String) -> String {
 fn mask_shown_spans(
     content: &str,
     block_titles: &HashMap<String, String>,
-    pieces: &mut Vec<String>,
-) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut rest = content;
-    while let Some(ch) = rest.chars().next() {
+    pieces: &mut Vec<Shown>,
+) -> Shown {
+    let mut out = Shown {
+        text: String::with_capacity(content.len()),
+        origin: Vec::with_capacity(content.len()),
+    };
+    let mut at = 0;
+    while let Some(ch) = content[at..].chars().next() {
+        let rest = &content[at..];
         // An escaped pipe shows as `|` and stays bare, so the page-link pass
         // reads a table cell's `[[ULID\|label]]` as the editor's table reader
         // does, label pipes included.
-        if let Some(after) = rest.strip_prefix("\\|") {
-            out.push('|');
-            rest = after;
+        if rest.starts_with("\\|") {
+            out.push_verbatim("|", at + 1);
+            at += 2;
             continue;
         }
-        let at_line_start = rest.len() == content.len() || out.ends_with('\n');
+        let at_line_start = at == 0 || out.text.ends_with('\n');
+        let verbatim = |range: std::ops::Range<usize>| {
+            let mut shown = Shown::default();
+            shown.push_verbatim(&rest[range.clone()], at + range.start);
+            shown
+        };
         let span = match ch {
-            '~' if at_line_start => tilde_fence(rest),
-            '`' => Some(code_span(rest)),
+            '~' if at_line_start => tilde_fence(rest).map(|(code, len)| (verbatim(code), len)),
+            '`' => {
+                let (code, len) = code_span(rest);
+                Some((verbatim(code), len))
+            }
             '\\' => rest[1..]
                 .chars()
                 .next()
                 .filter(|&next| is_escapable(next))
-                .map(|next| (next.to_string(), 1 + next.len_utf8())),
+                .map(|next| (verbatim(1..1 + next.len_utf8()), 1 + next.len_utf8())),
             '(' => BLOCK_REF_AT_RE.captures(rest).map(|caps| {
-                let title = block_titles.get(&caps[1]).cloned().unwrap_or_default();
-                (title, caps[0].len())
+                let len = caps[0].len();
+                let title = block_titles.get(&caps[1]).map_or("", String::as_str);
+                (Shown::resolved(title, (at, at + len)), len)
             }),
-            PIECE_OPEN => Some((PIECE_OPEN.to_string(), PIECE_OPEN.len_utf8())),
+            PIECE_OPEN => Some((verbatim(0..PIECE_OPEN.len_utf8()), PIECE_OPEN.len_utf8())),
             _ => None,
         };
         let len = match span {
             Some((shown, len)) => {
-                out.push_str(&piece(pieces, shown));
+                out.push_str(&piece(pieces, shown), (at, at + len));
                 len
             }
             None => {
-                out.push(ch);
+                out.push_verbatim(&rest[..ch.len_utf8()], at);
                 ch.len_utf8()
             }
         };
-        rest = &rest[len..];
+        at += len;
     }
     out
 }
 
-/// The code a tilde fence at the start of `rest`, which starts a line, opens,
-/// and the bytes it takes, as `parseCodeBlock` reads it: a run of three or
-/// more `~` closed by a line holding only a run at least as long, plus
-/// whitespace. With no closer the fence runs to the end. `None` for a run
-/// too short to open one.
-fn tilde_fence(rest: &str) -> Option<(String, usize)> {
+/// The range of `rest` holding the code a tilde fence at its start, which
+/// starts a line, opens, and the bytes the fence takes, as `parseCodeBlock`
+/// reads it: a run of three or more `~` closed by a line holding only a run
+/// at least as long, plus whitespace. With no closer the fence runs to the
+/// end. `None` for a run too short to open one.
+fn tilde_fence(rest: &str) -> Option<(std::ops::Range<usize>, usize)> {
     let open = rest.len() - rest.trim_start_matches('~').len();
     if open < 3 {
         return None;
@@ -272,19 +380,20 @@ fn tilde_fence(rest: &str) -> Option<(String, usize)> {
         let line = &rest[line_start..line_end];
         let run = line.len() - line.trim_start_matches('~').len();
         if run >= open && line[run..].trim().is_empty() {
-            return Some((rest[open..line_start].to_owned(), line_end));
+            return Some((open..line_start, line_end));
         }
         line_start = line_end + 1;
     }
-    Some((rest[open..].to_owned(), rest.len()))
+    Some((open..rest.len(), rest.len()))
 }
 
-/// The code a backtick run at the start of `rest` opens, and the bytes it
-/// takes, as the editor reads it: the next run of exactly as many backticks
-/// closes it, on the same line for a code span (`scanCodeSpan` sees one
-/// line) and on any later line for a fence of three or more. With no closer,
-/// the rest of the line is literal, backticks included.
-fn code_span(rest: &str) -> (String, usize) {
+/// The range of `rest` holding the code a backtick run at its start opens,
+/// and the bytes the span takes, as the editor reads it: the next run of
+/// exactly as many backticks closes it, on the same line for a code span
+/// (`scanCodeSpan` sees one line) and on any later line for a fence of three
+/// or more. With no closer, the rest of the line is literal, backticks
+/// included.
+fn code_span(rest: &str) -> (std::ops::Range<usize>, usize) {
     let run_at = |at: usize| rest[at..].len() - rest[at..].trim_start_matches('`').len();
     let open = run_at(0);
     let line_end = rest.find('\n').unwrap_or(rest.len());
@@ -294,11 +403,11 @@ fn code_span(rest: &str) -> (String, usize) {
         let close_at = at + found;
         let close = run_at(close_at);
         if close == open {
-            return (rest[open..close_at].to_owned(), close_at + close);
+            return (open..close_at, close_at + close);
         }
         at = close_at + close;
     }
-    (rest[..line_end].to_owned(), line_end)
+    (0..line_end, line_end)
 }
 
 /// The chars a backslash escapes, as the editor's `isEscapableChar` reads
@@ -456,49 +565,54 @@ pub async fn load_ref_maps_for_block(
     let Some(content) = content else {
         return Ok((HashMap::new(), HashMap::new(), HashMap::new()));
     };
+    load_ref_maps_for_contents(pool, &[content.as_str()]).await
+}
 
-    let tag_ids: Vec<String> = TAG_REF_RE
-        .captures_iter(&content)
-        .map(|cap| cap[1].to_string())
+/// [`load_ref_maps_for_block`] for the references in each of `contents`.
+pub(crate) async fn load_ref_maps_for_contents(
+    pool: &SqlitePool,
+    contents: &[&str],
+) -> Result<RefMaps, AppError> {
+    let tag_ids: Vec<&str> = contents
+        .iter()
+        .flat_map(|content| TAG_REF_RE.captures_iter(content))
+        .map(|cap| cap.extract::<1>().1[0])
         .collect();
-    let tag_names: HashMap<String, String> = if tag_ids.is_empty() {
-        HashMap::new()
-    } else {
-        let ids_json = serde_json::to_string(&tag_ids)?;
-        sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, content FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'tag' AND deleted_at IS NULL",
-        )
-        .bind(&ids_json)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .filter_map(|(id, content)| content.map(|c| (id, c)))
-        .collect()
-    };
-
-    let page_ids: Vec<String> = PAGE_LINK_RE
-        .captures_iter(&content)
-        .map(|cap| cap[1].to_string())
+    let tag_names = load_live_contents(pool, &tag_ids, "tag").await?;
+    let page_ids: Vec<&str> = contents
+        .iter()
+        .flat_map(|content| PAGE_LINK_RE.captures_iter(content))
+        .filter_map(|cap| cap.get(1).map(|id| id.as_str()))
         .collect();
-    let page_titles: HashMap<String, String> = if page_ids.is_empty() {
-        HashMap::new()
-    } else {
-        let ids_json = serde_json::to_string(&page_ids)?;
-        sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, content FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'page' AND deleted_at IS NULL",
-        )
-        .bind(&ids_json)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .filter_map(|(id, content)| content.map(|c| (id, c)))
-        .collect()
-    };
-
-    let block_titles = load_block_ref_titles(pool, [content.as_str()]).await?;
+    let page_titles = load_live_contents(pool, &page_ids, "page").await?;
+    let block_titles = load_block_ref_titles(pool, contents.iter().copied()).await?;
     Ok((tag_names, page_titles, block_titles))
 }
+
+/// The content of each live `block_type` block among `ids`, by id.
+async fn load_live_contents(
+    pool: &SqlitePool,
+    ids: &[&str],
+    block_type: &str,
+) -> Result<HashMap<String, String>, AppError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids_json = serde_json::to_string(ids)?;
+    Ok(sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, content FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?1)) \
+         AND block_type = ?2 AND deleted_at IS NULL",
+    )
+    .bind(&ids_json)
+    .bind(block_type)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .filter_map(|(id, content)| content.map(|c| (id, c)))
+    .collect())
+}
+
+#[cfg(test)]
+#[path = "strip_tests.rs"]
+mod tests;

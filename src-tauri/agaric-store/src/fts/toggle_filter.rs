@@ -152,7 +152,7 @@ async fn fts_page_with_toggles(
             snippet_len,
         )
         .await?;
-        highlight_short_term_rows(&mut response.items, query);
+        highlight_short_term_rows(pool, &mut response.items, query).await?;
         return Ok(response);
     }
 
@@ -462,8 +462,8 @@ async fn fts_partitioned_with_toggles(
             cancel,
         )
         .await?;
-        highlight_short_term_rows(&mut scan.pages, query);
-        highlight_short_term_rows(&mut scan.blocks, query);
+        highlight_short_term_rows(pool, &mut scan.pages, query).await?;
+        highlight_short_term_rows(pool, &mut scan.blocks, query).await?;
         return Ok(scan);
     }
 
@@ -718,10 +718,19 @@ fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
 /// `snippet()` marks only what the trigram index matched, so such a query's
 /// rows carry offsets for every term instead, and a row they mark drops its
 /// snippet as the toggle rows do. A query without a short term is untouched.
-fn highlight_short_term_rows(rows: &mut [SearchBlockRow], query: &str) {
+///
+/// The terms are matched in the text the editor shows, as the scan and FTS5
+/// match them, and each match maps back to the raw content (#6795). A match
+/// in a resolved name (a tag's, a link's page title, a block ref's first
+/// line) has no raw counterpart, so it marks the whole token.
+async fn highlight_short_term_rows(
+    pool: &SqlitePool,
+    rows: &mut [SearchBlockRow],
+    query: &str,
+) -> Result<(), AppError> {
     let parsed = super::search::parse_query(query);
     if parsed.short_terms.is_empty() {
-        return;
+        return Ok(());
     }
     // Longest first: at one position the regex takes the first alternative.
     let mut terms = parsed.terms;
@@ -729,11 +738,46 @@ fn highlight_short_term_rows(rows: &mut [SearchBlockRow], query: &str) {
     let alternatives: Vec<String> = terms.iter().map(|term| regex::escape(term)).collect();
     // A query past `MAX_PATTERN_LEN` keeps its rows, unmarked.
     let Ok(re) = build_regex(&format!("(?i)(?:{})", alternatives.join("|"))) else {
-        return;
+        return Ok(());
     };
+    let contents: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row.content.as_deref())
+        .collect();
+    let (tag_names, page_titles, block_titles) =
+        super::strip::load_ref_maps_for_contents(pool, &contents).await?;
     for row in rows {
-        post_filter_row(row, &re);
+        let Some(content) = row.content.as_deref() else {
+            continue;
+        };
+        let shown = super::strip::shown_text(content, &tag_names, &page_titles, &block_titles);
+        let byte_matches = shown_matches(&shown, &re);
+        if !byte_matches.is_empty() {
+            row.match_offsets = byte_to_utf16_offsets(content, &byte_matches);
+            row.snippet = None;
+        }
     }
+    Ok(())
+}
+
+/// The raw-content byte ranges `re`'s matches in `shown` show, in order.
+/// Matches in one resolved name map to the same token, so ranges that
+/// overlap merge into one.
+fn shown_matches(shown: &super::strip::Shown, re: &Regex) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for m in re.find_iter(&shown.text).filter(|m| m.end() > m.start()) {
+        let (start, end) = shown.raw_range(m.range());
+        if let Some(last) = ranges.last_mut()
+            && start < last.1
+        {
+            last.1 = last.1.max(end);
+        } else if ranges.len() == MAX_OFFSETS_PER_BLOCK {
+            break;
+        } else {
+            ranges.push((start, end));
+        }
+    }
+    ranges
 }
 
 /// Per-row post-filter predicate, extracted
@@ -1695,5 +1739,52 @@ mod unit_tests {
             re.find("会議に行く").is_none(),
             "ASCII \\b cannot match inside CJK"
         );
+    }
+
+    mod shown_match_tests {
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::HashMap;
+
+        fn text(alphabet: Vec<&'static str>, len: std::ops::Range<usize>) -> BoxedStrategy<String> {
+            prop::collection::vec(prop::sample::select(alphabet), len)
+                .prop_map(|parts| parts.concat())
+                .boxed()
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(512))]
+
+            /// Every offset lands on the raw content's char boundaries and
+            /// covers the term, case-folded, once the markup the strip drops
+            /// is taken out (#6795).
+            #[test]
+            fn every_offset_covers_the_term_on_char_boundaries(
+                content in text(
+                    vec!["a", "b", "A", "é", "É", "日", "🙂", " ", "\n", "*", "**", "~~",
+                         "~~~", "==", "`", "\\", "\\*"],
+                    0..40,
+                ),
+                term in text(vec!["a", "b", "A", "é", "日"], 1..3),
+            ) {
+                let empty = HashMap::new();
+                let shown = crate::fts::strip::shown_text(&content, &empty, &empty, &empty);
+                let re = build_regex(&format!("(?i){}", regex::escape(&term))).unwrap();
+                let ranges = shown_matches(&shown, &re);
+                prop_assert_eq!(
+                    ranges.len(),
+                    re.find_iter(&shown.text).count().min(MAX_OFFSETS_PER_BLOCK)
+                );
+                for (start, end) in ranges {
+                    prop_assert!(start < end);
+                    prop_assert!(content.is_char_boundary(start) && content.is_char_boundary(end));
+                    let covered: String = content[start..end]
+                        .chars()
+                        .filter(|c| !matches!(c, '*' | '~' | '=' | '`' | '\\'))
+                        .collect();
+                    prop_assert_eq!(covered.to_lowercase(), term.to_lowercase());
+                }
+            }
+        }
     }
 }

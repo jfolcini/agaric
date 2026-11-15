@@ -1334,6 +1334,52 @@ async fn short_term_matches_the_text_the_editor_shows() {
     );
 }
 
+#[tokio::test]
+async fn a_short_term_in_a_resolved_name_marks_the_whole_token() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, TAG_ULID, "tag", "qx", None, Some(0)).await;
+    insert_block(&pool, PAGE_ULID, "page", "Qx hub", None, Some(0)).await;
+    let tagged = format!("é #[{TAG_ULID}] end");
+    let linked = format!("see [[{PAGE_ULID}]]");
+    seed_short_term_blocks(&pool, &[&tagged, &linked]).await;
+
+    // `é` is one UTF-16 unit; a tag token is 29 and a link token 30.
+    assert_eq!(
+        short_term_hits(&pool, "qx").await,
+        vec![
+            (TAG_ULID.to_owned(), vec![(0, 2)]),
+            (short_id(1), vec![(4, 34)]),
+            (short_id(0), vec![(2, 31)]),
+            (PAGE_ULID.to_owned(), vec![(0, 2)]),
+        ],
+        "the name has no raw counterpart, so the whole token is marked"
+    );
+}
+
+#[tokio::test]
+async fn a_longer_term_split_by_markup_is_marked_beside_a_short_term() {
+    let (pool, _dir) = test_pool().await;
+    seed_short_term_blocks(&pool, &["foo**bar** ab"]).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let rows = search_page(&pool, "foobar ab", SearchToggles::default(), &page).await;
+    assert_eq!(rows.items.len(), 1);
+    let offsets: Vec<(u32, u32)> = rows.items[0]
+        .match_offsets
+        .iter()
+        .map(|m| (m.start, m.end))
+        .collect();
+    assert_eq!(
+        offsets,
+        vec![(0, 8), (11, 13)],
+        "`foo**bar` and `ab` are marked"
+    );
+    assert_eq!(
+        rows.items[0].snippet, None,
+        "the offsets replace the snippet"
+    );
+}
+
 #[test]
 fn a_repeated_short_term_is_scanned_for_once() {
     let parsed = super::search::parse_query("go a go \"a\" going");
