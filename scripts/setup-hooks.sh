@@ -14,7 +14,8 @@
 # (dnf/pacman, best-effort), macOS (brew, best-effort).
 #
 # Best-effort and idempotent by design:
-#   * tools already on PATH are skipped (fast re-runs);
+#   * tools already on PATH are skipped (fast re-runs), a pinned one only at
+#     its pinned version;
 #   * anything that can't be auto-installed on a platform prints a manual hint
 #     instead of aborting — a partial toolchain still builds and runs the app,
 #     you just can't run every hook until the gap is filled.
@@ -277,6 +278,9 @@ ensure_uv() {
 # a green tree went red with no repo change, and the fix that passed locally
 # still failed in CI, unreproducible by construction until the two matched.
 #
+# The shellcheck and shfmt rows are not crates: `release_get_pinned` reads them
+# for the same reason, local and CI running one version.
+#
 # A plain `case` (not an associative array) so this stays bash-3.2/macOS
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
 # without the other reintroduces the exact drift this table exists to
@@ -288,6 +292,8 @@ pinned_version_for() {
     prek) echo "0.3.8" ;;
     taplo-cli) echo "0.10.0" ;;
     typos-cli) echo "1.46.0" ;;
+    shellcheck) echo "0.11.0" ;;
+    shfmt) echo "3.14.1" ;;
     *) echo "" ;;
   esac
 }
@@ -495,11 +501,9 @@ ZIZMOR_VERSION_AWK="$(
 # provisioning flow over one tool — the same reason `cargo_get_pinned` warns
 # and installs unpinned when ZIZMOR_PINNED_VERSION comes back empty. A
 # degraded zizmor pin is a slow reinstall-every-run, not a broken box; a hard
-# exit here is taken BEFORE every installer below, so it would take the other
-# fourteen hook binaries down with it — HOOK_BINS names fourteen and sqlx-cli
-# is checked separately, so fifteen in all, of which zizmor is one; none of
-# the cargo tools, shellcheck, go or python3 would be reached. The guard below
-# is the runtime notice (#3545, finding 1).
+# exit here is taken BEFORE every installer below, so it would take every
+# other hook binary in HOOK_BINS down with it. The guard below is the runtime
+# notice (#3545, finding 1).
 if [ -z "$ZIZMOR_VERSION_AWK" ]; then
   warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — falling back to cargo_get_pinned's \$NF default, which can disagree with the wrapper's \$2 and reinstall zizmor on every run (#3545)"
 fi
@@ -522,6 +526,91 @@ SQRUFF_VERSION_AWK='NR == 1 { print $2 }'
 PREK_VERSION_AWK='NR == 1 { print $2 }'
 TAPLO_VERSION_AWK='NR == 1 { print $2 }'
 TYPOS_VERSION_AWK='NR == 1 { print $2 }'
+
+# The shellcheck and shfmt hooks run the upstream release binary at the
+# pinned version, verified against these digests: the ones the CI lint job's
+# taiki-e/install-action manifest checks for the same `tool:` pins. A package
+# manager's copy is whatever its distro carries, so a differing one on PATH is
+# replaced, as `cargo_get_pinned` does. It lands in ~/.cargo/bin, which
+# rustup's env puts ahead of the system directories that hold an apt or brew
+# copy.
+#
+# To bump: change the version in `pinned_version_for` and the CI `tool:`
+# lists, and refresh the digests below from the new release assets with
+# `sha256sum` (shellcheck publishes no checksum file).
+SHELLCHECK_SHA256_LINUX_X86_64="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+SHELLCHECK_SHA256_LINUX_AARCH64="12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588"
+SHELLCHECK_SHA256_DARWIN_X86_64="3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6"
+SHELLCHECK_SHA256_DARWIN_ARM64="56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79"
+SHFMT_SHA256_LINUX_X86_64="76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf"
+SHFMT_SHA256_LINUX_AARCH64="5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489"
+SHFMT_SHA256_DARWIN_X86_64="d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6"
+SHFMT_SHA256_DARWIN_ARM64="b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5"
+# `shellcheck --version` prints `version: 0.11.0` on its second line;
+# `shfmt --version` prints `v3.14.1`.
+SHELLCHECK_VERSION_AWK='$1 == "version:" { print $2 }'
+SHFMT_VERSION_AWK='NR == 1 { sub(/^v/, ""); print }'
+
+# release_get_pinned <tool> — install shellcheck or shfmt at its pinned
+# version. The download is verified before anything is extracted or
+# installed, and no downloaded content reaches a shell.
+release_get_pinned() {
+  local bin="$1" version field current="" platform="" want="" url member=""
+  local dest="${CARGO_HOME:-$HOME/.cargo}/bin" tmp
+  version="$(pinned_version_for "$bin")"
+  case "$bin" in
+    shellcheck) field="$SHELLCHECK_VERSION_AWK" ;;
+    shfmt) field="$SHFMT_VERSION_AWK" ;;
+  esac
+  if have "$bin"; then
+    current="$("$bin" --version 2>/dev/null | awk "$field")"
+    if [ "$current" = "$version" ]; then ok "$bin $version (already installed)"; return; fi
+    note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
+  fi
+  case "${OS}-$(uname -m)" in
+    Linux-x86_64)              platform=LINUX_X86_64 ;;
+    Linux-aarch64|Linux-arm64) platform=LINUX_AARCH64 ;;
+    Darwin-x86_64)             platform=DARWIN_X86_64 ;;
+    Darwin-arm64)              platform=DARWIN_ARM64 ;;
+  esac
+  if [ -z "$platform" ]; then
+    warn "no pinned $bin build for ${OS}-$(uname -m) — install $bin $version by hand"
+    return
+  fi
+  case "$bin-$platform" in
+    shellcheck-LINUX_X86_64)  want="$SHELLCHECK_SHA256_LINUX_X86_64";  url=linux.x86_64 ;;
+    shellcheck-LINUX_AARCH64) want="$SHELLCHECK_SHA256_LINUX_AARCH64"; url=linux.aarch64 ;;
+    shellcheck-DARWIN_X86_64) want="$SHELLCHECK_SHA256_DARWIN_X86_64"; url=darwin.x86_64 ;;
+    shellcheck-DARWIN_ARM64)  want="$SHELLCHECK_SHA256_DARWIN_ARM64";  url=darwin.aarch64 ;;
+    shfmt-LINUX_X86_64)       want="$SHFMT_SHA256_LINUX_X86_64";       url=linux_amd64 ;;
+    shfmt-LINUX_AARCH64)      want="$SHFMT_SHA256_LINUX_AARCH64";      url=linux_arm64 ;;
+    shfmt-DARWIN_X86_64)      want="$SHFMT_SHA256_DARWIN_X86_64";      url=darwin_amd64 ;;
+    shfmt-DARWIN_ARM64)       want="$SHFMT_SHA256_DARWIN_ARM64";       url=darwin_arm64 ;;
+  esac
+  if [ "$bin" = shellcheck ]; then
+    member="shellcheck-v${version}/shellcheck"
+    url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${url}.tar.xz"
+  else
+    url="https://github.com/mvdan/sh/releases/download/v${version}/shfmt_v${version}_${url}"
+  fi
+  tmp="$(mktemp -d)"
+  # Same guard, same reasoning as ensure_cargo_binstall above (#3622).
+  if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+    warn "mktemp -d failed (no writable temp dir?) — skipping the $bin download"
+    return
+  fi
+  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/download" \
+       && verify_sha256 "$tmp/download" "$want" \
+       && { [ -z "$member" ] || { tar -xJf "$tmp/download" -C "$tmp" "$member" && mv "$tmp/$member" "$tmp/download"; }; } \
+       && mkdir -p "$dest" && install -m 0755 "$tmp/download" "$dest/$bin"; then
+    current="$("$dest/$bin" --version 2>/dev/null | awk "$field")"
+    if [ "$current" = "$version" ]; then ok "$bin $version (release binary, $platform)"
+    else warn "$dest/$bin reports ${current:-no version} after install, not $version"; fi
+  else
+    warn "$bin $version download/verify failed — install it by hand from $url"
+  fi
+  rm -rf "$tmp"
+}
 
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
@@ -658,8 +747,8 @@ else
 fi
 
 # --- System hook tools -----------------------------------------------------
-# The ShellCheck hook calls the system `shellcheck` binary directly.
-pkg_install shellcheck shellcheck shellcheck
+release_get_pinned shellcheck
+release_get_pinned shfmt
 
 # go: prek BUILDS the `gitleaks` and `actionlint` hooks from their pinned
 # upstream repos via its Go backend, so the box needs a Go toolchain (the
@@ -718,7 +807,7 @@ fi
 # surfaced later as a hard-failed push), so instead of relying on the exit
 # code, print an impossible-to-miss `MISSING:` block naming every hook
 # binary still absent after every installer + fallback above ran.
-HOOK_BINS="prek cargo-deny cargo-machete cargo-audit sqruff typos zizmor taplo cargo-nextest just lychee shellcheck go python3"
+HOOK_BINS="prek cargo-deny cargo-machete cargo-audit sqruff typos zizmor taplo cargo-nextest just lychee shellcheck shfmt go python3"
 missing=""
 for bin in $HOOK_BINS; do
   have "$bin" || missing="$missing $bin"

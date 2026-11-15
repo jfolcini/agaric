@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// CI installs prek, zizmor, taplo-cli, typos-cli and sqruff from the
-// `taiki-e/install-action` `tool:` lists under .github/workflows/; a dev box
+// CI installs prek, zizmor, taplo-cli, typos-cli, sqruff, shellcheck and shfmt
+// from the `taiki-e/install-action` `tool:` lists under .github/workflows/; a dev box
 // installs the versions in scripts/setup-hooks.sh (`pinned_version_for`) and
 // scripts/zizmor-hook.sh (`ZIZMOR_PINNED_VERSION`). Dependabot bumps action
 // refs, not tool strings, so nothing else keeps those copies equal (#3523,

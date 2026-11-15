@@ -519,7 +519,7 @@ prek_skip_list() {
     fi
     # CI/tooling absent → skip the workflow/shell lint hooks.
     if [ "$has_ci" = "0" ]; then
-        skip_items+=(actionlint zizmor shellcheck)
+        skip_items+=(actionlint zizmor shellcheck shfmt)
     fi
     # Docs absent → skip the Markdown/doc hooks.
     if [ "$has_docs" = "0" ]; then
@@ -530,10 +530,10 @@ prek_skip_list() {
     # so a binding-boundary / cross-cutting hook still runs if ANY adjacent
     # category changed.
     [ "$has_ci" = "0" ] && [ "$has_rs" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
-    # tauri-mock-parity / snapshot-redaction / retired-pending guard the FE↔BE
-    # binding boundary — they MUST run if frontend OR backend changed.
+    # tauri-mock-parity / snapshot-redaction guard the FE↔BE binding
+    # boundary — they MUST run if frontend OR backend changed.
     [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
-        skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
+        skip_items+=(tauri-mock-parity snapshot-redaction)
     # architecture-citations reads BOTH docs and code, so it is a 3-way compound
     # and not a docs-only hook: CI's placement, and CI is the gate.
     [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
