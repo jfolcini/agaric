@@ -235,12 +235,42 @@ export function graphFilterToCanonical(filter: GraphFilter): FilterPredicate {
   }
 }
 
+/** The predicate kinds no `GraphFilter` expresses. */
+const NON_GRAPH_KINDS = [
+  'blockType',
+  'caseSensitive',
+  'contains',
+  'createdRange',
+  'hasNoInboundLinks',
+  'lastEdited',
+  'linkedFrom',
+  'linksTo',
+  'orphan',
+  'pathGlob',
+  'property',
+  'regex',
+  'sourcePage',
+  'space',
+  'stub',
+  'tagPrefix',
+  'wholeWord',
+] as const satisfies readonly FilterPredicate['kind'][]
+
+type NonGraphPredicate = Extract<FilterPredicate, { kind: (typeof NON_GRAPH_KINDS)[number] }>
+
+function isNonGraph(predicate: FilterPredicate): predicate is NonGraphPredicate {
+  return (NON_GRAPH_KINDS as readonly string[]).includes(predicate.kind)
+}
+
 /**
  * Project a single canonical predicate back to a legacy `GraphFilter`, or
  * `null` when the predicate is not a graph dimension (the caller drops it).
  * Inverse of `graphFilterToCanonical` for every graph kind.
  */
 export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter | null {
+  // The switch below names every graph kind, so a new kind fails to compile
+  // until it is either listed here or given a case.
+  if (isNonGraph(predicate)) return null
   switch (predicate.kind) {
     case 'tag': {
       return predicate.by === 'id' ? { type: 'tag', tagIds: [predicate.tagId] } : null
@@ -271,25 +301,6 @@ export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter 
     }
     case 'excludeJournal': {
       return { type: 'excludeJournal', value: true }
-    }
-    case 'blockType':
-    case 'caseSensitive':
-    case 'contains':
-    case 'createdRange':
-    case 'hasNoInboundLinks':
-    case 'lastEdited':
-    case 'linkedFrom':
-    case 'linksTo':
-    case 'orphan':
-    case 'pathGlob':
-    case 'property':
-    case 'regex':
-    case 'sourcePage':
-    case 'space':
-    case 'stub':
-    case 'tagPrefix':
-    case 'wholeWord': {
-      return null
     }
   }
 }

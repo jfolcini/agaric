@@ -193,6 +193,22 @@ function blockTypeSummary(
     : t('pageBrowser.filter.summaryBlockType', { values: list })
 }
 
+function resolved(resolver: ((id: string) => string) | undefined, id: string): string {
+  return resolver ? resolver(id) : id
+}
+
+function pathGlobSummary(
+  filter: Extract<FilterPrimitive, { type: 'PathGlob' }>,
+  t: TFunction,
+): string {
+  if (isExcludeJournalPagesFilter(filter)) return t('pageBrowser.filter.facetExcludeJournalPages')
+  // D24 ships the path-exclude toggle, so the Pages popover emits both the
+  // `exclude: false` ("path") and `exclude: true` ("not path") variants.
+  return filter.exclude
+    ? t('pageBrowser.filter.summaryPathExclude', { pattern: filter.pattern })
+    : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })
+}
+
 /** #1280 D2 — "created after X", "created before Y", or "created X…Y". */
 function createdSummary(
   filter: Extract<FilterPrimitive, { type: 'Created' }>,
@@ -267,18 +283,10 @@ export function pageFilterSummary(
 ): string {
   switch (filter.type) {
     case 'Tag': {
-      return t('pageBrowser.filter.summaryTag', {
-        tag: tagResolver ? tagResolver(filter.tag) : filter.tag,
-      })
+      return t('pageBrowser.filter.summaryTag', { tag: resolved(tagResolver, filter.tag) })
     }
     case 'PathGlob': {
-      if (isExcludeJournalPagesFilter(filter))
-        return t('pageBrowser.filter.facetExcludeJournalPages')
-      // D24 ships the path-exclude toggle, so the Pages popover emits both the
-      // `exclude: false` ("path") and `exclude: true` ("not path") variants.
-      return filter.exclude
-        ? t('pageBrowser.filter.summaryPathExclude', { pattern: filter.pattern })
-        : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })
+      return pathGlobSummary(filter, t)
     }
     case 'HasProperty': {
       return hasPropertySummary(filter, t, refResolver)
@@ -315,12 +323,12 @@ export function pageFilterSummary(
       // #1478 — `target` is a ULID; resolve to the page title (same resolver the
       // grouped-results headers use, #1447), falling back to the raw id.
       return t('pageBrowser.filter.summaryLinksTo', {
-        target: refResolver ? refResolver(filter.target) : filter.target,
+        target: resolved(refResolver, filter.target),
       })
     }
     case 'LinkedFrom': {
       return t('pageBrowser.filter.summaryLinkedFrom', {
-        source: refResolver ? refResolver(filter.source) : filter.source,
+        source: resolved(refResolver, filter.source),
       })
     }
     case 'HasParentMatching': {
