@@ -169,10 +169,11 @@ export function analyzeWorkflowPathCoverage({ root, modules, workflowPath = PR_W
   const regexps = patterns.map(pathFilterToRegExp)
   const uncovered = []
   for (const [name, mod] of Object.entries(modules)) {
-    for (const p of [mod.src, ...(mod.tests ?? [])]) {
-      if (p === undefined) continue
-      if (!regexps.some((re) => re.test(p))) uncovered.push({ module: name, path: p })
-    }
+    // `src` only: the workflow's `!` patterns leave test files out on purpose,
+    // so a module's `tests` paths are not meant to start the lane.
+    const p = mod.src
+    if (p === undefined) continue
+    if (!regexps.some((re) => re.test(p))) uncovered.push({ module: name, path: p })
   }
   return { uncovered, patterns, reason: null }
 }

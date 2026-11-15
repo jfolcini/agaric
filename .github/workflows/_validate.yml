@@ -12,11 +12,11 @@ name: Validate (prek-equivalent)
 # enumerated below,
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
-#   - detect-changes — classifies the diff (`scripts/classify-changes.sh`).
-#   - verify-version-agreement — always-on mutual-agreement check across
-#                        every file scripts/bump-version.sh bumps, the fuzz
-#                        crate's own lock included (#2975); no path gating,
-#                        no docs-only skip.
+#   - detect-changes — classifies the diff (`scripts/classify-changes.sh`),
+#                        then runs the always-on version mutual-agreement
+#                        check across every file scripts/bump-version.sh
+#                        bumps, the fuzz crate's own lock included (#2975);
+#                        no path gating, no docs-only skip.
 #   - verify-lockfiles — asserts BOTH Cargo.lock files (src-tauri/ and
 #                        src-tauri/fuzz/) are a faithful resolution of their
 #                        manifests (#4142); no build. Gated on backend
@@ -28,7 +28,7 @@ name: Validate (prek-equivalent)
 #                        markdown link/citation checks, typos, lychee); runs
 #                        ONLY on a docs-only diff (exactly one of
 #                        lint/docs-lint runs per push/PR).
-#   - vitest          — the frontend suite, sharded 3 ways; each shard emits a
+#   - vitest          — the frontend suite, sharded 2 ways; each shard emits a
 #                        blob report. Gated on the classifier's `vitest`:
 #                        frontend changes outside `e2e/` and `e2e-tauri/`.
 #                        Node 24 (primary).
@@ -37,7 +37,7 @@ name: Validate (prek-equivalent)
 #                        build + bundle-size gate. Paired with vitest.
 #   - vitest-e2e-tauri — `npx vitest run e2e-tauri` alone, for a diff whose
 #                        only vitest paths are `e2e-tauri/` non-specs.
-#   - playwright      — the e2e suite, sharded 4 ways, or one leg running only
+#   - playwright      — the e2e suite, sharded 3 ways, or one leg running only
 #                        the changed specs of a spec-only diff; gated on
 #                        frontend changes minus vitest test files and
 #                        `e2e-tauri/`.
@@ -172,41 +172,18 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
-
-  # ---------------------------------------------------------------------------
-  # verify-version-agreement (#2975) — the version mutual-agreement check over
-  # every file `scripts/bump-version.sh` bumps, always-on (no detect-changes
-  # gating, no docs-only fast path).
-  # Extracted from release.yml's `verify-version` job, which only runs on a
-  # tag push — so version drift between the manifests was previously caught
-  # mid-release instead of at PR time. This job reuses the EXACT SAME
-  # extraction expressions and runs them on every PR/push, but checks only
-  # that the manifests agree with EACH OTHER — there is no tag yet at
-  # PR time, so the tag-equality half of release.yml's check does not apply
-  # here and is intentionally NOT duplicated. release.yml's `verify-version`
-  # job is unchanged and still separately asserts the tag matches the
-  # manifests at release time; this job does not replace it.
-  #
-  # `src-tauri/fuzz/Cargo.lock` is checked here even though release.yml's
-  # tag-time twin does not look at it. It pins `agaric` through a path
-  # dependency, so a version bump moves it too — but it sits in the fuzz
-  # crate's OWN workspace, outside every parent-workspace command, and until
-  # `bump-version.sh` learned to regenerate it EVERY release from 0.7.1 to
-  # 0.9.8 left it stale (by up to five versions). `verify-lockfiles` below
-  # already reds on that, but as a raw `cargo … --locked` error against a
-  # file whose staleness is a VERSION-BUMP omission; diagnosing it from the
-  # job whose name says "version agreement", with the regeneration command in
-  # the message, is what turns that red into an instruction.
-  # ---------------------------------------------------------------------------
-  verify-version-agreement:
-    runs-on: ubuntu-24.04
-    # Trivial jq / grep / awk over the manifests + fail-fast comparison —
-    # same budget as release.yml's verify-version job.
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      # The version mutual-agreement check (#2975) over every file
+      # `scripts/bump-version.sh` bumps, the fuzz crate's own lock included. It
+      # lives here, not in a job of its own, because it is a few lines of
+      # jq/awk and a runner slot for them is not worth the checkout. Always on:
+      # no category gates it, so a docs-only diff runs it too. A red here reds
+      # `detect-changes`, which `validate-all` already fails closed on and every
+      # `needs: detect-changes` job skips on. It checks only that the manifests
+      # agree with EACH OTHER; the tag-equality half is `release.yml`'s
+      # `verify-version`. `src-tauri/fuzz/Cargo.lock` is read because it pins
+      # `agaric` through a path dependency, so a version bump moves it too, and
+      # `bump-version.sh` once left it stale for every release: the message
+      # carries the regeneration command.
       - name: Verify the version manifests mutually agree
         run: |
           set -euo pipefail
@@ -1153,7 +1130,7 @@ jobs:
         run: prek run --all-files --hook-stage pre-push lychee
 
   # ---------------------------------------------------------------------------
-  # vitest — frontend unit + integration suite, sharded 3 ways (#4818). Each
+  # vitest — frontend unit + integration suite, sharded 2 ways (#4818). Each
   # cell emits a blob report; `vitest-coverage` below replays all of them.
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
@@ -1189,7 +1166,7 @@ jobs:
       # On a PR, a red shard stops the rest (see the stop-after-* jobs below).
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1204,9 +1181,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (shard ${{ matrix.shard }}/3, blob report + raw coverage)
+      - name: Vitest (shard ${{ matrix.shard }}/2, blob report + raw coverage)
         # `--reporter=blob` records this shard's results and raw v8 coverage
-        # to `.vitest-reports/blob-${{ matrix.shard }}-3.json`, named
+        # to `.vitest-reports/blob-${{ matrix.shard }}-2.json`, named
         # EXPLICITLY rather than left to the reporter's default: vitest 5 moved
         # that default to `.vitest/blob`. That emptied this upload — loudly,
         # since `if-no-files-found: error` fails the step — and made the merge
@@ -1230,11 +1207,11 @@ jobs:
         # downstream, on the whole picture.
         run: |
           npx vitest run \
-            --shard=${{ matrix.shard }}/3 \
+            --shard=${{ matrix.shard }}/2 \
             --reporter=blob \
             --reporter=dot \
             --silent=passed-only \
-            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-3.json \
+            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
             --coverage \
             --coverage.reporter=json \
             --coverage.thresholds.lines=0 \
@@ -1354,7 +1331,7 @@ jobs:
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
         run: |
           {
-            echo "## Coverage (vitest, 3 shards merged)"
+            echo "## Coverage (vitest, 2 shards merged)"
             echo
             echo "| Metric | % | Covered / Total |"
             echo "| --- | --- | --- |"
@@ -1420,7 +1397,7 @@ jobs:
         run: npx vitest run e2e-tauri --reporter=dot --silent=passed-only
 
   # ---------------------------------------------------------------------------
-  # playwright — E2E browser tests, sharded 4 ways (#5848). Per-shard report
+  # playwright — E2E browser tests, sharded 3 ways (#5848). Per-shard report
   # uploaded on failure (artifact name includes the shard number so the shards
   # don't collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
@@ -1431,20 +1408,20 @@ jobs:
     # or `src-tauri/tauri.conf.json`, which a spec reads.
     # When every such path is an `e2e/*.spec.ts`, `playwright_specs` lists the
     # changed specs still on disk and one leg runs just those (#5853); any
-    # other path empties it and the whole suite runs on four shards.
+    # other path empties it and the whole suite runs on three shards.
     # Fail-closed classifier — see detect-changes.
     if: needs.detect-changes.outputs.playwright == 'true'
     runs-on: ubuntu-24.04
-    # 35 min = the measured 25-43s preamble + the install-deps step's
+    # 40 min = the measured 25-43s preamble + the install-deps step's
     # worst-known-legitimate 21m10s (300s attempt-1 bound + 30s SIGKILL grace
-    # + 180s lock poll + 760s cold-mirror attempt 2) + ~9 min for the shard
-    # itself, ~13% headroom.
-    timeout-minutes: 35
+    # + 180s lock poll + 760s cold-mirror attempt 2) + ~16 min for the slowest
+    # of the three shards, ~7% headroom.
+    timeout-minutes: 40
     strategy:
       # On a PR, a red shard stops the rest (see the stop-after-* jobs below).
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
-        shard: ${{ fromJSON(needs.detect-changes.outputs.playwright_specs == '' && '[1, 2, 3, 4]' || '[1]') }}
+        shard: ${{ fromJSON(needs.detect-changes.outputs.playwright_specs == '' && '[1, 2, 3]' || '[1]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1491,7 +1468,7 @@ jobs:
           else
             # Dealt by each file's measured time (scripts/playwright-shard.mjs):
             # `--shard` cuts equal test counts, and the slow files sort together.
-            files=$(node scripts/playwright-shard.mjs "$SHARD/4")
+            files=$(node scripts/playwright-shard.mjs "$SHARD/3")
             # shellcheck disable=SC2086
             npx playwright test $files
           fi
@@ -1996,7 +1973,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, vitest-e2e-tauri, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, vitest-e2e-tauri, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -2079,10 +2056,6 @@ jobs:
           fi
           echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend rust_tests=$rust_tests"
 
-          # verify-version-agreement is always-on (#2975) — no category gates
-          # it, so a skip is never acceptable.
-          check_job verify-version-agreement "false"
-
           # ---- Per-category acceptance --------------------------------------
           # lint is CROSS-CUTTING: it runs on any non-docs change, so its skip
           # is allowed only when docs_only.
@@ -2150,15 +2123,6 @@ jobs:
     uses: ./.github/workflows/_stop-pr-ci.yml
     with:
       failed-job: detect-changes
-
-  stop-after-verify-version-agreement:
-    needs: verify-version-agreement
-    if: failure() && needs.verify-version-agreement.result == 'failure' && github.event_name == 'pull_request'
-    permissions:
-      actions: write
-    uses: ./.github/workflows/_stop-pr-ci.yml
-    with:
-      failed-job: verify-version-agreement
 
   stop-after-verify-lockfiles:
     needs: verify-lockfiles
