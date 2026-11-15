@@ -239,13 +239,21 @@ test.describe('The board on a touch tablet @search @mobile', () => {
     await column(page, 'TODO').evaluate((el) => el.scrollIntoView({ block: 'center' }))
 
     // A quick swipe across the card scrolls the board sideways and lifts nothing.
+    // It flings: the board scrolls on after the finger lifts, and setting
+    // `scrollLeft` does not stop it, so the card is measured only after the
+    // fling's `scrollend`.
+    const swipeEnd = await viewport.evaluateHandle((el) => ({
+      scrollLeft: new Promise<number>((resolve) => {
+        el.addEventListener('scrollend', () => resolve(el.scrollLeft), { once: true })
+      }),
+    }))
     const swipe = await centre(card(page, 'TODO', 'Board spec touched'))
     await touches(page, async (send) => {
       await send('touchStart', swipe.x, swipe.y)
       for (let i = 1; i <= 10; i++) await send('touchMove', swipe.x - i * 30, swipe.y)
       await send('touchEnd')
     })
-    await expect.poll(() => viewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0)
+    expect(await swipeEnd.evaluate((end) => end.scrollLeft)).toBeGreaterThan(0)
     // Nothing was picked up: the drop below shows the region would say so.
     await expect(announced(page, 'Board spec touched')).toHaveCount(0)
     await viewport.evaluate((el) => {
@@ -268,6 +276,8 @@ test.describe('The board on a touch tablet @search @mobile', () => {
         )
       }
       await renderedFrame(page)
+      // A drag between columns mid-board leaves the board where it was.
+      expect(await viewport.evaluate((el) => el.scrollLeft)).toBe(0)
       await send('touchEnd')
     })
     await dndClickGuardLifted(page)
@@ -282,5 +292,42 @@ test.describe('The board on a touch tablet @search @mobile', () => {
     await reopenBoard(page)
     await expect(card(page, 'DOING', 'Board spec touched')).toHaveCount(1)
     await expect(card(page, 'TODO', 'Board spec touched')).toHaveCount(0)
+  })
+
+  test('a card held at the board’s edge scrolls it to a column off screen', async ({ page }) => {
+    await seedSearchBlocks(page, [{ content: 'Board spec edge', todo: 'TODO' }])
+    await openStateBoard(page)
+    const viewport = page
+      .getByTestId('query-board')
+      .locator('[data-slot="scroll-area-viewport"]')
+      .first()
+    await column(page, 'TODO').evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await expect(column(page, 'No value')).not.toBeInViewport()
+
+    const from = await centre(card(page, 'TODO', 'Board spec edge'))
+    const right = await viewport.evaluate((el) => el.getBoundingClientRect().right)
+    await touches(page, async (send) => {
+      await send('touchStart', from.x, from.y)
+      await expect(page.getByTestId('query-board-drag-overlay')).toHaveText('Board spec edge')
+      for (let i = 1; i <= 10; i++) {
+        await send('touchMove', from.x + ((right - 10 - from.x) * i) / 10, from.y)
+      }
+      // Held at the edge, the board scrolls to its end.
+      await expect
+        .poll(() => viewport.evaluate((el) => el.scrollWidth - el.clientWidth - el.scrollLeft))
+        .toBeLessThan(1)
+      const to = await centre(column(page, 'No value'))
+      await send('touchMove', to.x, to.y)
+      await renderedFrame(page)
+      await send('touchEnd')
+    })
+    await dndClickGuardLifted(page)
+
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: 'Moved to No value' }),
+    ).toBeVisible()
+    await reopenBoard(page)
+    await expect(card(page, 'No value', 'Board spec edge')).toHaveCount(1)
+    await expect(card(page, 'TODO', 'Board spec edge')).toHaveCount(0)
   })
 })

@@ -183,6 +183,36 @@ describe('useAutoScrollOnDrag', () => {
     expect(delta2).toBeGreaterThan(delta1)
   })
 
+  it('on the x axis, scrolls sideways at the left and right edges and never vertically', () => {
+    const container = makeContainer({ left: 0, right: 800 })
+    let scrollLeft = 300
+    Object.defineProperty(container, 'scrollLeft', {
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = v
+      },
+      configurable: true,
+    })
+    renderHook(() => useAutoScrollOnDrag({ current: container }, true, 'x'))
+
+    // 20px from the right edge, at a y inside the top zone.
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointermove', { clientX: 780, clientY: 110 }))
+    })
+    act(() => flushRAF(1))
+    expect(container.scrollLeft).toBe(300 + (30 / SCROLL_ZONE) * MAX_SPEED)
+
+    // 10px from the left edge.
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointermove', { clientX: 10, clientY: 110 }))
+    })
+    act(() => flushRAF(1))
+    expect(container.scrollLeft).toBe(
+      300 + (30 / SCROLL_ZONE) * MAX_SPEED - (40 / SCROLL_ZONE) * MAX_SPEED,
+    )
+    expect(container.scrollTop).toBe(200)
+  })
+
   // 5. No scroll when pointer is in the middle
   it('does not scroll when pointer is in the middle of the container', () => {
     const container = makeContainer({ top: 100, bottom: 600 })

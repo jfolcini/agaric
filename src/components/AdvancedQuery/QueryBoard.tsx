@@ -50,10 +50,10 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
+import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { pressesFocusedControl, useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { AggregateSpec, BlockRow, FilterExpr, SortKey } from '@/lib/bindings'
 import { displayPageTitle } from '@/lib/date-utils'
-import { shouldReduceMotion } from '@/lib/preferences'
 import { resolveBlockDisplay } from '@/lib/query-result-utils'
 import { cn } from '@/lib/utils'
 
@@ -399,8 +399,15 @@ function QueryBoardColumn({
 export function QueryBoard({ columns, ...query }: QueryBoardProps): React.ReactElement {
   const { t } = useTranslation()
   const boardRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement | null>(null)
   const [dragged, setDragged] = useState<CardDrag | null>(null)
   const sensors = useSensors(usePointerDragSensor())
+  useEffect(() => {
+    mainRef.current = document.getElementById('main-content')
+  }, [])
+  useAutoScrollOnDrag(viewportRef, dragged !== null, 'x')
+  useAutoScrollOnDrag(mainRef, dragged !== null)
   const labelled = columns.map((column): MoveTarget => ({
     column,
     label:
@@ -433,8 +440,11 @@ export function QueryBoard({ columns, ...query }: QueryBoardProps): React.ReactE
     <DndContext
       sensors={sensors}
       collisionDetection={pointerWithin}
-      // Edge scrolling is a JS loop the reduced-motion CSS cannot stop, as in the block tree.
-      autoScroll={!shouldReduceMotion()}
+      // dnd-kit's edge scrolling pairs the drop target's scroll ancestors with
+      // rects measured for the card's, and the card has one more, its column:
+      // the board scrolled under a finger mid-board. Edge scrolling is ours, as
+      // in the block tree.
+      autoScroll={false}
       onDragStart={({ active }: DragStartEvent) =>
         setDragged((active.data.current as CardDrag | undefined) ?? null)
       }
@@ -446,7 +456,7 @@ export function QueryBoard({ columns, ...query }: QueryBoardProps): React.ReactE
         t('advancedQuery.board.dragInstructions'),
       )}
     >
-      <ScrollArea orientation="horizontal" data-testid="query-board">
+      <ScrollArea orientation="horizontal" data-testid="query-board" viewportRef={viewportRef}>
         <div ref={boardRef} className="flex items-start gap-3 pb-3">
           {labelled.map(({ column, label }) => (
             <QueryBoardColumn
