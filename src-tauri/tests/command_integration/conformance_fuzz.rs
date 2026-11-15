@@ -41,6 +41,10 @@
 //! cargo nextest run --workspace --run-ignored all -E 'test(conformance_fuzz)'
 //! ```
 //!
+//! It prints its seed before the first case, so a run the leash kills still
+//! names it: `PROPTEST_RNG_SEED=<seed>` replays it, and
+//! `PROPTEST_MAX_SHRINK_TIME=0` lifts [`SHRINK_BUDGET_MS`] to shrink it fully.
+//!
 //! The same body over [`FIXED_SEED`] and [`FIXED_SEED_CASES`] chains is an
 //! ordinary test (#6567): the chains are the same on every run, so it reddens
 //! only on a change to the mock, the backend, or the generator. It runs with
@@ -89,9 +93,12 @@ use agaric_engine::proptest_db_harness::{HARNESS_SPACE_IDS, op_chain_strategy, r
 use agaric_store::op::{OpPayload, SPACE_PROPERTY_KEY};
 use proptest::prelude::{Just, Strategy, any, prop_oneof};
 use proptest::sample::Index;
-use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
+use proptest::test_runner::{
+    Config, RngAlgorithm, RngSeed, TestCaseError, TestError, TestRng, TestRunner,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -108,6 +115,12 @@ const DEFAULT_CASES: u32 = 256;
 /// ones every run. Changing either constant reshuffles them.
 const FIXED_SEED_CASES: u32 = 64;
 const FIXED_SEED: [u8; 32] = [0x67; 32];
+
+/// How long a failing run may shrink. Proptest's own cap is `cases × 4`
+/// replays and no time limit; at a fraction of a second per replay that
+/// outlasts nextest's `slow-timeout` kill, which then hid the divergence, and
+/// the retry drew a new seed and passed.
+const SHRINK_BUDGET_MS: u32 = 30_000;
 
 /// The name every generated fixture carries.
 const FUZZ_FIXTURE: &str = "conformance_fuzz_generated";
@@ -733,10 +746,15 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
                 "beforeDate": "2031-01-01", "todoStates": ["TODO"], "limit": 100, "scope": scope,
             },
         }),
-        json!({ "name": "search", "command": "search_blocks", "args": {
-            "query": term, "limit": 50,
-            "filter": { "scope": { "kind": "spaces", "space_ids": ["$SPACE"] } },
-        }}),
+        json!({ "name": "search", "command": "search_blocks",
+            "unordered": "ranked by bm25, which the mock approximates by match density \
+                          (`approximateFtsRank`), so blocks that match a different number of \
+                          times can rank in a different order",
+            "args": {
+                "query": term, "limit": 50,
+                "filter": { "scope": { "kind": "spaces", "space_ids": ["$SPACE"] } },
+            },
+        }),
         json!({ "name": "advanced", "command": "run_advanced_query", "unordered": RAW_ID_ORDER,
             "args": { "request": { "limit": 100, "spaceId": "$SPACE" } },
         }),
@@ -1069,6 +1087,17 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
     if std::env::var_os("PROPTEST_CASES").is_none() {
         config.cases = DEFAULT_CASES;
     }
+    if std::env::var_os("PROPTEST_MAX_SHRINK_TIME").is_none() {
+        config.max_shrink_time = SHRINK_BUDGET_MS;
+    }
+    // Drawn here rather than inside the runner, so it can be printed first.
+    if config.rng_seed == RngSeed::Random {
+        config.rng_seed = RngSeed::Fixed(std::hash::RandomState::new().hash_one(0_u8));
+    }
+    eprintln!(
+        "#4669 differential fuzz seed {0}: replay with PROPTEST_RNG_SEED={0}",
+        config.rng_seed
+    );
     // The counter-example file is this lane's artefact; proptest's own
     // regression file would pin an opaque seed instead of a readable fixture.
     config.failure_persistence = None;
@@ -1088,6 +1117,7 @@ fn mock_matches_backend_on_generated_op_chains_4669() {
 fn mock_matches_backend_on_fixed_seed_op_chains_6567() {
     let config = Config {
         cases: FIXED_SEED_CASES,
+        max_shrink_time: SHRINK_BUDGET_MS,
         failure_persistence: None,
         ..Config::default()
     };

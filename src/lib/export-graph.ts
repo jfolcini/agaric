@@ -566,7 +566,7 @@ function collectAttachmentIds(md: string): Set<string> {
  * pins both.
  */
 export function assetName(filename: string): string {
-  return sanitizeSegment(filename.replaceAll('/', '_')) || 'attachment'
+  return sanitizeSegment(filename.replaceAll('/', '_'))
 }
 
 /** Return shape of {@link rewriteAttachmentRefs} — see #2965. */

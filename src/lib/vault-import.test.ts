@@ -655,6 +655,34 @@ describe('vaultRestoreSpaces', () => {
     expect(spaces?.map(({ name }) => name)).toEqual(['Work'])
   })
 
+  it('names a space by its folder, and logs why, when its space file is not JSON', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const spaces = await vaultRestoreSpaces([
+      spaceJson('Vault/Work/.agaric/space.json', '{"name": "Wo'),
+      folderFile(['- b'], 'b.md', 'Vault/Work/b.md'),
+    ])
+
+    expect(spaces?.map(({ name }) => name)).toEqual(['Work'])
+    expect(warn).toHaveBeenCalledWith(
+      'vault-import',
+      'space file unreadable',
+      { folder: 'Work' },
+      expect.any(SyntaxError),
+    )
+  })
+
+  it('restores a space whose folder name is one character long', async () => {
+    const spaces = await vaultRestoreSpaces([
+      spaceJson('Vault/A/.agaric/space.json', named('A')),
+      folderFile(['- a'], 'a.md', 'Vault/A/a.md'),
+    ])
+
+    expect(spaces?.map(({ name, files }) => ({ name, paths: relPaths(files) }))).toEqual([
+      { name: 'A', paths: ['.agaric/space.json', 'a.md'] },
+    ])
+  })
+
   it('is not put off by a hidden file the system left at the top level', async () => {
     const spaces = await vaultRestoreSpaces([
       folderFile(['\0'], '.DS_Store', 'Vault/.DS_Store', ''),
@@ -676,6 +704,10 @@ describe('vaultRestoreSpaces', () => {
     [
       'a vault beside a top-level note',
       [...vault(), folderFile(['- r'], 'README.md', 'Vault/README.md')],
+    ],
+    [
+      'a vault beside a top-level file named as a space folder is, but for one more letter',
+      [...vault(), folderFile(['x'], 'Works', 'Vault/Works', '')],
     ],
     [
       'a vault one of whose folders has no space file',

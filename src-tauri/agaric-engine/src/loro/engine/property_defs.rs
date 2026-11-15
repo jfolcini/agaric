@@ -556,7 +556,11 @@ mod tests {
         };
         e.apply_set_property_def("stage", Some(&stages))
             .expect("declare");
-        for (id, items) in [("B1", &["review", "draft"][..]), ("B2", &["draft"][..])] {
+        for (id, items) in [
+            ("B1", &["review", "draft"][..]),
+            ("B2", &["draft"][..]),
+            ("B3", &["review"][..]),
+        ] {
             e.apply_create_block(id, "content", id, None, 0)
                 .expect("create block");
             e.apply_set_property_typed(id, "stage", &list(items))
@@ -571,6 +575,7 @@ mod tests {
             vec![
                 ("B1".to_owned(), list(&["in_review", "draft"])),
                 ("B2".to_owned(), list(&["draft"])),
+                ("B3".to_owned(), list(&["in_review"])),
             ]
         );
     }

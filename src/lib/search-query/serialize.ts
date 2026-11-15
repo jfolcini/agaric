@@ -129,8 +129,8 @@ function withoutIndex(node: FilterNode, index: number): FilterNode | null {
     if (node.index === index) return null
     return node.index > index ? { kind: 'token', index: node.index - 1 } : node
   }
+  // A parsed or added node has two children or more, so one is always left.
   const children = node.children.flatMap((c) => withoutIndex(c, index) ?? [])
-  if (children.length === 0) return null
   return children.length === 1 ? (children[0] as FilterNode) : { kind: node.kind, children }
 }
 
