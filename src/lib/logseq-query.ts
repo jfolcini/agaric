@@ -18,13 +18,13 @@ import { parse, serialize } from '@/lib/search-query'
 import type { FilterNode, FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
 /** The info string of the code block an untranslated query is kept in. */
-export const KEPT_QUERY_LANGUAGE = 'logseq-query'
+const KEPT_QUERY_LANGUAGE = 'logseq-query'
 
 /** The first line of that code block, which the editor shows where it does not show the info string. */
-export const KEPT_QUERY_MARKER = 'Logseq query, not translated:'
+const KEPT_QUERY_MARKER = 'Logseq query, not translated:'
 
-/** A bullet or paragraph line that is one macro whose expression opens as Logseq's do: group 1 the line's lead, 2 the expression. */
-const QUERY_LINE_RE = /^(\s*(?:[-*+]\s+)?)\{\{query\s+([("[].*?)\s*\}\}\s*$/i
+/** A bullet, or an unindented line, that is one macro whose expression opens as Logseq's do: group 1 the line's lead, 2 the expression. */
+const QUERY_LINE_RE = /^(\s*[-*+]\s+|)\{\{query\s+([("[].*?)\s*\}\}\s*$/i
 
 // content-regex-allow: mirrors the backend's tag-name class, whose first character is a base character on purpose; this only reads names
 const TAG_NAME = String.raw`[\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*`
@@ -201,8 +201,9 @@ function negate(node: Node): Node {
 function clause(sexp: Sexp, tags: ReadonlySet<string>): Node {
   if (sexp.k === 'string') return { t: 'word', text: `"${sexp.text}"` }
   if (sexp.k === 'page') {
+    // An inline `#x` is a reference, not an attached tag, and `under:` matches both.
     if (!tags.has(sexp.text.toLowerCase())) throw new Unsupported()
-    return tagClause(sexp.text)
+    return filters({ kind: 'under', value: sexp.text, span: noSpan })
   }
   if (sexp.k === 'atom') throw new Unsupported()
   const [head, ...args] = sexp.items
@@ -309,7 +310,7 @@ const kindsHoldOr = (nodes: Node[]): boolean =>
  * The query block text, `{{query …}}`, that `expression` (the text between
  * `{{query ` and `}}`) translates to, or null when a clause has no
  * equivalent. `tags` holds the lowercased names the import makes tags, which
- * a `[[name]]` clause needs, since only a tag is a filter.
+ * a `[[name]]` clause needs, since only a tag is a filter (`under:`, which sees inline `#name`).
  */
 export function translateLogseqQuery(
   expression: string,

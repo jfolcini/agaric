@@ -2,7 +2,8 @@
 // Real-backend import of Logseq `{{query …}}` simple queries (#6754).
 //
 // The frontend rewrites a macro whose every clause has an equivalent into the
-// search syntax's query block (`src/lib/logseq-query.ts`), and keeps any other
+// search syntax's query block (`[[tag]]` as `under:#tag`, which sees the inline
+// `#tag` an import stores as a reference, not as an attached tag) (`src/lib/logseq-query.ts`), and keeps any other
 // in a `logseq-query` code block, counted in one import warning. Only this
 // lane can show that the imported block is live: its results come from the
 // backend's search over the tag and task state the importer stored, read by a

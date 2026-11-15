@@ -23,8 +23,8 @@ const SUPPORTED: [form: string, expression: string, block: string][] = [
   ['task, any case', '(TASK canceled)', '{{query state:CANCELLED}}'],
   ['priority', '(priority A)', '{{query priority:1}}'],
   ['priority, several', '(priority A C)', '{{query priority:1 priority:3}}'],
-  ['page reference of a tag', '[[work]]', '{{query tag:#work}}'],
-  ['page reference, any case', '[[Work]]', '{{query tag:#Work}}'],
+  ['page reference of a tag', '[[work]]', '{{query under:#work}}'],
+  ['page reference, any case', '[[Work]]', '{{query under:#Work}}'],
   ['page-tags', '(page-tags work)', '{{query tag:#work}}'],
   ['page-tags, a name with spaces', '(page-tags [[Big Idea]])', '{{query tag:#"Big Idea"}}'],
   ['property', '(property type book)', '{{query prop:type=book}}'],
@@ -37,7 +37,7 @@ const SUPPORTED: [form: string, expression: string, block: string][] = [
   ['page-property', '(page-property type book)', '{{query prop:type=book}}'],
   ['page', '(page inbox)', '{{query path:[i]nbox}}'],
   ['page, a title with spaces', '(page "Meeting Notes")', '{{query path:"[M]eeting Notes"}}'],
-  ['and', '(and (task TODO) [[work]])', '{{query state:TODO tag:#work}}'],
+  ['and', '(and (task TODO) [[work]])', '{{query state:TODO under:#work}}'],
   [
     'and of several kinds',
     '(and (task TODO) (priority A) (property type book))',
@@ -46,18 +46,18 @@ const SUPPORTED: [form: string, expression: string, block: string][] = [
   [
     'and, nested',
     '(and (task TODO) (and [[work]] [[home]]))',
-    '{{query state:TODO tag:#work tag:#home}}',
+    '{{query state:TODO under:#work under:#home}}',
   ],
-  ['or', '(or [[work]] [[home]])', '{{query tag:#work OR tag:#home}}'],
+  ['or', '(or [[work]] [[home]])', '{{query under:#work OR under:#home}}'],
   [
     'or inside and',
     '(and (task TODO) (or [[work]] [[home]]))',
-    '{{query state:TODO (tag:#work OR tag:#home)}}',
+    '{{query state:TODO (under:#work OR under:#home)}}',
   ],
   [
     'and inside or',
     '(or (and (task TODO) [[work]]) [[home]])',
-    '{{query state:TODO tag:#work OR tag:#home}}',
+    '{{query state:TODO under:#work OR under:#home}}',
   ],
   ['or of two task clauses', '(or (task TODO) (task DONE))', '{{query state:TODO OR state:DONE}}'],
   ['not of a task', '(not (task DONE CANCELED))', '{{query not-state:DONE not-state:CANCELLED}}'],
@@ -94,6 +94,10 @@ const UNSUPPORTED: [why: string, expression: string][] = [
   ['a tag cannot be negated, inside an and', '(and (task TODO) (not (page-tags work)))'],
   ['a phrase cannot be negated', '(not "draft")'],
   ['page-tags of several', '(page-tags work home)'],
+  [
+    'a reference and an attached tag, which the search cannot hold in one query',
+    '(and [[work]] (page-tags home))',
+  ],
   ['a tag name the search syntax cannot spell', '(page-tags [[" [ ]])'],
   ['two task clauses of one and would OR', '(and (task TODO) (task DOING))'],
   ['two priority clauses of one and would OR', '(and (priority A) (priority B))'],
@@ -167,7 +171,7 @@ describe('translateLogseqQueries', () => {
     ).toHaveLength(1)
   })
 
-  it('leaves a macro in a code fence, a macro within other text, and a query already in the search syntax', () => {
+  it('leaves a macro in a code fence, within other text or on a later line of a block, and a query already in the search syntax', () => {
     const content = [
       '- ```',
       '  {{query (task TODO)}}',
@@ -175,6 +179,8 @@ describe('translateLogseqQueries', () => {
       '- see {{query (task TODO)}} here',
       '- {{query tag:#work state:TODO}}',
       '- {{query v2:abc}}',
+      '- text',
+      '  {{query (task TODO)}}',
     ].join('\n')
     expect(run(content)).toEqual({ content, kept: 0 })
   })

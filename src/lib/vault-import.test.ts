@@ -469,9 +469,9 @@ describe('mdFilesToUnits', () => {
   // #6754 — a Logseq simple query is a query block, or stays visible and counted.
   it('imports a translatable Logseq query as a query block that parses whole, and counts one it keeps', async () => {
     const page = [
-      '- {{query (and (task TODO DOING) (or [[work]] (page-tags home)) (not (priority C)))}}',
+      '- {{query (and (task TODO DOING) (or [[work]] [[home]]) (not (priority C)))}}',
       '- {{query (between -7d today)}}',
-      '- tagged #work',
+      '- tagged #work and #home',
     ].join('\n')
     const files = [
       folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
@@ -485,7 +485,7 @@ describe('mdFilesToUnits', () => {
     const lines = content.split('\n')
     expect(dialect).toBe('LogseqOrg')
     expect(lines[0]).toBe(
-      '- {{query state:TODO state:DOING (tag:#work OR tag:#home) not-priority:3}}',
+      '- {{query state:TODO state:DOING (under:#work OR under:#home) not-priority:3}}',
     )
     const text = (lines[0] as string).slice('- {{query '.length, -'}}'.length)
     expect(parse(text).filters.filter((token) => token.kind === 'invalid')).toEqual([])
