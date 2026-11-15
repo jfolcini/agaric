@@ -20094,6 +20094,13 @@ async fn a_comment_pasted_into_text_stays_the_comment() {
             vec!["Hello %%aside%%", "next"],
         ),
         (
+            "last of two blocks",
+            "world",
+            ("", "world"),
+            "next\n\n%%aside%%",
+            vec!["next", "%%aside%%world"],
+        ),
+        (
             "into an empty block",
             "",
             ("", ""),
