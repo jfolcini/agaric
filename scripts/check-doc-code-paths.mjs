@@ -227,7 +227,7 @@ function loadPathAliasMap(repoRoot) {
   try {
     raw = readFileSync(tsconfigPath, 'utf8')
   } catch (err) {
-    throw new Error(`could not read ${tsconfigPath}: ${err.message}`)
+    throw new Error(`could not read ${tsconfigPath}: ${err.message}`, { cause: err })
   }
   let parsed
   try {
@@ -380,7 +380,7 @@ function readBaseline({ lenientOnParseError = false } = {}) {
     parsed = JSON.parse(raw)
   } catch (err) {
     if (lenientOnParseError) return []
-    throw new Error(`${BASELINE_FILE} is not valid JSON: ${err.message}`)
+    throw new Error(`${BASELINE_FILE} is not valid JSON: ${err.message}`, { cause: err })
   }
   if (!Array.isArray(parsed)) {
     throw new Error(`${BASELINE_FILE} must contain a JSON array`)
