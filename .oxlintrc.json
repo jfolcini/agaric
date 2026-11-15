@@ -226,7 +226,8 @@
     // the `correctness` category, except `only-throw-error` above, which
     // spells out the one type this codebase legitimately throws.
     "typescript/require-array-sort-compare": "error",
-    "typescript/no-misused-spread": "error"
+    "typescript/no-misused-spread": "error",
+    "typescript/no-deprecated": "error"
   },
   "overrides": [
     {

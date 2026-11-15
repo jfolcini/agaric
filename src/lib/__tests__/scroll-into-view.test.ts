@@ -10,16 +10,17 @@ import { scrollElementIntoView } from '@/lib/scroll-into-view'
 
 /** Point `window.matchMedia` at a fixed reduced-motion answer. */
 function mockReducedMotion(matches: boolean): void {
-  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
-    matches: query.includes('prefers-reduced-motion') ? matches : false,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  }))
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes('prefers-reduced-motion') ? matches : false,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as Partial<MediaQueryList> as MediaQueryList,
+  )
 }
 
 function makeElement(): { el: Element; spy: ReturnType<typeof vi.fn> } {

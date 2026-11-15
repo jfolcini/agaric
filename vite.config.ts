@@ -164,7 +164,7 @@ export default defineConfig({
     // applies.
     minify: !process.env['TAURI_DEBUG'] ? 'oxc' : false,
     sourcemap: !!process.env['TAURI_DEBUG'],
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // Vendor chunking via Rolldown's native `codeSplitting` (see
         // VENDOR_CHUNK_GROUPS). #2939 — this REPLACES the previous Rollup-compat

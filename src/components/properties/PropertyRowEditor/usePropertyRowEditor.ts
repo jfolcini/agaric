@@ -262,7 +262,7 @@ export function usePropertyRowEditor({
       return
     }
     queryClient
-      .fetchQuery(pageIndexQuery(currentSpaceId))
+      .query(pageIndexQuery(currentSpaceId))
       .then((pages) => {
         setRefPages(pages)
         setRefPickerOpen(true)

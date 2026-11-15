@@ -33,8 +33,7 @@ import { isAllowedUrl } from '@/lib/url-validation'
 /**
  * Validate that `text` is an absolute HTTP(S) URL.
  *
- * Exported for testability — also used by the `validate` config option
- * and the custom paste handler.
+ * Exported for testability — also used by the custom paste handler.
  */
 export function isValidHttpUrl(text: string): boolean {
   try {
@@ -91,7 +90,7 @@ export const ExternalLink = Link.extend({
               return true
             }
             // #2209 — re-check the scheme denylist before handing the href to the
-            // OS shell. Input-time validation (`validate` / the link editor) is
+            // OS shell. Input-time validation (`isAllowedUri` / the link editor) is
             // bypassed by markdown import / peer sync, so a stored
             // `javascript:`/`file:`/`data:` link mark could otherwise reach
             // `openUrl` on Ctrl/Cmd+Click. Mirror the static render sink
@@ -146,7 +145,6 @@ export const ExternalLink = Link.extend({
   linkOnPaste: true,
   // A typed or pasted `[text](url)` becomes a link, as the stored form reads (#5160 N11).
   markdownLinks: true,
-  validate: (url: string) => isValidHttpUrl(url),
   isAllowedUri: (url, ctx) => parseAttachmentRef(url) !== null || ctx.defaultValidate(url),
   HTMLAttributes: {
     class: 'external-link',

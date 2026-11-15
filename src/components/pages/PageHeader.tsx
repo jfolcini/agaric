@@ -464,7 +464,7 @@ export function PageHeader({
   }, [readTitleCaret])
 
   const handleTitleInput = useCallback(
-    (e: React.FormEvent<HTMLDivElement>) => {
+    (e: React.InputEvent<HTMLDivElement>) => {
       setEditableTitle(e.currentTarget.textContent ?? '')
       captureTitleCaret()
     },

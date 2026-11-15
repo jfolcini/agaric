@@ -559,7 +559,9 @@ describe('useSlashCommandProperty — attach', () => {
   // captured input (populated once the handler runs).
   function interceptFileInput(): { get: () => HTMLInputElement | null; restore: () => void } {
     let captured: HTMLInputElement | null = null
-    const origCreateElement = document.createElement.bind(document)
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
     const spy = vi
       .spyOn(document, 'createElement')
       .mockImplementation((tag: string, options?: ElementCreationOptions) => {
