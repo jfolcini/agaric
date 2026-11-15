@@ -103,9 +103,50 @@ The sections above describe how individual paths *bound* memory; this one consol
 
 - **Op-log replay buffers the whole log** (#1624). `recover_blocks_from_op_log` materialises a full row-source `Vec`, and there is no guard on it — the `SNAPSHOT_WARN_ROW_COUNT` / `SNAPSHOT_WARN_PAYLOAD_BYTES` warns went with the snapshot blob in #4699, because after that the thing they warned about (compaction buffering the derived vault) no longer happens. Recovery is the rare disaster path by construction; the streaming rewrite is still deferred pending Android profiling (#129, `SQL-M-8`).
 
+### Loro engine cost (#6563)
+
+What one space's engine costs as it grows, on the engine as #6521 left it: the snapshot in `loro_doc_state`, the writes since in `loro_doc_delta` rows. A space of `n` blocks (a page per 100 blocks, built through the engine's write path), with `m` rounds of one edit to every block:
+
+```sh
+just measure-loro            # every scale; `just measure-loro 10000` skips the 100K one
+```
+
+The recipe runs `scripts/measure-loro.sh`: `cargo bench --bench engine_bench` over the Loro group (`src-tauri/benches/groups/loro_snapshot_bench.rs`) and the pulled-vault group below, in the release profile without LTO (the shipped profile's thin LTO does not finish on a shared box), with the result lines printed and the whole output kept in the file `MEASURE_LORO_LOG` names (`measure-loro.log` in the bench's working directory by default). Both scales take about 20 minutes on the container below after a compile of about 20 minutes cold; 10K takes about 5. The weekly `bench-slo` lane runs it at 10K and uploads the log and criterion's estimates as the `loro-measurements` artifact. It is informational: nothing gates on these numbers until a few weekly runs have shown their noise band.
+
+The numbers below are from a release build without LTO on a 4-core cloud container: 10K blocks twice, 100K once. Each cell is the band of the runs' medians, then the lowest and highest sample of either run.
+
+| Space | Snapshot | Export | Rehydrate (import + index) | Heap after rehydrate (peak) | Cold first sync (of 120 s) |
+|---|---|---|---|---|---|
+| 10K × 0 edits | 0.85 MB | 46–48 ms [36–70] | 64–68 ms [55–107] | 17.9 MB (19.4) | 2.91–2.95 s [2.64–3.95] (2.4–2.5%) |
+| 10K × 10 | 1.38 MB | 64–85 ms [51–95] | 98–106 ms [64–129] | 18.1 MB (19.6) | 3.00–3.21 s [2.64–3.58] (2.5–2.7%) |
+| 100K × 0 | 8.77 MB | 556 ms [504–732] | 968 ms [861–1,113] | 171.5 MB (185.0) | 29.7 s [28.1–31.1] (24.7%) |
+| 100K × 10 | 14.17 MB | 781 ms [698–945] | 1,153 ms [1,002–1,339] | 174.4 MB (187.9) | 33.4 s [32.6–33.9] (27.8%) |
+
+Export is `export_snapshot`, what a save writes to `loro_doc_state` and a snapshot catch-up sends. Rehydrate is what boot does for a space: import into an empty engine, rebuild the `block_id` index, read one block. Heap is the counting allocator's total of live Rust allocations after that rehydrate, and its highest on the way: not the process's resident set, and without SQLite's pages. Cold first sync is `apply_remote` of the snapshot into an empty vault: the inbox write, the import, the diff and the SQL projection of every block, which is one sync dispatch against `HANDSHAKE_TIMEOUT` (`src-tauri/agaric-sync/src/transport/driver.rs`).
+
+What they say:
+
+- **A first sync is the number near a limit.** 100K blocks take 30 to 33 s of the 120 s dispatch on this box, and 10× the blocks took 10× as long (2.9 s at 10K). The Loro import and index are about a second of it (the rehydrate column); the rest is SQL projection and its diff, whose split was not measured. A phone is slower than this container, and its row is missing.
+- **Ten rounds of one edit to every block** add 62% to the snapshot at 100K, 40% to its export and 19% to its rehydrate. The heap after rehydrate does not follow: it moved by 3 MB.
+- **A pulled vault carries the update, not the snapshot, until a compaction folds it.** After a cold first sync `loro_doc_delta` holds one row of 10.3 MB at 100K × 0 (the snapshot is 8.77 MB), 23.8 MB at 100K × 10 (14.17 MB), both far past `DELTA_COMPACTION_BYTES`.
+- **Memory is per engine and held for the process's life.** At 100K blocks one space is about 175 MB of heap, 190 MB at its peak.
+- **The attachment scan** (`find_missing_attachments`, every live attachment statted once per sync session) takes 249–264 ms [183–310] over 10,000 attachments whose files are present, on every session.
+
+**A write on a pulled vault, beside the same write on the vault that wrote it** (#6811). `pulled_vault_bench` builds #6811's vault by commands (a 1,100-block page and 1,900 blocks of filler, about 3K blocks), pulls its space snapshot into a second empty vault with `apply_remote`, then times a split (`create_block_inner` at the middle sibling slot) and a 300-line paste (`create_blocks_batch_inner`) on both, the two arms alternating sample by sample. The same `just measure-loro` run prints it (about 5 minutes).
+
+Two runs, same container and build; each cell is the two runs' medians, then the lowest and highest sample of either run. The page grows by one block per split and 300 per paste, so a run's timings drift up on both arms alike; the pulled-over-written ratio of each pair taken in turn is the figure that cancels it.
+
+| Write | App-written | Pulled | Pulled / app-written, median of pairs |
+|---|---|---|---|
+| Split | 10.1–12.1 ms [6.0–85.9] | 9.5–11.7 ms [6.2–72.3] | 0.96–0.98 |
+| 300-line paste | 3.7–4.2 s [2.3–6.7] | 3.8–4.1 s [2.2–6.5] | 0.93–0.98 |
+
+- **No gap at this level.** A split on a pulled vault took as long as on the vault that wrote the blocks, and so did the paste, in the commands and the engine of a release build. #6811's gap (a split about 2 s, a paste 91 s) is not in how an engine built from a peer's snapshot performs a command. The harness has no UI or IPC, no paired peer and no running materializer or sync daemon, and its build is release, where #6811's table is a debug build: any of those can still hold the cause.
+- **A 300-line paste into a page of 1,100 blocks is seconds in a release build** on both arms (the fastest samples are 2.2–2.5 s).
+
 ### Guidance for memory-constrained Android (1–3 GB)
 
-- **Vault-size envelope.** Interactive responsiveness is bench-validated to 100K blocks in an outliner-shaped vault (`FIXTURE_SIZE = 100_000` in `src-tauri/benches/interactive_slo.rs`; the page-heavy shape is measured, not budgeted, see § Product SLO); treat **~100K blocks per space as the comfortable ceiling** on a 1–3 GB device. A precise per-device peak-RAM-at-N-blocks figure is **not yet measured** — the existing benches validate interactive latency at scale (#1231), not resident/peak RAM, so a dedicated resource-envelope measurement is needed before a hard number can be stated here; do not infer a hard MB-per-block number from the figures above.
+- **Vault-size envelope.** Interactive responsiveness is bench-validated to 100K blocks in an outliner-shaped vault (`FIXTURE_SIZE = 100_000` in `src-tauri/benches/interactive_slo.rs`; the page-heavy shape is measured, not budgeted, see § Product SLO); treat **~100K blocks per space as the comfortable ceiling** on a 1–3 GB device. One space's Loro engine holds about 175 MB of heap at 100K blocks and peaks near 190 MB while it loads (§ [Loro engine cost](#loro-engine-cost-6563)); the rest of the process (SQLite's caches, the frontend, the WebView) is not measured, so there is still no whole-process peak-RAM figure.
 - **What to avoid on low-RAM devices.** Single multi-MB pasted blocks (the FTS cap truncates indexing of the tail, but the block content still lives in the Loro doc); letting a single space grow unbounded; and triggering a disaster-recovery replay or an FTS rebuild on a very large vault while other apps are pressuring the heap.
 - **Mitigation.** Split content across spaces (the Loro engine spike is per-space, so several smaller spaces peak lower than one large one); archive or prune stale pages to keep live block count down.
 

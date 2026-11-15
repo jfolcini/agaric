@@ -119,6 +119,13 @@ test-be-release:
 e2e-real SPEC: _require-npm
     bash scripts/e2e-tauri-local.sh "$1"
 
+# --- Measure ---------------------------------------------------------------
+
+# Measure the Loro engine's cost per space and a pulled vault's writes beside an app-written one's (#6563); `just measure-loro 10000` skips the 100K scale (default: every scale, about 20 minutes after a cold build).
+[group('measure')]
+measure-loro MAX_BLOCKS="":
+    bash scripts/measure-loro.sh {{MAX_BLOCKS}}
+
 # --- Lint & format ---------------------------------------------------------
 
 # Lint JS/TS (oxlint).

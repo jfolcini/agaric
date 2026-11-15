@@ -93,7 +93,9 @@ that engine from (#6518).
 The purge earns its keep: `op_log` costs ~303 B/op — JSON payload, blake3 hash,
 per-row timestamps — against a materially smaller Loro copy of the same edits,
 so it is the dominant term in vault growth (#4700). It does not *bound* growth:
-`loro_doc_state` is ungoverned and grows forever.
+`loro_doc_state` is ungoverned and grows forever (a 100K-block space is 8.8 MB, and
+14.2 MB after ten edits to every block; the numbers are in
+[operations.md](operations.md#loro-engine-cost-6563)).
 
 **What compaction costs the user.** Undo and page history go dark on ops older
 than the window.

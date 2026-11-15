@@ -31,9 +31,17 @@
 //! phase of every sync session pays before it requests any file.
 //!
 //! Measurement only: no budget. Each case's effect is asserted once, untimed,
-//! before its timed loop.
+//! before its timed loop. A timing prints as its median with the lowest and
+//! highest sample and the sample count: that range is the noise band, and a
+//! difference inside it is not a difference.
+//!
+//! `LORO_SNAPSHOT_MAX_BLOCKS=<n>` skips the scales above `n`, for a run that
+//! must fit a short budget. `just measure-loro` regenerates the numbers in
+//! `docs/architecture/operations.md` § Loro engine cost.
 
+use std::cell::RefCell;
 use std::hint::black_box;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -51,7 +59,6 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 use crate::loro_wire_bench::{LIVE, PEAK, TRACKING};
-use crate::sync_import_bench::Acc;
 
 /// The device that writes the space, and the one that receives it cold.
 const DEVICE_A: &str = "01LOROSNAPBENCHDEVICEA0001";
@@ -69,19 +76,93 @@ const EDIT: &str = "word ";
 const ATTACHMENTS: usize = 10_000;
 /// Each 100K sample moves or projects the whole space, so keep the count low.
 const SAMPLE_SIZE: usize = 10;
+const GROUP: &str = "loro_snapshot_bench";
 
 fn block_id(i: usize) -> String {
     format!("01LOROSNAPBENCH{i:011}")
 }
 
-fn report(case: &str, scale: &str, acc: &Acc) {
-    match acc.mean_secs() {
-        Some(secs) => println!(
-            "loro_snapshot_bench: {case} @ {scale} = {:.2} ms (measurement only — no budget)",
-            secs * 1000.0
-        ),
-        None => println!("loro_snapshot_bench: {case} @ {scale} not selected"),
+/// Every timed call of one case, in order.
+#[derive(Clone, Default)]
+pub(crate) struct Samples(Rc<RefCell<Vec<Duration>>>);
+
+impl Samples {
+    pub(crate) fn record(&self, elapsed: Duration) {
+        self.0.borrow_mut().push(elapsed);
     }
+
+    pub(crate) fn count(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    /// The median, lowest and highest of `other[i] / self[i]` over the samples
+    /// both arms took in turn, or `None` when either has none.
+    pub(crate) fn ratio_to(&self, other: &Samples) -> Option<(f64, f64, f64)> {
+        let (base, other) = (self.0.borrow(), other.0.borrow());
+        let mut ratios: Vec<f64> = base
+            .iter()
+            .zip(other.iter())
+            .map(|(b, o)| o.as_secs_f64() / b.as_secs_f64())
+            .collect();
+        ratios.sort_unstable_by(f64::total_cmp);
+        Some((
+            *ratios.get(ratios.len() / 2)?,
+            *ratios.first()?,
+            *ratios.last()?,
+        ))
+    }
+
+    /// Median, lowest and highest sample and their count, or `None` when a
+    /// name filter left the case out.
+    pub(crate) fn summary(&self) -> Option<Summary> {
+        let mut sorted = self.0.borrow().clone();
+        sorted.sort_unstable();
+        Some(Summary {
+            median: sorted.get(sorted.len() / 2).copied()?,
+            min: *sorted.first()?,
+            max: *sorted.last()?,
+            n: sorted.len(),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Summary {
+    pub(crate) median: Duration,
+    min: Duration,
+    max: Duration,
+    n: usize,
+}
+
+impl std::fmt::Display for Summary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        write!(
+            f,
+            "{:.2} ms [{:.2} – {:.2}] n={}",
+            ms(self.median),
+            ms(self.min),
+            ms(self.max),
+            self.n
+        )
+    }
+}
+
+pub(crate) fn report(group: &str, case: &str, scale: &str, samples: &Samples) {
+    match samples.summary() {
+        Some(summary) => {
+            println!("{group}: {case} @ {scale} = median {summary} (measurement only — no budget)");
+        }
+        None => println!("{group}: {case} @ {scale} not selected"),
+    }
+}
+
+/// The largest scale this run builds.
+fn max_blocks() -> usize {
+    std::env::var("LORO_SNAPSHOT_MAX_BLOCKS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(usize::MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +260,33 @@ async fn count_blocks(pool: &SqlitePool) -> i64 {
         .unwrap()
 }
 
+/// What a vault holds of one space's saved engine.
+struct SavedBytes {
+    delta_rows: i64,
+    delta_bytes: i64,
+    state_rows: i64,
+    state_bytes: i64,
+}
+
+async fn saved_bytes(pool: &SqlitePool) -> SavedBytes {
+    let (delta_rows, delta_bytes): (i64, i64) =
+        sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(length(bytes)), 0) FROM loro_doc_delta")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let (state_rows, state_bytes): (i64, i64) =
+        sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(length(snapshot)), 0) FROM loro_doc_state")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    SavedBytes {
+        delta_rows,
+        delta_bytes,
+        state_rows,
+        state_bytes,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Benches
 // ---------------------------------------------------------------------------
@@ -202,15 +310,23 @@ fn bench_case(c: &mut Criterion, rt: &Runtime, n: usize, rounds: usize) {
     drop(probe);
 
     // Shape probe: a cold first sync projects every block into SQL.
-    let projected = rt.block_on(async {
+    let (projected, saved) = rt.block_on(async {
         let vault = cold_vault().await;
         cold_first_sync(&vault, snapshot_message(&snapshot)).await;
-        count_blocks(&vault.pool).await
+        (
+            count_blocks(&vault.pool).await,
+            saved_bytes(&vault.pool).await,
+        )
     });
     assert_eq!(
         projected,
         i64::try_from(n).unwrap(),
         "a cold first sync projects every block"
+    );
+    println!(
+        "{GROUP}: after a cold first sync @ {scale}: loro_doc_delta {} rows, {} bytes; \
+         loro_doc_state {} rows, {} bytes",
+        saved.delta_rows, saved.delta_bytes, saved.state_rows, saved.state_bytes
     );
 
     let (held, peak) = heap_after_rehydrate(&snapshot, &read_id);
@@ -220,19 +336,21 @@ fn bench_case(c: &mut Criterion, rt: &Runtime, n: usize, rounds: usize) {
         snapshot.len()
     );
 
-    let (export, rehydrated, cold) = (Acc::default(), Acc::default(), Acc::default());
+    let (export, rehydrated, cold) = (Samples::default(), Samples::default(), Samples::default());
     let mut group = c.benchmark_group("loro_snapshot");
     group.sample_size(SAMPLE_SIZE);
     group.sampling_mode(SamplingMode::Flat);
     group.bench_function(BenchmarkId::new("export", &scale), |b| {
         b.iter_custom(|iters| {
-            let start = Instant::now();
+            let mut total = Duration::ZERO;
             for _ in 0..iters {
+                let start = Instant::now();
                 black_box(engine.export_snapshot().expect("export snapshot"));
+                let elapsed = start.elapsed();
+                export.record(elapsed);
+                total += elapsed;
             }
-            let elapsed = start.elapsed();
-            export.record(elapsed, iters);
-            elapsed
+            total
         });
     });
     group.bench_function(BenchmarkId::new("rehydrate", &scale), |b| {
@@ -241,7 +359,7 @@ fn bench_case(c: &mut Criterion, rt: &Runtime, n: usize, rounds: usize) {
             |()| {
                 let start = Instant::now();
                 let engine = rehydrate(&snapshot, &read_id);
-                rehydrated.record(start.elapsed(), 1);
+                rehydrated.record(start.elapsed());
                 engine
             },
             BatchSize::PerIteration,
@@ -256,21 +374,21 @@ fn bench_case(c: &mut Criterion, rt: &Runtime, n: usize, rounds: usize) {
                 let start = Instant::now();
                 rt.block_on(cold_first_sync(&vault, msg));
                 let elapsed = start.elapsed();
+                cold.record(elapsed);
                 total += elapsed;
             }
-            cold.record(total, iters);
             total
         });
     });
     group.finish();
 
-    report("export", &scale, &export);
-    report("rehydrate", &scale, &rehydrated);
-    report("cold_first_sync", &scale, &cold);
-    if let Some(secs) = cold.mean_secs() {
+    report(GROUP, "export", &scale, &export);
+    report(GROUP, "rehydrate", &scale, &rehydrated);
+    report(GROUP, "cold_first_sync", &scale, &cold);
+    if let Some(summary) = cold.summary() {
         println!(
-            "loro_snapshot_bench: cold_first_sync @ {scale} is {:.1}% of the {} s dispatch limit",
-            secs * 100.0 / HANDSHAKE_TIMEOUT.as_secs_f64(),
+            "{GROUP}: cold_first_sync @ {scale} median is {:.1}% of the {} s dispatch limit",
+            summary.median.as_secs_f64() * 100.0 / HANDSHAKE_TIMEOUT.as_secs_f64(),
             HANDSHAKE_TIMEOUT.as_secs()
         );
     }
@@ -278,7 +396,7 @@ fn bench_case(c: &mut Criterion, rt: &Runtime, n: usize, rounds: usize) {
 
 fn bench_loro_snapshot(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    for &n in SCALES {
+    for &n in SCALES.iter().filter(|&&n| n <= max_blocks()) {
         for &rounds in EDIT_ROUNDS {
             bench_case(c, &rt, n, rounds);
         }
@@ -341,25 +459,27 @@ fn bench_attachment_scan(c: &mut Criterion) {
         .unwrap();
     assert_eq!(missing.len(), 0, "every seeded file is present");
 
-    let acc = Acc::default();
+    let scan = Samples::default();
     let mut group = c.benchmark_group("loro_snapshot");
     group.sample_size(SAMPLE_SIZE);
     group.bench_function(BenchmarkId::new("attachment_scan", ATTACHMENTS), |b| {
         b.iter_custom(|iters| {
-            let start = Instant::now();
+            let mut total = Duration::ZERO;
             for _ in 0..iters {
+                let start = Instant::now();
                 black_box(
                     rt.block_on(find_missing_attachments(&pool, dir.path()))
                         .unwrap(),
                 );
+                let elapsed = start.elapsed();
+                scan.record(elapsed);
+                total += elapsed;
             }
-            let elapsed = start.elapsed();
-            acc.record(elapsed, iters);
-            elapsed
+            total
         });
     });
     group.finish();
-    report("attachment_scan", &ATTACHMENTS.to_string(), &acc);
+    report(GROUP, "attachment_scan", &ATTACHMENTS.to_string(), &scan);
 }
 
 criterion_group!(benches, bench_loro_snapshot, bench_attachment_scan);
