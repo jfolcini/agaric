@@ -10,9 +10,22 @@
  * A card is a button that opens its page and a *Move to…* button whose menu
  * lists the other columns (`moveCard`). Each column has one Tab stop for its
  * cursor card and one for that card's move button; the arrow keys move the
- * cursor.
+ * cursor. A pointer can also drag the card onto another column, which makes
+ * the menu's move: a long press picks it up on touch, so a swipe still
+ * scrolls. The keyboard keeps the menu.
  */
 
+import {
+  type Data,
+  DndContext,
+  type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensors,
+} from '@dnd-kit/core'
 import { ArrowRightLeft } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -24,6 +37,7 @@ import { moveCard } from '@/components/AdvancedQuery/board-move'
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { TaskCheckbox } from '@/components/editor/TaskMarkerButton'
+import { reorderAccessibility, usePointerDragSensor } from '@/components/layout/reorder-dnd'
 import {
   QueryResultRowContent,
   useRefTitleResolver,
@@ -39,6 +53,7 @@ import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { pressesFocusedControl, useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { AggregateSpec, BlockRow, FilterExpr, SortKey } from '@/lib/bindings'
 import { displayPageTitle } from '@/lib/date-utils'
+import { shouldReduceMotion } from '@/lib/preferences'
 import { resolveBlockDisplay } from '@/lib/query-result-utils'
 import { cn } from '@/lib/utils'
 
@@ -59,6 +74,13 @@ export interface QueryBoardProps extends BoardQuery {
 interface MoveTarget {
   column: BoardColumn
   label: string
+}
+
+/** What a dragged card carries to its drop; `title` also names it in the announcements. */
+interface CardDrag {
+  block: BlockRow
+  from: BoardColumn
+  title: string
 }
 
 function MoveCardMenu({
@@ -107,7 +129,72 @@ function MoveCardMenu({
   )
 }
 
+/** One card: it opens its page, has the move menu, and is the drag's handle. */
+function BoardCard({
+  block,
+  column,
+  title,
+  displayMarkdown,
+  pageTitle,
+  pageTitles,
+  tabIndex,
+  targets,
+  onNavigate,
+  onMove,
+}: {
+  block: BlockRow
+  column: BoardColumn
+  title: string
+  displayMarkdown: string | null
+  pageTitle: string | null
+  pageTitles: Map<string, string>
+  tabIndex: number
+  targets: MoveTarget[]
+  onNavigate: BoardQuery['onNavigate']
+  onMove: (target: MoveTarget) => void
+}): React.ReactElement {
+  const drag: CardDrag = { block, from: column, title }
+  // dnd-kit's `attributes` are left off: they describe a keyboard pick-up this
+  // board does not offer and would take over the roving tab index.
+  const { setNodeRef, listeners, isDragging } = useDraggable({
+    // A refetch can briefly show a moved card in both columns.
+    id: `${column.id} ${block.id}`,
+    data: drag,
+  })
+  return (
+    <li
+      ref={setNodeRef}
+      className={cn('flex items-start rounded-lg border bg-card', isDragging && 'opacity-50')}
+    >
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-start gap-x-2 gap-y-1 rounded-lg p-3 text-left text-sm transition-colors hover:bg-muted/40 focus-ring-visible [@media(pointer:coarse)]:[-webkit-touch-callout:none]"
+        data-testid="query-board-card"
+        data-board-card
+        data-block-id={block.id}
+        tabIndex={tabIndex}
+        // The name carries what the card shows: the state, the text, the page.
+        aria-label={[block.todo_state, title, pageTitle].filter(Boolean).join(' ')}
+        onClick={() => {
+          if (block.page_id) onNavigate?.(block.page_id, pageTitles.get(block.page_id))
+        }}
+        {...listeners}
+      >
+        {block.todo_state && <TaskCheckbox state={block.todo_state} />}
+        <span className="line-clamp-3 min-w-0 flex-1">
+          {displayMarkdown !== null ? <QueryResultRowContent content={displayMarkdown} /> : title}
+        </span>
+        {pageTitle && (
+          <span className="basis-full truncate text-xs text-muted-foreground">{pageTitle}</span>
+        )}
+      </button>
+      <MoveCardMenu targets={targets} tabIndex={tabIndex} onMove={onMove} />
+    </li>
+  )
+}
+
 function QueryBoardCards({
+  column,
   label,
   results,
   pageTitles,
@@ -115,6 +202,7 @@ function QueryBoardCards({
   onNavigate,
   onMove,
 }: {
+  column: BoardColumn
   label: string
   results: BlockRow[]
   pageTitles: Map<string, string>
@@ -160,42 +248,20 @@ function QueryBoardCards({
           pageTitle: storedPageTitle,
         } = resolveBlockDisplay(block, pageTitles, undefined, resolveRefTitle)
         const pageTitle = block.parent_id && storedPageTitle && displayPageTitle(storedPageTitle)
-        const tabIndex = index === focusedIndex ? 0 : -1
         return (
-          <li key={block.id} className="flex items-start rounded-lg border bg-card">
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-start gap-x-2 gap-y-1 rounded-lg p-3 text-left text-sm transition-colors hover:bg-muted/40 focus-ring-visible"
-              data-testid="query-board-card"
-              data-board-card
-              data-block-id={block.id}
-              tabIndex={tabIndex}
-              // The name carries what the card shows: the state, the text, the page.
-              aria-label={[block.todo_state, title, pageTitle].filter(Boolean).join(' ')}
-              onClick={() => {
-                if (block.page_id) onNavigate?.(block.page_id, pageTitles.get(block.page_id))
-              }}
-            >
-              {block.todo_state && <TaskCheckbox state={block.todo_state} />}
-              <span className="line-clamp-3 min-w-0 flex-1">
-                {displayMarkdown !== null ? (
-                  <QueryResultRowContent content={displayMarkdown} />
-                ) : (
-                  title
-                )}
-              </span>
-              {pageTitle && (
-                <span className="basis-full truncate text-xs text-muted-foreground">
-                  {pageTitle}
-                </span>
-              )}
-            </button>
-            <MoveCardMenu
-              targets={targets}
-              tabIndex={tabIndex}
-              onMove={(target) => onMove(block, target)}
-            />
-          </li>
+          <BoardCard
+            key={block.id}
+            block={block}
+            column={column}
+            title={title}
+            displayMarkdown={displayMarkdown}
+            pageTitle={pageTitle || null}
+            pageTitles={pageTitles}
+            tabIndex={index === focusedIndex ? 0 : -1}
+            targets={targets}
+            onNavigate={onNavigate}
+            onMove={(target) => onMove(block, target)}
+          />
         )
       })}
     </ul>
@@ -207,7 +273,7 @@ function QueryBoardColumn({
   column,
   label,
   targets,
-  onMoved,
+  onMove,
   filter,
   fulltext,
   sort,
@@ -217,10 +283,17 @@ function QueryBoardColumn({
   column: BoardColumn
   label: string
   targets: MoveTarget[]
-  /** A card is leaving this column for `target`. */
-  onMoved: (target: BoardColumn) => void
+  onMove: (block: BlockRow, target: MoveTarget) => void
 }): React.ReactElement | null {
   const { t } = useTranslation()
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: column.id,
+    // A value outside the options is not one a card can be given.
+    disabled: column.kind === 'other',
+    data: { title: label },
+  })
+  const dragFrom = (active?.data.current as CardDrag | undefined)?.from
+  const isDropTarget = isOver && dragFrom !== undefined && dragFrom.id !== column.id
   const filterExpr = useMemo<FilterExpr>(
     () => ({ type: 'And', children: [filter, column.filter] }),
     [filter, column.filter],
@@ -245,7 +318,11 @@ function QueryBoardColumn({
 
   return (
     <section
-      className="flex w-72 max-w-[85vw] shrink-0 flex-col gap-2 rounded-lg bg-muted/50 p-2 focus-ring-visible"
+      ref={setNodeRef}
+      className={cn(
+        'flex w-72 max-w-[85vw] shrink-0 flex-col gap-2 rounded-lg bg-muted/50 p-2 focus-ring-visible',
+        isDropTarget && 'bg-ring/5 ring-2 ring-ring',
+      )}
       aria-label={label}
       data-testid="query-board-column"
       data-column-id={column.id}
@@ -297,15 +374,13 @@ function QueryBoardColumn({
           aria-busy={loading}
         >
           <QueryBoardCards
+            column={column}
             label={label}
             results={results}
             pageTitles={pageTitles}
             targets={targets}
             onNavigate={onNavigate}
-            onMove={(block, target) => {
-              onMoved(target.column)
-              void moveCard(block, target.column, target.label)
-            }}
+            onMove={onMove}
           />
           <LoadMoreButton
             hasMore={hasMore}
@@ -324,6 +399,8 @@ function QueryBoardColumn({
 export function QueryBoard({ columns, ...query }: QueryBoardProps): React.ReactElement {
   const { t } = useTranslation()
   const boardRef = useRef<HTMLDivElement>(null)
+  const [dragged, setDragged] = useState<CardDrag | null>(null)
+  const sensors = useSensors(usePointerDragSensor())
   const labelled = columns.map((column): MoveTarget => ({
     column,
     label:
@@ -333,28 +410,70 @@ export function QueryBoard({ columns, ...query }: QueryBoardProps): React.ReactE
   }))
   // A value outside the options is not one a card can be given.
   const targets = labelled.filter((target) => target.column.kind !== 'other')
+
+  // The menu's pick and a drop both end here.
+  const move = (from: BoardColumn, block: BlockRow, target: MoveTarget) => {
+    // The moved card's buttons unmount under the focus. The column it left
+    // takes it, or the one it went to when the last card out of "Other values"
+    // removes that column.
+    const id = from.kind === 'other' ? target.column.id : from.id
+    boardRef.current?.querySelector<HTMLElement>(`[data-column-id="${CSS.escape(id)}"]`)?.focus()
+    void moveCard(block, target.column, target.label)
+  }
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    setDragged(null)
+    const card = active.data.current as CardDrag | undefined
+    const target = targets.find((candidate) => candidate.column.id === over?.id)
+    if (card === undefined || target === undefined || target.column.id === card.from.id) return
+    move(card.from, card.block, target)
+  }
+
   return (
-    <ScrollArea orientation="horizontal" data-testid="query-board">
-      <div ref={boardRef} className="flex items-start gap-3 pb-3">
-        {labelled.map(({ column, label }) => (
-          <QueryBoardColumn
-            key={column.id}
-            column={column}
-            label={label}
-            targets={targets.filter((target) => target.column !== column)}
-            // The moved card's buttons unmount under the focus. The column it
-            // left takes it, or the one it went to when the last card out of
-            // "Other values" removes that column.
-            onMoved={(target) => {
-              const id = column.kind === 'other' ? target.id : column.id
-              boardRef.current
-                ?.querySelector<HTMLElement>(`[data-column-id="${CSS.escape(id)}"]`)
-                ?.focus()
-            }}
-            {...query}
-          />
-        ))}
-      </div>
-    </ScrollArea>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      // Edge scrolling is a JS loop the reduced-motion CSS cannot stop, as in the block tree.
+      autoScroll={!shouldReduceMotion()}
+      onDragStart={({ active }: DragStartEvent) =>
+        setDragged((active.data.current as CardDrag | undefined) ?? null)
+      }
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDragged(null)}
+      accessibility={reorderAccessibility(
+        t,
+        (_id, data: Data | undefined) => String(data?.['title'] ?? ''),
+        t('advancedQuery.board.dragInstructions'),
+      )}
+    >
+      <ScrollArea orientation="horizontal" data-testid="query-board">
+        <div ref={boardRef} className="flex items-start gap-3 pb-3">
+          {labelled.map(({ column, label }) => (
+            <QueryBoardColumn
+              key={column.id}
+              column={column}
+              label={label}
+              targets={targets.filter((target) => target.column !== column)}
+              onMove={(block, target) => move(column, block, target)}
+              {...query}
+            />
+          ))}
+        </div>
+      </ScrollArea>
+      {/* No drop animation: the card lands in another column once the columns
+          re-read, so settling back onto its old place would show the wrong
+          thing, and there is no motion left for reduced motion to stop. */}
+      <DragOverlay dropAnimation={null}>
+        {dragged && (
+          <div
+            className="pointer-events-none line-clamp-3 w-72 max-w-[85vw] rounded-lg border bg-card p-3 text-sm shadow-(--shadow-overlay)"
+            data-testid="query-board-drag-overlay"
+            aria-hidden="true"
+          >
+            {dragged.title}
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
   )
 }

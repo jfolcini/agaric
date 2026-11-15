@@ -50,7 +50,7 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 
 **Properties.** Typed values on any block or page: text, number, date, select, reference, boolean, URL. Definitions belong to a space and can be renamed, merged and retyped.
 
-**Query.** A `{{query tag:#work state:TODO}}` block lists the matching blocks live inside a page, as a list or as a table with the columns you pick. The Advanced Query view filters by tags, properties, task state, dates and links with nested AND / OR / NOT, sorts, groups and summarises, and can lay the results out as a board with one column per task state or select option, where *Move to…* moves a card. A query can be saved as a view.
+**Query.** A `{{query tag:#work state:TODO}}` block lists the matching blocks live inside a page, as a list or as a table with the columns you pick. The Advanced Query view filters by tags, properties, task state, dates and links with nested AND / OR / NOT, sorts, groups and summarises, and can lay the results out as a board with one column per task state or select option, where a card moves by dragging or from its *Move to…* menu. A query can be saved as a view.
 
 **Search.** Full-text search over every block (SQLite FTS5) with filters such as `tag:`, `state:` and `due:`; find and replace in the open page; replace across pages with a preview and an undo. See [docs/SEARCH.md](docs/SEARCH.md).
 
