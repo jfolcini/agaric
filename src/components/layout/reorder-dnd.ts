@@ -20,11 +20,8 @@ import { hasSortableData } from '@dnd-kit/sortable'
 import type { TFunction } from 'i18next'
 
 import { MOUSE_DRAG_ACTIVATION_DISTANCE } from '@/components/block-tree/use-block-dnd'
-import {
-  LONG_PRESS_DELAY,
-  LONG_PRESS_MOVE_THRESHOLD,
-} from '@/components/block-tree/use-block-touch-long-press'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { LONG_PRESS_DELAY, LONG_PRESS_MOVE_THRESHOLD } from '@/lib/touch-press'
 
 const ARROW_STEPS: Partial<Record<string, { axis: 'x' | 'y'; step: 1 | -1 }>> = {
   [KeyboardCode.Right]: { axis: 'x', step: 1 },

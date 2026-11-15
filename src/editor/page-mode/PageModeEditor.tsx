@@ -134,6 +134,7 @@ import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useBlockRefCounts } from '@/hooks/useBlockRefCounts'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -197,6 +198,8 @@ export interface PageModeEditorProps {
   onShown?: (() => void) | undefined
   /** Edit as Markdown, from the footer; no link without it. */
   onEditSource?: (() => void) | undefined
+  /** A block's reference count was activated: show its references (#6746). */
+  onOpenReferences?: ((blockId: string) => void) | undefined
   ref?: React.Ref<PageModeEditorHandle>
 }
 
@@ -214,6 +217,7 @@ export function PageModeEditor({
   onNavigateToPage,
   opening,
   onEditSource,
+  onOpenReferences,
   onShown,
   ref,
 }: PageModeEditorProps): React.ReactElement {
@@ -268,6 +272,7 @@ export function PageModeEditor({
       onNavigateToPage={onNavigateToPage}
       opening={opening ?? null}
       onEditSource={onEditSource}
+      onOpenReferences={onOpenReferences}
       onShown={onShown}
       ref={ref}
     />
@@ -412,6 +417,7 @@ interface PageModeDocumentProps {
   onNavigateToPage?: NavigateToPageFn | undefined
   opening: PageModeOpening | null
   onEditSource?: (() => void) | undefined
+  onOpenReferences?: ((blockId: string) => void) | undefined
   onShown?: (() => void) | undefined
   ref?: React.Ref<PageModeEditorHandle> | undefined
 }
@@ -425,6 +431,7 @@ function PageModeDocument({
   onNavigateToPage,
   opening,
   onEditSource,
+  onOpenReferences,
   onShown,
   ref,
 }: PageModeDocumentProps): React.ReactElement {
@@ -451,6 +458,19 @@ function PageModeDocument({
   )
   useEffect(() => pageStore.subscribe(() => lists.tasksChanged()), [pageStore, lists])
   const [attachments] = useState(() => new PageAttachments(openedWithAttachments))
+  // #6746 — the blocks' reference counts, read for the page as block mode reads them; a new read
+  // redraws the rows that show them.
+  const refCounts = useBlockRefCounts(pageId)
+  const refCountsRef = useRef(refCounts)
+  const [refCountListeners] = useState(() => new Set<() => void>())
+  useEffect(() => {
+    refCountsRef.current = refCounts
+    for (const listener of refCountListeners) listener()
+  }, [refCounts, refCountListeners])
+  const onOpenReferencesRef = useRef(onOpenReferences)
+  useEffect(() => {
+    onOpenReferencesRef.current = onOpenReferences
+  }, [onOpenReferences])
   // What the checkbox, the badge, the chips and the keys do, once the session runs.
   const actions = useRef<
     PageTaskActions & {
@@ -536,11 +556,14 @@ function PageModeDocument({
         blockOf: (id: string) => pageStore.getState().blocksById.get(id),
         propertiesOf: (id: string) => properties.of(id),
         attachmentsOf: (id: string) => attachments.of(id),
+        refCountOf: (id: string) => refCountsRef.current[id] ?? 0,
         subscribe: (listener: () => void) => {
+          refCountListeners.add(listener)
           const unsubscribes = [
             pageStore.subscribe(listener),
             properties.subscribe(listener),
             attachments.subscribe(listener),
+            () => refCountListeners.delete(listener),
           ]
           return () => {
             for (const unsubscribe of unsubscribes) unsubscribe()
@@ -556,6 +579,7 @@ function PageModeDocument({
         openHistory: (id: string) => actions.current.openHistory(id),
         propertiesEdited: () => actions.current.propertiesEdited(),
         attachmentsChanged: () => actions.current.attachmentsChanged(),
+        openReferences: (id: string) => onOpenReferencesRef.current?.(id),
         attach: (id: string, files: File[]) => actions.current.attach(id, files),
         edit: (id: string) => actions.current.edit(id),
         saveQuery: (id: string, expression: string) => actions.current.saveQuery(id, expression),

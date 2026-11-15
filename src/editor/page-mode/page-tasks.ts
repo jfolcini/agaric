@@ -118,6 +118,10 @@ export interface PageTaskSource extends PageTaskActions {
   propertiesOf: (id: string) => InlineProperty[]
   /** Block `id`'s attachments. */
   attachmentsOf: (id: string) => AttachmentRow[]
+  /** How many blocks reference block `id` (#6746). */
+  refCountOf: (id: string) => number
+  /** Show block `id`'s references, as its reference count does in block mode: zoomed there. */
+  openReferences: (id: string) => void
   /** Call `listener` on every change of the page store, the properties or the attachments. */
   subscribe: (listener: () => void) => () => void
   /**
@@ -333,6 +337,7 @@ interface Metadata {
   scheduledDate: string | null
   properties: InlineProperty[]
   attachments: AttachmentRow[]
+  refCount: number
 }
 
 const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
@@ -341,7 +346,8 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
   a.dueDate === b.dueDate &&
   a.scheduledDate === b.scheduledDate &&
   arraysShallowEqual(a.properties, b.properties) &&
-  attachmentRowsEqual(a.attachments, b.attachments)
+  attachmentRowsEqual(a.attachments, b.attachments) &&
+  a.refCount === b.refCount
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
@@ -451,6 +457,7 @@ class PageBlockView implements NodeView {
       scheduledDate: block?.scheduled_date ?? null,
       properties: id === null ? [] : this.tasks.propertiesOf(id),
       attachments: id === null ? [] : this.tasks.attachmentsOf(id),
+      refCount: id === null ? 0 : this.tasks.refCountOf(id),
     })
   }
 
@@ -513,7 +520,7 @@ class PageBlockView implements NodeView {
   private showMetadata(id: string | null, metadata: Metadata): void {
     if (sameMetadata(this.shownMetadata, metadata)) return
     this.shownMetadata = metadata
-    const { priority, dueDate, scheduledDate, properties, attachments } = metadata
+    const { priority, dueDate, scheduledDate, properties, attachments, refCount } = metadata
     // As `SortableBlock` filters them: the repeat rule and a highlight's place have their own
     // chips, the rest are the app's.
     const filteredProperties = properties.filter(({ key }) => !INTERNAL_PROPERTY_KEYS.has(key))
@@ -525,7 +532,8 @@ class PageBlockView implements NodeView {
       repeats ||
       pdfSourceOf(properties) !== null ||
       filteredProperties.length > 0 ||
-      attachments.length > 0
+      attachments.length > 0 ||
+      refCount > 0
     if (id === null || !drawn) {
       this.metadata?.destroy()
       this.metadata = null
@@ -539,6 +547,8 @@ class PageBlockView implements NodeView {
       properties,
       filteredProperties,
       attachments,
+      refCount,
+      onOpenReferences: this.tasks.openReferences,
       onTogglePriority: this.tasks.cyclePriority,
       onOpenDatePicker: this.tasks.openDatePicker,
       onShowProperties: this.tasks.openPropertyDrawer,

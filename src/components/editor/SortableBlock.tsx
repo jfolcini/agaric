@@ -34,10 +34,7 @@ import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { useBlockContextMenu } from '@/components/block-tree/use-block-context-menu'
 import { useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
 import { useBlockSwipeActions } from '@/components/block-tree/use-block-swipe-actions'
-import {
-  isInsideEditableText,
-  useBlockTouchLongPress,
-} from '@/components/block-tree/use-block-touch-long-press'
+import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
@@ -54,6 +51,8 @@ import { EditableBlock } from '@/components/editor/EditableBlock'
 import { RESCHEDULE_DRAG_TYPE } from '@/components/journal/RescheduleDropZone'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import { useBlockRefCount } from '@/hooks/useBlockRefCounts'
+import { isOnBlockRefChip } from '@/hooks/useBlockRefPeek'
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -64,6 +63,7 @@ import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { notify } from '@/lib/notify'
+import { isInsideEditableText } from '@/lib/touch-press'
 import { cn } from '@/lib/utils'
 import { getPageStore, usePageBlockStoreOptional } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -243,6 +243,10 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   maxInlineProperties: number
   isSelected?: boolean | undefined
   attachmentCount: number
+  /** How many blocks reference this one (#6746). */
+  refCount: number
+  /** Zooms the block, where its references list. */
+  onZoomIn?: ((blockId: string) => void) | undefined
   showAttachments: boolean
   rovingEditor: RovingEditorHandle
   attributes: DraggableAttributes
@@ -285,6 +289,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     maxInlineProperties,
     isSelected,
     attachmentCount,
+    refCount,
+    onZoomIn,
     showAttachments,
     rovingEditor,
     attributes,
@@ -440,6 +446,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           attachmentCount={attachmentCount}
           showAttachments={showAttachments}
           onToggleAttachments={onToggleAttachments}
+          refCount={refCount}
+          onOpenReferences={onZoomIn}
           onEditProp={onEditProp}
           onEditKey={onEditKey}
           onShowProperties={onShowProperties}
@@ -588,6 +596,7 @@ function SortableBlockInner({
   // count defaults to 0 — matches the previous "no rows yet" rendering.
   const batchAttachments = useBatchAttachments()
   const attachmentCount = batchAttachments?.getCount(blockId) ?? 0
+  const refCount = useBlockRefCount(blockId)
   const [showAttachments, setShowAttachments] = useState(false)
 
   const handleToggleAttachments = useCallback(() => setShowAttachments((prev) => !prev), [])
@@ -698,6 +707,7 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
+  const isPhone = isTouchDevice && isMobile
   const isBeingRead = useIsBlockBeingRead(blockId)
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
@@ -806,7 +816,10 @@ function SortableBlockInner({
         if (e.touches.length === 1 && !isDraggingRef.current) {
           touchGestureClaimedRef.current = false
         }
-        handleTouchStart(e)
+        // On a phone a hold on a `((ref))` chip is the peek's (#6746): neither
+        // the menu nor the drag starts from it.
+        const chipHold = isPhone && isOnBlockRefChip(e.target)
+        if (!chipHold) handleTouchStart(e)
         swipeHandlers.onTouchStart(e)
         // The row is the touch drag activator (dnd-kit TouchSensor: hold, then
         // move), sharing the long-press hook's delay and tolerance — one hold,
@@ -814,7 +827,7 @@ function SortableBlockInner({
         // `attributes` or keyboard listener: a keydown bubbling up from the
         // editor must not start a keyboard drag. Inside the mounted editor a
         // hold is the native text selection, so the drag stays out of it too.
-        if (isTouchDevice && !isInsideEditableText(e.target)) {
+        if (isTouchDevice && !chipHold && !isInsideEditableText(e.target)) {
           listeners?.['onTouchStart']?.(e)
         }
       }}
@@ -867,6 +880,8 @@ function SortableBlockInner({
         maxInlineProperties={maxInlineProperties}
         isSelected={isSelected}
         attachmentCount={attachmentCount}
+        refCount={refCount}
+        onZoomIn={actions.onZoomIn}
         showAttachments={showAttachments}
         rovingEditor={rovingEditor}
         attributes={attributes}

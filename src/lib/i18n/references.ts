@@ -29,6 +29,15 @@ export const references: Record<string, string> = {
   'references.filtersAppliedBadge': '{{count}}',
   'references.filtersAppliedAriaLabel_one': '{{count}} filter applied',
   'references.filtersAppliedAriaLabel_other': '{{count}} filters applied',
+  // ── Outgoing links (#6749) ────────────────────────────────────────
+  'outgoingLinks.header': 'Outgoing links',
+  'outgoingLinks.empty': 'No block on this page links anywhere.',
+  'outgoingLinks.loadFailed': 'Failed to load outgoing links',
+  'outgoingLinks.unresolved': 'Unresolved',
+  'outgoingLinks.listLabel': 'Links to {{title}}',
+  // ── Reference count on a referenced block (#6746) ─────────────────
+  'refCount.label_one': 'Referenced by {{count}} block — zoom in to list it',
+  'refCount.label_other': 'Referenced by {{count}} blocks — zoom in to list them',
   // ── Block-reference peek (#4551) ──────────────────────────────────
   // The chip shows one capped line; the peek shows what it cannot — the
   // target's full content, where it lives, and how many blocks point at it.

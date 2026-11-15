@@ -4553,6 +4553,42 @@ describe('SortableBlock touch rows (#5332 item 10)', () => {
     expect(onTouchStart).not.toHaveBeenCalled()
   })
 
+  // #6746 — on a phone a hold on a `((ref))` chip is the peek's: no menu, no lift.
+  it('on a phone, a hold on a block-ref chip reaches neither the drag nor the menu; on the text it does', () => {
+    vi.useFakeTimers()
+    const narrow = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(400)
+    try {
+      const onTouchStart = vi.fn()
+      mockUseSortable.mockReturnValue({ ...makeSortable(), listeners: { onTouchStart } })
+      renderTouchRow()
+      // The read-only chip StaticBlock draws (EditableBlock is stubbed here).
+      const text = screen.getByTestId('editable-block-BLOCK_TOUCH')
+      const chip = document.createElement('span')
+      chip.setAttribute('data-type', 'block-ref')
+      chip.setAttribute('data-id', '01ARZ3NDEKTSV4RRFFQ69G5FAV')
+      text.append(chip)
+
+      fireEvent.touchStart(chip, { touches: [{ clientX: 10, clientY: 10 }] })
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      fireEvent.touchEnd(chip)
+      expect(onTouchStart).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+
+      fireEvent.touchStart(text, { touches: [{ clientX: 10, clientY: 10 }] })
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      fireEvent.touchEnd(text)
+      expect(onTouchStart).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      narrow.mockRestore()
+    }
+  })
+
   it("a parent's collapse chevron sits after the text column; a leaf has none", () => {
     const { unmount } = renderTouchRow({ hasChildren: true })
     const chevron = screen.getByTestId('collapse-toggle')

@@ -17,7 +17,9 @@ use agaric_store::backlink::{
     self, BacklinkFilter, BacklinkSort, GroupedBacklinkResponse, LinkKind,
 };
 use agaric_store::fts;
-use agaric_store::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
+use agaric_store::pagination::{
+    self, ActiveBlockRow, BlockRow, Cursor, OutgoingLinkRow, PageRequest, PageResponse,
+};
 use agaric_store::space::SpaceScope;
 use agaric_sync::sync_scheduler::SyncScheduler;
 
@@ -537,6 +539,80 @@ pub async fn count_backlinks_batch_inner(
         .collect())
 }
 
+/// Count, for each block of `page_id` that something links to, the live
+/// blocks of the scope's space linking to it from another page: the
+/// reference count a referenced block shows (#6746), which counts what
+/// zooming the block lists (`count_grouped_backlinks` leaves the target's own
+/// page out too). One read for the whole page, whatever its size, and only
+/// the blocks with a count are in the map.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `page_id` is empty
+#[instrument(skip(pool), err)]
+pub async fn count_backlinks_in_page_inner(
+    pool: &SqlitePool,
+    page_id: &PageId,
+    scope: &SpaceScope,
+) -> Result<HashMap<String, usize>, AppError> {
+    if page_id.as_str().trim().is_empty() {
+        return Err(AppError::validation("page_id must not be empty".into()));
+    }
+    let page_id_str = page_id.as_str();
+    let space_id = scope.space_id().as_str();
+    // `+s.space_id` keeps the space a filter: driven from it, the planner
+    // would walk every block of the space instead of the page's.
+    let rows = sqlx::query!(
+        r#"SELECT bl.target_id AS "target_id!", COUNT(*) AS "count!: i64"
+             FROM blocks t
+             JOIN block_links bl ON bl.target_id = t.id
+             JOIN blocks s ON s.id = bl.source_id
+            WHERE t.page_id = ?1 AND t.id <> ?1 AND t.deleted_at IS NULL
+              AND s.deleted_at IS NULL AND +s.space_id = ?2 AND s.page_id <> ?1
+            GROUP BY bl.target_id"#,
+        page_id_str,
+        space_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let count = usize::try_from(r.count)
+                .expect("COUNT(*) is non-negative and fits in usize on 64-bit targets");
+            (r.target_id, count)
+        })
+        .collect())
+}
+
+/// List the links `page_id`'s blocks hold, grouped by the page their target
+/// lives on, unresolved targets last (#6749). `kind` narrows to one link
+/// shape, as [`list_backlinks_grouped_inner`]'s does.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `page_id` is empty, or `limit` is out of range
+#[instrument(skip(pool), err)]
+pub async fn list_outgoing_links_inner(
+    pool: &SqlitePool,
+    page_id: &PageId,
+    kind: Option<LinkKind>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: &SpaceScope,
+) -> Result<PageResponse<OutgoingLinkRow>, AppError> {
+    if page_id.as_str().trim().is_empty() {
+        return Err(AppError::validation("page_id must not be empty".into()));
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_outgoing_links(
+        pool,
+        page_id.as_str(),
+        kind,
+        &page,
+        scope.space_id().as_str(),
+    )
+    .await
+}
+
 /// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -1047,6 +1123,35 @@ pub async fn count_backlinks_batch(
     scope: SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     count_backlinks_batch_inner(&read_pool.0, page_ids, &scope)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: per-block reference counts of a page. Delegates to [`count_backlinks_in_page_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn count_backlinks_in_page(
+    read_pool: State<'_, ReadPool>,
+    page_id: PageId,
+    scope: SpaceScope,
+) -> Result<HashMap<String, usize>, AppError> {
+    count_backlinks_in_page_inner(&read_pool.0, &page_id, &scope)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: a page's outgoing links. Delegates to [`list_outgoing_links_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn list_outgoing_links(
+    read_pool: State<'_, ReadPool>,
+    page_id: PageId,
+    kind: Option<LinkKind>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: SpaceScope,
+) -> Result<PageResponse<OutgoingLinkRow>, AppError> {
+    list_outgoing_links_inner(&read_pool.0, &page_id, kind, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

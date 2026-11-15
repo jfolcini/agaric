@@ -25,6 +25,8 @@ export interface PageModeSlotProps {
   onNavigateToPage?: NavigateToPageFn | undefined
   /** Edit as Markdown, from page mode's footer; none where the page has no Markdown mode. */
   onEditSource?: (() => void) | undefined
+  /** A block's reference count was activated (#6746). */
+  onOpenReferences?: ((blockId: string) => void) | undefined
 }
 
 export function PageModeSlot({
@@ -35,6 +37,7 @@ export function PageModeSlot({
   opening,
   onNavigateToPage,
   onEditSource,
+  onOpenReferences,
 }: PageModeSlotProps): React.ReactElement {
   const onShown = use(ShownContext)
   const loading = <LoadingSkeleton count={3} />
@@ -48,6 +51,7 @@ export function PageModeSlot({
         onNavigateToPage={onNavigateToPage}
         opening={opening}
         onEditSource={onEditSource}
+        onOpenReferences={onOpenReferences}
         onShown={onShown}
         ref={editorRef}
       />

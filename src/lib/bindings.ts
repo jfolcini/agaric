@@ -712,6 +712,10 @@ export const commands = {
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
 	countBacklinksBatch: (pageIds: PageId[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
+	/**  Tauri command: per-block reference counts of a page. Delegates to [`count_backlinks_in_page_inner`]. */
+	countBacklinksInPage: (pageId: PageId, scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_backlinks_in_page", { pageId, scope })),
+	/**  Tauri command: a page's outgoing links. Delegates to [`list_outgoing_links_inner`]. */
+	listOutgoingLinks: (pageId: PageId, kind: "page_link" | "block_ref" | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<OutgoingLinkRow>, AppError>(__TAURI_INVOKE("list_outgoing_links", { pageId, kind, cursor, limit, scope })),
 	/**
 	 *  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`];
 	 *  the response carries the op refs it appended, for the undo stack (#2468).
@@ -3328,6 +3332,25 @@ export type OsNetworkBlockStatus = {
 	 *  and a live event through one code path instead of two.
 	 */
 	reason_key: string | null,
+};
+
+/**
+ *  One link a page's block holds: a row of the page's *Outgoing links*
+ *  section (#6749).
+ */
+export type OutgoingLinkRow = {
+	/**  The block on the page that holds the link. */
+	source_id: string,
+	source_content: string | null,
+	target_id: string,
+	kind: LinkKind,
+	/**
+	 *  The page the target lives on, the target itself for a page link.
+	 *  `None` when the target does not resolve: it is in the trash, purged,
+	 *  or in another space.
+	 */
+	target_page_id: string | null,
+	target_page_title: string | null,
 };
 
 /**
