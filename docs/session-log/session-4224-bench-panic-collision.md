@@ -1,4 +1,4 @@
-# Session 4221 — `cargo bench` built two `agaric_lib`s into one file
+# Session 4224 — `cargo bench` built two `agaric_lib`s into one file
 
 `Refs #3394`: dispatch run 43744488102 of `scheduled-deep-checks.yml` (on #6840's branch) failed one step in `bench-slo`, "Measure the Loro engine and a pulled vault" (#6828). `cargo bench --bench engine_bench` stopped with 81 E0308/E0277 errors naming two copies of `sqlx-core`, after warning of an `output filename collision` on `libagaric_lib.rlib`.
 
