@@ -173,6 +173,18 @@ impl PasteSplice {
     /// own at its depth, so the fence keeps its closing line.
     pub(super) fn join(self, blocks: &mut Vec<import::ParsedBlock>) {
         let Self { before, after } = self;
+        // A comment read as a callout (#6751) joins text as the comment it was
+        // pasted as: a callout mid-text is no callout.
+        let last = blocks.len().saturating_sub(1);
+        for (at, block) in blocks.iter_mut().enumerate() {
+            let joined = (at == 0 && !before.is_empty()) || (at == last && !after.is_empty());
+            if let Some(comment) = joined
+                .then(|| import::callout_as_comment(&block.content))
+                .flatten()
+            {
+                block.content = comment;
+            }
+        }
         if let Some(first) = blocks.first_mut()
             && !before.is_empty()
         {

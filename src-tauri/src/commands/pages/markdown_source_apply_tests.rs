@@ -693,6 +693,38 @@ fn a_save_normalizes_only_the_blocks_it_writes() {
     });
 }
 
+/// #6751 — a save reads an Obsidian comment typed as a block as import and
+/// paste do: a `comment` callout of its text.
+#[test]
+fn a_save_reads_a_comment_block_as_a_comment_callout() {
+    Runtime::new().unwrap().block_on(async {
+        let fx = fixture().await;
+        let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+        let text = buffer.text.clone() + "\n%%one line%%\n\n%%\nfirst\nsecond\n%%\n";
+        let mut line_ids = buffer.line_ids.clone();
+        line_ids.extend(std::iter::repeat_n(None, 7));
+
+        let report = save(&fx, (text, line_ids), &buffer.source).await;
+
+        assert_eq!(report.created, 2);
+        let contents: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+             ORDER BY position, id",
+        )
+        .bind(&fx.page)
+        .fetch_all(&fx.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            contents,
+            [
+                "> [!comment]\n> one line",
+                "> [!comment]\n> first\n> second"
+            ]
+        );
+    });
+}
+
 /// #6277 D2 — Tasks signifiers typed at the end of a task's line are saved as
 /// the fields a typed task keeps: its dates, priority and rule, and a done
 /// task's `completed_at`, the `✅` date and not the day of the save. One that
