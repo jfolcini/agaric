@@ -97,7 +97,7 @@ export function RescheduleDropZone({
     <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDrop={(e) => void handleDrop(e)}
       data-testid={`reschedule-drop-zone-${dateStr}`}
       className={cn(
         'transition-colors rounded-lg',

@@ -478,26 +478,28 @@ export function BlockPropertyEditor({
                     'text-left rounded-sm px-2 py-1 text-sm hover:bg-accent transition-colors truncate focus-ring-visible',
                     page.id === editingProp.value && 'bg-accent font-medium',
                   )}
-                  onClick={async () => {
-                    try {
-                      unwrap(
-                        await commands.setProperty(blockId, editingProp.key, {
-                          value_text: null,
-                          value_num: null,
-                          value_date: null,
-                          value_ref: page.id,
-                          value_bool: null,
-                        }),
-                      )
-                    } catch (err) {
-                      reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
-                        blockId,
-                        key: editingProp.key,
-                        refPageId: page.id,
-                      })
-                    }
-                    setEditingProp(null)
-                  }}
+                  onClick={() =>
+                    void (async () => {
+                      try {
+                        unwrap(
+                          await commands.setProperty(blockId, editingProp.key, {
+                            value_text: null,
+                            value_num: null,
+                            value_date: null,
+                            value_ref: page.id,
+                            value_bool: null,
+                          }),
+                        )
+                      } catch (err) {
+                        reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                          blockId,
+                          key: editingProp.key,
+                          refPageId: page.id,
+                        })
+                      }
+                      setEditingProp(null)
+                    })()
+                  }
                 >
                   {page.content || t('block.untitled')}
                 </button>
@@ -514,130 +516,132 @@ export function BlockPropertyEditor({
           className="rounded border px-2 py-1 text-sm w-32"
           aria-label={t('block.editProperty')}
           defaultValue={editingProp.value}
-          onBlur={async (e) => {
-            const newValue = e.target.value.trim()
-            if (newValue !== editingProp.value) {
-              // #4010 (clear half) — an emptied chip means "remove this
-              // value", and for a user-defined key that is only expressible
-              // as a delete. `buildPropertyParams` would send `value_text:
-              // ''` (rejected by `set_property.value_text.empty`) or an
-              // all-null payload (rejected by the exactly-one-value rule for
-              // non-reserved keys), so clearing could never succeed — the
-              // user got `property.saveFailed` whatever they typed. No type is
-              // needed to clear, so this runs before the definition is
-              // resolved.
-              if (newValue === '') {
-                try {
-                  unwrap(await commands.deleteProperty(blockId, editingProp.key))
-                } catch (err) {
-                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
-                    blockId,
-                    key: editingProp.key,
-                  })
-                }
-                setEditingProp(null)
-                return
-              }
-              // #4009 — the definition for THIS key may not have resolved
-              // yet (`valueType === null`). The chip autofocuses and is meant
-              // to be typed into straight away, so the user routinely
-              // finishes before the per-key lookup lands. #3275 refused to
-              // commit in that window for a good reason — the only type in
-              // hand belonged to a DIFFERENT key, and writing against it
-              // routes a date string through `Number(...)` into `value_num`
-              // — but it also threw the freshly typed text away. Resolving
-              // the definition for `editingProp.key` right here removes the
-              // wrong-key hazard entirely, so a late definition costs a
-              // moment instead of the user's input.
-              let resolvedValueType = valueType
-              if (resolvedValueType === null) {
-                try {
-                  const def =
-                    spaceId === null
-                      ? null
-                      : unwrap(await commands.getPropertyDef(spaceId, editingProp.key))
-                  // A MISS is a real answer ('text'), matching
-                  // `usePropertyDefForEdit` and `BlockPropertyDrawer.getType`.
-                  resolvedValueType = def?.value_type ?? 'text'
-                } catch (err) {
-                  // The lookup itself failed, so there is still no type for
-                  // this key — and #3275's rule stands: never write against a
-                  // guess. This is now the ONLY path that discards the edit,
-                  // and it takes a real IPC failure to reach.
-                  //
-                  // #4041 review note 5 — `usePropertyDefForEdit` answers the
-                  // SAME failure differently: its `.catch` degrades to 'text'
-                  // (`usePropertyDefForEdit.ts`, the `setResolvedType(... 'text')`
-                  // in the catch) so the popup still renders. Recorded as a
-                  // deliberate split rather than left to look accidental: that
-                  // one runs before the user has typed and only chooses a
-                  // widget; this one runs with typed text in hand, where a
-                  // guessed type is a wrong-column WRITE. Both are noted at the
-                  // other end too.
-                  logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
-                    blockId,
-                    key: editingProp.key,
-                  })
-                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
-                    blockId,
-                    key: editingProp.key,
-                  })
+          onBlur={(e) =>
+            void (async () => {
+              const newValue = e.target.value.trim()
+              if (newValue !== editingProp.value) {
+                // #4010 (clear half) — an emptied chip means "remove this
+                // value", and for a user-defined key that is only expressible
+                // as a delete. `buildPropertyParams` would send `value_text:
+                // ''` (rejected by `set_property.value_text.empty`) or an
+                // all-null payload (rejected by the exactly-one-value rule for
+                // non-reserved keys), so clearing could never succeed — the
+                // user got `property.saveFailed` whatever they typed. No type is
+                // needed to clear, so this runs before the definition is
+                // resolved.
+                if (newValue === '') {
+                  try {
+                    unwrap(await commands.deleteProperty(blockId, editingProp.key))
+                  } catch (err) {
+                    reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                      blockId,
+                      key: editingProp.key,
+                    })
+                  }
                   setEditingProp(null)
                   return
                 }
-              }
-              // #4008 review note 4 — the inline chip renders a PLAIN TEXT
-              // input for every non-select/non-ref type, so a `boolean`
-              // property reaches `buildPropertyParams` as free text. Its
-              // boolean branch is written for the drawer's checkbox, which
-              // only ever supplies 'true' / 'false' / '': anything else maps
-              // to `value_bool: false`, silently discarding what the user
-              // typed AND overwriting the stored value. Refuse instead —
-              // exactly what the number branch already does for unparseable
-              // input, and the reason `date` (which stores the typed string
-              // verbatim, destroying nothing) is deliberately left alone.
-              if (resolvedValueType === 'boolean' && !['', 'true', 'false'].includes(newValue)) {
-                notify.error(t('property.invalidBoolean'))
-                setEditingProp(null)
-                return
-              }
-              // #3275 — route through the SAME `buildPropertyParams` the
-              // drawer path uses (`property-save-utils.ts` →
-              // `handleSaveProperty`) instead of hard-coding
-              // `value_text`/nulling every other typed column. This is what
-              // keeps a user-defined `number`/`date` property's typed
-              // column intact when edited from the inline chip, and
-              // surfaces the same `property.invalidNumber` toast the
-              // drawer shows for an unparseable number.
-              const result = buildPropertyParams(
-                blockId,
-                editingProp.key,
-                newValue,
-                resolvedValueType,
-              )
-              if (!result.ok) {
-                notify.error(t('property.invalidNumber'))
-              } else {
-                try {
-                  unwrap(
-                    await commands.setProperty(result.params.blockId, result.params.key, {
-                      value_text: result.params.valueText ?? null,
-                      value_num: result.params.valueNum ?? null,
-                      value_date: result.params.valueDate ?? null,
-                      value_ref: result.params.valueRef ?? null,
-                      value_bool: result.params.valueBool ?? null,
-                    }),
-                  )
-                } catch (err) {
-                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
-                    blockId,
-                    key: editingProp.key,
-                  })
+                // #4009 — the definition for THIS key may not have resolved
+                // yet (`valueType === null`). The chip autofocuses and is meant
+                // to be typed into straight away, so the user routinely
+                // finishes before the per-key lookup lands. #3275 refused to
+                // commit in that window for a good reason — the only type in
+                // hand belonged to a DIFFERENT key, and writing against it
+                // routes a date string through `Number(...)` into `value_num`
+                // — but it also threw the freshly typed text away. Resolving
+                // the definition for `editingProp.key` right here removes the
+                // wrong-key hazard entirely, so a late definition costs a
+                // moment instead of the user's input.
+                let resolvedValueType = valueType
+                if (resolvedValueType === null) {
+                  try {
+                    const def =
+                      spaceId === null
+                        ? null
+                        : unwrap(await commands.getPropertyDef(spaceId, editingProp.key))
+                    // A MISS is a real answer ('text'), matching
+                    // `usePropertyDefForEdit` and `BlockPropertyDrawer.getType`.
+                    resolvedValueType = def?.value_type ?? 'text'
+                  } catch (err) {
+                    // The lookup itself failed, so there is still no type for
+                    // this key — and #3275's rule stands: never write against a
+                    // guess. This is now the ONLY path that discards the edit,
+                    // and it takes a real IPC failure to reach.
+                    //
+                    // #4041 review note 5 — `usePropertyDefForEdit` answers the
+                    // SAME failure differently: its `.catch` degrades to 'text'
+                    // (`usePropertyDefForEdit.ts`, the `setResolvedType(... 'text')`
+                    // in the catch) so the popup still renders. Recorded as a
+                    // deliberate split rather than left to look accidental: that
+                    // one runs before the user has typed and only chooses a
+                    // widget; this one runs with typed text in hand, where a
+                    // guessed type is a wrong-column WRITE. Both are noted at the
+                    // other end too.
+                    logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
+                      blockId,
+                      key: editingProp.key,
+                    })
+                    reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                      blockId,
+                      key: editingProp.key,
+                    })
+                    setEditingProp(null)
+                    return
+                  }
+                }
+                // #4008 review note 4 — the inline chip renders a PLAIN TEXT
+                // input for every non-select/non-ref type, so a `boolean`
+                // property reaches `buildPropertyParams` as free text. Its
+                // boolean branch is written for the drawer's checkbox, which
+                // only ever supplies 'true' / 'false' / '': anything else maps
+                // to `value_bool: false`, silently discarding what the user
+                // typed AND overwriting the stored value. Refuse instead —
+                // exactly what the number branch already does for unparseable
+                // input, and the reason `date` (which stores the typed string
+                // verbatim, destroying nothing) is deliberately left alone.
+                if (resolvedValueType === 'boolean' && !['', 'true', 'false'].includes(newValue)) {
+                  notify.error(t('property.invalidBoolean'))
+                  setEditingProp(null)
+                  return
+                }
+                // #3275 — route through the SAME `buildPropertyParams` the
+                // drawer path uses (`property-save-utils.ts` →
+                // `handleSaveProperty`) instead of hard-coding
+                // `value_text`/nulling every other typed column. This is what
+                // keeps a user-defined `number`/`date` property's typed
+                // column intact when edited from the inline chip, and
+                // surfaces the same `property.invalidNumber` toast the
+                // drawer shows for an unparseable number.
+                const result = buildPropertyParams(
+                  blockId,
+                  editingProp.key,
+                  newValue,
+                  resolvedValueType,
+                )
+                if (!result.ok) {
+                  notify.error(t('property.invalidNumber'))
+                } else {
+                  try {
+                    unwrap(
+                      await commands.setProperty(result.params.blockId, result.params.key, {
+                        value_text: result.params.valueText ?? null,
+                        value_num: result.params.valueNum ?? null,
+                        value_date: result.params.valueDate ?? null,
+                        value_ref: result.params.valueRef ?? null,
+                        value_bool: result.params.valueBool ?? null,
+                      }),
+                    )
+                  } catch (err) {
+                    reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                      blockId,
+                      key: editingProp.key,
+                    })
+                  }
                 }
               }
-            }
-            setEditingProp(null)
-          }}
+              setEditingProp(null)
+            })()
+          }
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
             if (e.key === 'Escape') setEditingProp(null)
@@ -662,149 +666,151 @@ export function BlockPropertyEditor({
         className="rounded border px-2 py-1 text-sm w-32"
         aria-label={t('block.editProperty')}
         defaultValue={editingKey.oldKey}
-        onBlur={async (e) => {
-          const newKey = e.target.value.trim()
-          if (newKey && newKey !== editingKey.oldKey) {
-            try {
-              // #3275 — read the OLD key's raw typed row instead of
-              // re-writing `editingKey.value` (the already-flattened
-              // display string from `useExtraBlockProperties`'s `extraPropertiesOf`,
-              // which collapses value_text/value_date/value_num into one
-              // string and cannot tell them apart). Re-flattening it back
-              // into `value_text` on rename is exactly what nulled
-              // `value_num`/`value_date` for a renamed number/date property.
-              const rows: PropertyRow[] = unwrap(await commands.getProperties(blockId))
-              const oldRow = rows.find((r) => r.key === editingKey.oldKey)
-              if (!oldRow) {
-                // #3275 (review finding 2) — no row for the old key (empty or
-                // stale result, a concurrent delete, a key mismatch). Every
-                // `oldRow?.value_X ?? null` below would collapse to null and
-                // write an ALL-NULL row under the new key, destroying the
-                // value. There is nothing safe to carry over — the flattened
-                // `editingKey.value` cannot tell value_text from value_date —
-                // so abort with the same `renameFailed` toast the IPC-failure
-                // path uses and leave the original key exactly as it is.
-                throw new Error(
-                  `rename aborted: no property row for key "${editingKey.oldKey}" on block ${blockId}`,
-                )
-              }
-              // #4010 — carry the property DEFINITION to the new key as well.
-              // `set_property` never inserts a `property_definitions` row, so
-              // without this the renamed key is undeclared: the next chip
-              // edit's `getPropertyDef` misses, `valueType` falls back to
-              // `'text'`, and the `value_num`/`value_date` the block below
-              // carefully carries over is re-flattened into `value_text` —
-              // the exact bug #3275 fixed, reappearing one edit later.
-              //
-              // Deliberately BEST-EFFORT and ahead of the value write:
-              // ahead, because the engine validates the payload shape against
-              // the declaration; best-effort, because the value carry is the
-              // part that must not be lost, and it worked before definitions
-              // were carried at all. `create_property_def` is INSERT OR
-              // IGNORE, so renaming onto an already-declared key is a no-op.
-              //
-              // #4041 review notes 3 + 4 — writing the declaration first means
-              // the value write can still fail AFTER it lands (a concurrently
-              // soft-deleted block, a cross-space `ref`, an IPC error), and a
-              // `property_definitions` row covers its whole space and can be
-              // permanent: `delete_property_def_inner` refuses while any of
-              // the space's `block_properties` rows reference the key, and refuses every
-              // builtin outright. A compensating delete therefore cannot be
-              // the safety mechanism — the case that hurts most is the case it
-              // refuses. `renameMayDeclareKey` is the pre-flight that makes the
-              // row withdrawable BEFORE it exists (not builtin/column-backed,
-              // not already declared, referenced by no block); see its doc
-              // comment for the full argument and for what is given up when it
-              // says no.
-              //
-              // #4399 — the backend now refuses `create_property_def` when
-              // the target key's existing values contradict the carried
-              // type, in the same transaction as the insert. That is the
-              // race-free backstop this pre-flight cannot be (two pools, no
-              // shared transaction). Nothing here changes: the carry is already
-              // best-effort, so a refusal lands in the `catch` below, the
-              // key stays undeclared, and the VALUE carry proceeds — which
-              // is exactly the outcome the pre-flight aims for.
-              let declaredKey: string | null = null
+        onBlur={(e) =>
+          void (async () => {
+            const newKey = e.target.value.trim()
+            if (newKey && newKey !== editingKey.oldKey) {
               try {
-                // Old key's declaration first: when there is nothing to carry
-                // (an untyped key — the common case) the pre-flight's two
-                // lookups are never issued at all.
-                const carried =
-                  spaceId === null
-                    ? null
-                    : carriedRenameDefinition(
-                        unwrap(await commands.getPropertyDef(spaceId, editingKey.oldKey)),
-                        oldRow,
-                      )
-                if (carried && spaceId && (await renameMayDeclareKey(spaceId, newKey))) {
-                  unwrap(
-                    await commands.createPropertyDef(
-                      spaceId,
-                      newKey,
-                      carried.valueType,
-                      carried.options,
-                      carried.multiple ?? null,
-                    ),
+                // #3275 — read the OLD key's raw typed row instead of
+                // re-writing `editingKey.value` (the already-flattened
+                // display string from `useExtraBlockProperties`'s `extraPropertiesOf`,
+                // which collapses value_text/value_date/value_num into one
+                // string and cannot tell them apart). Re-flattening it back
+                // into `value_text` on rename is exactly what nulled
+                // `value_num`/`value_date` for a renamed number/date property.
+                const rows: PropertyRow[] = unwrap(await commands.getProperties(blockId))
+                const oldRow = rows.find((r) => r.key === editingKey.oldKey)
+                if (!oldRow) {
+                  // #3275 (review finding 2) — no row for the old key (empty or
+                  // stale result, a concurrent delete, a key mismatch). Every
+                  // `oldRow?.value_X ?? null` below would collapse to null and
+                  // write an ALL-NULL row under the new key, destroying the
+                  // value. There is nothing safe to carry over — the flattened
+                  // `editingKey.value` cannot tell value_text from value_date —
+                  // so abort with the same `renameFailed` toast the IPC-failure
+                  // path uses and leave the original key exactly as it is.
+                  throw new Error(
+                    `rename aborted: no property row for key "${editingKey.oldKey}" on block ${blockId}`,
                   )
-                  declaredKey = newKey
                 }
-              } catch (err) {
-                logger.warn(
-                  'BlockPropertyEditor',
-                  'could not carry property definition to renamed key',
-                  { blockId, oldKey: editingKey.oldKey, newKey },
-                  err,
-                )
-              }
-              try {
-                unwrap(
-                  await commands.setProperty(blockId, newKey, {
-                    // Non-optional access on purpose: `oldRow` is guaranteed
-                    // present by the guard above, and `?.` here is what let the
-                    // all-null write through in the first place.
-                    value_text: oldRow.value_text ?? null,
-                    value_num: oldRow.value_num ?? null,
-                    value_date: oldRow.value_date ?? null,
-                    value_ref: oldRow.value_ref ?? null,
-                    value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
-                    ...(oldRow.value_list == null ? {} : { value_list: oldRow.value_list }),
-                  }),
-                )
-              } catch (err) {
-                // The rename did not happen, so the declaration it created
-                // must go. This is the tidy-up, NOT the guarantee: the
-                // pre-flight above already established the row is ours and
-                // unreferenced, which is why this delete is expected to
-                // succeed. It can still be refused if another write claimed
-                // the key in between — and what then survives is a declaration
-                // over an unused key, which the user can still remove from the
-                // Properties tab. Never the un-exitable state of note 4.
-                if (declaredKey && spaceId) {
-                  try {
-                    unwrap(await commands.deletePropertyDef(spaceId, declaredKey))
-                  } catch (cleanupErr) {
-                    logger.warn(
-                      'BlockPropertyEditor',
-                      'could not withdraw the definition a failed rename created',
-                      { blockId, oldKey: editingKey.oldKey, newKey },
-                      cleanupErr,
+                // #4010 — carry the property DEFINITION to the new key as well.
+                // `set_property` never inserts a `property_definitions` row, so
+                // without this the renamed key is undeclared: the next chip
+                // edit's `getPropertyDef` misses, `valueType` falls back to
+                // `'text'`, and the `value_num`/`value_date` the block below
+                // carefully carries over is re-flattened into `value_text` —
+                // the exact bug #3275 fixed, reappearing one edit later.
+                //
+                // Deliberately BEST-EFFORT and ahead of the value write:
+                // ahead, because the engine validates the payload shape against
+                // the declaration; best-effort, because the value carry is the
+                // part that must not be lost, and it worked before definitions
+                // were carried at all. `create_property_def` is INSERT OR
+                // IGNORE, so renaming onto an already-declared key is a no-op.
+                //
+                // #4041 review notes 3 + 4 — writing the declaration first means
+                // the value write can still fail AFTER it lands (a concurrently
+                // soft-deleted block, a cross-space `ref`, an IPC error), and a
+                // `property_definitions` row covers its whole space and can be
+                // permanent: `delete_property_def_inner` refuses while any of
+                // the space's `block_properties` rows reference the key, and refuses every
+                // builtin outright. A compensating delete therefore cannot be
+                // the safety mechanism — the case that hurts most is the case it
+                // refuses. `renameMayDeclareKey` is the pre-flight that makes the
+                // row withdrawable BEFORE it exists (not builtin/column-backed,
+                // not already declared, referenced by no block); see its doc
+                // comment for the full argument and for what is given up when it
+                // says no.
+                //
+                // #4399 — the backend now refuses `create_property_def` when
+                // the target key's existing values contradict the carried
+                // type, in the same transaction as the insert. That is the
+                // race-free backstop this pre-flight cannot be (two pools, no
+                // shared transaction). Nothing here changes: the carry is already
+                // best-effort, so a refusal lands in the `catch` below, the
+                // key stays undeclared, and the VALUE carry proceeds — which
+                // is exactly the outcome the pre-flight aims for.
+                let declaredKey: string | null = null
+                try {
+                  // Old key's declaration first: when there is nothing to carry
+                  // (an untyped key — the common case) the pre-flight's two
+                  // lookups are never issued at all.
+                  const carried =
+                    spaceId === null
+                      ? null
+                      : carriedRenameDefinition(
+                          unwrap(await commands.getPropertyDef(spaceId, editingKey.oldKey)),
+                          oldRow,
+                        )
+                  if (carried && spaceId && (await renameMayDeclareKey(spaceId, newKey))) {
+                    unwrap(
+                      await commands.createPropertyDef(
+                        spaceId,
+                        newKey,
+                        carried.valueType,
+                        carried.options,
+                        carried.multiple ?? null,
+                      ),
                     )
+                    declaredKey = newKey
                   }
+                } catch (err) {
+                  logger.warn(
+                    'BlockPropertyEditor',
+                    'could not carry property definition to renamed key',
+                    { blockId, oldKey: editingKey.oldKey, newKey },
+                    err,
+                  )
                 }
-                throw err
+                try {
+                  unwrap(
+                    await commands.setProperty(blockId, newKey, {
+                      // Non-optional access on purpose: `oldRow` is guaranteed
+                      // present by the guard above, and `?.` here is what let the
+                      // all-null write through in the first place.
+                      value_text: oldRow.value_text ?? null,
+                      value_num: oldRow.value_num ?? null,
+                      value_date: oldRow.value_date ?? null,
+                      value_ref: oldRow.value_ref ?? null,
+                      value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
+                      ...(oldRow.value_list == null ? {} : { value_list: oldRow.value_list }),
+                    }),
+                  )
+                } catch (err) {
+                  // The rename did not happen, so the declaration it created
+                  // must go. This is the tidy-up, NOT the guarantee: the
+                  // pre-flight above already established the row is ours and
+                  // unreferenced, which is why this delete is expected to
+                  // succeed. It can still be refused if another write claimed
+                  // the key in between — and what then survives is a declaration
+                  // over an unused key, which the user can still remove from the
+                  // Properties tab. Never the un-exitable state of note 4.
+                  if (declaredKey && spaceId) {
+                    try {
+                      unwrap(await commands.deletePropertyDef(spaceId, declaredKey))
+                    } catch (cleanupErr) {
+                      logger.warn(
+                        'BlockPropertyEditor',
+                        'could not withdraw the definition a failed rename created',
+                        { blockId, oldKey: editingKey.oldKey, newKey },
+                        cleanupErr,
+                      )
+                    }
+                  }
+                  throw err
+                }
+                // Remove the OLD key, now that the new one holds the value.
+                unwrap(await commands.deleteProperty(blockId, editingKey.oldKey))
+              } catch (err) {
+                reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
+                  blockId,
+                  oldKey: editingKey.oldKey,
+                })
               }
-              // Remove the OLD key, now that the new one holds the value.
-              unwrap(await commands.deleteProperty(blockId, editingKey.oldKey))
-            } catch (err) {
-              reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
-                blockId,
-                oldKey: editingKey.oldKey,
-              })
             }
-          }
-          setEditingKey(null)
-        }}
+            setEditingKey(null)
+          })()
+        }
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') setEditingKey(null)

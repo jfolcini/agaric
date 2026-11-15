@@ -17,7 +17,7 @@ import { useJournalStore } from '@/stores/journal'
 interface WeeklyViewProps {
   makeDayEntry: (d: Date) => DayEntry
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
-  onAddBlock: (dateStr: string) => void
+  onAddBlock: (dateStr: string) => void | Promise<void>
   onPageDeleted?: ((dateStr: string) => void) | undefined
 }
 

@@ -347,7 +347,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         items={visibleDefs}
         skeleton={<LoadingSkeleton count={3} height="h-10" data-testid="properties-loading" />}
         error={loadError && t('property.loadFailed')}
-        onRetry={loadDefinitions}
+        onRetry={() => void loadDefinitions()}
         empty={<EmptyState icon={Settings2} message={t('propertiesView.empty')} />}
       >
         {() =>

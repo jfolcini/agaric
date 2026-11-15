@@ -12,7 +12,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 interface TrashRestoreAllDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onConfirm: () => void
+  onConfirm: () => void | Promise<void>
 }
 
 export function TrashRestoreAllDialog({

@@ -370,10 +370,12 @@ describe('AgendaView', () => {
     await waitFor(() => {
       expect(mockedNotifyRetry).toHaveBeenCalledTimes(1)
     })
-    // The retry callback handed to notify.retry is the same load-more
-    // function exposed to AgendaResults, so invoking it re-attempts the page.
+    // Invoking the retry callback handed to notify.retry re-attempts the page.
     const retryArg = mockedNotifyRetry.mock.calls[0]?.[1]
-    expect(retryArg).toBe(loadMoreRef.current)
+    retryArg?.()
+    await waitFor(() => {
+      expect(mockedLoadMoreAgendaFilters).toHaveBeenCalledTimes(2)
+    })
   })
 
   // 6. Resolves page titles via batchResolve

@@ -616,7 +616,7 @@ export function PageHeader({
               editableTitle={editableTitle}
               titleRef={titleRef}
               onInput={handleTitleInput}
-              onBlur={handleTitleBlur}
+              onBlur={() => void handleTitleBlur()}
               onKeyDown={handleTitleKeyDown}
               onKeyUp={handleTitleKeyUp}
             />
@@ -649,13 +649,13 @@ export function PageHeader({
               onAddAlias={handleKebabAddAlias}
               onAddTag={handleKebabAddTag}
               onAddProperty={handleKebabAddProperty}
-              onToggleTemplate={handleToggleTemplate}
-              onToggleJournalTemplate={handleToggleJournalTemplate}
-              onExport={handleExport}
-              onSaveMarkdownFile={handleSaveMarkdownFile}
+              onToggleTemplate={() => void handleToggleTemplate()}
+              onToggleJournalTemplate={() => void handleToggleJournalTemplate()}
+              onExport={() => void handleExport()}
+              onSaveMarkdownFile={() => void handleSaveMarkdownFile()}
               // Not on Android: printing there is out of scope (#6558).
               onPrint={isAndroid() ? undefined : handlePrint}
-              onCopyAppLink={handleCopyAppLink}
+              onCopyAppLink={() => void handleCopyAppLink()}
               onEditSource={handleEditSource}
               editMode={editMode}
               onEditModeChange={onPhone ? handleMenuEditModeChange : undefined}
@@ -665,7 +665,7 @@ export function PageHeader({
               onOpenInNewTab={handleOpenInNewTab}
               isSpaceBlock={isSpaceBlock}
               moveTargets={moveTargets}
-              onMoveToSpace={handleMoveToSpace}
+              onMoveToSpace={(targetSpaceId) => void handleMoveToSpace(targetSpaceId)}
             />
           </div>
 
@@ -703,9 +703,9 @@ export function PageHeader({
               showTagPicker={showTagPicker}
               onTagQueryChange={setTagQuery}
               onTagPickerChange={handleTagPickerChange}
-              onAddTag={handleTagAdd}
-              onRemoveTag={handleRemoveTag}
-              onCreateTag={handleTagCreate}
+              onAddTag={(tagId) => void handleTagAdd(tagId)}
+              onRemoveTag={(tagId) => void handleRemoveTag(tagId)}
+              onCreateTag={() => void handleTagCreate()}
             />
           )}
 

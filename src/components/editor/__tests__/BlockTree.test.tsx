@@ -264,7 +264,7 @@ vi.mock('@/components/editor/SortableBlock', async () => {
           {onToggleTodo && (
             <button
               data-testid={`todo-toggle-${props.blockId}`}
-              onClick={() => onToggleTodo(props.blockId)}
+              onClick={() => void onToggleTodo(props.blockId)}
               type="button"
             >
               Todo
@@ -273,7 +273,7 @@ vi.mock('@/components/editor/SortableBlock', async () => {
           {onTogglePriority && (
             <button
               data-testid={`priority-toggle-${props.blockId}`}
-              onClick={() => onTogglePriority(props.blockId)}
+              onClick={() => void onTogglePriority(props.blockId)}
               type="button"
             >
               Priority

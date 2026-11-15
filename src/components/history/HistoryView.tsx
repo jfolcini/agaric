@@ -374,7 +374,7 @@ export function HistoryView(): React.ReactElement {
         onLoadMore={loadMore}
         onRowClick={handleRowClick}
         onToggleSelection={toggleSelectedIndex}
-        onToggleDiff={handleToggleDiff}
+        onToggleDiff={(entry) => void handleToggleDiff(entry)}
         onRestoreToHere={handleRestoreToHere}
       />
 

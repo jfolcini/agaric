@@ -65,7 +65,7 @@ export interface UseBlockNavigateToLinkReturn {
    * `(id: string) => handleNavigateRef.current(id)` at the registration
    * site rather than capturing the ref's current value.
    */
-  handleNavigateRef: RefObject<(id: string) => void>
+  handleNavigateRef: RefObject<(id: string) => void | Promise<void>>
 }
 
 export function useBlockNavigateToLink({
@@ -78,7 +78,7 @@ export function useBlockNavigateToLink({
   onNavigateToPage,
   t,
 }: UseBlockNavigateToLinkParams): UseBlockNavigateToLinkReturn {
-  const handleNavigateRef = useRef<(id: string) => void>(() => {})
+  const handleNavigateRef = useRef<(id: string) => void | Promise<void>>(() => {})
 
   const handleNavigate = useCallback(
     async (targetId: string, openPage?: NavigateToPageFn): Promise<void> => {

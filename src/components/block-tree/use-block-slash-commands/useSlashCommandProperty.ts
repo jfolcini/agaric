@@ -254,42 +254,46 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
 function handleAttach(ctx: SlashCommandContext): void {
   const input = document.createElement('input')
   input.type = 'file'
-  input.addEventListener('change', async () => {
-    const file = input.files?.[0]
-    if (!file) return
-    if (ctx.attachFiles) {
-      ctx.attachFiles([file])
-      return
-    }
-    const filename = file.name
-    const sizeBytes = file.size
-    const mimeType = file.type || guessMimeType(filename)
-    const allowed = isAttachmentAllowed(mimeType, sizeBytes)
-    if (!allowed.ok) {
-      notify.error(ctx.t(allowed.reason, allowed.i18nContext))
-      return
-    }
-    const showProgress = sizeBytes >= 1_048_576
-    const progressToastId = showProgress
-      ? notify.loading(ctx.t('blockTree.attachingFileMessage', { filename }))
-      : undefined
-    try {
-      unwrap(
-        await commands.addAttachmentWithBytes(
-          ctx.blockId,
-          filename,
-          mimeType,
-          await blobToBase64(file),
-        ),
-      )
-      recordAttachmentInvalidation()
-      if (progressToastId !== undefined) notify.dismiss(progressToastId)
-      notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
-    } catch {
-      if (progressToastId !== undefined) notify.dismiss(progressToastId)
-      notify.error(ctx.t('blockTree.attachFileFailed'))
-    }
-  })
+  input.addEventListener(
+    'change',
+    () =>
+      void (async () => {
+        const file = input.files?.[0]
+        if (!file) return
+        if (ctx.attachFiles) {
+          ctx.attachFiles([file])
+          return
+        }
+        const filename = file.name
+        const sizeBytes = file.size
+        const mimeType = file.type || guessMimeType(filename)
+        const allowed = isAttachmentAllowed(mimeType, sizeBytes)
+        if (!allowed.ok) {
+          notify.error(ctx.t(allowed.reason, allowed.i18nContext))
+          return
+        }
+        const showProgress = sizeBytes >= 1_048_576
+        const progressToastId = showProgress
+          ? notify.loading(ctx.t('blockTree.attachingFileMessage', { filename }))
+          : undefined
+        try {
+          unwrap(
+            await commands.addAttachmentWithBytes(
+              ctx.blockId,
+              filename,
+              mimeType,
+              await blobToBase64(file),
+            ),
+          )
+          recordAttachmentInvalidation()
+          if (progressToastId !== undefined) notify.dismiss(progressToastId)
+          notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
+        } catch {
+          if (progressToastId !== undefined) notify.dismiss(progressToastId)
+          notify.error(ctx.t('blockTree.attachFileFailed'))
+        }
+      })(),
+  )
   // `input.click()` can throw on some platforms (e.g. when the user
   // gesture has been lost or the browser/webview blocks programmatic file
   // dialogs). Surface the failure instead of letting it bubble as an

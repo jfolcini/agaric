@@ -128,9 +128,9 @@ export interface BlockKeyboardCallbacks {
   /** Flush current content before navigation. Returns new markdown or null. */
   onFlush: () => string | null
   /** Merge current block with previous (Backspace at start of non-empty block). */
-  onMergeWithPrev: () => void
+  onMergeWithPrev: () => void | Promise<void>
   /** Flush current content and close the editor. Called on Enter. */
-  onEnterSave: () => void
+  onEnterSave: () => void | Promise<void>
   /** Escape pressed — save, leave editing, select the block (#5160 D17). */
   onEscapeSave: () => void
   /** Move block up among siblings (Ctrl/Cmd+Shift+ArrowUp). */
@@ -518,7 +518,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       e.key === 'Enter' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable && !ctx.inList,
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onEnterSave()
+      void cb.onEnterSave()
     },
   },
   // Escape: save, leave editing, select the block
@@ -633,7 +633,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       !ctx.markerBeforeCaret,
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onMergeWithPrev()
+      void cb.onMergeWithPrev()
     },
   },
 ]
@@ -819,7 +819,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         // guard). Scoped to Enter only; Backspace in a list is unchanged.
         if (editor.isActive?.('listItem') ?? false) return
         event.preventDefault()
-        onEnterSave()
+        void onEnterSave()
         return
       }
 
@@ -833,7 +833,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onDeleteBlock({ cursorPlacement: 'end' })
       } else if (atStart) {
         event.preventDefault()
-        onMergeWithPrev()
+        void onMergeWithPrev()
       }
     },
     [editor, onEnterSave, onDeleteBlock, onMergeWithPrev, isLastBlock],

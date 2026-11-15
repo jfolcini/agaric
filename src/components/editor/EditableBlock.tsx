@@ -629,8 +629,8 @@ function EditableBlockInner({
       onBlur={handleBlur}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      onPaste={handlePaste}
+      onDrop={(e) => void handleDrop(e)}
+      onPaste={(e) => void handlePaste(e)}
     >
       {/* oxlint-disable-next-line react/static-components -- EditorSurface is a component reference READ from context (published once by useLazyRovingEditor via useState, see editor-surface-context.ts), not created here; the Compiler's heuristic can't see that a useContext() result used as a JSX tag is a stable module-scope component, not an inline definition (#4409) */}
       <EditorSurface

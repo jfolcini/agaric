@@ -38,14 +38,14 @@ export interface BlockActions {
   onNavigate?: ((id: string) => void) | undefined
   /** Open a `[[link]]` or `((ref))` target's page in a background tab; unset on mobile. */
   onOpenLinkInNewTab?: OpenLinkInNewTab | undefined
-  onDelete?: ((blockId: string) => void) | undefined
-  onIndent?: ((blockId: string) => void) | undefined
-  onDedent?: ((blockId: string) => void) | undefined
-  onMoveUp?: ((blockId: string) => void) | undefined
-  onMoveDown?: ((blockId: string) => void) | undefined
-  onMerge?: ((blockId: string) => void) | undefined
-  onToggleTodo?: ((blockId: string) => void) | undefined
-  onTogglePriority?: ((blockId: string) => void) | undefined
+  onDelete?: ((blockId: string) => void | Promise<void>) | undefined
+  onIndent?: ((blockId: string) => void | Promise<void>) | undefined
+  onDedent?: ((blockId: string) => void | Promise<void>) | undefined
+  onMoveUp?: ((blockId: string) => void | Promise<void>) | undefined
+  onMoveDown?: ((blockId: string) => void | Promise<void>) | undefined
+  onMerge?: ((blockId: string) => void | Promise<void>) | undefined
+  onToggleTodo?: ((blockId: string) => void | Promise<void>) | undefined
+  onTogglePriority?: ((blockId: string) => void | Promise<void>) | undefined
   onToggleCollapse?: ((blockId: string) => void) | undefined
   onShowHistory?: ((blockId: string) => void) | undefined
   onShowProperties?: ((blockId: string) => void) | undefined
@@ -55,7 +55,7 @@ export interface BlockActions {
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   /** #264 — convert a block to another block type ("Turn into ▸"); `calloutType` picks a callout's variant. */
   onTurnInto?:
-    | ((blockId: string, blockType: BlockTypeToken, calloutType?: string) => void)
+    | ((blockId: string, blockType: BlockTypeToken, calloutType?: string) => void | Promise<void>)
     | undefined
   /**
    * #976 (item 13) — duplicate a block and its subtree, inserting the copy

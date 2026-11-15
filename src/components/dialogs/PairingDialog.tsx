@@ -1251,8 +1251,8 @@ export function PairingDialog({
                     onWordChange={handleWordChange}
                     onWordKeyDown={handleWordKeyDown}
                     onQrScan={handleQrScan}
-                    onCancel={handleCancel}
-                    onPair={handlePair}
+                    onCancel={() => void handleCancel()}
+                    onPair={() => void handlePair()}
                     pairLoading={pairLoading}
                     isExpired={false}
                   />
@@ -1267,7 +1267,7 @@ export function PairingDialog({
                 <PairingWaitingState
                   waitCountdownDisplay={waitCountdownDisplay}
                   waitCountdown={waitCountdown}
-                  onCancel={handleCancel}
+                  onCancel={() => void handleCancel()}
                 />
               )}
 

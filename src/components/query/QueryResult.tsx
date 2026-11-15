@@ -511,7 +511,7 @@ export function QueryResult({
             open={builderOpen}
             onOpenChange={setBuilderOpen}
             initialExpression={expression}
-            onSave={handleBuilderSave}
+            onSave={(newExpression) => void handleBuilderSave(newExpression)}
           />
         </Suspense>
       )}
