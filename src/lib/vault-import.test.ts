@@ -15,6 +15,7 @@ import { t } from '@/lib/i18n'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
+import { parse } from '@/lib/search-query'
 import {
   basename,
   collectVaultFiles,
@@ -463,6 +464,60 @@ describe('mdFilesToUnits', () => {
 
     expect(await dialects(mdFilesToUnits(plain, null, false))).toEqual(['Markdown', 'LogseqOrg'])
     expect(await dialects(mdFilesToUnits(graph, null, false))).toEqual(['LogseqOrg', 'LogseqOrg'])
+  })
+
+  // #6754 — a Logseq simple query is a query block, or stays visible and counted.
+  it('imports a translatable Logseq query as a query block that parses whole, and counts one it keeps', async () => {
+    const page = [
+      '- {{query (and (task TODO DOING) (or [[work]] [[home]]) (not (priority C)))}}',
+      '- {{query (between -7d today)}}',
+      '- tagged #work and #home',
+    ].join('\n')
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile([page], 'Dash.md', 'Graph/pages/Dash.md'),
+    ]
+    const keptQueries = { count: 0 }
+    const units = mdFilesToUnits(files, null, false, new Map(), keptQueries)
+
+    const { content, dialect } = await (units[0] as ImportUnit).load()
+
+    const lines = content.split('\n')
+    expect(dialect).toBe('LogseqOrg')
+    expect(lines[0]).toBe(
+      '- {{query state:TODO state:DOING (under:#work OR under:#home) not-priority:3}}',
+    )
+    const text = (lines[0] as string).slice('- {{query '.length, -'}}'.length)
+    expect(parse(text).filters.filter((token) => token.kind === 'invalid')).toEqual([])
+    expect(lines.slice(1, 5)).toEqual([
+      '- ```logseq-query',
+      '  Logseq query, not translated:',
+      '  {{query (between -7d today)}}',
+      '  ```',
+    ])
+    expect(keptQueries.count).toBe(1)
+  })
+
+  it('leaves the `[[name]]` of a query a tag the pick never makes untranslated', async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(['- {{query [[Project]]}}'], 'Dash.md', 'Graph/pages/Dash.md'),
+      folderFile(['- see [[Project]]'], 'Other.md', 'Graph/pages/Other.md'),
+    ]
+    const keptQueries = { count: 0 }
+    const units = mdFilesToUnits(files, null, false, new Map(), keptQueries)
+
+    expect((await (units[0] as ImportUnit).load()).content).toContain('```logseq-query')
+    expect(keptQueries.count).toBe(1)
+  })
+
+  it('leaves a query of a note outside a Logseq graph as written', async () => {
+    const files = [new File(['- {{query (task TODO)}}'], 'note.md', { type: 'text/markdown' })]
+    const keptQueries = { count: 0 }
+    const [unit] = mdFilesToUnits(files, null, false, new Map(), keptQueries)
+
+    expect((await (unit as ImportUnit).load()).content).toBe('- {{query (task TODO)}}')
+    expect(keptQueries.count).toBe(0)
   })
 
   it('keeps the file name of a note outside a Logseq graph that holds a `title::` line', async () => {

@@ -80,9 +80,10 @@ async function folderGroup(files: File[], spaceId: string): Promise<RunGroup> {
   const vaultIndex = isFolderPick(files) ? indexVaultFiles(files) : null
   const notion = isNotionPick(files)
   const restored = await restoreSpaceFile(files, spaceId)
+  const keptQueries = { count: 0 }
   return {
     spaceId,
-    units: mdFilesToUnits(files, vaultIndex, notion, restored.titles),
+    units: mdFilesToUnits(files, vaultIndex, notion, restored.titles, keptQueries),
     initialWarnings: restored.warnings,
     finalWarnings: (attached) => {
       const skipped = skippedFiles(files, notion, attached)
@@ -92,6 +93,9 @@ async function folderGroup(files: File[], spaceId: string): Promise<RunGroup> {
       }
       if (skipped.databases > 0) {
         warnings.push(i18n.t('data.importNotionDatabases', { count: skipped.databases }))
+      }
+      if (keptQueries.count > 0) {
+        warnings.push(i18n.t('data.importLogseqQueriesKept', { count: keptQueries.count }))
       }
       return warnings
     },

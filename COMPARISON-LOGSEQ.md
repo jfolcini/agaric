@@ -84,7 +84,7 @@ Pick a graph folder in Settings › Data. [docs/features/import-export.md](docs/
 
 - Custom task keywords fold into the four fixed states (`WAITING` becomes `TODO`, `NOW` becomes `DOING`); the set is fixed by decision (#1431).
 - `:LOGBOOK:` clock entries are dropped, with a warning (#6745).
-- `{{query}}` macros and advanced queries stay as text; they are not translated (#6754).
+- A `{{query}}` simple query whose every clause has a filter becomes a query block; any other stays as a code block, counted in one warning, and advanced (Datalog) queries stay as text (#6754). `(between …)`, a `[[page]]` that is no tag, `namespace`, `sort-by` and the result options (`query-table::` and the rest) have no equivalent.
 - Whiteboards and the `logseq/` config folder are not imported.
 - A `((uuid))` to a block outside the import is stripped and counted in the warnings.
 - Blocks nested past the import's depth cap (`MAX_IMPORT_DEPTH`) are flattened to it.
@@ -98,7 +98,7 @@ Import on one device and let sync carry the result; two devices that each import
 - **Your notes stop being files.** No `git log`, no `grep`, no other editor, no Syncthing over the graph folder. The desktop mirror gives files back as a copy Agaric keeps current; it is off by default and starts from an empty folder (#6540).
 - **A block reference is a chip, not the block.** `((ref))` shows one line and a hover peek. To see the content in place you embed the block, and an embedded task shows its text without a checkbox (#6746, #6747).
 - **A tag is not a page.** `#project` and `[[project]]` are two things: a tag has a listing page you cannot write on, and no properties that its blocks inherit (#6755). If your graph leans on tags-as-pages, decide per tag which one it becomes.
-- **Your queries need rebuilding.** `{{query}}` macros and Datalog arrive as text (#6754). The builder, or `{{query tag:#work state:TODO}}`, covers filters (#6742); nothing covers custom views or result transforms (#6757).
+- **Some queries need rebuilding.** Simple queries of tasks, priorities, tags, properties and pages, joined by `and`, `or` and `not`, import as query blocks (#6754); `(between …)`, other clauses and Datalog arrive as text. The builder, or `{{query tag:#work state:TODO}}`, covers filters (#6742); nothing covers custom views or result transforms (#6757).
 - **Task habits change.** `LATER`, `NOW` and `WAITING` become `TODO` and `DOING`, there are no keywords of your own (#1431), and clock entries are dropped (#6745).
 - **Links and tags are picked, not typed as text you can edit later.** In a block they are chips; *Edit as Markdown* is where a page reads as `[[Title]]` again.
 - **Folding is per device** (#6756), and there is no pane to keep a second page open beside the first (#6550).
