@@ -627,7 +627,7 @@ jobs:
           # shellcheck/shfmt pinned (#6762): the shellcheck hook used to find
           # whatever copy the runner image carried, and actionlint runs that
           # same binary over `run:` blocks. Same pins as setup-hooks.sh.
-          tool: prek@0.5.10,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,

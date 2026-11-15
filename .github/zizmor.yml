@@ -1,5 +1,9 @@
-# zizmor's config. No baselined findings: `rules: {}` is deliberately empty.
-# The only suppressions in the tree are inline `# zizmor: ignore[...]` comments
-# on the steps they cover (in ci.yml today), which travel with the step instead
-# of by line number (#3737).
-rules: {}
+# zizmor's config. No baselined findings: the only suppressions in the tree are
+# inline `# zizmor: ignore[...]` comments on the steps they cover (in ci.yml
+# today), which travel with the step instead of by line number (#3737).
+rules:
+  # `self-repository` asks for `uses: $/...`, but actionlint (v1.7.12) rejects
+  # that syntax as "ref is missing", so the two hooks cannot both pass until
+  # actionlint parses `$/` (#6841). Every other audit stays on.
+  self-repository:
+    disable: true

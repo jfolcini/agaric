@@ -64,7 +64,7 @@ set -uo pipefail
 # loud, visible warning locally, where hard-failing a push over a tool
 # version would recreate exactly the #2535 breakage this wrapper exists to
 # prevent.
-ZIZMOR_PINNED_VERSION="1.28.0"
+ZIZMOR_PINNED_VERSION="1.32.0"
 
 # The single source of truth for how `zizmor --version`'s one-line
 # `zizmor <semver>` output is turned into a bare version string. Extracted
