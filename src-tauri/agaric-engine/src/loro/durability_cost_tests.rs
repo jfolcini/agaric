@@ -326,7 +326,9 @@ fn boot_by_tail_size(snapshot: &[u8], ids: &[String], scale: &str) {
         Timings::of(5, || {
             timed(|| {
                 let mut engine = LoroEngine::with_peer_id(DEVICE).expect("engine");
-                let imported = engine.import_saved_rows(Some(snapshot), rows).expect("import");
+                let imported = engine
+                    .import_saved_rows(Some(snapshot), rows)
+                    .expect("import");
                 assert!(imported.complete, "no row is missing");
                 engine.rebuild_index_after_import();
             })

@@ -1700,14 +1700,23 @@ async fn a_kill_after_any_commit_loses_nothing_6521() {
         .unwrap();
     kill_and_compare(&mut b, "a move").await;
 
-    edit_block_inner(&a.pool, DEV_A, &a.mat, from_a.clone(), "from A, again".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &a.pool,
+        DEV_A,
+        &a.mat,
+        from_a.clone(),
+        "from A, again".into(),
+    )
+    .await
+    .unwrap();
     b.pull(&a, &space).await;
     kill_and_compare(&mut b, "an import on top of B's writes").await;
 
     assert_eq!(b.sql_content(&from_a).await, "from A, again");
-    assert_eq!(b.engine_content(&space, &child).as_deref(), Some("B's child"));
+    assert_eq!(
+        b.engine_content(&space, &child).as_deref(),
+        Some("B's child")
+    );
     a.shutdown();
     b.shutdown();
 }
@@ -1758,7 +1767,11 @@ async fn a_compaction_between_an_import_and_its_projection_is_healed_by_the_inbo
         .fetch_optional(&b.pool)
         .await
         .unwrap();
-    assert_eq!(projected.as_deref(), Some("from A"), "the inbox replay projected it");
+    assert_eq!(
+        projected.as_deref(),
+        Some("from A"),
+        "the inbox replay projected it"
+    );
     a.shutdown();
     b.shutdown();
 }

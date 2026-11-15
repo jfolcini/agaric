@@ -1733,7 +1733,9 @@ mod tests {
         write_with_its_delta(&pool, &materializer, SPACE_A, "BLOCK_ONE").await;
         let covered = covering(op_log_head(&pool).await.expect("head"));
         let covered = Covered {
-            delta_id: crate::loro::delta::delta_head(&pool).await.expect("delta head"),
+            delta_id: crate::loro::delta::delta_head(&pool)
+                .await
+                .expect("delta head"),
             ..covered
         };
         let collected = Collected::read(registry);

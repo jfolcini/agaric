@@ -35,7 +35,7 @@ A cascade over every block of a 100K-block space writes one row of about 1 MB (t
 
 ## The inbox replay stays
 
-A sync import reaches the engine after its write-ahead `loro_sync_inbox` slot and before its projection commits. A compaction in that gap saves the import in the snapshot; a kill before the projection then boots with the import in the engine and not in SQL, and the peer does not send it again, because this device's version vector holds it. Only the slot's replay at boot projects it: `a_compaction_between_an_import_and_its_projection_is_healed_by_the_inbox_6521`. The replay is also how a projection that failed is retried at the next start, and how a slot that keeps failing reaches the quarantine and its *Retry* (#6057, #3226).
+A sync import reaches the engine after its write-ahead `loro_sync_inbox` slot and before its projection commits. A compaction in that gap saves the import in the snapshot; a kill before the projection then boots with the import in the engine and not in SQL, and the peer does not send it again, because this device's version vector holds it. Only the slot's replay at boot projects it: `a_compaction_between_an_import_and_its_projection_is_healed_by_the_inbox_6521`. The replay is also how a projection that failed is retried at the next start, and how a slot that keeps failing reaches the quarantine and its *Retry* (#6057, #3226). With the boot replay removed, 262 inbox, quarantine, recovery and session tests ran and exactly two went red: that test and `status_reports_quarantine_only_on_the_boot_that_moved_it_6057`. The other inbox tests call `replay_sync_inbox` directly and do not see the boot call go.
 
 ## Interactions checked
 
@@ -52,4 +52,11 @@ What would let the replay code go: no vault from before stage B left to open (it
 
 ## What ran
 
-Filled in below once the gates have run.
+On the branch merged with `origin/main` at `f7cfecc` (#6799):
+
+- `cargo nextest run --workspace` in two partitions: 4145 and 4140 tests pass, the release-vault upgrade tests among them.
+- `cargo test --doc --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `just gen-sqlx`, which added the one cache file for `largest_delta_tail`.
+- Every new test was shown red by one mutation of the code it covers, in one command that restored the file on exit (the mutations and reds are in the PR). `a_kill_after_any_commit_loses_nothing_6521`, with boot not importing the delta rows, went red at the shared oracle inside `kill_and_boot` rather than at its own comparison: the oracle runs first and sees the same loss.
+- `just e2e-related` selects no Playwright spec and the whole WebdriverIO lane, which is CI's `e2e-tauri-gate`.
+
+Not run: vitest, Playwright (no frontend change).
