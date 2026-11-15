@@ -91,7 +91,13 @@ test.describe('Inline emoji picker — `:` trigger (#130) @editor', () => {
     // closing colon is typed (Slack/GitHub style), no Enter / popup selection.
     const editor = await focusBlock(page)
     await page.keyboard.press('End')
-    await page.keyboard.type(' :joy:', { delay: 30 })
+    await page.keyboard.type(' :joy', { delay: 30 })
+    // The rule reads the lazily loaded dataset synchronously and leaves the text
+    // alone while it is still loading; a listed `joy` item means it has loaded.
+    await expect(
+      page.locator('[data-testid="suggestion-item"]', { hasText: 'joy' }).first(),
+    ).toBeVisible()
+    await page.keyboard.type(':')
 
     await expect(editor).toContainText(JOY)
     await expect(editor).not.toContainText(':joy')
