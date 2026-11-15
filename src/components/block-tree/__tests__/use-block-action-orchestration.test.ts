@@ -15,6 +15,7 @@ import {
 import { parse } from '@/editor/markdown-serializer'
 import { announce } from '@/lib/announcer'
 import { newBlockId } from '@/lib/block-id'
+import { logLatencySample } from '@/lib/latency-sample'
 import type { ListStyle } from '@/lib/list-style'
 import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -24,6 +25,7 @@ import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore } from '@/stores/page-blocks'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/latency-sample', () => ({ logLatencySample: vi.fn() }))
 // The id Enter mints for the block it creates, which the `createBelow` double answers with.
 vi.mock('@/lib/block-id', () => ({ newBlockId: vi.fn(() => 'NEW_1') }))
 vi.mock('@/editor/markdown-serializer', () => ({
@@ -2286,5 +2288,51 @@ describe('useBlockActionOrchestration listStyle strip-then-merge (#4552 slice 3)
       failure,
     )
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.clearListStyleFailed')
+  })
+})
+
+// #6559 — the per-sample line a phone's measurement reads: one per Enter or
+// merge, with whether the backend took it.
+describe('latency samples', () => {
+  it('a caret split logs one enter-split sample once the split answers', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(vi.mocked(logLatencySample).mock.calls.map(([action, , , ok]) => [action, ok])).toEqual([
+      ['enter-split', true],
+    ])
+  })
+
+  it('Enter at the end of a block logs one enter-create sample, failed when the create is', async () => {
+    const params = makeDefaultParams({ createBelow: vi.fn(async () => null) })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(vi.mocked(logLatencySample).mock.calls.map(([action, , , ok]) => [action, ok])).toEqual([
+      ['enter-create', false],
+    ])
+  })
+
+  it('a merge logs one merge sample, failed when the merge is refused', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.unmount = vi.fn(() => 'Beta')
+    params.mergeInto = vi.fn<OrchestrationParams['mergeInto']>(async () => false)
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(vi.mocked(logLatencySample).mock.calls.map(([action, , , ok]) => [action, ok])).toEqual([
+      ['merge', false],
+    ])
   })
 })

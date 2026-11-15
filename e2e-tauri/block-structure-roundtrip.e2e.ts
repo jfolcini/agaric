@@ -30,6 +30,7 @@ import {
   typeMarkerVerified,
   waitForAppReady,
   openNewPageDialog,
+  placeCaret,
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
@@ -122,33 +123,6 @@ async function editBlock(id: string): Promise<void> {
     await row.click()
   }
   await waitForEditorIn(id, `the editor never opened in block ${id}`)
-}
-
-/** Collapse the editor's selection to `offset` characters into its first paragraph. */
-async function placeCaret(offset: number): Promise<void> {
-  await browser.waitUntil(
-    () =>
-      browser.execute(
-        (sel: string, at: number) => {
-          // TipTap keeps its editor on the editable element.
-          const dom = document.querySelector<
-            HTMLElement & {
-              editor?: {
-                state: { selection: { from: number; empty: boolean } }
-                commands: { setTextSelection: (pos: number) => boolean }
-              }
-            }
-          >(sel)
-          if (dom?.editor === undefined) return false
-          dom.editor.commands.setTextSelection(1 + at)
-          const { from, empty } = dom.editor.state.selection
-          return empty && from === 1 + at
-        },
-        EDITOR,
-        offset,
-      ),
-    { timeout: ACTION_TIMEOUT, timeoutMsg: `the caret never reached offset ${offset}` },
-  )
 }
 
 /** Leave the editor, where Ctrl+Z is its own, and press the page's undo. */
