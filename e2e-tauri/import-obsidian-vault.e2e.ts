@@ -169,7 +169,14 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     await reviewer.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await reviewer.getValue()).toBe(`${marker}-alice`)
 
-    // The link names the vault's note, and opens it.
+    // The link names the vault's note, and opens it. The row is scrolled to
+    // first: a row outside the scroller renders as a placeholder, chipless
+    // (`useViewportObserver`).
+    await browser.execute(
+      (id: string) =>
+        document.querySelector(`li[data-block-id="${id}"]`)?.scrollIntoView({ block: 'center' }),
+      links,
+    )
     const chip = $(`li[data-block-id="${links}"] [data-testid="block-link-chip"]`)
     await browser.waitUntil(async () => (await chip.getAttribute('title')) === topic, {
       timeout: NAV_TIMEOUT,
