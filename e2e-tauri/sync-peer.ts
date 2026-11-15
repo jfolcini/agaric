@@ -63,7 +63,7 @@ export function decodeQrSvg(viewBox: string, d: string): string {
     const hints = new Map([[zxing.DecodeHintType.PURE_BARCODE, true]])
     return new zxing.QRCodeReader().decode(image, hints).getText()
   } catch (error) {
-    throw new Error(`no QR code in the pairing SVG: ${String(error)}`)
+    throw new Error(`no QR code in the pairing SVG: ${String(error)}`, { cause: error })
   }
 }
 

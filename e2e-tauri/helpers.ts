@@ -807,6 +807,7 @@ export function pressChord(chord: string): void {
   } catch (err) {
     throw new Error(
       `xdotool key ${chord} failed; the lane needs xdotool to press OS chords: ${String(err)}`,
+      { cause: err },
     )
   }
 }
