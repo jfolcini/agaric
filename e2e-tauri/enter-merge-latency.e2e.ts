@@ -6,7 +6,8 @@
 //   AGARIC_PERF=1 just e2e-real e2e-tauri/enter-merge-latency.e2e.ts
 //
 // Opt-in because it is a measurement with no budget to fail, not an
-// environment precondition (e2e-tauri/AGENTS.md), and its seed takes minutes.
+// environment precondition (e2e-tauri/AGENTS.md), and in a debug build its seed
+// and the materializer's catch-up take most of an hour.
 // It fails only when what it times did not happen: a refused write, a missing
 // sample, an undo that took back less than the paste. Debug build under Xvfb:
 // compare runs on one machine. The `enter-merge-latency:` lines are printed and
@@ -69,7 +70,8 @@ const SAMPLES = 100
 const PASTE_LINES = 300
 const PASTES = 5
 const PEER_BLOCKS = 20
-const SEED_SETTLE_MS = 1_200_000
+/** The seed's derived views (FTS above all) take about half an hour to catch up in a debug build. */
+const SEED_SETTLE_MS = 3_600_000
 
 const TITLE = runScopedMarker('wdio-latency-page')
 const FILLER = runScopedMarker('wdio-latency-filler')
@@ -307,7 +309,7 @@ describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#65
   })
 
   it('seeds a page among filler pages and turns debug mode on', async function (this: Mocha.Context) {
-    this.timeout(SEED_SETTLE_MS + 900_000)
+    this.timeout(SEED_SETTLE_MS + 1_800_000)
     await waitForAppReady()
     const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
     spaceId = (spaces.find((s) => s.name === 'Personal') ?? spaces[0])?.id ?? ''
