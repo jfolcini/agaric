@@ -32,18 +32,17 @@
 //
 // ─── Why `--event schedule`, with one exception ──────────────────────────────
 //
-// `codeql` and `scorecard` also run on `push`/`pull_request`. Those runs are
+// A watched cron workflow can also run by hand (`workflow_dispatch`) or, for
+// `scorecard`, on a ruleset edit (`branch_protection_rule`). Those runs are
 // NOT considered here, deliberately, in both directions:
 //
-//   * For liveness, counting a push run would make the check vacuous on an
-//     active repo — the cron could be dead for months while pushes keep the
-//     "last run" fresh. Asking specifically "did the CRON fire" is the whole
-//     question. (It also catches GitHub disabling a repo's schedules after 60
-//     days of inactivity, which is otherwise entirely silent.)
-//   * For failures, a push/PR run's red is already surfaced — commit status,
-//     PR checks, the Security tab. It is precisely the SCHEDULED run whose
-//     failure is surfaced nowhere. `workflow_dispatch` runs are excluded for
-//     the same reason: a human is watching the run they triggered.
+//   * For liveness, counting a manual run would make the check vacuous: the
+//     cron could be dead for months while someone dispatches by hand. Asking
+//     specifically "did the CRON fire" is the whole question. (It also catches
+//     GitHub disabling a repo's schedules after 60 days of inactivity, which
+//     is otherwise entirely silent.)
+//   * For failures, a run someone triggered is one they are watching; it is
+//     precisely the SCHEDULED run whose failure is surfaced nowhere.
 //
 // The exception, and the reason the second clause above does not cover it:
 // `ci.yml`'s POST-MERGE run on `main`. The PR's checks all went green before

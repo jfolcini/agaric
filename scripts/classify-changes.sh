@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The one change classifier: which CI lanes a change set must run. Read by
 # `_validate.yml`'s `detect-changes` (and, through its outputs, `ci.yml`'s two
-# bundle jobs), `codeql.yml`'s language pick, and `e2e-tauri-weekly.yml`'s
-# relevance check.
+# bundle jobs) and `e2e-tauri-weekly.yml`'s relevance check.
 #
 # Usage:
 #   classify-changes.sh           classify the GitHub event's diff (env below)
@@ -52,7 +51,6 @@ set -euo pipefail
 #   real_backend a path the real-backend lane builds or runs.
 #   real_backend_specs  when non-empty, that lane runs only these changed
 #                `e2e-tauri/*.e2e.ts` specs; empty means every spec.
-#   codeql_languages  JSON list of the CodeQL languages the diff touches.
 # Run it from the repo root with the head checked out: a changed spec that is
 # not on disk was deleted, so it is never listed.
 # A backend change that regenerates src/lib/bindings.ts also flips frontend
@@ -64,7 +62,7 @@ emit() {
     "rust_tests=$rust_tests" "ci=$ci" "desktop=$desktop" "android=$android" "vitest=$vitest" \
     "vitest_e2e_tauri=$vitest_e2e_tauri" "playwright=$playwright" \
     "playwright_specs=$playwright_specs" "real_backend=$real_backend" \
-    "real_backend_specs=$real_backend_specs" "codeql_languages=$codeql_languages"
+    "real_backend_specs=$real_backend_specs"
 }
 
 # The "run everything" classification, then exit 0.
@@ -74,7 +72,6 @@ full_suite() {
   android=true
   vitest=true vitest_e2e_tauri=false playwright=true playwright_specs='' real_backend=true
   real_backend_specs=''
-  codeql_languages='["actions","javascript-typescript","rust"]'
   emit
   exit 0
 }
@@ -269,19 +266,8 @@ pw_reads_re='^(src-tauri/tauri\.conf\.json$|\.github/actions/playwright-setup/)'
 # `playwright.config.ts`'s `globalTimeout`.
 pw_spec_list_max=20
 
-# CodeQL languages, by the extensions each extractor reads. A path no category
-# recognizes selects all three (the pin below), as do the CodeQL config and
-# workflow; a recognized path that carries no code (a TOML, SQL, CSS or shell
-# file, a JSON config other than the npm manifests) selects none. The
-# JavaScript extractor also reads JSON and YAML, which this skips: CodeQL is
-# advisory, not a merge gate, and every push to `main` analyses all three.
-codeql_rust_re='(\.rs$|(^|/)Cargo\.(toml|lock)$)'
-codeql_js_re='(\.(ts|tsx|js|jsx|mjs|cjs|html)$|(^|/)package(-lock)?\.json$)'
-codeql_actions_re='^\.github/'
-codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
-
 # Single pass, no `break`: every path must be inspected. A docs path sets
-# `docs` and nothing else: no suite, build, lane or CodeQL language reads
+# `docs` and nothing else: no suite, build or lane reads
 # Markdown, wherever it lives (`src/stores/AGENTS.md`, `.claude/skills/**.md`),
 # and the prek hooks that do are keyed on `docs` or run in every `lint`. Any
 # other path sticks the flags it matches; docs_only stays true only while
@@ -297,7 +283,7 @@ codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
 # rustfmt.toml, .gitattributes, .gitignore, a root Dockerfile / *.sh) is a
 # build/toolchain change no single suite owns, so it pins
 # frontend=backend=rust_tests=ci=true, every frontend lane whole, the
-# real-backend lane whole and every CodeQL language.
+# real-backend lane whole.
 # Recognized-but-unsuited categories (a pure `ci` change like an edit to a
 # workflow other than `_validate.yml`) do NOT trip this: `lint` (incl. zizmor)
 # covers them.
@@ -315,9 +301,6 @@ pw_full=false
 real_full=false
 pw_specs=()
 real_specs=()
-lang_rust=false
-lang_js=false
-lang_actions=false
 for f in "${changed[@]}"; do
   if [[ "$f" =~ $docs_re ]]; then
     docs=true
@@ -382,16 +365,8 @@ for f in "${changed[@]}"; do
     if [[ "$f" =~ $pw_reads_re ]]; then pw_full=true; fi
     if [ "$test_only" = "false" ] && [[ "$f" =~ $real_backend_re ]]; then real_full=true; fi
   fi
-  if [[ "$f" =~ $codeql_rust_re ]]; then lang_rust=true; fi
-  if [[ "$f" =~ $codeql_js_re ]]; then lang_js=true; fi
-  if [[ "$f" =~ $codeql_actions_re ]]; then lang_actions=true; fi
-  if [[ "$f" =~ $codeql_all_re ]]; then
-    lang_rust=true
-    lang_js=true
-    lang_actions=true
-  fi
   if [ "$matched_cat" = "false" ]; then
-    echo "Unrecognized non-docs path: $f → pinning frontend=backend=rust_tests=ci=true, every lane whole and every CodeQL language (fail-closed)." >&2
+    echo "Unrecognized non-docs path: $f → pinning frontend=backend=rust_tests=ci=true, every lane whole (fail-closed)." >&2
     frontend=true
     backend=true
     rust_tests=true
@@ -399,9 +374,6 @@ for f in "${changed[@]}"; do
     vitest_full=true
     pw_full=true
     real_full=true
-    lang_rust=true
-    lang_js=true
-    lang_actions=true
   fi
 done
 
@@ -423,15 +395,6 @@ if [ "$real_full" = "false" ] && [ "${#real_specs[@]}" -gt 0 ]; then
   real_backend=true
   real_backend_specs="${real_specs[*]}"
 fi
-
-langs=()
-if [ "$lang_actions" = "true" ]; then langs+=('"actions"'); fi
-if [ "$lang_js" = "true" ]; then langs+=('"javascript-typescript"'); fi
-if [ "$lang_rust" = "true" ]; then langs+=('"rust"'); fi
-codeql_languages="[$(
-  IFS=,
-  echo "${langs[*]}"
-)]"
 
 emit | sed 's/^/  /' >&2
 emit

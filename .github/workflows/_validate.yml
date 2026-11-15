@@ -587,6 +587,7 @@ jobs:
           scripts/file-scheduled-failures.test.mjs
           scripts/node-modules-drift.test.mjs
           scripts/next-session-log.test.mjs
+          scripts/merge-ready.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
       - name: Verify npm package provenance signatures

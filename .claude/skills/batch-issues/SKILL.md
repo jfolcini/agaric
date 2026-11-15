@@ -64,7 +64,7 @@ Split by domain or file boundary, up to 6 subagents owning at most 6 files each,
 
 Worktree: `git fetch origin && git worktree add ../wt-x -b <branch> origin/main`, then `bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Each item gets its own `claude/<issue>-<slug>` branch and PR, and up to 10 PRs may be open at once; a cloud session's designated branch is one of those branches, not a cap on how many the session opens.
 
-Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the real gates once per item over the whole worktree: the full suite, `npm run typecheck`, `npm run lint`, `prek run --hook-stage manual --all-files`, the e2e specs `just e2e-related --range origin/main...HEAD` selects (Playwright on the worktree's own `PW_PORT`, WebdriverIO with `just e2e-real` when it selects a few specs; where it says "the whole lane", CI's run is the check and the PR does not merge while that lane is red), and for Rust `cargo clippy --workspace --all-targets -- -D warnings`, which otherwise runs only at pre-push and in CI.
+Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the inner-loop gates once per item over the whole worktree (`AGENTS.md` § Running tests efficiently; the full suites are CI's): `just check-fe` and, for Rust, `just check-be` with `--range origin/main...HEAD`, the manual-stage hooks for the files the item touches, the e2e specs `just e2e-related --range origin/main...HEAD` selects (Playwright on the worktree's own `PW_PORT`, WebdriverIO with `just e2e-real` when it selects a few specs; where it says "the whole lane", CI's run is the check and the PR does not merge while that lane is red).
 
 Prompt skeleton; keep the git and background lines verbatim:
 
@@ -80,7 +80,7 @@ Prompt skeleton; keep the git and background lines verbatim:
 **Do NOT modify:** AGENTS.md; anything outside the list above. An existing test under `e2e/**`, `e2e-tauri/**` or `src/**/__tests__/**` changes only where the issue changes the behaviour it asserts: name each such test and the old and new assertion in your report. A test that goes red for any other reason is a finding, not an edit.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground, read the output before your final message, and do not end while anything is pending.
-**Verification (targeted):** cd src-tauri && cargo nextest run --workspace -E '<filter>'  |  npx vitest run <paths> && npm run typecheck; then `just e2e-related --range origin/main...HEAD` and run what it selects (Playwright with this worktree's `PW_PORT`)
+**Verification (targeted):** `just check-fe` | `just check-be` (or `cargo nextest run --workspace -E '<filter>'` / `npx vitest run <paths>` for one test); then `just e2e-related --range origin/main...HEAD` and run what it selects (Playwright with this worktree's `PW_PORT`)
 **Success:** targeted tests pass (and select more than zero tests); follows AGENTS.md; no new warnings; each falsification ran as one shell command that restores on exit (AGENTS.md § Acceptance is falsification), and no stub is left in the tree.
 ```
 
@@ -121,9 +121,9 @@ The orchestrator writes one session log per PR (`references/session-log.md`).
 - Stage by path (`git add -A -- <paths>`), never bare `git add -A`.
 - Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause.
 - After a Rust change, regenerate codegen (`references/codegen-and-sql.md`), then run `SQLX_OFFLINE=true cargo check --workspace --all-targets`: a plain `cargo check` passes with a stale `.sqlx`, and `--tests` or nextest skip benches.
-- Skip the pre-push verify (`SKIP_CI_VERIFY`, `AGENTS.md` § Build Commands) also when the box is already running a heavy build.
+- Skip the pre-push verify (`SKIP_CI_VERIFY`, `AGENTS.md` § Build Commands) also when the box is already running a heavy build, and for a push that only merges `origin/main` (push it with `--no-verify` and say so): CI is the gate.
 - A push is confirmed by comparing SHAs, never by exit code or by eye: `[ "$(git ls-remote origin <branch> | cut -f1)" = "$(git rev-parse HEAD)" ]`. A dropped connection or a killed hook can exit 0 with nothing landed, and an empty `ls-remote` beside `git log` output reads as success.
-- Rebase onto the current `origin/main` before the verify that ships; a green run on a stale base proves nothing about the merge. A clean merge can still bring new callers of what you removed or changed: `git diff <old-base> origin/main -S<symbol>`.
+- Before the first push, branch from or merge a current `origin/main`. After that, merge `main` in only when §7's overlap rule says so: every push is another full CI run, and CI capacity is the bottleneck (`AGENTS.md` § Pre-commit & CI). A clean merge can still bring new callers of what you removed or changed: `git diff <old-base> origin/main -S<symbol>`.
 - Push a rebased branch with `scripts/push.sh --force-with-lease`: its verify reads the branch's own diff. A raw `git push`, or `SKIP_CI_VERIFY`, leaves prek's pre-push hooks reading every `main` commit since your last push, so a branch with no Rust compiles `main`'s; to skip the verify on such a branch, push with `--no-verify` and say so.
 - Keep refactors and features in separate commits.
 
@@ -135,14 +135,15 @@ Do not wait for CI. Record the PR as a task and start the next batch from the la
 
 - A green rollup is not yet a merge signal. Confirm the checks ran on the PR's `headRefOid`, not an older push, and that the base is `main`: a stacked PR gets no CI (`references/pitfalls.md`).
 - Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit before the merge; a non-blocking note goes to the follow-up PR. Then merge it with `gh api -X PUT repos/jfolcini/agaric/pulls/<n>/merge -f merge_method=squash -f sha=<head you checked>` (`references/pitfalls.md`) once `validate-all`, `e2e-tauri-gate` and `dco` are green on that head. The ruleset needs no approval, so no admin bypass. Marking a draft ready and merging are this loop's steps; do not hand them back to the maintainer.
-- Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
-- Changes requested → push the fix, then `gh pr edit <n> --add-label re-review` (`gh api repos/jfolcini/agaric/issues/<n>/labels -f 'labels[]=re-review'` if `gh pr edit` fails on the Projects (classic) error): a push alone does not re-run the review.
+- Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep. A failure the diff cannot have caused gets at most one re-run of the failed jobs, after the run completes (`POST actions/runs/<id>/rerun-failed-jobs`), and a root-cause fix started at once (§3); never a second re-run or a manual workflow dispatch to get green.
+- Changes requested → push the fix, then, once per pushed head, `gh pr edit <n> --add-label re-review` (`gh api repos/jfolcini/agaric/issues/<n>/labels -f 'labels[]=re-review'` if `gh pr edit` fails on the Projects (classic) error): a push alone does not re-run the review.
 - Running → leave it. Batch review fixes into one push per round: each push restarts `validate-all`, so pushing every fix means no run ever completes.
+- Before any merge, check the last *completed* CI run on `main`, not the newest one, which may still be running: if it is red, fixing `main` comes first.
 - Behind `main` → merge as is, unless one of the PR's own files changed on `main` since its merge base: `git diff --quiet $(git merge-base origin/main <branch>) origin/main -- $(git diff --name-only origin/main...<branch>)` exits non-zero then. In that case `git merge --signoff origin/main` (or rebase), push, and merge once CI is green again. Never GitHub's "Update branch": its merge commit has no `Signed-off-by` and fails `dco`.
 
 When checking CI by script, an absent check is not a pass: match the required context by suffix (`validate / validate-all`), classify states by allow-list, and require that the checks you need were found by name.
 
-When the planned list is empty and only CI-pending PRs remain, pull the next backlog issue.
+When the planned list is empty and only CI-pending PRs remain, pull the next backlog issue. Prefer one PR that carries a coherent set of changes over several small ones: each PR costs a full CI fan-out.
 
 ### The follow-up PR
 

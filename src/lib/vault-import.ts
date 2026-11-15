@@ -36,6 +36,7 @@ import {
   logseqGraph,
   logseqTitleProperty,
 } from '@/lib/logseq-import'
+import { holdsLogseqQuery, logseqTagNames, translateLogseqQueries } from '@/lib/logseq-query'
 import { isNotionExport, notionToMarkdown, stripNotionIds } from '@/lib/notion-import'
 import { type OrgLinkTargets, type OrgPage, orgToMarkdown } from '@/lib/org-import'
 import { listAllPropertyDefs } from '@/lib/property-save-utils'
@@ -549,6 +550,8 @@ interface NamedNotes {
   paths: string[]
   notesByName: Map<string, string[]>
   graph: LogseqGraph | null
+  /** The names the pick's notes make tags, read from every note on first call. */
+  tags: () => Promise<ReadonlySet<string>>
 }
 
 /**
@@ -582,7 +585,14 @@ async function nameNotes(
     const name = basename(path).slice(0, -'.md'.length).toLowerCase()
     notesByName.set(name, [...(notesByName.get(name) ?? []), path])
   }
-  return { paths, notesByName, graph }
+  let tags: Promise<ReadonlySet<string>> | undefined
+  const readTags = async () => {
+    const names = await Promise.all(
+      notes.map(async ({ file }) => logseqTagNames(await file.text())),
+    )
+    return new Set(names.flat())
+  }
+  return { paths, notesByName, graph, tags: () => (tags ??= readTags()) }
 }
 
 /** Where the Org links of a pick lead: its `:ID:`s and its Org files' page titles by vault path. */
@@ -624,13 +634,16 @@ async function orgPickTargets(
  * Logseq's titles, its own `logseq/` folder left out (#6033). An Org file's
  * `id:` links, and its `file:` links read from its own folder, resolve through
  * the `:ID:`s and the page titles of every Org file of the pick, by the paths
- * they import as, which the first Org file loaded reads.
+ * they import as, which the first Org file loaded reads. A Logseq `{{query}}`
+ * with an equivalent becomes a query block (#6754), and `keptQueries.count`
+ * counts those left as code blocks.
  */
 export function mdFilesToUnits(
   files: File[],
   vaultIndex: VaultIndex | null,
   notion: boolean,
   titles: ReadonlyMap<string, string> = new Map(),
+  keptQueries: { count: number } = { count: 0 },
 ): ImportUnit[] {
   const logseq = isLogseqGraph(files.map((file) => vaultRelativePath(file.webkitRelativePath)))
   const notes = files.flatMap((file) => {
@@ -660,7 +673,7 @@ export function mdFilesToUnits(
           }
         : importedAs,
     load: async () => {
-      const { paths, notesByName, graph } = await naming()
+      const { paths, notesByName, graph, tags } = await naming()
       const text = await file.text()
       let content = text
       let org: OrgPage | undefined
@@ -684,7 +697,15 @@ export function mdFilesToUnits(
         content = notionToMarkdown(text, name)
       }
       const path = titledPath(paths[index] as string, extension, text, notion ? null : graph, org)
-      if (graph !== null) content = graph.rewrite(content)
+      if (graph !== null) {
+        // Before the links are rewritten, so a query kept as written is as written.
+        if (holdsLogseqQuery(content)) {
+          const queries = translateLogseqQueries(content, await tags())
+          content = queries.content
+          keptQueries.count += queries.kept
+        }
+        content = graph.rewrite(content)
+      }
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings. A folder note always
       // ships its note names, even none: that marks it as a folder's, whose
