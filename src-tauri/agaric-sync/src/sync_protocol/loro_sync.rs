@@ -1596,7 +1596,7 @@ pub async fn sweep_deferred_purges_if_last(
         .await?;
     tx.commit().await?;
     // #6843: a `((ref))` to a purged block no longer shows its text.
-    agaric_engine::materializer::reindex_restored_cohort_fts(pool, &fts_referrers).await;
+    agaric_engine::materializer::reindex_purge_referrers_fts(pool, &fts_referrers).await;
     Ok(unheld
         .into_iter()
         .map(agaric_core::ulid::BlockId::from_trusted)
