@@ -772,22 +772,19 @@ describe('filterToQueryText: the text the builder saves', () => {
         )
         .map(([type, op, d]) => ({ type, predicate: { type: op, date: d } })),
     )
+    const writable = fc.constantFrom<FilterPrimitive>(
+      { type: 'Tag', tag: TAG_WORK },
+      { type: 'Tag', tag: TAG_HOME },
+      todo,
+      { type: 'Priority', values: ['1'], is_null: false, exclude: false },
+      text('done'),
+    )
+    const leafOf = (primitive: FilterPrimitive): FilterExpr => ({ type: 'Leaf', primitive })
     // #6742 — trees of And and Or over those leaves, as the builder's groups nest.
     const { tree } = fc.letrec<{ tree: FilterExpr }>((tie) => ({
       tree: fc.oneof(
         { depthSize: 'small', withCrossShrink: true },
-        fc
-          .oneof(
-            leaf,
-            fc.constantFrom<FilterPrimitive>(
-              { type: 'Tag', tag: TAG_WORK },
-              { type: 'Tag', tag: TAG_HOME },
-              todo,
-              { type: 'Priority', values: ['1'], is_null: false, exclude: false },
-              text('done'),
-            ),
-          )
-          .map((primitive): FilterExpr => ({ type: 'Leaf', primitive })),
+        fc.oneof(leaf, writable).map(leafOf),
         fc
           .tuple(
             fc.constantFrom('And' as const, 'Or' as const),
@@ -803,6 +800,21 @@ describe('filterToQueryText: the text the builder saves', () => {
         fc.oneof(
           fc.array(leaf, { maxLength: 4 }).map((primitives) => built(...primitives)),
           tree.map((root): FilterExpr => ({ type: 'And', children: [root] })),
+          // An OR group beside other conditions, from leaves the syntax can say, so a
+          // third of the runs write an OR whatever the trees above happen to draw.
+          fc
+            .tuple(
+              fc.uniqueArray(writable, {
+                minLength: 2,
+                maxLength: 3,
+                selector: (p) => JSON.stringify(p),
+              }),
+              fc.array(writable, { maxLength: 2 }),
+            )
+            .map(([group, rest]): FilterExpr => ({
+              type: 'And',
+              children: [{ type: 'Or', children: group.map(leafOf) }, ...rest.map(leafOf)],
+            })),
         ),
         (filter) => {
           const queryText = filterToQueryText(filter)
@@ -819,6 +831,7 @@ describe('filterToQueryText: the text the builder saves', () => {
     )
     // The property is vacuous if nothing was ever written as text.
     expect(written).toBeGreaterThan(100)
-    expect(writtenWithOr).toBeGreaterThan(20)
+    // The OR arm takes a third of the runs; the trees alone write far fewer than this.
+    expect(writtenWithOr).toBeGreaterThan(300)
   })
 })
