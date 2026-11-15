@@ -30,7 +30,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | --- | --- | --- |
 | Editing | Live Preview, source mode and reading view over one file | Block mode with the Markdown syntax shown at the cursor; page mode (the whole page as one document, off by default, with a block cap per page); *Edit as Markdown* for the page as plain text |
 | Outlining | Lists in a document | The whole app is an outline: indent, drag, zoom, collapse, multi-select and move blocks |
-| Editor extras | Vim key bindings, multiple cursors, `%%comments%%`, highlight colours, slides | None of those. One highlight colour |
+| Editor extras | Vim key bindings, multiple cursors, `%%comments%%`, highlight colours, slides | None of those. One highlight colour; a comment arrives as a visible comment callout |
 | Tables, math, diagrams, callouts, footnotes | All built in | All built in; callouts show in a fixed set of styles |
 | Links | `[[Note]]`, `[[Note#Heading]]`, `[[Note#^id]]`; names in the file | The same forms can be typed; stored as ids and shown as chips. A rename changes no other block |
 | Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, text only: an embedded row shows no checkbox, properties or attachments |
@@ -91,7 +91,7 @@ Settings › Data has an *Obsidian vault* button. [docs/features/import-export.m
 - A YAML list becomes one comma-joined value, except `tags` and `aliases`.
 - `.canvas` and `.base` files are not imported.
 - Dataview, Templater and other plugin code blocks stay as text.
-- `%%comments%%` have no equivalent and stay as visible text.
+- A comment block becomes a comment callout: its text is kept and marked as an aside, but shown. A `%%comment%%` inside a sentence stays text.
 - A link becomes an id. Every text surface (export, copy, *Edit as Markdown*, the mirror) writes it back as `[[Title]]`.
 
 An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block links, `![[ ]]` embeds, front matter and Tasks-style fields.
@@ -104,7 +104,7 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 - **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
 - **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type (#6758).
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
-- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and `%%comments%%` show as text (#6751).
+- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
 - **A tag name holds no spaces.**
 - **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
 - **Capture is thinner.** No web clipper (#6753) and, for now, nothing in Android's share sheet (#6555).

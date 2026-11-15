@@ -1803,6 +1803,54 @@ fn org_block_kind(line: &str) -> Option<(&str, Option<String>)> {
         .then(|| (kind, Some(format!("> [!{upper}]"))))
 }
 
+/// The callout type an Obsidian `%%…%%` comment reads as (#6751).
+pub const COMMENT_CALLOUT: &str = "comment";
+
+/// `content`, a block's text, as a `> [!comment]` callout of its text when the
+/// whole block is one Obsidian comment, `%%` … `%%` on one line or across
+/// lines (#6751). A block holding anything else, a second `%%` included, or
+/// only the markers, is not one.
+pub fn comment_as_callout(content: &str) -> Option<String> {
+    let inner = content.trim().strip_prefix("%%")?.strip_suffix("%%")?;
+    let text = inner.trim();
+    if text.is_empty() || inner.contains("%%") {
+        return None;
+    }
+    let mut callout = format!("> [!{COMMENT_CALLOUT}]");
+    for line in text.split('\n') {
+        callout.push_str(if line.is_empty() { "\n>" } else { "\n> " });
+        callout.push_str(line);
+    }
+    Some(callout)
+}
+
+/// The comment [`comment_as_callout`] read `content` from, written back as
+/// `%%…%%`, for a pasted block joined to text, where a callout cannot stand.
+pub fn callout_as_comment(content: &str) -> Option<String> {
+    let mut lines = content.split('\n');
+    if lines.next()? != format!("> [!{COMMENT_CALLOUT}]") {
+        return None;
+    }
+    let text: Option<Vec<&str>> = lines
+        .map(|line| {
+            line.strip_prefix("> ")
+                .or_else(|| (line == ">").then_some(""))
+        })
+        .collect();
+    Some(format!("%%{}%%", text?.join("\n")))
+}
+
+/// How many `%%…%%` comments `content` holds inside its text, outside its
+/// code spans: those [`comment_as_callout`] leaves as written.
+pub fn inline_comment_count(content: &str) -> usize {
+    let code = inline_code_spans(content);
+    let markers = content
+        .match_indices("%%")
+        .filter(|(at, _)| !code.iter().any(|&(start, end)| (start..end).contains(at)))
+        .count();
+    markers / 2
+}
+
 /// `%XX` escapes decoded to their bytes, read as UTF-8; anything else, and a
 /// malformed escape, stays as written.
 pub fn percent_decode(s: &str) -> String {
@@ -9463,5 +9511,56 @@ mod tests_document_dialect_5691 {
                 ("i", None, Some("CANCELLED")),
             ]
         );
+    }
+}
+
+/// #6751 — an Obsidian `%%…%%` comment that is a whole block reads as a
+/// `comment` callout; one inside text stays text.
+#[cfg(test)]
+mod tests_comment_callout {
+    use super::{callout_as_comment, comment_as_callout, inline_comment_count};
+
+    #[test]
+    fn a_whole_block_comment_is_a_comment_callout() {
+        assert_eq!(
+            comment_as_callout("%%one line%%").as_deref(),
+            Some("> [!comment]\n> one line")
+        );
+        assert_eq!(
+            comment_as_callout("%%\nfirst\n\nsecond\n%%").as_deref(),
+            Some("> [!comment]\n> first\n>\n> second")
+        );
+    }
+
+    #[test]
+    fn anything_else_is_not_a_comment() {
+        for content in [
+            "text %%aside%% more",
+            "%%a%% and %%b%%",
+            "%%never closed",
+            "%%%%",
+            "%%\n%%",
+            "%",
+            "plain",
+        ] {
+            assert_eq!(comment_as_callout(content), None, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn a_comment_callout_writes_back_as_the_comment() {
+        for content in ["%%one line%%", "%%first\n\nsecond%%"] {
+            let callout = comment_as_callout(content).unwrap();
+            assert_eq!(callout_as_comment(&callout).as_deref(), Some(content));
+        }
+        assert_eq!(callout_as_comment("> [!note]\n> x"), None);
+        assert_eq!(callout_as_comment("> [!comment]\nbare"), None);
+    }
+
+    #[test]
+    fn inline_comments_are_counted_outside_code_spans() {
+        assert_eq!(inline_comment_count("a %%b%% c %%d%%"), 2);
+        assert_eq!(inline_comment_count("a `%%b%%` c"), 0);
+        assert_eq!(inline_comment_count("100%% sure"), 0);
     }
 }
