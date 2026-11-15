@@ -122,8 +122,7 @@ function getFilterKey(filter: BacklinkFilter): string {
     case 'And':
     case 'DueDate':
     case 'Or':
-    case 'SourcePage':
-    default: {
+    case 'SourcePage': {
       return JSON.stringify(filter)
     }
   }

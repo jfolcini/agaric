@@ -8,8 +8,8 @@
  * per-`FilterPredicate['kind']` contract, so pinning their direct behaviour is
  * exercising the public contract, not padding coverage.
  *
- * Scope: src/lib/filters/model.ts lines 161, 165, 177, 213, 220, 230, 240,
- * 252, 258, 277 only.
+ * Scope: src/lib/filters/model.ts lines 161, 165, 177, 213, 220, 230, 252,
+ * 258, 277, and every non-graph kind of `canonicalToGraphFilter`.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -162,16 +162,33 @@ describe('canonicalToGraphFilter — date field routing (line 230)', () => {
   })
 })
 
-// ── line 240 — default arm of the canonicalToGraphFilter switch ─────────────
+// ── canonicalToGraphFilter — kinds with no graph dimension ─────────────────
 
-describe('canonicalToGraphFilter — default arm (line 240)', () => {
-  it('returns null (not undefined) for pages-only predicates with no graph dimension', () => {
-    // Kills the BlockStatement mutant that empties `default: { return null }`
-    // to `default: {}` (implicit `undefined`) — `toBe(null)` distinguishes
-    // undefined from null, unlike a loose falsy check.
-    expect(canonicalToGraphFilter({ kind: 'orphan' })).toBe(null)
-    expect(canonicalToGraphFilter({ kind: 'stub' })).toBe(null)
-    expect(canonicalToGraphFilter({ kind: 'contains', query: 'hello' })).toBe(null)
+describe('canonicalToGraphFilter — kinds with no graph dimension', () => {
+  const nonGraph: FilterPredicate[] = [
+    { kind: 'blockType', values: ['content'], exclude: false },
+    { kind: 'caseSensitive', enabled: true },
+    { kind: 'contains', query: 'hello' },
+    { kind: 'createdRange', after: null, before: null },
+    { kind: 'hasNoInboundLinks' },
+    { kind: 'lastEdited', spec: { type: 'Rolling', days: 7 } },
+    { kind: 'linkedFrom', source: 'SRC' },
+    { kind: 'linksTo', target: 'TGT' },
+    { kind: 'orphan' },
+    { kind: 'pathGlob', pattern: 'a/*', exclude: false },
+    { kind: 'property', key: 'k', predicate: { type: 'Exists' }, exclude: false },
+    { kind: 'regex', pattern: 'a.b' },
+    { kind: 'sourcePage', included: ['P'], excluded: [] },
+    { kind: 'space', spaceId: 'S' },
+    { kind: 'stub' },
+    { kind: 'tagPrefix', prefix: 'work/' },
+    { kind: 'wholeWord', enabled: true },
+  ]
+
+  it.each(nonGraph.map((p) => [p.kind, p] as const))('%s projects to null', (_kind, predicate) => {
+    // `toBeNull` tells null from the `undefined` a kind missing from the
+    // switch would fall out with.
+    expect(canonicalToGraphFilter(predicate)).toBeNull()
   })
 })
 

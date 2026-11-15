@@ -157,6 +157,7 @@ function datePredicateSummary(prefix: string, predicate: DatePredicate, t: TFunc
       return t('pageBrowser.filter.summaryDateOn', { prefix, date: predicate.date })
     }
     case 'Between':
+    // A saved view's or `v2:` query's predicate is unvalidated JSON.
     default: {
       return t('pageBrowser.filter.summaryDateBetween', {
         prefix,
@@ -244,8 +245,7 @@ export function pageFilterChipTitle(filter: FilterPrimitive, t: TFunction): stri
     case 'Tag':
     case 'TagOrRef':
     case 'TagUnder':
-    case 'WholeWord':
-    default: {
+    case 'WholeWord': {
       return undefined
     }
   }
@@ -347,7 +347,8 @@ export function pageFilterSummary(
     case 'WholeWord':
     default: {
       // Search-only primitives never reach the Pages surface (allow-list
-      // gate), but keep the switch exhaustive for type safety.
+      // gate). The default stays: a saved view's or `v2:` query's leaf is only
+      // checked to be an object, so its `type` can be one this build lacks.
       return t('pageBrowser.filter.summaryUnknown')
     }
   }

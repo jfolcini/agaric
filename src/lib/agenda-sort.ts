@@ -567,8 +567,7 @@ export function sortAgendaBlocksBy(
       return sortByPage(blocks, pageTitles ?? new Map())
     }
     case 'date':
-    case undefined:
-    default: {
+    case undefined: {
       return sortAgendaBlocks(blocks)
     }
   }

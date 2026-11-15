@@ -303,8 +303,7 @@ function AddFilterForm({
       case 'excludeTemplates':
       case 'hasBacklinks':
       case 'hasDueDate':
-      case 'hasScheduledDate':
-      default: {
+      case 'hasScheduledDate': {
         return true
       }
     }

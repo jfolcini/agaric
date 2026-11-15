@@ -71,8 +71,7 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
     case 'error': {
       return 'bg-destructive'
     }
-    case 'waiting':
-    default: {
+    case 'waiting': {
       return 'bg-muted-foreground'
     }
   }

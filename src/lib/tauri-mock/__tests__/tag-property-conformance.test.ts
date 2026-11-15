@@ -88,8 +88,7 @@ function propCell(value: FixturePropValue): Record<string, string | number> {
     case 'Date': {
       return { value_date: value.value }
     }
-    case 'Text':
-    default: {
+    case 'Text': {
       return { value_text: value.value }
     }
   }

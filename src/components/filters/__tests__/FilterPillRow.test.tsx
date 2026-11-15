@@ -281,8 +281,13 @@ describe('FilterPillRow', () => {
       ).toBe('created after 2024-01-01 before 2024-12-31')
     })
 
-    it('returns "filter" for unknown filter type', () => {
-      expect(filterSummary({ type: 'Unknown' } as any)).toBe('filter')
+    it.each([
+      { type: 'And', filters: [] },
+      { type: 'Or', filters: [] },
+      { type: 'DueDate', op: 'Eq', value: '2024-12-31' },
+      { type: 'SourcePage', included: ['P'], excluded: [] },
+    ] satisfies BacklinkFilter[])('returns "filter" for $type', (filter) => {
+      expect(filterSummary(filter)).toBe('filter')
     })
   })
 

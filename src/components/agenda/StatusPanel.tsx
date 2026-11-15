@@ -120,8 +120,7 @@ function syncStateDotClasses(state: SyncState): string {
     case 'offline': {
       return 'bg-muted-foreground'
     }
-    case 'waiting':
-    default: {
+    case 'waiting': {
       return 'bg-muted-foreground'
     }
   }
@@ -163,8 +162,7 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
         />
       )
     }
-    case 'idle':
-    default: {
+    case 'idle': {
       return (
         <CheckCircle2
           className={className}

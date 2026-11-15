@@ -303,8 +303,7 @@ function pmNodeSize(node: PMPositionNode): number {
     case 'table':
     case 'tableCell':
     case 'tableHeader':
-    case 'tableRow':
-    default: {
+    case 'tableRow': {
       return 2 + pmContentSize(node.content)
     }
   }
@@ -336,8 +335,7 @@ function pmRightmostTextblockEnd(node: PMPositionNode, start: number): number | 
     case 'table':
     case 'tableCell':
     case 'tableHeader':
-    case 'tableRow':
-    default: {
+    case 'tableRow': {
       let childStart = start + 1
       let rightmost: number | undefined
       for (const child of node.content ?? []) {

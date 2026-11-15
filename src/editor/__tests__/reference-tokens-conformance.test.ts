@@ -96,8 +96,7 @@ function inlinePiece(node: InlineNode): Piece {
     case 'footnote_ref':
     case 'hardBreak':
     case 'image':
-    case 'math_inline':
-    default: {
+    case 'math_inline': {
       throw new Error(`no piece for inline ${node.type}`)
     }
   }

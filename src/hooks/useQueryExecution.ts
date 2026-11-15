@@ -203,6 +203,7 @@ export async function dispatchQuery(
       throw new QueryValidationError(t('query.backlinksRequiresTarget'))
     }
     case 'unknown':
+    // `parseQueryExpression` casts the user's `type:` text to this union.
     default: {
       throw new QueryValidationError(t('query.unknownType', { type: parsed.type }))
     }
