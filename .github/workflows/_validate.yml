@@ -1107,14 +1107,14 @@ jobs:
         # remove-after-markers is included so a docs-only PR gets the same
         # `.md` REMOVE AFTER coverage the full `lint` job gives every other
         # PR (#4147) — it needs no toolchain beyond the Node/git already set
-        # up above. architecture-citations and dead-symbol-citations are here
-        # for the same reason: both are Node-only whole-tree scans over the
-        # extensions their `files` patterns name (`pass_filenames = false`, so
-        # the pattern only gates whether they fire), which covers
+        # up above. architecture-citations is here for the same reason: it is
+        # a Node-only whole-tree scan over the extensions its `files` pattern
+        # names (`pass_filenames = false`, so the pattern only gates whether
+        # it fires), which covers
         # `docs/architecture/*.md` here.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files markdownlint md-link-targets typos remove-after-markers architecture-citations dead-symbol-citations
+        run: prek run --all-files markdownlint md-link-targets typos remove-after-markers architecture-citations
 
       - name: Run doc-vs-code-paths (manual-stage hook)
         # A `manual`-stage hook, which the default-stage run above drops

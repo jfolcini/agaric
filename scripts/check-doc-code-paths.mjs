@@ -446,9 +446,8 @@ function listMarkdownFiles(tracked) {
 // citation can appear in any TS/TSX comment (the tree-utils.ts defect was
 // under `src/lib/`, but nothing about the shape is specific to that
 // directory), so the scan set is "every tracked file with this extension",
-// the same breadth `check-architecture-citations.mjs` and
-// `check-dead-symbol-citations.mjs` already use for their `.ts`/`.tsx`
-// scanning.
+// the same breadth `check-architecture-citations.mjs` already uses for its
+// `.ts`/`.tsx` scanning.
 function listTsFiles(tracked) {
   return tracked.filter((path) => /\.tsx?$/.test(path))
 }
