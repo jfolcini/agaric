@@ -1,4 +1,4 @@
-# Session 4206 — the board scrolled under a held card mid-board; the touch drag spec raced a fling
+# Session 4214 — the board scrolled under a held card mid-board; the touch drag spec raced a fling
 
 `e2e/advanced-query-board.spec.ts` "a long press picks a card up and a drop moves it; a swipe scrolls the board" (from #6805) failed on #6809, which does not touch the board (run 43700017986): the drag overlay never appeared after the long press. It turned out to be two faults, one in the test and one in the product.
 
