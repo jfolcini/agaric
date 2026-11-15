@@ -259,13 +259,11 @@ pub(super) fn render_page_file(data: &PageExportData) -> PageFile {
 /// before it, which is never its own first line: a bare empty first line is
 /// written `\`.
 fn block_start_lines(text: &str, starts: &[(String, usize)]) -> Vec<Option<String>> {
-    let mut ids = vec![None; text.split('\n').count()];
-    let (mut line, mut at) = (0, 0);
+    let newlines: Vec<usize> = text.match_indices('\n').map(|(at, _)| at).collect();
+    let mut ids = vec![None; newlines.len() + 1];
     for (id, start) in starts {
-        let start = start + usize::from(text[*start..].starts_with('\n'));
-        line += text[at..start].matches('\n').count();
-        at = start;
-        ids[line] = Some(id.clone());
+        let start = start + usize::from(newlines.binary_search(start).is_ok());
+        ids[newlines.partition_point(|&newline| newline < start)] = Some(id.clone());
     }
     ids
 }
@@ -617,13 +615,13 @@ fn push_clipboard_bullet(
     content: &str,
     id: &str,
 ) -> bool {
-    let start = output.len();
-    let code = push_block_bullet(output, indent, list_marker, task_marker, written);
-    let read_back = import::parse_pasted_text(&output[start..]);
+    let mut bullet = String::new();
+    let code = push_block_bullet(&mut bullet, indent, list_marker, task_marker, written);
+    let read_back = import::parse_pasted_text(&bullet);
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
+        output.push_str(&bullet);
         return code.any;
     }
-    output.truncate(start);
     push_anchored_bullet(output, indent, list_marker, task_marker, written, id)
 }
 
@@ -842,7 +840,13 @@ pub(super) fn agent_markdown_stretch(
         }
         stop = next;
     }
-    Ok((markdown[begin..stop.1].to_owned(), stop.0.cloned()))
+    let stretch = markdown.get(begin..stop.1).ok_or_else(|| {
+        AppError::Internal(format!(
+            "block offsets {begin}..{} split a character",
+            stop.1
+        ))
+    })?;
+    Ok((stretch.to_owned(), stop.0.cloned()))
 }
 
 /// `source`, a buffer with each block's `^ID` written in it, as the text with
@@ -2164,57 +2168,56 @@ pub(super) fn push_block_bullet(
     let mut lines = resolved.split('\n').peekable();
     let first = lines.next().unwrap_or("");
     let followed = lines.peek().is_some();
-    let line_start = output.len();
-    output.push_str(indent);
+    let mut written = indent.to_owned();
     let markers = format!("{list_marker}{task_marker}");
     if first.is_empty() && !markers.is_empty() {
         // An EMPTY first line after a marker: emit the bare marker (`-`,
         // `1.`, `- [ ]`) rather than a line with trailing whitespace. Both
         // forms read back identically, but only this one is a byte-level
         // fixpoint.
-        output.push_str(markers.trim_end());
+        written.push_str(markers.trim_end());
     } else {
-        output.push_str(&markers);
+        written.push_str(&markers);
         if first_line_needs_escape(first, followed, list_marker, task_marker) {
-            output.push('\\');
+            written.push('\\');
         }
-        output.push_str(first);
+        written.push_str(first);
     }
     // Fences are tracked over each line as written, escape and marker
     // included, with the reader's own probes: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
-    let mut in_fence = import::document_fence_opener(&output[line_start..]);
+    let mut in_fence = import::document_fence_opener(&written);
     let mut code = CodeLines {
         any: in_fence.is_some(),
         last: in_fence.is_some(),
         open: false,
     };
+    output.push_str(&written);
     output.push('\n');
 
     let cont_indent = continuation_indent(indent, list_marker);
     for line in lines {
-        let line_start = output.len();
-        output.push_str(&cont_indent);
+        let mut written = cont_indent.clone();
         let needs_escape = if in_fence.is_some() {
             import::needs_anchor_line_escape(line)
         } else {
             import::needs_document_line_escape(line)
         };
         if needs_escape {
-            output.push('\\');
+            written.push('\\');
         }
-        output.push_str(line);
-        let written = &output[line_start..];
+        written.push_str(line);
         code.last = if let Some(fence) = in_fence {
-            if import::closes_fence(written, fence) {
+            if import::closes_fence(&written, fence) {
                 in_fence = None;
             }
             true
         } else {
-            in_fence = import::document_fence_opener(written);
+            in_fence = import::document_fence_opener(&written);
             in_fence.is_some()
         };
         code.any |= code.last;
+        output.push_str(&written);
         output.push('\n');
     }
     code.open = in_fence.is_some();

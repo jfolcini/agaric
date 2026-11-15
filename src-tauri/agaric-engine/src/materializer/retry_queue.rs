@@ -6599,10 +6599,7 @@ mod tests {
         // rename, but the live schema columns must not.
         let sql_no_comments: String = sql
             .lines()
-            .map(|l| match l.find("--") {
-                Some(i) => &l[..i],
-                None => l,
-            })
+            .map(|l| l.split_once("--").map_or(l, |(code, _)| code))
             .collect::<Vec<_>>()
             .join("\n");
         assert!(

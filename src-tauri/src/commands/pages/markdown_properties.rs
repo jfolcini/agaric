@@ -355,18 +355,22 @@ fn push_text_line(content: &mut String, line: &str) {
     content.push_str(line);
 }
 
-/// `text` with each `[[` that opens a page link escaped (#5160 N3).
+/// `text` with each `[[` that opens a page link escaped (#5160 N3). A `[[`
+/// is escaped already when the text between it and the `[[` before it ends in
+/// an odd run of backslashes.
 fn escape_page_links(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len() + 2);
-    let mut copied = 0;
-    for (at, _) in text.match_indices("[[") {
-        if !is_escaped(text, at) {
-            escaped.push_str(&text[copied..at]);
-            escaped.push('\\');
-            copied = at;
+    let mut before: Option<&str> = None;
+    for piece in text.split("[[") {
+        if let Some(before) = before {
+            if !is_escaped(before, before.len()) {
+                escaped.push('\\');
+            }
+            escaped.push_str("[[");
         }
+        escaped.push_str(piece);
+        before = Some(piece);
     }
-    escaped.push_str(&text[copied..]);
     escaped
 }
 
@@ -511,4 +515,20 @@ pub(crate) async fn read_typed_ref_list(
             .map_err(AppError::validation)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #6841 — each `[[` an odd backslash run does not already escape gains
+    /// one, after multi-byte text and back to back alike.
+    #[test]
+    fn each_unescaped_page_link_opener_is_escaped() {
+        assert_eq!(
+            escape_page_links(r"é [[日本]] \[[a]] 🙂[[[[b]] \\[[c]]"),
+            r"é \[[日本]] \[[a]] 🙂\[[\[[b]] \\\[[c]]"
+        );
+        assert_eq!(escape_page_links("ü"), "ü");
+    }
 }

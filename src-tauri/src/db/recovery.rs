@@ -8532,10 +8532,7 @@ mod tests {
     /// all whitespace; what is left is the schema itself.
     fn normalize_ddl(sql: &str) -> String {
         sql.lines()
-            .map(|line| match line.find("--") {
-                Some(i) => &line[..i],
-                None => line,
-            })
+            .map(|line| line.split_once("--").map_or(line, |(code, _)| code))
             .collect::<String>()
             .chars()
             .filter(|c| !c.is_whitespace() && *c != '"')

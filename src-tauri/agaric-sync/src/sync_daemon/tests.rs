@@ -650,6 +650,20 @@ fn build_fallback_peer_handles_numeric_scope_id() {
     assert_eq!(peer.unwrap().addresses[0].to_string(), "fe80::1");
 }
 
+#[test]
+fn build_fallback_peer_strips_a_non_ascii_scope_id_in_both_forms() {
+    for addr in ["[fe80::1%wlé0]:8080", "fe80::1%wlé0:8080"] {
+        let peer = build_fallback_peer("DEV_UTF8_SCOPE", addr, None)
+            .unwrap_or_else(|| panic!("{addr} must parse"));
+        assert_eq!(peer.port, 8080, "port of {addr}");
+        assert_eq!(
+            peer.addresses[0].to_string(),
+            "fe80::1",
+            "address of {addr}"
+        );
+    }
+}
+
 // ======================================================================
 // T-41 — Stale mDNS eviction edge cases
 // ======================================================================

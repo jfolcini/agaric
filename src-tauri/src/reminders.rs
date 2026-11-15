@@ -171,8 +171,10 @@ pub fn notification_title(content: Option<&str>) -> String {
         return first_line.to_string();
     }
     let head: String = first_line.chars().take(TITLE_MAX_CHARS).collect();
-    let cut = head.rfind(char::is_whitespace).unwrap_or(head.len());
-    format!("{}…", head[..cut].trim_end())
+    let kept = head
+        .rsplit_once(char::is_whitespace)
+        .map_or(head.as_str(), |(kept, _)| kept);
+    format!("{}…", kept.trim_end())
 }
 
 /// A notification dispatcher: the job hands it what would be sent, so a test
@@ -595,6 +597,15 @@ mod tests {
         assert_eq!(
             notification_title(Some(&unbroken)),
             format!("{}…", "x".repeat(60))
+        );
+    }
+
+    #[test]
+    fn notification_title_cuts_multibyte_text_at_a_multibyte_space() {
+        let words = "日本語\u{3000}".repeat(20);
+        assert_eq!(
+            notification_title(Some(&words)),
+            format!("{}日本語…", "日本語\u{3000}".repeat(14))
         );
     }
 }

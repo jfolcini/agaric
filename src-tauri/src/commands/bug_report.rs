@@ -2714,11 +2714,13 @@ mod tests {
                 let Some(open_at) = line.find(OPENER) else {
                     continue;
                 };
-                let body = &line[open_at + 1..];
-                let Some(close_at) = body.find('"') else {
+                let body = line
+                    .get(open_at + 1..)
+                    .expect("OPENER starts with an ASCII quote");
+                let Some((inner, _)) = body.split_once('"') else {
                     continue;
                 };
-                let keys: Vec<String> = body[..close_at]
+                let keys: Vec<String> = inner
                     .split("\\t")
                     .filter_map(|seg| seg.split_once('=').map(|(k, _)| k.to_owned()))
                     .collect();
@@ -4608,7 +4610,7 @@ mod tests {
         assert!(
             got.starts_with("…[truncated"),
             "truncated output must start with marker, got prefix: {:?}",
-            &got[..got.len().min(80)]
+            got.chars().take(80).collect::<String>()
         );
         assert!(
             got.contains("TAIL_MARKER"),

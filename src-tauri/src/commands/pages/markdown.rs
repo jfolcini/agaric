@@ -1882,6 +1882,49 @@ mod tests {
         );
     }
 
+    /// #6841 — refs among multi-byte text are named in place, the text around
+    /// them kept byte for byte, a table cell's `\|` included.
+    #[test]
+    fn refs_among_multi_byte_text_are_named_in_place() {
+        const ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let tags = HashMap::from([(ULID.to_string(), "café".to_string())]);
+        let titles = HashMap::from([(ULID.to_string(), "日本".to_string())]);
+        let content = format!("é #[{ULID}] 🙂 [[{ULID}\\|ラベル]] ü");
+        assert_eq!(
+            humanise_tag_and_page_refs(&content, &tags, &titles),
+            "é #café 🙂 [[日本\\|ラベル]] ü"
+        );
+        assert_eq!(
+            link_body_readings("日本|ラベル"),
+            [("日本|ラベル", None), ("日本", Some("ラベル"))]
+        );
+        let row = "| é | [[A\\|b]] |";
+        assert_eq!(
+            escape_pipes_as(row, row.find("[[").unwrap(), "A\\|b", "X|b"),
+            "X\\|b"
+        );
+        let prose = "é\n日 [[A\\|b]]";
+        assert_eq!(
+            escape_pipes_as(prose, prose.find("[[").unwrap(), "A\\|b", "X|b"),
+            "X|b"
+        );
+    }
+
+    /// #6841 — vault and relative note links among multi-byte text are
+    /// rewritten in place, the text around them kept byte for byte.
+    #[test]
+    fn note_links_among_multi_byte_text_are_rewritten_in_place() {
+        let notes = HashMap::from([("ノート".to_string(), "notes/ノート".to_string())]);
+        assert_eq!(
+            rewrite_vault_wikilinks("é [[ノート|ラベル]] | [[ノート\\|表]] 🙂", &notes),
+            "é [[notes/ノート|ラベル]] | [[notes/ノート\\|表]] 🙂"
+        );
+        assert_eq!(
+            rewrite_relative_md_links("é [日本](ノート.md) 🙂 [x](b.md#見出し) ü", "notes"),
+            "é [[notes/ノート|日本]] 🙂 [[notes/b#見出し|x]] ü"
+        );
+    }
+
     /// #5160 N1 — a `#` inside a bare URL or a link destination is a fragment.
     #[test]
     fn a_hash_inside_a_url_or_link_destination_is_guarded() {

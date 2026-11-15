@@ -475,8 +475,12 @@ fn unanchored(mut block: import::ParsedBlock) -> import::ParsedBlock {
 /// The block's first line, cut to 40 characters, as a warning names it.
 fn label(block: &import::ParsedBlock) -> String {
     let line = block.content.lines().next().unwrap_or("");
-    match line.char_indices().nth(40) {
-        Some((at, _)) => format!("{}…", &line[..at]),
+    match line
+        .char_indices()
+        .nth(40)
+        .and_then(|(at, _)| line.split_at_checked(at))
+    {
+        Some((head, _)) => format!("{head}…"),
         None => line.to_owned(),
     }
 }

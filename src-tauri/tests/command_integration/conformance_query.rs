@@ -3378,11 +3378,11 @@ mod reader_delegation_tests {
     /// header.
     fn wired_commands(src: &str, fn_needle: &str, dispatch: &str) -> (Vec<String>, usize) {
         let body = body_after(src, fn_needle, "\n}\n");
-        let start = body.find(dispatch).unwrap_or_else(|| {
+        let (_, arms_src) = body.split_once(dispatch).unwrap_or_else(|| {
             panic!("{dispatch:?} not found inside `{fn_needle}` — did the dispatch move or rename?")
-        }) + dispatch.len();
+        });
 
-        let chars: Vec<char> = body[start..].chars().collect();
+        let chars: Vec<char> = arms_src.chars().collect();
         let mut commands = Vec::new();
         let mut arms = 0usize;
         let mut depth = 0i32;
@@ -3571,9 +3571,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         let start = src
             .find(needle)
             .unwrap_or_else(|| panic!("{needle:?} not found — did it move or get renamed?"));
-        let rest = &src[start..];
-        let end = rest.find(closer).map_or(rest.len(), |i| i + closer.len());
-        rest[..end].to_owned()
+        let rest = src.get(start..).expect("`find` returns a char boundary");
+        match rest.split_once(closer) {
+            Some((head, _)) => format!("{head}{closer}"),
+            None => rest.to_owned(),
+        }
     }
 
     #[test]

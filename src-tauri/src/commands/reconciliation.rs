@@ -96,9 +96,12 @@ pub struct DivergenceSample {
 /// `text` cut to [`SAMPLE_CHARS`] characters, on a character boundary, with
 /// an ellipsis when it was longer.
 fn truncate_sample(text: &str) -> String {
-    match text.char_indices().nth(SAMPLE_CHARS) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text.to_owned(),
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(SAMPLE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
     }
 }
 

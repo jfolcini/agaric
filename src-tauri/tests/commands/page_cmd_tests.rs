@@ -11894,7 +11894,9 @@ async fn export_aliases_tags_and_properties_coexist_1433() {
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
     let fence_start = md.find("---\n").expect("frontmatter fence");
-    let body = &md[fence_start..];
+    let body = md
+        .get(fence_start..)
+        .expect("`find` returns a char boundary");
     let a_pos = body.find("aliases: [AKA]").expect("aliases key");
     let t_pos = body.find("tags: [work]").expect("tags key");
     let p_pos = body.find("category: notes").expect("property key");
