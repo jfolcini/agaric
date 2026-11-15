@@ -281,8 +281,8 @@ pub async fn duplicate_block_inner(
     }
     let mut lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Copy).await?;
     // #6741 — a copy writes back each list its blocks held, declared or not.
-    for (key, text) in undeclared_lists(&data) {
-        lines.note_list(key, text);
+    for (block, key, text) in held_lists(&data) {
+        lines.note_list(HeldBy::Block(Some(&block)), key, text);
     }
     let parent_id = root.parent_id.map(BlockId::into_string);
     let siblings =
@@ -1165,7 +1165,7 @@ pub use import_attachments::*;
 
 #[path = "markdown_properties.rs"]
 mod property_lines;
-use property_lines::PropertyLines;
+use property_lines::{HeldBy, PropertyLines};
 pub(crate) use property_lines::{read_typed_ref, read_typed_ref_list};
 
 #[path = "markdown_source_apply.rs"]

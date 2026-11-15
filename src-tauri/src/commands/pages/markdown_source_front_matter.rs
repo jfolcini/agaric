@@ -79,7 +79,7 @@ impl FrontMatterEdit {
                 *key = lines.canonical_key(key);
             }
             if to.lists.contains(&as_typed) {
-                lines.note_list(key.clone(), value.clone());
+                lines.note_list(HeldBy::FrontMatter, key.clone(), value.clone());
             }
             if typed.insert(key.clone(), (as_typed, line)).is_some() {
                 let why = format!("`{key}` is written twice");
@@ -114,7 +114,7 @@ impl FrontMatterEdit {
             if from.get(key) == Some(&value) || now.get(key) == Some(&value) {
                 continue;
             }
-            if let Err(reason) = lines.read(key, value) {
+            if let Err(reason) = lines.read(HeldBy::FrontMatter, key, value) {
                 let (typed, line) = &self.typed[key];
                 let why = format!("`{typed}: {value}` cannot be saved: {reason}");
                 return Err(at_line(*line, AppError::validation(why)));
@@ -161,7 +161,11 @@ pub(super) async fn write_front_matter(
     let page = data.page.id.as_str();
     let changes = edit.property_changes(now, save.lines)?;
     let prior = PriorTaskState::default();
-    Box::pin(write_properties(&mut tx, save, page, changes, &prior)).await?;
+    let held_by = HeldBy::FrontMatter;
+    Box::pin(write_properties(
+        &mut tx, save, page, held_by, changes, &prior,
+    ))
+    .await?;
     let aliases = edited_list(&edit.from.aliases, &edit.to.aliases, &now.aliases);
     if aliases.iter().collect::<BTreeSet<_>>() != now.aliases.iter().collect::<BTreeSet<_>>() {
         let (materializer, device_id) = (save.materializer, save.device_id);

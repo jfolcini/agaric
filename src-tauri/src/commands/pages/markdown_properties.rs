@@ -22,10 +22,31 @@ pub(super) struct PropertyLines {
     /// The key each canonical `key:: value` line of a source buffer was typed
     /// with, when it was typed otherwise, to name the line by.
     typed: HashMap<(String, String), String>,
-    /// The `(key, list text)` pairs that write a list though no definition
-    /// says the key holds one (#6741): a front matter YAML list's, and in a
-    /// copy each list the copied blocks held ([`Self::note_list`]).
-    listed: HashSet<(String, String)>,
+    /// The `(holder, key, list text)` triples that write a list though no
+    /// definition says the key holds one (#6741): a front matter YAML list's,
+    /// and in a copy each list the copied blocks held ([`Self::note_list`]).
+    /// The holder is `None` for the front matter, else the copied block's id.
+    listed: HashSet<(Option<String>, String, String)>,
+}
+
+/// Whose `key:: value` line [`PropertyLines::read`] reads: the front matter's,
+/// or a block's, by the id it carries in the text when it carries one. A list
+/// noted for one holder is never read as a list for another.
+#[derive(Clone, Copy)]
+pub(super) enum HeldBy<'a> {
+    FrontMatter,
+    Block(Option<&'a str>),
+}
+
+impl HeldBy<'_> {
+    /// The holder [`PropertyLines::listed`] names, or `None` for a block that
+    /// carries no id and so was noted for no list.
+    fn listed_as(self) -> Option<Option<String>> {
+        match self {
+            Self::FrontMatter => Some(None),
+            Self::Block(id) => id.map(|id| Some(id.to_owned())),
+        }
+    }
 }
 
 impl PropertyLines {
@@ -244,10 +265,13 @@ impl PropertyLines {
     }
 
     /// Read `text`, the text of `items` ([`import::write_property_list`]),
-    /// under `key` as the list it is, whether or not the key is declared to
-    /// hold one: a YAML list in front matter, or a list a copied block held.
-    pub(super) fn note_list(&mut self, key: String, text: String) {
-        self.listed.insert((key, text));
+    /// under `key` of `held_by` as the list it is, whether or not the key is
+    /// declared to hold one: a YAML list in front matter, or a list a copied
+    /// block held.
+    pub(super) fn note_list(&mut self, held_by: HeldBy<'_>, key: String, text: String) {
+        if let Some(holder) = held_by.listed_as() {
+            self.listed.insert((holder, key, text));
+        }
     }
 
     /// The value `value` is written as under `key`, a canonical key, or why
@@ -255,9 +279,19 @@ impl PropertyLines {
     /// under an undeclared key, but one the app keeps for itself, and under a
     /// key that holds one value its items joined by `, `, as a list's text
     /// was before lists (#6741).
-    pub(super) fn read(&self, key: &str, value: &str) -> Result<PropertyValueFields, String> {
+    pub(super) fn read(
+        &self,
+        held_by: HeldBy<'_>,
+        key: &str,
+        value: &str,
+    ) -> Result<PropertyValueFields, String> {
         let declaration = self.declarations.get(key);
-        let listed = || self.listed.contains(&(key.to_owned(), value.to_owned()));
+        let listed = || {
+            held_by.listed_as().is_some_and(|holder| {
+                self.listed
+                    .contains(&(holder, key.to_owned(), value.to_owned()))
+            })
+        };
         if declaration.is_none_or(|d| !d.multiple) && listed() {
             if declaration.is_some() || agaric_store::op::is_internal_property_key(key) {
                 return self.read_value(key, &import::property_list_items(value).join(", "));
@@ -330,7 +364,8 @@ impl PropertyLines {
         for block in blocks {
             for (typed, value) in std::mem::take(&mut block.properties) {
                 let key = self.canonical_key(&typed);
-                let Err(reason) = self.read(&key, &value) else {
+                let held_by = HeldBy::Block(block.block_anchor.as_deref());
+                let Err(reason) = self.read(held_by, &key, &value) else {
                     block.properties.push((key, value));
                     continue;
                 };

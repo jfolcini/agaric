@@ -950,7 +950,8 @@ async fn write_changes(
             save.report.edited += 1;
         }
         let prior = priors.get(id).cloned().unwrap_or_default();
-        Box::pin(write_properties(tx, save, id, changes, &prior))
+        let held_by = HeldBy::Block(Some(id));
+        Box::pin(write_properties(tx, save, id, held_by, changes, &prior))
             .await
             .map_err(at)?;
         crate::commands::ensure_batch_within_cap("ops", tx.pending_len()).map_err(at)?;
@@ -975,6 +976,7 @@ async fn write_properties(
     tx: &mut CommandTx,
     save: &mut Save<'_>,
     id: &str,
+    held_by: HeldBy<'_>,
     changes: PropertyChanges,
     prior: &PriorTaskState,
 ) -> Result<(), AppError> {
@@ -996,7 +998,8 @@ async fn write_properties(
         .into_iter()
         .partition(|(key, _)| key != "completed_at");
     let (materializer, device_id) = (save.materializer, save.device_id);
-    let set = apply_block_properties(tx, materializer, device_id, id, &set, save.lines).await?;
+    let set = apply_block_properties(tx, materializer, device_id, id, held_by, &set, save.lines);
+    let set = set.await?;
     save.report.properties_set += set;
     if let Some(state) = changes.todo_state {
         let counter = if state.is_some() {
@@ -1007,7 +1010,15 @@ async fn write_properties(
         *counter += 1;
         set_todo_state_in_tx(tx, loro, save.device_id, id.to_owned(), prior, state).await?;
     }
-    let set = apply_block_properties(tx, materializer, device_id, id, &completed, save.lines);
+    let set = apply_block_properties(
+        tx,
+        materializer,
+        device_id,
+        id,
+        held_by,
+        &completed,
+        save.lines,
+    );
     save.report.properties_set += set.await?;
     Ok(())
 }
