@@ -163,8 +163,8 @@ fn holds_foreign_math(line: &str) -> bool {
     [("\\(", "\\)"), ("\\[", "\\]")]
         .iter()
         .any(|(open, close)| {
-            line.find(open)
-                .is_some_and(|at| line[at + 2..].contains(close))
+            line.split_once(open)
+                .is_some_and(|(_, after)| after.contains(close))
         })
 }
 
@@ -833,6 +833,28 @@ fn source_with_block_refs(content: &str) -> String {
     let text = render_page_document(&data_with_block_refs(content)).0;
     let (first, _) = text.split_once("\n\n").expect("two blocks");
     format!("{first}\n")
+}
+
+/// #6841 — a file's line ids count lines, not bytes: each block's id is on the
+/// line it starts on after multi-byte lines.
+#[test]
+fn a_files_line_ids_follow_multi_byte_lines() {
+    let data = page_data(vec![
+        row(BLOCK, PAGE, 0, "日本\n語 🙂"),
+        row(OWN, PAGE, 1, "é"),
+    ]);
+    let file = render_page_file(&data);
+    assert_eq!(file.text, "日本\n語 🙂\n\né\n");
+    assert_eq!(
+        file.line_ids,
+        [
+            Some(BLOCK.to_owned()),
+            None,
+            None,
+            Some(OWN.to_owned()),
+            None
+        ]
+    );
 }
 
 /// #6277 F2 — a block ref is written as an Obsidian block link where the link

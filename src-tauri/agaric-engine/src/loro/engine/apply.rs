@@ -304,56 +304,36 @@ impl LoroEngine {
             ))
         })?;
 
-        // Common prefix + suffix in Unicode scalars.  Scan both strings
-        // with `char_indices()` in lockstep — no `Vec<char>` collection —
-        // tracking USV (scalar) counts and byte offsets together so we can
-        // slice the differing middle directly.  USV offsets match
-        // `LoroText::splice`'s expected coordinate system; byte offsets let
-        // us borrow the replacement slice without re-collecting chars.
-        let cur_len = current.chars().count();
-        let new_len = new_content.chars().count();
-
-        // Common prefix: walk chars of both strings together.
+        // Common prefix + suffix in Unicode scalars.  Walk both strings'
+        // `chars()` in lockstep — no `Vec<char>` collection — first from the
+        // front, then from the back of what is left, so the suffix never
+        // overlaps the prefix.  Scalar counts match `LoroText::splice`'s
+        // expected coordinate system; `Chars::as_str` borrows the differing
+        // middle of `new_content` directly.
+        let mut cur_it = current.chars();
+        let mut new_it = new_content.chars();
         let mut prefix = 0usize; // scalar count
-        let mut prefix_byte_new = 0usize; // byte offset into `new_content`
+        while cur_it
+            .clone()
+            .next()
+            .is_some_and(|a| new_it.clone().next() == Some(a))
         {
-            let mut cur_it = current.char_indices();
-            let mut new_it = new_content.char_indices();
-            loop {
-                match (cur_it.next(), new_it.next()) {
-                    (Some((_, a)), Some((nb, b))) if a == b => {
-                        prefix += 1;
-                        // Byte offset of the *next* new char (one past the
-                        // matched char) = current new byte + matched len.
-                        prefix_byte_new = nb + b.len_utf8();
-                    }
-                    _ => break,
-                }
-            }
+            cur_it.next();
+            new_it.next();
+            prefix += 1;
         }
-
-        // Common suffix: walk chars of both strings from the end together,
-        // but never past the already-matched prefix.
-        let max_suffix = (cur_len - prefix).min(new_len - prefix);
-        let mut suffix = 0usize; // scalar count
-        let mut suffix_byte_new = new_content.len(); // byte offset of suffix start in `new_content`
+        while cur_it
+            .clone()
+            .next_back()
+            .is_some_and(|a| new_it.clone().next_back() == Some(a))
         {
-            let mut cur_it = current.char_indices().rev();
-            let mut new_it = new_content.char_indices().rev();
-            while suffix < max_suffix {
-                match (cur_it.next(), new_it.next()) {
-                    (Some((_, a)), Some((nb, b))) if a == b => {
-                        suffix += 1;
-                        suffix_byte_new = nb; // byte offset of this matched suffix char
-                    }
-                    _ => break,
-                }
-            }
+            cur_it.next_back();
+            new_it.next_back();
         }
 
         let range_start = prefix;
-        let range_len = cur_len - prefix - suffix;
-        let replacement: &str = &new_content[prefix_byte_new..suffix_byte_new];
+        let range_len = cur_it.count();
+        let replacement: &str = new_it.as_str();
 
         if range_len == 0 && replacement.is_empty() {
             return Ok(()); // identical strings; no-op
@@ -1133,6 +1113,28 @@ mod convergence_tests {
             .expect("read_block")
             .expect("seed block present")
             .content
+    }
+
+    /// The diff-splice counts the common prefix and suffix in scalars, so
+    /// disjoint edits around multi-byte text land where they were made and
+    /// both survive the merge.
+    #[test]
+    fn disjoint_edits_around_multi_byte_text_merge_without_loss() {
+        let mut a = LoroEngine::with_peer_id("DEV-2600-A").expect("peer A");
+        let mut b = LoroEngine::with_peer_id("DEV-2600-B").expect("peer B");
+        for e in [&mut a, &mut b] {
+            e.apply_create_block(SEED_ID, "content", "日本 é 😀 x", None, 0)
+                .expect("seed create");
+        }
+        merge(&mut a, &mut b);
+        a.apply_edit_via_diff_splice(SEED_ID, "日本語 é 😀 x")
+            .expect("A edit start");
+        b.apply_edit_via_diff_splice(SEED_ID, "日本 é 😀 ü")
+            .expect("B edit end");
+        assert_eq!(content(&b), "日本 é 😀 ü", "B's local edit landed");
+        merge(&mut a, &mut b);
+        assert_eq!(content(&a), "日本語 é 😀 ü");
+        assert_eq!(content(&b), "日本語 é 😀 ü");
     }
 
     /// Two peers edit DISJOINT regions of the same block while each is unaware

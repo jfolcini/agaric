@@ -154,15 +154,15 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
 
 /// Extract content from `<title>...</title>`.
 fn extract_title_tag(html: &str) -> Option<String> {
-    // ASCII-only lowercasing keeps byte offsets aligned with `html` so the
-    // `&html[content_start..]` slice below never lands mid-UTF-8-char. Tag
-    // names are ASCII, so this is behaviour-preserving. (#2958)
+    // ASCII-only lowercasing keeps byte offsets aligned with `html`, so a
+    // range found in `lower` reads the same text out of `html`. Tag names
+    // are ASCII, so this is behaviour-preserving. (#2958)
     let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?;
-    let after_tag = lower[start..].find('>')?;
-    let content_start = start + after_tag + 1;
-    let end = lower[content_start..].find("</title>")?;
-    let content = &html[content_start..content_start + end];
+    let (_, from_tag) = lower.split_once("<title")?;
+    let (_, after_open) = from_tag.split_once('>')?;
+    let (content_lower, _) = after_open.split_once("</title>")?;
+    let content_start = lower.len() - after_open.len();
+    let content = html.get(content_start..content_start + content_lower.len())?;
     let decoded = decode_html_entities(content);
     if decoded.trim().is_empty() {
         None
@@ -190,23 +190,18 @@ fn find_first_tag<F, T>(html: &str, tag_open: &str, mut f: F) -> Option<T>
 where
     F: FnMut(&str, &str) -> Option<T>,
 {
-    // ASCII-only lowercasing keeps byte offsets aligned with `html` so the
-    // `&html[abs_start..=tag_end]` slice below never lands mid-UTF-8-char.
-    // Tag names are ASCII, so this is behaviour-preserving. (#2958)
+    // ASCII-only lowercasing keeps byte offsets aligned with `html`, so a
+    // tag's range in `lower` reads the same tag out of `html`. Tag names are
+    // ASCII, so this is behaviour-preserving. (#2958)
     let lower = html.to_ascii_lowercase();
     let mut search_pos = 0;
-    while let Some(rel_start) = lower[search_pos..].find(tag_open) {
+    while let Some(rel_start) = lower.get(search_pos..)?.find(tag_open) {
         let abs_start = search_pos + rel_start;
-        let tag_end = match lower[abs_start..].find('>') {
-            Some(e) => abs_start + e,
-            None => break,
-        };
-        let tag_lower = &lower[abs_start..=tag_end];
-        let tag_orig = &html[abs_start..=tag_end];
-        if let Some(v) = f(tag_lower, tag_orig) {
+        let tag = abs_start..abs_start + lower.get(abs_start..)?.find('>')? + 1;
+        if let Some(v) = f(lower.get(tag.clone())?, html.get(tag.clone())?) {
             return Some(v);
         }
-        search_pos = tag_end + 1;
+        search_pos = tag.end;
     }
     None
 }
@@ -255,23 +250,20 @@ fn extract_link_icon_href(html: &str) -> Option<String> {
 /// Extract an attribute value from an HTML tag string.
 /// Handles both double and single quoted values.
 fn extract_attribute_value(tag: &str, attr: &str) -> Option<String> {
-    // ASCII-only lowercasing keeps byte offsets aligned with `tag` so the
-    // `tag[val_start..]` slices below never land mid-UTF-8-char. Attribute
+    // ASCII-only lowercasing keeps byte offsets aligned with `tag`, so an
+    // offset found in `lower` reads the same text out of `tag`. Attribute
     // names are ASCII, so this is behaviour-preserving. (#2958)
     let lower = tag.to_ascii_lowercase();
-    let dq_pattern = format!("{attr}=\"");
-    let sq_pattern = format!("{attr}='");
-
-    if let Some(pos) = lower.find(&dq_pattern) {
-        let val_start = pos + dq_pattern.len();
-        if let Some(val_end) = tag[val_start..].find('"') {
-            return Some(tag[val_start..val_start + val_end].to_string());
-        }
-    }
-    if let Some(pos) = lower.find(&sq_pattern) {
-        let val_start = pos + sq_pattern.len();
-        if let Some(val_end) = tag[val_start..].find('\'') {
-            return Some(tag[val_start..val_start + val_end].to_string());
+    for quote in ['"', '\''] {
+        let pattern = format!("{attr}={quote}");
+        let Some(pos) = lower.find(&pattern) else {
+            continue;
+        };
+        let value = tag
+            .get(pos + pattern.len()..)
+            .and_then(|rest| rest.split_once(quote));
+        if let Some((value, _)) = value {
+            return Some(value.to_string());
         }
     }
     None
@@ -290,17 +282,16 @@ pub(super) fn extract_meta_refresh_url(html: &str) -> Option<String> {
         {
             // Parse content="0;url=https://..." or content="0; url=https://..."
             let content = extract_attribute_value(tag_orig, "content")?;
-            // ASCII-only lowercasing keeps byte offsets aligned with `content`
-            // so the `content[url_pos + 4..]` slice below never lands
-            // mid-UTF-8-char. `url=` is ASCII, so this is
-            // behaviour-preserving. (#2958)
+            // ASCII-only lowercasing keeps byte offsets aligned with `content`,
+            // so an offset found in `content_lower` reads the same text out of
+            // `content`. `url=` is ASCII, so this is behaviour-preserving. (#2958)
             let content_lower = content.to_ascii_lowercase();
-            let url_pos = content_lower.find("url=")?;
+            let url_start = content_lower.find("url=")? + "url=".len();
             // I-Search-8: some servers wrap the URL inside quotes within the
             // `content` attribute (e.g. `content="0;url='https://example.com'"`).
             // The outer trim() left the inner quotes; strip them so downstream
             // `extract_domain` and `detect_auth_required` see a clean URL.
-            let url = content[url_pos + 4..].trim();
+            let url = content.get(url_start..)?.trim();
             let url = url
                 .trim_start_matches(['\'', '"'])
                 .trim_end_matches(['\'', '"']);
@@ -324,52 +315,41 @@ pub(super) fn extract_meta_refresh_url(html: &str) -> Option<String> {
 /// first ensures an `@` that lives in the path (e.g.
 /// `https://host/path@frag`) is **not** treated as userinfo.
 fn strip_userinfo(authority: &str) -> &str {
-    let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
-    let auth_part = &authority[..authority_end];
-    if let Some(at_pos) = auth_part.rfind('@') {
-        &authority[at_pos + 1..]
-    } else {
-        authority
-    }
+    let auth_part = authority
+        .split_once(['/', '?', '#'])
+        .map_or(authority, |(auth_part, _)| auth_part);
+    auth_part
+        .rfind('@')
+        .and_then(|at_pos| authority.get(at_pos + 1..))
+        .unwrap_or(authority)
 }
 
 /// Extract origin (scheme + host + port) from a URL.
 pub(super) fn extract_origin(url: &str) -> Option<String> {
-    // Find scheme
-    let scheme_end = url.find("://")?;
-    let rest = &url[scheme_end + 3..];
-    // Find end of host (first / or end of string)
-    let host_end = rest.find('/').unwrap_or(rest.len());
-    let host = &rest[..host_end];
+    let (scheme, rest) = url.split_once("://")?;
+    // The host runs to the first `/`, or to the end.
+    let host = rest.split_once('/').map_or(rest, |(host, _)| host);
     // Drop any `user:pwd@` so cached favicon URLs and traces
     // never carry the user's credentials.
     let host = strip_userinfo(host);
     if host.is_empty() {
         return None;
     }
-    Some(format!("{}://{}", &url[..scheme_end], host))
+    Some(format!("{scheme}://{host}"))
 }
 
 /// Extract domain from a URL (strips port).
 pub(super) fn extract_domain(url: &str) -> Option<String> {
-    let scheme_end = url.find("://")?;
-    let rest = &url[scheme_end + 3..];
-    let host_end = rest.find('/').unwrap_or(rest.len());
-    let host = &rest[..host_end];
+    let (_, rest) = url.split_once("://")?;
+    let host = rest.split_once('/').map_or(rest, |(host, _)| host);
     // Drop any `user:pwd@` before port-stripping so the rfind(':')
     // lookup below cannot land inside the userinfo and so the returned
     // domain never carries credentials.
     let host = strip_userinfo(host);
-    // Strip port if present
-    let domain = if let Some(colon) = host.rfind(':') {
-        // Check if everything after colon is digits (port)
-        if host[colon + 1..].chars().all(|c| c.is_ascii_digit()) {
-            &host[..colon]
-        } else {
-            host
-        }
-    } else {
-        host
+    // Strip the port: everything after the last colon, when all digits.
+    let domain = match host.rsplit_once(':') {
+        Some((domain, port)) if port.chars().all(|c| c.is_ascii_digit()) => domain,
+        _ => host,
     };
     if domain.is_empty() {
         None
@@ -472,13 +452,11 @@ fn decode_html_entities(s: &str) -> String {
 /// decoding, which would obscure char-counting bugs).
 pub(super) fn truncate_str(s: &str, max_chars: usize) -> &str {
     // `char_indices().nth(max_chars)` yields the byte index of the
-    // (`max_chars` + 1)th `char` — i.e. the byte position immediately
-    // after exactly `max_chars` chars. If the input has fewer chars
-    // than `max_chars`, `nth` returns `None` and the input is returned
-    // unchanged. Slicing on that byte index always lands on a UTF-8
-    // boundary, so this never panics on multibyte input.
-    match s.char_indices().nth(max_chars) {
-        Some((byte_idx, _)) => &s[..byte_idx],
-        None => s,
-    }
+    // (`max_chars` + 1)th `char`, i.e. the byte position immediately after
+    // exactly `max_chars` chars. With no more chars than `max_chars`, `nth`
+    // returns `None` and the input is returned unchanged.
+    s.char_indices()
+        .nth(max_chars)
+        .and_then(|(byte_idx, _)| s.get(..byte_idx))
+        .unwrap_or(s)
 }

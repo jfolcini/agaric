@@ -227,9 +227,11 @@ mod tests {
     /// lines dropped, for a rule whose output is its SQL.
     fn code_between(source: &str, start: &str, end: &str) -> String {
         let from = source.find(start).expect("start marker");
-        let to = from + source[from..].find(end).expect("end marker");
-        source[from..to]
-            .lines()
+        let (_, tail) = source
+            .split_at_checked(from)
+            .expect("find yields a char boundary");
+        let (body, _) = tail.split_once(end).expect("end marker");
+        body.lines()
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with("//"))
             .collect::<Vec<_>>()

@@ -5234,17 +5234,15 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
         .snippet
         .as_deref()
         .expect("snippet must be produced for a content match");
-    let mark_start = snippet
-        .find('\u{E000}')
-        .expect("snippet must contain a match span");
-    let mark_end = snippet
-        .find('\u{E001}')
-        .expect("snippet must close the match span");
     // Some surrounding context before/after the highlighted span —
     // at least one non-marker character on each side (allowing the
     // FTS5 truncation ellipsis to count as context).
-    let before = &snippet[..mark_start];
-    let after = &snippet[mark_end + '\u{E001}'.len_utf8()..];
+    let (before, _) = snippet
+        .split_once('\u{E000}')
+        .expect("snippet must contain a match span");
+    let (_, after) = snippet
+        .split_once('\u{E001}')
+        .expect("snippet must close the match span");
     assert!(
         before.chars().any(|c| !c.is_whitespace()),
         "snippet must include non-empty leading context: {snippet:?}"
@@ -8402,6 +8400,9 @@ fn strip_indexes_the_text_the_editor_shows_6277() {
         ("```\n~~~\n```", "\n~~~\n"),
         ("~~~md", "md"),
         ("~~~", ""),
+        // Multi-byte text around and inside code keeps its fences' offsets.
+        ("`日é` 🙂 `x", "日é 🙂 `x"),
+        ("~~~日\né*\n~~~ \n🙂", "日\né*\n\n🙂"),
         // Text shaped like the strip's own placeholder stays text.
         ("\u{E002}0\u{E003} `x`", "\u{E002}0\u{E003} x"),
     ]

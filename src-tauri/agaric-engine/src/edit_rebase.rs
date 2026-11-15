@@ -9,21 +9,27 @@
 /// The one splice that turns `old` into `new`: the bytes of `old` between its
 /// longest common prefix and suffix with `new`, and what replaces them.
 fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
-    let prefix: usize = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum();
-    // The prefix is the same bytes in both, so it ends on a char boundary of each.
-    let suffix: usize = old[prefix..]
-        .chars()
-        .rev()
-        .zip(new[prefix..].chars().rev())
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum();
-    (prefix, old.len() - suffix, &new[prefix..new.len() - suffix])
+    // Walk both by chars, so every cut lands on a char boundary of each:
+    // first past the common prefix, then past the common suffix of the rest.
+    let (mut o, mut n) = (old.chars(), new.chars());
+    while o
+        .clone()
+        .next()
+        .is_some_and(|a| n.clone().next() == Some(a))
+    {
+        o.next();
+        n.next();
+    }
+    let start = old.len() - o.as_str().len();
+    while o
+        .clone()
+        .next_back()
+        .is_some_and(|a| n.clone().next_back() == Some(a))
+    {
+        o.next_back();
+        n.next_back();
+    }
+    (start, start + o.as_str().len(), n.as_str())
 }
 
 /// `to_text` as the editor would have written it had it started from

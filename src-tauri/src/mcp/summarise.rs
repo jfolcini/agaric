@@ -869,13 +869,11 @@ mod tests {
             !summary.contains(full),
             "summary {summary:?} embedded the full ULID {full:?} instead of the {ULID_PREFIX_LEN}-char prefix",
         );
-        // The 8-char prefix should appear when the summariser embeds an id.
-        let prefix: String = full.chars().take(ULID_PREFIX_LEN).collect();
-        if summary.contains(&prefix[..1]) {
-            // best-effort: the prefix is short and not exclusive enough to
-            // assert it always appears, so skip the positive check here.
-            let _ = prefix;
-        }
+    }
+
+    /// The expected id prefix, sliced independently of [`ulid_prefix`].
+    fn prefix_of(id: &str) -> &str {
+        id.get(..ULID_PREFIX_LEN).unwrap()
     }
 
     // -----------------------------------------------------------------
@@ -891,7 +889,7 @@ mod tests {
             let args = json!({ "block_id": ULID_A, "key": "k", "value_list": items });
             summarise_set_property(&args, &json!({ "id": ULID_A }))
         };
-        let on = format!(" on {}", &ULID_A[..ULID_PREFIX_LEN]);
+        let on = format!(" on {}", prefix_of(ULID_A));
         assert_eq!(
             summary(json!([2.5, 4])),
             format!("set_property — set k=[2.5, 4]{on}")
@@ -909,7 +907,7 @@ mod tests {
     #[test]
     fn ulid_prefix_truncates_to_eight_chars() {
         assert_eq!(ulid_prefix(ULID_A).chars().count(), ULID_PREFIX_LEN);
-        assert_eq!(ulid_prefix(ULID_A), &ULID_A[..ULID_PREFIX_LEN]);
+        assert_eq!(ulid_prefix(ULID_A), prefix_of(ULID_A));
     }
 
     #[test]
@@ -979,7 +977,7 @@ mod tests {
         });
         let s = summarise_get_page(&json!({"page_id": ULID_A}), &result);
         assert!(s.starts_with("get_page — "));
-        assert!(s.contains(&ULID_A[..ULID_PREFIX_LEN]));
+        assert!(s.contains(prefix_of(ULID_A)));
         assert!(s.contains("1 child"));
         assert_no_secrets(&s);
         assert_no_full_ulid(&s, ULID_A);
@@ -1022,7 +1020,7 @@ mod tests {
     fn get_block_includes_prefix_only() {
         let result = json!({ "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" });
         let s = summarise_get_block(&json!({"block_id": ULID_A}), &result);
-        assert_eq!(s, format!("get_block — {}", &ULID_A[..ULID_PREFIX_LEN]));
+        assert_eq!(s, format!("get_block — {}", prefix_of(ULID_A)));
         assert_no_secrets(&s);
         assert_no_full_ulid(&s, ULID_A);
     }
@@ -1048,10 +1046,7 @@ mod tests {
         let s = summarise_list_backlinks(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "list_backlinks — 5 inbound on {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("list_backlinks — 5 inbound on {}", prefix_of(ULID_A)),
         );
         assert_no_secrets(&s);
         assert_no_full_ulid(&s, ULID_A);
@@ -1189,10 +1184,7 @@ mod tests {
         let s = summarise_get_page_markdown(&json!({"page_id": ULID_A}), &result);
         assert_eq!(
             s,
-            format!(
-                "get_page_markdown — {} (7 lines)",
-                &ULID_A[..ULID_PREFIX_LEN]
-            )
+            format!("get_page_markdown — {} (7 lines)", prefix_of(ULID_A))
         );
         assert_no_secrets(&s);
         assert_no_full_ulid(&s, ULID_A);
@@ -1206,10 +1198,7 @@ mod tests {
         let s = summarise_journal_for_date(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "journal_for_date — 2025-01-15 → {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("journal_for_date — 2025-01-15 → {}", prefix_of(ULID_A)),
         );
         assert_no_secrets(&s);
         assert_no_full_ulid(&s, ULID_A);
@@ -1279,7 +1268,7 @@ mod tests {
             s,
             format!(
                 "append_markdown — 2 blocks under {} (created 1 page, 1 tag)",
-                &ULID_B[..ULID_PREFIX_LEN]
+                prefix_of(ULID_B)
             )
         );
         assert_no_secrets(&s);
@@ -1305,8 +1294,8 @@ mod tests {
             s,
             format!(
                 "append_block — added {} under {}",
-                &ULID_A[..ULID_PREFIX_LEN],
-                &ULID_B[..ULID_PREFIX_LEN],
+                prefix_of(ULID_A),
+                prefix_of(ULID_B),
             ),
         );
         assert_no_secrets(&s);
@@ -1325,10 +1314,7 @@ mod tests {
         let s = summarise_update_block_content(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "update_block_content — updated {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("update_block_content — updated {}", prefix_of(ULID_A)),
         );
         assert_no_secrets(&s);
     }
@@ -1345,7 +1331,7 @@ mod tests {
         let s = summarise_set_property(&args, &result);
         assert_eq!(
             s,
-            format!("set_property — set notes on {}", &ULID_A[..ULID_PREFIX_LEN]),
+            format!("set_property — set notes on {}", prefix_of(ULID_A)),
         );
         assert_no_secrets(&s);
     }
@@ -1360,10 +1346,7 @@ mod tests {
         let s = summarise_set_property(&args, &json!({ "id": ULID_A }));
         assert_eq!(
             s,
-            format!(
-                "set_property — set effort=3 on {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("set_property — set effort=3 on {}", prefix_of(ULID_A)),
         );
     }
 
@@ -1377,10 +1360,7 @@ mod tests {
         let s = summarise_set_property(&args, &json!({ "id": ULID_A }));
         assert_eq!(
             s,
-            format!(
-                "set_property — set due=2025-02-14 on {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("set_property — set due=2025-02-14 on {}", prefix_of(ULID_A)),
         );
     }
 
@@ -1394,10 +1374,7 @@ mod tests {
         let s = summarise_set_property(&args, &json!({ "id": ULID_A }));
         assert_eq!(
             s,
-            format!(
-                "set_property — set archived=true on {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("set_property — set archived=true on {}", prefix_of(ULID_A)),
         );
     }
 
@@ -1413,8 +1390,8 @@ mod tests {
             s,
             format!(
                 "set_property — set linked={} on {}",
-                &ULID_REF[..ULID_PREFIX_LEN],
-                &ULID_A[..ULID_PREFIX_LEN],
+                prefix_of(ULID_REF),
+                prefix_of(ULID_A),
             ),
         );
         assert_no_full_ulid(&s, ULID_REF);
@@ -1429,8 +1406,8 @@ mod tests {
             s,
             format!(
                 "add_tag — applied {} to {}",
-                &ULID_TAG[..ULID_PREFIX_LEN],
-                &ULID_A[..ULID_PREFIX_LEN],
+                prefix_of(ULID_TAG),
+                prefix_of(ULID_A),
             ),
         );
         assert_no_secrets(&s);
@@ -1446,10 +1423,7 @@ mod tests {
             "content": "SECRET_TITLE",
         });
         let s = summarise_create_page(&args, &result);
-        assert_eq!(
-            s,
-            format!("create_page — created {}", &ULID_A[..ULID_PREFIX_LEN]),
-        );
+        assert_eq!(s, format!("create_page — created {}", prefix_of(ULID_A)),);
         assert_no_secrets(&s);
     }
 
@@ -1466,7 +1440,7 @@ mod tests {
             s,
             format!(
                 "delete_block — deleted {} (4 descendants)",
-                &ULID_A[..ULID_PREFIX_LEN]
+                prefix_of(ULID_A)
             ),
         );
     }
@@ -1492,8 +1466,8 @@ mod tests {
             s,
             format!(
                 "move_page_to_space — moved {} to {}",
-                &ULID_A[..ULID_PREFIX_LEN],
-                &ULID_B[..ULID_PREFIX_LEN],
+                prefix_of(ULID_A),
+                prefix_of(ULID_B),
             ),
         );
         assert_no_secrets(&s);
@@ -1504,10 +1478,7 @@ mod tests {
         let args = json!({ "name": "SECRET_TAG_NAME", "space_id": ULID_B });
         let result = json!({ "id": ULID_TAG, "block_type": "tag", "content": "SECRET_TAG_NAME" });
         let s = summarise_create_tag(&args, &result);
-        assert_eq!(
-            s,
-            format!("create_tag — created {}", &ULID_TAG[..ULID_PREFIX_LEN]),
-        );
+        assert_eq!(s, format!("create_tag — created {}", prefix_of(ULID_TAG)),);
         assert_no_secrets(&s);
     }
 
@@ -1518,10 +1489,7 @@ mod tests {
         let s = summarise_delete_property(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "delete_property — deleted effort on {}",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("delete_property — deleted effort on {}", prefix_of(ULID_A)),
         );
     }
 
@@ -1532,10 +1500,7 @@ mod tests {
         let s = summarise(TOOL_SET_PAGE_ALIASES, &args, &two);
         assert_eq!(
             s,
-            format!(
-                "set_page_aliases — {}: 2 aliases",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("set_page_aliases — {}: 2 aliases", prefix_of(ULID_A)),
         );
         assert_no_secrets(&s);
         let one = json!({ "page_id": ULID_A, "aliases": ["SECRET_ALIAS"] });
@@ -1552,10 +1517,7 @@ mod tests {
         let s = summarise_move_blocks(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "move_blocks — moved 2 blocks under {}",
-                &ULID_B[..ULID_PREFIX_LEN]
-            ),
+            format!("move_blocks — moved 2 blocks under {}", prefix_of(ULID_B)),
         );
     }
 
@@ -1578,10 +1540,7 @@ mod tests {
         let s = summarise_restore_block(&args, &result);
         assert_eq!(
             s,
-            format!(
-                "restore_block — restored {} (3 blocks)",
-                &ULID_A[..ULID_PREFIX_LEN]
-            ),
+            format!("restore_block — restored {} (3 blocks)", prefix_of(ULID_A)),
         );
     }
 

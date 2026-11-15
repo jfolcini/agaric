@@ -208,20 +208,22 @@ fn role_filename(filename: &str, role: Role) -> String {
         Role::Summary => ".summary.md",
     };
     let name = filename.trim();
-    if ends_with_ignore_case(name, suffix) {
+    if strip_suffix_ignore_case(name, suffix).is_some() {
         return name.to_owned();
     }
     let stem = [".markdown", ".md", ".txt"]
         .iter()
-        .find(|ext| ends_with_ignore_case(name, ext))
-        .map_or(name, |ext| &name[..name.len() - ext.len()]);
+        .find_map(|ext| strip_suffix_ignore_case(name, ext))
+        .unwrap_or(name);
     format!("{stem}{suffix}")
 }
 
-fn ends_with_ignore_case(name: &str, suffix: &str) -> bool {
-    name.len() >= suffix.len()
-        && name.is_char_boundary(name.len() - suffix.len())
-        && name[name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+/// `name` without `suffix`, compared ASCII-case-insensitively; `None` when
+/// it does not end so, or when the cut would split a character.
+fn strip_suffix_ignore_case<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
+    let cut = name.len().checked_sub(suffix.len())?;
+    let (stem, tail) = name.split_at_checked(cut)?;
+    tail.eq_ignore_ascii_case(suffix).then_some(stem)
 }
 
 /// The stored name and MIME type of a file given as `role`, refused when

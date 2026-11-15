@@ -220,13 +220,13 @@ pub(super) fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, Str
             let body = &caps[1];
             let (name, rest) = body.split_at(body.find(['|', '#']).unwrap_or(body.len()));
             // A table cell's `\|` (`unescape_link_pipes`) keeps its backslash.
-            let (name, rest) = match name.strip_suffix('\\') {
-                Some(name) if rest.starts_with('|') => (name, &body[name.len()..]),
-                _ => (name, rest),
+            let (name, escape) = match name.strip_suffix('\\') {
+                Some(name) if rest.starts_with('|') => (name, "\\"),
+                _ => (name, ""),
             };
             match notes.get(&name.trim().to_lowercase()) {
                 Some(title) if page_link_is_token(content, m.start(), &code_spans) => {
-                    format!("[[{title}{rest}]]")
+                    format!("[[{title}{escape}{rest}]]")
                 }
                 _ => m.as_str().to_string(),
             }
@@ -247,7 +247,7 @@ pub(super) fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
     }
     let code_spans = import::inline_code_spans(content);
     let mut out = String::with_capacity(content.len());
-    let mut copied = 0;
+    let (mut copied, mut tail) = (0, content);
     for token in import::markdown_link_tokens(content) {
         if token.is_image
             || is_in_span(token.start, &code_spans)
@@ -263,6 +263,11 @@ pub(super) fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
         let Some(title) = relative_md_link_title(path, dir) else {
             continue;
         };
+        let (Some(before), Some(after)) =
+            (content.get(copied..token.start), content.get(token.end..))
+        else {
+            continue;
+        };
         let target = match anchor.filter(|anchor| !anchor.is_empty()) {
             Some(anchor) => format!("{title}#{anchor}"),
             None => title.clone(),
@@ -272,11 +277,11 @@ pub(super) fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
             text if text == title => format!("[[{target}]]"),
             text => format!("[[{target}|{text}]]"),
         };
-        out.push_str(&content[copied..token.start]);
+        out.push_str(before);
         out.push_str(&link);
-        copied = token.end;
+        (copied, tail) = (token.end, after);
     }
-    out.push_str(&content[copied..]);
+    out.push_str(tail);
     out
 }
 

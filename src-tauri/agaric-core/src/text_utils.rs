@@ -69,15 +69,10 @@ pub fn nfc_normalise(input: &str) -> String {
 /// re-exports it so its existing call sites resolve unchanged.
 #[must_use]
 pub fn strip_yaml_quotes(value: &str) -> &str {
-    let bytes = value.as_bytes();
-    if bytes.len() >= 2
-        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    }
+    ['"', '\'']
+        .into_iter()
+        .find_map(|q| value.strip_prefix(q)?.strip_suffix(q))
+        .unwrap_or(value)
 }
 
 #[cfg(test)]
@@ -93,6 +88,7 @@ mod tests {
         // Matching pairs are stripped, one layer.
         assert_eq!(strip_yaml_quotes("\"abc\""), "abc");
         assert_eq!(strip_yaml_quotes("'abc'"), "abc");
+        assert_eq!(strip_yaml_quotes("'日本 é'"), "日本 é");
         // Empty quoted values collapse to empty.
         assert_eq!(strip_yaml_quotes("\"\""), "");
         assert_eq!(strip_yaml_quotes("''"), "");

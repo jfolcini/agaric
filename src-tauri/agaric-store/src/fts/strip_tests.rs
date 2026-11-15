@@ -76,15 +76,15 @@ fn oracle_mask_shown_spans(
         let at_line_start = rest.len() == content.len() || out.ends_with('\n');
         let span = match ch {
             '~' if at_line_start => {
-                tilde_fence(rest).map(|(code, len)| (rest[code].to_owned(), len))
+                tilde_fence(rest).map(|(code, len)| (rest.get(code).unwrap().to_owned(), len))
             }
             '`' => {
                 let (code, len) = code_span(rest);
-                Some((rest[code].to_owned(), len))
+                Some((rest.get(code).unwrap().to_owned(), len))
             }
-            '\\' => rest[1..]
+            '\\' => rest
                 .chars()
-                .next()
+                .nth(1)
                 .filter(|&next| is_escapable(next))
                 .map(|next| (next.to_string(), 1 + next.len_utf8())),
             '(' => BLOCK_REF_AT_RE.captures(rest).map(|caps| {
@@ -104,7 +104,7 @@ fn oracle_mask_shown_spans(
                 ch.len_utf8()
             }
         };
-        rest = &rest[len..];
+        rest = rest.get(len..).unwrap();
     }
     out
 }

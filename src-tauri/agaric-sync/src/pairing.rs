@@ -255,8 +255,8 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
     let svg = code.render::<qrcode::render::svg::Color>().build();
     // Keep everything from the opening `<svg` tag onward, dropping the XML
     // declaration the renderer emits before it.
-    Ok(match svg.find("<svg") {
-        Some(idx) => svg[idx..].to_string(),
+    Ok(match svg.split_once("<svg") {
+        Some((_prolog, from_svg_tag)) => format!("<svg{from_svg_tag}"),
         None => svg,
     })
 }

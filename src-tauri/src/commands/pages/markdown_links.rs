@@ -94,7 +94,9 @@ pub(super) fn page_link_is_token(
     code_spans: &[(usize, usize)],
 ) -> bool {
     !is_in_span(start, code_spans)
-        && !content[..start].ends_with(['#', '!'])
+        && !content
+            .get(..start)
+            .is_some_and(|before| before.ends_with(['#', '!']))
         && !is_escaped(content, start)
 }
 
@@ -174,10 +176,10 @@ pub(super) fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
 /// then reads, so `A#B|label` anchors `A#B`.
 pub(super) fn link_body_readings(body: &str) -> Vec<(&str, Option<&str>)> {
     let mut readings = vec![(body.trim(), None)];
-    for (at, _) in body.rmatch_indices('|') {
-        let label = body[at + 1..].trim();
-        readings.push((body[..at].trim(), Some(label).filter(|l| !l.is_empty())));
-    }
+    readings.extend(body.rmatch_indices('|').filter_map(|(at, _)| {
+        let (name, label) = (body.get(..at)?, body.get(at + 1..)?.trim());
+        Some((name.trim(), Some(label).filter(|l| !l.is_empty())))
+    }));
     readings
 }
 
@@ -462,8 +464,14 @@ pub(super) fn is_internal_page_link(whole: &str) -> bool {
 /// there the editor's table writer escapes them all and a bare `|` would split
 /// the cell, while elsewhere the editor reads `[[ULID\|label]]` as no link.
 pub(super) fn escape_pipes_as(content: &str, at: usize, body: &str, stored: &str) -> String {
-    let line = &content[content[..at].rfind('\n').map_or(0, |nl| nl + 1)..];
-    if body.contains("\\|") && line.starts_with('|') {
+    let line_start = content
+        .get(..at)
+        .and_then(|before| before.rfind('\n'))
+        .map_or(0, |nl| nl + 1);
+    let in_table_row = content
+        .get(line_start..)
+        .is_some_and(|line| line.starts_with('|'));
+    if body.contains("\\|") && in_table_row {
         stored.replace('|', "\\|")
     } else {
         stored.to_string()
@@ -712,15 +720,19 @@ pub(super) fn humanise_tag_and_page_refs(
     // text written so far is the reader's left context, so two refs in a row
     // are judged as they come out, not as they went in.
     let mut result = String::with_capacity(content.len());
-    let mut last = 0;
+    let (mut last, mut tail) = (0, content);
     for caps in TAG_REF_RE.captures_iter(content) {
         let m = caps.get(0).expect("group 0 always present");
-        result.push_str(&content[last..m.start()]);
+        let (Some(before), Some(after)) = (content.get(last..m.start()), content.get(m.end()..))
+        else {
+            continue;
+        };
+        result.push_str(before);
         match tag_names
             .get(&caps[1])
             .filter(|_| !is_escaped(content, m.start()))
         {
-            Some(name) if tag_reads_back_bare(&result, name, &content[m.end()..]) => {
+            Some(name) if tag_reads_back_bare(&result, name, after) => {
                 result.push('#');
                 result.push_str(name);
             }
@@ -731,9 +743,9 @@ pub(super) fn humanise_tag_and_page_refs(
             }
             None => result.push_str(m.as_str()),
         }
-        last = m.end();
+        (last, tail) = (m.end(), after);
     }
-    result.push_str(&content[last..]);
+    result.push_str(tail);
 
     // Replace [[ULID]] → [[Page Title]], a label riding along (#5160 D9)
     PAGE_LINK_RE
@@ -747,7 +759,10 @@ pub(super) fn humanise_tag_and_page_refs(
                 .get(id.as_str())
                 .map_or(id.as_str(), String::as_str);
             // A table cell's `\|` stays escaped: a bare pipe would split the cell.
-            let pipe = if result[id.end()..].starts_with('\\') {
+            let pipe = if result
+                .get(id.end()..)
+                .is_some_and(|rest| rest.starts_with('\\'))
+            {
                 r"\|"
             } else {
                 "|"

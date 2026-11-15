@@ -108,8 +108,14 @@ impl Shown {
         self.origin.extend((at..at + s.len()).map(|b| (b, b + 1)));
     }
 
+    /// Push `from` over `range`. Callers take `range` from regex matches on
+    /// `from.text` (a match, or the gap between two), so it lands on char
+    /// boundaries; a range that does not pushes nothing.
     fn push_slice(&mut self, from: &Shown, range: std::ops::Range<usize>) {
-        self.text.push_str(&from.text[range.clone()]);
+        let Some(text) = from.text.get(range.clone()) else {
+            return;
+        };
+        self.text.push_str(text);
         self.origin.extend_from_slice(&from.origin[range]);
     }
 
@@ -312,8 +318,10 @@ fn mask_shown_spans(
         origin: Vec::with_capacity(content.len()),
     };
     let mut at = 0;
-    while let Some(ch) = content[at..].chars().next() {
-        let rest = &content[at..];
+    while let Some(rest) = content.get(at..) {
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
         // An escaped pipe shows as `|` and stays bare, so the page-link pass
         // reads a table cell's `[[ULID\|label]]` as the editor's table reader
         // does, label pipes included.
@@ -323,28 +331,28 @@ fn mask_shown_spans(
             continue;
         }
         let at_line_start = at == 0 || out.text.ends_with('\n');
-        let verbatim = |range: std::ops::Range<usize>| {
+        let verbatim = |range: std::ops::Range<usize>, len: usize| {
             let mut shown = Shown::default();
-            shown.push_verbatim(&rest[range.clone()], at + range.start);
-            shown
+            shown.push_verbatim(rest.get(range.clone())?, at + range.start);
+            Some((shown, len))
         };
         let span = match ch {
-            '~' if at_line_start => tilde_fence(rest).map(|(code, len)| (verbatim(code), len)),
+            '~' if at_line_start => tilde_fence(rest).and_then(|(code, len)| verbatim(code, len)),
             '`' => {
                 let (code, len) = code_span(rest);
-                Some((verbatim(code), len))
+                verbatim(code, len)
             }
-            '\\' => rest[1..]
+            '\\' => rest
                 .chars()
-                .next()
+                .nth(1)
                 .filter(|&next| is_escapable(next))
-                .map(|next| (verbatim(1..1 + next.len_utf8()), 1 + next.len_utf8())),
+                .and_then(|next| verbatim(1..1 + next.len_utf8(), 1 + next.len_utf8())),
             '(' => BLOCK_REF_AT_RE.captures(rest).map(|caps| {
                 let len = caps[0].len();
                 let title = block_titles.get(&caps[1]).map_or("", String::as_str);
                 (Shown::resolved(title, (at, at + len)), len)
             }),
-            PIECE_OPEN => Some((verbatim(0..PIECE_OPEN.len_utf8()), PIECE_OPEN.len_utf8())),
+            PIECE_OPEN => verbatim(0..PIECE_OPEN.len_utf8(), PIECE_OPEN.len_utf8()),
             _ => None,
         };
         let len = match span {
@@ -353,7 +361,7 @@ fn mask_shown_spans(
                 len
             }
             None => {
-                out.push_verbatim(&rest[..ch.len_utf8()], at);
+                out.push_verbatim(ch.encode_utf8(&mut [0; 4]), at);
                 ch.len_utf8()
             }
         };
@@ -373,16 +381,12 @@ fn tilde_fence(rest: &str) -> Option<(std::ops::Range<usize>, usize)> {
         return None;
     }
     let mut line_start = rest.find('\n').map_or(rest.len() + 1, |at| at + 1);
-    while line_start <= rest.len() {
-        let line_end = rest[line_start..]
-            .find('\n')
-            .map_or(rest.len(), |at| line_start + at);
-        let line = &rest[line_start..line_end];
-        let run = line.len() - line.trim_start_matches('~').len();
-        if run >= open && line[run..].trim().is_empty() {
-            return Some((open..line_start, line_end));
+    for line in rest.split('\n').skip(1) {
+        let after_run = line.trim_start_matches('~');
+        if line.len() - after_run.len() >= open && after_run.trim().is_empty() {
+            return Some((open..line_start, line_start + line.len()));
         }
-        line_start = line_end + 1;
+        line_start += line.len() + 1;
     }
     Some((open..rest.len(), rest.len()))
 }
@@ -394,12 +398,14 @@ fn tilde_fence(rest: &str) -> Option<(std::ops::Range<usize>, usize)> {
 /// or more. With no closer, the rest of the line is literal, backticks
 /// included.
 fn code_span(rest: &str) -> (std::ops::Range<usize>, usize) {
-    let run_at = |at: usize| rest[at..].len() - rest[at..].trim_start_matches('`').len();
+    // Backticks and `\n` are ASCII, so their byte offsets are char boundaries.
+    let bytes = rest.as_bytes();
+    let run_at = |at: usize| bytes.iter().skip(at).take_while(|&&b| b == b'`').count();
     let open = run_at(0);
     let line_end = rest.find('\n').unwrap_or(rest.len());
     let limit = if open >= 3 { rest.len() } else { line_end };
     let mut at = open;
-    while let Some(found) = rest[at..limit].find('`') {
+    while let Some(found) = bytes.iter().take(limit).skip(at).position(|&b| b == b'`') {
         let close_at = at + found;
         let close = run_at(close_at);
         if close == open {

@@ -832,8 +832,8 @@ fn first_author_is_braced(raw: &str) -> bool {
         return false;
     }
     let mut depth = 0usize;
-    let mut chars = raw.char_indices();
-    while let Some((i, c)) = chars.next() {
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
         match c {
             '\\' => {
                 chars.next();
@@ -842,11 +842,13 @@ fn first_author_is_braced(raw: &str) -> bool {
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    let rest = &raw[i + 1..];
+                    let rest = chars.as_str();
                     let next = rest.trim_start();
                     let and_follows = rest.starts_with(char::is_whitespace)
-                        && next.get(..3).is_some_and(|w| w.eq_ignore_ascii_case("and"))
-                        && next[3..].chars().next().is_none_or(char::is_whitespace);
+                        && next.split_at_checked(3).is_some_and(|(w, after)| {
+                            w.eq_ignore_ascii_case("and")
+                                && after.chars().next().is_none_or(char::is_whitespace)
+                        });
                     return next.is_empty() || and_follows;
                 }
             }
@@ -859,8 +861,8 @@ fn first_author_is_braced(raw: &str) -> bool {
 /// The leading four-digit year of a biblatex `date` (`2024-03-01`,
 /// `2024/2025`, `2024`).
 fn leading_year(date: &str) -> Option<i64> {
-    let year = date.get(..4)?;
-    let delimited = !date[4..].starts_with(|c: char| c.is_ascii_digit());
+    let (year, after) = date.split_at_checked(4)?;
+    let delimited = !after.starts_with(|c: char| c.is_ascii_digit());
     if delimited && year.bytes().all(|b| b.is_ascii_digit()) {
         year.parse().ok()
     } else {
@@ -1633,6 +1635,18 @@ mod tests {
         let out = parse_bibtex("@misc{k, author = {{A} {B}}}").unwrap();
         assert_eq!(out.entries[0].authors, vec!["A B"]);
         assert_eq!(out.entries[0].first_author_family().as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn braced_author_and_leading_year_cut_multi_byte_text_on_char_boundaries() {
+        assert!(first_author_is_braced("{Ünï Örg} and Ébert"));
+        assert!(first_author_is_braced("{日本}"));
+        assert!(!first_author_is_braced("{日本} andé"));
+        assert!(!first_author_is_braced("{Ö} é"));
+        assert!(!first_author_is_braced("{Ö} 日本語"));
+        assert_eq!(leading_year("2024年"), Some(2024));
+        assert_eq!(leading_year("202é"), None);
+        assert_eq!(leading_year("年2024"), None);
     }
 
     #[test]

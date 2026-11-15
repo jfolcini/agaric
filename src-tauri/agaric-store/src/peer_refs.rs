@@ -2107,7 +2107,7 @@ mod tests {
         // Each of these parses or prints as "an EndpointId" somewhere in iroh's API,
         // and none of them is the spelling the column stores.
         let uppercase = KEY_A.to_ascii_uppercase();
-        let short = &KEY_A[..10]; // what `EndpointId::fmt_short()` yields
+        let short = KEY_A.get(..10).expect("a hex key is ASCII"); // what `EndpointId::fmt_short()` yields
         let base32 = "a".repeat(52); // the other form `FromStr` accepts
 
         for (label, bad) in [

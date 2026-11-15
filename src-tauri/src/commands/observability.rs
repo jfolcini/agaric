@@ -211,7 +211,7 @@ mod tests {
         let rest = &b[at..];
 
         if rest.starts_with(b"//") {
-            return Some(src[at..].find('\n').unwrap_or(src.len() - at));
+            return Some(rest.iter().position(|c| *c == b'\n').unwrap_or(rest.len()));
         }
         // Block comments NEST in Rust, so this counts depth rather than
         // stopping at the first `*/`.
@@ -250,7 +250,7 @@ mod tests {
                 let hashes = k - hashes_at;
                 let mut scan = k + 1;
                 loop {
-                    let Some(rel) = src[scan..].find('"') else {
+                    let Some(rel) = b[scan..].iter().position(|c| *c == b'"') else {
                         return Some(b.len() - at);
                     };
                     let after = scan + rel + 1;
@@ -284,13 +284,13 @@ mod tests {
             // escape bodies — `'\x41'`, `'\u{1F600}'` — since none of them
             // can contain a `'`.
             if b.get(at + 1) == Some(&b'\\') {
-                let escaped = src[at + 2..].chars().next()?;
+                let escaped = src.get(at + 2..)?.chars().next()?;
                 let body = at + 2 + escaped.len_utf8();
-                return src[body..].find('\'').map(|rel| body + rel + 1 - at);
+                return src.get(body..)?.find('\'').map(|rel| body + rel + 1 - at);
             }
             // One char then a closing quote is a char literal; anything else
             // (`'a,`, `'static>`) is a lifetime and stays ordinary code.
-            if let Some(c) = src[at + 1..].chars().next() {
+            if let Some(c) = src.get(at + 1..).and_then(|s| s.chars().next()) {
                 let after = at + 1 + c.len_utf8();
                 if b.get(after) == Some(&b'\'') {
                     return Some(after + 1 - at);
@@ -332,12 +332,16 @@ mod tests {
                     return src.get(open + 1..i);
                 }
             }
-            i += src[i..].chars().next().map_or(1, char::len_utf8);
+            i += src
+                .get(i..)
+                .and_then(|s| s.chars().next())
+                .map_or(1, char::len_utf8);
         }
         None
     }
 
-    /// Byte index at which the identifier ENDING at `end` starts.
+    /// The identifier that ENDS `before`: everything after its last
+    /// non-identifier char, or all of it when it has none.
     ///
     /// The delimiting char before an identifier is not necessarily one byte
     /// wide, and `rfind(…).map_or(0, |n| n + 1)` assumed it was (#3980
@@ -345,14 +349,12 @@ mod tests {
     /// marker or a `.record("` receiver made the following slice panic with
     /// "byte index is not a char boundary" — an opaque failure for a guard
     /// whose entire job is to be legible to whoever it fails on. Note the
-    /// `span!` arm takes this slice BEFORE [`delimiter_after`] runs, so the
-    /// anchor does not shield it.
-    fn ident_start(src: &str, end: usize) -> usize {
-        src[..end]
-            .char_indices()
-            .rev()
-            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
-            .map_or(0, |(n, c)| n + c.len_utf8())
+    /// `span!` arm reads this BEFORE [`delimiter_after`] runs, so the anchor
+    /// does not shield it.
+    fn trailing_ident(before: &str) -> &str {
+        before
+            .rsplit_once(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map_or(before, |(_, ident)| ident)
     }
 
     /// The index of the macro-invocation delimiter that immediately follows
@@ -394,14 +396,24 @@ mod tests {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth -= 1,
                 b',' if depth == 0 => {
-                    parts.push(args[start..i].to_owned());
+                    let part = args
+                        .get(start..i)
+                        .expect("a top-level comma is a char boundary");
+                    parts.push(part.to_owned());
                     start = i + 1;
                 }
                 _ => {}
             }
-            i += args[i..].chars().next().map_or(1, char::len_utf8);
+            i += args
+                .get(i..)
+                .and_then(|s| s.chars().next())
+                .map_or(1, char::len_utf8);
         }
-        parts.push(args[start..].to_owned());
+        parts.push(
+            args.get(start..)
+                .expect("past a comma is a char boundary")
+                .to_owned(),
+        );
         parts
     }
 
@@ -432,15 +444,13 @@ mod tests {
         let marker = ".record(";
         let mut keys: Vec<String> = Vec::new();
         let mut used: Vec<&'static str> = Vec::new();
-        let mut from = 0_usize;
 
-        while let Some(rel_idx) = src[from..].find(marker) {
-            let idx = from + rel_idx;
-            from = idx + marker.len();
+        for (idx, _) in src.match_indices(marker) {
+            let before = src.get(..idx).expect("a match index is a char boundary");
 
             // Mentions inside a comment are prose, not a call site.
-            let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
-            if src[line_start..idx].trim_start().starts_with("//") {
+            let line = before.rsplit_once('\n').map_or(before, |(_, line)| line);
+            if line.trim_start().starts_with("//") {
                 continue;
             }
 
@@ -454,13 +464,13 @@ mod tests {
             // so it does the consuming; it is asked only at a comment opener,
             // because at the key it would happily measure the literal too and
             // skip straight past what we came to read.
-            let mut at = from;
+            let mut at = idx + marker.len();
             loop {
                 if matches!(bytes.get(at), Some(c) if c.is_ascii_whitespace()) {
                     at += 1;
                     continue;
                 }
-                if !(src[at..].starts_with("//") || src[at..].starts_with("/*")) {
+                if !(bytes[at..].starts_with(b"//") || bytes[at..].starts_with(b"/*")) {
                     break;
                 }
                 let Some(skip) = opaque_prefix_len(src, at) else {
@@ -476,7 +486,7 @@ mod tests {
             // left the entry marked unused, and the staleness assertion in
             // [`span_fields_stay_on_the_pii_allowlist`] fired at a call site
             // that had not moved at all.
-            let ident = &src[ident_start(src, idx)..idx];
+            let ident = trailing_ident(before);
             if let Some((_, name)) = NON_SPAN_RECORD_RECEIVERS
                 .iter()
                 .find(|(file, name)| *file == rel && *name == ident)
@@ -661,7 +671,7 @@ mod tests {
     /// unrelated paren group and the real fields went unscanned); whether a
     /// delimiter or comma sits inside a literal or comment (round-three notes
     /// 1 and 5); and whether the byte before an identifier is one byte wide
-    /// ([`ident_start`], round-three note 3). #3988 adds three: whether a
+    /// ([`trailing_ident`], round-three note 3). #3988 adds three: whether a
     /// char literal escapes its own closing quote ([`opaque_prefix_len`],
     /// note 1); whether rustfmt has wrapped a `.record(` onto the next line
     /// or a comment sits between its paren and its key ([`record_keys`], note
@@ -710,22 +720,23 @@ mod tests {
 
             // `#[instrument(... fields(...))]` — attribute macro form.
             for marker in ["#[instrument", "#[tracing::instrument"] {
-                let mut from = 0_usize;
-                while let Some(rel_idx) = src[from..].find(marker) {
-                    let idx = from + rel_idx;
-                    from = idx + marker.len();
+                for (idx, _) in src.match_indices(marker) {
+                    let (before, from_marker) = src
+                        .split_at_checked(idx)
+                        .expect("a match index is a char boundary");
                     // Skip mentions inside a doc comment / comment line.
-                    let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
-                    if src[line_start..idx].trim_start().starts_with("//") {
+                    let line = before.rsplit_once('\n').map_or(before, |(_, line)| line);
+                    if line.trim_start().starts_with("//") {
                         continue;
                     }
-                    let Some(open) = src[idx..].find('(').map(|o| idx + o) else {
+                    let Some((head, _)) = from_marker.split_once('(') else {
                         continue;
                     };
                     // A bare `#[instrument]` has no parens before the `]`.
-                    if src[idx..open].contains(']') {
+                    if head.contains(']') {
                         continue;
                     }
+                    let open = idx + head.len();
                     let Some(args) = balanced(&src, open) else {
                         continue;
                     };
@@ -768,17 +779,15 @@ mod tests {
             // thing that can be read (#3980 note 2).
             {
                 let marker = "span!";
-                let mut from = 0_usize;
-                while let Some(rel_idx) = src[from..].find(marker) {
-                    let idx = from + rel_idx;
+                for (idx, _) in src.match_indices(marker) {
                     let after = idx + marker.len();
-                    from = after;
-                    let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
-                    if src[line_start..idx].trim_start().starts_with("//") {
+                    let before = src.get(..idx).expect("a match index is a char boundary");
+                    let line = before.rsplit_once('\n').map_or(before, |(_, line)| line);
+                    if line.trim_start().starts_with("//") {
                         continue;
                     }
                     // Report the macro by its full name, not the marker.
-                    let macro_name = &src[ident_start(&src, idx)..after];
+                    let macro_name = format!("{}{marker}", trailing_ident(before));
                     let Some(open) = delimiter_after(&src, after) else {
                         continue;
                     };
@@ -1090,17 +1099,14 @@ mod tests {
     /// identifier. `rfind(…).map_or(0, |n| n + 1)` landed mid-char and the
     /// slice that followed panicked with "byte index is not a char boundary".
     #[test]
-    fn ident_start_lands_on_a_char_boundary_after_a_multibyte_delimiter() {
-        let src = "…info_span";
-        let start = ident_start(src, src.len());
-        assert_eq!(&src[start..], "info_span");
+    fn trailing_ident_lands_on_a_char_boundary_after_a_multibyte_delimiter() {
+        assert_eq!(trailing_ident("…info_span"), "info_span");
+        assert_eq!(trailing_ident("…holder"), "holder");
 
-        let rec = "…holder";
-        assert_eq!(&rec[ident_start(rec, rec.len())..], "holder");
-
-        // An identifier at byte 0 still reports 0, and a one-byte delimiter
-        // is unaffected — the fix widens the step, it does not shift it.
-        assert_eq!(ident_start("info_span", 9), 0);
-        assert_eq!(&"a.holder"[ident_start("a.holder", 8)..], "holder");
+        // An identifier at byte 0 is the whole input, and a one-byte
+        // delimiter is unaffected — the fix widens the step, it does not
+        // shift it.
+        assert_eq!(trailing_ident("info_span"), "info_span");
+        assert_eq!(trailing_ident("a.holder"), "holder");
     }
 }

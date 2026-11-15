@@ -848,7 +848,9 @@ fn search_term(fixture: &Value) -> String {
         .find(|word| {
             word.len() >= 3
                 && word.chars().all(char::is_alphanumeric)
-                && !(word.starts_with(['C', 'S']) && word[1..].bytes().all(|b| b.is_ascii_digit()))
+                && !word
+                    .strip_prefix(['C', 'S'])
+                    .is_some_and(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
         })
         .unwrap_or("absent")
         .to_owned()

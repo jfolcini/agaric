@@ -130,10 +130,14 @@ impl Fx {
 
     /// Where `page`'s state is saved, by the key `StateDir` derives.
     fn state_file(&self, page: &str) -> PathBuf {
-        let key = blake3::hash(path_string(&self.root).as_bytes()).to_hex();
+        let key: String = blake3::hash(path_string(&self.root).as_bytes())
+            .to_hex()
+            .chars()
+            .take(32)
+            .collect();
         self.data
             .join("mirror/folders")
-            .join(&key[..32])
+            .join(key)
             .join(format!("{page}.json"))
     }
 

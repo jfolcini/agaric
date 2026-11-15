@@ -49,13 +49,11 @@ pub fn sanitize_segment(segment: &str) -> String {
 /// The longest prefix of `text` within `max` bytes that ends on a char
 /// boundary.
 fn cut_to(text: &str, max: usize) -> &str {
-    let end = text
-        .char_indices()
-        .map(|(i, c)| i + c.len_utf8())
-        .take_while(|&end| end <= max)
-        .last()
-        .unwrap_or(0);
-    &text[..end]
+    let mut chars = text.chars();
+    while chars.as_str().len() > max {
+        chars.next_back();
+    }
+    chars.as_str()
 }
 
 fn escape_reserved_device_name(name: &str) -> String {

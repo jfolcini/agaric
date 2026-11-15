@@ -513,15 +513,13 @@ fn expand_tokens(
 ) -> String {
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
-    while let Some(start) = rest.find(open) {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + open.len()..];
-        let Some(end) = after.find(close) else {
+    while let Some((before, after)) = rest.split_once(open) {
+        out.push_str(before);
+        let Some((body, tail)) = after.split_once(close) else {
             out.push_str(open);
             rest = after;
             continue;
         };
-        let body = &after[..end];
         if let Some(value) = resolve(body) {
             out.push_str(&value);
         } else {
@@ -529,7 +527,7 @@ fn expand_tokens(
             out.push_str(body);
             out.push_str(close);
         }
-        rest = &after[end + close.len()..];
+        rest = tail;
     }
     out.push_str(rest);
     out
@@ -2092,6 +2090,17 @@ mod tests {
             "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
         );
         assert_eq!(expand("plain"), "plain");
+    }
+
+    #[test]
+    fn journal_template_variables_keep_multibyte_text_around_tokens() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        assert_eq!(
+            expand("日本<% today %>é{{ time }}🎉<% été %>ü<% 開"),
+            "日本2031-01-02é09:05🎉<% été %>ü<% 開"
+        );
     }
 
     #[test]
