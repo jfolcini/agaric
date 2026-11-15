@@ -66,25 +66,45 @@ WORKTREE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cached)
-      SOURCE="cached"; RANGE=""; WORKTREE=0; shift ;;
+      SOURCE="cached"
+      RANGE=""
+      WORKTREE=0
+      shift
+      ;;
     --range)
       RANGE="${2:-}"
-      [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; }
-      SOURCE="git"; shift 2 ;;
+      [ -z "$RANGE" ] && {
+        echo "ERROR: --range requires a revspec" >&2
+        exit 2
+      }
+      SOURCE="git"
+      shift 2
+      ;;
     --worktree)
-      SOURCE="git"; WORKTREE=1; shift ;;
+      SOURCE="git"
+      WORKTREE=1
+      shift
+      ;;
     --stdin)
-      SOURCE="stdin"; RANGE=""; WORKTREE=0; shift ;;
+      SOURCE="stdin"
+      RANGE=""
+      WORKTREE=0
+      shift
+      ;;
     *)
-      echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+      echo "ERROR: unknown arg: $1" >&2
+      exit 2
+      ;;
   esac
 done
 
 case "$SOURCE" in
   cached) LABEL="staged" ;;
-  stdin)  LABEL="stdin" ;;
-  git)    LABEL="${RANGE:+range $RANGE}"
-          [ "$WORKTREE" = 1 ] && LABEL="${LABEL:+$LABEL and }working tree" ;;
+  stdin) LABEL="stdin" ;;
+  git)
+    LABEL="${RANGE:+range $RANGE}"
+    [ "$WORKTREE" = 1 ] && LABEL="${LABEL:+$LABEL and }working tree"
+    ;;
 esac
 
 if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
@@ -95,14 +115,16 @@ fi
 list_changed() {
   case "$SOURCE" in
     cached) git -C "$REPO_ROOT" diff --cached --name-only --no-renames ;;
-    git)    if [ -n "$RANGE" ]; then
-              git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames || return
-            fi
-            if [ "$WORKTREE" = 1 ]; then
-              git -C "$REPO_ROOT" diff HEAD --name-only --no-renames \
-                && git -C "$REPO_ROOT" ls-files --others --exclude-standard
-            fi ;;
-    stdin)  cat ;;
+    git)
+      if [ -n "$RANGE" ]; then
+        git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames || return
+      fi
+      if [ "$WORKTREE" = 1 ]; then
+        git -C "$REPO_ROOT" diff HEAD --name-only --no-renames \
+          && git -C "$REPO_ROOT" ls-files --others --exclude-standard
+      fi
+      ;;
+    stdin) cat ;;
   esac
 }
 
@@ -111,7 +133,7 @@ if ! CHANGED_RAW=$(list_changed); then
   echo "ERROR: could not list the $LABEL changes." >&2
   exit 2
 fi
-mapfile -t CHANGED <<< "$CHANGED_RAW"
+mapfile -t CHANGED <<<"$CHANGED_RAW"
 
 AREAS_OF=()
 areas_of() { # <path> → sets AREAS_OF
@@ -120,7 +142,10 @@ areas_of() { # <path> → sets AREAS_OF
   AREAS_OF=()
   for entry in "${AREA_WORDS[@]}"; do
     for word in ${entry#*:}; do
-      if [[ "$path" == *"$word"* ]]; then AREAS_OF+=("${entry%%:*}"); break; fi
+      if [[ "$path" == *"$word"* ]]; then
+        AREAS_OF+=("${entry%%:*}")
+        break
+      fi
     done
   done
 }
@@ -129,34 +154,44 @@ PW_FULL="" WD_FULL=""
 PW_AREAS=() WD_AREAS=() PW_SPECS=() WD_SPECS=()
 for f in "${CHANGED[@]}"; do
   case "$f" in
-    ''|*.md|*.test.ts|*.test.tsx|*/__tests__/*|src/test-setup.ts|*/snapshots/*|*/.sqlx/*) ;;
-    src-tauri/tests/*|src-tauri/benches/*|src-tauri/fuzz/*|src-tauri/gen/*) ;;
-    src-tauri/proptest-regressions/*|src-tauri/*.txt) ;;
+    '' | *.md | *.test.ts | *.test.tsx | */__tests__/* | src/test-setup.ts | */snapshots/* | */.sqlx/*) ;;
+    src-tauri/tests/* | src-tauri/benches/* | src-tauri/fuzz/* | src-tauri/gen/*) ;;
+    src-tauri/proptest-regressions/* | src-tauri/*.txt) ;;
     e2e/*.spec.ts)
-      if [ -f "$REPO_ROOT/$f" ]; then PW_SPECS+=("$f"); fi ;;
+      if [ -f "$REPO_ROOT/$f" ]; then PW_SPECS+=("$f"); fi
+      ;;
     e2e-tauri/*.e2e.ts)
-      if [ -f "$REPO_ROOT/$f" ]; then WD_SPECS+=("$f"); fi ;;
-    e2e/*|src/lib/tauri-mock*|playwright.config.ts)
-      PW_FULL="$f" ;;
-    e2e-tauri/*.ts|wdio.conf.ts|tsconfig.wdio.json|src-tauri/migrations/*)
-      WD_FULL="$f" ;;
+      if [ -f "$REPO_ROOT/$f" ]; then WD_SPECS+=("$f"); fi
+      ;;
+    e2e/* | src/lib/tauri-mock* | playwright.config.ts)
+      PW_FULL="$f"
+      ;;
+    e2e-tauri/*.ts | wdio.conf.ts | tsconfig.wdio.json | src-tauri/migrations/*)
+      WD_FULL="$f"
+      ;;
     # `src-tauri/tauri.conf.json`: e2e/interface-zoom.spec.ts sizes its viewport from it.
-    package.json|package-lock.json|tsconfig*.json|vite.config.ts|index.html|src-tauri/tauri.conf.json)
-      PW_FULL="$f"; WD_FULL="$f" ;;
-    src/*|public/*)
+    package.json | package-lock.json | tsconfig*.json | vite.config.ts | index.html | src-tauri/tauri.conf.json)
+      PW_FULL="$f"
+      WD_FULL="$f"
+      ;;
+    src/* | public/*)
       areas_of "$f"
       if [ ${#AREAS_OF[@]} -eq 0 ]; then
-        PW_FULL="$f (no area)"; WD_FULL="$f (no area)"
+        PW_FULL="$f (no area)"
+        WD_FULL="$f (no area)"
       else
-        PW_AREAS+=("${AREAS_OF[@]}"); WD_AREAS+=("${AREAS_OF[@]}")
-      fi ;;
+        PW_AREAS+=("${AREAS_OF[@]}")
+        WD_AREAS+=("${AREAS_OF[@]}")
+      fi
+      ;;
     src-tauri/*)
       areas_of "$f"
       if [ ${#AREAS_OF[@]} -eq 0 ]; then
         WD_FULL="$f (no area)"
       else
         WD_AREAS+=("${AREAS_OF[@]}")
-      fi ;;
+      fi
+      ;;
   esac
 done
 
@@ -165,7 +200,10 @@ done
 tagged_specs() { # <glob> <area...>
   local glob=$1 alternation
   shift
-  alternation=$(IFS='|'; echo "$*")
+  alternation=$(
+    IFS='|'
+    echo "$*"
+  )
   # shellcheck disable=SC2086 # the glob expands to the spec files
   (cd "$REPO_ROOT" && grep -lE "[\"'\` ]@($alternation)[\"'\` ]" -- $glob) || [ $? -eq 1 ]
 }
@@ -175,7 +213,10 @@ report_lane() {
   local lane=$1 full=$2 command=$3 glob=$4 flag=$5
   shift 5
   local specs=() areas=() matched spec line why=""
-  while [ "$1" != "--" ]; do specs+=("$1"); shift; done
+  while [ "$1" != "--" ]; do
+    specs+=("$1")
+    shift
+  done
   shift
   if [ ${#specs[@]} -gt 0 ]; then why="changed"; fi
   if [ -n "$full" ]; then
@@ -187,7 +228,7 @@ report_lane() {
     readarray -t areas < <(printf '%s\n' "$@" | sort -u)
     matched=$(tagged_specs "$glob" "${areas[@]}")
     why="${why:+$why, or }tagged$(printf ' @%s' "${areas[@]}")"
-    if [ -n "$matched" ]; then readarray -t -O "${#specs[@]}" specs <<< "$matched"; fi
+    if [ -n "$matched" ]; then readarray -t -O "${#specs[@]}" specs <<<"$matched"; fi
   fi
   if [ ${#specs[@]} -eq 0 ]; then
     echo "$lane: nothing to run"

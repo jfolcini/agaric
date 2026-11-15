@@ -491,7 +491,7 @@ export const references: Record<string, string> = {
   'search.replace.loading': 'Finding every match\u2026',
   'search.replace.none': 'Nothing to replace',
   'search.replace.noRegex': 'Replace across pages does not take a regex. Turn regex mode off.',
-  'search.replace.tooShort': 'Type at least 3 characters to replace across pages.',
+  'search.replace.noText': 'Type the text to replace across pages.',
   'search.replace.tooMany':
     'Too many blocks match to replace them at once. Narrow the search with a filter or a longer text.',
   'search.replace.namesSkipped_one':

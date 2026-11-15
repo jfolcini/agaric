@@ -49,16 +49,33 @@ DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cached)
-      SOURCE="cached"; LABEL="staged"; shift ;;
+      SOURCE="cached"
+      LABEL="staged"
+      shift
+      ;;
     --range)
-      [ -n "${2:-}" ] || { echo "ERROR: --range requires a revspec" >&2; exit 2; }
-      SOURCE="range"; RANGE="$2"; LABEL="range $RANGE"; shift 2 ;;
+      [ -n "${2:-}" ] || {
+        echo "ERROR: --range requires a revspec" >&2
+        exit 2
+      }
+      SOURCE="range"
+      RANGE="$2"
+      LABEL="range $RANGE"
+      shift 2
+      ;;
     --worktree)
-      SOURCE="worktree"; LABEL="working tree"; shift ;;
+      SOURCE="worktree"
+      LABEL="working tree"
+      shift
+      ;;
     --dry)
-      DRY=1; shift ;;
+      DRY=1
+      shift
+      ;;
     *)
-      echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+      echo "ERROR: unknown arg: $1" >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -73,10 +90,10 @@ CARGO_BIN=cargo
 
 list_changed() {
   case "$SOURCE" in
-    cached)  git -C "$REPO_ROOT" diff --cached --name-only --no-renames -z ;;
-    range)   git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames -z ;;
+    cached) git -C "$REPO_ROOT" diff --cached --name-only --no-renames -z ;;
+    range) git -C "$REPO_ROOT" diff "$RANGE" --name-only --no-renames -z ;;
     worktree) git -C "$REPO_ROOT" diff HEAD --name-only --no-renames -z \
-               && git -C "$REPO_ROOT" ls-files --others --exclude-standard -z ;;
+      && git -C "$REPO_ROOT" ls-files --others --exclude-standard -z ;;
   esac
 }
 
@@ -85,7 +102,7 @@ if ! CHANGED_RAW=$(list_changed | tr '\0' '\n'); then
   echo "ERROR: could not list the $LABEL changes." >&2
   exit 2
 fi
-mapfile -t CHANGED <<< "$CHANGED_RAW"
+mapfile -t CHANGED <<<"$CHANGED_RAW"
 
 # One "<repo-relative-dir> <package>" line per workspace member, deepest
 # directory first so a member wins over the root package (`src-tauri/`).
@@ -93,9 +110,9 @@ crate_roots() {
   local meta
   # --offline first (hooks must not reach the network).
   meta=$("$CARGO_BIN" metadata --manifest-path "$REPO_ROOT/src-tauri/Cargo.toml" \
-           --no-deps --format-version 1 --offline 2>/dev/null) \
+    --no-deps --format-version 1 --offline 2>/dev/null) \
     || meta=$("$CARGO_BIN" metadata --manifest-path "$REPO_ROOT/src-tauri/Cargo.toml" \
-           --no-deps --format-version 1) \
+      --no-deps --format-version 1) \
     || return 1
   printf '%s' "$meta" | node -e '
 const { readFileSync } = require("node:fs")
@@ -118,9 +135,12 @@ crate_of() { # <repo-relative-file> → sets CRATE
   fi
   while read -r dir name; do
     case "$1" in
-      "$dir"/*) CRATE="$name"; return 0 ;;
+      "$dir"/*)
+        CRATE="$name"
+        return 0
+        ;;
     esac
-  done <<< "$CRATE_MAP"
+  done <<<"$CRATE_MAP"
 }
 
 # Tests that read a sibling crate's source files as data. They depend on
@@ -128,11 +148,14 @@ crate_of() { # <repo-relative-file> → sets CRATE
 source_readers() { # <package>
   case "$1" in
     agaric)
-      echo '(package(=agaric-store) & test(/^(block_descendants::cohort_cascade_drift_guard|space_filter_canonical)::/))' ;;
+      echo '(package(=agaric-store) & test(/^(block_descendants::cohort_cascade_drift_guard|space_filter_canonical)::/))'
+      ;;
     agaric-engine)
-      echo '(package(=agaric-store) & test(/^block_descendants::cohort_cascade_drift_guard::/))' ;;
+      echo '(package(=agaric-store) & test(/^block_descendants::cohort_cascade_drift_guard::/))'
+      ;;
     agaric-diagnostics)
-      echo '(package(=agaric) & test(/^commands::(observability|bug_report)::/))' ;;
+      echo '(package(=agaric) & test(/^commands::(observability|bug_report)::/))'
+      ;;
   esac
 }
 
@@ -143,15 +166,20 @@ for file in "${CHANGED[@]}"; do
   [ -n "$file" ] || continue
   case "$file" in
     *.md) ;;
-    src-tauri/fuzz/*|src-tauri/gen/*)
-      NOT_COVERED+=("$file") ;;
-    src-tauri/migrations/*|src-tauri/Cargo.lock|src-tauri/Cargo.toml|src-tauri/*/Cargo.toml|src-tauri/.config/*|src-tauri/scripts/*|rust-toolchain.toml)
-      FULL="$file"; break ;;
-    conformance/*|src/lib/bindings.ts)
-      CRATES+=(agaric) ;;
+    src-tauri/fuzz/* | src-tauri/gen/*)
+      NOT_COVERED+=("$file")
+      ;;
+    src-tauri/migrations/* | src-tauri/Cargo.lock | src-tauri/Cargo.toml | src-tauri/*/Cargo.toml | src-tauri/.config/* | src-tauri/scripts/* | rust-toolchain.toml)
+      FULL="$file"
+      break
+      ;;
+    conformance/* | src/lib/bindings.ts)
+      CRATES+=(agaric)
+      ;;
     src-tauri/*)
       crate_of "$file"
-      CRATES+=("$CRATE") ;;
+      CRATES+=("$CRATE")
+      ;;
   esac
 done
 

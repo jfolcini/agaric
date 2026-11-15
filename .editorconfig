@@ -20,3 +20,9 @@ indent_size = 4
 # Markdown: trailing spaces are significant (hard line breaks), so don't trim.
 [*.md]
 trim_trailing_whitespace = false
+
+# Shell: shfmt reads its options from here, so its hook passes no flags (a
+# flag on its command line makes it ignore this file).
+[*.sh]
+switch_case_indent = true
+binary_next_line = true

@@ -99,6 +99,8 @@ describe('a query block and the search box, text by text', () => {
     ['under:#urgent', 'under', ['B2', 'B3', 'B7']],
     ['launch', 'text', ['B2', 'B6']],
     ['state:TODO launch', 'text_and_state', ['B2']],
+    ['la', 'short_text', ['B2', 'B4', 'B6']],
+    ['launch pl', 'text_and_short', ['B2']],
     ['due:overdue', 'due_overdue', ['B2']],
     // An OR between filters: one `filterExpr` in the search box (#6742).
     ['path:beta OR tag:#urgent', 'or', ['B2', 'B5', 'B6', 'B7']],

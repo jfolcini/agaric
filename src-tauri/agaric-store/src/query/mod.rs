@@ -104,8 +104,11 @@ pub struct AdvancedQueryRequest {
     /// INTERSECTED with the structural `filter`, exposes the per-row `bm25`
     /// relevance via [`QueryResultRow::score`], and defaults the sort to
     /// [`SortSource::Relevance`] (best-first) when no explicit `sort` is
-    /// given. When `None`, the query is purely structural (full backward
-    /// compat with the C1 engine) and [`SortSource::Relevance`] is rejected.
+    /// given. A term under three characters is a substring of the block's
+    /// indexed text, as in search; a text of only such terms has no `MATCH`,
+    /// so no score, and a `Relevance` sort key orders nothing. When `None`,
+    /// the query is purely structural (full backward compat with the C1
+    /// engine) and [`SortSource::Relevance`] is rejected.
     #[serde(default)]
     pub fulltext: Option<String>,
     /// Optional grouping. When `Some`, the engine runs the GROUPED path:

@@ -279,29 +279,6 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
-# Retired-doc-citation guard (#2233). The `pending/*.md` workplan convention
-# was retired — those files were migrated to GitHub issues and no longer
-# exist, so a comment citing `pending/<plan>-<date>.md` points at nothing.
-# This hook fails on any NEW such reference in source (ts/tsx/rs). The
-# pattern requires a hyphen after the slash so it matches the dead plan
-# filenames (`pending/design-system-...`, `pending/-pages-view-...`) without
-# firing on the unrelated `pending/loading` state phrase or the Tailwind
-# opacity classes (`status-pending/30`). Generated `bindings.ts` is exempt
-# (regenerated from the Rust specta docs). Historical archives under
-# `docs/session-log/` and `SESSION-LOG.md` legitimately mention the retired
-# convention and are .md files outside the scanned globs, so they are not hit.
-# WHY: comments citing the retired pending/*.md workplans point at files that no longer exist — #2233
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "no-retired-pending-doc-refs"
-name = "no citations of retired pending/*.md workplans (#2233)"
-entry = "bash -c 'if grep -rnE \"pending/[A-Za-z]*-\" src/ src-tauri/src/ --include=\"*.ts\" --include=\"*.tsx\" --include=\"*.rs\" | grep -vE \"^src/lib/bindings\\.ts:\"; then echo \"ERROR: reference to a retired pending/*.md workplan — those docs were migrated to GitHub issues (see MEMORY: pending folder convention). Cite a surviving issue/#NNN or write an inline rationale instead.\"; exit 1; fi'"
-language = "system"
-pass_filenames = false
-types_or = ["ts", "tsx", "rust"]
-stages = ["pre-commit"]
-
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (React 19, TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
@@ -1895,7 +1872,8 @@ stages = ["pre-commit"]
 # minor stylistic preferences; we still catch real bugs and probable
 # bugs. Out of scope: the inline `bash -c '...'` strings inside this
 # file (shellcheck cannot parse TOML-embedded bash).
-# Install via system package manager (e.g. `apt-get install shellcheck`).
+# scripts/setup-hooks.sh installs the version pinned there and in CI's
+# `tool:` lists (`tool-pins` checks they agree).
 # WHY: shell bugs that only fire on a branch no test takes — #3637
 [[repos]]
 repo = "local"
@@ -1903,6 +1881,18 @@ repo = "local"
 id = "shellcheck"
 name = "shellcheck"
 entry = "shellcheck --severity=warning"
+language = "system"
+files = "^((scripts|src-tauri/scripts)/|\\.claude/hooks/).*\\.sh$"
+stages = ["pre-commit"]
+
+# Writes in place, the fixer contract `oxfmt (write)` follows. No flags:
+# shfmt reads its options from .editorconfig's `[*.sh]` section, and any flag
+# here would make it ignore that file. Installed and pinned like shellcheck.
+# WHY: each shell script kept its last author's layout, so reviews read layout noise beside the change — #6762
+[[repos.hooks]]
+id = "shfmt"
+name = "shfmt (write)"
+entry = "shfmt --write"
 language = "system"
 files = "^((scripts|src-tauri/scripts)/|\\.claude/hooks/).*\\.sh$"
 stages = ["pre-commit"]
@@ -2035,9 +2025,10 @@ pass_filenames = false
 files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|spaces)/tests\\.rs|src-tauri/agaric-sync/src/snapshot/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
 stages = ["manual"]
 
-# tool-pins: CI installs prek, zizmor, taplo-cli, typos-cli and sqruff from the
-# workflows' `tool:` lists, a dev box from scripts/setup-hooks.sh and
-# scripts/zizmor-hook.sh. Dependabot tracks none of those copies.
+# tool-pins: CI installs prek, zizmor, taplo-cli, typos-cli, sqruff, shellcheck
+# and shfmt from the workflows' `tool:` lists, a dev box from
+# scripts/setup-hooks.sh and scripts/zizmor-hook.sh. Dependabot tracks none of
+# those copies.
 # WHY: CI floated to a newer prek than the dev boxes and a green tree went red with no repo change — #3742 (#3523)
 [[repos]]
 repo = "local"

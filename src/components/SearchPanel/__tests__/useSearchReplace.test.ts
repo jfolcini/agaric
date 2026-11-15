@@ -23,13 +23,19 @@ describe('candidateQuery', () => {
     expect(candidateQuery('sprint plan')).toBe('"sprint plan"')
   })
 
-  it('sends the stretches around a quote, dropping one the index cannot find', () => {
-    expect(candidateQuery('say "hi" twice')).toBe('"say " " twice"')
+  it('sends the stretches around a quote, dropping one with only spaces', () => {
+    expect(candidateQuery('say "hi" twice')).toBe('"say " "hi" " twice"')
+    expect(candidateQuery('a" "b')).toBe('"a" "b"')
   })
 
-  it('is null when no stretch has three characters', () => {
-    expect(candidateQuery('ab')).toBeNull()
-    expect(candidateQuery('a"b"c')).toBeNull()
+  it('sends a term under three characters, which search matches by substring (#6752)', () => {
+    expect(candidateQuery('ab')).toBe('"ab"')
+    expect(candidateQuery('a"b"c')).toBe('"a" "b" "c"')
+  })
+
+  it('is null when there is nothing to find', () => {
+    expect(candidateQuery('')).toBeNull()
     expect(candidateQuery('   ')).toBeNull()
+    expect(candidateQuery('""')).toBeNull()
   })
 })

@@ -505,10 +505,10 @@ run_one_guard() {
       node "$workdir/scripts/$guard" "$@"
       ;;
     check-unsafe-allowlist.sh)
-      ( cd "$workdir" && bash "scripts/$guard" )
+      (cd "$workdir" && bash "scripts/$guard")
       ;;
     check-migrations-immutable.sh)
-      ( cd "$workdir" && bash "scripts/$guard" --range "${base_tip}...HEAD" )
+      (cd "$workdir" && bash "scripts/$guard" --range "${base_tip}...HEAD")
       ;;
     *)
       # An unknown guard must be a hard FAILURE, never a silent pass:
@@ -540,7 +540,7 @@ resolve_node_modules_source() {
     src="$toplevel/node_modules"
   fi
   [ -d "$src" ] || return 1
-  ( cd "$src" && pwd -P )
+  (cd "$src" && pwd -P)
 }
 
 # Give the merged worktree a `node_modules` without paying for an install:
@@ -585,8 +585,8 @@ lockfiles_agree() {
   local workdir="$1" src_root="$2" base_tip="$3" head_sha="$4"
   local a="$workdir/package-lock.json" b="$src_root/package-lock.json"
   if [ ! -f "$a" ]; then
-    if git -C "$workdir" cat-file -e "${base_tip}:package-lock.json" 2>/dev/null ||
-       git -C "$workdir" cat-file -e "${head_sha}:package-lock.json" 2>/dev/null; then
+    if git -C "$workdir" cat-file -e "${base_tip}:package-lock.json" 2>/dev/null \
+      || git -C "$workdir" cat-file -e "${head_sha}:package-lock.json" 2>/dev/null; then
       return 2
     fi
     return 0
@@ -710,7 +710,7 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
       echo "  NOTHING was type-checked; this is a runner-side gap, not a verdict." >&2
       return 3
     fi
-    if ! ( cd "$workdir" && npm ci ) >&2; then
+    if ! (cd "$workdir" && npm ci) >&2; then
       echo "pr-merge-result-check: \`npm ci\` FAILED in the merged tree. That is an" >&2
       echo "  install failure, not a type error — reported as 3, never as 4, because" >&2
       echo "  exit 4 tells the author their merge does not compile and nothing here" >&2
@@ -728,7 +728,7 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
   # success, and tsc writes its diagnostics to stdout. The workflow tees the
   # whole job log into the step summary, so the actual TS errors have to
   # reach the log rather than be swallowed by a `>/dev/null`.
-  if ! ( cd "$workdir" && npm run --silent typecheck ) >&2; then
+  if ! (cd "$workdir" && npm run --silent typecheck) >&2; then
     return 1
   fi
   return 0
@@ -804,8 +804,8 @@ run_merge_check() {
 
   local merge_out merge_rc
   merge_out=$(git -C "$workdir" -c user.email=pr-merge-result-check@invalid \
-      -c user.name='pr-merge-result-check' \
-      merge --quiet --no-edit "$head_sha" 2>&1)
+    -c user.name='pr-merge-result-check' \
+    merge --quiet --no-edit "$head_sha" 2>&1)
   merge_rc=$?
   if [ "$merge_rc" -ne 0 ]; then
     # NOT every non-zero `git merge` is a content conflict: unrelated
@@ -857,7 +857,7 @@ run_merge_check() {
   local -a crate_roots=()
   local crate_root_script="$workdir/scripts/check-raw-tx.mjs"
   local roots_errfile="$parent/crate-roots.err"
-  : > "$roots_errfile"
+  : >"$roots_errfile"
   if [ -f "$crate_root_script" ]; then
     while IFS= read -r root; do
       # Same guard as count_examined's sibling loop over this same output

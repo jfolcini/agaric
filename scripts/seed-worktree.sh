@@ -129,7 +129,7 @@ if [ "$IS_MAIN_CHECKOUT" -eq 1 ]; then
   SKIPPED+=("node_modules (this is the main checkout, not a worktree)")
 elif [ -L node_modules ]; then
   link_target="$(readlink -f node_modules || true)"
-  main_nm="$(readlink -f "$MAIN_ROOT/node_modules" 2> /dev/null || echo "$MAIN_ROOT/node_modules")"
+  main_nm="$(readlink -f "$MAIN_ROOT/node_modules" 2>/dev/null || echo "$MAIN_ROOT/node_modules")"
   if [ "$link_target" = "$main_nm" ]; then
     echo "  already symlinked -> $link_target"
     SKIPPED+=("node_modules (already symlinked to main checkout)")
@@ -200,7 +200,7 @@ fi
 echo
 echo "▶ [3/5] branch upstream"
 branch="$(git rev-parse --abbrev-ref HEAD)"
-if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2> /dev/null)"; then
+if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
   # Strip the leading "<remote>/" to compare branch names only -- local
   # branch names may themselves contain slashes (e.g. "claude/seed").
   upstream_branch="${upstream#*/}"
@@ -250,11 +250,11 @@ if [ "$USE_SCCACHE" -eq 1 ]; then
     SKIPPED+=("sccache (already wired)")
   elif [ "$HAD_CARGO_CONFIG" -eq 1 ]; then
     PROBLEMS+=("--sccache: .cargo/config.toml was already here; delete it and re-run to wire sccache")
-  elif ! command -v sccache > /dev/null 2>&1; then
+  elif ! command -v sccache >/dev/null 2>&1; then
     PROBLEMS+=("--sccache: sccache is not on PATH (cargo binstall sccache, or your package manager)")
   else
     mkdir -p .cargo
-    cat >> .cargo/config.toml <<'CONFIG'
+    cat >>.cargo/config.toml <<'CONFIG'
 
 # sccache trial (#6560), written by `seed-worktree.sh --sccache`. sccache
 # cannot cache an incremental build, so incremental is off here. Delete this

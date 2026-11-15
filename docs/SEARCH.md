@@ -286,7 +286,7 @@ Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a
 
 ## Replace across pages
 
-The replace toggle beside the search modes, or `Ctrl+H` with the focus in the Search view, opens a replace row under the search box. While it is open, the text in the search box is the literal text to find, with the case and whole-word toggles: search operators and quotes in it are plain characters, except that one quoted phrase is found without its quotes. Filter chips still narrow where to look, and the search stays in the active space. Regex mode is not replaced in, and neither is a text under three characters.
+The replace toggle beside the search modes, or `Ctrl+H` with the focus in the Search view, opens a replace row under the search box. While it is open, the text in the search box is the literal text to find, with the case and whole-word toggles: search operators and quotes in it are plain characters, except that one quoted phrase is found without its quotes. Filter chips still narrow where to look, and the search stays in the active space. Regex mode is not replaced in. A text of one or two characters is found as search finds a [short term](#short-terms), so a short text can match many blocks: the count below waits for all of them, and the limit on one run applies as for any text.
 
 The result list becomes the preview: only the blocks a replace would change, each showing its change and ticked. A click, `Space` or `Enter` on a row unticks or ticks it, and the checkbox in a page's header does so for every row of that page. The button reads **Replace in N blocks across M pages** and asks before it writes. Every match is loaded first, and a search with more matching blocks than one run writes (`MAX_BATCH_BLOCK_IDS`) is refused with a note to narrow it: a run never does part of the matches.
 
@@ -355,6 +355,7 @@ The full-text index holds three-character runs, so a term of one or two characte
 - Matches are highlighted in the block's raw text, so a term found only in a link's or tag's name is found and not highlighted.
 - A short term in a query whose words hold `OR`, or after `NOT`, is left out of the query: only a required term can be scanned for. An `OR` between filters does not count, so `ui (tag:#a OR tag:#b)` still requires *ui*. A bare `or` is read as the operator; quote it (`"or"`) to search for the word.
 - The case-sensitive and whole-word toggles apply to short terms too. Whole word is what makes `ui` find *UI* and not *build*.
+- A query block's text, the Advanced Query's full-text box and the References panel's *Contains* filter take short terms the same way, and so does [replace across pages](#replace-across-pages).
 
 Boolean operators **don't work inside regex mode** — there the free-text remainder is the regex pattern; `AND` / `OR` in it are matched as literal text. (Structural filters like `tag:` / `path:` still apply — see [Regex mode and structural filters](#regex-mode-and-structural-filters).)
 

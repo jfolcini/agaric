@@ -24,7 +24,7 @@ That is the whole dev-environment setup. The script is idempotent — safe to re
 - **Dependencies** — `npm ci` (deterministic install from the lockfile) and Playwright's chromium.
 - **`.env`** — copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time; skipping this is the classic fresh-clone compile failure).
 - **Dev DB** — provisions the local sqlx offline-check database so pre-push Rust checks pass.
-- **prek hook toolchain + git hooks** — installs `prek` and every host binary the commit/push hooks shell out to (cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, `just`, …), then runs `prek install` to wire the git shims (pre-commit, commit-msg, prepare-commit-msg, pre-push, post-commit). This step is best-effort: anything it can't auto-install on your platform prints a manual hint instead of failing, and you can re-run `scripts/setup-hooks.sh` (or `just install-hooks`) any time to fill gaps. See [`docs/BUILD.md` → Hook toolchain](docs/BUILD.md#hook-toolchain) for the full install set (which mirrors CI).
+- **prek hook toolchain + git hooks** — installs `prek` and every host binary the commit/push hooks shell out to (cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, shfmt, `just`, …), then runs `prek install` to wire the git shims (pre-commit, commit-msg, prepare-commit-msg, pre-push, post-commit). This step is best-effort: anything it can't auto-install on your platform prints a manual hint instead of failing, and you can re-run `scripts/setup-hooks.sh` (or `just install-hooks`) any time to fill gaps. See [`docs/BUILD.md` → Hook toolchain](docs/BUILD.md#hook-toolchain) for the full install set (which mirrors CI).
 
 The base toolchain the script builds on — Rust stable (`rustup default stable`) and Tauri's CLI (the pinned `@tauri-apps/cli` devDependency, installed by `npm ci`) — is documented in [`docs/BUILD.md`](docs/BUILD.md).
 
@@ -49,7 +49,7 @@ cargo install --locked just   # one-time install
 just                          # list every recipe (alias for `just --list`)
 ```
 
-The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, shellcheck, zizmor, taplo-cli, …). Install them once via [`docs/BUILD.md` → Developer tools (prek hook host-binaries)](docs/BUILD.md#developer-tools-prek-hook-host-binaries) so a local `prek run --all-files` is green; otherwise individual hooks fail with `command not found`.
+The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, shellcheck, shfmt, zizmor, taplo-cli, …). Install them once via [`docs/BUILD.md` → Developer tools (prek hook host-binaries)](docs/BUILD.md#developer-tools-prek-hook-host-binaries) so a local `prek run --all-files` is green; otherwise individual hooks fail with `command not found`.
 
 ### Editor setup (VS Code)
 
