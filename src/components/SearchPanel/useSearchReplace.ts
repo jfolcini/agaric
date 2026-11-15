@@ -36,9 +36,6 @@ import { useResolveStore } from '@/stores/resolve'
 
 type ScanQuery = Extract<CompiledQuery, { kind: 'literal' }>
 
-/** Replace across pages keeps the three-character floor that search dropped (#6752). */
-const MIN_FIND_LENGTH = 3
-
 const CANDIDATE_TOGGLES: SearchToggleState = {
   caseSensitive: false,
   wholeWord: false,
@@ -68,13 +65,12 @@ export function findTextOf(freeText: string): string {
 
 /**
  * The search query whose results hold every block showing `find`, or `null`
- * when the index cannot answer it. A phrase cannot hold a quote, so the text
- * goes as the phrases around its quotes.
+ * when there is nothing to find. A phrase cannot hold a quote, so the text
+ * goes as the phrases around its quotes; search matches a phrase under three
+ * characters by substring (#6752).
  */
 export function candidateQuery(find: string): string | null {
-  const phrases = find
-    .split('"')
-    .filter((part) => Array.from(part.trim()).length >= MIN_FIND_LENGTH)
+  const phrases = find.split('"').filter((part) => part.trim() !== '')
   return phrases.length === 0 ? null : phrases.map((part) => `"${part}"`).join(' ')
 }
 
@@ -99,7 +95,7 @@ export interface SearchReplaceMode {
   replacement: string
   setReplacement: (value: string) => void
   /** Why this search cannot be replaced in, while the row is open. */
-  unavailable: 'regex' | 'tooShort' | null
+  unavailable: 'regex' | 'noText' | null
   /** The row is open and the search can be replaced in. */
   active: boolean
   find: string
@@ -146,7 +142,7 @@ export function useSearchReplaceMode(
     : toggles.isRegex
       ? 'regex'
       : candidates === null
-        ? 'tooShort'
+        ? 'noText'
         : null
   const active = open && unavailable === null
 

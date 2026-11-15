@@ -71,6 +71,39 @@ pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
     }
 }
 
+/// `EXISTS (…)`: the indexed text of the block aliased `b`, the stripped text
+/// the editor shows, holds every term in any letter case (#6752). It reads
+/// FTS5's content table by `block_id` (`idx_fts_blocks_content_block`), so a
+/// walk of `blocks` in its own order can test one block at a time; a `LIKE` on
+/// `fts_blocks` itself would scan the whole index before the first row.
+///
+/// Returns the SQL, its placeholders numbered from `?{first_param}`, and the
+/// `LIKE` patterns to bind to them in order. `terms` is non-empty.
+pub(crate) fn shown_text_contains(terms: &[String], first_param: usize) -> (String, Vec<String>) {
+    let mut patterns = Vec::new();
+    let mut holds_term = Vec::new();
+    for term in terms {
+        let mut forms = Vec::new();
+        for form in like_case_forms(term) {
+            let escaped = form
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            forms.push(format!(
+                "s.c1 LIKE ?{} ESCAPE '\\'",
+                first_param + patterns.len()
+            ));
+            patterns.push(format!("%{escaped}%"));
+        }
+        holds_term.push(format!("({})", forms.join(" OR ")));
+    }
+    let sql = format!(
+        "EXISTS (SELECT 1 FROM fts_blocks_content s WHERE s.c0 = b.id AND {})",
+        holds_term.join(" AND ")
+    );
+    (sql, patterns)
+}
+
 /// The spellings of `term` to hand `LIKE`, which folds ASCII case only while
 /// the trigram index folds every script: each non-ASCII letter is tried as
 /// typed, lowercased and uppercased, in every combination. Only a term under
@@ -635,33 +668,16 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// `AND EXISTS (…)`: the block's indexed text, the stripped text the
-    /// editor shows, holds every term in any letter case. It reads FTS5's
-    /// content table by `block_id` (`idx_fts_blocks_content_block`), so a walk
-    /// of `blocks` in its own order can test one block at a time; a `LIKE` on
-    /// `fts_blocks` itself would scan the whole index before the first row.
+    /// `AND EXISTS (…)`: see [`shown_text_contains`].
     pub(super) fn add_shown_text_contains(&mut self, prefix: &str, terms: &[String]) {
         if terms.is_empty() {
             return;
         }
-        let mut holds_term = Vec::new();
-        for term in terms {
-            let mut forms = Vec::new();
-            for form in like_case_forms(term) {
-                let escaped = form
-                    .replace('\\', "\\\\")
-                    .replace('%', "\\%")
-                    .replace('_', "\\_");
-                forms.push(format!("s.c1 LIKE ?{} ESCAPE '\\'", self.next_param));
-                self.next_param += 1;
-                self.binds.push(ScalarBind::Str(format!("%{escaped}%")));
-            }
-            holds_term.push(format!("({})", forms.join(" OR ")));
-        }
-        self.sql.push_str(&format!(
-            "{prefix}EXISTS (SELECT 1 FROM fts_blocks_content s WHERE s.c0 = b.id AND {})",
-            holds_term.join(" AND ")
-        ));
+        let (sql, patterns) = shown_text_contains(terms, self.next_param);
+        self.next_param += patterns.len();
+        self.binds.extend(patterns.into_iter().map(ScalarBind::Str));
+        self.sql.push_str(prefix);
+        self.sql.push_str(&sql);
     }
 
     /// `AND b.id < ?N` keyset cursor predicate when `Some`.

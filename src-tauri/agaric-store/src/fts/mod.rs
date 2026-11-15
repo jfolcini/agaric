@@ -57,6 +57,10 @@ pub use toggle_filter::search_with_toggles_partitioned;
 // #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
 // can name `agaric_store::fts::sanitize_fts_query` directly.
 pub use search::sanitize_fts_query;
+// #6752 — the backlink `Contains` filter and the query engine's text filter
+// answer a term under the trigram floor with the search path's predicate.
+pub(crate) use filter_builder::shown_text_contains;
+pub(crate) use search::{ParsedQuery, parse_query};
 // BE-2 — the partitioned IPC command validates its
 // `page_limit` / `block_limit` against this ceiling and rejects an
 // over-limit request (the cursor path rejects via `PageRequest::new`).
