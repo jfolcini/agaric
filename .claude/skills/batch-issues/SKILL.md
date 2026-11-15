@@ -80,7 +80,7 @@ Prompt skeleton; keep the git and background lines verbatim:
 **Do NOT modify:** AGENTS.md; anything outside the list above. An existing test under `e2e/**`, `e2e-tauri/**` or `src/**/__tests__/**` changes only where the issue changes the behaviour it asserts: name each such test and the old and new assertion in your report. A test that goes red for any other reason is a finding, not an edit.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground, read the output before your final message, and do not end while anything is pending.
-**Verification (targeted):** `just check-fe` | `just check-be` (or `cargo nextest run --workspace -E '<filter>'` / `npx vitest run <paths>` for one test); then `just e2e-related --range origin/main...HEAD` and run what it selects (Playwright with this worktree's `PW_PORT`)
+**Verification (targeted):** `just check-fe` | `just check-be` (or `cargo nextest run --workspace -E '<filter>'` / `npx vitest run <paths>` for one test); then `just e2e-related --range origin/main...HEAD --run` (Playwright with this worktree's `PW_PORT`; WebdriverIO specs it prints run with `just e2e-real`)
 **Success:** targeted tests pass (and select more than zero tests); follows AGENTS.md; no new warnings; each falsification ran as one shell command that restores on exit (AGENTS.md § Acceptance is falsification), and no stub is left in the tree.
 ```
 
@@ -139,7 +139,7 @@ Do not wait for CI. Record the PR as a task and start the next batch from the la
 - Changes requested → push the fix, then, once per pushed head, `gh pr edit <n> --add-label re-review` (`gh api repos/jfolcini/agaric/issues/<n>/labels -f 'labels[]=re-review'` if `gh pr edit` fails on the Projects (classic) error): a push alone does not re-run the review.
 - Running → leave it. Batch review fixes into one push per round: each push restarts `validate-all`, so pushing every fix means no run ever completes.
 - Before any merge, check the last *completed* CI run on `main`, not the newest one, which may still be running: if it is red, fixing `main` comes first.
-- Behind `main` → merge as is, unless one of the PR's own files changed on `main` since its merge base: `git diff --quiet $(git merge-base origin/main <branch>) origin/main -- $(git diff --name-only origin/main...<branch>)` exits non-zero then. In that case `git merge --signoff origin/main` (or rebase), push, and merge once CI is green again. Never GitHub's "Update branch": its merge commit has no `Signed-off-by` and fails `dco`.
+- Behind `main` → merge as is, unless one of the PR's own files changed on `main` since the `main` commit its CI tested against. `just merge-ready <pr>` checks that, with the required checks, the approval on the head, `mergeable_state` and the last completed `main` run, and names any overlapping files. Run it before every merge. On overlap, `git merge --signoff origin/main` (or rebase), push, and merge once CI is green again. Never GitHub's "Update branch": its merge commit has no `Signed-off-by` and fails `dco`.
 
 When checking CI by script, an absent check is not a pass: match the required context by suffix (`validate / validate-all`), classify states by allow-list, and require that the checks you need were found by name.
 

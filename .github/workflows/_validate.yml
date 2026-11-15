@@ -1425,16 +1425,41 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Two commits: a PR run checks out the merge commit, and its first
+          # parent is the base, so `HEAD^1..HEAD` is the PR's diff.
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Playwright setup (Node, npm ci, browsers, system deps)
         uses: ./.github/actions/playwright-setup
+
+      # Evidence for review: a PR that changes UI files saves one screenshot of
+      # each passing test in the specs `e2e-related.sh` picks for them (the
+      # `screenshotEvidence` fixture in `e2e/helpers.ts`). Any other run picks
+      # nothing and the fixture does nothing.
+      - name: Pick the specs to screenshot (UI changes on a PR)
+        id: shots
+        if: github.event_name == 'pull_request'
+        run: |
+          ui=$(git diff --no-renames --name-only HEAD^1 HEAD \
+            | grep -E '^(src/components/|src/editor/|src/index\.css$)' \
+            | grep -vE '/__tests__/|\.test\.tsx?$' || true)
+          [ -n "$ui" ] || exit 0
+          specs=$(bash scripts/e2e-related.sh --stdin <<<"$ui" \
+            | grep -E '^  npx playwright test ' | tr ' ' '\n' | grep -E '^e2e/.*\.spec\.ts$' \
+            | sort -u | tr '\n' ' ' || true)
+          echo "specs=${specs% }" >> "$GITHUB_OUTPUT"
+          if [ -z "$specs" ]; then
+            echo "UI files changed, but \`e2e-related.sh\` names no single spec for them (a shared style or primitive reaches the whole lane): no screenshots." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Playwright E2E tests (shard ${{ matrix.shard }})
         id: playwright
         env:
           SHARD: ${{ matrix.shard }}
           SPECS: ${{ needs.detect-changes.outputs.playwright_specs }}
+          PW_SHOT_SPECS: ${{ steps.shots.outputs.specs }}
+          PW_SHOT_DIR: ${{ steps.shots.outputs.specs && 'ui-screenshots' || '' }}
         run: |
           if [ -n "$SPECS" ]; then
             # One path per word; the classifier lists only `e2e/*.spec.ts`.
@@ -1447,6 +1472,28 @@ jobs:
             # shellcheck disable=SC2086
             npx playwright test $files
           fi
+
+      - name: Upload UI screenshots
+        id: upload-shots
+        if: ${{ !cancelled() && steps.shots.outputs.specs != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-screenshots-shard-${{ matrix.shard }}
+          path: ui-screenshots/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Link the UI screenshots in the run summary
+        if: ${{ !cancelled() && steps.upload-shots.outputs.artifact-url != '' }}
+        env:
+          ARTIFACT_URL: ${{ steps.upload-shots.outputs.artifact-url }}
+          SHARD: ${{ matrix.shard }}
+          SPECS: ${{ steps.shots.outputs.specs }}
+        run: |
+          {
+            echo "### UI screenshots, shard $SHARD"
+            echo "[ui-screenshots-shard-$SHARD]($ARTIFACT_URL) holds one PNG per passing test of: \`$SPECS\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Playwright report (on failure)
         if: failure() && steps.playwright.outcome == 'failure'

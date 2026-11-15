@@ -237,6 +237,22 @@ void test('main moved onto a PR file: the file is named with the PR that changed
   assert.ok(shared.out.includes('merge main into the branch'), shared.out)
 })
 
+void test('main moved onto a PR file among large patches: still found, the overlap never fails open', () => {
+  const big = run((routes) => {
+    const patch = 'x'.repeat(20_000)
+    for (let i = 0; i < 150; i++) {
+      routes[ROUTE.mainFiles].files.push({
+        filename: `src/filler/f${i}.ts`,
+        status: 'modified',
+        patch,
+      })
+    }
+    routes[ROUTE.mainFiles].files.push(sharedChange)
+    routes[touching(SHARED)] = []
+  })
+  assertFailsOnly(big, 'main moved', '1 PR file(s)')
+})
+
 void test('main moved onto a PR file under another name: a rename counts both ways', () => {
   const renamed = run((routes) => {
     routes[ROUTE.mainFiles].files.push({

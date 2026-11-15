@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { dragToTarget, moveOver, releasePointer } from '@/__tests__/helpers/pointer-drag'
 import { toast } from '@/__tests__/mocks/sonner'
 import { type BoardColumn, boardColumns } from '@/components/AdvancedQuery/board-columns'
 import { QueryBoard } from '@/components/AdvancedQuery/QueryBoard'
@@ -564,27 +565,9 @@ describe('QueryBoard', () => {
         await new Promise((resolve) => setTimeout(resolve, 50))
       })
 
-      /**
-       * Mid-column: near the board's edge the board scrolls, and happy-dom's
-       * `scrollLeft` runs below 0, sliding every column out from under the pointer.
-       */
-      function carryOver(name: string): void {
-        const { left, width } = column(name).getBoundingClientRect()
-        fireEvent.pointerMove(document, { clientX: left + width / 2, clientY: 40, isPrimary: true })
-      }
-
-      /** Press the first card of `from`, carry it past the 8px threshold and over `to`. */
-      function lift(from: string, to: string): void {
-        const card = cards(from)[0] as HTMLElement
-        const at = { clientX: card.getBoundingClientRect().left + 20, clientY: 20 }
-        fireEvent.pointerDown(card, { ...at, isPrimary: true, button: 0 })
-        fireEvent.pointerMove(document, { ...at, clientX: at.clientX + 20, isPrimary: true })
-        carryOver(to)
-      }
-
-      function drop(): void {
-        fireEvent.pointerUp(document, { isPrimary: true, button: 0 })
-      }
+      /** Press the first card of `from`, carry it over the column `to`. */
+      const lift = (from: string, to: string) =>
+        dragToTarget(cards(from)[0] as HTMLElement, column(to))
 
       const writes = () =>
         mockedInvoke.mock.calls.filter(([cmd]) =>
@@ -597,7 +580,7 @@ describe('QueryBoard', () => {
 
         await waitFor(() => expect(ids('TODO')).toEqual(['T1', 'T2']))
         lift('TODO', 'DONE')
-        drop()
+        releasePointer()
 
         await waitFor(() => expect(ids('DONE')).toEqual(['T1']))
         expect(ids('TODO')).toEqual(['T2'])
@@ -615,7 +598,7 @@ describe('QueryBoard', () => {
 
         await waitFor(() => expect(ids('later')).toEqual(['B1']))
         lift('later', none)
-        drop()
+        releasePointer()
 
         await waitFor(() => expect(ids(none)).toEqual(['B1']))
         expect(values).toEqual({ B1: null })
@@ -628,12 +611,12 @@ describe('QueryBoard', () => {
 
         await waitFor(() => expect(ids(t('advancedQuery.board.other'))).toEqual(['X1']))
         lift('later', 'later')
-        drop()
+        releasePointer()
         lift('later', t('advancedQuery.board.other'))
-        drop()
+        releasePointer()
         // The same gesture onto a real target does write: the two above were refused, not lost.
         lift(t('advancedQuery.board.other'), 'now')
-        drop()
+        releasePointer()
 
         await waitFor(() => expect(ids('now')).toEqual(['X1']))
         expect(values).toEqual({ B1: 'later', X1: 'now' })
@@ -659,13 +642,13 @@ describe('QueryBoard', () => {
         })
 
         // Over its own column, then over "Other values": neither is a target.
-        carryOver('later')
+        moveOver(column('later'))
         await waitFor(() => expect(outlined()).toEqual([]))
-        carryOver('now')
+        moveOver(column('now'))
         await waitFor(() => expect(outlined()).toEqual(['now']))
-        carryOver(other)
+        moveOver(column(other))
         await waitFor(() => expect(outlined()).toEqual([]))
-        drop()
+        releasePointer()
       })
     })
 
