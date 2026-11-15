@@ -529,17 +529,7 @@ fn fitted(key: &str, value: &PropertyValue, decl: &PropertyDeclaration) -> Optio
         (PropertyValue::List(list), true) => PropertyValue::List(PropertyList(
             list.0
                 .iter()
-                .map(|item| {
-                    let item = match item {
-                        PropertyListItem::Text(s) => PropertyValue::Str(s.clone()),
-                        PropertyListItem::Num(n) => PropertyValue::Num(*n),
-                    };
-                    match coerce(&item, &decl.value_type)? {
-                        PropertyValue::Str(s) => Some(PropertyListItem::Text(s)),
-                        PropertyValue::Num(n) => Some(PropertyListItem::Num(n)),
-                        _ => None,
-                    }
-                })
+                .map(|item| coerce(&PropertyValue::from(item), &decl.value_type)?.into_list_item())
                 .collect::<Option<_>>()?,
         )),
         (_, true) => return None,

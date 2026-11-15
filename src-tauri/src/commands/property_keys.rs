@@ -17,9 +17,8 @@ use agaric_engine::import::write_property_list;
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_engine::loro::shared::LoroState;
 use agaric_store::op::{
-    OpPayload, PropertyDefState, PropertyDefWrite, PropertyListItem, PropertyValueFields,
-    PropertyValueWrite, RenamePropertyKeyPayload, RewritePropertiesPayload, RewriteReason,
-    is_internal_property_key,
+    OpPayload, PropertyDefState, PropertyDefWrite, PropertyValueFields, PropertyValueWrite,
+    RenamePropertyKeyPayload, RewritePropertiesPayload, RewriteReason, is_internal_property_key,
 };
 use agaric_store::space::SpaceId;
 
@@ -257,10 +256,10 @@ pub(crate) fn value_fields(value: &PropertyValue) -> Option<PropertyValueFields>
 pub(crate) fn shown_value(value: &PropertyValue) -> String {
     match value {
         PropertyValue::List(list) => {
-            let items = list.0.iter().map(|item| match item {
-                PropertyListItem::Text(s) => s.clone(),
-                PropertyListItem::Num(n) => n.to_string(),
-            });
+            let items = list
+                .0
+                .iter()
+                .map(|item| shown_value(&PropertyValue::from(item)));
             write_property_list(&items.collect::<Vec<_>>())
         }
         single => single.as_legacy_string().unwrap_or_default(),
