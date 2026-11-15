@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { basename, relative } from 'node:path'
 
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
@@ -102,7 +103,7 @@ function expectNoConsoleErrors(page: Page): void {
 // it runs and every later file in that worker goes ungated. A page the test
 // opens itself (`page.context().newPage()`) is gated too.
 export const test = baseTest.extend<
-  { consoleErrorGate: void; realBackend: void },
+  { consoleErrorGate: void; realBackend: void; screenshotEvidence: void },
   { bridge: Bridge | null }
 >({
   // #6529 — one bridge to the real backend per worker, when a run names its
@@ -131,6 +132,27 @@ export const test = baseTest.extend<
         }, bridge.url)
       }
       await use()
+    },
+    { auto: true },
+  ],
+  // CI sets `PW_SHOT_DIR` and `PW_SHOT_SPECS` (space-separated paths, from
+  // `scripts/e2e-related.sh`) on a PR that changes UI files, and a reviewer reads
+  // the PNGs of the screens those specs end on. Unset, it does nothing.
+  screenshotEvidence: [
+    async ({ page }, use, testInfo) => {
+      await use()
+      const dir = process.env['PW_SHOT_DIR']
+      const specs = (process.env['PW_SHOT_SPECS'] ?? '').split(' ')
+      if (!dir || testInfo.status !== 'passed') return
+      if (!specs.includes(relative(process.cwd(), testInfo.file))) return
+      const slug = testInfo.titlePath.slice(1).join(' ').replace(/\W+/g, '-').slice(0, 150)
+      try {
+        await page.screenshot({
+          path: `${dir}/${basename(testInfo.file, '.spec.ts')}--${slug}.png`,
+        })
+      } catch (err) {
+        console.warn(`screenshotEvidence: ${testInfo.title}: ${String(err)}`)
+      }
     },
     { auto: true },
   ],
@@ -1417,7 +1439,7 @@ async function performPointerDrag(
  * committed and @dnd-kit's "over" state, set from an effect of that commit,
  * has committed too, so a release drops where the pointer is.
  */
-async function renderedFrame(page: Page): Promise<void> {
+export async function renderedFrame(page: Page): Promise<void> {
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   )
@@ -1458,13 +1480,16 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
 // it before lifting. Do not lower without checking it.
 const TOUCH_HOLD_MS = 550
 
-interface TouchPipeline {
+export interface TouchPipeline {
   start: (x: number, y: number) => Promise<void>
   move: (x: number, y: number) => Promise<void>
   end: () => Promise<void>
 }
 
-async function withTouch(page: Page, run: (touch: TouchPipeline) => Promise<void>): Promise<void> {
+export async function withTouch(
+  page: Page,
+  run: (touch: TouchPipeline) => Promise<void>,
+): Promise<void> {
   const cdp = await page.context().newCDPSession(page)
   const dispatch = async (
     type: 'touchStart' | 'touchMove' | 'touchEnd',
@@ -1487,10 +1512,33 @@ async function withTouch(page: Page, run: (touch: TouchPipeline) => Promise<void
   }
 }
 
-async function centerOf(locator: Locator, what: string): Promise<{ x: number; y: number }> {
+/** The centre of `locator`'s box as the page lays it out now. */
+export async function centerOf(locator: Locator, what: string): Promise<{ x: number; y: number }> {
   const box = await locator.boundingBox()
   if (!box) throw new Error(`${what}: no bounding box`)
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
+/**
+ * Carry a held pointer (`move` is its mouse or touch move) from `from` onto the
+ * centre of `target`, measuring `target` again before every step. A page that
+ * scrolls mid-drag (dnd-kit's edge auto-scroll, a layout shift) moves the
+ * target, so a centre taken before the press aims at where it was and the drop
+ * misses. Resolves with the last point sent.
+ */
+export async function carryOver(
+  from: { x: number; y: number },
+  target: Locator,
+  move: (x: number, y: number) => Promise<void>,
+  steps = 20,
+): Promise<{ x: number; y: number }> {
+  let at = from
+  for (let i = 1; i <= steps; i++) {
+    const to = await centerOf(target, 'carryOver target')
+    at = { x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps }
+    await move(at.x, at.y)
+  }
+  return at
 }
 
 /**
