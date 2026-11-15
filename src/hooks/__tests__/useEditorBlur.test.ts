@@ -954,7 +954,6 @@ describe('useEditorBlur', () => {
             seenMidBlur.push(committedText())
           },
         })
-        // oxlint-disable-next-line react/immutability -- test harness: publishes the render-produced handler onto an outer object so the test can invoke it after render; not production render logic (#4409)
         handle.blur = handleBlur
         return createElement('div', { 'data-testid': 'committed-content' }, committed)
       }
