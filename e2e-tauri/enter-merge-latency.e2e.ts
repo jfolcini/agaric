@@ -481,15 +481,16 @@ describe('Agaric real-backend Enter and merge latency, and a 300-line paste (#65
     await materializerIdle(SETTLE_MS)
 
     // The peer rewrites its blocks round the clock until the samples are done,
-    // and the app pulls them as often as the sidebar's Sync button lets it. A
-    // local write's own pull waits for a pause in writing (`LOCAL_EDIT_DEBOUNCE`),
-    // which keys pressed one after another never leave. `click()` from the page
-    // moves no focus, so the editor keeps it.
+    // and the app pulls them on a press of the sidebar's Sync button every 2 s.
+    // A local write's own pull waits for a pause in writing
+    // (`LOCAL_EDIT_DEBOUNCE`), which keys pressed one after another never
+    // leave. A press while the peer is pulling back is refused with a toast, so
+    // not oftener. `click()` from the page moves no focus.
     await browser.execute((selector: string) => {
       const timer = setInterval(() => {
         const button = document.querySelector<HTMLElement>(selector)
         if (button?.getAttribute('aria-disabled') === 'false') button.click()
-      }, 250)
+      }, 2_000)
       Object.assign(window, { __latencyPulls: timer })
     }, SYNC_BUTTON)
     const pullsBefore = pullsFinished()
