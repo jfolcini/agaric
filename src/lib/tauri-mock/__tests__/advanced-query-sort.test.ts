@@ -1065,20 +1065,21 @@ describe('run_advanced_query — Rank cursor value (#3888 note 4)', () => {
   it('emits an integral rank as a JSON integer — a byte difference from serde 10.0 that still decodes to Real(10.0)', () => {
     const HIT = id('F1')
     const OTHER = id('F2')
-    // 'aa' folded length 2, one occurrence of 'aa' → rank 2/1 = 2 (integral).
+    // 'aaa' folded length 3, one occurrence of 'aaa' → rank 3/1 = 3 (integral).
+    // Three characters: a shorter text has no MATCH, so no rank (#6752).
     for (const [blockId, content] of [
-      [HIT, 'aa'],
-      [OTHER, 'aaaa'],
+      [HIT, 'aaa'],
+      [OTHER, 'aaaaaa'],
     ] as const) {
       const b = makeBlock(blockId, 'text', content, PAGE, 0)
       b['page_id'] = PAGE
       b['content'] = content
       blocks.set(blockId, b)
     }
-    // Relevance ASC (lower = better): 'aa' scores 2/1 = 2, 'aaaa' scores
-    // 4/2 = 2 as well, so the id DESC tiebreak decides — F2 first.
+    // Relevance ASC (lower = better): 'aaa' scores 3/1 = 3, 'aaaaaa' scores
+    // 6/2 = 3 as well, so the id DESC tiebreak decides — F2 first.
     const page1 = run({
-      fulltext: 'aa',
+      fulltext: 'aaa',
       sort: [{ source: { type: 'Relevance' } }],
       limit: 1,
     })
@@ -1092,12 +1093,12 @@ describe('run_advanced_query — Rank cursor value (#3888 note 4)', () => {
         (c) => c.codePointAt(0) ?? 0,
       ),
     )
-    // The RAW bytes, not the parsed value: `2` vs serde's `2.0` is invisible
+    // The RAW bytes, not the parsed value: `3` vs serde's `3.0` is invisible
     // after `JSON.parse`, and the raw form is what this pins.
-    expect(cursorJson).toContain('{"t":"Real","v":2}')
-    // …and the resume still works, which is the reason it stays a `2`.
+    expect(cursorJson).toContain('{"t":"Real","v":3}')
+    // …and the resume still works, which is the reason it stays a `3`.
     const page2 = run({
-      fulltext: 'aa',
+      fulltext: 'aaa',
       sort: [{ source: { type: 'Relevance' } }],
       limit: 1,
       cursor: page1.nextCursor,

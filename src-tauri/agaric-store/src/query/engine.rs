@@ -23,7 +23,9 @@
 //!    b.id = fts.block_id` and `fts_blocks MATCH ?1` (the sanitised query)
 //!    is AND-composed in front of the structural predicate — the MATCH ∩
 //!    the structural WHERE. The MATCH takes the `?1` slot and the space +
-//!    filter binds shift one slot right.
+//!    filter binds shift one slot right. A term under the trigram floor is
+//!    the search box's substring test, AND-ed after the filter; a text of
+//!    only such terms has no MATCH and keeps the plain FROM (#6752).
 //! 5. **Sort + keyset** — the default keyset is `b.id DESC` (or, with a
 //!    `fulltext` term, `fts.rank ASC` relevance-first) terminating in
 //!    `b.id`; each requested [`SortKey`] maps to a literal column / the
@@ -41,7 +43,7 @@ use crate::filters::primitive::{
     Bind, FilterPrimitive, PropertyPredicate, last_edited_ms_sql, ulid_created_ms_sql,
 };
 use crate::filters::{CompileExpr, FilterExpr, SqlFragment};
-use crate::fts::sanitize_fts_query;
+use crate::fts::{ParsedQuery, parse_query, shown_text_contains};
 use crate::pagination::ActiveBlockRow;
 use agaric_core::error::AppError;
 
@@ -610,7 +612,16 @@ pub async fn compile_and_run(
         Some(s) => Some(QueryCursor::decode(s)?),
         None => None,
     };
-    let (terms, sort_joins) = resolve_sort(&request.sort, ctx.has_fulltext())?;
+    // A query of only short terms has no MATCH to rank on: every row ties on
+    // relevance, as in the search box's scan, so that key orders nothing.
+    let unranked = request.fulltext.is_some() && !ctx.has_fulltext();
+    let sort: Vec<SortKey> = request
+        .sort
+        .iter()
+        .filter(|key| !(unranked && matches!(key.source, SortSource::Relevance)))
+        .cloned()
+        .collect();
+    let (terms, sort_joins) = resolve_sort(&sort, ctx.has_fulltext())?;
     if let Some(c) = cursor.as_ref()
         && c.values.len() != terms.len()
     {
@@ -637,23 +648,21 @@ fn validate_limit(limit: Option<i64>) -> Result<i64, AppError> {
     }
 }
 
-/// Sanitise the full-text query into the FTS5 `MATCH` expression, or `None`
-/// when the request carries no full-text term.
+/// Parse the full-text query the way the search box does, or `None` when the
+/// request carries no full-text term.
 ///
-/// An empty result after trigram/operator filtering (e.g. a query of only
-/// sub-trigram tokens) is REJECTED rather than dropped, because dropping it
+/// A query left with nothing to search for (only operators, or only short
+/// terms beside an `OR`) is REJECTED rather than dropped, because dropping it
 /// would silently widen the query to the whole structural set.
-fn sanitize_fulltext(raw: Option<&str>) -> Result<Option<String>, AppError> {
+fn parse_fulltext(raw: Option<&str>) -> Result<Option<ParsedQuery>, AppError> {
     let Some(raw) = raw else { return Ok(None) };
-    let sanitized = sanitize_fts_query(raw);
-    if sanitized.is_empty() {
+    let parsed = parse_query(raw);
+    if parsed.match_expr.is_empty() && parsed.short_terms.is_empty() {
         return Err(AppError::validation(
-            "Invalid search query: no searchable terms (each term must be \
-             at least 3 characters)"
-                .to_string(),
+            "Invalid search query: no searchable terms".to_string(),
         ));
     }
-    Ok(Some(sanitized))
+    Ok(Some(parsed))
 }
 
 /// Compile the boolean filter tree into the one predicate every statement in
@@ -681,14 +690,32 @@ fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppErro
     // `fts_blocks MATCH ?1` is AND-composed in front of the structural WHERE.
     // The `bm25` rank (`fts.rank`) becomes the per-row `score` and the
     // relevance sort source.
-    let match_sanitized = sanitize_fulltext(request.fulltext.as_deref())?;
+    // A term under the trigram floor is the search box's substring test on
+    // the block's indexed text, AND-ed after the filter (#6752). A query of
+    // only such terms has no MATCH, so it runs on the structural path.
+    let text = parse_fulltext(request.fulltext.as_deref())?;
+    let (match_sanitized, short_terms) = match text {
+        Some(t) => (
+            (!t.match_expr.is_empty()).then_some(t.match_expr),
+            t.short_terms,
+        ),
+        None => (None, Vec::new()),
+    };
     let has_fulltext = match_sanitized.is_some();
 
     let space_pos = if has_fulltext { 2 } else { 1 };
     let mut next_pos = space_pos + 1; // first free slot after the space bind
     let filter_fragment = SqlFragment::from_where_clause(where_clause);
     let filter_sql = filter_fragment.render(&mut next_pos);
-    let filter_binds = filter_fragment.into_binds();
+    let mut filter_binds = filter_fragment.into_binds();
+    let short_terms_sql = if short_terms.is_empty() {
+        String::new()
+    } else {
+        let (sql, patterns) = shown_text_contains(&short_terms, next_pos);
+        next_pos += patterns.len();
+        filter_binds.extend(patterns.into_iter().map(Bind::Text));
+        format!(" AND {sql}")
+    };
 
     let from_clause = if has_fulltext {
         "fts_blocks fts JOIN blocks b ON b.id = fts.block_id"
@@ -714,7 +741,7 @@ fn compile_query_ctx(request: &AdvancedQueryRequest) -> Result<QueryCtx, AppErro
         from_clause,
         predicate: format!(
             "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL{template_guard} \
-             AND {} AND ({filter_sql})",
+             AND {} AND ({filter_sql}){short_terms_sql}",
             crate::filters::NOT_SAVED_VIEW
         ),
         space_id: request.space_id.clone(),

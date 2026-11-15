@@ -18,7 +18,7 @@
 // be free to drift from the backend's `Cursor` shape.
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
-import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { matchesFtsIndex, matchesSearchText, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   columnBackedValue,
@@ -188,27 +188,21 @@ function matchesBacklinkFilter(
     }
     case 'Contains': {
       const query = (filter['query'] as string) ?? ''
-      // #4022 — `BacklinkFilter::Contains` is `sanitize_fts_query` + `WHERE
-      // fts_blocks MATCH ?1` (`agaric-store/src/backlink/filters.rs:381-421`,
-      // SQL at :398-407). It is NOT a `LIKE` scan over `blocks.content`: it
-      // reads the SAME trigram index `search_blocks` does, so it matches
-      // `stripForFts`'s text through the index's case-only fold. This was
-      // `matchesSearchFolded` over raw content, which both over-matched
-      // (folding diacritics the tokenizer does not fold) and under-matched
-      // (blind to markup-hidden terms and to the names `#[ULID]` /
-      // `[[ULID]]` resolve to).
+      // #4022 — `BacklinkFilter::Contains` reads the SAME trigram index
+      // `search_blocks` does, and since #6752 splits the query the same way
+      // (`resolve_contains`, `agaric-store/src/backlink/filters.rs`): each
+      // longer term in `stripForFts`'s text through the index's case-only
+      // fold, each term under three characters as a substring of that text.
       //
       // One query-SIDE divergence is left standing, and is named rather than
       // modelled: the backend early-returns an EMPTY result set when
-      // `query.trim().is_empty()` or the query sanitizes to empty
-      // (`src-tauri/agaric-store/src/backlink/filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
-      // every candidate for an empty needle. Note the backend TRIMS, so this
-      // covers two shapes — `''` (which `matchesFtsIndex` short-circuits to
-      // "match all") and whitespace-only such as `'   '` (which it runs as a
-      // three-space substring test). Both are the pre-#4022 behaviour here,
-      // unchanged by this seam, and both are reachable from this call site
-      // because it does not test blank-ness first.
-      return matchesFtsIndex(stripForFts(b['content'] as string | null), query)
+      // `query.trim().is_empty()` or the query leaves nothing to search for,
+      // where `matchesFtsIndex` admits every candidate for an empty needle.
+      // The backend TRIMS, so this covers `''` (which `matchesFtsIndex`
+      // short-circuits to "match all") and whitespace-only such as `'   '`
+      // (which it runs as a three-space substring test). Both are reachable
+      // from this call site because it does not test blank-ness first.
+      return matchesSearchText(stripForFts(b['content'] as string | null), query)
     }
     case 'PropertyText':
     case 'PropertyNum':

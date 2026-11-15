@@ -55,7 +55,7 @@ function skipNotes(t: TFunction, replace: SearchReplace): string[] {
 
 function statusText(t: TFunction, mode: SearchReplaceMode, replace: SearchReplace): string {
   if (mode.unavailable === 'regex') return t('search.replace.noRegex')
-  if (mode.unavailable === 'tooShort') return t('search.replace.tooShort')
+  if (mode.unavailable === 'noText') return t('search.replace.noText')
   if (replace.state.kind === 'loading') return t('search.replace.loading')
   if (replace.state.kind === 'tooMany') return t('search.replace.tooMany')
   const none = replace.state.blocks === 0 ? [t('search.replace.none')] : []

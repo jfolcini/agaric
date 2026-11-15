@@ -40,8 +40,9 @@ pub use cursor::search_fts;
 // up in `fts/mod.rs`).
 pub use sanitizer::sanitize_fts_query;
 
-// The parsed query, for the toggle pipeline's short-term highlighting.
-pub(in crate::fts) use sanitizer::parse_query;
+// The parsed query, for the toggle pipeline's short-term highlighting and the
+// backlink and query-engine text filters (via `crate::fts`).
+pub(crate) use sanitizer::{ParsedQuery, parse_query};
 
 // Result / query-length ceilings.
 pub use constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};
