@@ -193,6 +193,58 @@ describe('a query table cell against the mock backend', () => {
     )
   })
 
+  // #6741 — a key that holds several values: the cell shows the items and edits
+  // them with the list editor, which writes the whole list, never one scalar.
+  async function holdList(key: string, valueType: string, items: string[]): Promise<void> {
+    await invoke('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key,
+      valueType,
+      options: null,
+      multiple: true,
+    })
+    await invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_MTG_1,
+      key,
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+        value_list: items,
+      },
+    })
+    mockedInvoke.mockClear()
+  }
+
+  it('shows a list’s items and adds one with the list editor', async () => {
+    await holdList('authors', 'text', ['Ann', 'Bob'])
+    const user = userEvent.setup()
+    const { container } = render(<QueryResult expression={`${QUERY} columns:authors`} />)
+
+    await user.click(await editCell('authors', 'Ann, Bob'))
+    const add = screen.getByRole('textbox', {
+      name: t('property.addListItem', { key: 'authors' }),
+    })
+    expect(add).toHaveFocus()
+    expect(await axe(container)).toHaveNoViolations()
+    await user.keyboard('Cy{Enter}')
+    expect(await screen.findByText('Cy')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    const cell = await editCell('authors', 'Ann, Bob, Cy')
+    await waitFor(() => expect(cell).toHaveFocus())
+    expect(writes()).toEqual(['set_property'])
+  })
+
+  it('shows a ref list’s items by their pages’ titles', async () => {
+    await holdList('reviewers', 'ref', [SEED_IDS.PAGE_GETTING_STARTED])
+    render(<QueryResult expression={`${QUERY} columns:reviewers`} />)
+
+    expect(await editCell('reviewers', 'Getting Started')).toBeInTheDocument()
+  })
+
   it('shows an error toast and keeps the value when the write is rejected', async () => {
     const answer = mockedInvoke.getMockImplementation()
     if (!answer) throw new Error('answerInvokeFromMock set no implementation')

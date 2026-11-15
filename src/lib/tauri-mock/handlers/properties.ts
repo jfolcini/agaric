@@ -402,6 +402,19 @@ function liveBlock(blockId: string): Record<string, unknown> {
   return b
 }
 
+/** The item types whose list items the value typeahead offers (#6741). */
+const LIST_VALUE_TYPES_OFFERED: ReadonlySet<string | undefined> = new Set(['text', 'select', 'url'])
+
+/** The type `key`'s definition gives in the space of the block `blockId`, trashed or not. */
+function listItemType(blockId: string, key: string): string | undefined {
+  const block = blocks.get(blockId)
+  const spaceId =
+    block === undefined ? null : ((block['space_id'] as string | null) ?? ownerSpaceOf(block))
+  return spaceId === null
+    ? undefined
+    : (propertyDefs.get(spaceId)?.get(key)?.['value_type'] as string | undefined)
+}
+
 export const propertiesHandlers = {
   // Mirrors `pagination::query_by_property` (#3827). One `block_properties`
   // (or native-column) row per block; the comparison operator applies to
@@ -741,16 +754,25 @@ export const propertiesHandlers = {
 
   // #1425 — distinct text values for a key, usage-ranked (most-used
   // first), `value ASC` tiebreaker. Mirrors the backend
-  // `list_property_values`, surfacing only the `value_text` channel.
+  // `list_property_values`, surfacing the `value_text` channel and, from a
+  // list (#6741) whose key the holder's space declares text, select or url,
+  // each string item, counted with them; never ref ids, dates or numbers.
   list_property_values: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
     const counts = new Map<string, number>()
-    for (const blockProps of properties.values()) {
+    const count = (value: string): void => {
+      counts.set(value, (counts.get(value) ?? 0) + 1)
+    }
+    for (const [blockId, blockProps] of properties) {
       const prop = blockProps.get(key)
       const value = prop?.['value_text']
-      if (typeof value !== 'string') continue
-      counts.set(value, (counts.get(value) ?? 0) + 1)
+      if (typeof value === 'string') count(value)
+      const list = prop?.['value_list']
+      if (!Array.isArray(list) || !LIST_VALUE_TYPES_OFFERED.has(listItemType(blockId, key))) {
+        continue
+      }
+      for (const item of list as unknown[]) if (typeof item === 'string') count(item)
     }
     return [...counts.entries()]
       .toSorted((x, y) => y[1] - x[1] || compareUtf8Bytes(x[0], y[0]))

@@ -188,6 +188,34 @@ describe('useQuerySorting', () => {
     expect(result.current.sortedResults.map((b) => b.id)).toEqual(['B', 'A'])
   })
 
+  // #6741 — a list sorts by its first item; one holding only a longer first
+  // item's prefix ties with it rather than sorting before it, as its joined
+  // text would.
+  it('sorts a list column by its first item, a block without it last', () => {
+    const list = (items: string[]) => ({
+      key: 'authors',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+      value_list: items,
+    })
+    const propertyRows = { A: [list(['Ann', 'Zed'])], B: [list(['Ann'])] }
+    const customProps = new Map([
+      ['A', new Map([['authors', 'Ann, Zed']])],
+      ['B', new Map([['authors', 'Ann']])],
+    ])
+    const results = [blockC, blockA, blockB]
+    const { result } = renderHook(() => useQuerySorting({ results, customProps, propertyRows }))
+
+    act(() => {
+      result.current.handleColumnSort('prop:authors')
+    })
+
+    expect(result.current.sortedResults.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+  })
+
   // #2041 — the Schwartzian-transform rewrite must keep the sort STABLE: rows
   // with equal sort keys preserve their original relative order.
   it('is stable for rows with equal sort keys', () => {

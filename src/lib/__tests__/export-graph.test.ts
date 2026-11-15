@@ -1207,6 +1207,25 @@ describe('the space file and the title line (#6277 decision 8)', () => {
     })
   })
 
+  it('writes no flag on a key whose definition says it holds one value', async () => {
+    stubExport({
+      list_property_defs: () => ({
+        ...NO_DEFS,
+        items: [{ ...def('effort', 'number'), multiple: false }],
+      }),
+      list_all_pages_in_space: () => [makePageHeading({ id: 'P1', content: 'Plain' })],
+      export_page_markdown: () => '- body\n',
+    })
+
+    const { blob } = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+
+    expect(await spaceFile(unzipped)).toEqual({
+      propertyDefinitions: [{ key: 'effort', value_type: 'number', options: null }],
+      titles: {},
+    })
+  })
+
   it('writes no space file when the space defines nothing and every path reads back as its title', async () => {
     stubExport({
       list_all_pages_in_space: () => [

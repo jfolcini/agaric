@@ -26,9 +26,9 @@ import {
   isInlinePropertyKey,
 } from '@/lib/inline-property-parse'
 import { nameKey, normalizeTagName } from '@/lib/name-tokens'
-import { joinListItems, splitListItems } from '@/lib/property-list'
+import { joinListItems, RUST_F64, splitListItems } from '@/lib/property-list'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { RUST_F64, RUST_TRIM } from '@/lib/tauri-mock/coerce'
+import { RUST_TRIM } from '@/lib/tauri-mock/coerce'
 import { withoutEvents } from '@/lib/tauri-mock/events'
 import { blocksHandlers } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'

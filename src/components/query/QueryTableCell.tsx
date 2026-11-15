@@ -2,7 +2,9 @@
  * One editable cell of a query table (#6743): a button showing the value that
  * opens, in place, the Properties table's editor for the key's type. Committing
  * is one write of that block, with the board's Undo toast (`recordBlockWrite`);
- * Escape closes the editor and writes nothing.
+ * Escape closes the editor and writes nothing. A key that holds several values
+ * (#6741) shows its items, a ref list its pages' titles, and opens the list
+ * editor, each added or removed item one write of the whole list.
  */
 
 import type React from 'react'
@@ -11,8 +13,10 @@ import { useTranslation } from 'react-i18next'
 
 import { recordBlockWrite, writeBlockValue } from '@/components/AdvancedQuery/board-move'
 import { EditorSlot } from '@/components/properties/PropertyRowEditor'
+import { ListEditor } from '@/components/properties/PropertyRowEditor/ListEditor'
 import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
 import { usePropertyRowEditor } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
+import { useRefTitles } from '@/components/properties/useRefTitle'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import type { BlockRow, PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { isUnfit, valueForm } from '@/lib/property-fit'
@@ -41,6 +45,7 @@ function CellEditor({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const cancelled = useRef(false)
   const done = t('queryResult.cell.updated', { column: label })
+  const valueLabel = t('pageProperty.valueLabel', { key: label })
   const current = readCurrentValue(prop)
   const { handleSave, handleDelete } = usePropertySave({
     blockId: block.id,
@@ -75,15 +80,21 @@ function CellEditor({
   })
   const { valueType } = bag
   const { open: pickerOpen, handleOpen: openPicker } = bag.refPicker
+  const multiple = def?.multiple === true
 
   // A ref's picker loads its pages and opens; a select opens by itself; the
-  // other controls take the focus the cell's button had.
+  // other controls take the focus the cell's button had, a list's its add
+  // control, which follows its items' remove buttons.
   useEffect(() => {
     if (valueType === 'ref') openPicker()
-    else if (valueType !== 'select') {
+    else if (multiple) {
+      ;[...(wrapperRef.current?.querySelectorAll<HTMLElement>('input, button') ?? [])]
+        .at(-1)
+        ?.focus()
+    } else if (valueType !== 'select') {
       wrapperRef.current?.querySelector<HTMLElement>('input, button')?.focus()
     }
-  }, [valueType, openPicker])
+  }, [valueType, multiple, openPicker])
 
   // The picker closing, on a pick or a dismissal, closes the cell with it.
   const pickerWasOpen = useRef(false)
@@ -116,22 +127,37 @@ function CellEditor({
         }
       }}
     >
-      <EditorSlot
-        bag={bag}
-        prop={prop}
-        onSave={commit}
-        valueLabel={t('pageProperty.valueLabel', { key: label })}
-        hasCreateNewPage={false}
-        unfit={isUnfit(prop.key, valueForm(prop), prop.value_text, def)}
-        onSelectClose={() => onClose(true)}
-      />
+      {def?.multiple ? (
+        <ListEditor
+          blockId={block.id}
+          prop={prop}
+          def={def}
+          refPicker={bag.refPicker}
+          ariaLabel={valueLabel}
+          hasCreateNewPage={false}
+          onWritten={(refs) => recordBlockWrite(block, refs, done)}
+        />
+      ) : (
+        <EditorSlot
+          bag={bag}
+          prop={prop}
+          onSave={commit}
+          valueLabel={valueLabel}
+          hasCreateNewPage={false}
+          unfit={isUnfit(prop.key, valueForm(prop), prop.value_text, def)}
+          onSelectClose={() => onClose(true)}
+        />
+      )}
     </div>
   )
 }
 
 export function QueryTableCell(props: QueryTableCellProps): React.ReactElement {
-  const { label, display } = props
+  const { label, prop, def } = props
   const { t } = useTranslation()
+  const refItems = def?.value_type === 'ref' ? (prop.value_list?.map(String) ?? []) : []
+  const titles = useRefTitles(refItems)
+  const display = refItems.length > 0 ? titles : props.display
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const refocus = useRef(false)
