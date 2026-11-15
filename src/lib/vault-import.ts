@@ -482,7 +482,8 @@ export function isNotionPick(files: readonly File[]): boolean {
 /**
  * The files of a pick that imported as nothing: neither a note, nor a file a
  * note may embed or link, nor one a note did (`attached`, vault-relative paths),
- * nor hidden (`.obsidian/`, `.DS_Store`). A Notion export's database tables
+ * nor hidden (`.obsidian/`, `.DS_Store`), nor a Logseq graph's `config.edn`
+ * (read for its titles). A Notion export's database tables
  * are counted apart, as `databases`, since each row of one is also a page of
  * the export; Notion writes each as `X.csv` and again as `X_all.csv`.
  */
@@ -497,6 +498,7 @@ export function skippedFiles(
     const path = file.webkitRelativePath || file.name
     if (noteExtension(file.name) !== null || ATTACHMENT_RE.test(file.name)) continue
     if (/(?:^|\/)\./.test(path) || attached.has(vaultRelativePath(path))) continue
+    if (vaultRelativePath(path) === LOGSEQ_CONFIG) continue
     if (notion && file.name.toLowerCase().endsWith('.csv')) {
       databases.add(path.replace(/_all\.csv$/i, '.csv'))
     } else other++

@@ -11,7 +11,8 @@
 #   required checks   `validate / validate-all`, `e2e-tauri-gate` and `dco` are
 #                     all success on the PR's current head sha (a missing or
 #                     still-running one fails)
-#   review            the newest submitted review is APPROVED on that same head
+#   review            the newest APPROVED or CHANGES_REQUESTED review (a COMMENTED
+#                     one decides nothing) is APPROVED on that same head
 #                     sha, or every changed file is Markdown, which the
 #                     reviewer skips (`claude-code-review.yml` paths-ignore)
 #   mergeable         `mergeable_state` is not dirty; `unknown` (GitHub is still
@@ -102,10 +103,11 @@ elif [ "$(jq 'length' <<<"$files")" -gt 0 ] && jq -e 'all(.[]; .filename | endsw
 elif ! raw=$(api "repos/$REPO/pulls/$PR/reviews?per_page=100") || ! reviews=$(jq -s '[.[][]?]' <<<"$raw" 2>/dev/null); then
   fail "review: the PR's reviews could not be read"
 else
-  # `submitted_at` is null on a pending review that nobody has submitted.
-  newest=$(jq -c '[.[] | select(.submitted_at != null)] | sort_by(.submitted_at) | last // empty' <<<"$reviews")
+  # `submitted_at` is null on a pending review that nobody has submitted; a COMMENTED one
+  # after an approval neither withdraws it nor asks for changes.
+  newest=$(jq -c '[.[] | select(.submitted_at != null and (.state == "APPROVED" or .state == "CHANGES_REQUESTED"))] | sort_by(.submitted_at) | last // empty' <<<"$reviews")
   if [ -z "$newest" ]; then
-    fail "review: none submitted"
+    fail "review: none submitted that approves or requests changes"
   else
     read -r rstate rsha < <(jq -r '[.state, .commit_id] | join(" ")' <<<"$newest")
     if [ "$rstate" != "APPROVED" ]; then
@@ -184,6 +186,9 @@ else
     fail "main moved: the files changed on $BASE_REF since $(short "$since") could not be read"
   # A rename counts under both names. The lists go in on stdin, not as arguments: a compare
   # with large patches overflowed the argument limit, jq failed, and an empty overlap passed.
+  # The compare API lists at most 300 files, so a list that long may be cut short.
+  elif [ "$(jq 'length' <<<"$main_files")" -ge 300 ]; then
+    fail "main moved: $BASE_REF changed 300 or more files since $(short "$since"), the most the compare API lists; the overlap cannot be checked, so merge $BASE_REF into the branch"
   elif ! overlap=$(printf '%s\n%s\n' "$files" "$main_files" | jq -sr '
       def names: map(.filename, .previous_filename) | map(select(. != null)) | unique;
       (.[0] | names) as $a | (.[1] | names) as $b | $a - ($a - $b) | .[]'); then
