@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { TagEntry } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { insertEmojiIntoInput, spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
+import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
 import { dashedTagName } from '@/lib/name-tokens'
 
 export interface PageTagSectionProps {
@@ -121,7 +122,13 @@ export function PageTagSection({
             <Plus />
           </Button>
         </PopoverTrigger>
-        <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageHeader.tagPicker')}>
+        {/* The picker closes once its create or add IPC returns; a click into a
+            block meanwhile has moved the focus to that block's editor. */}
+        <MenuPopoverContent
+          className="space-y-2 p-3"
+          aria-label={t('pageHeader.tagPicker')}
+          onCloseAutoFocus={keepFocusThatMovedOn}
+        >
           <div className="flex items-center gap-1">
             <Input
               ref={tagInputRef}
