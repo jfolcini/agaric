@@ -1,4 +1,4 @@
-# Session 4202 — shfmt hook and a pinned shellcheck
+# Session 4206 — shfmt hook and a pinned shellcheck
 
 #6762, all three items, as the maintainer approved them on the issue: an `shfmt (write)` hook, the tree formatted once, and shellcheck pinned instead of taken from apt, brew or the runner image.
 
