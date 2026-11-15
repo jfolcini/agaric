@@ -24,7 +24,7 @@ export const KEPT_QUERY_LANGUAGE = 'logseq-query'
 export const KEPT_QUERY_MARKER = 'Logseq query, not translated:'
 
 /** A bullet or paragraph line that is one macro whose expression opens as Logseq's do: group 1 the line's lead, 2 the expression. */
-const QUERY_LINE_RE = /^(\s*(?:[-*+]\s+)?)\{\{query\s+([(["[].*?)\s*\}\}\s*$/i
+const QUERY_LINE_RE = /^(\s*(?:[-*+]\s+)?)\{\{query\s+([("[].*?)\s*\}\}\s*$/i
 
 const TAG_NAME = String.raw`[\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*`
 
