@@ -65,8 +65,8 @@ pub(crate) async fn copy_page_blocks_in_tx(
     let dest = BlockId::from_trusted(dest_page_id);
     let mut lines = PropertyLines::load_for_block(tx, &dest, PropertyWrite::Copy).await?;
     // #6741 — a copy writes back each list its blocks held, declared or not.
-    for (key, text) in undeclared_lists(&data) {
-        lines.note_list(key, text);
+    for (block, key, text) in held_lists(&data) {
+        lines.note_list(HeldBy::Block(Some(&block)), key, text);
     }
     Box::pin(create_parsed_blocks(
         tx,
@@ -550,7 +550,17 @@ pub(super) async fn splice_into_anchor(
         None,
     )
     .await?;
-    apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;
+    let held_by = HeldBy::Block(first.block_anchor.as_deref());
+    apply_block_properties(
+        tx,
+        materializer,
+        device_id,
+        id,
+        held_by,
+        &first.properties,
+        lines,
+    )
+    .await?;
     if let Some(state) = stamped_todo_state(first) {
         super::super::properties::write_todo_timestamp_transitions_in_tx(
             tx,
@@ -762,7 +772,17 @@ pub(super) async fn create_parsed_blocks(
         .await?;
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
-        apply_block_properties(tx, materializer, device_id, &id, &block.properties, lines).await?;
+        let held_by = HeldBy::Block(block.block_anchor.as_deref());
+        apply_block_properties(
+            tx,
+            materializer,
+            device_id,
+            &id,
+            held_by,
+            &block.properties,
+            lines,
+        )
+        .await?;
         if let Some(state) = stamped_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,

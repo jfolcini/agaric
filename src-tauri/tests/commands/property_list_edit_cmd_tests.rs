@@ -582,6 +582,24 @@ async fn duplicate_copies_each_list_a_block_holds_6741() {
     );
 }
 
+/// A copy reads a line as a list only for the block that held the list: a
+/// text under the same undeclared key whose line reads the same stays text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_keeps_a_text_that_reads_as_another_blocks_list_6741() {
+    let f = fixture().await;
+    let under = append_child(&f.pool, &f.mat, &f.child, "under").await;
+    f.set_list(&f.child, "phase", texts(&["draft"]))
+        .await
+        .unwrap();
+    f.set_text(&under, "phase", "draft").await;
+    let copy = duplicate(&f.pool, &f.mat, &f.child).await;
+    assert_eq!(copy.len(), 2);
+    let phase = texts(&["draft"]);
+    assert_eq!(lists(&f, &copy[0].id).await, vec![("phase".into(), phase)]);
+    assert_eq!(f.text(&copy[1].id, "phase").await.as_deref(), Some("draft"));
+    assert_eq!(lists(&f, &copy[1].id).await, vec![]);
+}
+
 /// A text under a key that holds a list, a value that doesn't fit it, is
 /// written as a list of one: Edit as Markdown's line and Duplicate's copy read
 /// it back as that one item, never as the parts its comma splits it into, so a

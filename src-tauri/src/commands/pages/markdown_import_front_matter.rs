@@ -109,14 +109,14 @@ pub(super) async fn apply_frontmatter_properties(
         // #6741 — a YAML list is a list value, item for item, under any key
         // but one that holds a single value, which takes its items joined.
         if is_list {
-            lines.note_list(key.clone(), value.clone());
+            lines.note_list(HeldBy::FrontMatter, key.clone(), value.clone());
         }
         // #1921 (B1) — the declaration read once for the whole import. A key
         // with no `property_definitions` row stays undeclared (`None`). A ref
         // value reads as a `key::` line's does: a live block id of the space,
         // or `[[Title]]` or a title by the link rule (#6277 F3).
         let declaration = lines.declaration(&key);
-        let args = match lines.read(&key, value) {
+        let args = match lines.read(HeldBy::FrontMatter, &key, value) {
             Ok(args) => args,
             Err(reason) => {
                 warnings.push(format!(

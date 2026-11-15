@@ -1019,12 +1019,13 @@ pub(super) async fn apply_block_properties(
     materializer: &Materializer,
     device_id: &str,
     block_id: &str,
+    held_by: HeldBy<'_>,
     properties: &[(String, String)],
     lines: &PropertyLines,
 ) -> Result<u32, AppError> {
     let mut set: u32 = 0;
     for (key, value) in properties {
-        let value = lines.read(key, value).map_err(|reason| {
+        let value = lines.read(held_by, key, value).map_err(|reason| {
             let line = lines.typed_line(key, value);
             AppError::validation(format!("`{line}` cannot be saved: {reason}"))
         })?;
@@ -1169,6 +1170,7 @@ pub(super) async fn insert_blocks(
                 materializer,
                 device_id,
                 &new_block_id,
+                HeldBy::Block(block.block_anchor.as_deref()),
                 &properties,
                 &ctx.lines,
             )

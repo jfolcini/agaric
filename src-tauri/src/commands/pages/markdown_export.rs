@@ -87,13 +87,18 @@ fn frontmatter_row_items<'a>(
     Some(items.collect())
 }
 
-/// Each list `data`'s blocks hold under a key no definition says holds one,
-/// as `(key, the text its line writes)`, which a copy reads back as that
-/// list (`PropertyLines::note_list`, #6741).
-pub(super) fn undeclared_lists(data: &PageExportData) -> Vec<(String, String)> {
-    let rows = data.descendant_properties.values().flatten();
-    rows.filter(|row| row.value_list.is_some() && !row.list_of_refs)
-        .map(|row| (row.key.clone(), frontmatter_row_value(row, |_| None)))
+/// Each list of text or numbers `data`'s blocks hold, as `(block, key, the
+/// text its line writes)`, declared or not: a copy notes them all
+/// (`PropertyLines::note_list`, #6741), and its read takes one as a list only
+/// under a key no definition says holds several values.
+pub(super) fn held_lists(data: &PageExportData) -> Vec<(String, String, String)> {
+    let blocks = data.descendant_properties.iter();
+    let rows = blocks.flat_map(|(block, rows)| rows.iter().map(move |row| (block, row)));
+    rows.filter(|(_, row)| row.value_list.is_some() && !row.list_of_refs)
+        .map(|(block, row)| {
+            let text = frontmatter_row_value(row, |_| None);
+            (block.clone(), row.key.clone(), text)
+        })
         .collect()
 }
 
