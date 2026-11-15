@@ -175,7 +175,7 @@ pub(crate) use block_links::rebuild_block_links_unresolved_conn;
 pub use block_links::{
     backfill_block_links, classify_link_kind, rebuild_block_links_unresolved, rederive_block_links,
     reindex_block_links, reindex_block_links_conn, reindex_block_links_split,
-    unresolved_link_sources,
+    unresolve_links_into_purged, unresolved_link_sources,
 };
 pub use block_tag_refs::{
     rebuild_block_tag_refs_cache, rebuild_block_tag_refs_cache_split, reindex_block_tag_refs,

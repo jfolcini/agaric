@@ -2107,9 +2107,9 @@ async fn delete_purge_link_refs_and_doc_state(
 /// descends from the purged block must go. `depth < 100` is the
 /// runaway-recursion guard.
 ///
-/// Returns the blocks left behind whose `((ref))` or `[[link]]` named the
-/// subtree, read before their `block_links` rows go, for the caller to
-/// re-strip once the purge commits (#6843).
+/// Returns the live blocks left behind whose `((ref))` or `[[link]]` named the
+/// subtree, their edges now unresolved, for the caller to re-strip once the
+/// purge commits (#6843).
 // `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
 // `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
 // assert remote-purge SQL == local-purge SQL across every derived table.
@@ -2122,7 +2122,7 @@ pub async fn purge_block_sql_cascade(
         .execute(&mut *conn)
         .await?;
     collect_purge_descendants(conn, block_id).await?;
-    let fts_referrers = agaric_store::fts::purged_block_referrers(
+    let fts_referrers = agaric_store::cache::unresolve_links_into_purged(
         conn,
         "",
         "SELECT id FROM _purge_descendants",

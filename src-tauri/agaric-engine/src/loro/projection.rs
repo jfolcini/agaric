@@ -709,9 +709,9 @@ async fn delete_purge_ids_derived_rows(conn: &mut SqliteConnection) -> Result<()
 /// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
 /// deletes nothing the second time (every row is already gone).
 ///
-/// Returns the blocks left behind whose `((ref))` or `[[link]]` named a
-/// purged id, as `purge_block_sql_cascade` does, for the caller to re-strip
-/// once the purge commits (#6843).
+/// Returns the live blocks left behind whose `((ref))` or `[[link]]` named a
+/// purged id, their edges now unresolved, as `purge_block_sql_cascade` does,
+/// for the caller to re-strip once the purge commits (#6843).
 pub async fn project_purge_blocks_to_sql(
     conn: &mut SqliteConnection,
     block_ids: &[&str],
@@ -742,7 +742,7 @@ pub async fn project_purge_blocks_to_sql(
             .execute(&mut *conn)
             .await?;
     }
-    let fts_referrers = agaric_store::fts::purged_block_referrers(
+    let fts_referrers = agaric_store::cache::unresolve_links_into_purged(
         &mut *conn,
         "",
         "SELECT id FROM _purge_ids",

@@ -68,6 +68,47 @@ pub async fn unresolved_link_sources(
     Ok(rows.into_iter().map(|r| r.source_id).collect())
 }
 
+/// #6843 — run by a purge cascade before it deletes the `block_links` rows
+/// that name its members. Each of those edges whose source is live and outside
+/// the member set is recorded in `block_links_unresolved`: a purged target is a
+/// dangling reference, which keeps its row (migration 0112). Returns every live
+/// source outside the set with an unresolved row into it, for the caller to
+/// re-strip once the purge commits, since a `((ULID))` indexes its target's
+/// first line.
+///
+/// `cte_prefix`, `member_subquery` and `bind` are the cascade's member set, in
+/// the shape `purge_block_satellite_caches` takes.
+///
+/// # Errors
+/// Returns [`AppError`] if a query fails.
+pub async fn unresolve_links_into_purged(
+    conn: &mut sqlx::SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    let into_members = format!(
+        "JOIN blocks s ON s.id = l.source_id \
+         WHERE s.deleted_at IS NULL \
+           AND l.target_id IN ({member_subquery}) AND l.source_id NOT IN ({member_subquery})"
+    );
+    // dynamic-sql: the purge cascades' three runtime member-set shapes.
+    let mut record = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{cte_prefix}INSERT OR IGNORE INTO block_links_unresolved (source_id, target_id) \
+         SELECT l.source_id, l.target_id FROM block_links l {into_members}"
+    )));
+    // dynamic-sql: the same member set as the INSERT above.
+    let mut sources = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+        "{cte_prefix}SELECT DISTINCT l.source_id FROM block_links_unresolved l {into_members}"
+    )));
+    if let Some(bind) = bind {
+        record = record.bind(bind.to_owned());
+        sources = sources.bind(bind.to_owned());
+    }
+    record.execute(&mut *conn).await?;
+    Ok(sources.fetch_all(&mut *conn).await?)
+}
+
 /// Bring `source_id`'s rows in `block_links_unresolved` in line with the state
 /// the surrounding reindex just committed to `block_links`.
 ///

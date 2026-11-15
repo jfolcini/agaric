@@ -4482,6 +4482,16 @@ mod saturation_probe_tests {
                 Some("see "),
                 "{purge}: a purged target's first line leaves the block that names it"
             );
+            let unresolved: Vec<(String, String)> =
+                sqlx::query_as("SELECT source_id, target_id FROM block_links_unresolved")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                unresolved,
+                vec![(REF_NOTE.to_owned(), REF_TARGET.to_owned())],
+                "{purge}: the note's token to the purged target is a dangling reference"
+            );
             mat.shutdown();
         }
     }

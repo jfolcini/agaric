@@ -96,9 +96,10 @@ pub async fn purge_subtree_tables(
     // `agaric_store::cache::purge_block_satellite_caches`, threading the SAME
     // borrowed connection so the caller's IMMEDIATE tx is preserved. FK checks
     // remain deferred by the caller; `blocks` is deleted last (below).
-    // #6843: read before the satellite purge deletes their `block_links` rows.
+    // #6843: before the satellite purge deletes the `block_links` rows into it.
     let fts_referrers =
-        agaric_store::fts::purged_block_referrers(conn, cte_prefix, member_subquery, bind).await?;
+        agaric_store::cache::unresolve_links_into_purged(conn, cte_prefix, member_subquery, bind)
+            .await?;
     agaric_store::cache::purge_block_satellite_caches(conn, cte_prefix, member_subquery, bind)
         .await?;
 
@@ -174,9 +175,9 @@ pub struct PurgeSubtreeCounts {
     /// Rows affected by the final `blocks` DELETE — the purge's headline
     /// "how many blocks did this remove" count.
     pub blocks: u64,
-    /// The blocks left behind whose `((ref))` or `[[link]]` named a member
-    /// ([`agaric_store::fts::purged_block_referrers`]). The caller re-strips
-    /// their `fts_blocks` rows once the purge commits (#6843).
+    /// The live blocks left behind whose `((ref))` or `[[link]]` named a member
+    /// ([`agaric_store::cache::unresolve_links_into_purged`]). The caller
+    /// re-strips their `fts_blocks` rows once the purge commits (#6843).
     pub fts_referrers: Vec<String>,
 }
 
