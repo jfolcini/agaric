@@ -92,12 +92,12 @@ set -uo pipefail
 # being left behind (the old `rm -f "$db"` cleanup leaked both).
 # Defined up here so `--self-test` below can drive them directly.
 sqlx_probe_dir_new() {
-    mktemp -d -t pre-push-sqlx.XXXXXX
+  mktemp -d -t pre-push-sqlx.XXXXXX
 }
 
 sqlx_probe_dir_cleanup() {
-    [ -n "${1:-}" ] && rm -rf "$1"
-    return 0
+  [ -n "${1:-}" ] && rm -rf "$1"
+  return 0
 }
 
 # ── Phase E gate (#6560) ───────────────────────────────────────────
@@ -106,26 +106,26 @@ sqlx_probe_dir_cleanup() {
 # failure, or any other output, runs Phase E.
 # Defined up here so `--self-test` below can drive it directly.
 sqlx_gate_verdict() {
-    local forced="$1" changed_ok="$2" out rc
-    shift 2
-    if [ "$forced" = "1" ]; then
-        echo "run: PRE_PUSH_SQLX_CHECK=1"
-        return
-    fi
-    if [ "$changed_ok" != "1" ]; then
-        echo "run: the changed-file set could not be computed"
-        return
-    fi
-    out="$("$@")" && rc=0 || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        echo "run: $* exited $rc"
-    elif [ "$out" = "skip" ]; then
-        echo "skip"
-    elif [[ "$out" == "run: "* && "$out" != *$'\n'* ]]; then
-        echo "$out"
-    else
-        echo "run: unrecognised output from $*"
-    fi
+  local forced="$1" changed_ok="$2" out rc
+  shift 2
+  if [ "$forced" = "1" ]; then
+    echo "run: PRE_PUSH_SQLX_CHECK=1"
+    return
+  fi
+  if [ "$changed_ok" != "1" ]; then
+    echo "run: the changed-file set could not be computed"
+    return
+  fi
+  out="$("$@")" && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "run: $* exited $rc"
+  elif [ "$out" = "skip" ]; then
+    echo "skip"
+  elif [[ "$out" == "run: "* && "$out" != *$'\n'* ]]; then
+    echo "$out"
+  else
+    echo "run: unrecognised output from $*"
+  fi
 }
 
 # ── Default push range ──────────────────────────────────────────────
@@ -137,21 +137,21 @@ sqlx_gate_verdict() {
 # main's `.rs`. The branch's own diff, `origin/main...HEAD`, is what it adds then.
 # Defined up here so `--self-test` below can drive it directly.
 default_push_range() {
-    local main_base
-    if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-        if main_base="$(git merge-base origin/main HEAD 2>/dev/null)" \
-            && ! git merge-base --is-ancestor "$main_base" '@{upstream}'; then
-            echo "→ main moved into this branch since its last push; range is the branch's own diff" >&2
-            echo "origin/main...HEAD"
-        else
-            echo "@{upstream}...HEAD"
-        fi
-    elif git rev-parse --verify --quiet origin/main >/dev/null; then
-        echo "→ No tracking upstream; falling back to range 'origin/main...HEAD'" >&2
-        echo "origin/main...HEAD"
+  local main_base
+  if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+    if main_base="$(git merge-base origin/main HEAD 2>/dev/null)" \
+      && ! git merge-base --is-ancestor "$main_base" '@{upstream}'; then
+      echo "→ main moved into this branch since its last push; range is the branch's own diff" >&2
+      echo "origin/main...HEAD"
     else
-        return 1
+      echo "@{upstream}...HEAD"
     fi
+  elif git rev-parse --verify --quiet origin/main >/dev/null; then
+    echo "→ No tracking upstream; falling back to range 'origin/main...HEAD'" >&2
+    echo "origin/main...HEAD"
+  else
+    return 1
+  fi
 }
 
 # ── MCP change classifier (#4419) ──────────────────────────────────
@@ -260,45 +260,45 @@ HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/a
 # returns 0 silently otherwise. Takes the root as an argument so the
 # self-test below can drive it against fixture directories.
 node_deps_problem() {
-    local root="${1:-}" nm
-    nm="$root/node_modules"
+  local root="${1:-}" nm
+  nm="$root/node_modules"
 
-    if [ -L "$nm" ] && [ ! -e "$nm" ]; then
-        printf 'node_modules is a DANGLING symlink: %s -> %s\n' \
-            "$nm" "$(readlink "$nm" 2>/dev/null || echo '?')"
-        return 1
-    fi
-    if [ ! -d "$nm" ]; then
-        printf 'node_modules is MISSING: %s\n' "$nm"
-        return 1
-    fi
-    if [ ! -d "$nm/.bin" ]; then
-        printf 'node_modules exists but has no .bin/ (dependencies not installed): %s\n' "$nm"
-        return 1
-    fi
-    return 0
+  if [ -L "$nm" ] && [ ! -e "$nm" ]; then
+    printf 'node_modules is a DANGLING symlink: %s -> %s\n' \
+      "$nm" "$(readlink "$nm" 2>/dev/null || echo '?')"
+    return 1
+  fi
+  if [ ! -d "$nm" ]; then
+    printf 'node_modules is MISSING: %s\n' "$nm"
+    return 1
+  fi
+  if [ ! -d "$nm/.bin" ]; then
+    printf 'node_modules exists but has no .bin/ (dependencies not installed): %s\n' "$nm"
+    return 1
+  fi
+  return 0
 }
 
 # Remedy text for the failure above, tailored to where you are: a linked
 # worktree (`--git-dir` != `--git-common-dir`) wants the symlink that
 # seed-worktree.sh creates; the main checkout wants an `npm ci`.
 node_deps_remedy() {
-    local root="${1:-}" git_dir common_dir main_root
-    git_dir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null || echo '')"
-    common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo '')"
-    if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
-        main_root="$(cd "$common_dir/.." 2>/dev/null && pwd || echo '<main-checkout>')"
-        printf 'This is a LINKED WORKTREE. Seed it (idempotent, also fixes the\n'
-        printf '  upstream and dev.db prerequisites):\n'
-        printf '    bash scripts/seed-worktree.sh\n'
-        printf '  or, node_modules alone:\n'
-        printf '    ln -s %s/node_modules %s/node_modules\n' "$main_root" "$root"
-        printf '  (create the symlink BEFORE any `npm install` here — once a\n'
-        printf '  REAL node_modules directory exists, `ln -s` nests inside it.)\n'
-    else
-        printf 'Install dependencies in this checkout:\n'
-        printf '    npm ci\n'
-    fi
+  local root="${1:-}" git_dir common_dir main_root
+  git_dir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null || echo '')"
+  common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo '')"
+  if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+    main_root="$(cd "$common_dir/.." 2>/dev/null && pwd || echo '<main-checkout>')"
+    printf 'This is a LINKED WORKTREE. Seed it (idempotent, also fixes the\n'
+    printf '  upstream and dev.db prerequisites):\n'
+    printf '    bash scripts/seed-worktree.sh\n'
+    printf '  or, node_modules alone:\n'
+    printf '    ln -s %s/node_modules %s/node_modules\n' "$main_root" "$root"
+    printf '  (create the symlink BEFORE any `npm install` here — once a\n'
+    printf '  REAL node_modules directory exists, `ln -s` nests inside it.)\n'
+  else
+    printf 'Install dependencies in this checkout:\n'
+    printf '    npm ci\n'
+  fi
 }
 
 # ── dev.db migration gap check (#4266) ─────────────────────────────
@@ -345,54 +345,54 @@ node_deps_remedy() {
 # relative `${BASH_SOURCE[0]}` no longer names this directory.
 DEVDB_GAP_MJS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/devdb-migration-gap.mjs"
 devdb_migration_gap() {
-    local src_tauri="$1" migrations_dir="$2"
-    local out rc
-    # SQLX_OFFLINE (sqlx-cli's own switch): when truthy, `sqlx::query!`
-    # resolves entirely from the committed `.sqlx/` cache and never
-    # touches dev.db at all — Phase E below already allocates its own
-    # per-invocation probe DBs for the offline check, independent of this
-    # one. This preflight's whole premise (a stale dev.db breaks Phase
-    # D/D2's ONLINE macro compilation) doesn't hold for such a push, so
-    # inspecting dev.db here would hard-block a workflow this repo
-    # documents and uses (`SQLX_OFFLINE=true cargo check`, throughout
-    # docs/session-log/). Match sqlx-macros-core's own truthiness
-    # (`is_truthy_bool` in its query/metadata.rs: case-insensitive "true"
-    # or exactly "1", nothing else — so "false"/"0"/unset all fall
-    # through to the normal check below, same as sqlx itself) rather than
-    # inventing different rules here.
-    case "${SQLX_OFFLINE:-}" in
-        [Tt][Rr][Uu][Ee] | 1) return 0 ;;
-    esac
-    # stderr folded into the capture: a missing node (exit 127) or a
-    # failure that never reaches the .mjs's own catch would otherwise
-    # print to the terminal while $out stays empty — a hard block with a
-    # headline and a blank body. `--no-warnings` keeps a warning out of
-    # that fold: Node 22 prints an ExperimentalWarning on stderr every time
-    # `node:sqlite` loads, which would otherwise read as part of the
-    # diagnosis.
-    out="$(node --no-warnings "$DEVDB_GAP_MJS" "$src_tauri" "$migrations_dir" 2>&1)"
-    rc=$?
-    if [ "$rc" -eq 127 ]; then
-        # `node` itself is missing — bash's own "command not found" is
-        # already folded into $out via the 2>&1 above.
-        printf 'could not inspect dev.db: node not found on PATH: %s\n' "$out"
-        return 2
-    fi
-    if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ] && [ "$rc" -ne 2 ]; then
-        # The .mjs only ever exits 0/1/2 — anything else is node failing
-        # in a way that never reached its own catch: not executable (126),
-        # killed by a signal (bash reports these as 128+signum), or some
-        # other runtime-level abort. The caller below only branches on
-        # `-eq 1` / `-eq 2`, so an unrecognized code would otherwise match
-        # NEITHER arm and produce no message at all — a silent no-op guard.
-        # Fold it into the same rc=2 "could not inspect" warn path instead:
-        # a guard that cannot inspect dev.db is not evidence dev.db is
-        # behind.
-        printf 'could not inspect dev.db: node exited %s: %s\n' "$rc" "$out"
-        return 2
-    fi
-    printf '%s' "$out"
-    return "$rc"
+  local src_tauri="$1" migrations_dir="$2"
+  local out rc
+  # SQLX_OFFLINE (sqlx-cli's own switch): when truthy, `sqlx::query!`
+  # resolves entirely from the committed `.sqlx/` cache and never
+  # touches dev.db at all — Phase E below already allocates its own
+  # per-invocation probe DBs for the offline check, independent of this
+  # one. This preflight's whole premise (a stale dev.db breaks Phase
+  # D/D2's ONLINE macro compilation) doesn't hold for such a push, so
+  # inspecting dev.db here would hard-block a workflow this repo
+  # documents and uses (`SQLX_OFFLINE=true cargo check`, throughout
+  # docs/session-log/). Match sqlx-macros-core's own truthiness
+  # (`is_truthy_bool` in its query/metadata.rs: case-insensitive "true"
+  # or exactly "1", nothing else — so "false"/"0"/unset all fall
+  # through to the normal check below, same as sqlx itself) rather than
+  # inventing different rules here.
+  case "${SQLX_OFFLINE:-}" in
+    [Tt][Rr][Uu][Ee] | 1) return 0 ;;
+  esac
+  # stderr folded into the capture: a missing node (exit 127) or a
+  # failure that never reaches the .mjs's own catch would otherwise
+  # print to the terminal while $out stays empty — a hard block with a
+  # headline and a blank body. `--no-warnings` keeps a warning out of
+  # that fold: Node 22 prints an ExperimentalWarning on stderr every time
+  # `node:sqlite` loads, which would otherwise read as part of the
+  # diagnosis.
+  out="$(node --no-warnings "$DEVDB_GAP_MJS" "$src_tauri" "$migrations_dir" 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 127 ]; then
+    # `node` itself is missing — bash's own "command not found" is
+    # already folded into $out via the 2>&1 above.
+    printf 'could not inspect dev.db: node not found on PATH: %s\n' "$out"
+    return 2
+  fi
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ] && [ "$rc" -ne 2 ]; then
+    # The .mjs only ever exits 0/1/2 — anything else is node failing
+    # in a way that never reached its own catch: not executable (126),
+    # killed by a signal (bash reports these as 128+signum), or some
+    # other runtime-level abort. The caller below only branches on
+    # `-eq 1` / `-eq 2`, so an unrecognized code would otherwise match
+    # NEITHER arm and produce no message at all — a silent no-op guard.
+    # Fold it into the same rc=2 "could not inspect" warn path instead:
+    # a guard that cannot inspect dev.db is not evidence dev.db is
+    # behind.
+    printf 'could not inspect dev.db: node exited %s: %s\n' "$rc" "$out"
+    return 2
+  fi
+  printf '%s' "$out"
+  return "$rc"
 }
 
 # ── caller-supplied SKIP (#3968) ───────────────────────────────────
@@ -448,19 +448,19 @@ devdb_migration_gap() {
 # hooks Phase A cannot run meaningfully (the `--cached` test hooks) plus
 # the category-absent list, and a caller cannot un-skip them by omission.
 phase_a_skip_compose() {
-    local required="${1:-}" caller="${2:-}"
-    local -a items=()
-    local item seen="," out=""
-    IFS=$',\n' read -r -d '' -a items <<< "$required,$caller" || true
-    for item in "${items[@]}"; do
-        item="${item#"${item%%[![:space:]]*}"}"
-        item="${item%"${item##*[![:space:]]}"}"
-        [ -z "$item" ] && continue
-        case "$seen" in *",$item,"*) continue ;; esac
-        seen="$seen$item,"
-        out="${out:+$out,}$item"
-    done
-    printf '%s' "$out"
+  local required="${1:-}" caller="${2:-}"
+  local -a items=()
+  local item seen="," out=""
+  IFS=$',\n' read -r -d '' -a items <<<"$required,$caller" || true
+  for item in "${items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -z "$item" ] && continue
+    case "$seen" in *",$item,"*) continue ;; esac
+    seen="$seen$item,"
+    out="${out:+$out,}$item"
+  done
+  printf '%s' "$out"
 }
 
 # The caller's entries that are NOT already in the required set — i.e.
@@ -469,27 +469,27 @@ phase_a_skip_compose() {
 # a caller who re-skips a hook the category plan already skips has changed nothing, and
 # warning about it would train the reader to ignore the warning.
 phase_a_skip_extra() {
-    local required="${1:-}" caller="${2:-}"
-    local -a req=() cal=()
-    local item reqset="," seen="," out=""
-    IFS=$',\n' read -r -d '' -a req <<< "$required" || true
-    for item in "${req[@]}"; do
-        item="${item#"${item%%[![:space:]]*}"}"
-        item="${item%"${item##*[![:space:]]}"}"
-        [ -z "$item" ] && continue
-        reqset="$reqset$item,"
-    done
-    IFS=$',\n' read -r -d '' -a cal <<< "$caller" || true
-    for item in "${cal[@]}"; do
-        item="${item#"${item%%[![:space:]]*}"}"
-        item="${item%"${item##*[![:space:]]}"}"
-        [ -z "$item" ] && continue
-        case "$reqset" in *",$item,"*) continue ;; esac
-        case "$seen" in *",$item,"*) continue ;; esac
-        seen="$seen$item,"
-        out="${out:+$out,}$item"
-    done
-    printf '%s' "$out"
+  local required="${1:-}" caller="${2:-}"
+  local -a req=() cal=()
+  local item reqset="," seen="," out=""
+  IFS=$',\n' read -r -d '' -a req <<<"$required" || true
+  for item in "${req[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -z "$item" ] && continue
+    reqset="$reqset$item,"
+  done
+  IFS=$',\n' read -r -d '' -a cal <<<"$caller" || true
+  for item in "${cal[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -z "$item" ] && continue
+    case "$reqset" in *",$item,"*) continue ;; esac
+    case "$seen" in *",$item,"*) continue ;; esac
+    seen="$seen$item,"
+    out="${out:+$out,}$item"
+  done
+  printf '%s' "$out"
 }
 
 # ── the prek SKIP list (one copy, read by CI too) ───────────────────
@@ -499,52 +499,55 @@ phase_a_skip_extra() {
 # appends the CI-only `no-commit-to-branch` itself.
 # Args: <docs> <frontend> <backend> <ci>, each 1 (present) or 0 (absent).
 prek_skip_list() {
-    local has_docs="$1" has_ts="$2" has_rs="$3" has_ci="$4"
-    local -a skip_items=()
+  local has_docs="$1" has_ts="$2" has_rs="$3" has_ci="$4"
+  local -a skip_items=()
 
-    # Frontend absent → skip the FE lint/type/architecture hooks.
-    if [ "$has_ts" = "0" ]; then
-        skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
-            no-ui-store-imports no-legacy-react-apis \
-            store-layering axe-presence test-file-naming \
-            ipc-error-path-coverage no-raw-local-storage)
-    fi
-    # Backend absent → skip the Rust/cargo/SQL/migration hooks.
-    if [ "$has_rs" = "0" ]; then
-        skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
-            tauri-command-sanitize tauri-command-instrumented check-raw-tx \
-            check-dynamic-sql \
-            unsafe-allowlist migrations-immutable migrations-strict-tables \
-            migrations-rebuild-cascade)
-    fi
-    # CI/tooling absent → skip the workflow/shell lint hooks.
-    if [ "$has_ci" = "0" ]; then
-        skip_items+=(actionlint zizmor shellcheck shfmt)
-    fi
-    # Docs absent → skip the Markdown/doc hooks.
-    if [ "$has_docs" = "0" ]; then
-        skip_items+=(markdownlint md-link-targets session-log-numbering)
-    fi
+  # Frontend absent → skip the FE lint/type/architecture hooks.
+  if [ "$has_ts" = "0" ]; then
+    skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import
+      no-ui-store-imports no-legacy-react-apis
+      store-layering axe-presence test-file-naming
+      ipc-error-path-coverage no-raw-local-storage)
+  fi
+  # Backend absent → skip the Rust/cargo/SQL/migration hooks.
+  if [ "$has_rs" = "0" ]; then
+    skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff
+      tauri-command-sanitize tauri-command-instrumented check-raw-tx
+      check-dynamic-sql
+      unsafe-allowlist migrations-immutable migrations-strict-tables
+      migrations-rebuild-cascade)
+  fi
+  # CI/tooling absent → skip the workflow/shell lint hooks.
+  if [ "$has_ci" = "0" ]; then
+    skip_items+=(actionlint zizmor shellcheck shfmt)
+  fi
+  # Docs absent → skip the Markdown/doc hooks.
+  if [ "$has_docs" = "0" ]; then
+    skip_items+=(markdownlint md-link-targets session-log-numbering)
+  fi
 
-    # Compound guards: skip only when EVERY category they straddle is absent,
-    # so a binding-boundary / cross-cutting hook still runs if ANY adjacent
-    # category changed.
-    [ "$has_ci" = "0" ] && [ "$has_rs" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
-    # tauri-mock-parity / snapshot-redaction guard the FE↔BE binding
-    # boundary — they MUST run if frontend OR backend changed.
-    [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
-        skip_items+=(tauri-mock-parity snapshot-redaction)
-    # architecture-citations reads BOTH docs and code, so it is a 3-way compound
-    # and not a docs-only hook: CI's placement, and CI is the gate.
-    [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
-        skip_items+=(architecture-citations)
-    # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
-    # run when frontend OR ci changed, so a tooling-only push is still linted.
-    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json oxlint oxfmt)
-    [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
-    [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
+  # Compound guards: skip only when EVERY category they straddle is absent,
+  # so a binding-boundary / cross-cutting hook still runs if ANY adjacent
+  # category changed.
+  [ "$has_ci" = "0" ] && [ "$has_rs" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
+  # tauri-mock-parity / snapshot-redaction guard the FE↔BE binding
+  # boundary — they MUST run if frontend OR backend changed.
+  [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] \
+    && skip_items+=(tauri-mock-parity snapshot-redaction)
+  # architecture-citations reads BOTH docs and code, so it is a 3-way compound
+  # and not a docs-only hook: CI's placement, and CI is the gate.
+  [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] \
+    && skip_items+=(architecture-citations)
+  # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
+  # run when frontend OR ci changed, so a tooling-only push is still linted.
+  [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json oxlint oxfmt)
+  [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
+  [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
 
-    (IFS=,; printf '%s' "${skip_items[*]-}")
+  (
+    IFS=,
+    printf '%s' "${skip_items[*]-}"
+  )
 }
 
 # ── --print-skip ───────────────────────────────────────────────────
@@ -552,19 +555,22 @@ prek_skip_list() {
 # prints the SKIP list for those categories and exits. How CI reads the list
 # above.
 if [ "${1:-}" = "--print-skip" ]; then
-    if [ "$#" -ne 5 ]; then
-        echo "✗ --print-skip takes exactly four flags: <docs> <frontend> <backend> <ci>, each 0 or 1" >&2
+  if [ "$#" -ne 5 ]; then
+    echo "✗ --print-skip takes exactly four flags: <docs> <frontend> <backend> <ci>, each 0 or 1" >&2
+    exit 1
+  fi
+  for ps_flag in "$2" "$3" "$4" "$5"; do
+    case "$ps_flag" in
+      0 | 1) ;;
+      *)
+        echo "✗ --print-skip: flags must be 0 or 1, got '$ps_flag'" >&2
         exit 1
-    fi
-    for ps_flag in "$2" "$3" "$4" "$5"; do
-        case "$ps_flag" in
-            0|1) ;;
-            *) echo "✗ --print-skip: flags must be 0 or 1, got '$ps_flag'" >&2; exit 1 ;;
-        esac
-    done
-    prek_skip_list "$2" "$3" "$4" "$5"
-    echo ""
-    exit 0
+        ;;
+    esac
+  done
+  prek_skip_list "$2" "$3" "$4" "$5"
+  echo ""
+  exit 0
 fi
 
 # ── self-test ──────────────────────────────────────────────────────
@@ -577,793 +583,801 @@ fi
 # through `--print-skip` above. Runs BEFORE the bypass guard and the
 # multi-minute verifier body, so it is fast and side-effect free.
 if [ "${1:-}" = "--self-test" ]; then
-    st_fail=0
-    st_ok() { printf '  ok   - %s\n' "$1"; }
-    st_bad() { printf '  FAIL - %s: %s\n' "$1" "$2" >&2; st_fail=1; }
+  st_fail=0
+  st_ok() { printf '  ok   - %s\n' "$1"; }
+  st_bad() {
+    printf '  FAIL - %s: %s\n' "$1" "$2" >&2
+    st_fail=1
+  }
 
-    # 1. Two invocations (the two concurrent pushes) must not collide.
-    d1="$(sqlx_probe_dir_new)"
-    d2="$(sqlx_probe_dir_new)"
-    if [ "$d1" != "$d2" ]; then
-        st_ok "two invocations get distinct probe dirs"
+  # 1. Two invocations (the two concurrent pushes) must not collide.
+  d1="$(sqlx_probe_dir_new)"
+  d2="$(sqlx_probe_dir_new)"
+  if [ "$d1" != "$d2" ]; then
+    st_ok "two invocations get distinct probe dirs"
+  else
+    st_bad "two invocations get distinct probe dirs" "both got $d1"
+  fi
+
+  # 2. Each is a real, private directory.
+  if [ -d "$d1" ] && [ -d "$d2" ]; then
+    st_ok "probe dirs are created as directories"
+  else
+    st_bad "probe dirs are created as directories" "d1=$d1 d2=$d2"
+  fi
+
+  # 3. Worktree B's cleanup must NOT touch worktree A's database — the
+  #    literal cross-process collision this fix is about.
+  : >"$d1/root.db"
+  sqlx_probe_dir_cleanup "$d2"
+  if [ -f "$d1/root.db" ]; then
+    st_ok "one invocation's cleanup leaves the other's probe DB intact"
+  else
+    st_bad "one invocation's cleanup leaves the other's probe DB intact" \
+      "$d1/root.db was deleted by cleanup of $d2"
+  fi
+
+  # 4. Cleanup takes the SQLite -wal / -shm siblings with it.
+  : >"$d1/root.db-wal"
+  : >"$d1/root.db-shm"
+  sqlx_probe_dir_cleanup "$d1"
+  if [ ! -e "$d1" ]; then
+    st_ok "cleanup removes the probe dir including -wal/-shm siblings"
+  else
+    st_bad "cleanup removes the probe dir including -wal/-shm siblings" \
+      "$(ls -A "$d1" 2>/dev/null | tr '\n' ' ')"
+  fi
+
+  # 4b. MCP classifier (#4419): the gate decides whether a push pays for
+  #     a full `agaric-mcp` RELEASE build. Drive the real pattern against
+  #     sample paths — a string ratchet would pass against a dead
+  #     constant, so this applies MCP_PATH_RE the way the classifier does.
+  st_mcp() { # <path> <expected: yes|no> <label>
+    local got=no
+    printf '%s\n' "$1" | grep -qE "$MCP_PATH_RE" && got=yes
+    if [ "$got" = "$2" ]; then
+      st_ok "MCP gate: $3"
     else
-        st_bad "two invocations get distinct probe dirs" "both got $d1"
+      st_bad "MCP gate: $3" "path '$1' matched=$got, expected $2"
     fi
+  }
+  # MUST trigger — these end up in the binary.
+  st_mcp 'src-tauri/src/mcp/server.rs' yes 'a .rs file in the mcp module triggers'
+  st_mcp 'src-tauri/src/mcp/server/tests.rs' yes 'a nested .rs file triggers'
+  st_mcp 'src-tauri/src/commands/mcp.rs' yes 'the Tauri command wrapper triggers'
+  st_mcp 'src-tauri/src/bin/agaric-mcp.rs' yes 'the binary entry point triggers'
+  st_mcp 'src-tauri/binaries/agaric-mcp-x86_64' yes 'a prebuilt artifact triggers (not .rs)'
+  # MUST NOT trigger — nothing here is compiled into anything. Each of
+  # these matched the old bare `^src-tauri/src/mcp/` prefix, so they are
+  # the cases that fail if it is ever restored.
+  st_mcp 'src-tauri/src/mcp/AGENTS.md' no 'docs in the mcp module do NOT trigger'
+  st_mcp 'src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap' \
+    no 'a .snap fixture does NOT trigger'
+  st_mcp 'docs/mcp.md' no 'an unrelated doc does NOT trigger'
 
-    # 2. Each is a real, private directory.
-    if [ -d "$d1" ] && [ -d "$d2" ]; then
-        st_ok "probe dirs are created as directories"
+  # 4c. CI classifier: decides whether a path is attributable to the CI
+  #     category or falls through to the fail-closed arm that pins EVERY
+  #     suite. Drives the real constant, and asserts the fail-closed arm
+  #     reuses it — those two were verbatim copies, so a change to one
+  #     silently left the other behind.
+  st_ci() { # <path> <expected: yes|no> <label>
+    local got=no
+    printf '%s\n' "$1" | grep -qE "$CI_PATH_RE" && got=yes
+    if [ "$got" = "$2" ]; then
+      st_ok "CI gate: $3"
     else
-        st_bad "probe dirs are created as directories" "d1=$d1 d2=$d2"
+      st_bad "CI gate: $3" "path '$1' matched=$got, expected $2"
     fi
+  }
+  st_ci 'scripts/verify-ci-equivalent.sh' yes 'a scripts/*.sh change is CI (covered by shellcheck + its self-tests)'
+  st_ci 'scripts/push.sh' yes 'ditto for push.sh'
+  st_ci '.github/workflows/release.yml' yes 'a workflow is CI'
+  st_ci 'prek.toml' yes 'the hook config is CI'
+  st_ci 'justfile' yes 'the just facade is CI (nothing in CI runs it)'
+  st_ci '.editorconfig' yes 'the editor config is CI (read by oxfmt)'
+  st_ci '.vscode/extensions.json' yes 'editor settings are CI'
+  # MUST NOT be CI — these change how everything is built, no per-category
+  # suite covers them, and they must keep hitting the fail-closed arm.
+  st_ci 'rust-toolchain.toml' no 'the toolchain pin is NOT CI (must fail closed)'
+  st_ci '.cargo/config.toml' no 'cargo config is NOT CI (must fail closed)'
+  st_ci 'bootstrap.sh' no 'a ROOT-level *.sh is NOT CI (must fail closed)'
+  st_ci '.gitattributes' no 'gitattributes sets eol on scripts, NOT CI (must fail closed)'
+  st_ci '.gitignore' no 'gitignore steers Tailwind and knip, NOT CI (must fail closed)'
+  st_ci 'src-tauri/src/lib.rs' no 'Rust is not CI'
+  # A CI-attributed script may ALSO need the Rust phases. Attribution and
+  # Rust-relevance are independent: these are CI (so Phase A runs their
+  # self-tests) AND set HAS_RS (so the phases they govern re-run).
+  st_rs() { # <path> <expected: yes|no> <label>
+    local got=no
+    printf '%s\n' "$1" | grep -qE "$RS_SCRIPT_RE" && got=yes
+    if [ "$got" = "$2" ]; then
+      st_ok "RS-script gate: $3"
+    else st_bad "RS-script gate: $3" "path '$1' matched=$got, expected $2"; fi
+  }
+  st_rs 'scripts/setup-dev-db.sh' yes 'provisions the dev.db Phase D/E compile against'
+  st_rs 'scripts/test-related-rust.sh' yes 'selects which Rust tests Phase D runs'
+  st_rs 'scripts/push.sh' no 'a plain shell script does NOT force the Rust phases'
+  st_rs 'scripts/verify-ci-equivalent.sh' no 'nor does this verifier itself'
+  # A script whose ONLY hook lives in a skippable category must re-enable that
+  # category, or attributing it to CI leaves it covered by shellcheck alone.
+  st_hook() { # <path> <re-var> <expected> <label>
+    local got=no
+    printf '%s\n' "$1" | grep -qE "$2" && got=yes
+    if [ "$got" = "$3" ]; then
+      st_ok "hook-owner gate: $4"
+    else st_bad "hook-owner gate: $4" "path '$1' matched=$got, expected $3"; fi
+  }
+  st_hook 'scripts/check-unsafe-allowlist.sh' "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
+  st_hook 'scripts/check-axe-presence.sh' "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
+  st_hook 'scripts/check-test-file-naming.sh' "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
+  st_hook 'scripts/check-store-layering.mjs' "$HOOK_OWNER_TS_RE" yes 'a guard with a vitest unit test re-enables HAS_TS'
+  st_hook 'scripts/lib/js-scanner.mjs' "$HOOK_OWNER_TS_RE" yes 'js-scanner (imported by a vitest test) re-enables HAS_TS'
+  st_hook 'scripts/check-type-aware-liveness.mjs' "$HOOK_OWNER_TS_RE" no 'a guard only mentioned in a test comment stays CI-only'
+  st_hook 'scripts/push.sh' "$HOOK_OWNER_RS_RE" no 'push.sh is not a hook owner'
+  st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor is check-migrations-immutable.sh'
 
-    # 3. Worktree B's cleanup must NOT touch worktree A's database — the
-    #    literal cross-process collision this fix is about.
-    : > "$d1/root.db"
-    sqlx_probe_dir_cleanup "$d2"
-    if [ -f "$d1/root.db" ]; then
-        st_ok "one invocation's cleanup leaves the other's probe DB intact"
+  # RATCHET the documented divergence from `classify-changes.sh`'s `ci_re`. The
+  # comment this replaces ("mirrors _validate.yml's classifier") went stale
+  # precisely because nothing checked it. Assert the difference is EXACTLY
+  # the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
+  # `.gitleaks.toml`): anchored to the repo root in `classify-changes.sh`
+  # (`^prek\.toml$`, …) but UNANCHORED here (`prek\.toml$`, …), so ANY path
+  # merely ENDING in one of those filenames — a nested copy
+  # (`docs/prek.toml`) or a differently prefixed file at the repo root
+  # (`myprek.toml`) alike — is CI here and not there. (`scripts/` and
+  # `.claude/` used to be a second divergence; both classifiers route them
+  # to CI now, and the tooling-path checks above assert that.)
+  # Every other CI path — including these same filenames at the repo TOP
+  # LEVEL, where anchored and unanchored agree — must still agree with
+  # classify-changes.sh, or the divergence is wider than documented.
+  #
+  # Hence the `.+` on each toml alternative in the exclusion below. An
+  # UNANCHORED `prek\.toml$` also strips the root copies, so all four of
+  # prek.toml / .taplo.toml / lychee.toml / .gitleaks.toml — every one of
+  # them tracked and at the root — would leave `_tracked` entirely and
+  # never be compared, while this comment claimed they were. Deleting
+  # `^prek\.toml$` from `classify-changes.sh`'s `ci_re` (a NARROWING edit, the
+  # unsafe direction) then still reported green. `.+` excludes only the
+  # nested and prefixed copies that are the actual documented divergence.
+  #
+  # `_vy` is resolved via `${BASH_SOURCE[0]}`, not a bare relative path:
+  # this self-test runs BEFORE the `cd "$REPO_ROOT"` further down, so a
+  # relative path would silently vanish (and this whole ratchet with it)
+  # when invoked from any directory other than the repo root.
+  _vy="$(dirname "${BASH_SOURCE[0]}")/classify-changes.sh"
+  if [ ! -f "$_vy" ]; then
+    st_bad "divergence ratchet: found classify-changes.sh" "no such file: $_vy"
+  else
+    _vci_matches=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy")
+    _vci_count=$(printf '%s\n' "$_vci_matches" | sed '/^$/d' | wc -l)
+    if [ "$_vci_count" -ne 1 ]; then
+      # Fail closed the same way the sibling guards in this block do
+      # (`[ ! -f "$_vy" ]`, `[ -z "$_tracked" ]`): a `head -1` here
+      # would silently compare against only the FIRST `ci_re=` line
+      # if `classify-changes.sh` ever grows a second one,
+      # leaving the second diverge unwatched instead of caught.
+      st_bad "divergence ratchet: found exactly one classify-changes.sh ci_re= line" \
+        "found $_vci_count (expected 1)"
     else
-        st_bad "one invocation's cleanup leaves the other's probe DB intact" \
-            "$d1/root.db was deleted by cleanup of $d2"
-    fi
-
-    # 4. Cleanup takes the SQLite -wal / -shm siblings with it.
-    : > "$d1/root.db-wal"
-    : > "$d1/root.db-shm"
-    sqlx_probe_dir_cleanup "$d1"
-    if [ ! -e "$d1" ]; then
-        st_ok "cleanup removes the probe dir including -wal/-shm siblings"
-    else
-        st_bad "cleanup removes the probe dir including -wal/-shm siblings" \
-            "$(ls -A "$d1" 2>/dev/null | tr '\n' ' ')"
-    fi
-
-    # 4b. MCP classifier (#4419): the gate decides whether a push pays for
-    #     a full `agaric-mcp` RELEASE build. Drive the real pattern against
-    #     sample paths — a string ratchet would pass against a dead
-    #     constant, so this applies MCP_PATH_RE the way the classifier does.
-    st_mcp() {  # <path> <expected: yes|no> <label>
-        local got=no
-        printf '%s\n' "$1" | grep -qE "$MCP_PATH_RE" && got=yes
-        if [ "$got" = "$2" ]; then
-            st_ok "MCP gate: $3"
+      _vci="$_vci_matches"
+      # Tooling paths are CI on BOTH sides (a `scripts/*.mjs`-only push
+      # used to fail closed into the full Rust suite; 2026-09-02).
+      for _p in scripts/push.sh scripts/coverage-ratchet.mjs .claude/skills/batch-issues/SKILL.md; do
+        _ours=no
+        _theirs=no
+        printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _ours=yes
+        printf '%s\n' "$_p" | grep -qE "$_vci" && _theirs=yes
+        if [ "$_ours" = yes ] && [ "$_theirs" = yes ]; then
+          st_ok "divergence ratchet: $_p is CI here AND in classify-changes.sh (tooling is attributable)"
         else
-            st_bad "MCP gate: $3" "path '$1' matched=$got, expected $2"
+          st_bad "divergence ratchet: $_p is CI here AND in classify-changes.sh" \
+            "ours=$_ours theirs=$_theirs — keep CI_PATH_RE and classify-changes.sh's ci_re in step"
         fi
-    }
-    # MUST trigger — these end up in the binary.
-    st_mcp 'src-tauri/src/mcp/server.rs'            yes 'a .rs file in the mcp module triggers'
-    st_mcp 'src-tauri/src/mcp/server/tests.rs'      yes 'a nested .rs file triggers'
-    st_mcp 'src-tauri/src/commands/mcp.rs'          yes 'the Tauri command wrapper triggers'
-    st_mcp 'src-tauri/src/bin/agaric-mcp.rs'        yes 'the binary entry point triggers'
-    st_mcp 'src-tauri/binaries/agaric-mcp-x86_64'   yes 'a prebuilt artifact triggers (not .rs)'
-    # MUST NOT trigger — nothing here is compiled into anything. Each of
-    # these matched the old bare `^src-tauri/src/mcp/` prefix, so they are
-    # the cases that fail if it is ever restored.
-    st_mcp 'src-tauri/src/mcp/AGENTS.md'            no  'docs in the mcp module do NOT trigger'
-    st_mcp 'src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap' \
-                                                    no  'a .snap fixture does NOT trigger'
-    st_mcp 'docs/mcp.md'                            no  'an unrelated doc does NOT trigger'
-
-    # 4c. CI classifier: decides whether a path is attributable to the CI
-    #     category or falls through to the fail-closed arm that pins EVERY
-    #     suite. Drives the real constant, and asserts the fail-closed arm
-    #     reuses it — those two were verbatim copies, so a change to one
-    #     silently left the other behind.
-    st_ci() {  # <path> <expected: yes|no> <label>
-        local got=no
-        printf '%s\n' "$1" | grep -qE "$CI_PATH_RE" && got=yes
-        if [ "$got" = "$2" ]; then
-            st_ok "CI gate: $3"
+      done
+      # The four toml arms are unanchored here but anchored there, so
+      # ANY path merely ENDING in one of the four filenames must
+      # diverge the same documented way scripts/*.sh does above — not
+      # just a nested copy (`docs/prek.toml`) but also a differently
+      # prefixed file sitting at the repo root (`myprek.toml`), which
+      # the unanchored regex matches just as readily.
+      for _p in docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
+        myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml; do
+        _a=no
+        _b=no
+        printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
+        printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
+        if [ "$_a" = yes ] && [ "$_b" = no ]; then
+          st_ok "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh (documented, unanchored-toml divergence)"
         else
-            st_bad "CI gate: $3" "path '$1' matched=$got, expected $2"
+          st_bad "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh" \
+            "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
         fi
-    }
-    st_ci 'scripts/verify-ci-equivalent.sh' yes 'a scripts/*.sh change is CI (covered by shellcheck + its self-tests)'
-    st_ci 'scripts/push.sh'                 yes 'ditto for push.sh'
-    st_ci '.github/workflows/release.yml'   yes 'a workflow is CI'
-    st_ci 'prek.toml'                       yes 'the hook config is CI'
-    st_ci 'justfile'                        yes 'the just facade is CI (nothing in CI runs it)'
-    st_ci '.editorconfig'                   yes 'the editor config is CI (read by oxfmt)'
-    st_ci '.vscode/extensions.json'         yes 'editor settings are CI'
-    # MUST NOT be CI — these change how everything is built, no per-category
-    # suite covers them, and they must keep hitting the fail-closed arm.
-    st_ci 'rust-toolchain.toml'             no  'the toolchain pin is NOT CI (must fail closed)'
-    st_ci '.cargo/config.toml'              no  'cargo config is NOT CI (must fail closed)'
-    st_ci 'bootstrap.sh'                    no  'a ROOT-level *.sh is NOT CI (must fail closed)'
-    st_ci '.gitattributes'                  no  'gitattributes sets eol on scripts, NOT CI (must fail closed)'
-    st_ci '.gitignore'                      no  'gitignore steers Tailwind and knip, NOT CI (must fail closed)'
-    st_ci 'src-tauri/src/lib.rs'            no  'Rust is not CI'
-    # A CI-attributed script may ALSO need the Rust phases. Attribution and
-    # Rust-relevance are independent: these are CI (so Phase A runs their
-    # self-tests) AND set HAS_RS (so the phases they govern re-run).
-    st_rs() {  # <path> <expected: yes|no> <label>
-        local got=no
-        printf '%s\n' "$1" | grep -qE "$RS_SCRIPT_RE" && got=yes
-        if [ "$got" = "$2" ]; then st_ok "RS-script gate: $3"
-        else st_bad "RS-script gate: $3" "path '$1' matched=$got, expected $2"; fi
-    }
-    st_rs 'scripts/setup-dev-db.sh'          yes 'provisions the dev.db Phase D/E compile against'
-    st_rs 'scripts/test-related-rust.sh'     yes 'selects which Rust tests Phase D runs'
-    st_rs 'scripts/push.sh'                  no  'a plain shell script does NOT force the Rust phases'
-    st_rs 'scripts/verify-ci-equivalent.sh'  no  'nor does this verifier itself'
-    # A script whose ONLY hook lives in a skippable category must re-enable that
-    # category, or attributing it to CI leaves it covered by shellcheck alone.
-    st_hook() {  # <path> <re-var> <expected> <label>
-        local got=no
-        printf '%s\n' "$1" | grep -qE "$2" && got=yes
-        if [ "$got" = "$3" ]; then st_ok "hook-owner gate: $4"
-        else st_bad "hook-owner gate: $4" "path '$1' matched=$got, expected $3"; fi
-    }
-    st_hook 'scripts/check-unsafe-allowlist.sh'  "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
-    st_hook 'scripts/check-axe-presence.sh'      "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
-    st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
-    st_hook 'scripts/check-store-layering.mjs'   "$HOOK_OWNER_TS_RE" yes 'a guard with a vitest unit test re-enables HAS_TS'
-    st_hook 'scripts/lib/js-scanner.mjs'         "$HOOK_OWNER_TS_RE" yes 'js-scanner (imported by a vitest test) re-enables HAS_TS'
-    st_hook 'scripts/check-type-aware-liveness.mjs' "$HOOK_OWNER_TS_RE" no 'a guard only mentioned in a test comment stays CI-only'
-    st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'push.sh is not a hook owner'
-    st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor is check-migrations-immutable.sh'
-
-    # RATCHET the documented divergence from `classify-changes.sh`'s `ci_re`. The
-    # comment this replaces ("mirrors _validate.yml's classifier") went stale
-    # precisely because nothing checked it. Assert the difference is EXACTLY
-    # the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
-    # `.gitleaks.toml`): anchored to the repo root in `classify-changes.sh`
-    # (`^prek\.toml$`, …) but UNANCHORED here (`prek\.toml$`, …), so ANY path
-    # merely ENDING in one of those filenames — a nested copy
-    # (`docs/prek.toml`) or a differently prefixed file at the repo root
-    # (`myprek.toml`) alike — is CI here and not there. (`scripts/` and
-    # `.claude/` used to be a second divergence; both classifiers route them
-    # to CI now, and the tooling-path checks above assert that.)
-    # Every other CI path — including these same filenames at the repo TOP
-    # LEVEL, where anchored and unanchored agree — must still agree with
-    # classify-changes.sh, or the divergence is wider than documented.
-    #
-    # Hence the `.+` on each toml alternative in the exclusion below. An
-    # UNANCHORED `prek\.toml$` also strips the root copies, so all four of
-    # prek.toml / .taplo.toml / lychee.toml / .gitleaks.toml — every one of
-    # them tracked and at the root — would leave `_tracked` entirely and
-    # never be compared, while this comment claimed they were. Deleting
-    # `^prek\.toml$` from `classify-changes.sh`'s `ci_re` (a NARROWING edit, the
-    # unsafe direction) then still reported green. `.+` excludes only the
-    # nested and prefixed copies that are the actual documented divergence.
-    #
-    # `_vy` is resolved via `${BASH_SOURCE[0]}`, not a bare relative path:
-    # this self-test runs BEFORE the `cd "$REPO_ROOT"` further down, so a
-    # relative path would silently vanish (and this whole ratchet with it)
-    # when invoked from any directory other than the repo root.
-    _vy="$(dirname "${BASH_SOURCE[0]}")/classify-changes.sh"
-    if [ ! -f "$_vy" ]; then
-        st_bad "divergence ratchet: found classify-changes.sh" "no such file: $_vy"
-    else
-        _vci_matches=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy")
-        _vci_count=$(printf '%s\n' "$_vci_matches" | sed '/^$/d' | wc -l)
-        if [ "$_vci_count" -ne 1 ]; then
-            # Fail closed the same way the sibling guards in this block do
-            # (`[ ! -f "$_vy" ]`, `[ -z "$_tracked" ]`): a `head -1` here
-            # would silently compare against only the FIRST `ci_re=` line
-            # if `classify-changes.sh` ever grows a second one,
-            # leaving the second diverge unwatched instead of caught.
-            st_bad "divergence ratchet: found exactly one classify-changes.sh ci_re= line" \
-                "found $_vci_count (expected 1)"
+      done
+      # ...and every OTHER CI path must still agree with classify-changes.sh,
+      # or the divergence is wider than documented. "Every other" used
+      # to mean a hardcoded five-path list — .github/workflows/ci.yml,
+      # prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml — which
+      # made the "fails closed if a new one opens anywhere else" claim
+      # in the comment above CI_PATH_RE untrue: a new arm added to
+      # either regex covering a path outside that list (e.g. a future
+      # `^Dockerfile$`) would pass silently, PROVIDED that path is
+      # already tracked. Run both regexes over the actual tracked
+      # tree instead, so the claim holds for any currently tracked
+      # path — see the note above CI_PATH_RE for the residual gap
+      # (a not-yet-tracked path).
+      #
+      # Two `grep -E` passes over the WHOLE tracked-file list, diffed
+      # with `comm`, replace what used to fork a `printf | grep` pair
+      # PER TRACKED FILE — roughly 9.6k processes at this repo's
+      # ~4810 tracked paths — with a handful total, regardless of
+      # tree size. This hook runs before every push (prek.toml calls
+      # it "Fast: exercised before the verifier body").
+      #
+      # `git ls-files` returning EMPTY — no git, not a repo, an
+      # exported tarball, a container without git — must fail CLOSED,
+      # not report a pass having compared zero paths: every sibling
+      # guard in this block does (`[ ! -f "$_vy" ]`, and the
+      # `_vci_count -ne 1` cardinality check above),
+      # and this ratchet is not exempt just because its failure mode
+      # is a command returning nothing instead of a missing file.
+      #
+      # The documented divergence must be excluded here, or the two
+      # halves of this very check disagree with each other: the four
+      # toml arms, which are UNANCHORED in `CI_PATH_RE` (see the
+      # divergence note above
+      # `CI_PATH_RE`) — so ANY tracked path merely ending in one of
+      # those four filenames (a nested `docs/prek.toml`, a
+      # differently-prefixed `myprek.toml`) is CI here and not in
+      # `classify-changes.sh`'s anchored `ci_re`, same as (a). Omitting (b)
+      # here would make this loop flag that exact documented case as
+      # "wider than documented" and tell you to update a note that
+      # already says it — the failure this fix (#4424) closes.
+      _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
+      if [ -z "$_tracked" ]; then
+        st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
+          "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
+      else
+        _ours_list=$(printf '%s\n' "$_tracked" | grep -E "$CI_PATH_RE" | sort -u)
+        _theirs_list=$(printf '%s\n' "$_tracked" | grep -E "$_vci" | sort -u)
+        _mismatch=$(
+          comm -23 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=yes,theirs=no)/'
+          comm -13 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=no,theirs=yes)/'
+        )
+        _count=$(printf '%s\n' "$_tracked" | wc -l)
+        if [ -z "$_mismatch" ]; then
+          st_ok "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh ($_count paths compared)"
         else
-            _vci="$_vci_matches"
-            # Tooling paths are CI on BOTH sides (a `scripts/*.mjs`-only push
-            # used to fail closed into the full Rust suite; 2026-09-02).
-            for _p in scripts/push.sh scripts/coverage-ratchet.mjs .claude/skills/batch-issues/SKILL.md; do
-                _ours=no; _theirs=no
-                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _ours=yes
-                printf '%s\n' "$_p" | grep -qE "$_vci" && _theirs=yes
-                if [ "$_ours" = yes ] && [ "$_theirs" = yes ]; then
-                    st_ok "divergence ratchet: $_p is CI here AND in classify-changes.sh (tooling is attributable)"
-                else
-                    st_bad "divergence ratchet: $_p is CI here AND in classify-changes.sh" \
-                        "ours=$_ours theirs=$_theirs — keep CI_PATH_RE and classify-changes.sh's ci_re in step"
-                fi
-            done
-            # The four toml arms are unanchored here but anchored there, so
-            # ANY path merely ENDING in one of the four filenames must
-            # diverge the same documented way scripts/*.sh does above — not
-            # just a nested copy (`docs/prek.toml`) but also a differently
-            # prefixed file sitting at the repo root (`myprek.toml`), which
-            # the unanchored regex matches just as readily.
-            for _p in docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
-                      myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml; do
-                _a=no; _b=no
-                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
-                printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
-                if [ "$_a" = yes ] && [ "$_b" = no ]; then
-                    st_ok "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh (documented, unanchored-toml divergence)"
-                else
-                    st_bad "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh" \
-                        "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
-                fi
-            done
-            # ...and every OTHER CI path must still agree with classify-changes.sh,
-            # or the divergence is wider than documented. "Every other" used
-            # to mean a hardcoded five-path list — .github/workflows/ci.yml,
-            # prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml — which
-            # made the "fails closed if a new one opens anywhere else" claim
-            # in the comment above CI_PATH_RE untrue: a new arm added to
-            # either regex covering a path outside that list (e.g. a future
-            # `^Dockerfile$`) would pass silently, PROVIDED that path is
-            # already tracked. Run both regexes over the actual tracked
-            # tree instead, so the claim holds for any currently tracked
-            # path — see the note above CI_PATH_RE for the residual gap
-            # (a not-yet-tracked path).
-            #
-            # Two `grep -E` passes over the WHOLE tracked-file list, diffed
-            # with `comm`, replace what used to fork a `printf | grep` pair
-            # PER TRACKED FILE — roughly 9.6k processes at this repo's
-            # ~4810 tracked paths — with a handful total, regardless of
-            # tree size. This hook runs before every push (prek.toml calls
-            # it "Fast: exercised before the verifier body").
-            #
-            # `git ls-files` returning EMPTY — no git, not a repo, an
-            # exported tarball, a container without git — must fail CLOSED,
-            # not report a pass having compared zero paths: every sibling
-            # guard in this block does (`[ ! -f "$_vy" ]`, and the
-            # `_vci_count -ne 1` cardinality check above),
-            # and this ratchet is not exempt just because its failure mode
-            # is a command returning nothing instead of a missing file.
-            #
-            # The documented divergence must be excluded here, or the two
-            # halves of this very check disagree with each other: the four
-            # toml arms, which are UNANCHORED in `CI_PATH_RE` (see the
-            # divergence note above
-            # `CI_PATH_RE`) — so ANY tracked path merely ending in one of
-            # those four filenames (a nested `docs/prek.toml`, a
-            # differently-prefixed `myprek.toml`) is CI here and not in
-            # `classify-changes.sh`'s anchored `ci_re`, same as (a). Omitting (b)
-            # here would make this loop flag that exact documented case as
-            # "wider than documented" and tell you to update a note that
-            # already says it — the failure this fix (#4424) closes.
-            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
-            if [ -z "$_tracked" ]; then
-                st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
-                    "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
-            else
-                _ours_list=$(printf '%s\n' "$_tracked" | grep -E "$CI_PATH_RE" | sort -u)
-                _theirs_list=$(printf '%s\n' "$_tracked" | grep -E "$_vci" | sort -u)
-                _mismatch=$(
-                    comm -23 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=yes,theirs=no)/'
-                    comm -13 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=no,theirs=yes)/'
-                )
-                _count=$(printf '%s\n' "$_tracked" | wc -l)
-                if [ -z "$_mismatch" ]; then
-                    st_ok "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh ($_count paths compared)"
-                else
-                    st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
-                        "$(printf '%s' "$_mismatch" | tr '\n' ' ')"
-                fi
-            fi
-
-            # RATCHET (#4424): the exclusion just above must actually
-            # cover divergence (b), not just (a) — a nested or
-            # differently-prefixed toml path must not survive into
-            # `_tracked` and trip the loop above as an undocumented
-            # mismatch. This is a pure string/regex property of the
-            # exclusion pattern itself — it needs no git fixture, tracked
-            # or otherwise, to exercise: apply the SAME pattern the
-            # `_tracked=` line uses to a synthetic path list and check what
-            # survives. (An earlier version of this check built a throwaway
-            # `git init` fixture to get a "real" tracked path; #3722's
-            # git-fixture-isolation guard correctly rejected that — a
-            # self-test run as a prek hook executes inside the invoking
-            # git environment, where GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE
-            # outrank `git -C <dir>`, so that fixture's `git init`/`add`/
-            # `commit` would have landed on the real repository, not a
-            # scratch one. No fixture is simpler AND safer here.)
-            #
-            # Extract the exclusion pattern from the `_tracked=` line
-            # itself (not a hand copy that could silently drift from it —
-            # the same failure mode `unrec_ci` already had once in this
-            # file).
-            _tracked_line=$(grep -E '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
-            # Cardinality guard, matching the `_vci_count` sibling above: a
-            # second `_tracked=$(git -C` line would make the parameter
-            # expansions below splice ACROSS both lines and silently yield a
-            # mangled exclusion pattern, which would then be compared as if it
-            # were the real one. Fail closed instead.
-            _tracked_line_count=$(grep -cE '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
-            if [ "$_tracked_line_count" -ne 1 ]; then
-                st_bad "divergence ratchet: exactly one _tracked= line" \
-                    "found $_tracked_line_count (expected 1) — the extraction below would splice across them"
-                _tracked_line=''
-            fi
-            _tracked_excl=${_tracked_line#*grep -vE \'}
-            _tracked_excl=${_tracked_excl%\'*}
-            if [ -z "$_tracked_excl" ] || [ "$_tracked_excl" = "$_tracked_line" ]; then
-                st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths" \
-                    "could not extract the grep -vE pattern from the _tracked= line"
-            else
-                # The eight unanchored-toml shapes from the loop above, PLUS
-                # a scripts/*.sh path (CI on both sides since the tooling
-                # widening, so it must SURVIVE the exclusion and be compared)
-                # and two ordinary tracked paths that must NOT be swept up by
-                # an over-broad pattern.
-                _survivors=$(printf '%s\n' \
-                    docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
-                    myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml \
-                    scripts/push.sh src-tauri/src/lib.rs README.md \
-                    | grep -vE "$_tracked_excl")
-                if [ "$_survivors" = "$(printf 'scripts/push.sh\nsrc-tauri/src/lib.rs\nREADME.md')" ]; then
-                    st_ok "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)"
-                else
-                    st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)" \
-                        "expected scripts/push.sh, src-tauri/src/lib.rs and README.md to survive; got: $(printf '%s' "$_survivors" | tr '\n' ' ')"
-                fi
-            fi
+          st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
+            "$(printf '%s' "$_mismatch" | tr '\n' ' ')"
         fi
+      fi
+
+      # RATCHET (#4424): the exclusion just above must actually
+      # cover divergence (b), not just (a) — a nested or
+      # differently-prefixed toml path must not survive into
+      # `_tracked` and trip the loop above as an undocumented
+      # mismatch. This is a pure string/regex property of the
+      # exclusion pattern itself — it needs no git fixture, tracked
+      # or otherwise, to exercise: apply the SAME pattern the
+      # `_tracked=` line uses to a synthetic path list and check what
+      # survives. (An earlier version of this check built a throwaway
+      # `git init` fixture to get a "real" tracked path; #3722's
+      # git-fixture-isolation guard correctly rejected that — a
+      # self-test run as a prek hook executes inside the invoking
+      # git environment, where GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE
+      # outrank `git -C <dir>`, so that fixture's `git init`/`add`/
+      # `commit` would have landed on the real repository, not a
+      # scratch one. No fixture is simpler AND safer here.)
+      #
+      # Extract the exclusion pattern from the `_tracked=` line
+      # itself (not a hand copy that could silently drift from it —
+      # the same failure mode `unrec_ci` already had once in this
+      # file).
+      _tracked_line=$(grep -E '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
+      # Cardinality guard, matching the `_vci_count` sibling above: a
+      # second `_tracked=$(git -C` line would make the parameter
+      # expansions below splice ACROSS both lines and silently yield a
+      # mangled exclusion pattern, which would then be compared as if it
+      # were the real one. Fail closed instead.
+      _tracked_line_count=$(grep -cE '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
+      if [ "$_tracked_line_count" -ne 1 ]; then
+        st_bad "divergence ratchet: exactly one _tracked= line" \
+          "found $_tracked_line_count (expected 1) — the extraction below would splice across them"
+        _tracked_line=''
+      fi
+      _tracked_excl=${_tracked_line#*grep -vE \'}
+      _tracked_excl=${_tracked_excl%\'*}
+      if [ -z "$_tracked_excl" ] || [ "$_tracked_excl" = "$_tracked_line" ]; then
+        st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths" \
+          "could not extract the grep -vE pattern from the _tracked= line"
+      else
+        # The eight unanchored-toml shapes from the loop above, PLUS
+        # a scripts/*.sh path (CI on both sides since the tooling
+        # widening, so it must SURVIVE the exclusion and be compared)
+        # and two ordinary tracked paths that must NOT be swept up by
+        # an over-broad pattern.
+        _survivors=$(printf '%s\n' \
+          docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
+          myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml \
+          scripts/push.sh src-tauri/src/lib.rs README.md \
+          | grep -vE "$_tracked_excl")
+        if [ "$_survivors" = "$(printf 'scripts/push.sh\nsrc-tauri/src/lib.rs\nREADME.md')" ]; then
+          st_ok "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)"
+        else
+          st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)" \
+            "expected scripts/push.sh, src-tauri/src/lib.rs and README.md to survive; got: $(printf '%s' "$_survivors" | tr '\n' ' ')"
+        fi
+      fi
     fi
-    for _v in HOOK_OWNER_RS_RE:HAS_RS HOOK_OWNER_TS_RE:HAS_TS; do
-        _re="${_v%%:*}"; _flag="${_v##*:}"
-        if grep -qE "^[[:space:]]*has_match \"\\\$$_re\" && $_flag=1\$" "${BASH_SOURCE[0]}"; then
-            st_ok "hook-owner gate: the classifier consults $_re"
-        else
-            st_bad "hook-owner gate: the classifier consults $_re" "no has_match call found"
-        fi
+  fi
+  for _v in HOOK_OWNER_RS_RE:HAS_RS HOOK_OWNER_TS_RE:HAS_TS; do
+    _re="${_v%%:*}"
+    _flag="${_v##*:}"
+    if grep -qE "^[[:space:]]*has_match \"\\\$$_re\" && $_flag=1\$" "${BASH_SOURCE[0]}"; then
+      st_ok "hook-owner gate: the classifier consults $_re"
+    else
+      st_bad "hook-owner gate: the classifier consults $_re" "no has_match call found"
+    fi
+  done
+  # ...and the classifier must actually CONSULT it. Driving the constant
+  # alone would pass against a constant nothing reads — the exact shape of
+  # the `unrec_ci` copy this file already got wrong once.
+  if grep -qE '^[[:space:]]*has_match "\$RS_SCRIPT_RE" && HAS_RS=1$' "${BASH_SOURCE[0]}"; then
+    st_ok "RS-script gate: the classifier consults RS_SCRIPT_RE"
+  else
+    st_bad "RS-script gate: the classifier consults RS_SCRIPT_RE" "no has_match call found"
+  fi
+
+  # The fail-closed arm must not carry its own copy of the pattern.
+  if grep -qE '^[[:space:]]*unrec_ci="\$CI_PATH_RE"$' "${BASH_SOURCE[0]}"; then
+    st_ok "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it"
+  else
+    st_bad "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it" \
+      "$(grep -nE '^[[:space:]]*unrec_ci=' "${BASH_SOURCE[0]}" | tr '\n' ' ')"
+  fi
+
+  # 7. Ratchet (#3361): the root lane's OLD vulnerable form must not come
+  #    back — root's sqlx subcommands run with NO DATABASE_URL override,
+  #    which falls through to whatever `src-tauri/.env`'s DATABASE_URL
+  #    points at, i.e. the developer's real dev.db, not an isolated probe
+  #    DB. Excludes comment lines (incl. this one) so the assertion can't
+  #    match its own description of the pattern it guards against.
+  bad_root_lines="$(grep -vE '^[[:space:]]*#' "${BASH_SOURCE[0]}" \
+    | grep -nE 'cd src-tauri.{0,40}cargo sqlx (migrate run|prepare)')"
+  if [ -n "$bad_root_lines" ]; then
+    st_bad "root sqlx lane never runs cargo sqlx without a DATABASE_URL override" \
+      "$(printf '%s' "$bad_root_lines" | tr '\n' ' ')"
+  else
+    st_ok "root sqlx lane never runs cargo sqlx without a DATABASE_URL override"
+  fi
+
+  # 8. Ratchet (#3361): Phase E's root lane must actually allocate its
+  #    probe DB under the per-invocation dir. Anchored at line start,
+  #    exact form, so a `root_db=` pointing anywhere else fails this.
+  if grep -qE '^[[:space:]]*root_db="\$probe_dir/root\.db"$' "${BASH_SOURCE[0]}"; then
+    st_ok "Phase E allocates the root lane's probe DB under the per-invocation dir"
+  else
+    st_bad "Phase E allocates the root lane's probe DB under the per-invocation dir" \
+      'no `root_db="$probe_dir/root.db"` assignment found'
+  fi
+
+  # 9. Ratchet (#3361): the root lane's `cargo sqlx migrate run` — the
+  #    command that actually WRITES schema — must be prefixed with the
+  #    per-invocation DATABASE_URL override. A partial fix that isolated
+  #    `database create`/`prepare --check` but left `migrate run`
+  #    pointed at the real DB would still migrate the developer's dev.db
+  #    to whatever schema is on the pushed branch.
+  if grep -qE '^[[:space:]]*&& DATABASE_URL="sqlite:\$root_db" cargo sqlx migrate run \\$' "${BASH_SOURCE[0]}"; then
+    st_ok "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL"
+  else
+    st_bad "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL" \
+      'no `&& DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \` line found'
+  fi
+
+  # ── Node dependency preflight (#3656) ────────────────────────────
+  # The property: a checkout whose node-based hooks CANNOT run is named
+  # as such, and one whose dependencies are present is left alone.
+  st_fixture_root="$(mktemp -d -t pre-push-nodedeps.XXXXXX)"
+
+  # 10. The live #3656 shape: a fresh worktree with no node_modules at
+  #     all. Must be diagnosed, and the diagnosis must contain the
+  #     string the five-red-hooks output never did.
+  mkdir -p "$st_fixture_root/fresh"
+  st_out="$(node_deps_problem "$st_fixture_root/fresh")" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'node_modules'; then
+    st_ok "missing node_modules is diagnosed by name"
+  else
+    st_bad "missing node_modules is diagnosed by name" "rc=$st_rc out=$st_out"
+  fi
+
+  # 11. A dangling symlink — `ln -s` run against a main checkout that
+  #     has since moved. `-d` alone follows the link and reports false,
+  #     so this would otherwise be indistinguishable from case 10; it
+  #     gets its own diagnosis because the remedy differs.
+  mkdir -p "$st_fixture_root/dangling"
+  ln -s "$st_fixture_root/does-not-exist" "$st_fixture_root/dangling/node_modules"
+  st_out="$(node_deps_problem "$st_fixture_root/dangling")" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qi 'dangling'; then
+    st_ok "dangling node_modules symlink is diagnosed as dangling"
+  else
+    st_bad "dangling node_modules symlink is diagnosed as dangling" "rc=$st_rc out=$st_out"
+  fi
+
+  # 12. Present but empty — `npm ci` interrupted, or a stray `mkdir`.
+  #     `npx oxlint` still cannot run, so this must not pass.
+  mkdir -p "$st_fixture_root/empty/node_modules"
+  st_out="$(node_deps_problem "$st_fixture_root/empty")" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ]; then
+    st_ok "node_modules without .bin/ is diagnosed (npx would fail)"
+  else
+    st_bad "node_modules without .bin/ is diagnosed (npx would fail)" "rc=$st_rc"
+  fi
+
+  # 13. The healthy shapes — a real directory, and the symlink the
+  #     worktree convention actually uses — must pass SILENTLY. A
+  #     preflight that fires on a good checkout is worse than none.
+  mkdir -p "$st_fixture_root/real/node_modules/.bin"
+  st_out="$(node_deps_problem "$st_fixture_root/real")" && st_rc=0 || st_rc=$?
+  mkdir -p "$st_fixture_root/linked"
+  ln -s "$st_fixture_root/real/node_modules" "$st_fixture_root/linked/node_modules"
+  st_out2="$(node_deps_problem "$st_fixture_root/linked")" && st_rc2=0 || st_rc2=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ] && [ "$st_rc2" -eq 0 ] && [ -z "$st_out2" ]; then
+    st_ok "installed deps (real dir and symlink) pass silently"
+  else
+    st_bad "installed deps (real dir and symlink) pass silently" \
+      "real: rc=$st_rc out=$st_out | symlink: rc=$st_rc2 out=$st_out2"
+  fi
+
+  # 14. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A.
+  #     Diagnosing the cause after the five red hooks have already
+  #     printed is the state this fixes; a future edit that moves the
+  #     call below Phase A restores it while cases 10-13 stay green.
+  #
+  #     The lookup is a function called from a condition context, with
+  #     `|| true` on each capture. This script runs `set -uo pipefail`
+  #     WITHOUT `-e`, so the inline form here did still reach its
+  #     diagnosis (verified) — unlike push.sh's, which aborted silently.
+  #     One `set -e` away from the same bug, and the fixtures below cost
+  #     nothing, so it gets the same shape.
+  st_line_of() {
+    grep -n "$1" "$2" 2>/dev/null | head -1 | cut -d: -f1 || true
+  }
+  st_order_check() {
+    # $1 file, $2 anchor that must come FIRST, $3 anchor after it.
+    # Echoes a human diagnosis; non-zero on any violation, including a
+    # MISSING anchor (unwired is a failure, not a reason to skip).
+    local f="$1" first="$2" second="$3" a b
+    a="$(st_line_of "$first" "$f")"
+    b="$(st_line_of "$second" "$f")"
+    if [ -z "$a" ]; then
+      echo "<not wired>: no line matching /$first/"
+      return 1
+    fi
+    if [ -z "$b" ]; then
+      echo "<anchor missing>: no line matching /$second/"
+      return 1
+    fi
+    if [ "$a" -lt "$b" ]; then
+      echo "ok (line $a < $b)"
+      return 0
+    fi
+    echo "<out of order>: /$first/ at line $a is not before /$second/ at line $b"
+    return 1
+  }
+
+  ST_CALL_ANCHOR='^if ! node_deps_problem_out='
+  ST_PHASE_A_ANCHOR='^if ! SKIP="\$PHASE_A_SKIP" prek run'
+  st_rc=0
+  st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+  if [ "$st_rc" -eq 0 ]; then
+    st_ok "the node-deps preflight runs before Phase A — $st_out"
+  else
+    st_bad "the node-deps preflight runs before Phase A" "$st_out"
+  fi
+
+  # 15. The ratchet's diagnostics must survive the failure they describe:
+  #     a NAMED message, not a silent abort and not a bare non-zero.
+  grep -v "$ST_CALL_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired.sh" || true
+  st_rc=0
+  st_out="$(st_order_check "$st_fixture_root/unwired.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'not wired'; then
+    st_ok "ratchet names an UNWIRED preflight instead of aborting silently"
+  else
+    st_bad "ratchet names an UNWIRED preflight instead of aborting silently" \
+      "rc=$st_rc out=$st_out"
+  fi
+
+  printf 'if ! SKIP="$PHASE_A_SKIP" prek run --from-ref\nif ! node_deps_problem_out="x"\n' \
+    >"$st_fixture_root/swapped.sh"
+  st_rc=0
+  st_out="$(st_order_check "$st_fixture_root/swapped.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'out of order'; then
+    st_ok "ratchet names a preflight moved BELOW Phase A, with both line numbers"
+  else
+    st_bad "ratchet names a preflight moved BELOW Phase A, with both line numbers" \
+      "rc=$st_rc out=$st_out"
+  fi
+
+  # ── caller-supplied SKIP (#3968) ─────────────────────────────────
+  # The property: a `SKIP` the caller exported reaches prek instead of
+  # being silently replaced, the required entries still survive, and
+  # the run reports that it is no longer CI-equivalent.
+
+  # 16. UNION. Before the fix the caller's entry was simply absent from
+  #     the value handed to prek — the hook ran and the run reported
+  #     success. Exact equality, so an implementation that dropped
+  #     either side, or reordered, fails.
+  st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
+  if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
+    st_ok "a caller SKIP is composed with the required entries, not discarded"
+  else
+    st_bad "a caller SKIP is composed with the required entries, not discarded" \
+      "got '$st_out'"
+  fi
+
+  # 17. The required entries are NOT overridable from outside: a caller
+  #     SKIP naming something else cannot displace them. (The mirror of
+  #     16 — that direction of the swap has its own way of being wrong.)
+  st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
+  case ",$st_out," in
+    *",vitest,"*) case ",$st_out," in *",cargo-test,"*) st_rc=0 ;; *) st_rc=1 ;; esac ;;
+    *) st_rc=1 ;;
+  esac
+  if [ "$st_rc" -eq 0 ]; then
+    st_ok "the script's own required skips survive a caller SKIP"
+  else
+    st_bad "the script's own required skips survive a caller SKIP" "got '$st_out'"
+  fi
+
+  # 18. Whitespace and duplicates: `SKIP='cargo-test , cargo-deny'` is a
+  #     shape a human types. A duplicate must collapse (prek takes a
+  #     comma list; a doubled entry is noise in the echoed SKIP= line)
+  #     and surrounding spaces must not become part of a hook name,
+  #     which would silently match nothing.
+  st_out="$(phase_a_skip_compose "vitest,cargo-test" " cargo-test , cargo-deny ")"
+  if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
+    st_ok "caller SKIP entries are trimmed and de-duplicated"
+  else
+    st_bad "caller SKIP entries are trimmed and de-duplicated" "got '$st_out'"
+  fi
+
+  # 19. No caller SKIP is the overwhelmingly common case (every
+  #     scripts/push.sh invocation): the composed value must be exactly
+  #     the required list, with no trailing comma — prek reads an empty
+  #     trailing field as a hook name that matches nothing, which is how
+  #     a "harmless" formatting slip becomes a silent no-op again.
+  st_out="$(phase_a_skip_compose "vitest,cargo-test" "")"
+  if [ "$st_out" = "vitest,cargo-test" ]; then
+    st_ok "no caller SKIP leaves the required list byte-identical"
+  else
+    st_bad "no caller SKIP leaves the required list byte-identical" "got '$st_out'"
+  fi
+
+  # 19b. EMPTY fields inside the caller's value — `SKIP=a,,b`, or a value
+  #      that is nothing but separators and spaces. `read -ra` drops a
+  #      TRAILING empty field on its own, so case 19 above does not reach
+  #      the empty-entry skip; only an interior or whitespace-only field
+  #      does. An empty entry reaching prek is a hook name that matches
+  #      nothing, i.e. exactly the silent no-op this issue is about, one
+  #      layer down. Both helpers, since both split the same way.
+  st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny,,typos")"
+  st_out2="$(phase_a_skip_compose "vitest" " , ")"
+  st_out3="$(phase_a_skip_extra "vitest" "cargo-deny,,typos")"
+  if [ "$st_out" = "vitest,cargo-test,cargo-deny,typos" ] \
+    && [ "$st_out2" = "vitest" ] && [ "$st_out3" = "cargo-deny,typos" ]; then
+    st_ok "empty and whitespace-only SKIP entries are dropped, not passed to prek"
+  else
+    st_bad "empty and whitespace-only SKIP entries are dropped, not passed to prek" \
+      "compose='$st_out' whitespace-only='$st_out2' extra='$st_out3'"
+  fi
+
+  # 19c. A caller SKIP carrying a NEWLINE (#3990 item 5). `IFS=',' read -ra`
+  #      reads one LINE, so everything after the first was dropped from the
+  #      value handed to prek AND from the non-equivalence warning — the run
+  #      omitted hooks it did not name, which is the silent discard #3968
+  #      removed one layer up. Both helpers, and both must name `typos`.
+  st_nl_compose="$(phase_a_skip_compose "vitest,cargo-test" "gitleaks
+typos")"
+  st_nl_extra="$(phase_a_skip_extra "vitest,cargo-test" "gitleaks
+typos")"
+  if [ "$st_nl_compose" = "vitest,cargo-test,gitleaks,typos" ] \
+    && [ "$st_nl_extra" = "gitleaks,typos" ]; then
+    st_ok "a caller SKIP containing a newline is honoured whole, not truncated"
+  else
+    st_bad "a caller SKIP containing a newline is honoured whole, not truncated" \
+      "compose='$st_nl_compose' extra='$st_nl_extra'"
+  fi
+
+  #      The other direction — a value that merely ENDS in a newline must
+  #      not gain an empty trailing entry — has no assertion of its own on
+  #      purpose: newline is IFS whitespace, the empty-entry drop in 19b and
+  #      the whitespace trim in 18 (whose `[[:space:]]` class covers `\n`)
+  #      each independently guarantee it, and no implementation that passes
+  #      19c can fail it. An assertion there would be decoration.
+
+  # 20. The warning reports what the caller's SKIP actually REMOVES, not
+  #     the raw value: re-skipping something already required changes
+  #     nothing, and warning about it trains the reader to ignore the
+  #     warning.
+  st_out="$(phase_a_skip_extra "vitest,cargo-test" "cargo-test,cargo-deny")"
+  if [ "$st_out" = "cargo-deny" ]; then
+    st_ok "the non-equivalence warning names only the hooks actually removed"
+  else
+    st_bad "the non-equivalence warning names only the hooks actually removed" \
+      "got '$st_out'"
+  fi
+
+  # 21. …and is EMPTY when the caller removed nothing, so a redundant
+  #     SKIP does not print a scary "not CI-equivalent" banner on a run
+  #     that is, in fact, equivalent.
+  st_out="$(phase_a_skip_extra "vitest,cargo-test" " vitest ")"
+  if [ -z "$st_out" ]; then
+    st_ok "a redundant caller SKIP produces no non-equivalence warning"
+  else
+    st_bad "a redundant caller SKIP produces no non-equivalence warning" "got '$st_out'"
+  fi
+
+  # 22. Ratchet: the helpers above are worthless if Phase A does not USE
+  #     them. This is the half that the pure-function cases cannot cover
+  #     — the original bug was entirely in the call site, not in any
+  #     function. Anchored at line start and matched as exact text so a
+  #     future edit back to `PHASE_A_SKIP="$(IFS=,; …skip_items…)"`
+  #     fails here rather than silently reinstating the clobber.
+  ST_COMPOSE_ANCHOR='^PHASE_A_SKIP="\$\(phase_a_skip_compose "\$PHASE_A_REQUIRED_SKIP" "\$CALLER_SKIP"\)"$'
+  ST_CALLERSKIP_ANCHOR='^CALLER_SKIP="\$\{SKIP:-\}"$'
+  # Both ratchets are expressed as FUNCTIONS taking a file, so case 25
+  # can drive the identical logic against a fixture that violates the
+  # property. A ratchet written inline as a grep over this file alone
+  # passes on a healthy tree no matter what it looks for, and a weakened
+  # pattern is then indistinguishable from a satisfied one.
+  st_skip_wiring_ok() {
+    grep -qE "$ST_CALLERSKIP_ANCHOR" "$1" && grep -qE "$ST_COMPOSE_ANCHOR" "$1"
+  }
+  # Numbered against the FILE (#3990 item 4). This used to pipe through
+  # `grep -vE '^[[:space:]]*#'` FIRST and number SECOND, so the line numbers
+  # were positions in the comment-stripped stream: a clobber reinstated near
+  # the end of this file would be announced hundreds of lines above where it
+  # lives, sending the reader to the wrong place.
+  #
+  # That prefilter is gone rather than reordered. What excludes the prose
+  # above is the `^` ANCHOR — a commented line begins with `#`, so it can
+  # never match `^PHASE_A_SKIP=`. The filter was doing nothing, and the
+  # comment at case 23 crediting it was a stale justification. Case 25 pins
+  # the anchor's exclusion directly instead.
+  st_clobber_lines() {
+    grep -nE '^PHASE_A_SKIP="\$\(IFS=,' "$1" || true
+  }
+  st_rc=0
+  st_skip_wiring_ok "${BASH_SOURCE[0]}" || st_rc=1
+  if [ "$st_rc" -eq 0 ]; then
+    st_ok "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it"
+  else
+    st_bad "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it" \
+      'no `CALLER_SKIP="${SKIP:-}"` + `PHASE_A_SKIP="$(phase_a_skip_compose …)"` pair found'
+  fi
+
+  # 23. Ratchet: the clobbering form must not come back alongside it. A
+  #     re-added `PHASE_A_SKIP="$(IFS=,; …)"` line would satisfy case 22
+  #     (the composing line still exists) while whichever ran last won.
+  #     The `^` anchor is what keeps this off the prose above; case 25
+  #     drives that exclusion against a fixture rather than asserting it.
+  st_out="$(st_clobber_lines "${BASH_SOURCE[0]}")"
+  if [ -z "$st_out" ]; then
+    st_ok "the clobbering PHASE_A_SKIP assignment is gone and stays gone"
+  else
+    st_bad "the clobbering PHASE_A_SKIP assignment is gone and stays gone" \
+      "$(printf '%s' "$st_out" | tr '\n' ' ')"
+  fi
+
+  # 24. Ratchet: a run made inequivalent by a caller SKIP must say so in
+  #     the FINAL banner, not only in a Phase A line that has scrolled
+  #     past by the time the gate reports. The banner is the line that
+  #     gets quoted as "the gate passed".
+  if grep -qE '^[[:space:]]*echo "  ⚠ NOT CI-equivalent: caller SKIP omitted' "${BASH_SOURCE[0]}"; then
+    st_ok "the PASSED banner declares the run non-equivalent when caller skips applied"
+  else
+    st_bad "the PASSED banner declares the run non-equivalent when caller skips applied" \
+      'no "NOT CI-equivalent" line found near the final banner'
+  fi
+
+  # 25. Cases 22 and 23 must be able to FAIL. Both are checks over this
+  #     very file, so on a healthy tree they pass whatever they look
+  #     for — a weakened `st_skip_wiring_ok` (or one that always returns
+  #     0) is indistinguishable from a satisfied one. Drive the SAME
+  #     functions against fixtures that violate the property and require
+  #     them to report it there.
+  grep -vE "$ST_COMPOSE_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired-skip.sh" || true
+  if st_skip_wiring_ok "$st_fixture_root/unwired-skip.sh"; then
+    st_bad "the compose-wiring ratchet reports a file with the wiring removed" \
+      'st_skip_wiring_ok passed a fixture with the composing assignment stripped'
+  else
+    st_ok "the compose-wiring ratchet reports a file with the wiring removed"
+  fi
+  #     The forbidden line is placed at line 10, behind nine COMMENT lines,
+  #     for two reasons at once: it must still be found (the ratchet works)
+  #     and it must be reported at line 10 (#3990 item 4 — numbering a
+  #     comment-filtered stream reported it at line 1, sending the reader
+  #     hundreds of lines from the reinstated clobber in this file). A
+  #     one-line fixture cannot tell those apart: every line number is 1.
+  {
+    for st_i in 1 2 3 4 5 6 7 8 9; do
+      printf '# PHASE_A_SKIP is discussed in prose on line %s\n' "$st_i"
     done
-    # ...and the classifier must actually CONSULT it. Driving the constant
-    # alone would pass against a constant nothing reads — the exact shape of
-    # the `unrec_ci` copy this file already got wrong once.
-    if grep -qE '^[[:space:]]*has_match "\$RS_SCRIPT_RE" && HAS_RS=1$' "${BASH_SOURCE[0]}"; then
-        st_ok "RS-script gate: the classifier consults RS_SCRIPT_RE"
-    else
-        st_bad "RS-script gate: the classifier consults RS_SCRIPT_RE" "no has_match call found"
-    fi
+    printf 'PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")"\n'
+  } >"$st_fixture_root/clobber.sh"
+  st_out="$(st_clobber_lines "$st_fixture_root/clobber.sh")"
+  if [ -n "$st_out" ]; then
+    st_ok "the clobber ratchet reports the exact form it forbids"
+  else
+    st_bad "the clobber ratchet reports the exact form it forbids" \
+      'st_clobber_lines found nothing in a fixture that is the forbidden line'
+  fi
+  case "$st_out" in
+    10:*) st_ok "the clobber ratchet reports the line number of the FILE" ;;
+    *)
+      st_bad "the clobber ratchet reports the line number of the FILE" \
+        "want line 10, got '$st_out'"
+      ;;
+  esac
+  #     The other half: a clobber sitting inside a COMMENT is still not a
+  #     clobber. Numbering first must not have re-admitted the prose this
+  #     ratchet was written to ignore.
+  printf '# PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")" was the old form\n' \
+    >"$st_fixture_root/clobber-in-comment.sh"
+  if [ -z "$(st_clobber_lines "$st_fixture_root/clobber-in-comment.sh")" ]; then
+    st_ok "the clobber ratchet still ignores the forbidden form inside a comment"
+  else
+    st_bad "the clobber ratchet still ignores the forbidden form inside a comment" \
+      'a commented-out clobber was reported as a live one'
+  fi
 
-    # The fail-closed arm must not carry its own copy of the pattern.
-    if grep -qE '^[[:space:]]*unrec_ci="\$CI_PATH_RE"$' "${BASH_SOURCE[0]}"; then
-        st_ok "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it"
-    else
-        st_bad "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it" \
-            "$(grep -nE '^[[:space:]]*unrec_ci=' "${BASH_SOURCE[0]}" | tr '\n' ' ')"
-    fi
+  rm -rf "$st_fixture_root"
 
-    # 7. Ratchet (#3361): the root lane's OLD vulnerable form must not come
-    #    back — root's sqlx subcommands run with NO DATABASE_URL override,
-    #    which falls through to whatever `src-tauri/.env`'s DATABASE_URL
-    #    points at, i.e. the developer's real dev.db, not an isolated probe
-    #    DB. Excludes comment lines (incl. this one) so the assertion can't
-    #    match its own description of the pattern it guards against.
-    bad_root_lines="$(grep -vE '^[[:space:]]*#' "${BASH_SOURCE[0]}" \
-        | grep -nE 'cd src-tauri.{0,40}cargo sqlx (migrate run|prepare)')"
-    if [ -n "$bad_root_lines" ]; then
-        st_bad "root sqlx lane never runs cargo sqlx without a DATABASE_URL override" \
-            "$(printf '%s' "$bad_root_lines" | tr '\n' ' ')"
-    else
-        st_ok "root sqlx lane never runs cargo sqlx without a DATABASE_URL override"
-    fi
+  # ── dev.db migration gap (#4266) ─────────────────────────────────
+  # The property: a dev.db genuinely behind (or missing, or never
+  # migrated) is caught and named, with the exact remedy command; a
+  # dev.db that is caught up is left alone. Own fixture root, cleaned
+  # at the end of this section.
+  st_devdb_root="$(mktemp -d -t pre-push-devdb.XXXXXX)"
 
-    # 8. Ratchet (#3361): Phase E's root lane must actually allocate its
-    #    probe DB under the per-invocation dir. Anchored at line start,
-    #    exact form, so a `root_db=` pointing anywhere else fails this.
-    if grep -qE '^[[:space:]]*root_db="\$probe_dir/root\.db"$' "${BASH_SOURCE[0]}"; then
-        st_ok "Phase E allocates the root lane's probe DB under the per-invocation dir"
-    else
-        st_bad "Phase E allocates the root lane's probe DB under the per-invocation dir" \
-            'no `root_db="$probe_dir/root.db"` assignment found'
-    fi
-
-    # 9. Ratchet (#3361): the root lane's `cargo sqlx migrate run` — the
-    #    command that actually WRITES schema — must be prefixed with the
-    #    per-invocation DATABASE_URL override. A partial fix that isolated
-    #    `database create`/`prepare --check` but left `migrate run`
-    #    pointed at the real DB would still migrate the developer's dev.db
-    #    to whatever schema is on the pushed branch.
-    if grep -qE '^[[:space:]]*&& DATABASE_URL="sqlite:\$root_db" cargo sqlx migrate run \\$' "${BASH_SOURCE[0]}"; then
-        st_ok "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL"
-    else
-        st_bad "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL" \
-            'no `&& DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \` line found'
-    fi
-
-    # ── Node dependency preflight (#3656) ────────────────────────────
-    # The property: a checkout whose node-based hooks CANNOT run is named
-    # as such, and one whose dependencies are present is left alone.
-    st_fixture_root="$(mktemp -d -t pre-push-nodedeps.XXXXXX)"
-
-    # 10. The live #3656 shape: a fresh worktree with no node_modules at
-    #     all. Must be diagnosed, and the diagnosis must contain the
-    #     string the five-red-hooks output never did.
-    mkdir -p "$st_fixture_root/fresh"
-    st_out="$(node_deps_problem "$st_fixture_root/fresh")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'node_modules'; then
-        st_ok "missing node_modules is diagnosed by name"
-    else
-        st_bad "missing node_modules is diagnosed by name" "rc=$st_rc out=$st_out"
-    fi
-
-    # 11. A dangling symlink — `ln -s` run against a main checkout that
-    #     has since moved. `-d` alone follows the link and reports false,
-    #     so this would otherwise be indistinguishable from case 10; it
-    #     gets its own diagnosis because the remedy differs.
-    mkdir -p "$st_fixture_root/dangling"
-    ln -s "$st_fixture_root/does-not-exist" "$st_fixture_root/dangling/node_modules"
-    st_out="$(node_deps_problem "$st_fixture_root/dangling")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qi 'dangling'; then
-        st_ok "dangling node_modules symlink is diagnosed as dangling"
-    else
-        st_bad "dangling node_modules symlink is diagnosed as dangling" "rc=$st_rc out=$st_out"
-    fi
-
-    # 12. Present but empty — `npm ci` interrupted, or a stray `mkdir`.
-    #     `npx oxlint` still cannot run, so this must not pass.
-    mkdir -p "$st_fixture_root/empty/node_modules"
-    st_out="$(node_deps_problem "$st_fixture_root/empty")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ]; then
-        st_ok "node_modules without .bin/ is diagnosed (npx would fail)"
-    else
-        st_bad "node_modules without .bin/ is diagnosed (npx would fail)" "rc=$st_rc"
-    fi
-
-    # 13. The healthy shapes — a real directory, and the symlink the
-    #     worktree convention actually uses — must pass SILENTLY. A
-    #     preflight that fires on a good checkout is worse than none.
-    mkdir -p "$st_fixture_root/real/node_modules/.bin"
-    st_out="$(node_deps_problem "$st_fixture_root/real")" && st_rc=0 || st_rc=$?
-    mkdir -p "$st_fixture_root/linked"
-    ln -s "$st_fixture_root/real/node_modules" "$st_fixture_root/linked/node_modules"
-    st_out2="$(node_deps_problem "$st_fixture_root/linked")" && st_rc2=0 || st_rc2=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ] && [ "$st_rc2" -eq 0 ] && [ -z "$st_out2" ]; then
-        st_ok "installed deps (real dir and symlink) pass silently"
-    else
-        st_bad "installed deps (real dir and symlink) pass silently" \
-            "real: rc=$st_rc out=$st_out | symlink: rc=$st_rc2 out=$st_out2"
-    fi
-
-    # 14. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A.
-    #     Diagnosing the cause after the five red hooks have already
-    #     printed is the state this fixes; a future edit that moves the
-    #     call below Phase A restores it while cases 10-13 stay green.
-    #
-    #     The lookup is a function called from a condition context, with
-    #     `|| true` on each capture. This script runs `set -uo pipefail`
-    #     WITHOUT `-e`, so the inline form here did still reach its
-    #     diagnosis (verified) — unlike push.sh's, which aborted silently.
-    #     One `set -e` away from the same bug, and the fixtures below cost
-    #     nothing, so it gets the same shape.
-    st_line_of() {
-        grep -n "$1" "$2" 2>/dev/null | head -1 | cut -d: -f1 || true
-    }
-    st_order_check() {
-        # $1 file, $2 anchor that must come FIRST, $3 anchor after it.
-        # Echoes a human diagnosis; non-zero on any violation, including a
-        # MISSING anchor (unwired is a failure, not a reason to skip).
-        local f="$1" first="$2" second="$3" a b
-        a="$(st_line_of "$first" "$f")"
-        b="$(st_line_of "$second" "$f")"
-        if [ -z "$a" ]; then
-            echo "<not wired>: no line matching /$first/"
-            return 1
-        fi
-        if [ -z "$b" ]; then
-            echo "<anchor missing>: no line matching /$second/"
-            return 1
-        fi
-        if [ "$a" -lt "$b" ]; then
-            echo "ok (line $a < $b)"
-            return 0
-        fi
-        echo "<out of order>: /$first/ at line $a is not before /$second/ at line $b"
-        return 1
-    }
-
-    ST_CALL_ANCHOR='^if ! node_deps_problem_out='
-    ST_PHASE_A_ANCHOR='^if ! SKIP="\$PHASE_A_SKIP" prek run'
-    st_rc=0
-    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
-    if [ "$st_rc" -eq 0 ]; then
-        st_ok "the node-deps preflight runs before Phase A — $st_out"
-    else
-        st_bad "the node-deps preflight runs before Phase A" "$st_out"
-    fi
-
-    # 15. The ratchet's diagnostics must survive the failure they describe:
-    #     a NAMED message, not a silent abort and not a bare non-zero.
-    grep -v "$ST_CALL_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired.sh" || true
-    st_rc=0
-    st_out="$(st_order_check "$st_fixture_root/unwired.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'not wired'; then
-        st_ok "ratchet names an UNWIRED preflight instead of aborting silently"
-    else
-        st_bad "ratchet names an UNWIRED preflight instead of aborting silently" \
-            "rc=$st_rc out=$st_out"
-    fi
-
-    printf 'if ! SKIP="$PHASE_A_SKIP" prek run --from-ref\nif ! node_deps_problem_out="x"\n' \
-        >"$st_fixture_root/swapped.sh"
-    st_rc=0
-    st_out="$(st_order_check "$st_fixture_root/swapped.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'out of order'; then
-        st_ok "ratchet names a preflight moved BELOW Phase A, with both line numbers"
-    else
-        st_bad "ratchet names a preflight moved BELOW Phase A, with both line numbers" \
-            "rc=$st_rc out=$st_out"
-    fi
-
-    # ── caller-supplied SKIP (#3968) ─────────────────────────────────
-    # The property: a `SKIP` the caller exported reaches prek instead of
-    # being silently replaced, the required entries still survive, and
-    # the run reports that it is no longer CI-equivalent.
-
-    # 16. UNION. Before the fix the caller's entry was simply absent from
-    #     the value handed to prek — the hook ran and the run reported
-    #     success. Exact equality, so an implementation that dropped
-    #     either side, or reordered, fails.
-    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
-    if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
-        st_ok "a caller SKIP is composed with the required entries, not discarded"
-    else
-        st_bad "a caller SKIP is composed with the required entries, not discarded" \
-            "got '$st_out'"
-    fi
-
-    # 17. The required entries are NOT overridable from outside: a caller
-    #     SKIP naming something else cannot displace them. (The mirror of
-    #     16 — that direction of the swap has its own way of being wrong.)
-    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
-    case ",$st_out," in
-        *",vitest,"*) case ",$st_out," in *",cargo-test,"*) st_rc=0 ;; *) st_rc=1 ;; esac ;;
-        *) st_rc=1 ;;
-    esac
-    if [ "$st_rc" -eq 0 ]; then
-        st_ok "the script's own required skips survive a caller SKIP"
-    else
-        st_bad "the script's own required skips survive a caller SKIP" "got '$st_out'"
-    fi
-
-    # 18. Whitespace and duplicates: `SKIP='cargo-test , cargo-deny'` is a
-    #     shape a human types. A duplicate must collapse (prek takes a
-    #     comma list; a doubled entry is noise in the echoed SKIP= line)
-    #     and surrounding spaces must not become part of a hook name,
-    #     which would silently match nothing.
-    st_out="$(phase_a_skip_compose "vitest,cargo-test" " cargo-test , cargo-deny ")"
-    if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
-        st_ok "caller SKIP entries are trimmed and de-duplicated"
-    else
-        st_bad "caller SKIP entries are trimmed and de-duplicated" "got '$st_out'"
-    fi
-
-    # 19. No caller SKIP is the overwhelmingly common case (every
-    #     scripts/push.sh invocation): the composed value must be exactly
-    #     the required list, with no trailing comma — prek reads an empty
-    #     trailing field as a hook name that matches nothing, which is how
-    #     a "harmless" formatting slip becomes a silent no-op again.
-    st_out="$(phase_a_skip_compose "vitest,cargo-test" "")"
-    if [ "$st_out" = "vitest,cargo-test" ]; then
-        st_ok "no caller SKIP leaves the required list byte-identical"
-    else
-        st_bad "no caller SKIP leaves the required list byte-identical" "got '$st_out'"
-    fi
-
-    # 19b. EMPTY fields inside the caller's value — `SKIP=a,,b`, or a value
-    #      that is nothing but separators and spaces. `read -ra` drops a
-    #      TRAILING empty field on its own, so case 19 above does not reach
-    #      the empty-entry skip; only an interior or whitespace-only field
-    #      does. An empty entry reaching prek is a hook name that matches
-    #      nothing, i.e. exactly the silent no-op this issue is about, one
-    #      layer down. Both helpers, since both split the same way.
-    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny,,typos")"
-    st_out2="$(phase_a_skip_compose "vitest" " , ")"
-    st_out3="$(phase_a_skip_extra "vitest" "cargo-deny,,typos")"
-    if [ "$st_out" = "vitest,cargo-test,cargo-deny,typos" ] &&
-        [ "$st_out2" = "vitest" ] && [ "$st_out3" = "cargo-deny,typos" ]; then
-        st_ok "empty and whitespace-only SKIP entries are dropped, not passed to prek"
-    else
-        st_bad "empty and whitespace-only SKIP entries are dropped, not passed to prek" \
-            "compose='$st_out' whitespace-only='$st_out2' extra='$st_out3'"
-    fi
-
-    # 19c. A caller SKIP carrying a NEWLINE (#3990 item 5). `IFS=',' read -ra`
-    #      reads one LINE, so everything after the first was dropped from the
-    #      value handed to prek AND from the non-equivalence warning — the run
-    #      omitted hooks it did not name, which is the silent discard #3968
-    #      removed one layer up. Both helpers, and both must name `typos`.
-    st_nl_compose="$(phase_a_skip_compose "vitest,cargo-test" "gitleaks
-typos")"
-    st_nl_extra="$(phase_a_skip_extra "vitest,cargo-test" "gitleaks
-typos")"
-    if [ "$st_nl_compose" = "vitest,cargo-test,gitleaks,typos" ] &&
-        [ "$st_nl_extra" = "gitleaks,typos" ]; then
-        st_ok "a caller SKIP containing a newline is honoured whole, not truncated"
-    else
-        st_bad "a caller SKIP containing a newline is honoured whole, not truncated" \
-            "compose='$st_nl_compose' extra='$st_nl_extra'"
-    fi
-
-    #      The other direction — a value that merely ENDS in a newline must
-    #      not gain an empty trailing entry — has no assertion of its own on
-    #      purpose: newline is IFS whitespace, the empty-entry drop in 19b and
-    #      the whitespace trim in 18 (whose `[[:space:]]` class covers `\n`)
-    #      each independently guarantee it, and no implementation that passes
-    #      19c can fail it. An assertion there would be decoration.
-
-    # 20. The warning reports what the caller's SKIP actually REMOVES, not
-    #     the raw value: re-skipping something already required changes
-    #     nothing, and warning about it trains the reader to ignore the
-    #     warning.
-    st_out="$(phase_a_skip_extra "vitest,cargo-test" "cargo-test,cargo-deny")"
-    if [ "$st_out" = "cargo-deny" ]; then
-        st_ok "the non-equivalence warning names only the hooks actually removed"
-    else
-        st_bad "the non-equivalence warning names only the hooks actually removed" \
-            "got '$st_out'"
-    fi
-
-    # 21. …and is EMPTY when the caller removed nothing, so a redundant
-    #     SKIP does not print a scary "not CI-equivalent" banner on a run
-    #     that is, in fact, equivalent.
-    st_out="$(phase_a_skip_extra "vitest,cargo-test" " vitest ")"
-    if [ -z "$st_out" ]; then
-        st_ok "a redundant caller SKIP produces no non-equivalence warning"
-    else
-        st_bad "a redundant caller SKIP produces no non-equivalence warning" "got '$st_out'"
-    fi
-
-    # 22. Ratchet: the helpers above are worthless if Phase A does not USE
-    #     them. This is the half that the pure-function cases cannot cover
-    #     — the original bug was entirely in the call site, not in any
-    #     function. Anchored at line start and matched as exact text so a
-    #     future edit back to `PHASE_A_SKIP="$(IFS=,; …skip_items…)"`
-    #     fails here rather than silently reinstating the clobber.
-    ST_COMPOSE_ANCHOR='^PHASE_A_SKIP="\$\(phase_a_skip_compose "\$PHASE_A_REQUIRED_SKIP" "\$CALLER_SKIP"\)"$'
-    ST_CALLERSKIP_ANCHOR='^CALLER_SKIP="\$\{SKIP:-\}"$'
-    # Both ratchets are expressed as FUNCTIONS taking a file, so case 25
-    # can drive the identical logic against a fixture that violates the
-    # property. A ratchet written inline as a grep over this file alone
-    # passes on a healthy tree no matter what it looks for, and a weakened
-    # pattern is then indistinguishable from a satisfied one.
-    st_skip_wiring_ok() {
-        grep -qE "$ST_CALLERSKIP_ANCHOR" "$1" && grep -qE "$ST_COMPOSE_ANCHOR" "$1"
-    }
-    # Numbered against the FILE (#3990 item 4). This used to pipe through
-    # `grep -vE '^[[:space:]]*#'` FIRST and number SECOND, so the line numbers
-    # were positions in the comment-stripped stream: a clobber reinstated near
-    # the end of this file would be announced hundreds of lines above where it
-    # lives, sending the reader to the wrong place.
-    #
-    # That prefilter is gone rather than reordered. What excludes the prose
-    # above is the `^` ANCHOR — a commented line begins with `#`, so it can
-    # never match `^PHASE_A_SKIP=`. The filter was doing nothing, and the
-    # comment at case 23 crediting it was a stale justification. Case 25 pins
-    # the anchor's exclusion directly instead.
-    st_clobber_lines() {
-        grep -nE '^PHASE_A_SKIP="\$\(IFS=,' "$1" || true
-    }
-    st_rc=0
-    st_skip_wiring_ok "${BASH_SOURCE[0]}" || st_rc=1
-    if [ "$st_rc" -eq 0 ]; then
-        st_ok "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it"
-    else
-        st_bad "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it" \
-            'no `CALLER_SKIP="${SKIP:-}"` + `PHASE_A_SKIP="$(phase_a_skip_compose …)"` pair found'
-    fi
-
-    # 23. Ratchet: the clobbering form must not come back alongside it. A
-    #     re-added `PHASE_A_SKIP="$(IFS=,; …)"` line would satisfy case 22
-    #     (the composing line still exists) while whichever ran last won.
-    #     The `^` anchor is what keeps this off the prose above; case 25
-    #     drives that exclusion against a fixture rather than asserting it.
-    st_out="$(st_clobber_lines "${BASH_SOURCE[0]}")"
-    if [ -z "$st_out" ]; then
-        st_ok "the clobbering PHASE_A_SKIP assignment is gone and stays gone"
-    else
-        st_bad "the clobbering PHASE_A_SKIP assignment is gone and stays gone" \
-            "$(printf '%s' "$st_out" | tr '\n' ' ')"
-    fi
-
-    # 24. Ratchet: a run made inequivalent by a caller SKIP must say so in
-    #     the FINAL banner, not only in a Phase A line that has scrolled
-    #     past by the time the gate reports. The banner is the line that
-    #     gets quoted as "the gate passed".
-    if grep -qE '^[[:space:]]*echo "  ⚠ NOT CI-equivalent: caller SKIP omitted' "${BASH_SOURCE[0]}"; then
-        st_ok "the PASSED banner declares the run non-equivalent when caller skips applied"
-    else
-        st_bad "the PASSED banner declares the run non-equivalent when caller skips applied" \
-            'no "NOT CI-equivalent" line found near the final banner'
-    fi
-
-    # 25. Cases 22 and 23 must be able to FAIL. Both are checks over this
-    #     very file, so on a healthy tree they pass whatever they look
-    #     for — a weakened `st_skip_wiring_ok` (or one that always returns
-    #     0) is indistinguishable from a satisfied one. Drive the SAME
-    #     functions against fixtures that violate the property and require
-    #     them to report it there.
-    grep -vE "$ST_COMPOSE_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired-skip.sh" || true
-    if st_skip_wiring_ok "$st_fixture_root/unwired-skip.sh"; then
-        st_bad "the compose-wiring ratchet reports a file with the wiring removed" \
-            'st_skip_wiring_ok passed a fixture with the composing assignment stripped'
-    else
-        st_ok "the compose-wiring ratchet reports a file with the wiring removed"
-    fi
-    #     The forbidden line is placed at line 10, behind nine COMMENT lines,
-    #     for two reasons at once: it must still be found (the ratchet works)
-    #     and it must be reported at line 10 (#3990 item 4 — numbering a
-    #     comment-filtered stream reported it at line 1, sending the reader
-    #     hundreds of lines from the reinstated clobber in this file). A
-    #     one-line fixture cannot tell those apart: every line number is 1.
-    {
-        for st_i in 1 2 3 4 5 6 7 8 9; do
-            printf '# PHASE_A_SKIP is discussed in prose on line %s\n' "$st_i"
-        done
-        printf 'PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")"\n'
-    } >"$st_fixture_root/clobber.sh"
-    st_out="$(st_clobber_lines "$st_fixture_root/clobber.sh")"
-    if [ -n "$st_out" ]; then
-        st_ok "the clobber ratchet reports the exact form it forbids"
-    else
-        st_bad "the clobber ratchet reports the exact form it forbids" \
-            'st_clobber_lines found nothing in a fixture that is the forbidden line'
-    fi
-    case "$st_out" in
-        10:*) st_ok "the clobber ratchet reports the line number of the FILE" ;;
-        *)
-            st_bad "the clobber ratchet reports the line number of the FILE" \
-                "want line 10, got '$st_out'"
-            ;;
-    esac
-    #     The other half: a clobber sitting inside a COMMENT is still not a
-    #     clobber. Numbering first must not have re-admitted the prose this
-    #     ratchet was written to ignore.
-    printf '# PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")" was the old form\n' \
-        >"$st_fixture_root/clobber-in-comment.sh"
-    if [ -z "$(st_clobber_lines "$st_fixture_root/clobber-in-comment.sh")" ]; then
-        st_ok "the clobber ratchet still ignores the forbidden form inside a comment"
-    else
-        st_bad "the clobber ratchet still ignores the forbidden form inside a comment" \
-            'a commented-out clobber was reported as a live one'
-    fi
-
-    rm -rf "$st_fixture_root"
-
-    # ── dev.db migration gap (#4266) ─────────────────────────────────
-    # The property: a dev.db genuinely behind (or missing, or never
-    # migrated) is caught and named, with the exact remedy command; a
-    # dev.db that is caught up is left alone. Own fixture root, cleaned
-    # at the end of this section.
-    st_devdb_root="$(mktemp -d -t pre-push-devdb.XXXXXX)"
-
-    st_devdb_seed() {
-        # $1 name, $2 = space-separated list of migration FILENAMEs to place
-        # in migrations/ on disk (each already encodes its own version via
-        # its leading digits, e.g. "0001_initial.sql" — no separate version
-        # tag needed), $3 = space-separated applied version numbers (or ""
-        # for none, or "NOTABLE" for a dev.db with no _sqlx_migrations table
-        # at all, or "NODB" for no dev.db file), $4 = optional db filename
-        # (default "dev.db" — override to prove a DATABASE_URL form was
-        # actually parsed, not just defaulted), $5 = space-separated versions
-        # whose stored checksum should be deliberately WRONG (#4334 — the
-        # edited-in-place case; default "" = every applied row carries the
-        # real SHA-384 of its on-disk file, which is what sqlx itself
-        # stores), $6 = journal mode: "" for SQLite's rollback-journal
-        # default, or "WAL" for the shape that actually ships (#4334 note 2
-        # — sqlx's `SqliteConnectOptions` defaults `journal_mode` to WAL, so
-        # a rollback-journal fixture is not the database this guard meets in
-        # a real checkout; a read-only open of a WAL database takes a
-        # different SQLite path and creates `-shm`/`-wal` beside the file).
-        local name="$1" disk="$2" applied="$3" dbname="${4:-dev.db}"
-        local drift="${5:-}" journal="${6:-}"
-        local dir="$st_devdb_root/$name/src-tauri"
-        mkdir -p "$dir/migrations"
-        local fn
-        for fn in $disk; do
-            touch "$dir/migrations/$fn"
-        done
-        case "$applied" in
-            NODB) ;;
-            NOTABLE)
-                node --no-warnings -e '
+  st_devdb_seed() {
+    # $1 name, $2 = space-separated list of migration FILENAMEs to place
+    # in migrations/ on disk (each already encodes its own version via
+    # its leading digits, e.g. "0001_initial.sql" — no separate version
+    # tag needed), $3 = space-separated applied version numbers (or ""
+    # for none, or "NOTABLE" for a dev.db with no _sqlx_migrations table
+    # at all, or "NODB" for no dev.db file), $4 = optional db filename
+    # (default "dev.db" — override to prove a DATABASE_URL form was
+    # actually parsed, not just defaulted), $5 = space-separated versions
+    # whose stored checksum should be deliberately WRONG (#4334 — the
+    # edited-in-place case; default "" = every applied row carries the
+    # real SHA-384 of its on-disk file, which is what sqlx itself
+    # stores), $6 = journal mode: "" for SQLite's rollback-journal
+    # default, or "WAL" for the shape that actually ships (#4334 note 2
+    # — sqlx's `SqliteConnectOptions` defaults `journal_mode` to WAL, so
+    # a rollback-journal fixture is not the database this guard meets in
+    # a real checkout; a read-only open of a WAL database takes a
+    # different SQLite path and creates `-shm`/`-wal` beside the file).
+    local name="$1" disk="$2" applied="$3" dbname="${4:-dev.db}"
+    local drift="${5:-}" journal="${6:-}"
+    local dir="$st_devdb_root/$name/src-tauri"
+    mkdir -p "$dir/migrations"
+    local fn
+    for fn in $disk; do
+      touch "$dir/migrations/$fn"
+    done
+    case "$applied" in
+      NODB) ;;
+      NOTABLE)
+        node --no-warnings -e '
 const { DatabaseSync } = require("node:sqlite")
 const db = new DatabaseSync(process.argv[1])
 db.exec("CREATE TABLE not_a_migrations_table (id INTEGER)")
 db.close()
 ' "$dir/$dbname"
-                ;;
-            *)
-                node --no-warnings -e '
+        ;;
+      *)
+        node --no-warnings -e '
 const { createHash } = require("node:crypto")
 const { readdirSync, readFileSync } = require("node:fs")
 const { join } = require("node:path")
@@ -1398,737 +1412,855 @@ for (const v of versions(applied)) {
 }
 db.close()
 ' "$dir" "$dbname" "$applied" "$drift" "$journal"
-                ;;
-        esac
-    }
+        ;;
+    esac
+  }
 
-    # The remedy is printed as two lines (`REMEDY` in
-    # scripts/lib/devdb-migration-gap.mjs), so assert both lines rather than
-    # one contiguous string.
-    st_devdb_names_remedy() {
-        printf '%s' "$1" | grep -qF 'cd src-tauri' \
-            && printf '%s' "$1" | grep -qF 'cargo sqlx migrate run'
-    }
+  # The remedy is printed as two lines (`REMEDY` in
+  # scripts/lib/devdb-migration-gap.mjs), so assert both lines rather than
+  # one contiguous string.
+  st_devdb_names_remedy() {
+    printf '%s' "$1" | grep -qF 'cd src-tauri' \
+      && printf '%s' "$1" | grep -qF 'cargo sqlx migrate run'
+  }
 
-    # 26. dev.db does not exist at all: fails, names the file and the exact
-    #     `sqlx migrate run` remedy.
-    st_devdb_seed missing-db "0001_initial.sql" NODB
-    # `unset DATABASE_URL` runs INSIDE the $(...) subshell, so it isolates
-    # this fixture invocation from an ambient exported DATABASE_URL in the
-    # developer's own shell without touching the outer environment (#4330
-    # review — an ambient DATABASE_URL used to make this and the other
-    # fixture-default cases below go red, invisibly, since no CI workflow
-    # exports it).
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
-        && st_devdb_names_remedy "$st_out"; then
-        st_ok "a missing dev.db fails, naming the file and the exact remedy"
-    else
-        st_bad "a missing dev.db fails, naming the file and the exact remedy" "rc=$st_rc out=$st_out"
-    fi
+  # 26. dev.db does not exist at all: fails, names the file and the exact
+  #     `sqlx migrate run` remedy.
+  st_devdb_seed missing-db "0001_initial.sql" NODB
+  # `unset DATABASE_URL` runs INSIDE the $(...) subshell, so it isolates
+  # this fixture invocation from an ambient exported DATABASE_URL in the
+  # developer's own shell without touching the outer environment (#4330
+  # review — an ambient DATABASE_URL used to make this and the other
+  # fixture-default cases below go red, invisibly, since no CI workflow
+  # exports it).
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+    && st_devdb_names_remedy "$st_out"; then
+    st_ok "a missing dev.db fails, naming the file and the exact remedy"
+  else
+    st_bad "a missing dev.db fails, naming the file and the exact remedy" "rc=$st_rc out=$st_out"
+  fi
 
-    # 27. dev.db exists but was never migrated (no _sqlx_migrations table —
-    #     `cargo sqlx database create` ran, `migrate run` never did): fails,
-    #     names the missing table and the remedy.
-    st_devdb_seed never-migrated "0001_initial.sql" NOTABLE
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/never-migrated/src-tauri" "$st_devdb_root/never-migrated/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q '_sqlx_migrations' \
-        && st_devdb_names_remedy "$st_out"; then
-        st_ok "a never-migrated dev.db fails, naming the missing table and the remedy"
-    else
-        st_bad "a never-migrated dev.db fails, naming the missing table and the remedy" "rc=$st_rc out=$st_out"
-    fi
+  # 27. dev.db exists but was never migrated (no _sqlx_migrations table —
+  #     `cargo sqlx database create` ran, `migrate run` never did): fails,
+  #     names the missing table and the remedy.
+  st_devdb_seed never-migrated "0001_initial.sql" NOTABLE
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/never-migrated/src-tauri" "$st_devdb_root/never-migrated/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q '_sqlx_migrations' \
+    && st_devdb_names_remedy "$st_out"; then
+    st_ok "a never-migrated dev.db fails, naming the missing table and the remedy"
+  else
+    st_bad "a never-migrated dev.db fails, naming the missing table and the remedy" "rc=$st_rc out=$st_out"
+  fi
 
-    # 28. The live #4266 shape: dev.db genuinely behind — applied up through
-    #     0002, migration 0003 is on disk and pending. Fails, names exactly
-    #     that file and the exact remedy command.
-    st_devdb_seed behind-tail "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/behind-tail/src-tauri" "$st_devdb_root/behind-tail/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
-        && st_devdb_names_remedy "$st_out"; then
-        st_ok "a dev.db behind by one migration fails, naming it and the exact remedy"
-    else
-        st_bad "a dev.db behind by one migration fails, naming it and the exact remedy" "rc=$st_rc out=$st_out"
-    fi
+  # 28. The live #4266 shape: dev.db genuinely behind — applied up through
+  #     0002, migration 0003 is on disk and pending. Fails, names exactly
+  #     that file and the exact remedy command.
+  st_devdb_seed behind-tail "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/behind-tail/src-tauri" "$st_devdb_root/behind-tail/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
+    && st_devdb_names_remedy "$st_out"; then
+    st_ok "a dev.db behind by one migration fails, naming it and the exact remedy"
+  else
+    st_bad "a dev.db behind by one migration fails, naming it and the exact remedy" "rc=$st_rc out=$st_out"
+  fi
 
-    # 29. A GAP, not just a stale tail: 0001 and 0003 applied, 0002 pending.
-    #     A max()-only comparison (applied max = 3 = disk max) would call
-    #     this caught up; the set comparison this check does must not.
-    #     Names ONLY the missing one, not the two already applied.
-    st_devdb_seed middle-gap "0001_initial.sql 0002_second.sql 0003_third.sql" "1 3"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/middle-gap/src-tauri" "$st_devdb_root/middle-gap/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
-        && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql' \
-        && ! printf '%s' "$st_out" | grep -qF '0003_third.sql'; then
-        st_ok "a mid-sequence gap is caught by set comparison, not just a stale max"
-    else
-        st_bad "a mid-sequence gap is caught by set comparison, not just a stale max" "rc=$st_rc out=$st_out"
-    fi
+  # 29. A GAP, not just a stale tail: 0001 and 0003 applied, 0002 pending.
+  #     A max()-only comparison (applied max = 3 = disk max) would call
+  #     this caught up; the set comparison this check does must not.
+  #     Names ONLY the missing one, not the two already applied.
+  st_devdb_seed middle-gap "0001_initial.sql 0002_second.sql 0003_third.sql" "1 3"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/middle-gap/src-tauri" "$st_devdb_root/middle-gap/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
+    && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql' \
+    && ! printf '%s' "$st_out" | grep -qF '0003_third.sql'; then
+    st_ok "a mid-sequence gap is caught by set comparison, not just a stale max"
+  else
+    st_bad "a mid-sequence gap is caught by set comparison, not just a stale max" "rc=$st_rc out=$st_out"
+  fi
 
-    # 30. The healthy shape must pass SILENTLY — a preflight that fires on a
-    #     caught-up dev.db is worse than none (mirrors case 13 above).
-    st_devdb_seed up-to-date "0001_initial.sql 0002_second.sql" "1 2"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/up-to-date/src-tauri" "$st_devdb_root/up-to-date/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a dev.db caught up with migrations/ passes silently"
-    else
-        st_bad "a dev.db caught up with migrations/ passes silently" "rc=$st_rc out=$st_out"
-    fi
+  # 30. The healthy shape must pass SILENTLY — a preflight that fires on a
+  #     caught-up dev.db is worse than none (mirrors case 13 above).
+  st_devdb_seed up-to-date "0001_initial.sql 0002_second.sql" "1 2"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/up-to-date/src-tauri" "$st_devdb_root/up-to-date/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a dev.db caught up with migrations/ passes silently"
+  else
+    st_bad "a dev.db caught up with migrations/ passes silently" "rc=$st_rc out=$st_out"
+  fi
 
-    # 30b (#4334 note 2). THE SHAPE THAT ACTUALLY SHIPS. Every fixture above
-    #     is a rollback-journal database, because that is SQLite's own
-    #     default — but sqlx's `SqliteConnectOptions` defaults `journal_mode`
-    #     to WAL, so the dev.db this guard meets in a real checkout is a WAL
-    #     database, and a read-only open of one takes a DIFFERENT SQLite code
-    #     path (it materialises `-shm`/`-wal` beside the file). Case 30
-    #     therefore proved the healthy path for a database shape that does
-    #     not ship. Same assertion, WAL fixture.
-    st_devdb_seed up-to-date-wal "0001_initial.sql 0002_second.sql" "1 2" dev.db "" WAL
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/up-to-date-wal/src-tauri" "$st_devdb_root/up-to-date-wal/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently"
-    else
-        st_bad "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently" "rc=$st_rc out=$st_out"
-    fi
+  # 30b (#4334 note 2). THE SHAPE THAT ACTUALLY SHIPS. Every fixture above
+  #     is a rollback-journal database, because that is SQLite's own
+  #     default — but sqlx's `SqliteConnectOptions` defaults `journal_mode`
+  #     to WAL, so the dev.db this guard meets in a real checkout is a WAL
+  #     database, and a read-only open of one takes a DIFFERENT SQLite code
+  #     path (it materialises `-shm`/`-wal` beside the file). Case 30
+  #     therefore proved the healthy path for a database shape that does
+  #     not ship. Same assertion, WAL fixture.
+  st_devdb_seed up-to-date-wal "0001_initial.sql 0002_second.sql" "1 2" dev.db "" WAL
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/up-to-date-wal/src-tauri" "$st_devdb_root/up-to-date-wal/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently"
+  else
+    st_bad "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently" "rc=$st_rc out=$st_out"
+  fi
 
-    # 30c (#4334 note 1). THE CASE THE VERSION SETS CANNOT SEE: a migration
-    #     EDITED IN PLACE after it was applied — routine while iterating on
-    #     your own migration on a branch. The version sets are identical, so
-    #     every check above it reports caught up, while dev.db's schema is
-    #     whatever the file's OLD text produced and Phase D fails with the
-    #     confusing `no such table`-shaped error this preflight exists to get
-    #     ahead of. Must name the drifted file and ONLY it.
-    st_devdb_seed edited-in-place "0001_initial.sql 0002_second.sql" "1 2" dev.db "2"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/edited-in-place/src-tauri" "$st_devdb_root/edited-in-place/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
-        && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql'; then
-        st_ok "a migration edited in place after being applied is caught by checksum, not version"
-    else
-        st_bad "a migration edited in place after being applied is caught by checksum, not version" "rc=$st_rc out=$st_out"
-    fi
+  # 30c (#4334 note 1). THE CASE THE VERSION SETS CANNOT SEE: a migration
+  #     EDITED IN PLACE after it was applied — routine while iterating on
+  #     your own migration on a branch. The version sets are identical, so
+  #     every check above it reports caught up, while dev.db's schema is
+  #     whatever the file's OLD text produced and Phase D fails with the
+  #     confusing `no such table`-shaped error this preflight exists to get
+  #     ahead of. Must name the drifted file and ONLY it.
+  st_devdb_seed edited-in-place "0001_initial.sql 0002_second.sql" "1 2" dev.db "2"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/edited-in-place/src-tauri" "$st_devdb_root/edited-in-place/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
+    && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql'; then
+    st_ok "a migration edited in place after being applied is caught by checksum, not version"
+  else
+    st_bad "a migration edited in place after being applied is caught by checksum, not version" "rc=$st_rc out=$st_out"
+  fi
 
-    # 30d (#4334 note 1, the MIRROR). dev.db AHEAD: a version applied with no
-    #     file on disk, which is what switching off a branch that added a
-    #     migration leaves behind. `pending` only ever looks one way, so this
-    #     used to read as "up to date". The remedy must NOT be `migrate run`
-    #     — there is nothing left to run — so this case asserts the message
-    #     names the ahead version and does NOT print that remedy.
-    st_devdb_seed ahead-of-disk "0001_initial.sql" "1 2"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/ahead-of-disk/src-tauri" "$st_devdb_root/ahead-of-disk/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF 'AHEAD' \
-        && printf '%s' "$st_out" | grep -qF 'version 2' \
-        && ! st_devdb_names_remedy "$st_out"; then
-        st_ok "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run"
-    else
-        st_bad "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run" "rc=$st_rc out=$st_out"
-    fi
+  # 30d (#4334 note 1, the MIRROR). dev.db AHEAD: a version applied with no
+  #     file on disk, which is what switching off a branch that added a
+  #     migration leaves behind. `pending` only ever looks one way, so this
+  #     used to read as "up to date". The remedy must NOT be `migrate run`
+  #     — there is nothing left to run — so this case asserts the message
+  #     names the ahead version and does NOT print that remedy.
+  st_devdb_seed ahead-of-disk "0001_initial.sql" "1 2"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/ahead-of-disk/src-tauri" "$st_devdb_root/ahead-of-disk/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF 'AHEAD' \
+    && printf '%s' "$st_out" | grep -qF 'version 2' \
+    && ! st_devdb_names_remedy "$st_out"; then
+    st_ok "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run"
+  else
+    st_bad "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run" "rc=$st_rc out=$st_out"
+  fi
 
-    # 30e (#4334 note 1). BEHIND STILL WINS over the two new checks: a
-    #     fixture that is both behind (0003 pending) and drifted (0002
-    #     edited) must report the PENDING migration, because `migrate run`
-    #     is the remedy that actually moves it forward. A checksum report
-    #     that fired ahead of the pending one would hand the developer the
-    #     wrong command for the state they are in.
-    st_devdb_seed behind-and-drifted "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2" dev.db "2"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/behind-and-drifted/src-tauri" "$st_devdb_root/behind-and-drifted/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
-        && st_devdb_names_remedy "$st_out"; then
-        st_ok "a dev.db that is both behind and drifted reports the PENDING migration first"
-    else
-        st_bad "a dev.db that is both behind and drifted reports the PENDING migration first" "rc=$st_rc out=$st_out"
-    fi
+  # 30e (#4334 note 1). BEHIND STILL WINS over the two new checks: a
+  #     fixture that is both behind (0003 pending) and drifted (0002
+  #     edited) must report the PENDING migration, because `migrate run`
+  #     is the remedy that actually moves it forward. A checksum report
+  #     that fired ahead of the pending one would hand the developer the
+  #     wrong command for the state they are in.
+  st_devdb_seed behind-and-drifted "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2" dev.db "2"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/behind-and-drifted/src-tauri" "$st_devdb_root/behind-and-drifted/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
+    && st_devdb_names_remedy "$st_out"; then
+    st_ok "a dev.db that is both behind and drifted reports the PENDING migration first"
+  else
+    st_bad "a dev.db that is both behind and drifted reports the PENDING migration first" "rc=$st_rc out=$st_out"
+  fi
 
-    # ── DATABASE_URL resolution (#4330 review) ────────────────────────
-    # Each case below seeds an UP-TO-DATE dev.db under a name other than
-    # the "dev.db" default, so a parser that silently fell back to the
-    # default (or mis-parsed the URL and missed the real file) would be
-    # caught failing here, not accidentally passing. Every case must
-    # resolve to rc=0 with empty output — exactly case 30's healthy shape,
-    # just reached through a DATABASE_URL instead of the implicit default.
+  # ── DATABASE_URL resolution (#4330 review) ────────────────────────
+  # Each case below seeds an UP-TO-DATE dev.db under a name other than
+  # the "dev.db" default, so a parser that silently fell back to the
+  # default (or mis-parsed the URL and missed the real file) would be
+  # caught failing here, not accidentally passing. Every case must
+  # resolve to rc=0 with empty output — exactly case 30's healthy shape,
+  # just reached through a DATABASE_URL instead of the implicit default.
 
-    # 31. "sqlite://host" form: the host must fold into the filename
-    #     ("sqlite://custom-a.db" -> "custom-a.db"), not be treated as an
-    #     absolute path via a naive "//custom-a.db" (the exact #4330 bug).
-    st_devdb_seed dburl-dblslash "0001_initial.sql" "1" custom-a.db
-    st_dir="$st_devdb_root/dburl-dblslash/src-tauri"
-    printf 'DATABASE_URL=sqlite://custom-a.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "DATABASE_URL=sqlite://<file> resolves the file, not a bogus absolute path"
-    else
-        st_bad "DATABASE_URL=sqlite://<file> resolves the file, not a bogus absolute path" "rc=$st_rc out=$st_out"
-    fi
+  # 31. "sqlite://host" form: the host must fold into the filename
+  #     ("sqlite://custom-a.db" -> "custom-a.db"), not be treated as an
+  #     absolute path via a naive "//custom-a.db" (the exact #4330 bug).
+  st_devdb_seed dburl-dblslash "0001_initial.sql" "1" custom-a.db
+  st_dir="$st_devdb_root/dburl-dblslash/src-tauri"
+  printf 'DATABASE_URL=sqlite://custom-a.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "DATABASE_URL=sqlite://<file> resolves the file, not a bogus absolute path"
+  else
+    st_bad "DATABASE_URL=sqlite://<file> resolves the file, not a bogus absolute path" "rc=$st_rc out=$st_out"
+  fi
 
-    # 32. "sqlite:///abs/path" form: true absolute path (empty host).
-    st_devdb_seed dburl-abspath "0001_initial.sql" "1" custom-b.db
-    st_dir="$st_devdb_root/dburl-abspath/src-tauri"
-    printf 'DATABASE_URL=sqlite://%s/custom-b.db\n' "$st_dir" >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "DATABASE_URL=sqlite:///<abs path> resolves the absolute file"
-    else
-        st_bad "DATABASE_URL=sqlite:///<abs path> resolves the absolute file" "rc=$st_rc out=$st_out"
-    fi
+  # 32. "sqlite:///abs/path" form: true absolute path (empty host).
+  st_devdb_seed dburl-abspath "0001_initial.sql" "1" custom-b.db
+  st_dir="$st_devdb_root/dburl-abspath/src-tauri"
+  printf 'DATABASE_URL=sqlite://%s/custom-b.db\n' "$st_dir" >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "DATABASE_URL=sqlite:///<abs path> resolves the absolute file"
+  else
+    st_bad "DATABASE_URL=sqlite:///<abs path> resolves the absolute file" "rc=$st_rc out=$st_out"
+  fi
 
-    # 33. A "?..." query suffix (e.g. sqlx-cli's own "?mode=rwc") must be
-    #     stripped, not treated as part of the filename.
-    st_devdb_seed dburl-query "0001_initial.sql" "1" custom-c.db
-    st_dir="$st_devdb_root/dburl-query/src-tauri"
-    printf 'DATABASE_URL=sqlite:custom-c.db?mode=rwc\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a trailing ?query string on DATABASE_URL is stripped, not treated as part of the filename"
-    else
-        st_bad "a trailing ?query string on DATABASE_URL is stripped, not treated as part of the filename" "rc=$st_rc out=$st_out"
-    fi
+  # 33. A "?..." query suffix (e.g. sqlx-cli's own "?mode=rwc") must be
+  #     stripped, not treated as part of the filename.
+  st_devdb_seed dburl-query "0001_initial.sql" "1" custom-c.db
+  st_dir="$st_devdb_root/dburl-query/src-tauri"
+  printf 'DATABASE_URL=sqlite:custom-c.db?mode=rwc\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a trailing ?query string on DATABASE_URL is stripped, not treated as part of the filename"
+  else
+    st_bad "a trailing ?query string on DATABASE_URL is stripped, not treated as part of the filename" "rc=$st_rc out=$st_out"
+  fi
 
-    # 34. dotenvy keeps the FIRST "DATABASE_URL=" line in .env, not the
-    #     last — two lines present, first names the real (caught-up) db,
-    #     second names one that doesn't exist.
-    st_devdb_seed dburl-first-wins "0001_initial.sql" "1" good.db
-    st_dir="$st_devdb_root/dburl-first-wins/src-tauri"
-    printf 'DATABASE_URL=sqlite:good.db\nDATABASE_URL=sqlite:does-not-exist.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "the FIRST DATABASE_URL= line in .env wins, matching dotenvy"
-    else
-        st_bad "the FIRST DATABASE_URL= line in .env wins, matching dotenvy" "rc=$st_rc out=$st_out"
-    fi
+  # 34. dotenvy keeps the FIRST "DATABASE_URL=" line in .env, not the
+  #     last — two lines present, first names the real (caught-up) db,
+  #     second names one that doesn't exist.
+  st_devdb_seed dburl-first-wins "0001_initial.sql" "1" good.db
+  st_dir="$st_devdb_root/dburl-first-wins/src-tauri"
+  printf 'DATABASE_URL=sqlite:good.db\nDATABASE_URL=sqlite:does-not-exist.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "the FIRST DATABASE_URL= line in .env wins, matching dotenvy"
+  else
+    st_bad "the FIRST DATABASE_URL= line in .env wins, matching dotenvy" "rc=$st_rc out=$st_out"
+  fi
 
-    # 35. An EXPORTED DATABASE_URL (what sqlx-cli itself prefers) must win
-    #     over .env, not be ignored — .env here names a db that doesn't
-    #     exist; only the exported var names the real, caught-up one.
-    st_devdb_seed dburl-exported-wins "0001_initial.sql" "1" good2.db
-    st_dir="$st_devdb_root/dburl-exported-wins/src-tauri"
-    printf 'DATABASE_URL=sqlite:does-not-exist2.db\n' >"$st_dir/.env"
-    st_out="$(unset SQLX_OFFLINE; DATABASE_URL="sqlite:good2.db" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "an exported DATABASE_URL wins over a stale .env entry"
-    else
-        st_bad "an exported DATABASE_URL wins over a stale .env entry" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── could-not-inspect (#4330 review): warn, don't hard-block ──────
-    # A guard that cannot inspect dev.db is not evidence dev.db is behind
-    # — it must say so plainly and return 2 (the caller warns and
-    # continues), distinct from 1 (a confirmed gap, which hard-blocks).
-
-    # 36. dev.db exists but is not a valid sqlite file at all (corrupt /
-    #     truncated) — node:sqlite throws on the first query; caught locally.
-    mkdir -p "$st_devdb_root/corrupt-db/src-tauri/migrations"
-    touch "$st_devdb_root/corrupt-db/src-tauri/migrations/0001_initial.sql"
-    printf 'not a sqlite database\n' >"$st_devdb_root/corrupt-db/src-tauri/dev.db"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/corrupt-db/src-tauri" "$st_devdb_root/corrupt-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect'; then
-        st_ok "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap"
-    else
-        st_bad "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap" "rc=$st_rc out=$st_out"
-    fi
-
-    # 37. node itself unavailable — the function must say so plainly on
-    #     stdout (not lose it to the terminal as bare stderr) and return 2.
-    st_devdb_seed no-node "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/no-node/src-tauri"
-    st_out="$(unset SQLX_OFFLINE; PATH="$st_devdb_root/empty-bin-$$" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'node not found'; then
-        st_ok "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body"
-    else
-        st_bad "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── ambient-environment isolation (#4330 review) ──────────────────
-    # This self-test is wired as a prek hook (manual stage, CI), so it must be
-    # hermetic: a developer who happens to `export DATABASE_URL` in their
-    # shell (for sqlx-cli, say) must not turn any of the fixture-driven
-    # cases above red. Regression-guards the isolation added to cases
-    # 26-34/36 above, not just the fixture-parsing logic itself — if that
-    # isolation is ever dropped, THIS case goes red under a hostile
-    # ambient value even though the property it names ("the fixture
-    # wins") sounds like it should already be covered by case 30.
-
-    # 38. A hostile ambient DATABASE_URL exported into THIS shell (as a
-    #     developer's would be) must not leak into an isolated fixture
-    #     invocation — the fixture (default dev.db, caught up) wins.
-    st_devdb_seed ambient-hostile "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/ambient-hostile/src-tauri"
-    DATABASE_URL="sqlite:/nonexistent-hostile-path/ambient.db"
-    export DATABASE_URL
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    unset DATABASE_URL
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation"
-    else
-        st_bad "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
-    fi
-
-    # 38b. Same property, for SQLX_OFFLINE: a hostile ambient exported
-    #      SQLX_OFFLINE=true (as a developer's `export SQLX_OFFLINE=true`
-    #      for `cargo check` would be) must not leak into an isolated
-    #      fixture invocation and mask a confirmed gap as a silent pass —
-    #      the missing-db fixture from case 26 must still hard-block. Before
-    #      the fix this case's own assertion (a non-zero rc) goes RED under
-    #      such an ambient value, while every case above asserting rc=0
-    #      passes VACUOUSLY (short-circuited, not actually exercised) — the
-    #      same failure shape case 38 exists to prevent for DATABASE_URL.
-    SQLX_OFFLINE=true
-    export SQLX_OFFLINE
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+  # 35. An EXPORTED DATABASE_URL (what sqlx-cli itself prefers) must win
+  #     over .env, not be ignored — .env here names a db that doesn't
+  #     exist; only the exported var names the real, caught-up one.
+  st_devdb_seed dburl-exported-wins "0001_initial.sql" "1" good2.db
+  st_dir="$st_devdb_root/dburl-exported-wins/src-tauri"
+  printf 'DATABASE_URL=sqlite:does-not-exist2.db\n' >"$st_dir/.env"
+  st_out="$(
     unset SQLX_OFFLINE
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist'; then
-        st_ok "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation"
+    DATABASE_URL="sqlite:good2.db" devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "an exported DATABASE_URL wins over a stale .env entry"
+  else
+    st_bad "an exported DATABASE_URL wins over a stale .env entry" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── could-not-inspect (#4330 review): warn, don't hard-block ──────
+  # A guard that cannot inspect dev.db is not evidence dev.db is behind
+  # — it must say so plainly and return 2 (the caller warns and
+  # continues), distinct from 1 (a confirmed gap, which hard-blocks).
+
+  # 36. dev.db exists but is not a valid sqlite file at all (corrupt /
+  #     truncated) — node:sqlite throws on the first query; caught locally.
+  mkdir -p "$st_devdb_root/corrupt-db/src-tauri/migrations"
+  touch "$st_devdb_root/corrupt-db/src-tauri/migrations/0001_initial.sql"
+  printf 'not a sqlite database\n' >"$st_devdb_root/corrupt-db/src-tauri/dev.db"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/corrupt-db/src-tauri" "$st_devdb_root/corrupt-db/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect'; then
+    st_ok "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap"
+  else
+    st_bad "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap" "rc=$st_rc out=$st_out"
+  fi
+
+  # 37. node itself unavailable — the function must say so plainly on
+  #     stdout (not lose it to the terminal as bare stderr) and return 2.
+  st_devdb_seed no-node "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/no-node/src-tauri"
+  st_out="$(
+    unset SQLX_OFFLINE
+    PATH="$st_devdb_root/empty-bin-$$" devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'node not found'; then
+    st_ok "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body"
+  else
+    st_bad "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── ambient-environment isolation (#4330 review) ──────────────────
+  # This self-test is wired as a prek hook (manual stage, CI), so it must be
+  # hermetic: a developer who happens to `export DATABASE_URL` in their
+  # shell (for sqlx-cli, say) must not turn any of the fixture-driven
+  # cases above red. Regression-guards the isolation added to cases
+  # 26-34/36 above, not just the fixture-parsing logic itself — if that
+  # isolation is ever dropped, THIS case goes red under a hostile
+  # ambient value even though the property it names ("the fixture
+  # wins") sounds like it should already be covered by case 30.
+
+  # 38. A hostile ambient DATABASE_URL exported into THIS shell (as a
+  #     developer's would be) must not leak into an isolated fixture
+  #     invocation — the fixture (default dev.db, caught up) wins.
+  st_devdb_seed ambient-hostile "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/ambient-hostile/src-tauri"
+  DATABASE_URL="sqlite:/nonexistent-hostile-path/ambient.db"
+  export DATABASE_URL
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  unset DATABASE_URL
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation"
+  else
+    st_bad "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
+  fi
+
+  # 38b. Same property, for SQLX_OFFLINE: a hostile ambient exported
+  #      SQLX_OFFLINE=true (as a developer's `export SQLX_OFFLINE=true`
+  #      for `cargo check` would be) must not leak into an isolated
+  #      fixture invocation and mask a confirmed gap as a silent pass —
+  #      the missing-db fixture from case 26 must still hard-block. Before
+  #      the fix this case's own assertion (a non-zero rc) goes RED under
+  #      such an ambient value, while every case above asserting rc=0
+  #      passes VACUOUSLY (short-circuited, not actually exercised) — the
+  #      same failure shape case 38 exists to prevent for DATABASE_URL.
+  SQLX_OFFLINE=true
+  export SQLX_OFFLINE
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  unset SQLX_OFFLINE
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist'; then
+    st_ok "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation"
+  else
+    st_bad "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── SQLX_OFFLINE (#4330 review) ────────────────────────────────────
+  # A push building purely against the committed `.sqlx/` cache never
+  # touches dev.db — Phase E allocates its own probe DBs for that — so
+  # this preflight's premise doesn't apply and it must get out of the
+  # way, but ONLY for the truthy spellings sqlx-macros-core itself
+  # honours.
+
+  # 39. SQLX_OFFLINE=true short-circuits to a silent pass, even against
+  #     a src_tauri directory with no dev.db at all — proves the check
+  #     happens before anything touches the filesystem.
+  st_out="$(SQLX_OFFLINE=true devdb_migration_gap "$st_devdb_root/does-not-exist-at-all/src-tauri" "$st_devdb_root/does-not-exist-at-all/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "SQLX_OFFLINE=true short-circuits to a silent pass, even with no dev.db at all"
+  else
+    st_bad "SQLX_OFFLINE=true short-circuits to a silent pass, even with no dev.db at all" "rc=$st_rc out=$st_out"
+  fi
+
+  # 40. SQLX_OFFLINE=false must NOT short-circuit — only the truthy
+  #     spellings do. Same missing-dev.db shape as case 26.
+  st_out="$(
+    SQLX_OFFLINE=false
+    unset DATABASE_URL
+    devdb_migration_gap "$st_devdb_root/does-not-exist-at-all/src-tauri" "$st_devdb_root/does-not-exist-at-all/src-tauri/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist'; then
+    st_ok "SQLX_OFFLINE=false does not short-circuit — the preflight still runs"
+  else
+    st_bad "SQLX_OFFLINE=false does not short-circuit — the preflight still runs" "rc=$st_rc out=$st_out"
+  fi
+
+  # 41. node EXISTS but exits with an exit code neither 0/1/2 (the .mjs's
+  #     only exit codes) nor 127 (missing) — e.g. 126 "not
+  #     executable", or a signal death reported as 128+n. Must fold into
+  #     the rc=2 warn path with a message, not produce NO output at all
+  #     (the caller's `-eq 1`/`-eq 2` branches would otherwise match
+  #     neither and the guard would silently no-op).
+  st_devdb_seed weird-node-rc "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/weird-node-rc/src-tauri"
+  st_weird_bin="$st_devdb_root/weird-bin-$$"
+  mkdir -p "$st_weird_bin"
+  printf '#!/bin/sh\nexit 126\n' >"$st_weird_bin/node"
+  chmod +x "$st_weird_bin/node"
+  st_out="$(
+    unset SQLX_OFFLINE
+    PATH="$st_weird_bin" devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect' \
+    && printf '%s' "$st_out" | grep -q '126'; then
+    st_ok "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op"
+  else
+    st_bad "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── .env parser: beyond the literal "DATABASE_URL=..." prefix (#4330 review) ──
+  # dotenvy accepts forms this preflight's parser used to reject outright
+  # (falling through to the "dev.db" default and reaching the WRONG
+  # diagnosis — a hard block naming a file that isn't even the real db).
+
+  # 42. `export DATABASE_URL = ...   # trailing comment` all at once:
+  #     "export " prefix, spaces around "=", and a trailing comment.
+  st_devdb_seed dburl-export-spaces-comment "0001_initial.sql" "1" combo.db
+  st_dir="$st_devdb_root/dburl-export-spaces-comment/src-tauri"
+  printf 'export DATABASE_URL = sqlite:combo.db   # dev db, see README\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "an 'export', spaced '=', and trailing comment on DATABASE_URL all resolve correctly together"
+  else
+    st_bad "an 'export', spaced '=', and trailing comment on DATABASE_URL all resolve correctly together" "rc=$st_rc out=$st_out"
+  fi
+
+  # 43. Quotes are stripped as ONE matched pair, not repeated stripping —
+  #     content after the closing quote (here an unrealistic but
+  #     probative "trailer") must be dropped, not appended to the
+  #     filename. The old `.strip('"').strip("'")` left it attached
+  #     (nothing to strip from the end, since the last char is "r" not
+  #     '"'), producing a bogus filename and a wrong-diagnosis hard
+  #     block.
+  st_devdb_seed dburl-quote-pair "0001_initial.sql" "1" nested.db
+  st_dir="$st_devdb_root/dburl-quote-pair/src-tauri"
+  printf 'DATABASE_URL="sqlite:nested.db"trailer\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "quotes are stripped as a single matched pair, not repeated stripping"
+  else
+    st_bad "quotes are stripped as a single matched pair, not repeated stripping" "rc=$st_rc out=$st_out"
+  fi
+
+  # 44. A "${VAR}"-style reference this parser does not resolve: using it
+  #     verbatim would build a literal, nonexistent filename and produce
+  #     a wrong-diagnosis rc=1 hard block. Must warn (rc=2) instead.
+  st_devdb_seed dburl-var-ref "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-var-ref/src-tauri"
+  printf 'DATABASE_URL=sqlite:${DB_DIR}/dev.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
+    st_ok "an unresolved \${VAR}-style DATABASE_URL warns (rc=2) instead of a wrong-diagnosis hard block"
+  else
+    st_bad "an unresolved \${VAR}-style DATABASE_URL warns (rc=2) instead of a wrong-diagnosis hard block" "rc=$st_rc out=$st_out"
+  fi
+
+  # 45. .env mentions DATABASE_URL in a form this parser recognises as
+  #     NEITHER a valid assignment NOR a comment (e.g. prose, or a
+  #     YAML-style "DATABASE_URL:") — must warn (rc=2), not silently
+  #     fall back to the "dev.db" default as if .env said nothing.
+  st_devdb_seed dburl-unparseable-mention "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-unparseable-mention/src-tauri"
+  printf 'DATABASE_URL points at sqlite:dev.db, see setup-dev-db.sh\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
+    st_ok "a .env line that mentions DATABASE_URL but parses as neither an assignment nor a comment warns (rc=2)"
+  else
+    st_bad "a .env line that mentions DATABASE_URL but parses as neither an assignment nor a comment warns (rc=2)" "rc=$st_rc out=$st_out"
+  fi
+
+  # 46. A genuinely COMMENTED-OUT "# DATABASE_URL=..." line must still be
+  #     ignored outright (falls through to the "dev.db" default, exactly
+  #     as if .env didn't mention the key) — regression guard for case
+  #     45's "mentions but unparseable" logic not to misfire on comments.
+  st_devdb_seed dburl-commented-out "0001_initial.sql 0002_second.sql" "1 2"
+  st_dir="$st_devdb_root/dburl-commented-out/src-tauri"
+  printf '# DATABASE_URL=sqlite:somewhere-else.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default"
+  else
+    st_bad "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default" "rc=$st_rc out=$st_out"
+  fi
+
+  # 47. .env names a DIFFERENT key that merely CONTAINS "DATABASE_URL" as a
+  #     substring ("POSTGRES_DATABASE_URL=", "DATABASE_URL_REPLICA=") —
+  #     a plain `"DATABASE_URL" in line` test would set the ambiguous flag
+  #     and force the rc=2 banner even though the real DATABASE_URL is
+  #     unmentioned and the dev.db default resolves fine. Must pass
+  #     silently, exactly like case 46.
+  st_devdb_seed dburl-substring-neighbor "0001_initial.sql 0002_second.sql" "1 2"
+  st_dir="$st_devdb_root/dburl-substring-neighbor/src-tauri"
+  printf 'POSTGRES_DATABASE_URL=sqlite:should-be-ignored.db\nDATABASE_URL_REPLICA=sqlite:also-ignored.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention"
+  else
+    st_bad "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── resolved-but-not-sqlite DATABASE_URL (#4330 review) ────────────
+  # A DATABASE_URL that actually resolved to something this preflight
+  # cannot check at all — empty, or a different engine's URL — used to
+  # fall through to the "dev.db" default silently, then hard-block (rc=1)
+  # with a migrate-run remedy aimed at a database the developer isn't
+  # using. This file's own stated policy is "cannot tell" -> warn (rc=2),
+  # not block.
+
+  # 48. A non-sqlite DATABASE_URL (e.g. postgres://) must warn (rc=2), not
+  #     silently check dev.db and hard-block against the wrong database.
+  st_devdb_seed dburl-postgres "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-postgres/src-tauri"
+  printf 'DATABASE_URL=postgres://user@localhost/agaric\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+    st_ok "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database"
+  else
+    st_bad "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database" "rc=$st_rc out=$st_out"
+  fi
+
+  # 49. An explicit but EMPTY "DATABASE_URL=" in .env must also warn
+  #     (rc=2), not silently fall back to the dev.db default. Message
+  #     names the emptiness itself, not "not a sqlite: URL: ''" — case 54
+  #     below drives this exact code path from an exported-empty var
+  #     instead of an .env assignment, so the two share this message.
+  st_devdb_seed dburl-empty "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-empty/src-tauri"
+  printf 'DATABASE_URL=\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
+    st_ok "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db"
+  else
+    st_bad "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── a checkout path with URI characters (#4330 review) ─────────────
+  # 50. A checkout path containing "#", "?", or "%" must still open
+  #     dev.db and pass SILENTLY, same shape as case 30, rather than
+  #     degrade to the rc=2 could-not-inspect warn path.
+  st_devdb_seed 'weird#dir?with%chars' "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/weird#dir?with%chars/src-tauri"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect"
+  else
+    st_bad "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── credential redaction (#4330 review — the leak this batch closes) ──
+  # 51. A DATABASE_URL carrying real "user:password@" userinfo must never
+  #     put the password on stdout — push output gets pasted into
+  #     issues/chat. The host survives (still diagnostic); the password
+  #     does not.
+  st_devdb_seed dburl-credentials "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-credentials/src-tauri"
+  printf 'DATABASE_URL=postgres://dbuser:sup3rSecr3t@localhost:5432/agaric\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3rSecr3t' \
+    && printf '%s' "$st_out" | grep -q 'localhost'; then
+    st_ok "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis"
+  else
+    st_bad "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── dotenvy parity for the VALUE, not just the checkout path (#4330 review) ──
+  # 52. Only a WHITESPACE-preceded "#" starts a comment in an unquoted
+  #     value — "sqlite:my#db.db" is the whole value, not truncated to
+  #     "sqlite:my" at the first "#" (case 50 above covers "#" in the
+  #     CHECKOUT path; this is "#" in the DATABASE_URL VALUE itself). Must
+  #     resolve the full filename and pass SILENTLY.
+  st_devdb_seed dburl-hash-in-value "0001_initial.sql" "1" 'my#db.db'
+  st_dir="$st_devdb_root/dburl-hash-in-value/src-tauri"
+  printf 'DATABASE_URL=sqlite:my#db.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "an unquoted '#' not preceded by whitespace is part of the value, not a comment start"
+  else
+    st_bad "an unquoted '#' not preceded by whitespace is part of the value, not a comment start" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── more "cannot tell" cases: warn, don't hard-block (#4330 review) ──
+  # 53. sqlite::memory: has no on-disk file to check — "cannot tell", same
+  #     category as the non-sqlite-engine case (48), not a confirmed
+  #     "dev.db does not exist" hard block (rc=1) for a database that was
+  #     never meant to exist on disk.
+  st_devdb_seed dburl-memory "0001_initial.sql" NODB
+  st_dir="$st_devdb_root/dburl-memory/src-tauri"
+  printf 'DATABASE_URL=sqlite::memory:\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'memory'; then
+    st_ok "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block"
+  else
+    st_bad "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block" "rc=$st_rc out=$st_out"
+  fi
+
+  # 54. An exported-but-EMPTY DATABASE_URL with no .env key at all: takes
+  #     the `if not val` branch, finds nothing in .env, and used to report
+  #     rc=2 "not a sqlite: URL: ''" — technically harmless (still a warn,
+  #     not a block) but naming the wrong cause. Must still warn (rc=2)
+  #     but say what actually happened, not claim a value was given and
+  #     rejected.
+  st_devdb_seed dburl-empty-exported-no-env "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-empty-exported-no-env/src-tauri"
+  st_out="$(
+    unset SQLX_OFFLINE
+    DATABASE_URL="" devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty' \
+    && ! printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+    st_ok "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL"
+  else
+    st_bad "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL" "rc=$st_rc out=$st_out"
+  fi
+
+  # 55. DATABASE_URL=sqlite: (or sqlite://) with nothing after it resolves
+  #     to an empty path. Falsified against the pre-fix code: `os.path.join
+  #     (src_tauri, "")` yields a DIRECTORY ("<src_tauri>/"), `os.path.isfile`
+  #     on that is False, and the guard hard-blocked with `rc=1` naming that
+  #     directory as a missing "dev.db" — a confirmed-gap block for a URL
+  #     that named no file at all. Must warn (rc=2) instead, same "cannot
+  #     tell" category as sqlite::memory: (case 53).
+  st_devdb_seed dburl-empty-path "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-empty-path/src-tauri"
+  printf 'DATABASE_URL=sqlite:\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
+    st_ok "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory"
+  else
+    st_bad "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── percent-decoding parity with sqlx-sqlite's own parser (#4330 review) ──
+  # 56. sqlx-sqlite percent-decodes the filename it resolves from a
+  #     DATABASE_URL ("% decode to allow for `?` or `#` in the filename",
+  #     options/parse.rs). Falsified against the pre-fix code: the literal,
+  #     undecoded "my%20db.db" was checked on disk, missed the real file
+  #     ("my db.db"), and hard-blocked (rc=1) a dev.db that was actually
+  #     caught up. Must resolve the decoded name and pass SILENTLY, same
+  #     shape as cases 30/50.
+  st_devdb_seed dburl-percent-encoded "0001_initial.sql" "1" 'my db.db'
+  st_dir="$st_devdb_root/dburl-percent-encoded/src-tauri"
+  printf 'DATABASE_URL=sqlite:my%%20db.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+    st_ok "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk"
+  else
+    st_bad "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── no DATABASE_URL anywhere: the same premise as SQLX_OFFLINE (#4330 review) ──
+  # 57. Neither an exported DATABASE_URL nor a .env entry for it at all,
+  #     AND dev.db is genuinely missing. Falsified against the pre-fix
+  #     code: db_rel stayed at its "dev.db" default and the guard
+  #     hard-blocked (rc=1, "dev.db does not exist") even though
+  #     `sqlx::query!` in this state never opens dev.db at all — it
+  #     resolves entirely from the committed .sqlx/ cache (same premise as
+  #     the SQLX_OFFLINE=true short-circuit above). Must warn (rc=2), not
+  #     block — but still NAME the real "does not exist" state (kept
+  #     informative, narrower than that short-circuit's silent pass).
+  st_devdb_seed dburl-unset-everywhere "0001_initial.sql" NODB
+  st_dir="$st_devdb_root/dburl-unset-everywhere/src-tauri"
+  rm -f "$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+    && printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set anywhere'; then
+    st_ok "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default"
+  else
+    st_bad "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default" "rc=$st_rc out=$st_out"
+  fi
+
+  # 57b. Companion property: when DATABASE_URL IS explicitly configured
+  #      (the documented, normal case), a genuinely missing dev.db must
+  #      STILL hard-block (rc=1) exactly as before — case 57 narrows the
+  #      policy for the unconfigured state only, it must not weaken the
+  #      confirmed-gap block for the configured one.
+  st_devdb_seed dburl-configured-missing "0001_initial.sql" NODB
+  st_dir="$st_devdb_root/dburl-configured-missing/src-tauri"
+  printf 'DATABASE_URL=sqlite:dev.db\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 1 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+    && ! printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set'; then
+    st_ok "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured"
+  else
+    st_bad "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured" "rc=$st_rc out=$st_out"
+  fi
+
+  # ── credential redaction: the two shapes the userinfo-only regex missed (#4330 review) ──
+  # 58. A password containing a raw, unescaped "/" defeats a character
+  #     class that excludes "/" from the userinfo match entirely — the
+  #     regex never reaches the "@" and redacts nothing. Falsified against
+  #     the pre-fix code: the full "u:p/w@" printed verbatim. Must redact
+  #     the password and keep the host visible.
+  st_devdb_seed dburl-credentials-slash "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-credentials-slash/src-tauri"
+  printf 'DATABASE_URL=postgres://dbuser:sup3r/Secr3t@localhost:5432/agaric\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3r/Secr3t' \
+    && printf '%s' "$st_out" | grep -q 'localhost'; then
+    st_ok "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched"
+  else
+    st_bad "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched" "rc=$st_rc out=$st_out"
+  fi
+
+  # 59. Credentials in the QUERY STRING (e.g. "?password=...") are a second
+  #     leak surface distinct from userinfo — the query string is kept in
+  #     the printed line deliberately for diagnosability, but that does not
+  #     make a "password=" parameter safe to print. Falsified against the
+  #     pre-fix code: "?password=hunter2" printed verbatim. Must redact the
+  #     credential-shaped query VALUE while leaving an ordinary query key
+  #     (sslmode) visible.
+  st_devdb_seed dburl-credentials-query "0001_initial.sql" "1"
+  st_dir="$st_devdb_root/dburl-credentials-query/src-tauri"
+  printf 'DATABASE_URL=postgres://localhost:5432/agaric?password=hunter2&sslmode=require\n' >"$st_dir/.env"
+  st_out="$(
+    unset DATABASE_URL SQLX_OFFLINE
+    devdb_migration_gap "$st_dir" "$st_dir/migrations"
+  )" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'hunter2' \
+    && printf '%s' "$st_out" | grep -q 'sslmode=require'; then
+    st_ok "a credential-shaped query-string parameter is redacted; an ordinary query key is not"
+  else
+    st_bad "a credential-shaped query-string parameter is redacted; an ordinary query key is not" "rc=$st_rc out=$st_out"
+  fi
+
+  rm -rf "$st_devdb_root"
+
+  # 60. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
+  #     same failure shape as case 14 (diagnosing after the fact is the
+  #     state being fixed). Reuses ST_PHASE_A_ANCHOR and st_order_check
+  #     from the node-deps section above.
+  # NOTE: st_line_of/st_order_check use plain `grep -n`, whose patterns are
+  # basic regular expressions, not extended ones. Bare "(" "/" ")" are
+  # LITERAL there, so they must NOT be backslash-escaped here (the
+  # extended-flavoured anchors above happen to contain no parens, so this
+  # gotcha never showed up until now).
+  ST_DEVDB_ANCHOR='^  devdb_gap_out="\$(devdb_migration_gap '
+  st_rc=0
+  st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_DEVDB_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+  if [ "$st_rc" -eq 0 ]; then
+    st_ok "the dev.db migration-gap preflight runs before Phase A — $st_out"
+  else
+    st_bad "the dev.db migration-gap preflight runs before Phase A" "$st_out"
+  fi
+
+  # 61. Ratchet: the pre-push hooks (clippy first among them) run before the
+  #     first test phase, or a lint failure costs a whole test run (#6560).
+  ST_PHASE_A2_ANCHOR='^  if ! SKIP="\$PHASE_A2_SKIP" prek run .*--hook-stage pre-push'
+  ST_PHASE_C_ANCHOR='^if ! bash scripts/test-related-ts.sh --range'
+  st_rc=0
+  st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_PHASE_A2_ANCHOR" "$ST_PHASE_C_ANCHOR")" || st_rc=$?
+  if [ "$st_rc" -eq 0 ]; then
+    st_ok "the pre-push hooks run before the first test phase — $st_out"
+  else
+    st_bad "the pre-push hooks run before the first test phase" "$st_out"
+  fi
+
+  # 62. Phase E gate (#6560): only the helper's exact `skip` skips.
+  st_sqlx() { # <expected: skip|run> <label> <forced> <changed_ok> <helper…>
+    local want="$1" label="$2" got
+    shift 2
+    got="$(sqlx_gate_verdict "$@" 2>/dev/null)"
+    if [ "${got%%:*}" = "$want" ]; then
+      st_ok "Phase E gate: $label"
     else
-        st_bad "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
+      st_bad "Phase E gate: $label" "verdict '$got', expected $want"
     fi
+  }
+  st_sqlx skip 'the helper printing exactly skip skips' 0 1 printf 'skip\n'
+  st_sqlx run 'PRE_PUSH_SQLX_CHECK=1 runs despite a skip' 1 1 printf 'skip\n'
+  st_sqlx run 'an uncomputable changed-file set runs' 0 0 printf 'skip\n'
+  st_sqlx run 'a helper exiting non-zero runs' 0 1 sh -c 'echo skip; exit 1'
+  st_sqlx run 'garbage helper output runs' 0 1 printf 'skipped\n'
 
-    # ── SQLX_OFFLINE (#4330 review) ────────────────────────────────────
-    # A push building purely against the committed `.sqlx/` cache never
-    # touches dev.db — Phase E allocates its own probe DBs for that — so
-    # this preflight's premise doesn't apply and it must get out of the
-    # way, but ONLY for the truthy spellings sqlx-macros-core itself
-    # honours.
+  # 63. Push range: what the branch adds, never main's commits since its
+  #     last push. One line per state, in order: pushed then committed;
+  #     main advanced without the branch; rebased onto main; main merged in.
+  st_range_root="$(mktemp -d -t pre-push-range.XXXXXX)"
+  st_out="$(
+    # shellcheck source=lib/git-scratch-guard.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/lib/git-scratch-guard.sh"
+    git_scratch_guard "$st_range_root"
+    git_scratch_init "$st_range_root/repo"
+    cd "$st_range_root/repo" || exit 1
+    git config remote.origin.url .
+    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+    git config branch.feat.remote origin
+    git config branch.feat.merge refs/heads/feat
+    tree="$(git write-tree)"
+    commit() { git commit-tree "$tree" -m "$@"; }
+    m1="$(commit m1)"
+    f1="$(commit f1 -p "$m1")"
+    git update-ref refs/remotes/origin/main "$m1"
+    git update-ref refs/remotes/origin/feat "$f1"
+    git symbolic-ref HEAD refs/heads/feat
+    git update-ref refs/heads/feat "$(commit f2 -p "$f1")"
+    default_push_range 2>/dev/null
+    m2="$(commit m2 -p "$m1")"
+    git update-ref refs/remotes/origin/main "$m2"
+    default_push_range 2>/dev/null
+    git update-ref refs/heads/feat "$(commit f1-rebased -p "$m2")"
+    default_push_range 2>/dev/null
+    git update-ref refs/heads/feat "$(commit merge -p "$f1" -p "$m2")"
+    default_push_range 2>/dev/null
+  )"
+  rm -rf "$st_range_root"
+  st_want=$'@{upstream}...HEAD\n@{upstream}...HEAD\norigin/main...HEAD\norigin/main...HEAD'
+  if [ "$st_out" = "$st_want" ]; then
+    st_ok "push range: the branch's own diff once main moved into it"
+  else
+    st_bad "push range: the branch's own diff once main moved into it" "$(echo "$st_out" | tr '\n' ' ')"
+  fi
 
-    # 39. SQLX_OFFLINE=true short-circuits to a silent pass, even against
-    #     a src_tauri directory with no dev.db at all — proves the check
-    #     happens before anything touches the filesystem.
-    st_out="$(SQLX_OFFLINE=true devdb_migration_gap "$st_devdb_root/does-not-exist-at-all/src-tauri" "$st_devdb_root/does-not-exist-at-all/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "SQLX_OFFLINE=true short-circuits to a silent pass, even with no dev.db at all"
-    else
-        st_bad "SQLX_OFFLINE=true short-circuits to a silent pass, even with no dev.db at all" "rc=$st_rc out=$st_out"
-    fi
-
-    # 40. SQLX_OFFLINE=false must NOT short-circuit — only the truthy
-    #     spellings do. Same missing-dev.db shape as case 26.
-    st_out="$(SQLX_OFFLINE=false; unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/does-not-exist-at-all/src-tauri" "$st_devdb_root/does-not-exist-at-all/src-tauri/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist'; then
-        st_ok "SQLX_OFFLINE=false does not short-circuit — the preflight still runs"
-    else
-        st_bad "SQLX_OFFLINE=false does not short-circuit — the preflight still runs" "rc=$st_rc out=$st_out"
-    fi
-
-    # 41. node EXISTS but exits with an exit code neither 0/1/2 (the .mjs's
-    #     only exit codes) nor 127 (missing) — e.g. 126 "not
-    #     executable", or a signal death reported as 128+n. Must fold into
-    #     the rc=2 warn path with a message, not produce NO output at all
-    #     (the caller's `-eq 1`/`-eq 2` branches would otherwise match
-    #     neither and the guard would silently no-op).
-    st_devdb_seed weird-node-rc "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/weird-node-rc/src-tauri"
-    st_weird_bin="$st_devdb_root/weird-bin-$$"
-    mkdir -p "$st_weird_bin"
-    printf '#!/bin/sh\nexit 126\n' >"$st_weird_bin/node"
-    chmod +x "$st_weird_bin/node"
-    st_out="$(unset SQLX_OFFLINE; PATH="$st_weird_bin" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect' \
-        && printf '%s' "$st_out" | grep -q '126'; then
-        st_ok "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op"
-    else
-        st_bad "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── .env parser: beyond the literal "DATABASE_URL=..." prefix (#4330 review) ──
-    # dotenvy accepts forms this preflight's parser used to reject outright
-    # (falling through to the "dev.db" default and reaching the WRONG
-    # diagnosis — a hard block naming a file that isn't even the real db).
-
-    # 42. `export DATABASE_URL = ...   # trailing comment` all at once:
-    #     "export " prefix, spaces around "=", and a trailing comment.
-    st_devdb_seed dburl-export-spaces-comment "0001_initial.sql" "1" combo.db
-    st_dir="$st_devdb_root/dburl-export-spaces-comment/src-tauri"
-    printf 'export DATABASE_URL = sqlite:combo.db   # dev db, see README\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "an 'export', spaced '=', and trailing comment on DATABASE_URL all resolve correctly together"
-    else
-        st_bad "an 'export', spaced '=', and trailing comment on DATABASE_URL all resolve correctly together" "rc=$st_rc out=$st_out"
-    fi
-
-    # 43. Quotes are stripped as ONE matched pair, not repeated stripping —
-    #     content after the closing quote (here an unrealistic but
-    #     probative "trailer") must be dropped, not appended to the
-    #     filename. The old `.strip('"').strip("'")` left it attached
-    #     (nothing to strip from the end, since the last char is "r" not
-    #     '"'), producing a bogus filename and a wrong-diagnosis hard
-    #     block.
-    st_devdb_seed dburl-quote-pair "0001_initial.sql" "1" nested.db
-    st_dir="$st_devdb_root/dburl-quote-pair/src-tauri"
-    printf 'DATABASE_URL="sqlite:nested.db"trailer\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "quotes are stripped as a single matched pair, not repeated stripping"
-    else
-        st_bad "quotes are stripped as a single matched pair, not repeated stripping" "rc=$st_rc out=$st_out"
-    fi
-
-    # 44. A "${VAR}"-style reference this parser does not resolve: using it
-    #     verbatim would build a literal, nonexistent filename and produce
-    #     a wrong-diagnosis rc=1 hard block. Must warn (rc=2) instead.
-    st_devdb_seed dburl-var-ref "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-var-ref/src-tauri"
-    printf 'DATABASE_URL=sqlite:${DB_DIR}/dev.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
-        st_ok "an unresolved \${VAR}-style DATABASE_URL warns (rc=2) instead of a wrong-diagnosis hard block"
-    else
-        st_bad "an unresolved \${VAR}-style DATABASE_URL warns (rc=2) instead of a wrong-diagnosis hard block" "rc=$st_rc out=$st_out"
-    fi
-
-    # 45. .env mentions DATABASE_URL in a form this parser recognises as
-    #     NEITHER a valid assignment NOR a comment (e.g. prose, or a
-    #     YAML-style "DATABASE_URL:") — must warn (rc=2), not silently
-    #     fall back to the "dev.db" default as if .env said nothing.
-    st_devdb_seed dburl-unparseable-mention "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-unparseable-mention/src-tauri"
-    printf 'DATABASE_URL points at sqlite:dev.db, see setup-dev-db.sh\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
-        st_ok "a .env line that mentions DATABASE_URL but parses as neither an assignment nor a comment warns (rc=2)"
-    else
-        st_bad "a .env line that mentions DATABASE_URL but parses as neither an assignment nor a comment warns (rc=2)" "rc=$st_rc out=$st_out"
-    fi
-
-    # 46. A genuinely COMMENTED-OUT "# DATABASE_URL=..." line must still be
-    #     ignored outright (falls through to the "dev.db" default, exactly
-    #     as if .env didn't mention the key) — regression guard for case
-    #     45's "mentions but unparseable" logic not to misfire on comments.
-    st_devdb_seed dburl-commented-out "0001_initial.sql 0002_second.sql" "1 2"
-    st_dir="$st_devdb_root/dburl-commented-out/src-tauri"
-    printf '# DATABASE_URL=sqlite:somewhere-else.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default"
-    else
-        st_bad "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default" "rc=$st_rc out=$st_out"
-    fi
-
-    # 47. .env names a DIFFERENT key that merely CONTAINS "DATABASE_URL" as a
-    #     substring ("POSTGRES_DATABASE_URL=", "DATABASE_URL_REPLICA=") —
-    #     a plain `"DATABASE_URL" in line` test would set the ambiguous flag
-    #     and force the rc=2 banner even though the real DATABASE_URL is
-    #     unmentioned and the dev.db default resolves fine. Must pass
-    #     silently, exactly like case 46.
-    st_devdb_seed dburl-substring-neighbor "0001_initial.sql 0002_second.sql" "1 2"
-    st_dir="$st_devdb_root/dburl-substring-neighbor/src-tauri"
-    printf 'POSTGRES_DATABASE_URL=sqlite:should-be-ignored.db\nDATABASE_URL_REPLICA=sqlite:also-ignored.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention"
-    else
-        st_bad "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── resolved-but-not-sqlite DATABASE_URL (#4330 review) ────────────
-    # A DATABASE_URL that actually resolved to something this preflight
-    # cannot check at all — empty, or a different engine's URL — used to
-    # fall through to the "dev.db" default silently, then hard-block (rc=1)
-    # with a migrate-run remedy aimed at a database the developer isn't
-    # using. This file's own stated policy is "cannot tell" -> warn (rc=2),
-    # not block.
-
-    # 48. A non-sqlite DATABASE_URL (e.g. postgres://) must warn (rc=2), not
-    #     silently check dev.db and hard-block against the wrong database.
-    st_devdb_seed dburl-postgres "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-postgres/src-tauri"
-    printf 'DATABASE_URL=postgres://user@localhost/agaric\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
-        st_ok "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database"
-    else
-        st_bad "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database" "rc=$st_rc out=$st_out"
-    fi
-
-    # 49. An explicit but EMPTY "DATABASE_URL=" in .env must also warn
-    #     (rc=2), not silently fall back to the dev.db default. Message
-    #     names the emptiness itself, not "not a sqlite: URL: ''" — case 54
-    #     below drives this exact code path from an exported-empty var
-    #     instead of an .env assignment, so the two share this message.
-    st_devdb_seed dburl-empty "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-empty/src-tauri"
-    printf 'DATABASE_URL=\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
-        st_ok "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db"
-    else
-        st_bad "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── a checkout path with URI characters (#4330 review) ─────────────
-    # 50. A checkout path containing "#", "?", or "%" must still open
-    #     dev.db and pass SILENTLY, same shape as case 30, rather than
-    #     degrade to the rc=2 could-not-inspect warn path.
-    st_devdb_seed 'weird#dir?with%chars' "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/weird#dir?with%chars/src-tauri"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect"
-    else
-        st_bad "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── credential redaction (#4330 review — the leak this batch closes) ──
-    # 51. A DATABASE_URL carrying real "user:password@" userinfo must never
-    #     put the password on stdout — push output gets pasted into
-    #     issues/chat. The host survives (still diagnostic); the password
-    #     does not.
-    st_devdb_seed dburl-credentials "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-credentials/src-tauri"
-    printf 'DATABASE_URL=postgres://dbuser:sup3rSecr3t@localhost:5432/agaric\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3rSecr3t' \
-        && printf '%s' "$st_out" | grep -q 'localhost'; then
-        st_ok "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis"
-    else
-        st_bad "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── dotenvy parity for the VALUE, not just the checkout path (#4330 review) ──
-    # 52. Only a WHITESPACE-preceded "#" starts a comment in an unquoted
-    #     value — "sqlite:my#db.db" is the whole value, not truncated to
-    #     "sqlite:my" at the first "#" (case 50 above covers "#" in the
-    #     CHECKOUT path; this is "#" in the DATABASE_URL VALUE itself). Must
-    #     resolve the full filename and pass SILENTLY.
-    st_devdb_seed dburl-hash-in-value "0001_initial.sql" "1" 'my#db.db'
-    st_dir="$st_devdb_root/dburl-hash-in-value/src-tauri"
-    printf 'DATABASE_URL=sqlite:my#db.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "an unquoted '#' not preceded by whitespace is part of the value, not a comment start"
-    else
-        st_bad "an unquoted '#' not preceded by whitespace is part of the value, not a comment start" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── more "cannot tell" cases: warn, don't hard-block (#4330 review) ──
-    # 53. sqlite::memory: has no on-disk file to check — "cannot tell", same
-    #     category as the non-sqlite-engine case (48), not a confirmed
-    #     "dev.db does not exist" hard block (rc=1) for a database that was
-    #     never meant to exist on disk.
-    st_devdb_seed dburl-memory "0001_initial.sql" NODB
-    st_dir="$st_devdb_root/dburl-memory/src-tauri"
-    printf 'DATABASE_URL=sqlite::memory:\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'memory'; then
-        st_ok "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block"
-    else
-        st_bad "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block" "rc=$st_rc out=$st_out"
-    fi
-
-    # 54. An exported-but-EMPTY DATABASE_URL with no .env key at all: takes
-    #     the `if not val` branch, finds nothing in .env, and used to report
-    #     rc=2 "not a sqlite: URL: ''" — technically harmless (still a warn,
-    #     not a block) but naming the wrong cause. Must still warn (rc=2)
-    #     but say what actually happened, not claim a value was given and
-    #     rejected.
-    st_devdb_seed dburl-empty-exported-no-env "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-empty-exported-no-env/src-tauri"
-    st_out="$(unset SQLX_OFFLINE; DATABASE_URL="" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty' \
-        && ! printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
-        st_ok "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL"
-    else
-        st_bad "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL" "rc=$st_rc out=$st_out"
-    fi
-
-    # 55. DATABASE_URL=sqlite: (or sqlite://) with nothing after it resolves
-    #     to an empty path. Falsified against the pre-fix code: `os.path.join
-    #     (src_tauri, "")` yields a DIRECTORY ("<src_tauri>/"), `os.path.isfile`
-    #     on that is False, and the guard hard-blocked with `rc=1` naming that
-    #     directory as a missing "dev.db" — a confirmed-gap block for a URL
-    #     that named no file at all. Must warn (rc=2) instead, same "cannot
-    #     tell" category as sqlite::memory: (case 53).
-    st_devdb_seed dburl-empty-path "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-empty-path/src-tauri"
-    printf 'DATABASE_URL=sqlite:\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
-        st_ok "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory"
-    else
-        st_bad "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── percent-decoding parity with sqlx-sqlite's own parser (#4330 review) ──
-    # 56. sqlx-sqlite percent-decodes the filename it resolves from a
-    #     DATABASE_URL ("% decode to allow for `?` or `#` in the filename",
-    #     options/parse.rs). Falsified against the pre-fix code: the literal,
-    #     undecoded "my%20db.db" was checked on disk, missed the real file
-    #     ("my db.db"), and hard-blocked (rc=1) a dev.db that was actually
-    #     caught up. Must resolve the decoded name and pass SILENTLY, same
-    #     shape as cases 30/50.
-    st_devdb_seed dburl-percent-encoded "0001_initial.sql" "1" 'my db.db'
-    st_dir="$st_devdb_root/dburl-percent-encoded/src-tauri"
-    printf 'DATABASE_URL=sqlite:my%%20db.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk"
-    else
-        st_bad "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── no DATABASE_URL anywhere: the same premise as SQLX_OFFLINE (#4330 review) ──
-    # 57. Neither an exported DATABASE_URL nor a .env entry for it at all,
-    #     AND dev.db is genuinely missing. Falsified against the pre-fix
-    #     code: db_rel stayed at its "dev.db" default and the guard
-    #     hard-blocked (rc=1, "dev.db does not exist") even though
-    #     `sqlx::query!` in this state never opens dev.db at all — it
-    #     resolves entirely from the committed .sqlx/ cache (same premise as
-    #     the SQLX_OFFLINE=true short-circuit above). Must warn (rc=2), not
-    #     block — but still NAME the real "does not exist" state (kept
-    #     informative, narrower than that short-circuit's silent pass).
-    st_devdb_seed dburl-unset-everywhere "0001_initial.sql" NODB
-    st_dir="$st_devdb_root/dburl-unset-everywhere/src-tauri"
-    rm -f "$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
-        && printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set anywhere'; then
-        st_ok "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default"
-    else
-        st_bad "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default" "rc=$st_rc out=$st_out"
-    fi
-
-    # 57b. Companion property: when DATABASE_URL IS explicitly configured
-    #      (the documented, normal case), a genuinely missing dev.db must
-    #      STILL hard-block (rc=1) exactly as before — case 57 narrows the
-    #      policy for the unconfigured state only, it must not weaken the
-    #      confirmed-gap block for the configured one.
-    st_devdb_seed dburl-configured-missing "0001_initial.sql" NODB
-    st_dir="$st_devdb_root/dburl-configured-missing/src-tauri"
-    printf 'DATABASE_URL=sqlite:dev.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 1 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
-        && ! printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set'; then
-        st_ok "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured"
-    else
-        st_bad "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured" "rc=$st_rc out=$st_out"
-    fi
-
-    # ── credential redaction: the two shapes the userinfo-only regex missed (#4330 review) ──
-    # 58. A password containing a raw, unescaped "/" defeats a character
-    #     class that excludes "/" from the userinfo match entirely — the
-    #     regex never reaches the "@" and redacts nothing. Falsified against
-    #     the pre-fix code: the full "u:p/w@" printed verbatim. Must redact
-    #     the password and keep the host visible.
-    st_devdb_seed dburl-credentials-slash "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-credentials-slash/src-tauri"
-    printf 'DATABASE_URL=postgres://dbuser:sup3r/Secr3t@localhost:5432/agaric\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3r/Secr3t' \
-        && printf '%s' "$st_out" | grep -q 'localhost'; then
-        st_ok "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched"
-    else
-        st_bad "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched" "rc=$st_rc out=$st_out"
-    fi
-
-    # 59. Credentials in the QUERY STRING (e.g. "?password=...") are a second
-    #     leak surface distinct from userinfo — the query string is kept in
-    #     the printed line deliberately for diagnosability, but that does not
-    #     make a "password=" parameter safe to print. Falsified against the
-    #     pre-fix code: "?password=hunter2" printed verbatim. Must redact the
-    #     credential-shaped query VALUE while leaving an ordinary query key
-    #     (sslmode) visible.
-    st_devdb_seed dburl-credentials-query "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/dburl-credentials-query/src-tauri"
-    printf 'DATABASE_URL=postgres://localhost:5432/agaric?password=hunter2&sslmode=require\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'hunter2' \
-        && printf '%s' "$st_out" | grep -q 'sslmode=require'; then
-        st_ok "a credential-shaped query-string parameter is redacted; an ordinary query key is not"
-    else
-        st_bad "a credential-shaped query-string parameter is redacted; an ordinary query key is not" "rc=$st_rc out=$st_out"
-    fi
-
-    rm -rf "$st_devdb_root"
-
-    # 60. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
-    #     same failure shape as case 14 (diagnosing after the fact is the
-    #     state being fixed). Reuses ST_PHASE_A_ANCHOR and st_order_check
-    #     from the node-deps section above.
-    # NOTE: st_line_of/st_order_check use plain `grep -n`, whose patterns are
-    # basic regular expressions, not extended ones. Bare "(" "/" ")" are
-    # LITERAL there, so they must NOT be backslash-escaped here (the
-    # extended-flavoured anchors above happen to contain no parens, so this
-    # gotcha never showed up until now).
-    ST_DEVDB_ANCHOR='^    devdb_gap_out="\$(devdb_migration_gap '
-    st_rc=0
-    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_DEVDB_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
-    if [ "$st_rc" -eq 0 ]; then
-        st_ok "the dev.db migration-gap preflight runs before Phase A — $st_out"
-    else
-        st_bad "the dev.db migration-gap preflight runs before Phase A" "$st_out"
-    fi
-
-    # 61. Ratchet: the pre-push hooks (clippy first among them) run before the
-    #     first test phase, or a lint failure costs a whole test run (#6560).
-    ST_PHASE_A2_ANCHOR='^    if ! SKIP="\$PHASE_A2_SKIP" prek run .*--hook-stage pre-push'
-    ST_PHASE_C_ANCHOR='^if ! bash scripts/test-related-ts.sh --range'
-    st_rc=0
-    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_PHASE_A2_ANCHOR" "$ST_PHASE_C_ANCHOR")" || st_rc=$?
-    if [ "$st_rc" -eq 0 ]; then
-        st_ok "the pre-push hooks run before the first test phase — $st_out"
-    else
-        st_bad "the pre-push hooks run before the first test phase" "$st_out"
-    fi
-
-    # 62. Phase E gate (#6560): only the helper's exact `skip` skips.
-    st_sqlx() {  # <expected: skip|run> <label> <forced> <changed_ok> <helper…>
-        local want="$1" label="$2" got
-        shift 2
-        got="$(sqlx_gate_verdict "$@" 2>/dev/null)"
-        if [ "${got%%:*}" = "$want" ]; then
-            st_ok "Phase E gate: $label"
-        else
-            st_bad "Phase E gate: $label" "verdict '$got', expected $want"
-        fi
-    }
-    st_sqlx skip 'the helper printing exactly skip skips' 0 1 printf 'skip\n'
-    st_sqlx run 'PRE_PUSH_SQLX_CHECK=1 runs despite a skip' 1 1 printf 'skip\n'
-    st_sqlx run 'an uncomputable changed-file set runs' 0 0 printf 'skip\n'
-    st_sqlx run 'a helper exiting non-zero runs' 0 1 sh -c 'echo skip; exit 1'
-    st_sqlx run 'garbage helper output runs' 0 1 printf 'skipped\n'
-
-    # 63. Push range: what the branch adds, never main's commits since its
-    #     last push. One line per state, in order: pushed then committed;
-    #     main advanced without the branch; rebased onto main; main merged in.
-    st_range_root="$(mktemp -d -t pre-push-range.XXXXXX)"
-    st_out="$(
-        # shellcheck source=lib/git-scratch-guard.sh
-        . "$(dirname "${BASH_SOURCE[0]}")/lib/git-scratch-guard.sh"
-        git_scratch_guard "$st_range_root"
-        git_scratch_init "$st_range_root/repo"
-        cd "$st_range_root/repo" || exit 1
-        git config remote.origin.url .
-        git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-        git config branch.feat.remote origin
-        git config branch.feat.merge refs/heads/feat
-        tree="$(git write-tree)"
-        commit() { git commit-tree "$tree" -m "$@"; }
-        m1="$(commit m1)"
-        f1="$(commit f1 -p "$m1")"
-        git update-ref refs/remotes/origin/main "$m1"
-        git update-ref refs/remotes/origin/feat "$f1"
-        git symbolic-ref HEAD refs/heads/feat
-        git update-ref refs/heads/feat "$(commit f2 -p "$f1")"
-        default_push_range 2>/dev/null
-        m2="$(commit m2 -p "$m1")"
-        git update-ref refs/remotes/origin/main "$m2"
-        default_push_range 2>/dev/null
-        git update-ref refs/heads/feat "$(commit f1-rebased -p "$m2")"
-        default_push_range 2>/dev/null
-        git update-ref refs/heads/feat "$(commit merge -p "$f1" -p "$m2")"
-        default_push_range 2>/dev/null
-    )"
-    rm -rf "$st_range_root"
-    st_want=$'@{upstream}...HEAD\n@{upstream}...HEAD\norigin/main...HEAD\norigin/main...HEAD'
-    if [ "$st_out" = "$st_want" ]; then
-        st_ok "push range: the branch's own diff once main moved into it"
-    else
-        st_bad "push range: the branch's own diff once main moved into it" "$(echo "$st_out" | tr '\n' ' ')"
-    fi
-
-    if [ "$st_fail" != 0 ]; then
-        echo "verify-ci-equivalent self-test FAILED" >&2
-        exit 2
-    fi
-    echo "verify-ci-equivalent self-test passed"
-    exit 0
+  if [ "$st_fail" != 0 ]; then
+    echo "verify-ci-equivalent self-test FAILED" >&2
+    exit 2
+  fi
+  echo "verify-ci-equivalent self-test passed"
+  exit 0
 fi
 
 # ── Bypass guard (CI-R16) ──────────────────────────────────────────
@@ -2141,21 +2273,21 @@ SKIP_REASON="${SKIP_CI_VERIFY:-}"
 SKIP_REASON="${SKIP_REASON#"${SKIP_REASON%%[![:space:]]*}"}"
 SKIP_REASON="${SKIP_REASON%"${SKIP_REASON##*[![:space:]]}"}"
 if [ -n "$SKIP_REASON" ]; then
-    case "$(printf '%s' "$SKIP_REASON" | tr '[:upper:]' '[:lower:]')" in
-        1 | 0 | y | n | on | off | yes | no | true | false)
-            printf '✗ SKIP_CI_VERIFY=%s rejected: bypassing the verifier requires a REASON, not a truthy flag.\n' "$SKIP_REASON" >&2
-            printf "  Re-run with a short explanation, e.g.:\n" >&2
-            printf "    SKIP_CI_VERIFY='docs typo, no source change' git push\n" >&2
-            exit 1
-            ;;
-    esac
-    if [ "${#SKIP_REASON}" -lt 8 ]; then
-        printf '✗ SKIP_CI_VERIFY reason too short (%s chars, need ≥8): "%s"\n' "${#SKIP_REASON}" "$SKIP_REASON" >&2
-        printf "  Give a real reason, e.g. SKIP_CI_VERIFY='rebasing onto main, already verified' git push\n" >&2
-        exit 1
-    fi
-    echo "→ Pre-push verifier skipped. Reason: $SKIP_REASON"
-    exit 0
+  case "$(printf '%s' "$SKIP_REASON" | tr '[:upper:]' '[:lower:]')" in
+    1 | 0 | y | n | on | off | yes | no | true | false)
+      printf '✗ SKIP_CI_VERIFY=%s rejected: bypassing the verifier requires a REASON, not a truthy flag.\n' "$SKIP_REASON" >&2
+      printf "  Re-run with a short explanation, e.g.:\n" >&2
+      printf "    SKIP_CI_VERIFY='docs typo, no source change' git push\n" >&2
+      exit 1
+      ;;
+  esac
+  if [ "${#SKIP_REASON}" -lt 8 ]; then
+    printf '✗ SKIP_CI_VERIFY reason too short (%s chars, need ≥8): "%s"\n' "${#SKIP_REASON}" "$SKIP_REASON" >&2
+    printf "  Give a real reason, e.g. SKIP_CI_VERIFY='rebasing onto main, already verified' git push\n" >&2
+    exit 1
+  fi
+  echo "→ Pre-push verifier skipped. Reason: $SKIP_REASON"
+  exit 0
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -2165,15 +2297,15 @@ cd "$REPO_ROOT" || exit 1
 # Before Phase A, not after five of its hooks have gone red for reasons
 # none of them can name. Costs a stat; saves the diagnosis.
 if ! node_deps_problem_out="$(node_deps_problem "$REPO_ROOT")"; then
-    echo "✗ Pre-push verification cannot run: $node_deps_problem_out" >&2
-    echo "" >&2
-    echo "  Every node-based hook in Phase A (npx oxlint / oxfmt / tsc, and the" >&2
-    echo "  node guard scripts) needs this. Without it they fail one by one on" >&2
-    echo "  their own terms — including two guard SELF-TESTS, which look like" >&2
-    echo "  your change broke a guard. It did not; the dependencies are absent." >&2
-    echo "" >&2
-    node_deps_remedy "$REPO_ROOT" | sed 's/^/  /' >&2
-    exit 1
+  echo "✗ Pre-push verification cannot run: $node_deps_problem_out" >&2
+  echo "" >&2
+  echo "  Every node-based hook in Phase A (npx oxlint / oxfmt / tsc, and the" >&2
+  echo "  node guard scripts) needs this. Without it they fail one by one on" >&2
+  echo "  their own terms — including two guard SELF-TESTS, which look like" >&2
+  echo "  your change broke a guard. It did not; the dependencies are absent." >&2
+  echo "" >&2
+  node_deps_remedy "$REPO_ROOT" | sed 's/^/  /' >&2
+  exit 1
 fi
 
 # ── Preflight: npm floor ───────────────────────────────────────────
@@ -2200,14 +2332,14 @@ bash "$REPO_ROOT/scripts/require-npm.sh" >/dev/null || exit 1
 
 RANGE="${PRE_PUSH_RANGE:-}"
 if [ -z "$RANGE" ] && ! RANGE="$(default_push_range)"; then
-    echo "✗ Cannot determine push range (no upstream, no origin/main)."
-    echo "  Set PRE_PUSH_RANGE=<revspec> and retry."
-    exit 1
+  echo "✗ Cannot determine push range (no upstream, no origin/main)."
+  echo "  Set PRE_PUSH_RANGE=<revspec> and retry."
+  exit 1
 fi
 
 if ! git rev-list --count "$RANGE" >/dev/null 2>&1; then
-    echo "✗ Range '$RANGE' does not resolve to a valid revision range."
-    exit 1
+  echo "✗ Range '$RANGE' does not resolve to a valid revision range."
+  exit 1
 fi
 
 # Display count only. `rev-list --count A...B` counts the SYMMETRIC
@@ -2215,30 +2347,30 @@ fi
 # as its own; --right-only narrows it to this branch's. Falls back for a
 # two-dot PRE_PUSH_RANGE, where --right-only is not meaningful.
 RANGE_COUNT="$(git rev-list --count --right-only "$RANGE" 2>/dev/null \
-    || git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
+  || git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
 echo "→ Pre-push verifier: range '$RANGE' ($RANGE_COUNT commit(s))"
 
 # Phase A feeds prek the range's left side as `--from-ref`. For the
 # three-dot default that is the merge-base (what this branch changed); a
 # two-dot PRE_PUSH_RANGE is taken as given.
 case "$RANGE" in
-    *...*) RANGE_BASE="$(git merge-base "${RANGE%%...*}" HEAD)" ;;
-    *..*)  RANGE_BASE="${RANGE%%..*}" ;;
-    *)     RANGE_BASE="$RANGE" ;;
+  *...*) RANGE_BASE="$(git merge-base "${RANGE%%...*}" HEAD)" ;;
+  *..*) RANGE_BASE="${RANGE%%..*}" ;;
+  *) RANGE_BASE="$RANGE" ;;
 esac
 
 # Fail-closed change detection: keep the git-diff exit status so we can tell a
 # genuinely EMPTY diff apart from a diff that could not be computed. If the
 # command fails we cannot know what changed, so we run EVERY category below.
 if CHANGED="$(git diff "$RANGE" --name-only --diff-filter=ACMR 2>/dev/null)"; then
-    CHANGED_OK=1
+  CHANGED_OK=1
 else
-    CHANGED_OK=0
-    CHANGED=""
+  CHANGED_OK=0
+  CHANGED=""
 fi
 
 has_match() {
-    [ -n "$CHANGED" ] && printf '%s\n' "$CHANGED" | grep -qE "$1"
+  [ -n "$CHANGED" ] && printf '%s\n' "$CHANGED" | grep -qE "$1"
 }
 
 # Per-category change flags. HAS_RS/HAS_MCP gate the Rust/MCP phases (unchanged);
@@ -2250,87 +2382,87 @@ HAS_CI=0
 HAS_DOCS=0
 HAS_MCP=0
 if [ "$CHANGED_OK" = "0" ]; then
-    # Could not compute the changed-file set → fail closed: run everything.
-    echo "→ Could not compute changed-file set for '$RANGE'; failing closed (running every category)."
-    HAS_RS=1
-    HAS_TS=1
-    HAS_CI=1
-    HAS_DOCS=1
-    HAS_MCP=1
+  # Could not compute the changed-file set → fail closed: run everything.
+  echo "→ Could not compute changed-file set for '$RANGE'; failing closed (running every category)."
+  HAS_RS=1
+  HAS_TS=1
+  HAS_CI=1
+  HAS_DOCS=1
+  HAS_MCP=1
 else
-    # Backend: Rust sources, the crate manifests/lockfile, shipped migrations.
-    has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
-    # ...and the shell scripts the Rust phases depend on (see RS_SCRIPT_RE).
-    has_match "$RS_SCRIPT_RE" && HAS_RS=1
-    # ...and scripts whose only hook would otherwise be skipped (HOOK_OWNER_*).
-    has_match "$HOOK_OWNER_RS_RE" && HAS_RS=1
-    # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
-    has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
-    has_match "$HOOK_OWNER_TS_RE" && HAS_TS=1
-    # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
-    has_match "$CI_PATH_RE" && HAS_CI=1
-    # Docs: any Markdown file plus the docs/ tree.
-    has_match '\.md$|^docs/' && HAS_DOCS=1
-    # MCP gate: only the binary, its module, the Tauri command wrapper, and
-    # the prebuilt-binary directory. Catches the surface that affects the
-    # agaric-mcp release build + UDS smoke + externalBin pin verification.
-    has_match "$MCP_PATH_RE" && HAS_MCP=1
+  # Backend: Rust sources, the crate manifests/lockfile, shipped migrations.
+  has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
+  # ...and the shell scripts the Rust phases depend on (see RS_SCRIPT_RE).
+  has_match "$RS_SCRIPT_RE" && HAS_RS=1
+  # ...and scripts whose only hook would otherwise be skipped (HOOK_OWNER_*).
+  has_match "$HOOK_OWNER_RS_RE" && HAS_RS=1
+  # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
+  has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
+  has_match "$HOOK_OWNER_TS_RE" && HAS_TS=1
+  # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
+  has_match "$CI_PATH_RE" && HAS_CI=1
+  # Docs: any Markdown file plus the docs/ tree.
+  has_match '\.md$|^docs/' && HAS_DOCS=1
+  # MCP gate: only the binary, its module, the Tauri command wrapper, and
+  # the prebuilt-binary directory. Catches the surface that affects the
+  # agaric-mcp release build + UDS smoke + externalBin pin verification.
+  has_match "$MCP_PATH_RE" && HAS_MCP=1
 
-    # Fail-closed for UNRECOGNIZED non-docs paths.
-    #
-    # DIVERGENCE FROM `classify-changes.sh` (#4419, 2026-08-26; ratcheted by the
-    # "divergence ratchet" --self-test checks below, #4424): this classifier
-    # differs from `classify-changes.sh`'s `ci_re` in one documented way: the four
-    # toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`, `.gitleaks.toml`)
-    # are anchored to the repo root in `classify-changes.sh` (`^prek\.toml$`, …)
-    # but UNANCHORED here (`prek\.toml$`, …), so ANY path merely ENDING in
-    # one of those filenames — a nested copy (`docs/prek.toml`) or a
-    # differently prefixed file at the repo root (`myprek.toml`) alike — is
-    # CI here and not there. (`scripts/` used to be a second one; both
-    # classifiers route tooling to CI now.)
-    # The asymmetry is deliberate and in the SAFE direction — CI does
-    # strictly more than the local gate, never less — so this is no longer a
-    # mirror. Unlike the stale version of this note, the parity IS now
-    # ratcheted: the --self-test divergence-ratchet checks fail closed if
-    # either gap widens, narrows, or a new one opens for any CURRENTLY
-    # TRACKED path — the checks scan `git ls-files`, so an arm added for a
-    # path that is not yet tracked (a future `^Dockerfile$`, say, before any
-    # Dockerfile is committed) still passes silently — so this note itself is
-    # what they mean by "update the divergence note" on failure. Widening
-    # `classify-changes.sh` to match is a separate change with its own blast
-    # radius.
-    #
-    # Otherwise mirrors `classify-changes.sh`: a changed file matching neither docs nor any known category
-    # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
-    # root *.sh — is a build/toolchain change we cannot attribute to a suite.
-    # Without this the per-category SKIP below would drop nearly every hook for
-    # such a push. Pin frontend+backend+ci so their hooks still run — the ci
-    # hooks (shell lint + the skip-ci-verify guard) then cover *.sh. The
-    # recognizer regexes are the SAME patterns that set HAS_TS/HAS_RS/HAS_CI
-    # above (so "recognized" ⟺ "set some category flag"), plus a broad docs
-    # matcher (LICENSE/NOTICE/… beyond the HAS_DOCS *.md set) so a licence edit
-    # is NOT over-escalated to the full suite. A file matching none of these set
-    # no flag → fail closed.
-    unrec_docs='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
-    unrec_fe='^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$'
-    unrec_be='\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$'
-    # Reuse the SAME constant the classifier uses. This was a verbatim copy,
-    # so narrowing or widening one arm silently left the other behind — and
-    # the fail-closed check is the one that decides whether a category-less
-    # path pins every suite. A shell-only change would have kept paying the
-    # full Rust suite here even after the classifier learned to attribute it.
-    unrec_ci="$CI_PATH_RE"
-    while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        if [[ "$f" =~ $unrec_docs || "$f" =~ $unrec_fe || "$f" =~ $unrec_be || "$f" =~ $unrec_ci ]]; then
-            continue
-        fi
-        echo "→ Unrecognized non-docs path: $f → failing closed (frontend+backend+ci)."
-        HAS_TS=1
-        HAS_RS=1
-        HAS_CI=1
-        break
-    done <<< "$CHANGED"
+  # Fail-closed for UNRECOGNIZED non-docs paths.
+  #
+  # DIVERGENCE FROM `classify-changes.sh` (#4419, 2026-08-26; ratcheted by the
+  # "divergence ratchet" --self-test checks below, #4424): this classifier
+  # differs from `classify-changes.sh`'s `ci_re` in one documented way: the four
+  # toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`, `.gitleaks.toml`)
+  # are anchored to the repo root in `classify-changes.sh` (`^prek\.toml$`, …)
+  # but UNANCHORED here (`prek\.toml$`, …), so ANY path merely ENDING in
+  # one of those filenames — a nested copy (`docs/prek.toml`) or a
+  # differently prefixed file at the repo root (`myprek.toml`) alike — is
+  # CI here and not there. (`scripts/` used to be a second one; both
+  # classifiers route tooling to CI now.)
+  # The asymmetry is deliberate and in the SAFE direction — CI does
+  # strictly more than the local gate, never less — so this is no longer a
+  # mirror. Unlike the stale version of this note, the parity IS now
+  # ratcheted: the --self-test divergence-ratchet checks fail closed if
+  # either gap widens, narrows, or a new one opens for any CURRENTLY
+  # TRACKED path — the checks scan `git ls-files`, so an arm added for a
+  # path that is not yet tracked (a future `^Dockerfile$`, say, before any
+  # Dockerfile is committed) still passes silently — so this note itself is
+  # what they mean by "update the divergence note" on failure. Widening
+  # `classify-changes.sh` to match is a separate change with its own blast
+  # radius.
+  #
+  # Otherwise mirrors `classify-changes.sh`: a changed file matching neither docs nor any known category
+  # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
+  # root *.sh — is a build/toolchain change we cannot attribute to a suite.
+  # Without this the per-category SKIP below would drop nearly every hook for
+  # such a push. Pin frontend+backend+ci so their hooks still run — the ci
+  # hooks (shell lint + the skip-ci-verify guard) then cover *.sh. The
+  # recognizer regexes are the SAME patterns that set HAS_TS/HAS_RS/HAS_CI
+  # above (so "recognized" ⟺ "set some category flag"), plus a broad docs
+  # matcher (LICENSE/NOTICE/… beyond the HAS_DOCS *.md set) so a licence edit
+  # is NOT over-escalated to the full suite. A file matching none of these set
+  # no flag → fail closed.
+  unrec_docs='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
+  unrec_fe='^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$'
+  unrec_be='\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$'
+  # Reuse the SAME constant the classifier uses. This was a verbatim copy,
+  # so narrowing or widening one arm silently left the other behind — and
+  # the fail-closed check is the one that decides whether a category-less
+  # path pins every suite. A shell-only change would have kept paying the
+  # full Rust suite here even after the classifier learned to attribute it.
+  unrec_ci="$CI_PATH_RE"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if [[ "$f" =~ $unrec_docs || "$f" =~ $unrec_fe || "$f" =~ $unrec_be || "$f" =~ $unrec_ci ]]; then
+      continue
+    fi
+    echo "→ Unrecognized non-docs path: $f → failing closed (frontend+backend+ci)."
+    HAS_TS=1
+    HAS_RS=1
+    HAS_CI=1
+    break
+  done <<<"$CHANGED"
 fi
 
 # ── Preflight: dev.db migration gap (#4266) ─────────────────────────
@@ -2342,30 +2474,30 @@ fi
 # never reaches those phases, so it is not made to pay for a check whose
 # failure it could not have caused.
 if [ "$HAS_RS" = "1" ]; then
-    devdb_gap_out="$(devdb_migration_gap "$REPO_ROOT/src-tauri" "$REPO_ROOT/src-tauri/migrations")"
-    devdb_gap_rc=$?
-    if [ "$devdb_gap_rc" -eq 1 ]; then
-        # Confirmed gap (missing/never-migrated/behind) — the diagnosis
-        # below is the headline; this line just generalizes it rather than
-        # (wrongly) always naming "behind" when it might be either of the
-        # other two.
-        echo "✗ Pre-push verification cannot run: dev.db is not in sync with src-tauri/migrations/ (#4266)" >&2
-        echo "" >&2
-        echo "$devdb_gap_out" | sed 's/^/  /' >&2
-        echo "" >&2
-        echo "  Without this, Phase D/D2's online sqlx::query! macros compile" >&2
-        echo "  against a stale schema and fail with a confusing error (e.g. 'no" >&2
-        echo "  such table') from a crate this push never touched." >&2
-        exit 1
-    elif [ "$devdb_gap_rc" -eq 2 ]; then
-        # Could not inspect at all (missing node, permission/OS error) —
-        # this is NOT evidence dev.db is behind, so warn and let the push
-        # proceed rather than hard-blocking on an inability to check.
-        echo "⚠ Could not check dev.db against src-tauri/migrations/ (#4266) — continuing without this preflight:" >&2
-        echo "" >&2
-        echo "$devdb_gap_out" | sed 's/^/  /' >&2
-        echo "" >&2
-    fi
+  devdb_gap_out="$(devdb_migration_gap "$REPO_ROOT/src-tauri" "$REPO_ROOT/src-tauri/migrations")"
+  devdb_gap_rc=$?
+  if [ "$devdb_gap_rc" -eq 1 ]; then
+    # Confirmed gap (missing/never-migrated/behind) — the diagnosis
+    # below is the headline; this line just generalizes it rather than
+    # (wrongly) always naming "behind" when it might be either of the
+    # other two.
+    echo "✗ Pre-push verification cannot run: dev.db is not in sync with src-tauri/migrations/ (#4266)" >&2
+    echo "" >&2
+    echo "$devdb_gap_out" | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "  Without this, Phase D/D2's online sqlx::query! macros compile" >&2
+    echo "  against a stale schema and fail with a confusing error (e.g. 'no" >&2
+    echo "  such table') from a crate this push never touched." >&2
+    exit 1
+  elif [ "$devdb_gap_rc" -eq 2 ]; then
+    # Could not inspect at all (missing node, permission/OS error) —
+    # this is NOT evidence dev.db is behind, so warn and let the push
+    # proceed rather than hard-blocking on an inability to check.
+    echo "⚠ Could not check dev.db against src-tauri/migrations/ (#4266) — continuing without this preflight:" >&2
+    echo "" >&2
+    echo "$devdb_gap_out" | sed 's/^/  /' >&2
+    echo "" >&2
+  fi
 fi
 
 # ── Phase A: prek run over the push range (pre-commit hooks) ────────
@@ -2410,22 +2542,22 @@ PHASE_A_SKIP="$(phase_a_skip_compose "$PHASE_A_REQUIRED_SKIP" "$CALLER_SKIP")"
 CALLER_SKIP_EXTRA="$(phase_a_skip_extra "$PHASE_A_REQUIRED_SKIP" "$CALLER_SKIP")"
 NOT_CI_EQUIVALENT=0
 if [ -n "$CALLER_SKIP_EXTRA" ]; then
-    NOT_CI_EQUIVALENT=1
-    echo ""
-    echo "⚠ Honouring caller-supplied SKIP: $CALLER_SKIP_EXTRA"
-    echo "  Those hooks will NOT run in Phase A. CI runs them unskipped, so"
-    echo "  this run is NOT CI-equivalent and a green result here does not"
-    echo "  predict a green there. Unset SKIP for a representative run."
+  NOT_CI_EQUIVALENT=1
+  echo ""
+  echo "⚠ Honouring caller-supplied SKIP: $CALLER_SKIP_EXTRA"
+  echo "  Those hooks will NOT run in Phase A. CI runs them unskipped, so"
+  echo "  this run is NOT CI-equivalent and a green result here does not"
+  echo "  predict a green there. Unset SKIP for a representative run."
 fi
 
 echo ""
 echo "→ Phase A: prek run over '$RANGE_BASE..HEAD' (pre-commit stage)"
 echo "  SKIP=$PHASE_A_SKIP"
 if ! SKIP="$PHASE_A_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-commit; then
-    echo ""
-    echo "✗ Pre-push verification FAILED at Phase A (prek over the push range)."
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-    exit 1
+  echo ""
+  echo "✗ Pre-push verification FAILED at Phase A (prek over the push range)."
+  echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+  exit 1
 fi
 echo "  ✓ prek over the push range"
 
@@ -2436,16 +2568,16 @@ echo "  ✓ prek over the push range"
 # PRE_COMMIT_REMOTE_NAME there) prek has already run these hooks: this one is
 # last in prek.toml.
 if [ -z "${PRE_COMMIT_REMOTE_NAME:-}" ]; then
-    PHASE_A2_SKIP="$(phase_a_skip_compose "verify-ci-equivalent" "$CALLER_SKIP")"
+  PHASE_A2_SKIP="$(phase_a_skip_compose "verify-ci-equivalent" "$CALLER_SKIP")"
+  echo ""
+  echo "→ Phase A2: prek run over '$RANGE_BASE..HEAD' (pre-push stage)"
+  if ! SKIP="$PHASE_A2_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-push; then
     echo ""
-    echo "→ Phase A2: prek run over '$RANGE_BASE..HEAD' (pre-push stage)"
-    if ! SKIP="$PHASE_A2_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-push; then
-        echo ""
-        echo "✗ Pre-push verification FAILED at Phase A2 (pre-push hooks over the push range)."
-        echo "  Skip one failing hook: SKIP=<hook-id> scripts/push.sh (use sparingly)"
-        exit 1
-    fi
-    echo "  ✓ pre-push hooks over the push range"
+    echo "✗ Pre-push verification FAILED at Phase A2 (pre-push hooks over the push range)."
+    echo "  Skip one failing hook: SKIP=<hook-id> scripts/push.sh (use sparingly)"
+    exit 1
+  fi
+  echo "  ✓ pre-push hooks over the push range"
 fi
 
 # Migrations append-only backstop (#806): the migrations-immutable hook
@@ -2453,10 +2585,10 @@ fi
 # with `--no-verify` would sail through Phase A unnoticed. Re-check the
 # whole push range for M/D/R/C/T under src-tauri/migrations/*.sql.
 if ! bash scripts/check-migrations-immutable.sh --range "$RANGE"; then
-    echo ""
-    echo "✗ Pre-push verification FAILED: shipped migration changed in range '$RANGE' (#806)."
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-    exit 1
+  echo ""
+  echo "✗ Pre-push verification FAILED: shipped migration changed in range '$RANGE' (#806)."
+  echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+  exit 1
 fi
 echo "  ✓ migrations append-only over '$RANGE'"
 
@@ -2466,13 +2598,13 @@ echo "  ✓ migrations append-only over '$RANGE'"
 # would fail with a misleading "missing external-binary" error.
 
 if [ "$HAS_RS" = "1" ]; then
-    echo ""
-    echo "→ Phase B: externalBin placeholder"
-    if ! node scripts/prepare-external-bins.mjs --placeholder-only > /dev/null 2>&1; then
-        echo "  ✗ externalBin placeholder setup failed"
-        exit 1
-    fi
-    echo "  ✓ externalBin placeholder"
+  echo ""
+  echo "→ Phase B: externalBin placeholder"
+  if ! node scripts/prepare-external-bins.mjs --placeholder-only >/dev/null 2>&1; then
+    echo "  ✗ externalBin placeholder setup failed"
+    exit 1
+  fi
+  echo "  ✓ externalBin placeholder"
 fi
 
 # ── Phase C: vitest related (scoped to push range) ─────────────────
@@ -2480,25 +2612,25 @@ fi
 echo ""
 echo "→ Phase C: vitest related (range $RANGE)"
 if ! bash scripts/test-related-ts.sh --range "$RANGE"; then
-    echo ""
-    echo "✗ Pre-push verification FAILED at Phase C (vitest related)."
-    echo "  Iterate: bash scripts/test-related-ts.sh --range $RANGE"
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-    exit 1
+  echo ""
+  echo "✗ Pre-push verification FAILED at Phase C (vitest related)."
+  echo "  Iterate: bash scripts/test-related-ts.sh --range $RANGE"
+  echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+  exit 1
 fi
 
 # ── Phase D: cargo nextest related (scoped to push range) ──────────
 
 if [ "$HAS_RS" = "1" ]; then
+  echo ""
+  echo "→ Phase D: cargo nextest related (range $RANGE)"
+  if ! bash scripts/test-related-rust.sh --range "$RANGE"; then
     echo ""
-    echo "→ Phase D: cargo nextest related (range $RANGE)"
-    if ! bash scripts/test-related-rust.sh --range "$RANGE"; then
-        echo ""
-        echo "✗ Pre-push verification FAILED at Phase D (cargo nextest related)."
-        echo "  Iterate: bash scripts/test-related-rust.sh --range $RANGE"
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-        exit 1
-    fi
+    echo "✗ Pre-push verification FAILED at Phase D (cargo nextest related)."
+    echo "  Iterate: bash scripts/test-related-rust.sh --range $RANGE"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+  fi
 fi
 
 # ── Phase D2: cargo test --doc (only if Rust changed) ──────────────
@@ -2514,15 +2646,15 @@ fi
 # clean locally and only failed once pushed to CI.
 
 if [ "$HAS_RS" = "1" ]; then
+  echo ""
+  echo "→ Phase D2: cargo test --doc --workspace"
+  if ! (cd src-tauri && cargo test --doc --workspace); then
     echo ""
-    echo "→ Phase D2: cargo test --doc --workspace"
-    if ! ( cd src-tauri && cargo test --doc --workspace ); then
-        echo ""
-        echo "✗ Pre-push verification FAILED at Phase D2 (cargo test --doc --workspace)."
-        echo "  Iterate: ( cd src-tauri && cargo test --doc --workspace )"
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-        exit 1
-    fi
+    echo "✗ Pre-push verification FAILED at Phase D2 (cargo test --doc --workspace)."
+    echo "  Iterate: ( cd src-tauri && cargo test --doc --workspace )"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+  fi
 fi
 
 # ── Phase E: cargo sqlx prepare --check (only if a query can change) ─
@@ -2545,43 +2677,44 @@ fi
 
 SQLX_SKIPPED=0
 if [ "$HAS_RS" = "1" ]; then
-    SQLX_GATE="$(sqlx_gate_verdict "${PRE_PUSH_SQLX_CHECK:-0}" "$CHANGED_OK" \
-        node scripts/lib/sqlx-query-range.mjs "$RANGE_BASE" HEAD)"
-    if [ "$SQLX_GATE" = "skip" ]; then
-        SQLX_SKIPPED=1
-        echo ""
-        echo "→ Phase E skipped: no query macro, .sql, .sqlx or Cargo manifest change in '$RANGE_BASE..HEAD' (force: PRE_PUSH_SQLX_CHECK=1)"
-    fi
+  SQLX_GATE="$(sqlx_gate_verdict "${PRE_PUSH_SQLX_CHECK:-0}" "$CHANGED_OK" \
+    node scripts/lib/sqlx-query-range.mjs "$RANGE_BASE" HEAD)"
+  if [ "$SQLX_GATE" = "skip" ]; then
+    SQLX_SKIPPED=1
+    echo ""
+    echo "→ Phase E skipped: no query macro, .sql, .sqlx or Cargo manifest change in '$RANGE_BASE..HEAD' (force: PRE_PUSH_SQLX_CHECK=1)"
+  fi
 fi
 
 if [ "$HAS_RS" = "1" ] && [ "$SQLX_SKIPPED" = "0" ]; then
-    echo ""
-    echo "→ Phase E: cargo sqlx prepare --workspace --check (${SQLX_GATE#run: })"
+  echo ""
+  echo "→ Phase E: cargo sqlx prepare --workspace --check (${SQLX_GATE#run: })"
 
-    # #3257 / #3361 — per-invocation probe dir. The trap also covers the
-    # `exit 1` path at the end of this phase; no other EXIT trap exists in
-    # this script, so it is safe to install here.
-    probe_dir="$(sqlx_probe_dir_new)"
-    trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
+  # #3257 / #3361 — per-invocation probe dir. The trap also covers the
+  # `exit 1` path at the end of this phase; no other EXIT trap exists in
+  # this script, so it is safe to install here.
+  probe_dir="$(sqlx_probe_dir_new)"
+  trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
 
-    root_db="$probe_dir/root.db"
-    sqlx_log="$(mktemp -t pre-push-sqlx-root.XXXXXX)"
-    if ! ( cd src-tauri \
-            && DATABASE_URL="sqlite:$root_db" cargo sqlx database create \
-            && DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \
-            && DATABASE_URL="sqlite:$root_db" cargo sqlx prepare --workspace --check -- --workspace --tests \
-         ) > "$sqlx_log" 2>&1; then
-        echo "  ✗ sqlx prepare check failed"
-        tail -100 "$sqlx_log" | sed 's/^/      /'
-        rm -f "$sqlx_log"
-        echo ""
-        echo "✗ Pre-push verification FAILED at Phase E (sqlx prepare --check)."
-        echo "  Iterate: just gen-sqlx, then re-push."
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
-        exit 1
-    fi
+  root_db="$probe_dir/root.db"
+  sqlx_log="$(mktemp -t pre-push-sqlx-root.XXXXXX)"
+  if ! (
+    cd src-tauri \
+      && DATABASE_URL="sqlite:$root_db" cargo sqlx database create \
+      && DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \
+      && DATABASE_URL="sqlite:$root_db" cargo sqlx prepare --workspace --check -- --workspace --tests
+  ) >"$sqlx_log" 2>&1; then
+    echo "  ✗ sqlx prepare check failed"
+    tail -100 "$sqlx_log" | sed 's/^/      /'
     rm -f "$sqlx_log"
-    echo "  ✓ sqlx prepare check"
+    echo ""
+    echo "✗ Pre-push verification FAILED at Phase E (sqlx prepare --check)."
+    echo "  Iterate: just gen-sqlx, then re-push."
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+  fi
+  rm -f "$sqlx_log"
+  echo "  ✓ sqlx prepare check"
 fi
 
 # ── Phase F: MCP build + UDS smoke + externalBin verify (gated) ────
@@ -2590,43 +2723,43 @@ fi
 # narrow MCP surface keeps unrelated pushes fast.
 
 if [ "$HAS_MCP" = "1" ]; then
-    echo ""
-    echo "→ Phase F: MCP UDS smoke + externalBin verify (MCP paths touched)"
+  echo ""
+  echo "→ Phase F: MCP UDS smoke + externalBin verify (MCP paths touched)"
 
-    smoke_log="$(mktemp -t pre-push-mcp-smoke.XXXXXX)"
-    if ! ( cd src-tauri && cargo nextest run --lib --features ci-smoke --profile ci \
-            -E 'test(stub_binary_)' ) > "$smoke_log" 2>&1; then
-        echo "  ✗ MCP UDS smoke test failed"
-        tail -100 "$smoke_log" | sed 's/^/      /'
-        rm -f "$smoke_log"
-        exit 1
-    fi
+  smoke_log="$(mktemp -t pre-push-mcp-smoke.XXXXXX)"
+  if ! (cd src-tauri && cargo nextest run --lib --features ci-smoke --profile ci \
+    -E 'test(stub_binary_)') >"$smoke_log" 2>&1; then
+    echo "  ✗ MCP UDS smoke test failed"
+    tail -100 "$smoke_log" | sed 's/^/      /'
     rm -f "$smoke_log"
-    echo "  ✓ MCP UDS smoke"
+    exit 1
+  fi
+  rm -f "$smoke_log"
+  echo "  ✓ MCP UDS smoke"
 
-    extbin_log="$(mktemp -t pre-push-extbin.XXXXXX)"
-    if ! node scripts/prepare-external-bins.mjs > "$extbin_log" 2>&1; then
-        echo "  ✗ prepare-external-bins.mjs (release) failed"
-        tail -100 "$extbin_log" | sed 's/^/      /'
-        rm -f "$extbin_log"
-        exit 1
-    fi
+  extbin_log="$(mktemp -t pre-push-extbin.XXXXXX)"
+  if ! node scripts/prepare-external-bins.mjs >"$extbin_log" 2>&1; then
+    echo "  ✗ prepare-external-bins.mjs (release) failed"
+    tail -100 "$extbin_log" | sed 's/^/      /'
     rm -f "$extbin_log"
+    exit 1
+  fi
+  rm -f "$extbin_log"
 
-    if ! src-tauri/target/release/agaric-mcp --version > /dev/null 2>&1; then
-        echo "  ✗ agaric-mcp --version failed"
-        exit 1
-    fi
-    HOST_TRIPLE="$(rustc -vV 2>/dev/null | awk '/^host:/{print $2}')"
-    if [ -z "$HOST_TRIPLE" ]; then
-        echo "  ✗ could not resolve host rustc triple"
-        exit 1
-    fi
-    if ! test -x "src-tauri/binaries/agaric-mcp-$HOST_TRIPLE"; then
-        echo "  ✗ externalBin artifact missing: src-tauri/binaries/agaric-mcp-$HOST_TRIPLE"
-        exit 1
-    fi
-    echo "  ✓ externalBin (release + --version + artifact for $HOST_TRIPLE)"
+  if ! src-tauri/target/release/agaric-mcp --version >/dev/null 2>&1; then
+    echo "  ✗ agaric-mcp --version failed"
+    exit 1
+  fi
+  HOST_TRIPLE="$(rustc -vV 2>/dev/null | awk '/^host:/{print $2}')"
+  if [ -z "$HOST_TRIPLE" ]; then
+    echo "  ✗ could not resolve host rustc triple"
+    exit 1
+  fi
+  if ! test -x "src-tauri/binaries/agaric-mcp-$HOST_TRIPLE"; then
+    echo "  ✗ externalBin artifact missing: src-tauri/binaries/agaric-mcp-$HOST_TRIPLE"
+    exit 1
+  fi
+  echo "  ✓ externalBin (release + --version + artifact for $HOST_TRIPLE)"
 fi
 
 # ── Phase G: warn-only audits (do not block push) ──────────────────
@@ -2635,19 +2768,19 @@ echo ""
 echo "→ Phase G: warn-only audits (informational)"
 
 audit_log="$(mktemp -t pre-push-audit.XXXXXX)"
-if ( cd src-tauri && cargo audit --no-fetch ) > "$audit_log" 2>&1; then
-    echo "  ✓ cargo audit (no findings)"
+if (cd src-tauri && cargo audit --no-fetch) >"$audit_log" 2>&1; then
+  echo "  ✓ cargo audit (no findings)"
 else
-    echo "  ⚠ cargo audit had findings (warn-only); review and triage into deny.toml if accepted"
-    tail -20 "$audit_log" | sed 's/^/      /'
+  echo "  ⚠ cargo audit had findings (warn-only); review and triage into deny.toml if accepted"
+  tail -20 "$audit_log" | sed 's/^/      /'
 fi
 rm -f "$audit_log"
 
 npm_sig_log="$(mktemp -t pre-push-npm-sig.XXXXXX)"
-if npm audit signatures > "$npm_sig_log" 2>&1; then
-    echo "  ✓ npm audit signatures (all verified)"
+if npm audit signatures >"$npm_sig_log" 2>&1; then
+  echo "  ✓ npm audit signatures (all verified)"
 else
-    echo "  ⚠ npm audit signatures failed (warn-only here; CI blocks on it); see: npm audit signatures"
+  echo "  ⚠ npm audit signatures failed (warn-only here; CI blocks on it); see: npm audit signatures"
 fi
 rm -f "$npm_sig_log"
 
@@ -2657,7 +2790,7 @@ echo "✓ Pre-push verification PASSED."
 # Repeated here because the Phase A warning has scrolled past by now, and
 # this banner is the line that gets quoted as "the gate passed".
 if [ "$NOT_CI_EQUIVALENT" = "1" ]; then
-    echo "  ⚠ NOT CI-equivalent: caller SKIP omitted these Phase A hooks: $CALLER_SKIP_EXTRA"
+  echo "  ⚠ NOT CI-equivalent: caller SKIP omitted these Phase A hooks: $CALLER_SKIP_EXTRA"
 fi
 [ "$HAS_MCP" = "0" ] && echo "  (MCP build skipped — no MCP paths in range; CI will run the full check)"
 [ "$SQLX_SKIPPED" = "1" ] && echo "  (sqlx cache check skipped — no query change in range; CI's lint job runs it; force with PRE_PUSH_SQLX_CHECK=1)"

@@ -44,11 +44,11 @@ echo "  (cross-OS bundles are inherently un-buildable here — only this OS gets
 
 # Detect cargo-tauri presence; the build script in BUILD.md installs it
 # via `cargo install tauri-cli --locked`.
-if ! command -v cargo-tauri > /dev/null 2>&1; then
-    if ! cargo tauri --version > /dev/null 2>&1; then
-        echo "✗ cargo tauri CLI not found. Install: cargo install tauri-cli --locked"
-        exit 1
-    fi
+if ! command -v cargo-tauri >/dev/null 2>&1; then
+  if ! cargo tauri --version >/dev/null 2>&1; then
+    echo "✗ cargo tauri CLI not found. Install: cargo install tauri-cli --locked"
+    exit 1
+  fi
 fi
 
 # sqlx checks every `query!` at compile time against the DB `DATABASE_URL`
@@ -77,66 +77,75 @@ cargo tauri build
 # `.exe.zip` is produced.
 SIGNED=0
 if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-    SIGNED=1
-    echo "  (TAURI_SIGNING_PRIVATE_KEY is set — also probing updater payloads)"
+  SIGNED=1
+  echo "  (TAURI_SIGNING_PRIVATE_KEY is set — also probing updater payloads)"
 else
-    echo "  ⚠ TAURI_SIGNING_PRIVATE_KEY not set — bundles are unsigned; updater payloads NOT probed"
-    echo "    (export TAURI_SIGNING_PRIVATE_KEY + _PASSWORD before running to verify the auto-update path)"
+  echo "  ⚠ TAURI_SIGNING_PRIVATE_KEY not set — bundles are unsigned; updater payloads NOT probed"
+  echo "    (export TAURI_SIGNING_PRIVATE_KEY + _PASSWORD before running to verify the auto-update path)"
 fi
 
 probe() {
-    local label="$1" pattern="$2"
-    local found
-    # shellcheck disable=SC2086
-    found="$(find $pattern -type f 2>/dev/null | head -1)"
-    if [ -n "$found" ]; then
-        printf '  ✓ %s\n' "$label"
-        return 0
-    else
-        printf '  ✗ %s NOT found (pattern: %s)\n' "$label" "$pattern"
-        return 1
-    fi
+  local label="$1" pattern="$2"
+  local found
+  # shellcheck disable=SC2086
+  found="$(find $pattern -type f 2>/dev/null | head -1)"
+  if [ -n "$found" ]; then
+    printf '  ✓ %s\n' "$label"
+    return 0
+  else
+    printf '  ✗ %s NOT found (pattern: %s)\n' "$label" "$pattern"
+    return 1
+  fi
 }
 
 case "$OS" in
-    Linux)
-        echo "→ probing Linux bundle artifacts"
-        FAIL=0
-        probe '.AppImage' 'src-tauri/target/release/bundle/appimage/*.AppImage' || FAIL=$((FAIL + 1))
-        probe '.deb' 'src-tauri/target/release/bundle/deb/*.deb' || FAIL=$((FAIL + 1))
-        [ "$FAIL" -eq 0 ] || { echo "✗ $FAIL Linux artifact(s) missing"; exit 1; }
+  Linux)
+    echo "→ probing Linux bundle artifacts"
+    FAIL=0
+    probe '.AppImage' 'src-tauri/target/release/bundle/appimage/*.AppImage' || FAIL=$((FAIL + 1))
+    probe '.deb' 'src-tauri/target/release/bundle/deb/*.deb' || FAIL=$((FAIL + 1))
+    [ "$FAIL" -eq 0 ] || {
+      echo "✗ $FAIL Linux artifact(s) missing"
+      exit 1
+    }
 
-        # AppImage icon fix is part of release.yml's Linux path.
-        if [ -x scripts/fix-appimage-icons.sh ]; then
-            echo "→ running fix-appimage-icons.sh"
-            FIX_APPIMAGE_STRICT=1 bash scripts/fix-appimage-icons.sh || {
-                echo "✗ fix-appimage-icons.sh failed (would block CI per FIX_APPIMAGE_STRICT)"
-                exit 1
-            }
-            echo "  ✓ AppImage icons OK"
-        fi
-        ;;
-    Darwin)
-        echo "→ probing macOS bundle artifacts"
-        FAIL=0
-        probe '.dmg' 'src-tauri/target/release/bundle/dmg/*.dmg' || FAIL=$((FAIL + 1))
-        probe '.app' 'src-tauri/target/release/bundle/macos/*.app' || FAIL=$((FAIL + 1))
-        if [ "$SIGNED" = "1" ]; then
-            probe '.app.tar.gz (updater payload)' \
-                'src-tauri/target/release/bundle/macos/*.app.tar.gz' || FAIL=$((FAIL + 1))
-        fi
-        [ "$FAIL" -eq 0 ] || { echo "✗ $FAIL macOS artifact(s) missing"; exit 1; }
-        ;;
-    MINGW*|MSYS*|CYGWIN*|Windows_NT)
-        echo "→ probing Windows bundle artifacts"
-        FAIL=0
-        probe '.msi' 'src-tauri/target/release/bundle/msi/*.msi' || FAIL=$((FAIL + 1))
-        probe '.exe (NSIS)' 'src-tauri/target/release/bundle/nsis/*.exe' || FAIL=$((FAIL + 1))
-        [ "$FAIL" -eq 0 ] || { echo "✗ $FAIL Windows artifact(s) missing"; exit 1; }
-        ;;
-    *)
-        echo "⚠ unknown OS '$OS'; bundle-path probes skipped"
-        ;;
+    # AppImage icon fix is part of release.yml's Linux path.
+    if [ -x scripts/fix-appimage-icons.sh ]; then
+      echo "→ running fix-appimage-icons.sh"
+      FIX_APPIMAGE_STRICT=1 bash scripts/fix-appimage-icons.sh || {
+        echo "✗ fix-appimage-icons.sh failed (would block CI per FIX_APPIMAGE_STRICT)"
+        exit 1
+      }
+      echo "  ✓ AppImage icons OK"
+    fi
+    ;;
+  Darwin)
+    echo "→ probing macOS bundle artifacts"
+    FAIL=0
+    probe '.dmg' 'src-tauri/target/release/bundle/dmg/*.dmg' || FAIL=$((FAIL + 1))
+    probe '.app' 'src-tauri/target/release/bundle/macos/*.app' || FAIL=$((FAIL + 1))
+    if [ "$SIGNED" = "1" ]; then
+      probe '.app.tar.gz (updater payload)' \
+        'src-tauri/target/release/bundle/macos/*.app.tar.gz' || FAIL=$((FAIL + 1))
+    fi
+    [ "$FAIL" -eq 0 ] || {
+      echo "✗ $FAIL macOS artifact(s) missing"
+      exit 1
+    }
+    ;;
+  MINGW* | MSYS* | CYGWIN* | Windows_NT)
+    echo "→ probing Windows bundle artifacts"
+    FAIL=0
+    probe '.msi' 'src-tauri/target/release/bundle/msi/*.msi' || FAIL=$((FAIL + 1))
+    probe '.exe (NSIS)' 'src-tauri/target/release/bundle/nsis/*.exe' || FAIL=$((FAIL + 1))
+    [ "$FAIL" -eq 0 ] || {
+      echo "✗ $FAIL Windows artifact(s) missing"
+      exit 1
+    }
+    ;;
+  *)
+    echo "⚠ unknown OS '$OS'; bundle-path probes skipped"
+    ;;
 esac
 
 echo ""

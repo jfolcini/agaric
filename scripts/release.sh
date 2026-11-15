@@ -81,9 +81,12 @@ ASSUME_YES=0
 for arg in "$@"; do
   case "$arg" in
     --skip-verify-build) SKIP_VERIFY_BUILD=1 ;;
-    --dry-run)           DRY_RUN=1 ;;
-    -y|--yes)            ASSUME_YES=1 ;;
-    -h|--help)           usage; exit 0 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -y | --yes) ASSUME_YES=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     -*)
       echo "ERROR: unknown flag '$arg'" >&2
       echo "Usage: $0 <new-version> [--skip-verify-build] [--dry-run] [-y]" >&2
@@ -204,8 +207,11 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   printf 'Proceed? [y/N] '
   read -r reply
   case "$reply" in
-    y|Y|yes|YES) ;;
-    *) echo "Aborted."; exit 1 ;;
+    y | Y | yes | YES) ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
   esac
 fi
 

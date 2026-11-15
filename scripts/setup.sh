@@ -14,7 +14,10 @@ usage() {
 # second didn't — purely because of argument order (#3629 review).
 for arg in "$@"; do
   case "$arg" in
-    -h|--help) usage; exit 0 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
   esac
 done
 
@@ -22,7 +25,7 @@ install_system_deps=false
 for arg in "$@"; do
   case "$arg" in
     --install-system-deps) install_system_deps=true ;;
-    -h|--help) ;;  # handled by the pre-scan above; exhaustive here for clarity
+    -h | --help) ;; # handled by the pre-scan above; exhaustive here for clarity
     *)
       echo "error: unknown setup option: $arg" >&2
       exit 64
@@ -121,7 +124,7 @@ node_satisfies_engines() {
 
 ensure_node() {
   local want
-  want="$(tr -d '[:space:]' < .nvmrc 2>/dev/null || true)"
+  want="$(tr -d '[:space:]' <.nvmrc 2>/dev/null || true)"
   : "${want:=24}"
 
   # Already on a node that engine-strict will accept? Nothing to do.
@@ -152,7 +155,7 @@ ensure_node() {
   # auto-disables errexit inside `$(...)`), so an eval-restore would silently
   # leave errexit disabled for the rest of the bootstrap. The script header pins
   # these three options, so re-asserting them literally is correct and clearer.
-  set +e +u +o pipefail           # relax: nvm trips errexit/nounset/pipefail
+  set +e +u +o pipefail # relax: nvm trips errexit/nounset/pipefail
   # nvm ships pre-installed on the cloud VMs; restore just nvm.sh over HTTPS if a
   # box is missing it (never `git clone` — see note above).
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
@@ -166,7 +169,7 @@ ensure_node() {
   retry nvm install "$want" \
     && nvm use "$want" >/dev/null \
     && nvm alias default "$want" >/dev/null
-  set -euo pipefail               # restore the strict bootstrap options
+  set -euo pipefail # restore the strict bootstrap options
 
   # Verify we actually ended up on a new-enough node and fail LOUD + actionable,
   # rather than letting `npm ci` die later with a cryptic EBADENGINE (or, worse,

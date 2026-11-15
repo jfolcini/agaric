@@ -23,7 +23,10 @@ mkdir -p "$out/generated"
 # `prepare --check` connects to a migrated DB to re-describe every query.
 export DATABASE_URL="sqlite:$out/check.db"
 cargo sqlx database create
-cargo sqlx migrate run >"$out/migrate.log" 2>&1 || { cat "$out/migrate.log"; exit 1; }
+cargo sqlx migrate run >"$out/migrate.log" 2>&1 || {
+  cat "$out/migrate.log"
+  exit 1
+}
 
 # A macro only runs when its crate recompiles, so touch every member's target
 # sources, as sqlx-cli does before its own check.
