@@ -5613,6 +5613,8 @@ async fn pp_vault() -> (sqlx::SqlitePool, TempDir, Materializer, PpVault) {
         key: "stage".to_owned(),
         value_type: "date".to_owned(),
         options: None,
+        multiple: None,
+        separator: None,
     };
     let counts = preview_property_type_change_inner(&pool, &space, to_date.clone())
         .await

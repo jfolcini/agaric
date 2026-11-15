@@ -14,7 +14,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
-import type { AppError } from '@/lib/bindings'
+import type {
+  AppError,
+  PageResponse,
+  PropertyTypeChangeCounts,
+  PropertyTypeChangeValue,
+} from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -70,6 +75,20 @@ function confirmButton(dialog: HTMLElement): HTMLElement {
 
 function counts(dialog: HTMLElement): HTMLElement {
   return within(dialog).getByTestId('property-type-change-counts')
+}
+
+/** `context`'s type dialog, opened. */
+async function openDialog(): Promise<HTMLElement> {
+  const user = userEvent.setup()
+  await waitFor(() => {
+    expect(changeButton('context')).toBeInTheDocument()
+  })
+  await user.click(changeButton('context') as HTMLElement)
+  return screen.findByRole('dialog')
+}
+
+function severalBox(dialog: HTMLElement): HTMLElement {
+  return within(dialog).getByRole('checkbox', { name: t('properties.holdsSeveralValues') })
 }
 
 const converts = (count: number) => t('propertiesView.typeChangeConverts', { count })
@@ -282,6 +301,273 @@ describe('ChangePropertyType', () => {
     expect(await within(dialog).findByText('Meetings › Weekly standup notes')).toBeInTheDocument()
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
+    })
+  })
+
+  // #6741 D2/D5 — to and from a list. The mock's type change is Lane R's; these
+  // pin what the dialog sends, and the backend's answer is canned.
+  describe('to and from a list (#6741)', () => {
+    const COUNTS: PropertyTypeChangeCounts = { converted: 2, unfit: 0 }
+    const VALUE: PropertyTypeChangeValue = {
+      block_id: MTG_1,
+      page_id: SEED_IDS.PAGE_MEETINGS,
+      page_title: 'Meetings',
+      content: 'Weekly standup notes',
+      deleted: false,
+      value: '@office, @home',
+      converted: '@office, @home',
+    }
+    let sent: Array<{ cmd: string; args: Record<string, unknown> }>
+
+    /** Answer the type change with canned counts; the change writes the definition it was sent. */
+    function stubTypeChange(): void {
+      sent = []
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        const a = (args ?? {}) as Record<string, unknown>
+        if (cmd === 'preview_property_type_change') {
+          sent.push({ cmd, args: a })
+          return COUNTS
+        }
+        if (cmd === 'list_property_type_change_values') {
+          sent.push({ cmd, args: a })
+          const page: PageResponse<PropertyTypeChangeValue> = {
+            items: [VALUE],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+          return page
+        }
+        if (cmd === 'change_property_type') {
+          sent.push({ cmd, args: a })
+          const defs = spacePropertyDefs(PERSONAL.id)
+          const def: Record<string, unknown> = {
+            ...defs.get('context'),
+            value_type: a['valueType'],
+          }
+          if (a['multiple'] === true) def['multiple'] = true
+          else delete def['multiple']
+          defs.set('context', def)
+          return { ...def, op_refs: [{ device_id: 'D', seq: 1 }] }
+        }
+        return dispatch(cmd, args)
+      })
+    }
+
+    const previews = () => sent.filter(({ cmd }) => cmd === 'preview_property_type_change')
+
+    function declareList(): void {
+      const defs = spacePropertyDefs(PERSONAL.id)
+      defs.set('context', { ...defs.get('context'), multiple: true })
+    }
+
+    it('splits each value at commas into a list, and lists the key as holding several', async () => {
+      const user = userEvent.setup()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog()
+      expect(severalBox(dialog)).not.toBeChecked()
+
+      await user.click(severalBox(dialog))
+      const split = within(dialog).getByRole('radiogroup', {
+        name: t('propertiesView.typeChangeSplitLabel'),
+      })
+      // Where to split is the user's to say: nothing is previewed before.
+      expect(previews()).toEqual([])
+      expect(confirmButton(dialog)).toBeDisabled()
+      await user.click(
+        within(split).getByRole('radio', { name: t('propertiesView.typeChangeSplitComma') }),
+      )
+
+      expect(await within(dialog).findByText(converts(2))).toBeInTheDocument()
+      expect(previews().at(-1)?.args).toEqual({
+        spaceId: PERSONAL.id,
+        key: 'context',
+        valueType: 'text',
+        options: null,
+        multiple: true,
+        separator: 'comma',
+      })
+      await user.click(
+        within(dialog).getByRole('tab', {
+          name: t('propertiesView.typeChangeConvertedTab', { count: 2 }),
+        }),
+      )
+      expect(await within(dialog).findByText('@office, @home → @office, @home')).toBeVisible()
+      expect(
+        sent.find(({ cmd }) => cmd === 'list_property_type_change_values')?.args,
+      ).toMatchObject({ valueType: 'text', options: null, multiple: true, separator: 'comma' })
+      await user.click(confirmButton(dialog))
+
+      await waitFor(() => {
+        expect(contextType()).toBe(t('properties.severalValuesType', { type: 'text' }))
+      })
+      expect(sent.find(({ cmd }) => cmd === 'change_property_type')?.args).toEqual({
+        spaceId: PERSONAL.id,
+        key: 'context',
+        valueType: 'text',
+        options: null,
+        multiple: true,
+        separator: 'comma',
+        acknowledged: COUNTS,
+      })
+      expect(toast.success).toHaveBeenCalledWith(
+        t('propertiesView.typeChanged', {
+          key: 'context',
+          type: t('properties.severalValuesType', { type: 'text' }),
+        }),
+        expect.anything(),
+      )
+    })
+
+    it('opens again on the flag the key holds, after a cancel and after a change', async () => {
+      const user = userEvent.setup()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      let dialog = await openDialog()
+      await user.click(severalBox(dialog))
+      await user.click(within(dialog).getByRole('button', { name: t('action.cancel') }))
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      })
+      dialog = await openDialog()
+      expect(severalBox(dialog)).not.toBeChecked()
+
+      await user.click(severalBox(dialog))
+      await user.click(
+        within(dialog).getByRole('radio', { name: t('propertiesView.typeChangeSplitComma') }),
+      )
+      expect(await within(dialog).findByText(converts(2))).toBeInTheDocument()
+      await user.click(confirmButton(dialog))
+      await waitFor(() => {
+        expect(contextType()).toBe(t('properties.severalValuesType', { type: 'text' }))
+      })
+
+      dialog = await openDialog()
+      expect(severalBox(dialog)).toBeChecked()
+    })
+
+    it('makes each value a one-item list when told not to split, and splits at semicolons', async () => {
+      const user = userEvent.setup()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog()
+      await user.click(severalBox(dialog))
+
+      await user.click(
+        within(dialog).getByRole('radio', { name: t('propertiesView.typeChangeSplitNone') }),
+      )
+      await waitFor(() => {
+        expect(previews().at(-1)?.args).toMatchObject({ multiple: true, separator: null })
+      })
+      await user.click(
+        within(dialog).getByRole('radio', { name: t('propertiesView.typeChangeSplitSemicolon') }),
+      )
+      await waitFor(() => {
+        expect(previews().at(-1)?.args).toMatchObject({ multiple: true, separator: 'semicolon' })
+      })
+    })
+
+    it('joins each list into one text at the separator picked', async () => {
+      const user = userEvent.setup()
+      declareList()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog()
+      expect(severalBox(dialog)).toBeChecked()
+
+      await user.click(severalBox(dialog))
+      expect(previews()).toEqual([])
+      const join = within(dialog).getByRole('radiogroup', {
+        name: t('propertiesView.typeChangeJoinLabel'),
+      })
+      await user.click(
+        within(join).getByRole('radio', { name: t('propertiesView.typeChangeJoinSemicolon') }),
+      )
+
+      expect(await within(dialog).findByText(converts(2))).toBeInTheDocument()
+      expect(previews().at(-1)?.args).toEqual({
+        spaceId: PERSONAL.id,
+        key: 'context',
+        valueType: 'text',
+        options: null,
+        multiple: false,
+        separator: 'semicolon',
+      })
+      await user.click(confirmButton(dialog))
+      await waitFor(() => {
+        expect(contextType()).toBe('text')
+      })
+    })
+
+    it('asks no separator for a list changed to numbers, nor one to a list of numbers', async () => {
+      const user = userEvent.setup()
+      declareList()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await pickType('number')
+
+      // A list of numbers: each item converts, nothing to split or join.
+      await waitFor(() => {
+        expect(previews().at(-1)?.args).toMatchObject({
+          valueType: 'number',
+          multiple: true,
+          separator: null,
+        })
+      })
+      await user.click(severalBox(dialog))
+      await waitFor(() => {
+        expect(previews().at(-1)?.args).toMatchObject({
+          valueType: 'number',
+          multiple: false,
+          separator: null,
+        })
+      })
+      expect(within(dialog).queryByRole('radiogroup')).not.toBeInTheDocument()
+    })
+
+    it('offers no several values for a boolean, which holds one', async () => {
+      declareList()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await pickType('boolean')
+
+      expect(
+        within(dialog).queryByRole('checkbox', { name: t('properties.holdsSeveralValues') }),
+      ).not.toBeInTheDocument()
+      await waitFor(() => {
+        expect(previews().at(-1)?.args).toMatchObject({
+          valueType: 'boolean',
+          multiple: false,
+          separator: null,
+        })
+      })
+    })
+
+    it('previews nothing while the type and the flag are as they are', async () => {
+      const user = userEvent.setup()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog()
+
+      await user.click(severalBox(dialog))
+      await user.click(severalBox(dialog))
+
+      expect(within(dialog).queryByRole('radiogroup')).not.toBeInTheDocument()
+      expect(previews()).toEqual([])
+      expect(confirmButton(dialog)).toBeDisabled()
+    })
+
+    it('has no a11y violations with the split choice shown', async () => {
+      const user = userEvent.setup()
+      stubTypeChange()
+      render(<PropertyDefinitionsList />)
+      const dialog = await openDialog()
+      await user.click(severalBox(dialog))
+      expect(within(dialog).getByRole('radiogroup')).toBeInTheDocument()
+      await waitFor(async () => {
+        expect(await axe(dialog)).toHaveNoViolations()
+      })
     })
   })
 })

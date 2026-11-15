@@ -379,7 +379,10 @@ async function exportSpacePagesIntoZip(
 
   const propertyDefinitions = (await listAllPropertyDefs(spaceId))
     .filter((def) => !def.builtin)
-    .map(({ key, value_type, options }) => ({ key, value_type, options }))
+    // The flag only on a key that holds several values (#6741).
+    .map(({ key, value_type, options, multiple }) =>
+      multiple === true ? { key, value_type, options, multiple } : { key, value_type, options },
+    )
   // A folder import tells an all-spaces export's folders for spaces by their
   // named space files (#6554).
   if (spaceName !== undefined || propertyDefinitions.length > 0 || Object.keys(titles).length > 0) {

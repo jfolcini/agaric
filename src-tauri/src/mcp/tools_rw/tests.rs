@@ -687,6 +687,87 @@ async fn set_property_happy_path() {
     assert_eq!(result["id"], block.id.as_str());
 }
 
+/// #6741 — a key whose definition holds several values takes `value_list`,
+/// alone and in a batch, a ref item by its page's title; the read tools show
+/// the list; any other key refuses one, and a list beside a single value is
+/// two values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_takes_a_list_for_a_key_that_holds_one_6741() {
+    use agaric_store::op::PropertyDefState;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    for (key, value_type) in [("authors", "text"), ("related", "ref")] {
+        let def = PropertyDefState {
+            value_type: value_type.into(),
+            options: None,
+            multiple: true,
+        };
+        crate::commands::create_property_def_state_inner(&pool, DEV, &mat, &space, key.into(), def)
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+    let call = |name: &'static str, args: Value| {
+        let (tools, ctx) = (&tools, test_ctx_agent());
+        async move { tools.call_tool(name, args, &ctx).await }
+    };
+    let set = |key: &'static str, extra: Value| {
+        let mut args = json!({ "block_id": block.id.clone(), "key": key, "space_id": space });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        call("set_property", args)
+    };
+    let held = |key: &'static str| {
+        let read = call(
+            "get_block",
+            json!({ "block_id": block.id.clone(), "space_id": space }),
+        );
+        async move {
+            let read = read.await.expect("get_block");
+            let rows = read["properties"].as_array().unwrap().clone();
+            let row = rows.into_iter().find(|row| row["key"] == key);
+            row.map_or(Value::Null, |row| row["value_list"].clone())
+        }
+    };
+
+    set("authors", json!({ "value_list": ["Smith, John", "Doe"] }))
+        .await
+        .expect("a list under a key that holds one");
+    assert_eq!(held("authors").await, json!(["Smith, John", "Doe"]));
+    set("related", json!({ "value_list": ["[[ParentPage]]"] }))
+        .await
+        .expect("a ref item by its title");
+    let parent = block.parent_id.clone().unwrap().into_string();
+    assert_eq!(held("related").await, json!([parent]));
+
+    let batch = json!({
+        "ops": [{ "op": "set_property", "block_id": block.id.clone(), "key": "authors", "value_list": ["Zed"] }],
+        "space_id": space,
+    });
+    call("batch", batch).await.expect("a list in a batch");
+    assert_eq!(held("authors").await, json!(["Zed"]));
+
+    let message = |err: AppError| match err {
+        AppError::Validation { message, .. } => message,
+        other => panic!("expected a Validation, got {other:?}"),
+    };
+    let on_single = set("assignee", json!({ "value_list": ["alice"] })).await;
+    let refused = message(on_single.expect_err("a key that holds one value"));
+    assert!(refused.contains("holds one value, not a list"), "{refused}");
+    let both = set("authors", json!({ "value_list": ["a"], "value_text": "b" })).await;
+    let refused = message(both.expect_err("two values"));
+    assert!(refused.contains("exactly 1 non-null value"), "{refused}");
+    let single = set("authors", json!({ "value_text": "b" })).await;
+    let refused = message(single.expect_err("a single value under a list key"));
+    assert!(refused.contains("holds a list"), "{refused}");
+    assert_eq!(
+        held("authors").await,
+        json!(["Zed"]),
+        "a refusal writes nothing"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_missing_block_returns_not_found() {
     let (tools, _mat, _pool, space, _dir) = mk_tools().await;

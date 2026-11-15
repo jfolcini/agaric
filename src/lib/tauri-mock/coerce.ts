@@ -6,13 +6,22 @@
  * `property-type-change.ts` can both import it.
  */
 
+import { joinListItems } from '@/lib/property-list'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
 /** `PropertyValue` as the engine holds it: a string (text, date or ref), a number or a boolean. */
 export type HeldValue = string | number | boolean
+/** `PropertyList` (#6741): the items of a list value, in order. */
+export type ListValue = readonly (string | number)[]
+/** A held value of either shape. */
+export type Held = HeldValue | ListValue
+
+export function isList(value: Held | null): value is ListValue {
+  return Array.isArray(value)
+}
 
 /** Rust's `f64` grammar: a sign, digits with an optional point, an optional exponent. */
-const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
+export const RUST_F64 = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
 /** Rust's `str::trim`: Unicode White_Space, which takes U+0085 and not U+FEFF, unlike JS's. */
 export const RUST_TRIM = /^\p{White_Space}+|\p{White_Space}+$/gu
 /** `canonical_ulid`: Crockford base32, any case, no overflow. */
@@ -47,6 +56,11 @@ function rustF64Display(n: number): string {
 /** `as_legacy_string`: a held value as text. */
 export function heldText(value: HeldValue): string {
   return typeof value === 'number' ? rustF64Display(value) : String(value)
+}
+
+/** `shown_value`: a held value as the lists of a key's values show it, a list as its line of text. */
+export function shownValue(value: Held): string {
+  return isList(value) ? joinListItems(value.map(heldText)) : heldText(value)
 }
 
 /**

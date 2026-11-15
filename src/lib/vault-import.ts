@@ -103,13 +103,18 @@ export const SPACE_FILE_PATH = `${AGARIC_DIR}space.json`
 
 /**
  * The contents of {@link SPACE_FILE_PATH}: the space's name (only an
- * all-spaces export writes it), its own property definitions, and the title of
- * each file whose path does not read back as it ({@link pathTitle}), keyed by
- * that path.
+ * all-spaces export writes it), its own property definitions (`multiple` only
+ * on one that holds several values, #6741), and the title of each file whose
+ * path does not read back as it ({@link pathTitle}), keyed by that path.
  */
 export interface SpaceFile {
   name?: string
-  propertyDefinitions: { key: string; value_type: string; options: string | null }[]
+  propertyDefinitions: {
+    key: string
+    value_type: string
+    options: string | null
+    multiple?: boolean
+  }[]
   titles: Record<string, string>
 }
 
@@ -128,11 +133,17 @@ function parseSpaceFile(text: string): SpaceFile {
       !isRecord(def) ||
       typeof def['key'] !== 'string' ||
       typeof def['value_type'] !== 'string' ||
-      (def['options'] !== null && typeof def['options'] !== 'string')
+      (def['options'] !== null && typeof def['options'] !== 'string') ||
+      (def['multiple'] !== undefined && typeof def['multiple'] !== 'boolean')
     ) {
       throw new TypeError('not a property definition')
     }
-    return { key: def['key'], value_type: def['value_type'], options: def['options'] }
+    return {
+      key: def['key'],
+      value_type: def['value_type'],
+      options: def['options'],
+      ...(def['multiple'] === true ? { multiple: true } : {}),
+    }
   })
   const titles = value['titles']
   if (!isRecord(titles) || !Object.values(titles).every((title) => typeof title === 'string')) {
@@ -174,7 +185,13 @@ export async function restoreSpaceFile(
     for (const def of space.propertyDefinitions.filter(({ key }) => !existing.has(key))) {
       try {
         unwrap(
-          await commands.createPropertyDef(spaceId, def.key, def.value_type, def.options, null),
+          await commands.createPropertyDef(
+            spaceId,
+            def.key,
+            def.value_type,
+            def.options,
+            def.multiple === true ? true : null,
+          ),
         )
       } catch (err) {
         logger.warn('vault-import', 'property definition restore failed', { key: def.key }, err)

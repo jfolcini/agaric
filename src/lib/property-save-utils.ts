@@ -6,7 +6,13 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { OpRef, PageResponse, PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import type {
+  OpRef,
+  PageResponse,
+  PropertyDefinition,
+  PropertyList,
+  PropertyRow,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
@@ -132,12 +138,21 @@ const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref'
 /**
  * Types with no valid empty initializer: the backend refuses an empty
  * `value_text` (and, for `select`, any value outside the options), and a
- * `ref` with no target is a row with no value, which it refuses too. Adding
- * one opens a local draft row instead of init-persisting a placeholder
- * (#2656, #2792, #2804); a ref's draft writes once its picker picks a page.
+ * `ref` with no target is a row with no value, which it refuses too.
  * `url` is text on the wire, so it is one of them.
  */
-export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url', 'ref'])
+const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url', 'ref'])
+
+/**
+ * Whether adding a property of `def` opens a local draft row instead of
+ * init-persisting a placeholder (#2656, #2792, #2804): a type with no valid
+ * empty value, or a definition that holds several values (#6741), whose
+ * empty list is no value either. A ref's draft writes once its picker picks
+ * a page, a list's once its first item is added.
+ */
+export function opensDraftRow(def: Pick<PropertyDefinition, 'value_type' | 'multiple'>): boolean {
+  return def.multiple === true || DRAFT_ROW_VALUE_TYPES.has(def.value_type)
+}
 
 /**
  * The `property_definitions` row a KEY RENAME should carry over to the new
@@ -166,10 +181,14 @@ export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'sele
  * the rename's write just as surely as a type mismatch, so it is not copied.
  */
 export function carriedRenameDefinition(
-  oldDef: { value_type: string; options: string | null } | null | undefined,
+  oldDef: { value_type: string; options: string | null; multiple?: boolean } | null | undefined,
   oldRow: PropertyRow,
-): { valueType: string; options: string | null } | null {
+): { valueType: string; options: string | null; multiple?: true } | null {
   if (!oldDef || !DEFINABLE_VALUE_TYPES.has(oldDef.value_type)) return null
+  // #6741 — a list is taken only by a definition that holds several values,
+  // and such a definition takes nothing else.
+  if ((oldDef.multiple === true) !== (oldRow.value_list != null)) return null
+  if (oldRow.value_list != null) return carriedListDefinition(oldDef, oldRow.value_list)
   const hasText = oldRow.value_text != null
   const hasRef = oldRow.value_ref != null
   // Same shape as the engine's `type_matches`: `text`/`select` accept a ref
@@ -203,28 +222,51 @@ export function carriedRenameDefinition(
   })()
   if (!agrees) return null
   if (oldDef.value_type === 'select') {
-    // A select definition without an options array is not creatable.
-    if (oldDef.options == null) return null
     // Step 5 of `validate_property_value`, not just step 4: a `select`
     // declaration with an options array ALSO constrains `value_text` to be one
     // of the listed options, and malformed options JSON is itself a rejection
-    // ("has malformed options JSON"). The options list can drift away from a
+    // ("has malformed options JSON"). A select definition without an options
+    // array is not creatable either. The options list can drift away from a
     // stored value after the fact (the Properties tab edits options in place,
     // and import/MCP writes can predate the declaration), so copying such a
     // declaration would make the engine reject the rename's own write — the
     // exact failure the step-4 check above exists to avoid. Skip the copy.
-    let allowed: unknown
-    try {
-      allowed = JSON.parse(oldDef.options)
-    } catch {
-      return null
-    }
-    if (!Array.isArray(allowed) || allowed.length === 0) return null
-    if (!allowed.every((o) => typeof o === 'string')) return null
+    const allowed = selectOptionsOf(oldDef.options)
+    if (allowed === null) return null
     if (oldRow.value_text != null && !allowed.includes(oldRow.value_text)) return null
     return { valueType: 'select', options: oldDef.options }
   }
   return { valueType: oldDef.value_type, options: null }
+}
+
+/**
+ * {@link carriedRenameDefinition} for a list: a select's every item must be
+ * one of its options, as `validate_list_value` holds them; the engine holds
+ * each item to the type, so the type itself always agrees.
+ */
+function carriedListDefinition(
+  oldDef: { value_type: string; options: string | null },
+  items: PropertyList,
+): { valueType: string; options: string | null; multiple: true } | null {
+  if (oldDef.value_type !== 'select') {
+    return { valueType: oldDef.value_type, options: null, multiple: true }
+  }
+  const allowed = selectOptionsOf(oldDef.options)
+  if (allowed === null || !items.every((item) => allowed.includes(item))) return null
+  return { valueType: 'select', options: oldDef.options, multiple: true }
+}
+
+/** A select's options, or null when they are not a non-empty JSON array of strings. */
+function selectOptionsOf(options: string | null): unknown[] | null {
+  if (options == null) return null
+  let allowed: unknown
+  try {
+    allowed = JSON.parse(options)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(allowed) || allowed.length === 0) return null
+  return allowed.every((o) => typeof o === 'string') ? allowed : null
 }
 
 /**
@@ -308,14 +350,16 @@ export async function renameMayDeclareKey(spaceId: string, newKey: string): Prom
 
 /**
  * Build the type-appropriate `setProperty` params for initializing a
- * newly-added property. The `DRAFT_ROW_VALUE_TYPES` have no valid initializer
- * and answer `null`: every caller opens a draft row for them first, and an
- * empty `value_text` or a null ref here would be the init the backend refuses.
+ * newly-added property. A definition {@link opensDraftRow} names has no valid
+ * initializer and answers `null`: every caller opens a draft row for it
+ * first, and an empty `value_text`, a null ref or a scalar under a list
+ * definition here would be the init the backend refuses.
  */
 export function buildInitParams(
   blockId: string,
   def: PropertyDefinition,
 ): SetPropertyParams | null {
+  if (def.multiple === true) return null
   switch (def.value_type) {
     case 'number': {
       return { blockId, key: def.key, valueNum: 0 }
@@ -404,6 +448,30 @@ export async function handleSaveProperty(
   onWritten?.(written.op_refs)
   if (onRefresh) onRefresh(unwrap(await commands.getProperties(blockId)))
   return true
+}
+
+/**
+ * Write `items` as `key`'s list value on `blockId` (#6741), or delete the
+ * property when no item is left: an empty list is no value. Resolves the ops
+ * the write appended.
+ */
+export async function savePropertyList(
+  blockId: string,
+  key: string,
+  items: PropertyList,
+): Promise<OpRef[]> {
+  if (items.length === 0) return unwrap(await commands.deleteProperty(blockId, key)).op_refs
+  const written = unwrap(
+    await commands.setProperty(blockId, key, {
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+      value_list: items,
+    }),
+  )
+  return written.op_refs
 }
 
 /**

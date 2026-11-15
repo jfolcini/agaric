@@ -16,6 +16,10 @@ pub(super) struct FrontmatterRow {
     pub(super) value_num: Option<f64>,
     pub(super) value_ref: Option<String>,
     pub(super) value_bool: Option<i64>,
+    pub(super) value_list: Option<PropertyList>,
+    /// The key is declared `ref` in the block's space, so `value_list`'s
+    /// items are block ids.
+    pub(super) list_of_refs: bool,
 }
 
 /// Render a [`FrontmatterRow`]'s single populated value column as plain text
@@ -24,7 +28,9 @@ pub(super) struct FrontmatterRow {
 /// paths resolve a `block_properties` row identically.
 ///
 /// Precedence: date, then text, then ref (`[[Title]]` where `link` gives the
-/// target's title, else the raw id, #6277 F3), then numeric, then bool. A
+/// target's title, else the raw id, #6277 F3), then numeric, then bool, then
+/// a list as one line of text (`import::write_property_list`, #6741), each
+/// item written as a single value of its kind is. A
 /// `block_properties` row stores its value in exactly one column (enforced by
 /// the `exactly_one_value` CHECK), so at most one branch ever fires; the
 /// ordering is a defensive fallback, not a real precedence rule.
@@ -49,6 +55,19 @@ fn frontmatter_row_value<'a>(
         } else {
             "false".to_string()
         }
+    } else if let Some(list) = &prop.value_list {
+        let items: Vec<String> = list
+            .0
+            .iter()
+            .map(|item| match item {
+                PropertyListItem::Text(id) if prop.list_of_refs => {
+                    link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
+                }
+                PropertyListItem::Text(text) => text.clone(),
+                PropertyListItem::Num(n) => format!("{n}"),
+            })
+            .collect();
+        import::write_property_list(&items)
     } else {
         String::new()
     }
@@ -1434,11 +1453,17 @@ async fn load_page_properties(
     // `INLINE_PROPERTY_RESERVED_KEYS` so a later "add it everywhere" edit
     // fails loudly.
     let property_rows = sqlx::query!(
-        r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref,
-                  value_bool AS "value_bool: i64"
-           FROM block_properties
-           WHERE block_id = ?1
-             AND key NOT IN (
+        r#"SELECT bp.key AS "key!", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,
+                  bp.value_bool AS "value_bool: i64",
+                  bp.value_list AS "value_list: PropertyList",
+                  (bp.value_list IS NOT NULL AND EXISTS (
+                      SELECT 1 FROM blocks holder
+                      JOIN property_definitions d ON d.space_id = holder.space_id
+                      WHERE holder.id = bp.block_id AND d.key = bp.key
+                        AND d.value_type = 'ref')) AS "list_of_refs!: bool"
+           FROM block_properties bp
+           WHERE bp.block_id = ?1
+             AND bp.key NOT IN (
                 'space', 'is_space', 'created_at', 'completed_at',
                 'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'
              )"#,
@@ -1466,6 +1491,8 @@ async fn load_page_properties(
             value_num: r.value_num,
             value_ref: r.value_ref,
             value_bool: r.value_bool,
+            value_list: r.value_list,
+            list_of_refs: r.list_of_refs,
         })
         .collect();
     Ok(properties)
@@ -1566,15 +1593,21 @@ async fn load_descendant_properties(
             }
         }
         let rows = sqlx::query!(
-            r#"SELECT block_id AS "block_id!", key AS "key!", value_text, value_date,
-                      value_num, value_ref, value_bool AS "value_bool: i64"
-               FROM block_properties
-               WHERE block_id IN (SELECT value FROM json_each(?1))
-                 AND key NOT IN (
+            r#"SELECT bp.block_id AS "block_id!", bp.key AS "key!", bp.value_text, bp.value_date,
+                      bp.value_num, bp.value_ref, bp.value_bool AS "value_bool: i64",
+                      bp.value_list AS "value_list: PropertyList",
+                      (bp.value_list IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM blocks holder
+                          JOIN property_definitions d ON d.space_id = holder.space_id
+                          WHERE holder.id = bp.block_id AND d.key = bp.key
+                            AND d.value_type = 'ref')) AS "list_of_refs!: bool"
+               FROM block_properties bp
+               WHERE bp.block_id IN (SELECT value FROM json_each(?1))
+                 AND bp.key NOT IN (
                     'space', 'is_space', 'created_at',
                     'repeat-seq', 'repeat-origin', 'template', 'attachments', 'listStyle'
                  )
-               ORDER BY block_id ASC, key ASC"#,
+               ORDER BY bp.block_id ASC, bp.key ASC"#,
             ids_json,
         )
         .fetch_all(&mut *conn)
@@ -1590,6 +1623,8 @@ async fn load_descendant_properties(
                     value_num: r.value_num,
                     value_ref: r.value_ref,
                     value_bool: r.value_bool,
+                    value_list: r.value_list,
+                    list_of_refs: r.list_of_refs,
                 });
         }
     }
@@ -1600,9 +1635,10 @@ async fn load_descendant_properties(
     })
 }
 
-/// Resolves every `value_ref` reached by the page's and its descendants'
-/// properties to the title of the live page it names; a ref to any other
-/// block, or to a deleted one, has none and is written as its id.
+/// Resolves every `value_ref`, and every item of a list of refs, reached by
+/// the page's and its descendants' properties to the title of the live page
+/// it names; a ref to any other block, or to a deleted one, has none and is
+/// written as its id.
 async fn resolve_property_ref_titles(
     conn: &mut sqlx::SqliteConnection,
     page_properties: &[FrontmatterRow],
@@ -1610,23 +1646,19 @@ async fn resolve_property_ref_titles(
 ) -> Result<HashMap<String, String>, AppError> {
     // Covers BOTH the page's own properties and every descendant block's
     // properties in the single batched lookup below.
-    let mut ref_ids: HashSet<String> = HashSet::new();
-    for r in page_properties {
-        if let Some(rf) = r.value_ref.as_deref()
-            && !rf.is_empty()
-        {
-            ref_ids.insert(rf.to_string());
-        }
-    }
-    for rows in descendant_properties.values() {
-        for r in rows {
-            if let Some(rf) = r.value_ref.as_deref()
-                && !rf.is_empty()
-            {
-                ref_ids.insert(rf.to_string());
-            }
-        }
-    }
+    let rows = page_properties
+        .iter()
+        .chain(descendant_properties.values().flatten());
+    let ref_ids: HashSet<String> = rows
+        .flat_map(|row| {
+            let listed = row.value_list.as_ref().filter(|_| row.list_of_refs);
+            let single = row.value_ref.as_deref().filter(|id| !id.is_empty());
+            single
+                .into_iter()
+                .chain(listed.into_iter().flat_map(PropertyList::texts))
+        })
+        .map(str::to_owned)
+        .collect();
     let mut ref_titles: HashMap<String, String> = HashMap::new();
     if !ref_ids.is_empty() {
         let ids: Vec<String> = ref_ids.into_iter().collect();

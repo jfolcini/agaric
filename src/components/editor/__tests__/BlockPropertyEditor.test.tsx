@@ -1017,7 +1017,7 @@ describe('BlockPropertyEditor', () => {
      * describes: a declaration over an in-use key cannot be withdrawn.
      */
     function installDefinitionRegistry(
-      seed: Array<{ key: string; value_type: string; options: string | null }>,
+      seed: Array<{ key: string; value_type: string; options: string | null; multiple?: boolean }>,
       keysInUse: string[] = [],
     ): Map<
       string,
@@ -1322,6 +1322,58 @@ describe('BlockPropertyEditor', () => {
       // ...never through the all-null payload the engine refuses for it...
       expect(mockSetProperty).not.toHaveBeenCalledWith('BLOCK_1', 'estimate', expect.anything())
       // ...and the user sees no failure.
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+
+    // #6741 — a list is taken only by a key declared to hold several values:
+    // the rename declares the new key so and writes the items, or the write
+    // is refused and the old key's list stays where it was.
+    it('renames a key holding a list, carrying the items and the flag', async () => {
+      installDefinitionRegistry([
+        { key: 'stages', value_type: 'select', options: '["a","b"]', multiple: true },
+      ])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'stages',
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+            value_list: ['a', 'b'],
+          },
+        ],
+      })
+
+      render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'stages', value: 'a, b' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'phases' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'phases', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+          value_list: ['a', 'b'],
+        })
+      })
+      expect(mockCreatePropertyDef).toHaveBeenCalledWith(
+        expect.any(String),
+        'phases',
+        'select',
+        '["a","b"]',
+        true,
+      )
+      expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'stages')
       expect(mockToastError).not.toHaveBeenCalled()
     })
 
