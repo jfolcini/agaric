@@ -17,6 +17,7 @@
 - **Slots are scarce; minutes are not.** Standard runners are free on a public repo, but every workflow and PR shares the account's concurrent-job limit ([plan limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)), and an uncapped matrix queues every PR gate behind it (`max-parallel` in `scheduled-deep-checks.yml`). A new matrix leg, job or workflow takes a slot in every run: justify it by the critical-path time it saves, measured on a dispatch run.
 - **PR refs cancel superseded runs; `main` shares one group without cancel** (`concurrency` in `ci.yml`). A running `main` run finishes and a newer push replaces the pending one, so only the newest `main` commit is tested, and its run covers every merge before it.
 - Every job sets `timeout-minutes`, sized for a slow apt mirror rather than a typical run.
+- A check that is a few lines of shell is a step of an existing job, never a job of its own: each job takes a slot and a checkout (`detect-changes` carries the version check).
 
 ## Caches
 

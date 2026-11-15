@@ -14,7 +14,7 @@
 
 import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source-buffer-document'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
-import { parse, serialize } from '@/lib/search-query'
+import { holdsOr, parse, serialize } from '@/lib/search-query'
 import type { FilterNode, FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
 /** The info string of the code block an untranslated query is kept in. */
@@ -300,11 +300,8 @@ function toAst(node: Node): SearchQueryAST {
       ? undefined
       : tree(rest.length === 1 ? (rest[0] as Node) : { t: 'and', children: rest })
   const ast: SearchQueryAST = { filters: list, freeText: words.join(' ') }
-  return expr !== undefined && kindsHoldOr(rest) ? { ...ast, expr } : ast
+  return expr !== undefined && holdsOr(expr) ? { ...ast, expr } : ast
 }
-
-const kindsHoldOr = (nodes: Node[]): boolean =>
-  nodes.some((n) => n.t === 'or' || (n.t === 'and' && kindsHoldOr(n.children)))
 
 /**
  * The query block text, `{{query …}}`, that `expression` (the text between
@@ -312,10 +309,7 @@ const kindsHoldOr = (nodes: Node[]): boolean =>
  * equivalent. `tags` holds the lowercased names the import makes tags, which
  * a `[[name]]` clause needs, since only a tag is a filter (`under:`, which sees inline `#name`).
  */
-export function translateLogseqQuery(
-  expression: string,
-  tags: ReadonlySet<string> = new Set(),
-): string | null {
+export function translateLogseqQuery(expression: string, tags: ReadonlySet<string>): string | null {
   try {
     const sexp = readSexp(expression)
     if (sexp === null) return null

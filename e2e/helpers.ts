@@ -1480,7 +1480,7 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
 // it before lifting. Do not lower without checking it.
 const TOUCH_HOLD_MS = 550
 
-export interface TouchPipeline {
+interface TouchPipeline {
   start: (x: number, y: number) => Promise<void>
   move: (x: number, y: number) => Promise<void>
   end: () => Promise<void>
@@ -1524,21 +1524,18 @@ export async function centerOf(locator: Locator, what: string): Promise<{ x: num
  * centre of `target`, measuring `target` again before every step. A page that
  * scrolls mid-drag (dnd-kit's edge auto-scroll, a layout shift) moves the
  * target, so a centre taken before the press aims at where it was and the drop
- * misses. Resolves with the last point sent.
+ * misses.
  */
 export async function carryOver(
   from: { x: number; y: number },
   target: Locator,
   move: (x: number, y: number) => Promise<void>,
   steps = 20,
-): Promise<{ x: number; y: number }> {
-  let at = from
+): Promise<void> {
   for (let i = 1; i <= steps; i++) {
     const to = await centerOf(target, 'carryOver target')
-    at = { x: from.x + ((to.x - from.x) * i) / steps, y: from.y + ((to.y - from.y) * i) / steps }
-    await move(at.x, at.y)
+    await move(from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps)
   }
-  return at
 }
 
 /**

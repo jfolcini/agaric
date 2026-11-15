@@ -28,3 +28,13 @@ export const OVERLAY_SCRIM_CLASS =
 // overflow, so without it a focused first or last field loses the top or
 // bottom of its 3px focus ring.
 export const DIALOG_BODY_VIEWPORT_CLASS = 'px-6 py-1 [&>div]:!block'
+
+// `onCloseAutoFocus` handler for a Radix overlay whose trigger must not take
+// the focus back. Radix refocuses the trigger one timer after the content
+// unmounts; a click or keystroke that lands first has moved focus on, and
+// taking it back closes the popover that click opened (#6729) or commits the
+// input just focused while it is still empty.
+export function keepFocusThatMovedOn(event: Event): void {
+  const focused = document.activeElement
+  if (focused != null && focused !== document.body) event.preventDefault()
+}
