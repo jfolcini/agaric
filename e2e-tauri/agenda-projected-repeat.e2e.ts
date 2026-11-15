@@ -636,13 +636,10 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
     // projection was read after the save: a cache rebuild still pending answers
     // without the new tasks, and each remount of the view asks again.
     const after = week.slice(1)
-    // TEMPORARY (removed before ready): force one pass through the retry branch.
-    let retried = false
     await browser.waitUntil(
       async () => {
         const dates = (await agendaProjectedRows(open)).map((row) => row.date)
-        if (retried && dates.join() === after.join()) return true
-        retried = true
+        if (dates.join() === after.join()) return true
         await navigateTo('Pages')
         // The sidebar's Journal item opens Daily mode; Agenda mode is its tab.
         await navigateTo('Journal')
