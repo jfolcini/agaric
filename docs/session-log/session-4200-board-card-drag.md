@@ -1,4 +1,4 @@
-# Session 4197 — Drag a board card to another column, by pointer and by touch
+# Session 4200 — Drag a board card to another column, by pointer and by touch
 
 Built slices 3 and 4 of #6542 (pointer drag, then touch drag) on the Advanced Query board that #6700 and #6711 shipped.
 
