@@ -9,13 +9,10 @@
  *
  * Two render variants:
  *  - `variant="overlay"` (default) — free-floating overlay anchored at
- *    the top-right of the viewport. Tracks `window.visualViewport` so
- *    the toolbar floats above the iOS soft keyboard. This is the
- *    desktop Ctrl+F path.
- *  - `variant="embedded"` — same toolbar, no fixed positioning, no
- *    visualViewport offset. The parent container (the unified mobile
- *    search sheet's "In this page" segment) provides positioning and
- *    keyboard-aware sizing via `dvh`. Mutually exclusive with the
+ *    the top-right of the viewport. This is the desktop Ctrl+F path.
+ *  - `variant="embedded"` — same toolbar, no fixed positioning. The
+ *    parent container (the unified mobile search sheet's "In this page"
+ *    segment) provides positioning and sizing. Mutually exclusive with the
  *    overlay variant: when the search sheet is open in `'in-page'`
  *    mode the overlay returns `null` so the matcher / highlighter
  *    effects only run once.
@@ -90,29 +87,6 @@ import { useResolveStore } from '@/stores/resolve'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 /**
- * Compute the y-offset needed so the toolbar floats above any visible
- * soft keyboard. `window.visualViewport.height` is the layout-viewport
- * height MINUS the keyboard; subtracting `window.innerHeight` yields
- * a negative number when the keyboard is up. Falls back to 0 outside
- * browsers that expose the API (every test under happy-dom).
- *
- * Pinch zoom ALSO shrinks `visualViewport.height` without any keyboard —
- * on a desktop browser / touchscreen (trackpad pinch, WebView2 touch
- * zoom) a zoomed viewport would otherwise float the toolbar up by a bogus
- * "keyboard" offset. `scale > 1` is the discriminator: the IME never
- * changes scale, pinch zoom always does. Treat a zoomed viewport as "no
- * keyboard" and return 0. (`undefined > 1` is false, so WebViews lacking
- * `scale` keep the plain keyboard math.) Mirrors the #760 guard in
- * `useSoftKeyboardInset` (src/hooks/useSoftKeyboardInset.ts).
- */
-function computeViewportOffset(): number {
-  const vv = (typeof window !== 'undefined' && window.visualViewport) || null
-  if (!vv) return 0
-  if (vv.scale > 1) return 0
-  return vv.height - window.innerHeight
-}
-
-/**
  * Localised inline text for a regex failure. Switches exhaustively over the
  * {@link FindRegexError} union so a newly-added error kind is a compile error
  * here rather than silently falling through to the "invalid" branch.
@@ -137,7 +111,7 @@ interface InPageFindProps {
   /**
    * Render style. `'overlay'` (default) is the free-floating toolbar
    * used by the desktop Ctrl+F path. `'embedded'` drops the fixed
-   * positioning + visualViewport offset so a parent container (the
+   * positioning so a parent container (the
    * mobile search sheet's "In this page" body) can mount the same
    * toolbar inline.
    */
@@ -200,7 +174,6 @@ export function InPageFind({
   // run of the DOM walk, which no store change starts, after a page-mode replace.
   const replaceCursorRef = useRef<ReplaceCursor | null>(null)
   const [replaceRun, setReplaceRun] = useState(0)
-  const toolbarRef = useRef<HTMLDivElement>(null)
   // The matches list is shared between the walker driver effect (writes)
   // and the navigation/scroll effect (reads). We keep it in a ref so the
   // navigation effect doesn't re-subscribe on every chunked progress
@@ -278,29 +251,6 @@ export function InPageFind({
     inputRef.current?.focus()
     inputRef.current?.select()
   }, [open])
-
-  // ── visualViewport — keep the toolbar above the soft keyboard.
-  // Embedded variant skips this: the parent Sheet sizes itself via
-  // `dvh` (dynamic viewport height) and re-renders on keyboard show,
-  // so the embedded toolbar already floats above the keyboard for free.
-  useEffect(() => {
-    if (!open || variant === 'embedded') return
-    const apply = () => {
-      const el = toolbarRef.current
-      if (!el) return
-      const offset = computeViewportOffset()
-      el.style.transform = offset < 0 ? `translateY(${offset}px)` : ''
-    }
-    apply()
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
-    if (!vv) return
-    vv.addEventListener('resize', apply)
-    vv.addEventListener('scroll', apply)
-    return () => {
-      vv.removeEventListener('resize', apply)
-      vv.removeEventListener('scroll', apply)
-    }
-  }, [open, variant])
 
   // ── Matcher driver. Re-runs every time the query, toggles, or container
   // change. Aborts the in-flight walker first so a fast-typing user never
@@ -561,7 +511,6 @@ export function InPageFind({
 
   return (
     <div
-      ref={toolbarRef}
       role="toolbar"
       aria-label={t('findInPage.toolbarLabel')}
       data-testid="in-page-find-toolbar"
@@ -572,7 +521,7 @@ export function InPageFind({
           // rounded card holding the input + toggles + counter + arrows.
           // `fixed` so it floats above whichever view is rendered
           // without each view having to participate.
-          'fixed top-2 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating) transition-transform duration-fast',
+          'fixed top-2 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating)',
         variant === 'embedded' &&
           // Two intentional rows inside the search sheet — row 1 is
           // the input across the full width; row 2 is the controls.

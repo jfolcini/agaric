@@ -7,8 +7,8 @@
  *  - Render gate: shows when `useShouldShowMobileChrome()` is true; renders
  *    nothing when false (desktop).
  *  - Click invokes the shared `setQuickCaptureOpen(true)` setter.
- *  - Steps aside while an editing toolbar is pinned, while the on-screen
- *    keyboard is up, and on a scroll down.
+ *  - Steps aside while an editing toolbar is pinned, while a text field has
+ *    focus (the on-screen keyboard is up), and on a scroll down.
  *  - Carries the i18n aria-label + the stable test id.
  *  - axe clean.
  */
@@ -75,40 +75,24 @@ describe('QuickCaptureFab', () => {
     expect(fab).toHaveAttribute('data-shown', 'true')
   })
 
-  describe('with an on-screen keyboard', () => {
-    // What a Pixel 8 reports: the layout viewport keeps its 840 px and the
-    // visual viewport, 520 px tall, pans down over it.
-    function stubViewport(): { set: (height: number, scale?: number) => void } {
-      const vv = Object.assign(new EventTarget(), { height: 840, scale: 1 })
-      Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true })
-      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(840)
-      return {
-        set: (height, scale = 1) =>
-          act(() => {
-            vv.height = height
-            vv.scale = scale
-            vv.dispatchEvent(new Event('resize'))
-          }),
-      }
-    }
-
-    it('hides while the keyboard is up and returns when it closes', () => {
-      const viewport = stubViewport()
-      render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
-      const fab = screen.getByTestId('quick-capture-fab')
-      expect(fab).toHaveAttribute('data-shown', 'true')
-      viewport.set(520)
-      expect(fab).toHaveAttribute('data-shown', 'false')
-      viewport.set(840)
-      expect(fab).toHaveAttribute('data-shown', 'true')
-    })
-
-    it('stays shown under a pinch zoom, which shortens the visual viewport too', () => {
-      const viewport = stubViewport()
-      render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
-      viewport.set(520, 1.6)
-      expect(screen.getByTestId('quick-capture-fab')).toHaveAttribute('data-shown', 'true')
-    })
+  it.each([
+    ['an input', () => document.createElement('input')],
+    ['a textarea', () => document.createElement('textarea')],
+    [
+      'a contenteditable',
+      () => Object.assign(document.createElement('div'), { contentEditable: 'true' }),
+    ],
+  ])('hides while %s has focus and returns when it loses it', (_, make) => {
+    const field = make()
+    document.body.append(field)
+    render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
+    const fab = screen.getByTestId('quick-capture-fab')
+    expect(fab).toHaveAttribute('data-shown', 'true')
+    act(() => field.focus())
+    expect(fab).toHaveAttribute('data-shown', 'false')
+    act(() => field.blur())
+    expect(fab).toHaveAttribute('data-shown', 'true')
+    field.remove()
   })
 
   it('hides on a scroll down and returns on a scroll up', () => {

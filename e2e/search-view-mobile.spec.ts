@@ -76,9 +76,9 @@ test.describe('Search view — full panel at mobile viewport (E2E-A9) @search @m
     await input.press('Enter')
     const region = page.getByTestId('search-result-region')
     await expect(region).toBeVisible()
-    const firstRow = region.locator('[role="option"]').first()
-    await expect(firstRow).toBeVisible()
-    await firstRow.click()
+    // The escalation's "Review" rows stay on screen until this query answers,
+    // so wait for the "Welcome" row itself rather than clicking whichever row is first.
+    await region.locator('[role="option"]', { hasText: 'Welcome' }).click()
     // "Welcome…" lives under "Getting Started" — assert the specific landing.
     await expect(
       page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
