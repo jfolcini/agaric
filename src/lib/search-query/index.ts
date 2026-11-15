@@ -23,6 +23,7 @@ export { tokenize } from '@/lib/search-query/tokenize'
 export type {
   DateFilterValue,
   DateOp,
+  FilterNode,
   FilterToken,
   NamedDateRange,
   SearchPropertyFilter,

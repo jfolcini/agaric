@@ -1,6 +1,6 @@
 import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -26,7 +26,7 @@ import { buildCustomPropsMap } from '@/lib/query-result-columns'
 import { chipTagId, isLegacyQueryText, readQueryText } from '@/lib/query-text'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { type FilterToken, tokenKey, tokenSource } from '@/lib/search-query'
+import { type FilterNode, type FilterToken, tokenKey, tokenSource } from '@/lib/search-query'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 
@@ -62,14 +62,38 @@ function QueryTokenPill({ token }: { token: FilterToken }): React.ReactElement {
   )
 }
 
+/** The index of a node's first filter, unique among its siblings. */
+const firstIndex = (node: FilterNode): number =>
+  node.kind === 'token' ? node.index : firstIndex(node.children[0] ?? { kind: 'token', index: -1 })
+
+/** An OR tree's pills in order (#6742): `OR` between its branches, an OR inside an AND in parentheses. */
+function treePills(filters: FilterToken[], node: FilterNode, nested = false): React.ReactNode[] {
+  if (node.kind === 'token') {
+    const token = filters[node.index]
+    return token ? [<QueryTokenPill key={tokenKey(token)} token={token} />] : []
+  }
+  const parts = node.children.flatMap((child, i) => {
+    const pills = treePills(filters, child, node.kind === 'and')
+    if (node.kind === 'and' || i === 0) return pills
+    return [
+      <span key={`or-${firstIndex(child)}`} className="text-xs text-muted-foreground">
+        OR
+      </span>,
+      ...pills,
+    ]
+  })
+  if (node.kind === 'and' || !nested) return parts
+  return [<Fragment key={`group-${firstIndex(node)}`}>({parts})</Fragment>]
+}
+
 /** A search-syntax query (#6628) as the search box's chips: one per token, then the free text. */
 function QueryTextPills({ expression }: { expression: string }): React.ReactElement {
   const { ast } = readQueryText(expression)
   return (
     <span className="flex flex-1 flex-wrap items-center gap-1" title={expression}>
-      {ast.filters.map((token) => (
-        <QueryTokenPill key={tokenKey(token)} token={token} />
-      ))}
+      {ast.expr
+        ? treePills(ast.filters, ast.expr)
+        : ast.filters.map((token) => <QueryTokenPill key={tokenKey(token)} token={token} />)}
       {ast.freeText !== '' && <Badge tone="secondary">{ast.freeText}</Badge>}
     </span>
   )

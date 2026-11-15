@@ -11,7 +11,10 @@
  * shape is accepted by `searchBlocks` as `Partial<…>` extension fields
  * (each entry is `T | undefined`).
  */
-import type { AstFilterProjection } from '@/lib/search-query'
+import type { FilterExpr } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
+import { compileFilterTree } from '@/lib/query-text'
+import type { AstFilterProjection, FilterNode, SearchQueryAST } from '@/lib/search-query'
 
 /**
  * Issue #717 — matches-nothing sentinel for unresolvable tag names.
@@ -47,6 +50,35 @@ export interface SearchFilterParams {
     | null
   propertyFilters?: { key: string; value: string }[] | undefined
   excludedPropertyFilters?: { key: string; value: string }[] | undefined
+  /** #6742 — the filters of a query whose `OR` joins filters, in place of every field above. */
+  filterExpr?: FilterExpr | undefined
+}
+
+/**
+ * The bundle for a query with an OR tree (#6742): the tree as one
+ * `filterExpr`, each tag as `byName` resolved it. A name no tag holds is an
+ * empty `Or`, matching nothing in its own branch only, as the sentinel does for
+ * a flat query.
+ */
+export function treeFilterParams(
+  ast: SearchQueryAST & { expr: FilterNode },
+  byName: ReadonlyMap<string, string | string[] | null>,
+): SearchFilterParams {
+  try {
+    return {
+      filterExpr: compileFilterTree(ast, (token) => {
+        const type = token.kind === 'under' ? 'TagUnder' : 'Tag'
+        const resolved = byName.get(token.value.normalize('NFC').toLowerCase()) ?? []
+        const ids = typeof resolved === 'string' ? [resolved] : resolved
+        const leaves = ids.map((tag): FilterExpr => ({ type: 'Leaf', primitive: { type, tag } }))
+        return leaves.length === 1 ? (leaves[0] as FilterExpr) : { type: 'Or', children: leaves }
+      }),
+    }
+  } catch (err) {
+    // A page glob the parser let through but cannot be prepared: run nothing.
+    logger.warn('SearchPanel', 'could not compile the OR query', undefined, err)
+    return { filterExpr: { type: 'Or', children: [] } }
+  }
 }
 
 export function astFilterParams(

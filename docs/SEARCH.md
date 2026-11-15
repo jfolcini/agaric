@@ -135,7 +135,21 @@ A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}
 | `prop:KEY=VALUE` | Block has property `KEY` with the given value (matches across `value_text` / `value_num` / `value_date` / `value_ref`). | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
 | `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
 | `"phrase"` | Quoted phrase passed verbatim to FTS5. | A phrase under three characters is matched as a short term (see *Short terms*). |
-| `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
+| `AND` / `OR` / `NOT` | Boolean operators between words (FTS5 syntax). | `OR` between filters, and parentheses, are the filter grammar: see *OR between filters*. |
+
+### OR between filters
+
+`OR` joins filters too (#6742): `tag:#work OR tag:#home`. This grammar applies only to a query that holds the word `OR` (in any case); a query without one reads exactly as described above, and a `(` or `)` in it is plain text.
+
+- **The implicit AND binds tighter than `OR`**, as in FTS5: `state:TODO tag:#work OR tag:#home` is *(TODO and work) or home*.
+- **Parentheses group:** `state:TODO (tag:#work OR tag:#home)` is *TODO and (work or home)*. A parenthesis starts or ends a word, or is a word of its own. A value that starts or ends with one is quoted (`tag:#"a)"`). In such a query a quote right before `)` closes: `(tag:#x OR tag:#"my tag")`.
+- **Inside one AND run nothing changes:** repeated `state:`, `priority:` and `path:` still OR, repeated `tag:` and `prop:` still AND, and each run takes one `due:` and one `scheduled:` (`due:today OR due:overdue` is fine). `under:` and `tag:` may sit in different branches.
+- **Free text is one full-text expression**, with FTS5's own `OR` and `NOT`, AND-ed with the filters. An `OR` joins two words or two filters, never one of each: `meeting (tag:#work OR tag:#home)` searches *meeting* among either tag. A word inside an OR of filters, or inside a group of them, turns invalid (`meeting tag:#work OR tag:#home` would read *(meeting and work) or home*, which search cannot run).
+- **Words in parentheses** are the full-text expression when the parentheses hold every word of the query: `(cats OR dogs) tag:#work`. Written without them, `cats OR dogs tag:#work` turns `cats` and `dogs` invalid.
+- **No negation of a filter or group:** a `not-` prefix negates one token, and `NOT` before a filter or a group turns invalid. `-` is a plain character.
+- An unbalanced parenthesis, empty parentheses, and an `OR` with nothing on one side turn invalid.
+
+A query block reads the same grammar. The builder's *Advanced* tab writes it for a group set to *Any*, and reopens such a text as its groups.
 
 ### Values with spaces
 
@@ -339,7 +353,7 @@ The full-text index holds three-character runs, so a term of one or two characte
 - **Beside longer words**, each short term narrows the full-text matches to the blocks that also hold it, in the usual relevance order.
 - The scan reads the text the editor shows, as full-text search does: a link or tag is its name, and markup and the ids behind references are not text.
 - Matches are highlighted in the block's raw text, so a term found only in a link's or tag's name is found and not highlighted.
-- A short term beside `OR`, or after `NOT`, is left out of the query: only a required term can be scanned for. A bare `or` is read as the operator; quote it (`"or"`) to search for the word.
+- A short term in a query whose words hold `OR`, or after `NOT`, is left out of the query: only a required term can be scanned for. An `OR` between filters does not count, so `ui (tag:#a OR tag:#b)` still requires *ui*. A bare `or` is read as the operator; quote it (`"or"`) to search for the word.
 - The case-sensitive and whole-word toggles apply to short terms too. Whole word is what makes `ui` find *UI* and not *build*.
 
 Boolean operators **don't work inside regex mode** — there the free-text remainder is the regex pattern; `AND` / `OR` in it are matched as literal text. (Structural filters like `tag:` / `path:` still apply — see [Regex mode and structural filters](#regex-mode-and-structural-filters).)

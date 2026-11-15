@@ -40,7 +40,8 @@
 //! four-column OR (which bound one user value four ways across
 //! `value_text`/`value_num`/`value_date`/`value_ref`).
 
-use crate::filters::primitive::LastEditedSpec;
+use crate::filters::FilterExpr;
+use crate::filters::primitive::{FilterPrimitive, LastEditedSpec};
 use crate::search_types::{DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter};
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
@@ -107,6 +108,9 @@ pub struct MetadataPredicates {
     /// [`SearchFilter::tag_any_of`], carried here for the same reason as
     /// [`Self::last_edited`].
     pub tag_any_of: Vec<Vec<String>>,
+    /// [`SearchFilter::filter_expr`], carried here for the same reason as
+    /// [`Self::last_edited`].
+    pub filter_expr: Option<FilterExpr>,
     /// [`SearchFilter::tags_match_inline_and_inherited`], carried here for
     /// the same reason as [`Self::last_edited`]. Not a filter by itself, so
     /// [`Self::is_empty`] ignores it.
@@ -143,6 +147,7 @@ impl MetadataPredicates {
             && self.property_excludes.is_empty()
             && self.last_edited.is_none()
             && self.tag_any_of.is_empty()
+            && self.filter_expr.is_none()
     }
 }
 
@@ -246,8 +251,46 @@ pub fn prepare_metadata_with_today(
     }
     out.last_edited = filter.last_edited.clone();
     out.tag_any_of = filter.tag_any_of.clone();
+    if let Some(expr) = &filter.filter_expr {
+        validate_search_expr(expr)?;
+    }
+    out.filter_expr = filter.filter_expr.clone();
 
     Ok(out)
+}
+
+/// Refuse a [`SearchFilter::filter_expr`] nested past [`FilterExpr::MAX_DEPTH`]
+/// or holding a leaf the search syntax never writes: `SearchProjection` would
+/// compile the toggles' and grooming leaves to placeholders that bind nothing
+/// or match the page view's columns.
+fn validate_search_expr(expr: &FilterExpr) -> Result<(), AppError> {
+    expr.validate_depth()?;
+    fn leaves_ok(expr: &FilterExpr) -> bool {
+        match expr {
+            FilterExpr::Leaf { primitive } => matches!(
+                primitive,
+                FilterPrimitive::Tag { .. }
+                    | FilterPrimitive::TagUnder { .. }
+                    | FilterPrimitive::PathGlob { .. }
+                    | FilterPrimitive::State { .. }
+                    | FilterPrimitive::Priority { .. }
+                    | FilterPrimitive::HasProperty { .. }
+                    | FilterPrimitive::DueDate { .. }
+                    | FilterPrimitive::Scheduled { .. }
+            ),
+            FilterExpr::And { children } | FilterExpr::Or { children } => {
+                children.iter().all(leaves_ok)
+            }
+            FilterExpr::Not { child } => leaves_ok(child),
+        }
+    }
+    if leaves_ok(expr) {
+        Ok(())
+    } else {
+        Err(AppError::validation(
+            "filter_expr holds a filter search does not run".into(),
+        ))
+    }
 }
 
 /// Resolve one [`DateFilter`] into a [`DatePredicate`].
@@ -420,6 +463,39 @@ mod tests {
                 assert!(message.contains("range start"), "got: {message}");
             }
             other => panic!("expected Err(Validation), got {other:?}"),
+        }
+    }
+
+    /// #6742: `filter_expr` is carried for the search syntax's leaves, and
+    /// refused nested past the bound or holding a leaf search does not run.
+    #[test]
+    fn filter_expr_is_carried_or_refused() {
+        let tag = || FilterExpr::leaf(FilterPrimitive::Tag { tag: "T".into() });
+        let with = |filter_expr: FilterExpr| SearchFilter {
+            filter_expr: Some(filter_expr),
+            ..unfiltered()
+        };
+        let either = FilterExpr::Or {
+            children: vec![tag(), tag()],
+        };
+        let m = prepare_metadata_with_today(&with(either.clone()), fixed_today()).unwrap();
+        assert_eq!(m.filter_expr, Some(either));
+        assert!(!m.is_empty());
+
+        let orphan = FilterExpr::Or {
+            children: vec![tag(), FilterExpr::leaf(FilterPrimitive::Orphan)],
+        };
+        let deep = (0..=FilterExpr::MAX_DEPTH).fold(tag(), |child, _| FilterExpr::Not {
+            child: Box::new(child),
+        });
+        for refused in [orphan, deep] {
+            assert!(
+                matches!(
+                    prepare_metadata_with_today(&with(refused.clone()), fixed_today()),
+                    Err(AppError::Validation { .. })
+                ),
+                "{refused:?} must be refused"
+            );
         }
     }
 

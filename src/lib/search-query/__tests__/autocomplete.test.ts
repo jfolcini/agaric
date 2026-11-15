@@ -11,6 +11,14 @@ describe('detectAutocompleteAnchor', () => {
     expect(a).toEqual({ active: 'tag', query: '', anchor: 5 })
   })
 
+  it('#6742 — completes a token that opens a group', () => {
+    expect(detectAutocompleteAnchor('state:TODO ((tag:#wo', 20)).toEqual({
+      active: 'tag',
+      query: 'wo',
+      anchor: 18,
+    })
+  })
+
   it('captures partial tag query', () => {
     const a = detectAutocompleteAnchor('tag:#urg', 8)
     expect(a).toEqual({ active: 'tag', query: 'urg', anchor: 5 })

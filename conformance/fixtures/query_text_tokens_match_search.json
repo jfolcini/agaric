@@ -1,5 +1,5 @@
 {
-  "description": "#6742 — a query block runs the tokens the search box runs. Each pair of steps is one text: `search_*` is the request the search box sends for it and `block_*` the one a query block compiles it to (`compileQueryText`, pinned to these args by `query-text-conformance.test.ts`, which also holds each pair to the same rows). `path:` is a `PathGlob` over the title of the block's page, so it keeps every block on the page as search does, not the page row alone; `under:` is `TagUnder`, the tag attached (S2), inherited (S3, under S2) or written inline (S7); free text is the request's `fulltext`; a relative date is the dates it names on the day the query runs, here `overdue` against a due date in 2020 and one in 2999 so the rows do not move with the clock. Content arrives through `edit_block`, since only an op fills `fts_blocks` and `block_tag_refs`.",
+  "description": "#6742 — a query block runs the tokens the search box runs. Each pair of steps is one text: `search_*` is the request the search box sends for it and `block_*` the one a query block compiles it to (`compileQueryText`, pinned to these args by `query-text-conformance.test.ts`, which also holds each pair to the same rows). `path:` is a `PathGlob` over the title of the block's page, so it keeps every block on the page as search does, not the page row alone; `under:` is `TagUnder`, the tag attached (S2), inherited (S3, under S2) or written inline (S7); free text is the request's `fulltext`; a relative date is the dates it names on the day the query runs, here `overdue` against a due date in 2020 and one in 2999 so the rows do not move with the clock. Content arrives through `edit_block`, since only an op fills `fts_blocks` and `block_tag_refs`. An OR between filters (`path:beta OR tag:#urgent`, the implicit AND binding tighter, and an OR group beside free text) is one `filterExpr` in the search box and the same tree in a query block.",
   "expected": {
     "block_tags": [
       {
@@ -247,6 +247,54 @@
       "name": "block_due_overdue",
       "rows": ["B2"],
       "total_count": 1
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_or",
+      "rows": ["B7", "B6", "B5", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_or",
+      "rows": ["B7", "B6", "B5", "B2"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_or_precedence",
+      "rows": ["B7", "B6", "B5", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_or_precedence",
+      "rows": ["B7", "B6", "B5", "B2"],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_or_beside_text",
+      "rows": ["B6", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "block_or_beside_text",
+      "rows": ["B6", "B2"],
+      "total_count": 2
     }
   ],
   "name": "query_text_tokens_match_search",
@@ -559,6 +607,239 @@
       "command": "run_advanced_query",
       "comment": "`due:overdue` as a query block compiles it on 2026-01-01: due before that day.",
       "name": "block_due_overdue"
+    },
+    {
+      "args": {
+        "filter": {
+          "filterExpr": {
+            "children": [
+              {
+                "primitive": {
+                  "exclude": false,
+                  "pattern": "*beta*",
+                  "type": "PathGlob"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "tag": "S8",
+                  "type": "Tag"
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`path:beta OR tag:#urgent` in the search box: its filters as one `filterExpr`.",
+      "name": "search_or"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "exclude": false,
+                  "pattern": "*beta*",
+                  "type": "PathGlob"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "tag": "S8",
+                  "type": "Tag"
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "limit": 50,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`path:beta OR tag:#urgent` in a query block: the same tree.",
+      "name": "block_or"
+    },
+    {
+      "args": {
+        "filter": {
+          "filterExpr": {
+            "children": [
+              {
+                "children": [
+                  {
+                    "primitive": {
+                      "tag": "S8",
+                      "type": "Tag"
+                    },
+                    "type": "Leaf"
+                  },
+                  {
+                    "primitive": {
+                      "exclude": false,
+                      "is_null": false,
+                      "type": "State",
+                      "values": ["TODO"]
+                    },
+                    "type": "Leaf"
+                  }
+                ],
+                "type": "And"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "pattern": "*beta*",
+                  "type": "PathGlob"
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`state:TODO tag:#urgent OR path:beta` in the search box: its filters as one `filterExpr`.",
+      "name": "search_or_precedence"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "children": [
+                  {
+                    "primitive": {
+                      "tag": "S8",
+                      "type": "Tag"
+                    },
+                    "type": "Leaf"
+                  },
+                  {
+                    "primitive": {
+                      "exclude": false,
+                      "is_null": false,
+                      "type": "State",
+                      "values": ["TODO"]
+                    },
+                    "type": "Leaf"
+                  }
+                ],
+                "type": "And"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "pattern": "*beta*",
+                  "type": "PathGlob"
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "limit": 50,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`state:TODO tag:#urgent OR path:beta` in a query block: the same tree.",
+      "name": "block_or_precedence"
+    },
+    {
+      "args": {
+        "filter": {
+          "filterExpr": {
+            "children": [
+              {
+                "primitive": {
+                  "exclude": false,
+                  "is_null": false,
+                  "type": "State",
+                  "values": ["TODO"]
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "is_null": false,
+                  "type": "State",
+                  "values": ["DONE"]
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": "launch"
+      },
+      "command": "search_blocks",
+      "comment": "`launch (state:TODO OR state:DONE)` in the search box: its filters as one `filterExpr`.",
+      "name": "search_or_beside_text"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "exclude": false,
+                  "is_null": false,
+                  "type": "State",
+                  "values": ["TODO"]
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "is_null": false,
+                  "type": "State",
+                  "values": ["DONE"]
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "Or"
+          },
+          "fulltext": "launch",
+          "limit": 50,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`launch (state:TODO OR state:DONE)` in a query block: the same tree.",
+      "name": "block_or_beside_text"
     }
   ],
   "seed": {

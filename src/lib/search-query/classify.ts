@@ -15,6 +15,7 @@
  */
 
 import { t } from '@/lib/i18n'
+import { classifyOr } from '@/lib/search-query/or-query'
 import { ensureRegistered } from '@/lib/search-query/register'
 import { looksLikeUnknownPrefix, recognise } from '@/lib/search-query/registry'
 import { type RawToken, tokenize } from '@/lib/search-query/tokenize'
@@ -28,8 +29,11 @@ import type { FilterToken, SearchQueryAST } from '@/lib/search-query/types'
  */
 export function parse(input: string): SearchQueryAST {
   ensureRegistered()
-  const raw = tokenize(input)
-  return classify(raw, input)
+  // `OR` and parentheses are grammar only in a query holding the word `OR`
+  // (any case, as FTS5 reads it); every other query parses as it always has.
+  const grouped = tokenize(input, true)
+  if (grouped.some(isOrWord)) return classifyOr(grouped, input)
+  return classify(tokenize(input), input)
 }
 
 /**
@@ -62,77 +66,99 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       quotedSpans.push(tok.span)
       continue
     }
-    // A word whose `"` never closed is free text, never a chip: serialise
-    // moves free text after the chips, where a boundary `"` would close
-    // the chip's quote and swallow everything in between.
-    if (tok.unclosedQuote) continue
-    const matched = recognise(tok.text, tok.span)
+    const matched = classifyWord(tok)
     if (matched) {
       filters.push(matched)
-      consumedSpans.push(tok.span)
-      continue
-    }
-    // Bare `#tag` alias: the `tag:` recogniser, so `#"my tag"` peels its
-    // quotes exactly as `tag:#"my tag"` does and serialises back to it.
-    if (tok.text.startsWith('#') && tok.text.length > 1) {
-      const tag = recognise(`tag:${tok.text}`, tok.span)
-      if (tag) {
-        filters.push(tag)
-        consumedSpans.push(tok.span)
-        continue
-      }
-    }
-    // Token shaped like `xxx:yyy` but unregistered → invalid chip.
-    // `looksLikeUnknownPrefix` returns null for `key://…`
-    // (pasted URLs), so those fall through to free-text below instead of
-    // being consumed as an invalid chip and silently dropped.
-    const unk = looksLikeUnknownPrefix(tok.text)
-    if (unk) {
-      filters.push({
-        kind: 'invalid',
-        source: tok.text,
-        error: `unknown filter key '${unk.key}:'`,
-        span: tok.span,
-      })
       consumedSpans.push(tok.span)
     }
     // Everything else is free-text.
   }
 
-  // Only the LAST due:/scheduled: token reaches the backend
-  // (see astToFilterProjection's "last wins"). Flag the earlier,
-  // shadowed tokens as invalid so the rendered chips agree with the
-  // effective query instead of showing filters that silently don't apply.
+  flagShadowedDates(filters, input, filters.keys())
+  flagTagBesideUnder(filters, input)
+
+  const freeText = buildFreeText(input, consumedSpans, quotedSpans)
+  return { filters, freeText }
+}
+
+/** Whether `tok` is the word `OR`, in any case. */
+export function isOrWord(tok: RawToken): boolean {
+  return tok.kind === 'word' && tok.text.toUpperCase() === 'OR'
+}
+
+/** The filter a word is, or `null` for a word of free text. */
+export function classifyWord(tok: Extract<RawToken, { kind: 'word' }>): FilterToken | null {
+  // A word whose `"` never closed is free text, never a chip: serialise
+  // moves free text after the chips, where a boundary `"` would close
+  // the chip's quote and swallow everything in between.
+  if (tok.unclosedQuote) return null
+  const matched = recognise(tok.text, tok.span)
+  if (matched) return matched
+  // Bare `#tag` alias: the `tag:` recogniser, so `#"my tag"` peels its
+  // quotes exactly as `tag:#"my tag"` does and serialises back to it.
+  if (tok.text.startsWith('#') && tok.text.length > 1) {
+    const tag = recognise(`tag:${tok.text}`, tok.span)
+    if (tag) return tag
+  }
+  // Token shaped like `xxx:yyy` but unregistered → invalid chip.
+  // `looksLikeUnknownPrefix` returns null for `key://…`
+  // (pasted URLs), so those fall through to free-text instead of
+  // being consumed as an invalid chip and silently dropped.
+  const unk = looksLikeUnknownPrefix(tok.text)
+  if (unk) {
+    return {
+      kind: 'invalid',
+      source: tok.text,
+      error: `unknown filter key '${unk.key}:'`,
+      span: tok.span,
+    }
+  }
+  return null
+}
+
+/**
+ * Only the LAST due:/scheduled: token of the filters at `indices` (one AND
+ * run) applies (see astToFilterProjection's "last wins"). Flag the earlier,
+ * shadowed tokens as invalid so the rendered chips agree with the
+ * effective query instead of showing filters that silently don't apply.
+ */
+export function flagShadowedDates(
+  filters: FilterToken[],
+  input: string,
+  indices: Iterable<number>,
+): void {
+  const run = [...indices]
   for (const kind of ['due', 'scheduled'] as const) {
-    const last = filters.findLastIndex((f) => f.kind === kind)
-    filters.forEach((f, i) => {
-      if (f.kind !== kind || i === last) return
+    const last = run.findLast((i) => filters[i]?.kind === kind)
+    for (const i of run) {
+      const f = filters[i]
+      if (f?.kind !== kind || i === last) continue
       filters[i] = {
         kind: 'invalid',
         source: input.slice(f.span[0], f.span[1]),
         error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
         span: f.span,
       }
-    })
+    }
   }
+}
 
-  // The backend widens every tag of a query at once
-  // (`tags_match_inline_and_inherited`), so beside an `under:` a `tag:` chip
-  // would silently match inherited tags too. Flag it instead.
-  if (filters.some((f) => f.kind === 'under')) {
-    filters.forEach((f, i) => {
-      if (f.kind !== 'tag') return
-      filters[i] = {
-        kind: 'invalid',
-        source: input.slice(f.span[0], f.span[1]),
-        error: t('searchQuery.tagBesideUnder'),
-        span: f.span,
-      }
-    })
-  }
-
-  const freeText = buildFreeText(input, consumedSpans, quotedSpans)
-  return { filters, freeText }
+/**
+ * The backend widens every tag of a flat query at once
+ * (`tags_match_inline_and_inherited`), so beside an `under:` a `tag:` chip
+ * would silently match inherited tags too. Flag it instead.
+ */
+export function flagTagBesideUnder(filters: FilterToken[], input: string): void {
+  if (!filters.some((f) => f.kind === 'under')) return
+  filters.forEach((f, i) => {
+    if (f.kind !== 'tag') return
+    filters[i] = {
+      kind: 'invalid',
+      source: input.slice(f.span[0], f.span[1]),
+      error: t('searchQuery.tagBesideUnder'),
+      span: f.span,
+    }
+  })
 }
 
 /**
@@ -146,7 +172,7 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
  * surviving (non-consumed) text segment-by-segment against `input`,
  * collapsing only the segments that lie outside any quoted span.
  */
-function buildFreeText(
+export function buildFreeText(
   input: string,
   consumed: Array<[number, number]>,
   quoted: Array<[number, number]>,

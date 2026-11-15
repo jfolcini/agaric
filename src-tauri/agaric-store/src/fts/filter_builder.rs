@@ -28,11 +28,11 @@
 //! (13-space indent).
 
 use super::metadata_filter::{DatePredicate as MetaDatePredicate, MetadataPredicates};
-use crate::filters::SqlFragment;
 use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
     PropertyValue, SearchProjection,
 };
+use crate::filters::{CompileExpr, SqlFragment};
 use crate::search_types::{DateOp, SearchPropertyFilter, SearchScope};
 use crate::space::SpaceId;
 
@@ -761,6 +761,12 @@ impl StructuralFilterBuilder {
         if let Some(spec) = &metadata.last_edited {
             self.add_last_edited_via_projection(METADATA_AND_PREFIX, spec);
         }
+
+        // #6742 — an OR of filters, as one parenthesised clause.
+        if let Some(expr) = &metadata.filter_expr {
+            let wc = SearchProjection.compile_expr(expr);
+            self.add_projection_clause(METADATA_AND_PREFIX, &format!("({})", wc.sql), &wc.binds);
+        }
     }
 
     /// Replay the recorded binds onto `query`, in declaration order.
@@ -1416,6 +1422,7 @@ mod tests {
             last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
             tags_match_inline_and_inherited: false,
             tag_any_of: Vec::new(),
+            filter_expr: None,
         };
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_parent(FTS_PREFIX, Some("PARENT01"));

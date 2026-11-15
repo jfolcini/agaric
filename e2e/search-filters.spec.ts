@@ -229,6 +229,17 @@ test.describe('Structured DSL filters narrow the results (E2E-6) @search', () =>
     await expectFilterKeeps(page, 'not-path:Proj*', [{ parentId: PAGE_MEETINGS }], [{}])
   })
 
+  // #6742 — OR between filters, the implicit AND binding tighter: a block
+  // tagged work at priority 1, or a done one.
+  test('OR keeps what either side keeps', async ({ page }) => {
+    await expectFilterKeeps(
+      page,
+      '(priority:1 tag:#work OR state:DONE)',
+      [{ priority: '1', tagIds: [TAG_WORK_ID] }, { todo: 'DONE' }],
+      [{ tagIds: [TAG_WORK_ID] }, { priority: '1' }, { todo: 'TODO' }, {}],
+    )
+  })
+
   // E2E-A8 — a trailing `=` filters on key presence. The key has no
   // definition: a declared select such as `status` offers its options, and
   // Enter picks the first.

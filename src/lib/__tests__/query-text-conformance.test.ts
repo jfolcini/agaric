@@ -14,7 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
+import { astFilterParams, treeFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import { searchBlocks } from '@/lib/ipc-helpers'
 import { compileQueryTextWithTags } from '@/lib/query-text'
 import { astToFilterProjection, parse } from '@/lib/search-query'
@@ -71,6 +71,10 @@ async function searchRequest(text: string) {
   const tagIds = projection.tagNames.flatMap(
     (name) => TAGS.find((tag) => tag.name === name)?.tag_id ?? [],
   )
+  const { expr } = ast
+  const params = expr
+    ? treeFilterParams({ ...ast, expr }, new Map(TAGS.map((tag) => [tag.name, tag.tag_id])))
+    : astFilterParams(projection, tagIds)
   vi.mocked(invoke).mockImplementation(
     mockInvokeCommands({
       search_blocks: () => ({ items: [], next_cursor: null, has_more: false, total_count: null }),
@@ -78,7 +82,7 @@ async function searchRequest(text: string) {
   )
   await searchBlocks({
     query: ast.freeText,
-    ...astFilterParams(projection, tagIds),
+    ...params,
     spaceId: SPACE,
   })
   const sent = vi.mocked(invoke).mock.lastCall?.[1] as {
@@ -96,6 +100,10 @@ describe('a query block and the search box, text by text', () => {
     ['launch', 'text', ['B2', 'B6']],
     ['state:TODO launch', 'text_and_state', ['B2']],
     ['due:overdue', 'due_overdue', ['B2']],
+    // An OR between filters: one `filterExpr` in the search box (#6742).
+    ['path:beta OR tag:#urgent', 'or', ['B2', 'B5', 'B6', 'B7']],
+    ['state:TODO tag:#urgent OR path:beta', 'or_precedence', ['B2', 'B5', 'B6', 'B7']],
+    ['launch (state:TODO OR state:DONE)', 'or_beside_text', ['B2', 'B6']],
   ])('%s', async (text, name, expected) => {
     const search = step(`search_${name}`).args as { query: string; filter: Record<string, unknown> }
     expect(await searchRequest(text)).toEqual({

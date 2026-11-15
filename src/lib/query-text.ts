@@ -31,7 +31,13 @@ import type {
   PropertyValue,
 } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import { type FilterToken, parse, type SearchQueryAST, tokenize } from '@/lib/search-query'
+import {
+  type FilterNode,
+  type FilterToken,
+  parse,
+  type SearchQueryAST,
+  tokenize,
+} from '@/lib/search-query'
 import type { DateFilterValue } from '@/lib/search-query'
 import { prepareGlobs } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
@@ -249,6 +255,82 @@ function isTextOnly(token: FilterToken): boolean {
   )
 }
 
+/** The condition a `tag:` / `under:` token names, or `null` when no tag holds its name. */
+export type TagCondition = (
+  token: Extract<FilterToken, { kind: 'tag' | 'under' }>,
+) => FilterExpr | null
+
+/** One AND run's conditions: its tags, then the rest in the order search adds them. */
+function runConditions(
+  tokens: FilterToken[],
+  tagCondition: TagCondition,
+  today: Date,
+): FilterExpr[] {
+  const tags: FilterExpr[] = []
+  for (const token of tokens) {
+    if (token.kind !== 'tag' && token.kind !== 'under') continue
+    const condition = tagCondition(token)
+    if (condition && !tags.some((tag) => canonical(tag) === canonical(condition))) {
+      tags.push(condition)
+    }
+  }
+  return [...tags, ...conditions(tokens, [], 'Tag', today)]
+}
+
+function compileNode(
+  ast: SearchQueryAST,
+  node: FilterNode,
+  tagCondition: TagCondition,
+  today: Date,
+): FilterExpr | null {
+  if (node.kind === 'token') {
+    const token = ast.filters[node.index]
+    const run = token ? runConditions([token], tagCondition, today) : []
+    if (run.length === 0) return null
+    return run.length === 1 ? (run[0] as FilterExpr) : { type: 'And', children: run }
+  }
+  const groups = node.children.flatMap((child) => {
+    if (node.kind === 'and' && child.kind === 'token') return []
+    return compileNode(ast, child, tagCondition, today) ?? []
+  })
+  if (node.kind === 'or') return { type: 'Or', children: groups }
+  const tokens = node.children.flatMap((child) =>
+    child.kind === 'token' ? (ast.filters[child.index] ?? []) : [],
+  )
+  return { type: 'And', children: [...runConditions(tokens, tagCondition, today), ...groups] }
+}
+
+/**
+ * The `FilterExpr` of a query whose filters have an OR tree (`ast.expr`): each
+ * AND run compiled as a flat query's filters are, joined by the tree's `And`
+ * and `Or` nodes. An invalid token compiles to nothing.
+ */
+export function compileFilterTree(
+  ast: SearchQueryAST & { expr: FilterNode },
+  tagCondition: TagCondition,
+  today: Date = new Date(),
+): FilterExpr {
+  return compileNode(ast, ast.expr, tagCondition, today) ?? { type: 'And', children: [] }
+}
+
+/**
+ * A token's tag, looked up by name in `tags` as the search box looks it up
+ * (exact, any case) or a chip's own id; a name no tag holds is an `Or` of the
+ * tags nested under it, and `null` with none.
+ */
+function tagConditionIn(
+  tags: ReadonlyArray<{ tag_id: string; name: string }>,
+  token: Extract<FilterToken, { kind: 'tag' | 'under' }>,
+): FilterExpr | null {
+  const type = token.kind === 'under' ? 'TagUnder' : 'Tag'
+  const name = token.value.normalize('NFC').toLowerCase()
+  const id = chipTagId(token.value) ?? tags.find((tag) => tag.name.toLowerCase() === name)?.tag_id
+  if (id !== undefined) return leafOf({ type, tag: id })
+  const nested = tags.filter((tag) => tag.name.toLowerCase().startsWith(`${name}/`))
+  if (nested.length === 0) return null
+  return { type: 'Or', children: nested.map((tag) => leafOf({ type, tag: tag.tag_id })) }
+}
+
 /**
  * Compile a block's search-syntax query text to what the engine runs: a root
  * `And` over its conditions, as the builder writes it, and its free text as
@@ -273,6 +355,36 @@ export function compileQueryTextWithTags(
   for (const token of ast.filters) {
     const message = tokenProblem(token)
     if (message !== null) problems.push({ ...at(token), message })
+  }
+
+  if (ast.expr) {
+    const { expr } = ast
+    let nestedOnly = false
+    const tree = compileFilterTree(
+      { ...ast, expr },
+      (token) => {
+        const condition = tagConditionIn(tags, token)
+        if (condition === null) {
+          problems.push({
+            ...at(token),
+            message: t('query.text.unknownTag', { name: token.value }),
+          })
+        } else if (condition.type === 'Or') {
+          nestedOnly = true
+        }
+        return condition
+      },
+      today,
+    )
+    if (problems.length > 0) {
+      return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
+    }
+    return {
+      ok: true,
+      filter: tree,
+      fulltext: ast.freeText,
+      textOnly: ast.freeText !== '' || nestedOnly || ast.filters.some(isTextOnly),
+    }
   }
 
   const tagIds: string[] = []
@@ -369,27 +481,47 @@ function canonical(value: unknown): string {
   )
 }
 
-const leafSet = (children: FilterExpr[]): string[] => children.map(canonical).toSorted()
+/** `expr` with nested nodes of one kind flattened, single children unwrapped and children sorted, so two trees compare whatever order built them. */
+function normalisedTree(expr: FilterExpr): string {
+  const flat = (e: FilterExpr): FilterExpr => {
+    if (e.type === 'Leaf') return e
+    if (e.type === 'Not') return { type: 'Not', child: flat(e.child) }
+    const children = e.children
+      .map(flat)
+      .flatMap((c) => (c.type === e.type ? (c as { children: FilterExpr[] }).children : [c]))
+      .toSorted((a, b) => canonical(a).localeCompare(canonical(b)))
+    return children.length === 1 ? (children[0] as FilterExpr) : { type: e.type, children }
+  }
+  return canonical(flat(expr))
+}
+
+/** The search-syntax words of `expr`, an OR inside an AND parenthesised; `null` for what the syntax cannot say. */
+function exprWords(expr: FilterExpr): string | null {
+  if (expr.type === 'Leaf') {
+    const words = leafWords(expr.primitive)
+    return words.length > 0 ? words.join(' ') : null
+  }
+  if (expr.type === 'Not' || expr.children.length === 0) return null
+  const parts: string[] = []
+  for (const child of expr.children) {
+    const words = exprWords(child)
+    if (words === null) return null
+    parts.push(expr.type === 'And' && child.type === 'Or' ? `(${words})` : words)
+  }
+  return parts.join(expr.type === 'And' ? ' ' : ' OR ')
+}
 
 /**
  * The search-syntax text the builder saves for `filter`, or `null` when only a
- * `v2:` payload holds it. The words are written leaf by leaf and kept only when
- * the block would read them back as the same `And` of the same leaves, so a
- * filter the syntax cannot say (an `Or`, a value the reader would retype, text
+ * `v2:` payload holds it. The words are written node by node and kept only when
+ * the block would read them back as the same tree of the same leaves, so a
+ * filter the syntax cannot say (a `Not`, a value the reader would retype, text
  * the older reader would claim) is never saved as a text that means something
  * else. A tag is its chip, which follows a rename as the payload's id does.
  */
 export function filterToQueryText(filter: FilterExpr): string | null {
-  if (filter.type !== 'And') return null
-  const words = filter.children.flatMap((child) =>
-    child.type === 'Leaf' ? leafWords(child.primitive) : [],
-  )
-  const text = words.join(' ')
-  if (isLegacyQueryText(text)) return null
+  const text = exprWords(filter)
+  if (text === null || isLegacyQueryText(text)) return null
   const read = compileQueryTextWithTags(text, [])
-  const same =
-    read.ok &&
-    read.filter.type === 'And' &&
-    canonical(leafSet(read.filter.children)) === canonical(leafSet(filter.children))
-  return same ? text : null
+  return read.ok && normalisedTree(read.filter) === normalisedTree(filter) ? text : null
 }

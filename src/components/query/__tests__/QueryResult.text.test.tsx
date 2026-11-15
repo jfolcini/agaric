@@ -40,6 +40,20 @@ describe('QueryResult in the search syntax', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
+  it('runs an OR of filters and shows OR between its branches (#6742)', async () => {
+    const { container } = render(
+      <QueryResult expression="priority:3 OR state:TODO (tag:#work OR priority:2)" />,
+    )
+
+    // Priority 3 ("Write documentation"), or TODO and either work ("Ship v2.0
+    // release") or priority 2 ("Design new dashboard").
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3))
+    expect(header()).toHaveTextContent(
+      /priority:3\s*OR\s*state:TODO\s*\(tag:#work\s*OR\s*priority:2\)/,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('shows a tag chip as its tag name', async () => {
     useResolveStore.getState().batchSet([{ id: SEED_IDS.TAG_WORK, title: 'work', deleted: false }])
     render(<QueryResult expression={`#[${SEED_IDS.TAG_WORK}]`} />)

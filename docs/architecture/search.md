@@ -30,7 +30,7 @@ A term shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`chars().count()`, so a
 - **Alone**, the query has no MATCH. The same builder emits a walk of `blocks` instead, with the same structural filters, `ORDER BY b.id DESC`, a keyset on `b.id`, a constant `search_rank` and no snippet. The placeholder layout and row shape are the MATCH query's, so the cursor path, the toggle post-filter and the palette's partitioned scan page it unchanged. The scan is pinned to the primary key (`INDEXED BY sqlite_autoindex_blocks_1`): it stops at the page limit, so a term most blocks hold reads one page and no term reads more than one pass over the table. Left to the planner it took the space index and sorted every match.
 - `LIKE` folds ASCII case only, where the trigram index folds every script, so each non-ASCII letter of a term is tried as typed, lowercased and uppercased, in every combination (`like_case_forms`).
 - With every toggle off, `highlight_short_term_rows` (`toggle_filter.rs`) gives the rows of a query that has a short term `match_offsets` for all its terms, and a row they mark drops its snippet. The offsets index raw content, so a term found only in a resolved reference's name leaves its row unmarked. With a toggle on, the post-filter already does.
-- A short term in a query with an `OR` anywhere, or after `NOT`, stays out of the query (`short_term_stands_alone`): FTS5 binds the implicit AND tighter than OR, so in `cats OR dogs ab` a required `ab` would drop the `cats` rows, and requiring the operand of a `NOT` would invert it. A bare `or` outside an operator position stays dropped; a quoted `"or"` is a short term.
+- A short term in a query with an `OR` anywhere, or after `NOT`, stays out of the query (`short_term_stands_alone`): FTS5 binds the implicit AND tighter than OR, so in `cats OR dogs ab` a required `ab` would drop the `cats` rows, and requiring the operand of a `NOT` would invert it. The query is the free text alone: an `OR` between filters goes to `filter_expr`, so it does not count. A bare `or` outside an operator position stays dropped; a quoted `"or"` is a short term.
 
 `sanitize_fts_query`, which the backlink filters and the query engine's text filter also call, returns the MATCH expression alone, so those surfaces still ignore a short term.
 
@@ -138,11 +138,12 @@ Cross-group keyboard traversal (arrow keys flowing from the last row of group N 
 The query string is the canonical model of search state. Chips and IPC fields are projections of a parsed AST. The pipeline is:
 
 ```text
-input string ──tokenize──▶ raw tokens ──classify──▶ SearchQueryAST {filters, freeText}
+input string ──tokenize──▶ raw tokens ──classify──▶ SearchQueryAST {filters, freeText, expr?}
                                                           │
                                                           ├──▶ chip projection (FilterChipRow)
                                                           ├──▶ autocomplete (caret offset)
                                                           ├──▶ astToFilterProjection ──▶ SearchFilter IPC
+                                                          ├──▶ compileFilterTree ──▶ SearchFilter.filter_expr (expr only)
                                                           └──▶ compileQueryText ──▶ FilterExpr (a query block's text)
 ```
 
@@ -151,6 +152,7 @@ Three pure modules under `src/lib/search-query/`:
 - `tokenize.ts` — lexes whitespace-delimited words and `"…"` quoted phrases, attaching `[startCol, endCol)` spans. Mirrors the FTS5 sanitiser's quoting rules so the parser doesn't pre-process operator syntax.
 - `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; the property/metadata filters registered `state:`, `priority:`, `due:`, etc. on top of this table without touching the core parser.
 - `classify.ts` — walks the raw token stream, asks the registry, and stitches the surviving free-text spans into `freeText`.
+- `or-query.ts` — the grammar of a query holding the word `OR` (#6742), which `parse` hands it instead: `OR` between filters, parentheses, the implicit AND binding tighter. It adds `expr`, a tree of AND/OR nodes over indices into `filters`, when an OR between filters remains; `filters` stays the flat chip list. A group whose flaw depends on its context (a word, a one-sided `OR`) is one invalid token spanning the group, so serialising a flattened tree cannot change how it reads. The search box sends a query with `expr` as one `SearchFilter.filter_expr`, spliced by `add_metadata` as one parenthesised `SearchProjection::compile_expr` clause; every other query sends the flat fields as before.
 
 The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `s` — is enforced by `fast-check` property tests in `__tests__/serialize.test.ts`. Direct equality `serialize(parse(s)) === s` only holds for canonical inputs (the `#tag` bare alias normalises to `tag:#tag` on the way out, by design).
 

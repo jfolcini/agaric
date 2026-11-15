@@ -92,6 +92,27 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
     )
   })
 
+  // #6742: OR between filters, the implicit AND binding tighter.
+  test('runs an OR of filters, holds it, and the builder reopens it as its groups', async ({
+    page,
+  }) => {
+    const result = await writeQuery(page, 'state:TODO tag:#work OR state:DONE')
+    const items = result.getByTestId('query-result-item')
+    const expected = [/Update dependencies/, /Ship v2\.0 release/, /Write documentation/]
+    await expect(items).toHaveText(expected)
+
+    await reopenPage(page, PAGE)
+    await expect(items).toHaveText(expected)
+    await result.getByRole('button', { name: 'Edit query' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByTestId('advanced-filter-count')).toHaveText('3 filters')
+    await expect(dialog.getByTestId('expression-preview')).toHaveText(
+      '#[000000000000000000000TAG01] state:TODO OR state:DONE',
+    )
+    await dialog.getByRole('button', { name: 'Update Query' }).click()
+    await expect(items).toHaveText(expected)
+  })
+
   test('the builder leaves a text it has no control for to the block', async ({ page }) => {
     const result = await writeQuery(page, 'state:TODO due:this-week')
     await result.getByRole('button', { name: 'Edit query' }).click()

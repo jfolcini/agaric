@@ -4766,6 +4766,13 @@ export type SearchFilter = {
 	 *  `projects/web`, #6760).
 	 */
 	tagAnyOf?: string[][],
+	/**
+	 *  #6742 — the filters of a search whose `OR` joins filters, as one tree,
+	 *  AND-ed with the fields above (which the app leaves empty beside it).
+	 *  Compiled through [`crate::filters::SearchProjection`]; only the leaves
+	 *  the search syntax writes are accepted (`prepare_metadata`).
+	 */
+	filterExpr?: FilterExpr | null,
 };
 
 /**

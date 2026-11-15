@@ -25,7 +25,7 @@ import { useTranslation } from 'react-i18next'
 
 import { groupResultsByPage, type SearchResultGroup } from '@/components/search/SearchResultGroups'
 import type { SearchToggleState } from '@/components/search/SearchToggleRow'
-import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
+import { astFilterParams, treeFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
@@ -134,16 +134,19 @@ export function useSearchResults({
     tagIds,
     tagAnyOf,
     pending: tagResolutionPending,
+    byName,
   } = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
 
   // The two search modes are symmetric. In BOTH modes the
   // structural filters are projected and applied as SQL filters server-side;
   // the only difference is the `isRegex` flag and how the backend interprets
   // the free-text remainder.
-  const filterParams = useMemo(
-    () => astFilterParams(debouncedProjection, tagIds, tagAnyOf),
-    [debouncedProjection, tagIds, tagAnyOf],
-  )
+  // #6742 — a query whose `OR` joins filters sends them as one tree instead.
+  const filterParams = useMemo(() => {
+    const { expr } = debouncedAst
+    if (expr) return treeFilterParams({ ...debouncedAst, expr }, byName)
+    return astFilterParams(debouncedProjection, tagIds, tagAnyOf)
+  }, [debouncedAst, debouncedProjection, tagIds, tagAnyOf, byName])
   // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
   // directly (staged retirement of the generic hook; matching the merged
   // `DonePanel` / `TagFilterPanel` / `usePageBrowserData` pattern). The query key

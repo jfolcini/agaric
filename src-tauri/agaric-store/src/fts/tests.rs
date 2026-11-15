@@ -9077,6 +9077,50 @@ async fn tag_any_of_needs_one_tag_of_every_group_6760() {
     );
 }
 
+/// #6742 — `filter_expr`, the tree the app sends for a query whose `OR` joins
+/// filters: one parenthesised clause, AND-ed with the rest, on the filter-only
+/// scan and beside a MATCH.
+#[tokio::test]
+async fn filter_expr_is_one_clause_beside_the_rest_6742() {
+    use crate::filters::{FilterExpr, FilterPrimitive};
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+    let tree = |filter_expr: FilterExpr| MetadataPredicates {
+        filter_expr: Some(filter_expr),
+        ..MetadataPredicates::default()
+    };
+    let tag = |tag: &str| {
+        FilterExpr::leaf(FilterPrimitive::Tag {
+            tag: tag.to_owned(),
+        })
+    };
+    let site_or_api = || FilterExpr::Or {
+        children: vec![tag(NEST_SITE), tag(NEST_API)],
+    };
+
+    assert_eq!(
+        nested_tag_search(&pool, &[], tree(site_or_api())).await,
+        ["ON-API", "ON-SITE"],
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_WEB], tree(site_or_api())).await,
+        ["ON-SITE"],
+        "the OR stays inside its clause"
+    );
+    assert!(
+        nested_tag_search(&pool, &[], tree(FilterExpr::Or { children: vec![] }))
+            .await
+            .is_empty(),
+        "an empty Or, a tag no name holds, matches nothing"
+    );
+
+    rebuild_fts_index(&pool).await.unwrap();
+    assert_eq!(
+        nested_tag_search_for(&pool, "projects", &[NEST_WEB], tree(site_or_api())).await,
+        ["ON-SITE"],
+    );
+}
+
 /// #6752 beside #6760: a short term's scan and its predicate beside a MATCH
 /// both sit behind a parent-tag group. `we` is in `projects/web` and
 /// `projects/web/site`; the group admits the site and api blocks.

@@ -72,6 +72,8 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
     if (isWhitespace(ch)) break
     start--
   }
+  // A group's `(` glued to the token (#6742).
+  while (start < c && input[start] === '(') start++
   const slice = input.slice(start, c)
 
   // under:#… completes a tag name exactly as tag:#… does.
