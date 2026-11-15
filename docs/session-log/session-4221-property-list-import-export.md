@@ -24,7 +24,12 @@ PR 4 of the approved plan for properties that hold a list, plus the non-blocking
 
 ## What ran
 
-- Rust: the related nextest runs (import, export, bibliography, front matter, property list, duplicate, template, buffer, conformance), workspace clippy.
-- TS: typecheck, vitest over the mock, conformance and every touched module.
-- e2e: the related Playwright specs; the two `e2e-tauri/` specs under `just e2e-real`.
-- Each new test was shown red by breaking the code it covers.
+- Rust: nextest over every import, export, bibliography, front matter, property-list, duplicate, template, buffer and conformance test, and the new ones after the last change; `just gen-sqlx`; conformance re-authored with `CONFORMANCE_UPDATE=1`; workspace clippy with `-D warnings`.
+- TS: typecheck, vitest over the mock, conformance and every touched module, the related Playwright specs (property list, query table, import/export, page source, type change, unfit values, References sort).
+- e2e-tauri: `import-obsidian-vault`, `import-bibliography-warnings`, `advanced-query-group-by` and `export-roundtrip` green under `just e2e-real`, and the first three red with the import's list mark, the bibliography's list definition and the grouping dedupe each broken (one build, all three breaks at once).
+- Falsified: the undeclared-key relaxation and its internal-key refusal, the front matter list mark and flow-sequence export, the joined read under a single-value key, the template-copy and Duplicate marks, the buffer's YAML list mark, the bibliography list, the grouping and typeahead dedupe, the sort map, the list editor for an undeclared list in the editor, the drawer and the query cell, and the `onWritten` short-circuit.
+
+## Traps
+
+- **A falsification script that `cd`s must restore by absolute path**: this session's first e2e red run restored with relative paths after a `cd`, which missed; the backups were copied back by hand before any commit.
+- **`.dwo` files and `target/debug/incremental` fill the cloud disk**; a `gen-sqlx` run died on "No space left on device" halfway through rewriting `.sqlx/`. Restore `.sqlx/` from `HEAD`, free space, and run it again with `CARGO_INCREMENTAL=0`.
