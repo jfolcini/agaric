@@ -90,18 +90,3 @@ Every step is the maintainer's. A release has to contain these files before it c
 ## Every release after acceptance
 
 Flathub creates `flathub/io.github.jfolcini.Agaric`; updates go there and never through a new submission. Per release: the `<release>` entry in the MetaInfo file before tagging, then in that repository the manifest's `tag` and `commit`, and both sources files regenerated (step 3). `runtime-version` moves when GNOME retires the runtime, about once a year.
-
-## What was run, and what was not
-
-Run on 2026-11-14 in a container, on the commit that added these files:
-
-- The manifest as it is here, with plain `flatpak-builder`: built from source with no network in the build, against `org.gnome.Platform` 51 with the `rust-stable` and `node24` extensions.
-- The submission form (step 2's `git` source, pinned to that commit) with Flathub's `flathub-build` flags; `flatpak-builder-lint manifest` and `flatpak-builder-lint repo` pass on it. The linter cannot tell that the screenshot is a placeholder; a reviewer can.
-- The installed Flatpak launched under a virtual X display: the window renders, the database is created under `~/.var/app/io.github.jfolcini.Agaric/data/com.agaric.app/`, a second launch exits and leaves one instance, and from inside the sandbox the Downloads folder is writable and Documents is not.
-- `appstreamcli validate` and `desktop-file-validate`.
-
-Not run:
-
-- **Everything else in step 5.** No Wayland session, second device, notification service, sound, or camera: sync, notifications, audio, an export through the webview, `agaric://` links, and the limits listed under the permissions table come from reading the code.
-- **The two generators in step 3.** The session could not run them; the builds used source lists made from the same lockfiles by a stand-in script, with the npm cache filled from plain tarballs.
-- **A build from a release tag.** No release contains these files yet.

@@ -38,7 +38,8 @@ modules:
         npm_config_cache: /run/build/agaric/flatpak-node/npm-cache
         npm_config_offline: 'true'
     build-commands:
-      # The node24 extension ships npm 11; package.json asks for 12.
+      # The node24 extension's npm is older than package.json's engines.npm; drop
+      # --engine-strict=false once the extension's npm satisfies it.
       - npm ci --engine-strict=false
       - npm run build
       - cargo --offline build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol --bin agaric --bin agaric-mcp

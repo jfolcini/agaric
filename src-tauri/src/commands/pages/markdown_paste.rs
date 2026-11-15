@@ -175,21 +175,20 @@ impl PasteSplice {
         let Self { before, after } = self;
         // A comment read as a callout (#6751) joins text as the comment it was
         // pasted as: a callout mid-text is no callout.
-        let last = blocks.len().saturating_sub(1);
-        for (at, block) in blocks.iter_mut().enumerate() {
-            let joined = (at == 0 && !before.is_empty()) || (at == last && !after.is_empty());
-            if let Some(comment) = joined
-                .then(|| import::callout_as_comment(&block.content))
-                .flatten()
-            {
-                block.content = comment;
-            }
-        }
         if let Some(first) = blocks.first_mut()
             && !before.is_empty()
         {
+            if let Some(comment) = import::callout_as_comment(&first.content) {
+                first.content = comment;
+            }
             first.content = pasted_as_text(first, before.ends_with('\n'));
             first.properties.clear();
+        }
+        if let Some(last) = blocks.last_mut()
+            && !after.is_empty()
+            && let Some(comment) = import::callout_as_comment(&last.content)
+        {
+            last.content = comment;
         }
         match blocks.last_mut() {
             Some(last) if last.is_code && !after.is_empty() => {
