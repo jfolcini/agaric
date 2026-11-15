@@ -673,6 +673,33 @@ export async function caretToEnd(): Promise<void> {
   )
 }
 
+/** Collapse the editor's selection to `offset` characters into its first paragraph. */
+export async function placeCaret(offset: number): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (sel: string, at: number) => {
+          // TipTap keeps its editor on the editable element.
+          const dom = document.querySelector<
+            HTMLElement & {
+              editor?: {
+                state: { selection: { from: number; empty: boolean } }
+                commands: { setTextSelection: (pos: number) => boolean }
+              }
+            }
+          >(sel)
+          if (dom?.editor === undefined) return false
+          dom.editor.commands.setTextSelection(1 + at)
+          const { from, empty } = dom.editor.state.selection
+          return empty && from === 1 + at
+        },
+        '[data-testid="block-editor"] [contenteditable="true"]',
+        offset,
+      ),
+    { timeout: ACTION_TIMEOUT, timeoutMsg: `the caret never reached offset ${offset}` },
+  )
+}
+
 /**
  * Press Enter at the end of the roving editor's block, and return the id of
  * the blank sibling Enter created once the editor is in it. Enter's create is a
@@ -1658,6 +1685,38 @@ export function invoke<T>(cmd: string, args: Record<string, unknown> = {}): Prom
     cmd,
     args,
   ) as Promise<T>
+}
+
+/**
+ * Wait until the materializer has nothing queued, retries included, and has
+ * finished nothing since the last poll, so its catch-up runs beside no timed
+ * edit. Queue depth alone misses a batch the consumer has already taken off
+ * the queue, so a still-moving processed count means it is not idle. A batch
+ * of a thousand blocks sheds tasks to the retry queue, which its sweeper takes
+ * up later, on its own schedule.
+ */
+export async function materializerIdle(timeout: number): Promise<void> {
+  let processed = -1
+  await browser.waitUntil(
+    async () => {
+      const status = await invoke<{
+        foreground_queue_depth: number
+        background_queue_depth: number
+        retry_queue_pending: number | null
+        total_ops_dispatched: number
+        total_background_dispatched: number
+      }>('get_status')
+      const before = processed
+      processed = status.total_ops_dispatched + status.total_background_dispatched
+      return (
+        status.foreground_queue_depth === 0 &&
+        status.background_queue_depth === 0 &&
+        (status.retry_queue_pending ?? 0) === 0 &&
+        processed === before
+      )
+    },
+    { timeout, interval: 500, timeoutMsg: 'the materializer never went idle' },
+  )
 }
 
 /** Text the clipboard plugin holds, read the way the paste chord reads it. */

@@ -13,6 +13,7 @@ import type { DeleteBlockOpts } from '@/editor/use-block-keyboard'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { announce } from '@/lib/announcer'
 import { newBlockId } from '@/lib/block-id'
+import { logLatencySample } from '@/lib/latency-sample'
 import type { ListStyle } from '@/lib/list-style'
 import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
@@ -813,6 +814,7 @@ export function useBlockActionOrchestration({
   ])
 
   const handleMergeWithPrev = useCallback(async () => {
+    const startedAt = performance.now()
     if (!focusedBlockId) return
     // Re-entrancy guard (see `mergeInProgress`): a second merge would race
     // the first's remove() (cascade-deleting the source subtree).
@@ -868,7 +870,10 @@ export function useBlockActionOrchestration({
         // As Enter's `focusCreated`: the commit dropped the editor's focus.
         editor.view.focus()
       }
-      if (await merged) return
+      const focusedAt = performance.now()
+      const ok = await merged
+      logLatencySample('merge', startedAt, focusedAt, ok)
+      if (ok) return
       // The store put both blocks back and toasted: the user gets the block
       // they merged away back with its text, unless they have moved on. What
       // they typed at the join has nowhere to go.
@@ -931,6 +936,7 @@ export function useBlockActionOrchestration({
   )
 
   const handleEnterSave = useCallback(async () => {
+    const startedAt = performance.now()
     if (!focusedBlockId) return
     if (mergeInProgress.current) {
       logger.warn('useBlockActionOrchestration', 'Enter press dropped — merge still in progress', {
@@ -1010,8 +1016,11 @@ export function useBlockActionOrchestration({
           baseText,
         })
         focusCreated()
+        const focusedAt = performance.now()
         readSplitOffAsTyped(rovingEditorRef.current, createdId, split)
-        if (!(await splitDone)) {
+        const splitOk = await splitDone
+        logLatencySample('enter-split', startedAt, focusedAt, splitOk)
+        if (!splitOk) {
           // The store toasted and put the block back whole.
           if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
           restoreSource()
@@ -1064,7 +1073,10 @@ export function useBlockActionOrchestration({
       }
       const created = createBelow(focusedBlockId, '', createdId)
       focusCreated()
-      if (!(await created)) {
+      const focusedAt = performance.now()
+      const createdOk = (await created) !== null
+      logLatencySample('enter-create', startedAt, focusedAt, createdOk)
+      if (!createdOk) {
         restoreSource()
         return
       }

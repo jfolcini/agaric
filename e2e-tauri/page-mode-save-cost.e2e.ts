@@ -28,6 +28,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   invoke,
+  materializerIdle,
   openPageTitled,
   runScopedMarker,
   waitForAppReady,
@@ -75,38 +76,6 @@ const pageSamples: PageSample[] = []
 const blockSamples: BlockSample[] = []
 
 const opCount = async () => (await invoke<{ total_ops: number }>('get_compaction_status')).total_ops
-
-/**
- * Wait until the materializer has nothing queued, retries included, and has
- * finished nothing since the last poll, so its catch-up runs beside no timed
- * edit. Queue depth alone misses a batch the consumer has already taken off
- * the queue, so a still-moving processed count means it is not idle. A batch
- * of `CAP` blocks sheds tasks to the retry queue, which its sweeper takes up
- * later, on its own schedule.
- */
-async function materializerIdle(timeout: number): Promise<void> {
-  let processed = -1
-  await browser.waitUntil(
-    async () => {
-      const status = await invoke<{
-        foreground_queue_depth: number
-        background_queue_depth: number
-        retry_queue_pending: number | null
-        total_ops_dispatched: number
-        total_background_dispatched: number
-      }>('get_status')
-      const before = processed
-      processed = status.total_ops_dispatched + status.total_background_dispatched
-      return (
-        status.foreground_queue_depth === 0 &&
-        status.background_queue_depth === 0 &&
-        (status.retry_queue_pending ?? 0) === 0 &&
-        processed === before
-      )
-    },
-    { timeout, interval: 500, timeoutMsg: 'the materializer never went idle' },
-  )
-}
 
 /** How many page-mode saves the observer has seen. */
 const savesSeen = () =>
