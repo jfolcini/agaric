@@ -606,8 +606,10 @@ async fn advance_cursor_once_drained(
 ///
 /// Boot imports every row (`rehydrate_registry`), and a pass exports each
 /// dirty space whole: the threshold trades the one against the other.
-/// `durability_cost_tests::boot_by_tail_size` measures both.
-pub const DELTA_COMPACTION_BYTES: i64 = 1024 * 1024;
+/// `durability_cost_tests::boot_by_tail_size` measures both: on a 100K-block
+/// space a tail below this size stays within the noise of the snapshot's own
+/// import, and the cost of a longer one grows with it.
+pub const DELTA_COMPACTION_BYTES: i64 = 256 * 1024;
 
 /// The largest total, in bytes, of one space's `loro_doc_delta` rows.
 async fn largest_delta_tail(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
