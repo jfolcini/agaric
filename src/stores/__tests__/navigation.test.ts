@@ -1971,9 +1971,7 @@ describe('useNavigationStore', () => {
       function RecentProbe() {
         useRecentPagesStore((s) => s.recentPages)
         const r = useRef(0)
-        // oxlint-disable-next-line react/immutability -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         r.current++
-        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         recentRenders = r.current
         return createElement('span', { 'data-testid': 'recent' })
       }
@@ -1981,9 +1979,7 @@ describe('useNavigationStore', () => {
       function TabsProbe() {
         useTabsStore((s) => s.tabs)
         const r = useRef(0)
-        // oxlint-disable-next-line react/immutability -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         r.current++
-        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         tabsRenders = r.current
         return createElement('span', { 'data-testid': 'tabs' })
       }
@@ -1997,9 +1993,7 @@ describe('useNavigationStore', () => {
         useNavigationStore((s) => s.currentView)
         useNavigationStore((s) => s.selectedBlockId)
         const r = useRef(0)
-        // oxlint-disable-next-line react/immutability -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         r.current++
-        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         navRenders = r.current
         return createElement('span', { 'data-testid': 'nav' })
       }
@@ -2067,9 +2061,7 @@ describe('useNavigationStore', () => {
         useJournalStore((s) => s.currentDate)
         useJournalStore((s) => s.mode)
         const r = useRef(0)
-        // oxlint-disable-next-line react/immutability -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         r.current++
-        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         journalRenders = r.current
         return createElement('span')
       }
@@ -2078,9 +2070,7 @@ describe('useNavigationStore', () => {
         useNavigationStore((s) => s.currentView)
         useNavigationStore((s) => s.selectedBlockId)
         const r = useRef(0)
-        // oxlint-disable-next-line react/immutability -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         r.current++
-        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         navRenders = r.current
         return createElement('span')
       }
