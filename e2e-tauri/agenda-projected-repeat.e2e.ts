@@ -641,7 +641,11 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
         const dates = (await agendaProjectedRows(open)).map((row) => row.date)
         if (dates.join() === after.join()) return true
         await navigateTo('Pages')
+        // The sidebar's Journal item opens Daily mode; Agenda mode is its tab.
         await navigateTo('Journal')
+        const tab = $('button[role="tab"][aria-label="Agenda view"]')
+        await tab.waitForClickable({ timeout: NAV_TIMEOUT })
+        await tab.click()
         await $('[data-testid="agenda-view"]').waitForExist({ timeout: NAV_TIMEOUT })
         return false
       },
