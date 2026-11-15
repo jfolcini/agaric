@@ -803,6 +803,10 @@ describe('filterToQueryText: the text the builder saves', () => {
         fc.oneof(
           fc.array(leaf, { maxLength: 4 }).map((primitives) => built(...primitives)),
           tree.map((root): FilterExpr => ({ type: 'And', children: [root] })),
+          // An Or at the root, so a written OR is common rather than a tail the guard below can miss.
+          fc
+            .array(tree, { minLength: 2, maxLength: 3 })
+            .map((children): FilterExpr => ({ type: 'And', children: [{ type: 'Or', children }] })),
         ),
         (filter) => {
           const queryText = filterToQueryText(filter)
