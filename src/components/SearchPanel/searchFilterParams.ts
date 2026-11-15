@@ -13,8 +13,8 @@
  */
 import type { FilterExpr } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { compileFilterTree } from '@/lib/query-text'
 import type { AstFilterProjection, FilterNode, SearchQueryAST } from '@/lib/search-query'
+import { compileFilterTree } from '@/lib/search-query/compile-filter'
 
 /**
  * Issue #717 — matches-nothing sentinel for unresolvable tag names.
