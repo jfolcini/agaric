@@ -58,7 +58,11 @@ export default {
   // actually need. (`node_modules`, `.git`, `/reports`, `.stryker-tmp` are
   // always ignored by Stryker regardless of this list.)
   ignorePatterns: [
-    'src-tauri',
+    // `src-tauri/**`, not `src-tauri`, so the negations below can re-include
+    // the Rust sources a module's tests read (`history-utils.test.ts`
+    // reads `op.rs`).
+    'src-tauri/**',
+    '!src-tauri/agaric-store/src/op.rs',
     'e2e',
     'target',
     'coverage',
