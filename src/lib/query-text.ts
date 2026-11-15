@@ -305,6 +305,7 @@ function leafWords(leaf: FilterPrimitive): string[] {
     case 'TagOrRef':
     case 'TagUnder':
     case 'WholeWord':
+    // A `v2:` query's leaf is only checked to be an object; its `type` can be one this build lacks.
     default: {
       return []
     }

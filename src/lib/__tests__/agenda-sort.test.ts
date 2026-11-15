@@ -1604,6 +1604,15 @@ describe('mutation coverage: sortAgendaBlocksBy dispatch', () => {
     const sorted = sortAgendaBlocksBy(blocks, 'page')
     expect(sorted.map((b) => b.id)).toEqual(['b2', 'b1'])
   })
+
+  it.each([['date'], [undefined]] as const)('sortBy=%s sorts date-first', (sortBy) => {
+    // Priority-first would put p1-late first.
+    const blocks = [
+      makeBlock({ id: 'p1-late', priority: '1', due_date: '2025-06-20' }),
+      makeBlock({ id: 'p3-early', priority: '3', due_date: '2025-06-10' }),
+    ]
+    expect(sortAgendaBlocksBy(blocks, sortBy).map((b) => b.id)).toEqual(['p3-early', 'p1-late'])
+  })
 })
 
 describe('mutation coverage: formatGroupDate malformed input fallback', () => {

@@ -288,8 +288,7 @@ export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter 
     case 'space':
     case 'stub':
     case 'tagPrefix':
-    case 'wholeWord':
-    default: {
+    case 'wholeWord': {
       return null
     }
   }

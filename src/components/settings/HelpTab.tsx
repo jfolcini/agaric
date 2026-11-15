@@ -64,8 +64,7 @@ function updateStatusLabel(status: UpdateStatusValue, checking: boolean, t: TFun
         error: status.error ?? t('help.updateInstallFailedToast'),
       })
     }
-    case 'idle':
-    default: {
+    case 'idle': {
       // Nothing has been checked yet this install.
       return t('help.updateLastCheckedNever')
     }

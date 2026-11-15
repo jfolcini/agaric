@@ -130,8 +130,7 @@ export function filterSummary(
     case 'And':
     case 'DueDate':
     case 'Or':
-    case 'SourcePage':
-    default: {
+    case 'SourcePage': {
       return tr('filter.default', 'filter')
     }
   }

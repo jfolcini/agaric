@@ -93,6 +93,7 @@ function toDatePredicate(op: PropertyFilter['operator'], date: string): DatePred
     case 'eq':
     case 'neq':
     case undefined:
+    // `operator:` in a `type:property` query is user text cast to this type.
     default: {
       // Exact day, matching legacy `value_date = X`.
       return { type: 'On', date }
@@ -123,6 +124,7 @@ function toPropertyPredicate(
     }
     case 'eq':
     case undefined:
+    // `operator:` in a `type:property` query is user text cast to this type.
     default: {
       return { type: 'Eq', value }
     }

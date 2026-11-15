@@ -196,8 +196,7 @@ function negate(node: Node): Node {
             case 'pathExclude':
             case 'scheduled':
             case 'tag':
-            case 'under':
-            default: {
+            case 'under': {
               throw new Unsupported()
             }
           }

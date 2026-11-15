@@ -80,8 +80,7 @@ export function planAgendaProjection(
       case 'completedDate':
       case 'createdDate':
       case 'property':
-      case 'tag':
-      default: {
+      case 'tag': {
         return null
       }
     }

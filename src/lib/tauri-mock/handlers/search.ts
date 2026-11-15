@@ -801,8 +801,7 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
     }
     case 'Id':
     case 'Priority':
-    case 'Title':
-    default: {
+    case 'Title': {
       // This mock represents every one of these as a string (ULID or plain text).
       return { t: 'Text', v: raw as string }
     }
@@ -890,8 +889,7 @@ function isCursorValue(v: unknown): v is CursorValue {
     case 'real': {
       return typeof raw === 'number' && Number.isFinite(raw)
     }
-    case 'unit':
-    default: {
+    case 'unit': {
       return raw === undefined || raw === null
     }
   }
