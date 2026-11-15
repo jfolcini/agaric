@@ -59,8 +59,16 @@ describe('Agaric real-backend Logseq query import (#6754) @markdown @search', ()
       },
       `Imported “${TITLE}”`,
     )
-    // One query the import could not translate: one warning, not one per block.
-    expect(await $('[data-testid="import-warnings-heading"]').getText()).toBe('1 warning')
+    // One query the import could not translate: one warning for it, not one per block.
+    // The list may hold warnings that are not about queries, so only the query one is read.
+    const warnings = await browser.execute(() =>
+      [...document.querySelectorAll('[data-testid="import-warning-item"]')].map(
+        (el) => el.textContent ?? '',
+      ),
+    )
+    expect(warnings.filter((text) => text.includes('Logseq quer'))).toEqual([
+      '1 Logseq query has no equivalent here and was kept as a code block to rebuild.',
+    ])
 
     // Navigate away and back, so the page editor mounts from a fresh backend read.
     await navigateTo('Journal')
