@@ -899,6 +899,10 @@ export async function openPageMobile(page: Page, title: string) {
 
   const sheet = page.getByTestId('search-sheet')
   await expect(sheet).toBeVisible()
+  // The sheet slides up as it opens. A press that goes down on the segment
+  // mid-slide comes up over whatever slid under it, so no click reaches the
+  // segment; Playwright's stability check can pass mid-slide on a loaded runner.
+  await sheet.evaluate((el) => Promise.all(el.getAnimations().map((slide) => slide.finished)))
 
   // Force the all-pages (palette) segment — page-style views (Journal) default
   // to in-page, which has no cross-page search. The palette is where page-title
