@@ -1,13 +1,13 @@
 /**
  * MobileEscalationButton — prominent, always-visible
- * escalation CTA pinned beneath the CommandList on the mobile all-pages
+ * escalation CTA pinned beneath the palette input on the mobile all-pages
  * sheet. Extracted from `PaletteBody` in CommandPalette.tsx.
  *
  * Styled as a bordered, elevated box (not a muted footer row) so the
  * path to the full search view — filters, regex, history — is
  * discoverable even on a cold open with an empty query. Two lines: an
  * emphasized title with a trailing chevron + a muted hint.
- * Sibling-after-list placement loses cmdk's Enter-to-select binding, but
+ * Living outside the list loses cmdk's Enter-to-select binding, but
  * touch users tap.
  */
 

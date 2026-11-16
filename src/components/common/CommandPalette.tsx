@@ -936,6 +936,11 @@ export function PaletteBody({
           </span>
         )}
       </div>
+      {/* Above the results, not below: rows arriving after a keystroke would move it
+          between the press and the release of a tap. */}
+      {showMobileEscalation && (
+        <MobileEscalationButton onEscalate={() => escalate(trimmedQuery)} t={t} />
+      )}
       {/* SR-only loading status — announced politely during refetch.
           Outside the input wrapper so screen readers don't read the
           input twice. */}
@@ -1063,9 +1068,6 @@ export function PaletteBody({
           </>
         )}
       </CommandList>
-      {showMobileEscalation && (
-        <MobileEscalationButton onEscalate={() => escalate(trimmedQuery)} t={t} />
-      )}
       {/* The footer surfaces the open / new-tab / close keyboard chips; on touch (mobile search
           sheet) they're not actionable, so only show on desktop. */}
       {mode === 'search' && !linkMode && !isMobile && <PaletteFooterHint t={t} />}
