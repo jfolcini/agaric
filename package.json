@@ -142,7 +142,7 @@
     "@wdio/mocha-framework": "^10.1.0",
     "@wdio/spec-reporter": "^10.1.0",
     "babel-plugin-react-compiler": "^1.0.0",
-    "better-npm-audit": "^3.11.0",
+    "better-npm-audit": "^4.2.1",
     "emojibase": "^18.0.0",
     "emojibase-data": "^18.0.0",
     "esbuild": "^0.28.2",
