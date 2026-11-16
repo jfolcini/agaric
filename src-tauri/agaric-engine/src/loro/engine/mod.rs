@@ -968,6 +968,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn into_list_item_keeps_strings_and_numbers_only() {
+        use super::{PropertyList, PropertyListItem, PropertyValue};
+        assert_eq!(
+            PropertyValue::Str("a".into()).into_list_item(),
+            Some(PropertyListItem::Text("a".into()))
+        );
+        assert_eq!(
+            PropertyValue::Num(2.0).into_list_item(),
+            Some(PropertyListItem::Num(2.0))
+        );
+        assert_eq!(PropertyValue::Bool(true).into_list_item(), None);
+        assert_eq!(PropertyValue::Null.into_list_item(), None);
+        assert_eq!(
+            PropertyValue::List(PropertyList(vec![])).into_list_item(),
+            None
+        );
+    }
+
     // #1542: `from_loro` casts `LoroValue::I64` to `Num(f64)`, which is exact
     // only inside the f64-safe integer range `[-(2^53), 2^53]`. The conversion
     // is kept (a lossless `Int` variant is future work), but magnitudes beyond

@@ -1,17 +1,20 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { HistoryEntry } from '@/lib/bindings'
 import {
+  ALL_PAGES_HISTORY_ID,
   getPayloadDisplayContent,
   getPayloadRawContent,
   getPropertyPayload,
   OP_TYPE_LABEL_KEYS,
+  opTypeLabel,
   parsePayloadObject,
 } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
   return {
@@ -504,6 +507,30 @@ describe('OP_TYPE_LABEL_KEYS', () => {
   })
 })
 
+describe('opTypeLabel', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('labels a known op type from the catalog', () => {
+    expect(opTypeLabel('edit_block', t)).toBe(t('history.opTypeEdit'))
+  })
+
+  it('shows an unknown op type as itself and logs it', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    expect(opTypeLabel('future_op', t)).toBe('future_op')
+    expect(warn).toHaveBeenCalledWith('history-utils', 'no label for op type', {
+      opType: 'future_op',
+    })
+  })
+})
+
+describe('ALL_PAGES_HISTORY_ID', () => {
+  it('is the sentinel the backend reads as every page', () => {
+    expect(ALL_PAGES_HISTORY_ID).toBe('__all__')
+  })
+})
+
 describe('getPayloadDisplayContent (#6544)', () => {
   afterEach(() => {
     localStorage.clear()
@@ -526,5 +553,9 @@ describe('getPayloadDisplayContent (#6544)', () => {
     localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
     const entry = makeEntry(JSON.stringify(payload), opType)
     expect(getPayloadDisplayContent(entry)).toBe(getPayloadRawContent(entry))
+  })
+
+  it('returns null for a payload that is not JSON', () => {
+    expect(getPayloadDisplayContent(makeEntry('{not json', 'create_block'))).toBeNull()
   })
 })

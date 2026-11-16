@@ -478,3 +478,13 @@ frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorIndex !==
 frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorId !== undefined) context?.onCursorBlock?.(cursorId)
 # #5964 page-tasks: a block with no id draws no metadata row whatever its count (`showMetadata` returns on a null id), so the count read for it is never shown
 frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	11	1	refCount: id === null ? 0 : this.tasks.refCountOf(id),
+# #3756 history-utils: with `content` null, `displayPageTitle(null)` tests the string "null", which is no date, and returns null, as the else arm does
+frontend	src/lib/history-utils.ts	ConditionalExpression	8	1	return content !== null && createsPage ? displayPageTitle(content) : content
+# #3763 to-search-filter: the `invalid` case only breaks, and the switch has nothing after it, so dropping or emptying the case changes nothing
+frontend	src/lib/search-query/to-search-filter.ts	BlockStatement	17	1	case 'invalid': {
+frontend	src/lib/search-query/to-search-filter.ts	ConditionalExpression	1	1	case 'invalid': {
+frontend	src/lib/search-query/to-search-filter.ts	StringLiteral	6	1	case 'invalid': {
+# #3766 vault-import: `translateLogseqQueries` touches only lines `QUERY_LINE_RE` matches, a subset of what the pre-check matches; the check only skips reading the pick's tags
+frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (holdsLogseqQuery(content)) {
+# #3766 vault-import: nothing reads the default `keptQueries`; the one caller that reads the count passes its own
+frontend	src/lib/vault-import.ts	ObjectLiteral	34	1	keptQueries: { count: number } = { count: 0 },
