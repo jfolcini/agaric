@@ -1435,6 +1435,9 @@ jobs:
         # 27.1.0: a SIGINT'd run left `total_mutants: 5` against a 20-mutant
         # `mutants.json`).
         #
+        # `--annotations=none`, here and in the confirm: cargo-mutants posts a
+        # warning per miss under Actions, scan misses the confirm kills and
+        # accepted equivalents alike. The tracker issues are the report.
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
@@ -1447,7 +1450,7 @@ jobs:
           echo "scan filter for $PACKAGE: $filter"
           started=$(date +%s)
           timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
-            cargo mutants --in-place -p "$PACKAGE" \
+            cargo mutants --in-place -p "$PACKAGE" --annotations=none \
               --shard "$SHARD/$SHARDS" --sharding round-robin \
               --timeout "$MUTANTS_TIMEOUT" \
               --build-timeout "$MUTANTS_BUILD_TIMEOUT" \
@@ -1488,7 +1491,7 @@ jobs:
           echo "confirming $count surviving site(s) with the full $PACKAGE suite, ${remaining}s left of the budget"
           started=$(date +%s)
           timeout --signal=INT --kill-after=120 "$remaining" \
-            cargo mutants --in-place -p "$PACKAGE" \
+            cargo mutants --in-place -p "$PACKAGE" --annotations=none \
               --re "$re" \
               --timeout "$MUTANTS_TIMEOUT" \
               --build-timeout "$MUTANTS_BUILD_TIMEOUT" || true
