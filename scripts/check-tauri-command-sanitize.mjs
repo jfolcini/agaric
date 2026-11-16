@@ -63,6 +63,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+import { findMatchingBrace } from './lib/rust-scan.mjs'
+
 const HERE = import.meta.dirname
 const REPO_ROOT = join(HERE, '..')
 const COMMANDS_DIR = join(REPO_ROOT, 'src-tauri', 'src', 'commands')
@@ -78,117 +80,6 @@ function* walkRustFiles(dir) {
       yield full
     }
   }
-}
-
-/**
- * Locate the byte offset of the matching `}` for the `{` at `openIdx`.
- *
- * Skips braces that live inside Rust string literals (`"…"`), char literals
- * (`'{'`), raw strings (`r"…"`, `r#"…"#`, `r##"…"##`, …), and `//` line /
- * `/* … *\/` block comments — so a `{`/`}` inside a `format!("…{…}…")` string
- * or a comment cannot throw off the body's brace balance (#2045). Rust block
- * comments nest, so the scanner tracks block-comment depth.
- *
- * Returns `null` if no match is found.
- */
-function findMatchingBrace(src, openIdx) {
-  let depth = 0
-  let i = openIdx
-  while (i < src.length) {
-    const c = src[i]
-    const next = src[i + 1]
-
-    // Line comment: skip to end of line.
-    if (c === '/' && next === '/') {
-      const nl = src.indexOf('\n', i + 2)
-      if (nl === -1) return null
-      i = nl + 1
-      continue
-    }
-
-    // Block comment (nesting): skip past the matching `*/`.
-    if (c === '/' && next === '*') {
-      let commentDepth = 1
-      i += 2
-      while (i < src.length && commentDepth > 0) {
-        if (src[i] === '/' && src[i + 1] === '*') {
-          commentDepth++
-          i += 2
-        } else if (src[i] === '*' && src[i + 1] === '/') {
-          commentDepth--
-          i += 2
-        } else {
-          i++
-        }
-      }
-      continue
-    }
-
-    // Raw string: r"…", r#"…"#, r##"…"##, … — match the same number of
-    // `#`s on the closing delimiter. No escape processing inside.
-    if (c === 'r' && (next === '"' || next === '#')) {
-      let j = i + 1
-      let hashes = 0
-      while (src[j] === '#') {
-        hashes++
-        j++
-      }
-      if (src[j] === '"') {
-        // Confirmed raw-string opener `r{#*}"`.
-        const close = `"${'#'.repeat(hashes)}`
-        const end = src.indexOf(close, j + 1)
-        if (end === -1) return null
-        i = end + close.length
-        continue
-      }
-      // Not actually a raw string (e.g. an identifier starting with `r`):
-      // fall through and treat `r` as an ordinary char.
-    }
-
-    // Ordinary string literal: "…" with `\` escapes.
-    if (c === '"') {
-      i++
-      while (i < src.length) {
-        if (src[i] === '\\') {
-          i += 2
-          continue
-        }
-        if (src[i] === '"') {
-          i++
-          break
-        }
-        i++
-      }
-      continue
-    }
-
-    // Char literal: '…' with `\` escapes — but NOT a lifetime (`'a`), which
-    // has no closing quote. Only treat as a char literal when a closing `'`
-    // is present a plausible distance away.
-    if (c === "'") {
-      if (src[i + 1] === '\\') {
-        // Escaped char: '\n', '\'', '\\', '\u{7f}', … — find the closing '.
-        const end = src.indexOf("'", i + 2)
-        if (end !== -1 && end - i <= 12) {
-          i = end + 1
-          continue
-        }
-      } else if (src[i + 2] === "'") {
-        // Simple char literal like '{' or 'a'.
-        i += 3
-        continue
-      }
-      // Otherwise a lifetime/label — fall through, `'` is an ordinary char.
-    }
-
-    if (c === '{') depth++
-    else if (c === '}') {
-      depth--
-      if (depth === 0) return i
-    }
-    i++
-  }
-  return null
 }
 
 /**

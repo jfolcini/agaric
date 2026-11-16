@@ -496,6 +496,7 @@ function regexAllowedAfter(prev, src, slashIdx) {
  * Throws `ScanError` on undecidable input — see the header's fail-closed
  * policy.
  */
+// oxlint-disable-next-line eslint/complexity -- a hand-written lexer; one state machine reads best whole
 export function* tokenize(src, { from = 0, to = src.length, initialPrev = null } = {}) {
   let prev = initialPrev
   const parenStack = []
@@ -1053,6 +1054,7 @@ export function findStatementEnd(src, from) {
  * second copy of this rule, which is the failure mode this module exists to
  * remove.
  */
+// oxlint-disable-next-line eslint/complexity -- one token state machine whose rules share its state
 export function findStatementEndDetailed(src, from) {
   const R = (end, reason = null) => ({ end, reason })
   let depth = 0
@@ -1170,6 +1172,7 @@ if (isMainModule && process.argv.includes('--self-test')) {
   runSelfTest()
 }
 
+// oxlint-disable-next-line eslint/complexity -- a self-test case list; splitting it scatters the cases
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)

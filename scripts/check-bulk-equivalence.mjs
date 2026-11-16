@@ -163,6 +163,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { literalEnd } from './lib/rust-scan.mjs'
+
 const ROOT = path.resolve(import.meta.dirname, '..')
 const TAURI_DIR = path.join(ROOT, 'src-tauri')
 const APP_SRC_DIR = path.join(TAURI_DIR, 'src')
@@ -252,69 +254,17 @@ function toPosix(p) {
 export function blank(src, { blankStrings }) {
   const out = src.split('')
   let i = 0
-  const n = src.length
-  const wipe = (from, to) => {
-    for (let k = from; k < to && k < n; k += 1) if (out[k] !== '\n') out[k] = ' '
-  }
-  while (i < n) {
-    const c = src[i]
-    const d = src[i + 1]
-    if (c === '/' && d === '/') {
-      let j = i
-      while (j < n && src[j] !== '\n') j += 1
-      wipe(i, j)
-      i = j
-    } else if (c === '/' && d === '*') {
-      // Rust block comments nest.
-      let depth = 1
-      let j = i + 2
-      while (j < n && depth > 0) {
-        if (src[j] === '/' && src[j + 1] === '*') {
-          depth += 1
-          j += 2
-        } else if (src[j] === '*' && src[j + 1] === '/') {
-          depth -= 1
-          j += 2
-        } else j += 1
-      }
-      wipe(i, j)
-      i = j
-    } else if (c === 'r' && (d === '"' || d === '#')) {
-      // Raw string: r"..." / r#"..."# / r##"..."##
-      let hashes = 0
-      let j = i + 1
-      while (src[j] === '#') {
-        hashes += 1
-        j += 1
-      }
-      if (src[j] !== '"') {
-        i += 1
-        continue
-      }
-      const terminator = `"${'#'.repeat(hashes)}`
-      const end = src.indexOf(terminator, j + 1)
-      const stop = end === -1 ? n : end + terminator.length
-      if (blankStrings) wipe(i, stop)
-      i = stop
-    } else if (c === '"') {
-      let j = i + 1
-      while (j < n) {
-        if (src[j] === '\\') j += 2
-        else if (src[j] === '"') {
-          j += 1
-          break
-        } else j += 1
-      }
-      if (blankStrings) wipe(i, j)
-      i = j
-    } else if (c === "'") {
-      // Char literal or a lifetime (`'a`). Only the former can hide a quote.
-      const m = /^'(\\.|[^\\'])'/.exec(src.slice(i))
-      if (m) {
-        if (blankStrings) wipe(i, i + m[0].length)
-        i += m[0].length
-      } else i += 1
-    } else i += 1
+  while (i < src.length) {
+    const end = literalEnd(src, i)
+    if (end === -1) {
+      i += 1
+      continue
+    }
+    // Only a comment starts with `/`.
+    if (blankStrings || src[i] === '/') {
+      for (let k = i; k < end && k < src.length; k += 1) if (out[k] !== '\n') out[k] = ' '
+    }
+    i = end
   }
   return out.join('')
 }

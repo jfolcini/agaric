@@ -1081,6 +1081,41 @@ function resolveAgainstDoc(_docFile, ref) {
   return resolveAliasForm(ref)
 }
 
+/** `--print-source`: the chosen source, plus the alias-map error a real run would exit 2 on. */
+function printSource(chosen) {
+  console.log(`check-doc-code-paths: ${describeSource(chosen.source)} (${chosen.why})`)
+  // #4492 follow-up — `--print-source` is diagnostic, not the check
+  // itself: its whole job is to tell a caller what this guard is about to
+  // do before it does it, and "it is about to hard-fail on an unreadable
+  // `tsconfig.app.json`" is part of that. Report it here too, rather than
+  // leaving `--print-source` silent about the one thing that would make a
+  // real run exit 2. This still exits 0, not 2: `--print-source` never ran
+  // `computeMisses`'s scan and has nothing else to report as a failure, so
+  // making it fail here would conflate "here is the source" with "the
+  // check passed" — two different questions this flag has never answered.
+  // A caller who wants the loud failure runs the guard without the flag.
+  if (PATH_ALIAS_MAP_ERROR) {
+    process.stderr.write(
+      `check-doc-code-paths: warning: ${PATH_ALIAS_MAP_ERROR.message} ` +
+        `(a real run would exit 2 on this)\n`,
+    )
+  }
+}
+
+/** Every ancestor directory of every path in `paths`. */
+function ancestorDirs(paths) {
+  const dirs = new Set()
+  for (const path of paths) {
+    const parts = path.split('/')
+    let prefix = ''
+    for (let i = 0; i < parts.length - 1; i++) {
+      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i]
+      dirs.add(prefix)
+    }
+  }
+  return dirs
+}
+
 /**
  * Resolve the source, enumerate `.md` + `.ts`/`.tsx` files and compute
  * every current (miss, scanError) — shared by `check()` (which filters
@@ -1107,23 +1142,7 @@ function computeMisses() {
     return { exitCode: 2 }
   }
   if (process.argv.includes('--print-source')) {
-    console.log(`check-doc-code-paths: ${describeSource(chosen.source)} (${chosen.why})`)
-    // #4492 follow-up — `--print-source` is diagnostic, not the check
-    // itself: its whole job is to tell a caller what this guard is about to
-    // do before it does it, and "it is about to hard-fail on an unreadable
-    // `tsconfig.app.json`" is part of that. Report it here too, rather than
-    // leaving `--print-source` silent about the one thing that would make a
-    // real run exit 2. This still exits 0, not 2: `--print-source` never ran
-    // `computeMisses`'s scan and has nothing else to report as a failure, so
-    // making it fail here would conflate "here is the source" with "the
-    // check passed" — two different questions this flag has never answered.
-    // A caller who wants the loud failure runs the guard without the flag.
-    if (PATH_ALIAS_MAP_ERROR) {
-      process.stderr.write(
-        `check-doc-code-paths: warning: ${PATH_ALIAS_MAP_ERROR.message} ` +
-          `(a real run would exit 2 on this)\n`,
-      )
-    }
+    printSource(chosen)
     return { exitCode: 0 }
   }
   // #4482 — a `tsconfig.app.json` that exists but could not be read as the
@@ -1178,15 +1197,7 @@ function computeMisses() {
   // `.some(startsWith(...))` for every directory-shaped candidate AND
   // every genuine miss, paying O(n) per candidate on top of the O(n)
   // materialisation itself.
-  const trackedDirs = new Set()
-  for (const path of entries.paths) {
-    const parts = path.split('/')
-    let prefix = ''
-    for (let i = 0; i < parts.length - 1; i++) {
-      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i]
-      trackedDirs.add(prefix)
-    }
-  }
+  const trackedDirs = ancestorDirs(entries.paths)
   const docs = listMarkdownFiles(entries.paths)
   const tsFiles = listTsFiles(entries.paths)
   if (docs.length === 0 && tsFiles.length === 0) {
@@ -1408,6 +1419,41 @@ function computeMisses() {
   }
 }
 
+/** Print the citations `check()` fails on that the baseline does not cover. */
+function reportNewMisses(newMisses) {
+  const shown = newMisses.slice(0, 50)
+  process.stderr.write(
+    'ERROR: doc/comment citations reference paths missing from the tracked tree:\n',
+  )
+  for (const m of shown) {
+    // #4135 — a `bare-form` miss never resolved anything (there was no
+    // repo-rooted path to resolve), so printing its `resolved`/`onDisk`/
+    // `tracked` fields would read as a real resolution attempt that failed
+    // rather than what actually happened: the citation's FORM is the
+    // violation. Give it its own line instead.
+    if (m.kind === 'bare-form') {
+      process.stderr.write(
+        `  - ${m.doc} → \`${m.ref}\`  (bare filename with a line number — cite a repo-rooted path instead, #4135)\n`,
+      )
+      continue
+    }
+    if (m.kind === 'partial-root') {
+      process.stderr.write(
+        `  - ${m.doc} → \`${m.ref}\`  (partially-rooted citation — cite a repo-rooted path instead, #4184)\n`,
+      )
+      continue
+    }
+    const onDisk = m.onDisk === null ? 'n/a' : String(m.onDisk)
+    process.stderr.write(
+      `  - ${m.doc} → \`${m.ref}\`  (resolved: ${m.resolved}, onDisk=${onDisk}, tracked=${m.tracked})\n`,
+    )
+  }
+  if (newMisses.length > shown.length) {
+    process.stderr.write(`  ...and ${newMisses.length - shown.length} more\n`)
+  }
+  process.stderr.write('\nFix: restore the file, update the reference, or remove the mention.\n')
+}
+
 function check() {
   const result = computeMisses()
   if (result.exitCode !== undefined) return result.exitCode
@@ -1463,39 +1509,7 @@ function check() {
   // file is otherwise indistinguishable from a broken guard" case this line
   // exists to prevent.
   process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
-  if (newMisses.length > 0) {
-    const shown = newMisses.slice(0, 50)
-    process.stderr.write(
-      'ERROR: doc/comment citations reference paths missing from the tracked tree:\n',
-    )
-    for (const m of shown) {
-      // #4135 — a `bare-form` miss never resolved anything (there was no
-      // repo-rooted path to resolve), so printing its `resolved`/`onDisk`/
-      // `tracked` fields would read as a real resolution attempt that failed
-      // rather than what actually happened: the citation's FORM is the
-      // violation. Give it its own line instead.
-      if (m.kind === 'bare-form') {
-        process.stderr.write(
-          `  - ${m.doc} → \`${m.ref}\`  (bare filename with a line number — cite a repo-rooted path instead, #4135)\n`,
-        )
-        continue
-      }
-      if (m.kind === 'partial-root') {
-        process.stderr.write(
-          `  - ${m.doc} → \`${m.ref}\`  (partially-rooted citation — cite a repo-rooted path instead, #4184)\n`,
-        )
-        continue
-      }
-      const onDisk = m.onDisk === null ? 'n/a' : String(m.onDisk)
-      process.stderr.write(
-        `  - ${m.doc} → \`${m.ref}\`  (resolved: ${m.resolved}, onDisk=${onDisk}, tracked=${m.tracked})\n`,
-      )
-    }
-    if (newMisses.length > shown.length) {
-      process.stderr.write(`  ...and ${newMisses.length - shown.length} more\n`)
-    }
-    process.stderr.write('\nFix: restore the file, update the reference, or remove the mention.\n')
-  }
+  if (newMisses.length > 0) reportNewMisses(newMisses)
   if (staleEntries.length > 0) {
     process.stderr.write(
       'ERROR: scripts/doc-code-paths-baseline.json has stale entr(ies) that are no longer misses:\n',

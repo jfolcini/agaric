@@ -431,6 +431,70 @@ export function probeVisibilityInPage(selector: string): VisibilityProbe {
 }
 
 /**
+ * The verdict for an element nothing hides, with a real box: the branch of
+ * `explainVisibilityProbe` where visibility itself is not what failed.
+ */
+function visibleVerdict(
+  wait: WaitFailure,
+  probe: VisibilityProbe,
+  interactionWait: boolean,
+): string {
+  // From here on, `probe.checkVisibility` is either `true` (the engine
+  // actively agrees) or `null` (this engine implements no `checkVisibility`
+  // at all — see `askEngine` above; `false` the caller has already handled
+  // itself). #4457 note 1: the three branches below used to read
+  // `checkVisibility !== false` as "the engine agrees it is visible" — a
+  // DENY-list that silently folded "no opinion" into "agrees". With such
+  // an engine the walk's own facts (nothing hiding it, a real box) are the
+  // ONLY evidence, yet the message asserted corroboration it never
+  // obtained, and then — in the branch below with no other verdict to
+  // give — committed to "A TIMING failure, not a state failure" on the
+  // strength of that phantom agreement. Classified POSITIVELY instead:
+  // only `true` counts as agreement, so `null` today — and any value this
+  // scan has not anticipated tomorrow — reads as "no opinion", never as
+  // silent corroboration.
+  const engineAgrees = probe.checkVisibility === true
+
+  if (wait.waitedFor === 'displayed within viewport' && probe.inViewport === false) {
+    return engineAgrees
+      ? 'Nothing hides it and the engine agrees it is visible, but its box does not intersect ' +
+          'the viewport — the `within viewport` half of the assertion is what failed, not ' +
+          'visibility.'
+      : 'Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so the ' +
+          'visibility half rests on the walk alone; its box does not intersect the viewport — ' +
+          'the `within viewport` half of the assertion is what failed regardless.'
+  }
+  if (interactionWait) {
+    return engineAgrees
+      ? `Nothing hides it and the engine agrees it is visible — but this wait was for ` +
+          `\`${wait.waitedFor}\`, which visibility does not decide.`
+      : `Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so this ` +
+          `rests on the walk alone — and this wait was for \`${wait.waitedFor}\`, which ` +
+          'visibility does not decide either way.'
+  }
+  if (engineAgrees) {
+    return (
+      `Nothing hides it, the engine agrees it is visible, and it is ${probe.width}x${probe.height}px ` +
+      'RIGHT NOW — it reached the asserted state after the wait expired. A TIMING failure, not a ' +
+      'state failure.'
+    )
+  }
+  // #4457 acceptance: the null branch must not print a verdict. With no
+  // `checkVisibility` there is no corroboration for "TIMING, not state" —
+  // only the walk's say-so, which the caller's `checkVisibility === false` branch
+  // already establishes can miss a real hiding cause. So this says
+  // NO VERDICT rather than picking one of the two readings for the
+  // reader.
+  return (
+    `NO VERDICT: nothing this walk models hides it, and it is ${probe.width}x${probe.height}px ` +
+    'RIGHT NOW, but the engine has no opinion (checkVisibility unavailable) — this rests on ' +
+    'the walk alone, which cannot rule out an unmodeled rendering cause the way ' +
+    '`checkVisibility()` can. Reaching the asserted state late and an unmodeled rendering ' +
+    'cause are both still on the table, and nothing here decides between them.'
+  )
+}
+
+/**
  * Turn a probe into the few sentences a reader of a red run needs, which are
  * always an answer to "is the asserted state missing, or merely invisible?" —
  * for the state that was ACTUALLY awaited.
@@ -519,62 +583,7 @@ export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe
       `Nothing hides it, but its box is ${probe.width}x${probe.height}px — it is laid out to zero size.`,
     )
   } else {
-    // From here on, `probe.checkVisibility` is either `true` (the engine
-    // actively agrees) or `null` (this engine implements no `checkVisibility`
-    // at all — see `askEngine` above; already excluded is `false`, handled
-    // above). #4457 note 1: the three branches below used to read
-    // `checkVisibility !== false` as "the engine agrees it is visible" — a
-    // DENY-list that silently folded "no opinion" into "agrees". With such
-    // an engine the walk's own facts (nothing hiding it, a real box) are the
-    // ONLY evidence, yet the message asserted corroboration it never
-    // obtained, and then — in the branch below with no other verdict to
-    // give — committed to "A TIMING failure, not a state failure" on the
-    // strength of that phantom agreement. Classified POSITIVELY instead:
-    // only `true` counts as agreement, so `null` today — and any value this
-    // scan has not anticipated tomorrow — reads as "no opinion", never as
-    // silent corroboration.
-    const engineAgrees = probe.checkVisibility === true
-
-    if (wait.waitedFor === 'displayed within viewport' && probe.inViewport === false) {
-      parts.push(
-        engineAgrees
-          ? 'Nothing hides it and the engine agrees it is visible, but its box does not intersect ' +
-              'the viewport — the `within viewport` half of the assertion is what failed, not ' +
-              'visibility.'
-          : 'Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so the ' +
-              'visibility half rests on the walk alone; its box does not intersect the viewport — ' +
-              'the `within viewport` half of the assertion is what failed regardless.',
-      )
-    } else if (interactionWait) {
-      parts.push(
-        engineAgrees
-          ? `Nothing hides it and the engine agrees it is visible — but this wait was for ` +
-              `\`${wait.waitedFor}\`, which visibility does not decide.`
-          : `Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so this ` +
-              `rests on the walk alone — and this wait was for \`${wait.waitedFor}\`, which ` +
-              'visibility does not decide either way.',
-      )
-    } else if (engineAgrees) {
-      parts.push(
-        `Nothing hides it, the engine agrees it is visible, and it is ${probe.width}x${probe.height}px ` +
-          'RIGHT NOW — it reached the asserted state after the wait expired. A TIMING failure, not a ' +
-          'state failure.',
-      )
-    } else {
-      // #4457 acceptance: the null branch must not print a verdict. With no
-      // `checkVisibility` there is no corroboration for "TIMING, not state" —
-      // only the walk's say-so, which the `checkVisibility === false` branch
-      // above already establishes can miss a real hiding cause. So this says
-      // NO VERDICT rather than picking one of the two readings for the
-      // reader.
-      parts.push(
-        `NO VERDICT: nothing this walk models hides it, and it is ${probe.width}x${probe.height}px ` +
-          'RIGHT NOW, but the engine has no opinion (checkVisibility unavailable) — this rests on ' +
-          'the walk alone, which cannot rule out an unmodeled rendering cause the way ' +
-          '`checkVisibility()` can. Reaching the asserted state late and an unmodeled rendering ' +
-          'cause are both still on the table, and nothing here decides between them.',
-      )
-    }
+    parts.push(visibleVerdict(wait, probe, interactionWait))
   }
 
   if (interactionWait) {
