@@ -21,7 +21,7 @@
     "typescript/only-throw-error": ["error", { "allow": [{ "from": "file", "name": "AppError" }] }],
     "typescript/require-await": "error",
     "eslint/no-console": ["warn", { "allow": ["warn", "error"] }],
-    "eslint/complexity": ["warn", { "max": 25 }],
+    "eslint/complexity": ["error", { "max": 25 }],
 
     "jsx-a11y/prefer-tag-over-role": "error",
     "react-hooks/exhaustive-deps": "error",
