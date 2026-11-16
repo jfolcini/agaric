@@ -94,6 +94,31 @@ test.describe('Search sheet (mobile viewport) @search @mobile', () => {
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Search')
   })
 
+  test('a tap on the search-view button lands while the palette results arrive', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await navigateMobile(page, 'Pages')
+    await page.getByTestId('search-sheet-trigger').click()
+    const paletteInput = page.getByTestId('command-palette-input')
+    await expect(paletteInput).toBeVisible()
+
+    // The search answers late, as on a phone under load: the tap starts
+    // before the results render and ends after.
+    await page.evaluate(() => {
+      ;(window as unknown as { __setMockLatency: (ms: number) => void }).__setMockLatency(800)
+    })
+    await paletteInput.fill('Getting')
+    const escalation = page.getByTestId('palette-escalation-footer')
+    await escalation.hover()
+    await page.mouse.down()
+    await expect(page.locator('[data-testid^="palette-group-"]').first()).toBeVisible()
+    await page.mouse.up()
+
+    await expect(page.getByTestId('search-sheet')).toHaveCount(0)
+    await expect(page.locator('[data-testid="header-label"]')).toContainText('Search')
+  })
+
   test('defaults to in-page when opened from a page-style view', async ({ page }) => {
     await waitForBoot(page)
     // Journal is the default landing view — `journal-header` is the
