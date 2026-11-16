@@ -488,3 +488,5 @@ frontend	src/lib/search-query/to-search-filter.ts	StringLiteral	6	1	case 'invali
 frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (holdsLogseqQuery(content)) {
 # #3766 vault-import: nothing reads the default `keptQueries`; the one caller that reads the count passes its own
 frontend	src/lib/vault-import.ts	ObjectLiteral	34	1	keptQueries: { count: number } = { count: 0 },
+# #5964 page-tasks: `unwatch` without `watched.delete` leaves a block in `watched` only until the next `pick`, which drops it and unobserves it again; a view watches its own element once, so none is watched again
+frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.watched.delete(dom)

@@ -63,6 +63,9 @@ export default defineConfig({
     // rather than `node`.
     environment: 'happy-dom',
     include: mod.tests,
+    // Not vitest's CI default, which adds `github-actions`: Stryker runs the
+    // suite once per mutant, and that reporter appends a job summary each time.
+    reporters: ['default'],
 
     // #3350 — opt-in, per module. The original module set was pure libs
     // whose tests touch nothing global, so the default here is still "no
