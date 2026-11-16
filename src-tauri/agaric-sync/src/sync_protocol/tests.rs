@@ -1433,6 +1433,10 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         err_msg.contains("terminal state"),
         "rejection error must name the terminal state, got: {err_msg}"
     );
+    assert!(
+        err_msg.ends_with("cannot handle HeadExchange"),
+        "rejection error must name the message by its variant, got: {err_msg}"
+    );
 
     // The terminal arm must NOT mutate state — no transition occurred.
     assert_eq!(
@@ -1448,7 +1452,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         })
         .await;
     assert!(
-        matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
+        matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state") && m.ends_with("cannot handle SyncComplete")),
         "SyncComplete in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
     );
     assert_eq!(
