@@ -121,6 +121,32 @@ export async function clearTaskStates(
   return cleared.updated === tasks.length
 }
 
+/**
+ * The page left the active space (`PageNotInSpace`), or is trashed
+ * (`not_found`): a stale tab or recents reference was followed. Show a soft
+ * notice and heal: drop it from recents and from every tab (`removePages`;
+ * popping only the active tab would land on another tab holding the same
+ * page, #5753). Keyed on the structured code, so another validation error
+ * never reroutes here (#2810). Returns whether `err` was such a reference.
+ */
+function healStalePageReference(err: unknown, spaceId: string, pageId: string): boolean {
+  const trashed = isNotFound(err)
+  if (!trashed && validationCode(err) !== ValidationCode.PageNotInSpace) return false
+  // Heal only if the space this load was scoped to is still active: both
+  // removals act on the current space, and the heal re-fires the next time
+  // the stale reference is followed.
+  if (useSpaceStore.getState().currentSpaceId !== spaceId) return true
+  logger.warn('page-blocks', 'stale page reference — healing', {
+    rootParentId: pageId,
+    trashed,
+  })
+  if (trashed) notify.info(i18n.t('error.pageInTrash'), { id: 'page-in-trash' })
+  else notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
+  useRecentPagesStore.getState().removeRecentPage(pageId)
+  useTabsStore.getState().removePages([pageId])
+  return true
+}
+
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   /** Guard: block IDs currently being split. Prevents re-entrant splitBlock calls. */
   const splitInProgress = new Set<string>()
@@ -290,28 +316,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // A stale failed load must not stomp the newer load's `loading` (#753).
         if (generation !== loadGeneration) return
         set({ loading: false })
-        // The page left the active space (`PageNotInSpace`), or is trashed
-        // (`not_found`): a stale tab or recents reference was followed. Show a
-        // soft notice and heal: drop it from recents and from every tab
-        // (`removePages`; popping only the active tab would land on another
-        // tab holding the same page, #5753). Keyed on the structured code, so
-        // another validation error never reroutes here (#2810).
-        const trashed = isNotFound(err)
-        if (trashed || validationCode(err) === ValidationCode.PageNotInSpace) {
-          // Heal only if the space this load was scoped to is still active:
-          // both removals act on the current space, and the heal re-fires the
-          // next time the stale reference is followed.
-          if (useSpaceStore.getState().currentSpaceId !== spaceId) return
-          logger.warn('page-blocks', 'stale page reference — healing', {
-            rootParentId: rootParentId ?? '',
-            trashed,
-          })
-          if (trashed) notify.info(i18n.t('error.pageInTrash'), { id: 'page-in-trash' })
-          else notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
-          useRecentPagesStore.getState().removeRecentPage(rootParentId)
-          useTabsStore.getState().removePages([rootParentId])
-          return
-        }
+        if (healStalePageReference(err, spaceId, rootParentId)) return
         logger.error(
           'page-blocks',
           'Failed to load blocks',

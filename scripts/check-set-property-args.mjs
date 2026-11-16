@@ -436,6 +436,7 @@ function runGuard() {
 // argument (variable / spread / call) is SKIPPED not failed, a literal
 // with an internal spread is SKIPPED, a commented-out call is ignored,
 // and a test file is ignored regardless of content.
+// oxlint-disable-next-line eslint/complexity -- a self-test case list; splitting it scatters the cases
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)

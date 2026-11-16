@@ -330,6 +330,63 @@ function findAmbientRanges(tokens, src) {
 }
 
 /**
+ * Why the export whose keyword is followed by tokens `next`, `next2` may
+ * leak a runtime value, or null when it is provably type-only.
+ */
+function exportLeak(next, next2, src) {
+  if (!next) return "'export' with nothing following it"
+
+  // `export type ...` / `export interface ...` / `export declare ...`
+  // — always type-only (a `declare` statement emits no runtime code).
+  if (next.kind === 'ident' && SAFE_LEAD.has(next.value)) return null
+
+  // `export { … }` [`from '…'`] — safe only if EVERY specifier in the
+  // brace list carries its own `type` modifier.
+  if (next.kind === 'punct' && next.value === '{') {
+    const closeIdx = findMatchingBracket(src, next.start)
+    if (closeIdx === -1) return 'export { … } with an unbalanced brace'
+    const specs = splitTopLevelCommas(src.slice(next.start + 1, closeIdx))
+    // `/^type\b/` alone is a hole: a specifier whose ENTIRE text is
+    // `type` is TS's *value* export of a binding named `type`
+    // (`const type = {…}; export { type }`), not a type-only export —
+    // and that is precisely the leak this guard exists to stop. Require
+    // something to follow the modifier.
+    const untyped = specs.filter((s) => !/^type\s+\S/.test(s.trim()))
+    if (untyped.length === 0) return null
+    return `export { ${untyped.join(', ')} } — missing an explicit 'type' modifier, cannot prove type-only`
+  }
+
+  // `export * from '…'` / `export * as X from '…'` — re-exports
+  // everything from the target module; unprovable without resolving
+  // and recursively checking that module, which this guard does not do.
+  if (next.kind === 'punct' && next.value === '*') {
+    return "export * from '…' re-exports everything — cannot prove type-only"
+  }
+
+  if (next.kind === 'ident' && next.value === 'default') {
+    return 'export default is always a runtime value'
+  }
+
+  if (next.kind === 'ident' && (next.value === 'namespace' || next.value === 'module')) {
+    return `export ${next.value} … may contain runtime values`
+  }
+
+  if (next.kind === 'ident' && RUNTIME_LEAD.has(next.value)) {
+    const isConstEnum =
+      (next.value === 'const' || next.value === 'let' || next.value === 'var') &&
+      next2?.kind === 'ident' &&
+      next2.value === 'enum'
+    return isConstEnum
+      ? `export ${next.value} enum … is a runtime value`
+      : `export ${next.value} … is a runtime value`
+  }
+
+  // Fail CLOSED: an export shape this guard does not recognise is
+  // treated as a possible runtime leak, not waved through.
+  return `unrecognised export form starting with '${next.value ?? next.kind}' — cannot prove type-only`
+}
+
+/**
  * Scan one file's source for `export` statements that are not provably
  * type-only. Returns `{ hits, scanError }` where `hits` is
  * `[{ line, detail }]` (1-based line, human-readable reason) and
@@ -366,86 +423,8 @@ export function analyzeSource(rawSrc) {
       if (tok.kind !== 'ident' || tok.value !== 'export' || tok.propertyName === true) continue
       if (isAmbient(tok.start)) continue
 
-      const next = tokens[i + 1]
-      const next2 = tokens[i + 2]
-
-      if (!next) {
-        hits.push({ line: lineOf(tok.start), detail: "'export' with nothing following it" })
-        continue
-      }
-
-      // `export type ...` / `export interface ...` / `export declare ...`
-      // — always type-only (a `declare` statement emits no runtime code).
-      if (next.kind === 'ident' && SAFE_LEAD.has(next.value)) continue
-
-      // `export { … }` [`from '…'`] — safe only if EVERY specifier in the
-      // brace list carries its own `type` modifier.
-      if (next.kind === 'punct' && next.value === '{') {
-        const closeIdx = findMatchingBracket(src, next.start)
-        if (closeIdx === -1) {
-          hits.push({ line: lineOf(tok.start), detail: 'export { … } with an unbalanced brace' })
-          continue
-        }
-        const specs = splitTopLevelCommas(src.slice(next.start + 1, closeIdx))
-        // `/^type\b/` alone is a hole: a specifier whose ENTIRE text is
-        // `type` is TS's *value* export of a binding named `type`
-        // (`const type = {…}; export { type }`), not a type-only export —
-        // and that is precisely the leak this guard exists to stop. Require
-        // something to follow the modifier.
-        const untyped = specs.filter((s) => !/^type\s+\S/.test(s.trim()))
-        if (untyped.length > 0) {
-          hits.push({
-            line: lineOf(tok.start),
-            detail: `export { ${untyped.join(', ')} } — missing an explicit 'type' modifier, cannot prove type-only`,
-          })
-        }
-        continue
-      }
-
-      // `export * from '…'` / `export * as X from '…'` — re-exports
-      // everything from the target module; unprovable without resolving
-      // and recursively checking that module, which this guard does not do.
-      if (next.kind === 'punct' && next.value === '*') {
-        hits.push({
-          line: lineOf(tok.start),
-          detail: "export * from '…' re-exports everything — cannot prove type-only",
-        })
-        continue
-      }
-
-      if (next.kind === 'ident' && next.value === 'default') {
-        hits.push({ line: lineOf(tok.start), detail: 'export default is always a runtime value' })
-        continue
-      }
-
-      if (next.kind === 'ident' && (next.value === 'namespace' || next.value === 'module')) {
-        hits.push({
-          line: lineOf(tok.start),
-          detail: `export ${next.value} … may contain runtime values`,
-        })
-        continue
-      }
-
-      if (next.kind === 'ident' && RUNTIME_LEAD.has(next.value)) {
-        const isConstEnum =
-          (next.value === 'const' || next.value === 'let' || next.value === 'var') &&
-          next2?.kind === 'ident' &&
-          next2.value === 'enum'
-        hits.push({
-          line: lineOf(tok.start),
-          detail: isConstEnum
-            ? `export ${next.value} enum … is a runtime value`
-            : `export ${next.value} … is a runtime value`,
-        })
-        continue
-      }
-
-      // Fail CLOSED: an export shape this guard does not recognise is
-      // treated as a possible runtime leak, not waved through.
-      hits.push({
-        line: lineOf(tok.start),
-        detail: `unrecognised export form starting with '${next.value ?? next.kind}' — cannot prove type-only`,
-      })
+      const detail = exportLeak(tokens[i + 1], tokens[i + 2], src)
+      if (detail !== null) hits.push({ line: lineOf(tok.start), detail })
     }
 
     return { hits, scanError: null }
@@ -551,6 +530,7 @@ function runGuard() {
 // and the other recognised shapes (interface, declare, typed re-export,
 // enum, function, class, default, `export *`, bare re-export specifier,
 // unlexable file) are each exercised once.
+// oxlint-disable-next-line eslint/complexity -- a self-test case list; splitting it scatters the cases
 function runSelfTest() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'types-erasure-selftest-'))
   const failures = []

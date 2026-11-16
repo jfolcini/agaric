@@ -1739,6 +1739,27 @@ export function assertUniqueStepNames(steps: ReadonlyArray<QueryStep>): void {
 }
 
 /**
+ * Whether a step compares its rows as a set, which needs a non-empty reason.
+ * #4670 — re-read as `unknown`, not through the declared `string?`: this
+ * runner's input is `JSON.parse` output, so a fixture spelling
+ * `"unordered": true` reaches here typed as a string and would buy the
+ * weaker comparison for free. Mirror of the Rust twin's `match`.
+ */
+function stepIsUnordered(step: QueryStep): boolean {
+  const unordered: unknown = (step as unknown as Record<string, unknown>)['unordered']
+  if (unordered === undefined || unordered === null) return false
+  if (typeof unordered !== 'string' || unordered.trim() === '') {
+    throw new Error(
+      `query step '${step.name}' (command '${step.command}'): \`unordered\` must be a ` +
+        `NON-EMPTY reason string saying why the backend's row order is not comparable ` +
+        `with the mock's, got ${JSON.stringify(unordered)}. Ordered is the default: if ` +
+        `the two stacks simply disagree, that is a divergence to fix, not a reason.`,
+    )
+  }
+  return true
+}
+
+/**
  * Replay a fixture's `queries` steps through the tauri-mock and project each
  * response exactly as the Rust twin does.
  */
@@ -1759,20 +1780,7 @@ export async function runQuerySteps(
           `conformance_query.rs)`,
       )
     }
-    // #4670 — re-read as `unknown`, not through the declared `string?`: this
-    // runner's input is `JSON.parse` output, so a fixture spelling
-    // `"unordered": true` reaches here typed as a string and would buy the
-    // weaker comparison for free. Mirror of the Rust twin's `match`.
-    const unordered: unknown = (step as unknown as Record<string, unknown>)['unordered']
-    const isUnordered = unordered !== undefined && unordered !== null
-    if (isUnordered && (typeof unordered !== 'string' || unordered.trim() === '')) {
-      throw new Error(
-        `query step '${step.name}' (command '${step.command}'): \`unordered\` must be a ` +
-          `NON-EMPTY reason string saying why the backend's row order is not comparable ` +
-          `with the mock's, got ${JSON.stringify(unordered)}. Ordered is the default: if ` +
-          `the two stacks simply disagree, that is a divergence to fix, not a reason.`,
-      )
-    }
+    const isUnordered = stepIsUnordered(step)
     const args = expandQueryArgs(step.args ?? {}, createdIds) as Record<string, unknown>
     if (step.cursor_from != null) {
       if (!cursors.has(step.cursor_from)) {

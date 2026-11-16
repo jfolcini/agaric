@@ -1831,6 +1831,67 @@ function observedMutants(args) {
   }
 }
 
+/** Validate `--lane` and fill in the lane's title and default blast radius. */
+function applyLane(args) {
+  if (!LANE_NAMES.includes(args.lane)) {
+    throw new Error(
+      `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
+    )
+  }
+  args.title = LANES[args.lane]
+  // Per-lane blast radius unless the caller pinned one explicitly.
+  if (!args.maxChildrenExplicit) args.maxChildren = LANE_MAX_CHILDREN[args.lane]
+}
+
+/**
+ * The lane's tracking issue, or null when there is none.
+ *
+ * --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
+ * `gh issue list` lookup so the diff/file/update logic can be exercised
+ * against sample data without touching real GitHub state. The real
+ * (non-test) path always goes through `gh issue list`.
+ */
+function loadExistingIssue(args, repo) {
+  if (args.knownBodyFile !== undefined) {
+    const body = existsSync(args.knownBodyFile) ? readFileSync(args.knownBodyFile, 'utf8') : ''
+    return body ? { number: 0, state: 'OPEN', body } : null
+  }
+  if (!repo)
+    throw new Error(
+      '--repo (or $GITHUB_REPOSITORY) is required outside of --known-body-file test mode',
+    )
+  return findTrackingIssue(repo, args.title)
+}
+
+/**
+ * Is this lane's input COMPLETE, not merely present? `--require-input` only
+ * proves the frontend lane produced something; a run that lost a module's
+ * report empties that module's share of the set. Closing anything on that
+ * basis loses an issue, so it gates BOTH closes in `main` — the parent's and
+ * the children's.
+ *
+ * The rewrite-from-partial-data underneath is pre-existing (#3364) and left
+ * alone; widening `--require-input` would be a different fix. The rust lane
+ * needs no equivalent: a short merge already forces `--dry-run`, so it never
+ * reaches a write.
+ */
+function isFrontendComplete(lane, frontendReports) {
+  return (
+    lane !== 'frontend' ||
+    EXPECTED_FRONTEND_REPORTS === undefined ||
+    frontendReports >= EXPECTED_FRONTEND_REPORTS
+  )
+}
+
+function printNoOp(resolvedOnes) {
+  console.log('no new mutation findings — no-op (tracking issue left untouched)')
+  if (resolvedOnes.length > 0) {
+    console.log(
+      `(${resolvedOnes.length} previously-known finding(s) no longer present — not a reason to touch the issue on their own: ${resolvedOnes.join(', ')})`,
+    )
+  }
+}
+
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
   if (args.accept) {
@@ -1840,14 +1901,7 @@ export function main(argv = process.argv.slice(2)) {
     console.log(lines.join('\n'))
     return
   }
-  if (!LANE_NAMES.includes(args.lane)) {
-    throw new Error(
-      `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
-    )
-  }
-  args.title = LANES[args.lane]
-  // Per-lane blast radius unless the caller pinned one explicitly.
-  if (!args.maxChildrenExplicit) args.maxChildren = LANE_MAX_CHILDREN[args.lane]
+  applyLane(args)
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
 
@@ -1876,21 +1930,7 @@ export function main(argv = process.argv.slice(2)) {
     `${args.lane} mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived`,
   )
 
-  // --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
-  // `gh issue list` lookup so the diff/file/update logic can be exercised
-  // against sample data without touching real GitHub state. The real
-  // (non-test) path always goes through `gh issue list`.
-  let existingIssue = null
-  if (args.knownBodyFile !== undefined) {
-    const body = existsSync(args.knownBodyFile) ? readFileSync(args.knownBodyFile, 'utf8') : ''
-    existingIssue = body ? { number: 0, state: 'OPEN', body } : null
-  } else {
-    if (!repo)
-      throw new Error(
-        '--repo (or $GITHUB_REPOSITORY) is required outside of --known-body-file test mode',
-      )
-    existingIssue = findTrackingIssue(repo, args.title)
-  }
+  const existingIssue = loadExistingIssue(args, repo)
 
   // #5986 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
   // the observed set (and out of the tracked set) before anything else looks
@@ -1922,20 +1962,7 @@ export function main(argv = process.argv.slice(2)) {
   // reason to act: an area whose LAST survivor was killed leaves a child issue
   // standing that claims mutants survive there, and that is the same lie
   // `file-scheduled-failures.mjs` refuses to leave open on the lane tracker.
-  // Is this lane's input COMPLETE, not merely present? `--require-input` only
-  // proves the frontend lane produced something; a run that lost a module's
-  // report empties that module's share of the set. Closing anything on that
-  // basis loses an issue, so it gates BOTH closes below — the parent's and
-  // the children's.
-  //
-  // The rewrite-from-partial-data underneath is pre-existing (#3364) and left
-  // alone; widening `--require-input` would be a different fix. The rust lane
-  // needs no equivalent: a short merge already forces `--dry-run`, so it never
-  // reaches a write.
-  const frontendComplete =
-    args.lane !== 'frontend' ||
-    EXPECTED_FRONTEND_REPORTS === undefined ||
-    frontendReports >= EXPECTED_FRONTEND_REPORTS
+  const frontendComplete = isFrontendComplete(args.lane, frontendReports)
 
   const childActions = args.children
     ? decideChildActions({
@@ -1983,12 +2010,7 @@ export function main(argv = process.argv.slice(2)) {
   const willWrite = newOnes.length > 0 || childWork.length > 0 || needsClose
 
   if (!willWrite) {
-    console.log('no new mutation findings — no-op (tracking issue left untouched)')
-    if (resolvedOnes.length > 0) {
-      console.log(
-        `(${resolvedOnes.length} previously-known finding(s) no longer present — not a reason to touch the issue on their own: ${resolvedOnes.join(', ')})`,
-      )
-    }
+    printNoOp(resolvedOnes)
     return
   }
 
@@ -3025,6 +3047,7 @@ function selfTestChildPlanning({ check, survivor }) {
  * number of areas, so a filer that "just refreshes" nine children every Monday
  * is nine notifications a week and the end of anyone reading them.
  */
+// oxlint-disable-next-line eslint/complexity -- a self-test case list; splitting it scatters the cases
 function selfTestChildGh({ check }) {
   const dir = mkdtempSync(join(tmpdir(), 'mutation-children-gh-'))
   const log = join(dir, 'gh.log')

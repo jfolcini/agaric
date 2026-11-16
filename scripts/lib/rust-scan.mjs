@@ -3,10 +3,10 @@
 //
 // Whitespace, word characters and line breaks follow Python's definitions
 // (`str.isspace`, Unicode `\b`, `str.splitlines`), the ones these guards'
-// verdicts were first written against. The scanner walks CODE POINTS, so an
-// emoji shifts no offset and `'😀'` is blanked as a char literal; that is why
-// it does not reuse `check-bulk-equivalence.mjs`'s `blank()`, which walks
-// UTF-16 units and gets both wrong.
+// verdicts were first written against. `stripRustComments` walks CODE POINTS,
+// so an emoji shifts no offset and `'😀'` is blanked as a char literal;
+// `findMatchingBrace` and `check-bulk-equivalence.mjs`'s `blank()` run the
+// same `literalEnd` over UTF-16 units, because their callers index by them.
 
 import { realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -177,9 +177,39 @@ export function stripRustComments(text, { keepStrings = false } = {}) {
   return out.join('')
 }
 
-// Where the comment or literal starting at `i` ends (exclusive, possibly past
-// the end of input), or -1 when none starts there.
-function literalEnd(cps, i) {
+/**
+ * The UTF-16 offset of the `}` matching the `{` at `openIdx` in `src`, or null
+ * when unmatched. Braces inside comments and string, raw-string and char
+ * literals do not count, so a `format!("{x}")` cannot throw off the balance.
+ * Walks UTF-16 units, not code points, because callers slice `src` with the
+ * result; an astral char literal is then not recognised, which cannot matter
+ * since it holds no brace.
+ */
+export function findMatchingBrace(src, openIdx) {
+  let depth = 0
+  let i = openIdx
+  while (i < src.length) {
+    const end = literalEnd(src, i)
+    if (end !== -1) {
+      i = end
+      continue
+    }
+    if (src[i] === '{') depth += 1
+    else if (src[i] === '}') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+    i += 1
+  }
+  return null
+}
+
+/**
+ * Where the comment or literal starting at `cps[i]` ends (exclusive, possibly
+ * past the end of input), or -1 when none starts there. `cps` is an array of
+ * code points or a string, whose indices are UTF-16 units.
+ */
+export function literalEnd(cps, i) {
   const ch = cps[i]
   const nxt = cps[i + 1]
   if (ch === '/' && nxt === '/') return lineCommentEnd(cps, i)

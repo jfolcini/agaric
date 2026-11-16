@@ -98,6 +98,46 @@ export interface PageHeaderMenuProps {
   onMoveToSpace?: ((targetSpaceId: string) => void) | undefined
 }
 
+interface TopLevelMenuFlags {
+  offersNewTab: boolean
+  canRedo: boolean
+  hasHistory: boolean
+  hasSaveMarkdownFile: boolean
+  hasPrint: boolean
+  hasEditMode: boolean
+  hasEditSource: boolean
+  showMoveEntry: boolean
+}
+
+/**
+ * Ordered top-level menuitem ids — mirrors the conditional render order.
+ * A disabled Redo cannot take focus, so it leaves the roving set.
+ */
+function topLevelMenuIds(f: TopLevelMenuFlags): string[] {
+  return [
+    ...(f.offersNewTab ? ['openInNewTab'] : []),
+    'copyAppLink',
+    'undo',
+    ...(f.canRedo ? ['redo'] : []),
+    ...(f.hasHistory ? ['pageHistory'] : []),
+    'openOutline',
+    'showInGraph',
+    'insertEmoji',
+    'addAlias',
+    'addTag',
+    'addProperty',
+    'toggleTemplate',
+    'toggleJournalTemplate',
+    'export',
+    ...(f.hasSaveMarkdownFile ? ['saveMarkdownFile'] : []),
+    ...(f.hasPrint ? ['print'] : []),
+    ...(f.hasEditMode ? ['editMode'] : []),
+    ...(f.hasEditSource ? ['editSource'] : []),
+    ...(f.showMoveEntry ? ['moveTo'] : []),
+    'delete',
+  ]
+}
+
 export function PageHeaderMenu({
   canRedo,
   kebabOpen,
@@ -154,30 +194,16 @@ export function PageHeaderMenu({
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  // Ordered top-level menuitem ids — mirrors the conditional render order.
-  // A disabled Redo cannot take focus, so it leaves the roving set.
-  const orderedIds: string[] = [
-    ...(offersNewTab ? ['openInNewTab'] : []),
-    'copyAppLink',
-    'undo',
-    ...(canRedo ? ['redo'] : []),
-    ...(onOpenHistory != null ? ['pageHistory'] : []),
-    'openOutline',
-    'showInGraph',
-    'insertEmoji',
-    'addAlias',
-    'addTag',
-    'addProperty',
-    'toggleTemplate',
-    'toggleJournalTemplate',
-    'export',
-    ...(onSaveMarkdownFile != null ? ['saveMarkdownFile'] : []),
-    ...(onPrint != null ? ['print'] : []),
-    ...(onEditModeChange != null ? ['editMode'] : []),
-    ...(onEditSource != null ? ['editSource'] : []),
-    ...(showMoveEntry ? ['moveTo'] : []),
-    'delete',
-  ]
+  const orderedIds = topLevelMenuIds({
+    offersNewTab,
+    canRedo,
+    hasHistory: onOpenHistory != null,
+    hasSaveMarkdownFile: onSaveMarkdownFile != null,
+    hasPrint: onPrint != null,
+    hasEditMode: onEditModeChange != null,
+    hasEditSource: onEditSource != null,
+    showMoveEntry,
+  })
 
   const registerItem = useCallback((id: string, node: HTMLButtonElement | null) => {
     if (node) itemRefs.current.set(id, node)

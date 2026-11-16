@@ -46,6 +46,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+import { findMatchingBrace } from './lib/rust-scan.mjs'
+
 const HERE = import.meta.dirname
 const REPO_ROOT = join(HERE, '..')
 const COMMANDS_DIR = join(REPO_ROOT, 'src-tauri', 'src', 'commands')
@@ -111,100 +113,6 @@ function* walkRustFiles(dir) {
       yield full
     }
   }
-}
-
-/**
- * Locate the byte offset of the matching `}` for the `{` at `openIdx`,
- * skipping braces inside string / char / raw-string literals and `//` line /
- * nested `/* … *\/` block comments. Returns `null` if unmatched.
- *
- * (Identical scanner to `check-tauri-command-sanitize.mjs` — a `{`/`}` inside
- * a `format!("…{…}…")` string or a comment must not throw off the balance.)
- */
-function findMatchingBrace(src, openIdx) {
-  let depth = 0
-  let i = openIdx
-  while (i < src.length) {
-    const c = src[i]
-    const next = src[i + 1]
-
-    if (c === '/' && next === '/') {
-      const nl = src.indexOf('\n', i + 2)
-      if (nl === -1) return null
-      i = nl + 1
-      continue
-    }
-
-    if (c === '/' && next === '*') {
-      let commentDepth = 1
-      i += 2
-      while (i < src.length && commentDepth > 0) {
-        if (src[i] === '/' && src[i + 1] === '*') {
-          commentDepth++
-          i += 2
-        } else if (src[i] === '*' && src[i + 1] === '/') {
-          commentDepth--
-          i += 2
-        } else {
-          i++
-        }
-      }
-      continue
-    }
-
-    if (c === 'r' && (next === '"' || next === '#')) {
-      let j = i + 1
-      let hashes = 0
-      while (src[j] === '#') {
-        hashes++
-        j++
-      }
-      if (src[j] === '"') {
-        const close = `"${'#'.repeat(hashes)}`
-        const end = src.indexOf(close, j + 1)
-        if (end === -1) return null
-        i = end + close.length
-        continue
-      }
-    }
-
-    if (c === '"') {
-      i++
-      while (i < src.length) {
-        if (src[i] === '\\') {
-          i += 2
-          continue
-        }
-        if (src[i] === '"') {
-          i++
-          break
-        }
-        i++
-      }
-      continue
-    }
-
-    if (c === "'") {
-      if (src[i + 1] === '\\') {
-        const end = src.indexOf("'", i + 2)
-        if (end !== -1 && end - i <= 12) {
-          i = end + 1
-          continue
-        }
-      } else if (src[i + 2] === "'") {
-        i += 3
-        continue
-      }
-    }
-
-    if (c === '{') depth++
-    else if (c === '}') {
-      depth--
-      if (depth === 0) return i
-    }
-    i++
-  }
-  return null
 }
 
 /**

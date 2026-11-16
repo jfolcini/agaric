@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { initScratchRepo, scrubbedGitEnv, withScrubbedProcessEnv } from './git-scratch-guard.mjs'
-import { CRATE_ROOTS, openFileSource, stripRustComments } from './rust-scan.mjs'
+import { CRATE_ROOTS, findMatchingBrace, openFileSource, stripRustComments } from './rust-scan.mjs'
 
 // `check-raw-tx.mjs --self-test` covers the scanner. These cover what it
 // cannot reach: which copy of a file is read, and the guard's own `main()`
@@ -47,6 +47,12 @@ function withFixture(setup, fn) {
 void test('stripRustComments blanks strings by default and keeps them with keepStrings', () => {
   assert.equal(stripRustComments('a "x" // y'), `a${' '.repeat(9)}`)
   assert.equal(stripRustComments('a "x" // y', { keepStrings: true }), `a "x"${' '.repeat(5)}`)
+})
+
+void test('findMatchingBrace skips braces in comments and literals; null when unmatched', () => {
+  const src = `fn f() { let s = "}"; let r = r#"{"#; let c = '}'; /* { /* } */ } */ // }\n }`
+  assert.equal(findMatchingBrace(src, src.indexOf('{')), src.length - 1)
+  assert.equal(findMatchingBrace('fn f() { "}" ', 7), null)
 })
 
 void test('a staged deletion still on disk is absent from the index only', () => {

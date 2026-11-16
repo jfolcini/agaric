@@ -172,8 +172,9 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   const openPage = (pageId: string): void => onNavigate?.(pageId, pageTitles.get(pageId))
 
   const isGrouped = groups != null
-  // Empty when: flat mode with no rows, OR grouped mode with no groups.
-  const isEmpty = isGrouped ? groups.length === 0 : results.length === 0
+  // Rows in flat mode, groups in grouped mode; empty when there are none.
+  const shownCount = isGrouped ? groups.length : results.length
+  const isEmpty = shownCount === 0
 
   return (
     <div
@@ -325,9 +326,9 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               >
                 {/* Grouped mode pages over groups and a block can sit in several
                   (tag groups), so the group count is the only honest total. */}
-                {isGrouped
-                  ? t('advancedQuery.groupCount', { count: totalCount ?? groups.length })
-                  : t('advancedQuery.totalCount', { count: totalCount ?? results.length })}
+                {t(isGrouped ? 'advancedQuery.groupCount' : 'advancedQuery.totalCount', {
+                  count: totalCount ?? shownCount,
+                })}
               </p>
 
               {/* Global aggregate summary bar (shown in both flat and grouped mode

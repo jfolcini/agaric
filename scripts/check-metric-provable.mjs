@@ -2017,6 +2017,7 @@ function runGuard(root) {
 
 // ─── self-test ────────────────────────────────────────────────────────
 
+// oxlint-disable-next-line eslint/complexity -- a self-test case list; splitting it scatters the cases
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)

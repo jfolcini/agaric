@@ -32,7 +32,7 @@ import { useTranslation } from 'react-i18next'
 import { AttachmentList } from '@/components/attachments/AttachmentList'
 import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { useBlockContextMenu } from '@/components/block-tree/use-block-context-menu'
-import { useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
+import { type BlockResolvers, useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
 import { useBlockSwipeActions } from '@/components/block-tree/use-block-swipe-actions'
 import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
@@ -553,11 +553,12 @@ function SortableBlockInner({
   // removed, 2026-06-20). It is available for EVERY block — including leaves —
   // mirroring the old bullet's any-block zoom, so `onZoomIn` flows through the
   // action bag ungated.
-  const resolvers = useBlockResolvers()
-  const resolveBlockTitle = resolvers?.resolveBlockTitle
-  const resolveTagName = resolvers?.resolveTagName
-  const resolveBlockStatus = resolvers?.resolveBlockStatus
-  const resolveTagStatus = resolvers?.resolveTagStatus
+  const {
+    resolveBlockTitle,
+    resolveTagName,
+    resolveBlockStatus,
+    resolveTagStatus,
+  }: Partial<BlockResolvers> = useBlockResolvers() ?? {}
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
   })

@@ -140,6 +140,53 @@ function isLastEditedSpec(value: unknown): value is LastEditedSpec {
 // FilterPredicate — per-kind narrowing validator
 // ---------------------------------------------------------------------------
 
+type FieldValidator = (value: Record<string, unknown>) => boolean
+
+const DATE_FIELDS: ReadonlySet<unknown> = new Set(['due', 'scheduled', 'created', 'lastEdited'])
+
+const always: FieldValidator = () => true
+const valuesAndExclude: FieldValidator = (value) =>
+  isStringArray(value['values']) && isBoolean(value['exclude'])
+
+/**
+ * One validator per `kind`. Typed as a `Record` over the union's discriminant
+ * so adding a variant without a validator is a compile error.
+ */
+const FIELD_VALIDATORS: Record<FilterPredicate['kind'], FieldValidator> = {
+  tag: (value) => {
+    if (value['by'] === 'id') return isString(value['tagId'])
+    if (value['by'] === 'name') return isString(value['name'])
+    return false
+  },
+  tagPrefix: (value) => isString(value['prefix']),
+  status: (value) =>
+    isStringArray(value['values']) && isBoolean(value['isNull']) && isBoolean(value['exclude']),
+  priority: valuesAndExclude,
+  property: (value) =>
+    isString(value['key']) &&
+    isPropertyPredicate(value['predicate']) &&
+    isBoolean(value['exclude']),
+  date: (value) => DATE_FIELDS.has(value['field']) && isDatePredicate(value['predicate']),
+  createdRange: (value) => isStringOrNull(value['after']) && isStringOrNull(value['before']),
+  lastEdited: (value) => isLastEditedSpec(value['spec']),
+  blockType: valuesAndExclude,
+  pathGlob: (value) => isString(value['pattern']) && isBoolean(value['exclude']),
+  sourcePage: (value) => isStringArray(value['included']) && isStringArray(value['excluded']),
+  space: (value) => isString(value['spaceId']),
+  contains: (value) => isString(value['query']),
+  regex: (value) => isString(value['pattern']),
+  caseSensitive: (value) => isBoolean(value['enabled']),
+  wholeWord: (value) => isBoolean(value['enabled']),
+  linksTo: (value) => isString(value['target']),
+  linkedFrom: (value) => isString(value['source']),
+  hasBacklinks: (value) => isBoolean(value['value']),
+  orphan: always,
+  stub: always,
+  hasNoInboundLinks: always,
+  excludeTemplates: always,
+  excludeJournal: always,
+}
+
 /**
  * Narrow an `unknown` value to `FilterPredicate`, validating every field of
  * the variant its `kind` claims — not just the discriminant. Returns `false`
@@ -148,88 +195,9 @@ function isLastEditedSpec(value: unknown): value is LastEditedSpec {
  */
 export function isFilterPredicate(value: unknown): value is FilterPredicate {
   if (!isRecord(value) || !isString(value['kind'])) return false
-  switch (value['kind']) {
-    case 'tag': {
-      if (value['by'] === 'id') return isString(value['tagId'])
-      if (value['by'] === 'name') return isString(value['name'])
-      return false
-    }
-    case 'tagPrefix': {
-      return isString(value['prefix'])
-    }
-    case 'status': {
-      return (
-        isStringArray(value['values']) && isBoolean(value['isNull']) && isBoolean(value['exclude'])
-      )
-    }
-    case 'priority': {
-      return isStringArray(value['values']) && isBoolean(value['exclude'])
-    }
-    case 'property': {
-      return (
-        isString(value['key']) &&
-        isPropertyPredicate(value['predicate']) &&
-        isBoolean(value['exclude'])
-      )
-    }
-    case 'date': {
-      return (
-        (value['field'] === 'due' ||
-          value['field'] === 'scheduled' ||
-          value['field'] === 'created' ||
-          value['field'] === 'lastEdited') &&
-        isDatePredicate(value['predicate'])
-      )
-    }
-    case 'createdRange': {
-      return isStringOrNull(value['after']) && isStringOrNull(value['before'])
-    }
-    case 'lastEdited': {
-      return isLastEditedSpec(value['spec'])
-    }
-    case 'blockType': {
-      return isStringArray(value['values']) && isBoolean(value['exclude'])
-    }
-    case 'pathGlob': {
-      return isString(value['pattern']) && isBoolean(value['exclude'])
-    }
-    case 'sourcePage': {
-      return isStringArray(value['included']) && isStringArray(value['excluded'])
-    }
-    case 'space': {
-      return isString(value['spaceId'])
-    }
-    case 'contains': {
-      return isString(value['query'])
-    }
-    case 'regex': {
-      return isString(value['pattern'])
-    }
-    case 'caseSensitive':
-    case 'wholeWord': {
-      return isBoolean(value['enabled'])
-    }
-    case 'linksTo': {
-      return isString(value['target'])
-    }
-    case 'linkedFrom': {
-      return isString(value['source'])
-    }
-    case 'hasBacklinks': {
-      return isBoolean(value['value'])
-    }
-    case 'orphan':
-    case 'stub':
-    case 'hasNoInboundLinks':
-    case 'excludeTemplates':
-    case 'excludeJournal': {
-      return true
-    }
-    default: {
-      // Unknown `kind` — rejected outright rather than passed through (#3791).
-      return false
-    }
-  }
+  // `Object.hasOwn`, so an inherited name like `toString` is an unknown kind.
+  if (!Object.hasOwn(FIELD_VALIDATORS, value['kind'])) return false
+  return FIELD_VALIDATORS[value['kind'] as FilterPredicate['kind']](value)
 }
 
 /** Result of validating a persisted predicate array. */

@@ -94,6 +94,12 @@ type PeekTarget =
       hasMore: boolean
     }
 
+/** The target's title, `null` while loading or when it has none to show. */
+function peekTitle(data: PeekTarget | undefined): string | null {
+  if (data === undefined || data.status === 'unresolved' || data.status === 'error') return null
+  return data.title
+}
+
 async function fetchPeekTarget(
   refId: string,
   kind: PeekKind,
@@ -270,10 +276,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
 
   if (refId === null || anchorRect === null) return null
 
-  const title =
-    data === undefined || data.status === 'unresolved' || data.status === 'error'
-      ? null
-      : data.title
+  const title = peekTitle(data)
   const isPage = kind === 'page-link'
   const dialogLabel =
     title !== null

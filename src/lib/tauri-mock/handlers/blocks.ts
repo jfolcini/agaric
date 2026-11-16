@@ -998,6 +998,91 @@ function savedViewsOfSpace(spaceId: string): string[] {
     .toSorted()
 }
 
+/**
+ * `validate_parent_in_tx`: the parent is a live block. #4725 — the tag view is
+ * read-only; `create_block_in_tx` rejects a tag parent. Then
+ * `validate_content_refs_in_space`, against the parent's space: a page
+ * resolves its space through itself, so it is skipped, as there.
+ */
+function assertCreateParent(
+  parentId: string | null,
+  createParent: Record<string, unknown> | null | undefined,
+  blockType: string,
+  content: unknown,
+): void {
+  if (parentId == null) return
+  if (!createParent || createParent['deleted_at'] != null) {
+    throw notFoundRejection(`parent block '${parentId}'`)
+  }
+  if (createParent['block_type'] === 'tag') {
+    throw validationRejection(
+      `cannot create a block under tag '${parentId}': the tag view is read-only`,
+    )
+  }
+  if (blockType !== 'page') {
+    rejectCrossSpaceTokens(definitionSpaceOf(parentId), (content as string | null) ?? '', parentId)
+  }
+}
+
+/**
+ * The row a `create_block` of a tag or page resolves to instead of creating
+ * one, or `undefined` to create.
+ *
+ * #5236 — a live tag already named `content` in the space is the answer: its
+ * own row back, nothing created, no op appended. The match is the name key
+ * (`create_tag_in_space_inner`, #6278), smallest id first, so a case variant or
+ * a padded spelling resolves too. A new tag name with a space is refused.
+ *
+ * A page goes through `create_page_in_space_inner`, which resolves a title
+ * already held in the space (`nameKey`, #4723, #6278) to that page's own row,
+ * creating nothing and appending no op, and refuses another page's alias
+ * (`createPageInSpace`).
+ */
+function existingNamedBlock(
+  blockType: string,
+  content: unknown,
+  spaceId: string,
+): Record<string, unknown> | undefined {
+  if (blockType === 'tag') {
+    const name = (content as string) ?? ''
+    const wanted = nameKey(name)
+    const existing = [...blocks.values()]
+      .filter(
+        (b) =>
+          b['block_type'] === 'tag' &&
+          !b['deleted_at'] &&
+          b['space_id'] === spaceId &&
+          b['content'] != null &&
+          nameKey(b['content'] as string) === wanted,
+      )
+      .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
+    if (!existing) rejectSpacedTagName(name)
+    return existing
+  }
+  if (blockType === 'page' && typeof content === 'string') {
+    const holder = pageNameHolder(content, spaceId)
+    if (holder?.by === 'alias') throw pageNameRefusal(holder, content)
+    return holder ? blocks.get(holder.id) : undefined
+  }
+  return undefined
+}
+
+/**
+ * #763 — a block's `page_id` is the ROOT page of the parent chain, not the
+ * immediate parent: a page is its own, a page parent's child takes the parent,
+ * and a content parent's child takes the parent's own `page_id`.
+ */
+function createdPageId(
+  blockType: string,
+  id: string,
+  parentId: string | null,
+  parent: Record<string, unknown> | null | undefined,
+): string | null {
+  if (blockType === 'page') return id
+  if (parent == null) return null
+  return parent['block_type'] === 'page' ? parentId : ((parent['page_id'] as string | null) ?? null)
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -1171,67 +1256,14 @@ export const blocksHandlers = {
     // (backlink counts, alias resolution, etc.) recognise it as belonging to
     // that space.
     const spaceId = readActiveSpaceScope('create_block', a)
-    // #763 — the block's `page_id` is the ROOT page of the parent chain, not the
-    // immediate parent. The backend resolves the parent's own `page_id` (which,
-    // for a content parent, already holds the root page; for a page parent, is
-    // its own id). Stamping the raw `parentId` mis-set `page_id` to a content
-    // parent — the same class as the #1775 seed-loader / move-handler fix.
     const createParent = parentId != null ? blocks.get(parentId) : null
-    // `validate_parent_in_tx`: the parent is a live block.
-    if (parentId != null && (!createParent || createParent['deleted_at'] != null)) {
-      throw notFoundRejection(`parent block '${parentId}'`)
-    }
-    // #4725 — the tag view is read-only; `create_block_in_tx` rejects a tag parent.
-    if (createParent?.['block_type'] === 'tag') {
-      throw validationRejection(
-        `cannot create a block under tag '${parentId}': the tag view is read-only`,
-      )
-    }
-    // `validate_content_refs_in_space`, against the parent's space: a page
-    // resolves its space through itself, so it is skipped, as there.
-    if (parentId != null && blockType !== 'page') {
-      const content = (a['content'] as string | null) ?? ''
-      rejectCrossSpaceTokens(definitionSpaceOf(parentId), content, parentId)
-    }
-    // #5236 — a live tag already named `content` in the space is the answer:
-    // its own row back, nothing created, no op appended. The match is the
-    // name key (`create_tag_in_space_inner`, #6278), smallest id first, so a
-    // case variant or a padded spelling resolves too.
-    if (blockType === 'tag') {
-      const wanted = nameKey((a['content'] as string) ?? '')
-      const existing = [...blocks.values()]
-        .filter(
-          (b) =>
-            b['block_type'] === 'tag' &&
-            !b['deleted_at'] &&
-            b['space_id'] === spaceId &&
-            b['content'] != null &&
-            nameKey(b['content'] as string) === wanted,
-        )
-        .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
-      if (existing) {
-        return {
-          ...existing,
-          id: existing['id'] as string,
-          op_refs: [] as { device_id: string; seq: number }[],
-        }
-      }
-      rejectSpacedTagName((a['content'] as string) ?? '')
-    }
-    // A page goes through `create_page_in_space_inner`, which resolves a title
-    // already held in the space (`nameKey`, #4723, #6278) to that page's own
-    // row, creating nothing and appending no op, and refuses another page's
-    // alias (`createPageInSpace`).
-    if (blockType === 'page' && typeof a['content'] === 'string') {
-      const holder = pageNameHolder(a['content'], spaceId)
-      if (holder?.by === 'alias') throw pageNameRefusal(holder, a['content'])
-      const held = holder ? blocks.get(holder.id) : undefined
-      if (held) {
-        return {
-          ...held,
-          id: held['id'] as string,
-          op_refs: [] as { device_id: string; seq: number }[],
-        }
+    assertCreateParent(parentId, createParent, blockType, a['content'])
+    const existing = existingNamedBlock(blockType, a['content'], spaceId)
+    if (existing) {
+      return {
+        ...existing,
+        id: existing['id'] as string,
+        op_refs: [] as { device_id: string; seq: number }[],
       }
     }
     // `resolve_block_id_in_tx`: a client id already in `blocks`, live or not.
@@ -1246,14 +1278,7 @@ export const blocksHandlers = {
     // `create_tag_in_space_inner`) and projects the block as a root of that
     // space — its own page, ranked in the space's root group.
     const scopedRoot = parentId === null && (blockType === 'page' || blockType === 'tag')
-    const createPageId =
-      blockType === 'page' || scopedRoot
-        ? id
-        : createParent == null
-          ? null
-          : createParent['block_type'] === 'page'
-            ? parentId
-            : ((createParent['page_id'] as string | null) ?? null)
+    const createPageId = scopedRoot ? id : createdPageId(blockType, id, parentId, createParent)
     const row = {
       id,
       block_type: blockType,
