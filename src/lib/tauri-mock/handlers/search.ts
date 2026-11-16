@@ -1613,41 +1613,8 @@ function searchStructuralCandidates(
     if (spaceIds !== null && !spaceIds.some((id) => fbqInSpace(b, id))) return false
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
-    if (tagGroups.length > 0) {
-      // Every group needs one of its tags, or a tag nested under it, among
-      // the block's attached tags (`block_tags`) or, with
-      // `tagsMatchInlineAndInherited`, its attached, inline `#[id]` and
-      // inherited ones (`add_any_tag_via_projection`).
-      const id = b['id'] as string
-      const own = tagsWiden
-        ? new Set([...refInclusiveTags(id), ...inheritedTagIds(id)])
-        : (blockTags.get(id) ?? new Set<string>())
-      if (!tagGroups.every((group) => group.some((t) => own.has(t)))) return false
-    }
-    if (includeGlobs.length > 0 || excludeGlobs.length > 0) {
-      // `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache WHERE LOWER(title)
-      // GLOB ?)` — `SearchProjection::compile_path_glob`
-      // (`filters/primitive.rs:1372-1399`), OR-joined across the include list
-      // and AND-joined across the exclude list
-      // (`src-tauri/agaric-store/src/fts/filter_builder.rs:575-616`).
-      //
-      // A NULL `page_id` makes BOTH `IN` and `NOT IN` evaluate to NULL, so the
-      // row is dropped either way — not kept by the exclude half. (Pages
-      // themselves always carry `page_id = id`; migration 0073 promoted that
-      // to a CHECK constraint.)
-      const pageId = (b['page_id'] as string | null) ?? null
-      if (pageId === null) return false
-      const title = pagesCacheTitle(pageId)
-      if (includeGlobs.length > 0) {
-        if (title === null) return false
-        if (!includeGlobs.some((p) => pageGlobFilterMatches(p, title, false))) return false
-      }
-      // Absent from `pages_cache` → not a member of the excluded set either,
-      // so `NOT IN` holds and the row survives the exclude half.
-      if (title !== null && !excludeGlobs.every((p) => pageGlobFilterMatches(p, title, true))) {
-        return false
-      }
-    }
+    if (!matchesTagGroups(b['id'] as string, tagGroups, tagsWiden)) return false
+    if (!matchesPageGlobs(b, includeGlobs, excludeGlobs)) return false
     if (metadata.length > 0 || filterExpr !== null) {
       const row = searchMetadataRow(b, needsLastEdited)
       if (!metadata.every((p) => metaRowMatchesFilter(row, p))) return false
@@ -1655,6 +1622,49 @@ function searchStructuralCandidates(
     }
     return true
   })
+}
+
+/**
+ * Every group needs one of its tags, or a tag nested under it, among the
+ * block's attached tags (`block_tags`) or, with `tagsMatchInlineAndInherited`,
+ * its attached, inline `#[id]` and inherited ones (`add_any_tag_via_projection`).
+ */
+function matchesTagGroups(id: string, tagGroups: string[][], tagsWiden: boolean): boolean {
+  if (tagGroups.length === 0) return true
+  const own = tagsWiden
+    ? new Set([...refInclusiveTags(id), ...inheritedTagIds(id)])
+    : (blockTags.get(id) ?? new Set<string>())
+  return tagGroups.every((group) => group.some((t) => own.has(t)))
+}
+
+/**
+ * `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache WHERE LOWER(title)
+ * GLOB ?)` — `SearchProjection::compile_path_glob`
+ * (`filters/primitive.rs:1372-1399`), OR-joined across the include list
+ * and AND-joined across the exclude list
+ * (`src-tauri/agaric-store/src/fts/filter_builder.rs:575-616`).
+ *
+ * A NULL `page_id` makes BOTH `IN` and `NOT IN` evaluate to NULL, so the
+ * row is dropped either way — not kept by the exclude half. (Pages
+ * themselves always carry `page_id = id`; migration 0073 promoted that
+ * to a CHECK constraint.)
+ */
+function matchesPageGlobs(
+  b: Record<string, unknown>,
+  includeGlobs: string[],
+  excludeGlobs: string[],
+): boolean {
+  if (includeGlobs.length === 0 && excludeGlobs.length === 0) return true
+  const pageId = (b['page_id'] as string | null) ?? null
+  if (pageId === null) return false
+  const title = pagesCacheTitle(pageId)
+  if (includeGlobs.length > 0) {
+    if (title === null) return false
+    if (!includeGlobs.some((p) => pageGlobFilterMatches(p, title, false))) return false
+  }
+  // Absent from `pages_cache` → not a member of the excluded set either,
+  // so `NOT IN` holds and the row survives the exclude half.
+  return title === null || excludeGlobs.every((p) => pageGlobFilterMatches(p, title, true))
 }
 
 /**
@@ -2253,6 +2263,74 @@ function namesTemplateProperty(expr: Record<string, unknown>, positive = true): 
   }
 }
 
+/**
+ * Echo one AggregateResult per requested spec. `count` lands in `count`;
+ * every fold operator (sum/avg/min/max) lands a stub `value`.
+ */
+function stubAggregateResults(aggregates: unknown): Array<Record<string, unknown>> {
+  return ((aggregates as Array<Record<string, unknown>> | undefined) ?? []).map((spec, i) => {
+    const op = spec['op'] as string
+    if (op === 'count') return { op, value: null, count: i + 1 }
+    return { op, value: (i + 1) * 10, count: null }
+  })
+}
+
+/** The index of the first matched entry past `cursor`'s keyset position; 0 without one. */
+function resumeIndex(
+  matched: MatchedEntry[],
+  sortTerms: ReadonlyArray<ResolvedSortTerm>,
+  cursor: string | null | undefined,
+): number {
+  if (cursor == null) return 0
+  const decoded = decodeCursor(cursor)
+  const idx = matched.findIndex((m) => compareEntryToCursor(sortTerms, m, decoded.values) > 0)
+  return idx === -1 ? matched.length : idx
+}
+
+/**
+ * The grouped `run_advanced_query` response. First page only: synthesise one
+ * bucket. Cursor pages return an empty tail so load-more terminates
+ * deterministically.
+ */
+function groupedAdvancedQuery(
+  groupBy: Record<string, unknown>,
+  cursor: string | null | undefined,
+  aggregateResults: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  // #3917 — `decodeGroupCursor` still runs on a non-null cursor here even
+  // though its DECODED value is discarded (grouped pagination has no
+  // real keyset to resume from yet — the flat path is the only one
+  // with a live cursor contract). Skipping straight to the empty-tail
+  // return let a malformed/foreign/version-stale cursor through
+  // silently, diverging from the backend's `run_grouped`, which decodes
+  // its OWN `GroupCursor` (`src-tauri/agaric-store/src/query/engine.rs:1321-1324`) before doing anything
+  // else with it. Uses {@link decodeGroupCursor}, NOT the flat path's
+  // {@link decodeCursor} — the two cursor shapes are not interchangeable
+  // (`{count,key}` vs `{values}`); see that function's doc for the
+  // divergence a same-shape reuse would have left.
+  if (cursor != null) {
+    decodeGroupCursor(cursor)
+    return { rows: [], groups: [], nextCursor: null, hasMore: false, totalCount: null }
+  }
+  const key = (groupBy['key'] as Record<string, unknown> | undefined) ?? {}
+  const renderedKey = (key['type'] as string | undefined) ?? 'group'
+  return {
+    rows: [],
+    groups: [
+      {
+        key: renderedKey,
+        count: 1,
+        members: [],
+        ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
+      },
+    ],
+    nextCursor: null,
+    hasMore: false,
+    totalCount: 1,
+    ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
+  }
+}
+
 export const searchHandlers = {
   // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr` tree
   // to SQL, so it INTERPRETS it in TypeScript instead. The GROUPED + AGGREGATE
@@ -2277,7 +2355,6 @@ export const searchHandlers = {
   // seed data instead of an always-empty page.
   run_advanced_query: (args) => {
     const request = ((args as Record<string, unknown>)['request'] ?? {}) as Record<string, unknown>
-    const aggSpecs = (request['aggregates'] as Array<Record<string, unknown>> | undefined) ?? []
     const groupBy = request['groupBy'] as Record<string, unknown> | null | undefined
     const cursor = request['cursor'] as string | null | undefined
     // An omitted filter defaults to the engine's TRUE expression
@@ -2288,51 +2365,9 @@ export const searchHandlers = {
     }
     assertQueryFilterLeaves(filterExpr)
 
-    // Echo one AggregateResult per requested spec. `count` lands in `count`;
-    // every fold operator (sum/avg/min/max) lands a stub `value`.
-    const aggregateResults = aggSpecs.map((spec, i) => {
-      const op = spec['op'] as string
-      if (op === 'count') return { op, value: null, count: i + 1 }
-      return { op, value: (i + 1) * 10, count: null }
-    })
+    const aggregateResults = stubAggregateResults(request['aggregates'])
 
-    if (groupBy != null) {
-      // First page only: synthesise one bucket. Cursor pages return an empty
-      // tail so load-more terminates deterministically.
-      //
-      // #3917 — `decodeGroupCursor` still runs on a non-null cursor here even
-      // though its DECODED value is discarded (grouped pagination has no
-      // real keyset to resume from yet — the FLAT path below is the only one
-      // with a live cursor contract). Skipping straight to the empty-tail
-      // return let a malformed/foreign/version-stale cursor through
-      // silently, diverging from the backend's `run_grouped`, which decodes
-      // its OWN `GroupCursor` (`src-tauri/agaric-store/src/query/engine.rs:1321-1324`) before doing anything
-      // else with it. Uses {@link decodeGroupCursor}, NOT the flat path's
-      // {@link decodeCursor} — the two cursor shapes are not interchangeable
-      // (`{count,key}` vs `{values}`); see that function's doc for the
-      // divergence a same-shape reuse would have left.
-      if (cursor != null) {
-        decodeGroupCursor(cursor)
-        return { rows: [], groups: [], nextCursor: null, hasMore: false, totalCount: null }
-      }
-      const key = (groupBy['key'] as Record<string, unknown> | undefined) ?? {}
-      const renderedKey = (key['type'] as string | undefined) ?? 'group'
-      return {
-        rows: [],
-        groups: [
-          {
-            key: renderedKey,
-            count: 1,
-            members: [],
-            ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
-          },
-        ],
-        nextCursor: null,
-        hasMore: false,
-        totalCount: 1,
-        ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
-      }
-    }
+    if (groupBy != null) return groupedAdvancedQuery(groupBy, cursor, aggregateResults)
 
     // FLAT structural path: evaluate the `FilterExpr` against every active,
     // in-space block.
@@ -2419,12 +2454,7 @@ export const searchHandlers = {
     // or version-stale cursor instead of returning `null`, mirroring
     // `QueryCursor::decode` propagating `AppError::Validation` to the
     // caller.
-    let startIdx = 0
-    if (cursor != null) {
-      const decoded = decodeCursor(cursor)
-      const idx = matched.findIndex((m) => compareEntryToCursor(sortTerms, m, decoded.values) > 0)
-      startIdx = idx === -1 ? matched.length : idx
-    }
+    const startIdx = resumeIndex(matched, sortTerms, cursor)
     const slice = matched.slice(startIdx, startIdx + limit + 1)
     const hasMore = slice.length > limit
     const pageEntries = hasMore ? slice.slice(0, limit) : slice

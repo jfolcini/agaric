@@ -510,7 +510,7 @@ function App() {
     void syncAll({ userInitiated: true })
   }, [syncAll, setShowNoPeersDialog])
 
-  const activePage = pageStack.length > 0 ? pageStack.at(-1) : null
+  const activePage = pageStack.at(-1) ?? null
 
   // ── View key for scroll restore + transition ──────────────────────
   const viewKey =
@@ -728,7 +728,7 @@ function App() {
               >
                 <ViewDispatcher
                   currentView={currentView}
-                  activePage={activePage ?? null}
+                  activePage={activePage}
                   onPageSelect={handlePageSelect}
                   navigateToPage={navigateToPage}
                 />

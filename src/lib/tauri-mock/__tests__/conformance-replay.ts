@@ -199,6 +199,49 @@ function loadSeedProperty(p: Record<string, unknown>): void {
   pushOp('set_property', { block_id: blockId, key, from_value: null })
 }
 
+/** The harness space's definitions (#5841), as the Rust seed declares them. */
+function loadSeedPropertyDef(d: Record<string, unknown>): void {
+  spacePropertyDefs(CONFORMANCE_SPACE_ID).set(d['key'] as string, {
+    key: d['key'],
+    value_type: d['value_type'],
+    options: d['options'] ?? null,
+    // The backend stamps `now_rfc3339()`; a wall clock is never comparable,
+    // so no token carries it (`PROPERTY_DEF_TOKEN`).
+    created_at: new Date().toISOString(),
+  })
+}
+
+/** The eight `attachments` columns the Rust seed binds, in the same order. */
+function loadSeedAttachment(a: Record<string, unknown>): void {
+  attachments.set(a['id'] as string, {
+    id: a['id'],
+    block_id: seedLabelToId(a['block_id'] as string),
+    mime_type: a['mime_type'],
+    filename: a['filename'],
+    size_bytes: a['size_bytes'],
+    fs_path: a['fs_path'],
+    created_at: a['created_at'],
+    content_hash: a['content_hash'] ?? null,
+  })
+}
+
+/**
+ * The seven `link_metadata` columns the Rust seed binds, in the same order.
+ * The flags stay booleans: the backend struct has `bool` fields, so both
+ * stacks serialize `true` / `false` and the tokens agree.
+ */
+function loadSeedLinkMetadata(m: Record<string, unknown>): void {
+  linkMetadata.set(m['url'] as string, {
+    url: m['url'],
+    title: m['title'] ?? null,
+    favicon_url: m['favicon_url'] ?? null,
+    description: m['description'] ?? null,
+    fetched_at: m['fetched_at'],
+    auth_required: m['auth_required'],
+    not_found: m['not_found'],
+  })
+}
+
 /** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
 export function loadSeed(fixture: Fixture): void {
   for (const b of fixture.seed.blocks) {
@@ -219,44 +262,9 @@ export function loadSeed(fixture: Fixture): void {
     row['page_id'] =
       row['block_type'] === 'page' || row['parent_id'] == null ? id : resolveRootPageId(row)
   }
-  // The harness space's definitions (#5841), as the Rust seed declares them.
-  for (const d of fixture.seed.property_defs ?? []) {
-    spacePropertyDefs(CONFORMANCE_SPACE_ID).set(d['key'] as string, {
-      key: d['key'],
-      value_type: d['value_type'],
-      options: d['options'] ?? null,
-      // The backend stamps `now_rfc3339()`; a wall clock is never comparable,
-      // so no token carries it (`PROPERTY_DEF_TOKEN`).
-      created_at: new Date().toISOString(),
-    })
-  }
-  for (const a of fixture.seed.attachments ?? []) {
-    // The eight `attachments` columns the Rust seed binds, in the same order.
-    attachments.set(a['id'] as string, {
-      id: a['id'],
-      block_id: seedLabelToId(a['block_id'] as string),
-      mime_type: a['mime_type'],
-      filename: a['filename'],
-      size_bytes: a['size_bytes'],
-      fs_path: a['fs_path'],
-      created_at: a['created_at'],
-      content_hash: a['content_hash'] ?? null,
-    })
-  }
-  for (const m of fixture.seed.link_metadata ?? []) {
-    // The seven `link_metadata` columns the Rust seed binds, in the same
-    // order. The flags stay booleans: the backend struct has `bool` fields, so
-    // both stacks serialize `true` / `false` and the tokens agree.
-    linkMetadata.set(m['url'] as string, {
-      url: m['url'],
-      title: m['title'] ?? null,
-      favicon_url: m['favicon_url'] ?? null,
-      description: m['description'] ?? null,
-      fetched_at: m['fetched_at'],
-      auth_required: m['auth_required'],
-      not_found: m['not_found'],
-    })
-  }
+  for (const d of fixture.seed.property_defs ?? []) loadSeedPropertyDef(d)
+  for (const a of fixture.seed.attachments ?? []) loadSeedAttachment(a)
+  for (const m of fixture.seed.link_metadata ?? []) loadSeedLinkMetadata(m)
   for (const s of fixture.seed.app_settings ?? []) {
     appSettings.set(s['key'] as string, s['value'] as string)
   }
@@ -404,6 +412,44 @@ function resolveOpRefLabel(label: string): { device_id: string; seq: number } {
   return ref
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * #5364 — `add_meeting` takes one `input` object: its space and its two block
+ * ids are labels, as the scalar keys are.
+ */
+function expandMeetingInput(
+  input: Record<string, unknown>,
+  createdIds: readonly string[],
+): Record<string, unknown> {
+  const copy = { ...input }
+  for (const key of ['space_id', 'template_id', 'link_block_id']) {
+    if (copy[key] === '$SPACE') copy[key] = CONFORMANCE_SPACE_ID
+    else if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
+  }
+  return copy
+}
+
+/**
+ * #6531 — `split_block` and `merge_blocks` take one `request` object, whose
+ * block ids are labels.
+ */
+function expandSplitMergeRequest(
+  request: Record<string, unknown>,
+  createdIds: readonly string[],
+): Record<string, unknown> {
+  const copy = { ...request }
+  for (const key of ['blockId', 'intoId', 'newBlockId']) {
+    if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
+  }
+  for (const key of ['before', 'after', 'mergedText']) {
+    if (typeof copy[key] === 'string') copy[key] = expandContentLabels(copy[key], createdIds)
+  }
+  return copy
+}
+
 /**
  * Rewrite an op's args for the mock: labels referenced by id-shaped arg keys
  * are resolved (`S1` → its 26-char seed id, `C1` → the first op-created block).
@@ -452,29 +498,9 @@ export function expandOpArgs(
       }
     }
   }
-  // #5364 — `add_meeting` takes one `input` object: its space and its two
-  // block ids are labels, as the scalar keys are.
-  const input = out['input']
-  if (input != null && typeof input === 'object' && !Array.isArray(input)) {
-    const copy = { ...(input as Record<string, unknown>) }
-    for (const key of ['space_id', 'template_id', 'link_block_id']) {
-      if (copy[key] === '$SPACE') copy[key] = CONFORMANCE_SPACE_ID
-      else if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
-    }
-    out['input'] = copy
-  }
-  // #6531 — `split_block` and `merge_blocks` take one `request` object, whose
-  // block ids are labels.
-  const request = out['request']
-  if (request != null && typeof request === 'object' && !Array.isArray(request)) {
-    const copy = { ...(request as Record<string, unknown>) }
-    for (const key of ['blockId', 'intoId', 'newBlockId']) {
-      if (typeof copy[key] === 'string') copy[key] = resolveOpArgId(copy[key], createdIds)
-    }
-    for (const key of ['before', 'after', 'mergedText']) {
-      if (typeof copy[key] === 'string') copy[key] = expandContentLabels(copy[key], createdIds)
-    }
-    out['request'] = copy
+  if (isPlainObject(out['input'])) out['input'] = expandMeetingInput(out['input'], createdIds)
+  if (isPlainObject(out['request'])) {
+    out['request'] = expandSplitMergeRequest(out['request'], createdIds)
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
   // expands exactly as the scalar keys above do. Without it the mock is

@@ -1929,6 +1929,33 @@ function rawIdHits(token: string): string[] {
 }
 
 /**
+ * One `<step> (row … carries …)` line per recorded row in which `hits` finds
+ * anything.
+ */
+function rowLeaks(
+  stepLabel: string,
+  rows: readonly string[],
+  hits: (token: string) => string[],
+): string[] {
+  return rows.flatMap((row) => {
+    const found = hits(row)
+    return found.length > 0
+      ? [`${stepLabel} (row ${JSON.stringify(row)} carries ${JSON.stringify(found)})`]
+      : []
+  })
+}
+
+/** `null` and absent are no declaration; anything else that is no string is mis-typed. */
+function isNonStringDeclaration(declaration: unknown): boolean {
+  return declaration != null && typeof declaration !== 'string'
+}
+
+/** The `AppErrorKind` an `expect_error` declares, or `null` for none or a mis-typed one. */
+function declaredErrorKind(declaration: unknown): string | null {
+  return typeof declaration === 'string' ? declaration : null
+}
+
+/**
  * A seed label (`S2`) expanded to the 26-char id both runners insert — IDENTICAL
  * to `conformance.test.ts`'s `seedLabelToId` and the Rust `seed_label_to_id`.
  * Applied on BOTH sides of the label lookup so a fixture that spells an op arg
@@ -3486,7 +3513,6 @@ describe('#3083 conformance-coverage ratchet', () => {
     // be a raw 26-char id.
     const rawIdLeak: string[] = []
     for (const fx of fixtures) {
-      if (fx.querySteps.length === 0) continue
       for (const [i, step] of fx.querySteps.entries()) {
         const recorded = fx.expectedQueries[i]
         if (!recorded || recorded.name !== step.name) {
@@ -3506,11 +3532,11 @@ describe('#3083 conformance-coverage ratchet', () => {
         // so. Reading the key as `unknown` is what lets the shape arm be
         // written at all.
         const rawDeclaration: unknown = step.expect_error
-        if (rawDeclaration != null && typeof rawDeclaration !== 'string')
+        if (isNonStringDeclaration(rawDeclaration))
           nonStringDeclaration.push(
             `${fx.name}/${step.name} (declares ${JSON.stringify(rawDeclaration)})`,
           )
-        const declaredError = typeof rawDeclaration === 'string' ? rawDeclaration : null
+        const declaredError = declaredErrorKind(rawDeclaration)
         const isRefusal = recordedError !== null
         const isEmpty = recorded.rows.length === 0
         if (isEmpty && !isRefusal && step.expect_empty !== true) {
@@ -3531,20 +3557,8 @@ describe('#3083 conformance-coverage ratchet', () => {
           )
         if ((step.expect_empty === true || declaredError !== null) && !step.comment?.trim())
           uncommented.push(`${fx.name}/${step.name}`)
-        for (const row of recorded.rows) {
-          const hits = rowSentinelHits(row)
-          if (hits.length > 0) {
-            sentinelLeak.push(
-              `${fx.name}/${step.name} (row ${JSON.stringify(row)} carries ${JSON.stringify(hits)})`,
-            )
-          }
-          const raw = rawIdHits(row)
-          if (raw.length > 0) {
-            rawIdLeak.push(
-              `${fx.name}/${step.name} (row ${JSON.stringify(row)} carries ${JSON.stringify(raw)})`,
-            )
-          }
-        }
+        sentinelLeak.push(...rowLeaks(`${fx.name}/${step.name}`, recorded.rows, rowSentinelHits))
+        rawIdLeak.push(...rowLeaks(`${fx.name}/${step.name}`, recorded.rows, rawIdHits))
       }
     }
 

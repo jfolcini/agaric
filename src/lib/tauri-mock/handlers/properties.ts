@@ -420,6 +420,88 @@ function listItemType(blockId: string, key: string): string | undefined {
     : (propertyDefs.get(spaceId)?.get(key)?.['value_type'] as string | undefined)
 }
 
+/** The typed value columns of a `set_property` call, one of them non-null. */
+interface SetPropertyValues {
+  valueText: string | null
+  valueNum: number | null
+  valueDate: string | null
+  valueRef: string | null
+  valueBool: boolean | null
+  valueList: unknown[] | null
+}
+
+/**
+ * Typed values are bundled under `value: SetPropertyArgs` (was 4 flat args).
+ * Navigate the bundle to read each typed value column.
+ */
+function readSetPropertyValues(valueArgs: Record<string, unknown> | undefined): SetPropertyValues {
+  return {
+    valueText: (valueArgs?.['value_text'] as string | null) ?? null,
+    valueNum: (valueArgs?.['value_num'] as number | null) ?? null,
+    valueDate: (valueArgs?.['value_date'] as string | null) ?? null,
+    valueRef: (valueArgs?.['value_ref'] as string | null) ?? null,
+    valueBool: (valueArgs?.['value_bool'] as boolean | null) ?? null,
+    valueList: (valueArgs?.['value_list'] as unknown[] | null) ?? null,
+  }
+}
+
+/** The space a ref value is resolved in: the block's own, else its page's. */
+function holderSpaceOf(blockId: string): string | null {
+  const holder = blocks.get(blockId)
+  return holder ? ((holder['space_id'] as string | null) ?? ownerSpaceOf(holder)) : null
+}
+
+/**
+ * #6741 — a list is taken by a definition that holds one, which takes nothing
+ * else, and by an undeclared key. Returns the list with its ref items resolved.
+ */
+function checkedListValue(
+  defSpace: string | null,
+  blockId: string,
+  key: string,
+  valueList: unknown[] | null,
+  valueCount: number,
+): unknown[] | null {
+  const listDef = propertyDefinition(defSpace, key)
+  if (valueList === null) {
+    if (valueCount === 1 && listDef?.['multiple'] === true) {
+      throw validationRejection(`Property '${key}' holds a list; set it with value_list.`)
+    }
+    return null
+  }
+  let list = valueList
+  // `read_typed_ref_list`: a ref item that is no block id is the page its
+  // `[[Title]]` or title names in the block's space.
+  if (listDef?.['multiple'] === true && listDef['value_type'] === 'ref') {
+    const spaceId = holderSpaceOf(blockId)
+    list = list.map((item) =>
+      typeof item === 'string' && !CANONICAL_ULID.test(item)
+        ? resolveRefValue(item, spaceId)
+        : item,
+    )
+  }
+  assertValidListValue(key, list, listDef)
+  return list
+}
+
+/** Writes a `block_properties` row; the block row echoed with its `op_refs` (#2468, `WithOps<BlockRow>`). */
+function writeTypedPropertyRow(
+  blockId: string,
+  key: string,
+  v: SetPropertyValues,
+): Record<string, unknown> | null {
+  const op = writePropertyRow(blockId, key, {
+    value_text: v.valueText,
+    value_num: v.valueNum,
+    value_date: v.valueDate,
+    value_ref: v.valueRef,
+    value_bool: v.valueBool === null ? null : v.valueBool ? 1 : 0,
+    ...listField({ value_list: v.valueList }),
+  })
+  const b = blocks.get(blockId)
+  return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+}
+
 export const propertiesHandlers = {
   // Mirrors `pagination::query_by_property` (#3827). One `block_properties`
   // (or native-column) row per block; the comparison operator applies to
@@ -538,54 +620,25 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
-    // Typed values are bundled under `value: SetPropertyArgs` (was 4 flat
-    // args). Navigate the bundle to read each typed value column.
-    const valueArgs = a['value'] as Record<string, unknown> | undefined
-    let valueText = (valueArgs?.['value_text'] as string | null) ?? null
-    const valueNum = (valueArgs?.['value_num'] as number | null) ?? null
-    const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
-    let valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
-    const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
-    let valueList = (valueArgs?.['value_list'] as unknown[] | null) ?? null
+    const v = readSetPropertyValues(a['value'] as Record<string, unknown> | undefined)
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently. The
     // block's space's definitions apply (#5841).
     const defSpace = definitionSpaceOf(blockId)
-    assertValidSetPropertyValue(defSpace, key, valueText)
+    assertValidSetPropertyValue(defSpace, key, v.valueText)
     // `validate_set_property`: one value, or none to clear a reserved column.
-    const valueCount = [valueText, valueNum, valueDate, valueRef, valueBool, valueList].filter(
-      (v) => v !== null,
-    ).length
+    const valueCount = Object.values(v).filter((x) => x !== null).length
     if (valueCount > 1 || (valueCount === 0 && RESERVED_PROPERTY_COLUMN[key] === undefined)) {
       throw validationRejection(
         `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
       )
     }
-    // #6741 — a list is taken by a definition that holds one, which takes
-    // nothing else, and by an undeclared key.
-    const listDef = propertyDefinition(defSpace, key)
-    // `read_typed_ref_list`: a ref item that is no block id is the page its
-    // `[[Title]]` or title names in the block's space.
-    if (valueList !== null && listDef?.['multiple'] === true && listDef['value_type'] === 'ref') {
-      const holder = blocks.get(blockId)
-      const spaceId = holder
-        ? ((holder['space_id'] as string | null) ?? ownerSpaceOf(holder))
-        : null
-      valueList = valueList.map((item) =>
-        typeof item === 'string' && !CANONICAL_ULID.test(item)
-          ? resolveRefValue(item, spaceId)
-          : item,
-      )
-    }
-    if (valueList !== null) assertValidListValue(key, valueList, listDef)
-    else if (valueCount === 1 && listDef?.['multiple'] === true) {
-      throw validationRejection(`Property '${key}' holds a list; set it with value_list.`)
-    }
+    v.valueList = checkedListValue(defSpace, blockId, key, v.valueList, valueCount)
     // `validate_set_property`, then `validate_property_value`: every
     // `value_date` is a non-blank calendar day.
-    if (valueDate !== null) {
-      if (valueDate.trim() === '') throw validationRejection('set_property.value_date.empty')
-      assertValidDateFormat(valueDate)
+    if (v.valueDate !== null) {
+      if (v.valueDate.trim() === '') throw validationRejection('set_property.value_date.empty')
+      assertValidDateFormat(v.valueDate)
     }
     // `fetch_live_block_in_tx`.
     const target = blocks.get(blockId)
@@ -596,14 +649,12 @@ export const propertiesHandlers = {
     // #5160 D11 — `read_typed_ref`: text under a `ref` definition is the block
     // it names in the block's space.
     if (
-      valueText !== null &&
-      valueRef === null &&
+      v.valueText !== null &&
+      v.valueRef === null &&
       propertyDefinition(defSpace, key)?.['value_type'] === 'ref'
     ) {
-      const block = blocks.get(blockId)
-      const spaceId = block ? ((block['space_id'] as string | null) ?? ownerSpaceOf(block)) : null
-      valueRef = resolveRefValue(valueText, spaceId)
-      valueText = null
+      v.valueRef = resolveRefValue(v.valueText, holderSpaceOf(blockId))
+      v.valueText = null
     }
     // #3079 — reserved column-backed keys (todo_state/priority/due_date/
     // scheduled_date) are the single source of truth on the block ROW, not
@@ -615,25 +666,14 @@ export const propertiesHandlers = {
     if (reservedChannel !== undefined) {
       // #3091 — reserved-value validation runs inside setReservedColumnProperty.
       const write = () =>
-        setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
+        setReservedColumnProperty(blockId, key, reservedChannel, v.valueText, v.valueDate)
       // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_in_tx`.
-      const row = key === 'todo_state' ? writeTodoState(blockId, valueText, write) : write()
+      const row = key === 'todo_state' ? writeTodoState(blockId, v.valueText, write) : write()
       return propertiesChanged([blockId], [key], row)
     }
     if (key === 'space')
-      return propertiesChanged([blockId], [key], setSpaceProperty(target, valueRef))
-    const op = writePropertyRow(blockId, key, {
-      value_text: valueText,
-      value_num: valueNum,
-      value_date: valueDate,
-      value_ref: valueRef,
-      value_bool: valueBool === null ? null : valueBool ? 1 : 0,
-      ...listField({ value_list: valueList }),
-    })
-    const b = blocks.get(blockId)
-    // #2468 — `WithOps<BlockRow>`.
-    const row = b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
-    return propertiesChanged([blockId], [key], row)
+      return propertiesChanged([blockId], [key], setSpaceProperty(target, v.valueRef))
+    return propertiesChanged([blockId], [key], writeTypedPropertyRow(blockId, key, v))
   },
 
   delete_property: (args) => {

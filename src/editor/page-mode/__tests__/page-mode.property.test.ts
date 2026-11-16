@@ -651,6 +651,21 @@ function applyList(ed: Editor, action: ListStep, lists: PageLists): Acted {
   return { index, offset }
 }
 
+/** Copy (or cut) a run of blocks and paste it at a caret. */
+function applyPaste(ed: Editor, action: Extract<Action, { kind: 'paste' | 'cutPaste' }>): Acted {
+  const count = ed.state.doc.childCount
+  const from = action.from % count
+  const last = Math.min(count - 1, from + action.count - 1)
+  selectBlocks(ed, from, last, action.kind === 'cutPaste')
+  const html = clipboard(ed, action.kind === 'paste' ? 'copy' : 'cut')
+  const to = action.to % ed.state.doc.childCount
+  const offset = action.kind === 'paste' ? action.at % (firstTextLength(ed, to) + 1) : 0
+  caret(ed, to, offset)
+  const target = blockIdOf(ed.state.doc.child(to)) as string
+  ed.view.pasteHTML(html)
+  return { index: to, offset, target }
+}
+
 /** Apply `action`; resolves the block it acted on, if any. */
 function apply(ed: Editor, action: Action, lists: PageLists): Acted | null {
   const count = ed.state.doc.childCount
@@ -659,18 +674,7 @@ function apply(ed: Editor, action: Action, lists: PageLists): Acted | null {
     return null
   }
   ed.view.dispatch(closeHistory(ed.state.tr))
-  if (action.kind === 'paste' || action.kind === 'cutPaste') {
-    const from = action.from % count
-    const last = Math.min(count - 1, from + action.count - 1)
-    selectBlocks(ed, from, last, action.kind === 'cutPaste')
-    const html = clipboard(ed, action.kind === 'paste' ? 'copy' : 'cut')
-    const to = action.to % ed.state.doc.childCount
-    const offset = action.kind === 'paste' ? action.at % (firstTextLength(ed, to) + 1) : 0
-    caret(ed, to, offset)
-    const target = blockIdOf(ed.state.doc.child(to)) as string
-    ed.view.pasteHTML(html)
-    return { index: to, offset, target }
-  }
+  if (action.kind === 'paste' || action.kind === 'cutPaste') return applyPaste(ed, action)
   if (isListStep(action)) return applyList(ed, action, lists)
   const index = action.block % count
   const offset = 'at' in action ? action.at % (firstTextLength(ed, index) + 1) : 0
@@ -722,6 +726,19 @@ function apply(ed: Editor, action: Action, lists: PageLists): Acted | null {
           task: { marker: action.marker[0], state: action.marker[1], before },
         }
   }
+  pressKeys(ed, action, lists)
+  return { index, offset }
+}
+
+/** The steps that are only input at the caret: a paste from outside, typing, a key. */
+function pressKeys(
+  ed: Editor,
+  action: Extract<
+    Action,
+    { kind: 'pasteOutside' | 'type' | 'enter' | 'backspace' | 'tab' | 'shiftTab' }
+  >,
+  lists: PageLists,
+): void {
   if (action.kind === 'pasteOutside') {
     if (action.html) ed.view.pasteHTML('<p>from</p><p>outside</p>')
     else ed.view.pasteText('from\noutside')
@@ -729,7 +746,6 @@ function apply(ed: Editor, action: Action, lists: PageLists): Acted | null {
   else if (action.kind === 'enter') pressInList(ed, lists, 'Enter')
   else if (action.kind === 'backspace') pressInList(ed, lists, 'Backspace')
   else press(ed, 'Tab', { shiftKey: action.kind === 'shiftTab' })
-  return { index, offset }
 }
 
 /** Where `action` may have put ids: `before` the step, `after` it, `seen` in every earlier state. */
@@ -1107,16 +1123,7 @@ async function commitAndCycle(
     const blockIds = page.live().map(([id]) => id)
     lists.take(dispatch('get_batch_properties', { blockIds }) as Record<string, PropertyRow[]>)
     applyRemote(ed.view, save, page.rows(), mintKept)
-    if (acted?.line !== undefined && save.saved.has(tagged)) {
-      // A key the block held as a line before it was changed stays text.
-      const { key, value } = acted.line
-      const heldLine = heldKeys.has(key)
-      const shown = page.live().find(([id]) => id === tagged)?.[2] ?? ''
-      const lineLeft = parseInlineProperties(shown).some(
-        (prop) => prop.key === key && prop.value === value,
-      )
-      expect(lineLeft).toBe(heldLine)
-    }
+    expectLineKept(acted, save, page, tagged, heldKeys)
     const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
     expect(tagsWrittenAsText(content)).toEqual([])
     expectTagsHeld(named, content)
@@ -1128,30 +1135,59 @@ async function commitAndCycle(
       expect(text.startsWith(marker)).toBe(before.startsWith(marker))
     }
   }
-  const cycled = acted?.cycled
-  if (cycled !== undefined && save.saved.has(cycled)) {
-    const next = nextTaskState(states.get(cycled) ?? null)
-    await commands.setTodoState(cycled, next)
-    if (next === null) states.delete(cycled)
-    else states.set(cycled, next)
-  }
+  await cycleTask(acted, save, states)
   await setField(acted, save, fields)
+  await setPropertyValue(acted, save, props)
+}
+
+/** A key the block held as a line before it was changed stays text; a new one leaves it. */
+function expectLineKept(
+  acted: Acted | null,
+  save: PageSaveState,
+  page: MockPage,
+  tagged: string,
+  heldKeys: ReadonlySet<string>,
+): void {
+  const line = acted?.line
+  if (line === undefined || !save.saved.has(tagged)) return
+  const shown = page.live().find(([id]) => id === tagged)?.[2] ?? ''
+  const lineLeft = parseInlineProperties(shown).some(
+    (prop) => prop.key === line.key && prop.value === line.value,
+  )
+  expect(lineLeft).toBe(heldKeys.has(line.key))
+}
+
+/** Cycle a block's task state through the checkbox's command. */
+async function cycleTask(acted: Acted | null, save: PageSaveState, states: Map<string, string>) {
+  const cycled = acted?.cycled
+  if (cycled === undefined || !save.saved.has(cycled)) return
+  const next = nextTaskState(states.get(cycled) ?? null)
+  await commands.setTodoState(cycled, next)
+  if (next === null) states.delete(cycled)
+  else states.set(cycled, next)
+}
+
+/** Set or clear a block's property through its command, as the property drawer does. */
+async function setPropertyValue(
+  acted: Acted | null,
+  save: PageSaveState,
+  props: Map<string, string>,
+) {
   const property = acted?.property
-  if (property !== undefined && save.saved.has(property.id)) {
-    const { id, key, value } = property
-    if (value === null) {
-      await commands.deleteProperty(id, key)
-      props.delete(`${id}:${key}`)
-    } else {
-      await commands.setProperty(id, key, {
-        value_text: value,
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      })
-      props.set(`${id}:${key}`, value)
-    }
+  if (property === undefined || !save.saved.has(property.id)) return
+  const { id, key, value } = property
+  if (value === null) {
+    await commands.deleteProperty(id, key)
+    props.delete(`${id}:${key}`)
+  } else {
+    await commands.setProperty(id, key, {
+      value_text: value,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+    props.set(`${id}:${key}`, value)
   }
 }
 

@@ -1015,146 +1015,122 @@ export function metaRowMatchesFilter(
   f: Record<string, unknown>,
   lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
 ): boolean {
-  switch (f['type'] as string) {
-    case 'Stub': {
-      return r.childBlockCount === 0
-    }
-    case 'HasNoInboundLinks': {
-      return r.inboundLinkCount === 0
-    }
-    case 'Orphan': {
-      return r.inboundLinkCount === 0 && !r.hasOutboundLink
-    }
-    case 'Tag': {
-      const wanted = tagAndNestedIds(f['tag'] as string)
-      return [...(blockTags.get(r.id) ?? [])].some((t) => wanted.has(t))
-    }
-    case 'TagOrRef': {
-      // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
-      return refInclusiveTags(r.id).has(f['tag'] as string)
-    }
-    case 'TagUnder': {
-      // `compile_tag_under`: the tag or one nested under it, attached, inline or inherited.
-      const wanted = tagAndNestedIds(f['tag'] as string)
-      return [...refInclusiveTags(r.id), ...inheritedTagIds(r.id)].some((t) => wanted.has(t))
-    }
-    case 'LinksTo': {
-      // An outbound `block_links` edge to `target` (`compile_links_to`).
-      return linksTo({ id: r.id, content: r.content }, f['target'] as string)
-    }
-    case 'Priority': {
-      // Multi-value membership over `blocks.priority`, mirroring the REAL
-      // backend's `in_or_null("b.priority", values, is_null, exclude)`
-      // (src-tauri/agaric-store/src/filters/primitive.rs). INCLUDE: row matches if its
-      // priority is in `values` OR (is_null AND priority IS NULL). EXCLUDE:
-      // the shape depends on `is_null` (#2019). `is_null == false` KEEPS
-      // NULL-priority rows ("not in the excluded set"), OR-joined:
-      // `priority IS NULL OR priority NOT IN (values)`. `is_null == true`
-      // means "exclude the listed values AND the NULL bucket", AND-joined:
-      // `priority IS NOT NULL AND priority NOT IN (values)`. OR-joining both
-      // parts (the previous bug) is a tautology — every row hits one side or
-      // the other, so the filter silently matched every row. An empty,
-      // null-less set is a no-op (matches every row), mirroring the legacy
-      // helper's early return.
-      const values = (f['values'] as string[] | undefined) ?? []
-      const isNull = (f['is_null'] as boolean | undefined) ?? false
-      const exclude = (f['exclude'] as boolean | undefined) ?? false
-      if (values.length === 0 && !isNull) {
-        return true
-      }
-      const inValues = r.priority != null && values.includes(r.priority)
-      if (exclude) {
-        return isNull ? r.priority != null && !inValues : r.priority == null || !inValues
-      }
-      return inValues || (isNull && r.priority == null)
-    }
-    case 'PathGlob': {
-      // SQLite-`GLOB` dialect parity (#1910): brace expansion, `[class]`
-      // ranges, validation and ASCII-only folding — see `pageGlobFilterMatches`.
-      // On the title of the row's page (`page_id IN (SELECT … pages_cache)`), which
-      // for a page row is its own. A page absent from the cache is in no set.
-      const exclude = (f['exclude'] as boolean) ?? false
-      if (r.pageId === null) return false
-      const title = pagesCacheTitle(r.pageId)
-      if (title === null) return exclude
-      return pageGlobFilterMatches((f['pattern'] as string) ?? '', title, exclude)
-    }
-    case 'HasProperty': {
-      return hasPropertyMatches(r, f)
-    }
-    case 'LastEdited': {
-      return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined, lastEditedAt)
-    }
-    case 'State': {
-      // Multi-value membership over `blocks.todo_state`, identical shape to
-      // `Priority` (mirrors the backend's `in_or_null("b.todo_state", …)`,
-      // including the #2019 EXCLUDE + `is_null` AND-join fix — see the
-      // `Priority` arm's comment for the full rationale).
-      const values = (f['values'] as string[] | undefined) ?? []
-      const isNull = (f['is_null'] as boolean | undefined) ?? false
-      const exclude = (f['exclude'] as boolean | undefined) ?? false
-      if (values.length === 0 && !isNull) return true
-      const inValues = r.todoState != null && values.includes(r.todoState)
-      if (exclude) {
-        return isNull ? r.todoState != null && !inValues : r.todoState == null || !inValues
-      }
-      return inValues || (isNull && r.todoState == null)
-    }
-    case 'BlockType': {
-      // Membership over `blocks.block_type`; `exclude` negates. Empty set is a
-      // no-op (matches every row), mirroring the backend's early return.
-      const values = (f['values'] as string[] | undefined) ?? []
-      const exclude = (f['exclude'] as boolean | undefined) ?? false
-      if (values.length === 0) return true
-      const inValues = values.includes(r.blockType)
-      return exclude ? !inValues : inValues
-    }
-    case 'DueDate': {
-      return datePredicateMatches(r.dueDate, f['predicate'] as Record<string, unknown> | undefined)
-    }
-    case 'Scheduled': {
-      return datePredicateMatches(
-        r.scheduledDate,
-        f['predicate'] as Record<string, unknown> | undefined,
-      )
-    }
-    case 'ChildOf': {
-      return r.parentId === f['parent']
-    }
-    case 'Space': {
-      // `b.space_id = ?`: the space of the block's page.
-      return ownerSpaceOf({ id: r.id, page_id: r.pageId }) === f['space_id']
-    }
-    case 'Created': {
-      return createdInRange(r.id, f['after'], f['before'])
-    }
-    case 'LinkedFrom': {
-      // A `block_links` row from `source` to this block; the table keeps a
-      // trashed source's rows, so its content still counts.
-      const source = blocks.get(f['source'] as string)
-      return source !== undefined && linksTo(source, r.id)
-    }
-    case 'HasParentMatching': {
-      // `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND <matcher on p>)`:
-      // any parent row, trashed or not, judged on its own columns and its own
-      // last-edited stamp (`lastEditedAt` is the outer row's).
-      const parent = r.parentId === null ? undefined : blocks.get(r.parentId)
-      return (
-        parent !== undefined &&
-        metaRowMatchesExpr(
-          buildPageMetaRow(parent, [], []),
-          (f['matcher'] as Record<string, unknown> | undefined) ?? {},
-        )
-      )
-    }
-    default: {
-      throw appErrorRejection({
-        kind: 'validation',
-        code: 'InvalidFilter',
-        message: `\`${String(f['type'])}\` is not a valid filter on this surface`,
-      })
-    }
+  const type = f['type'] as string
+  if (!Object.hasOwn(META_ROW_MATCHERS, type)) {
+    throw appErrorRejection({
+      kind: 'validation',
+      code: 'InvalidFilter',
+      message: `\`${String(f['type'])}\` is not a valid filter on this surface`,
+    })
   }
+  return (META_ROW_MATCHERS[type] as MetaRowMatcher)(r, f, lastEditedAt)
+}
+
+type MetaRowMatcher = (
+  r: PageMetaRow,
+  f: Record<string, unknown>,
+  lastEditedAt: LastEditedSource,
+) => boolean
+
+/**
+ * Multi-value membership over a nullable column, mirroring the REAL backend's
+ * `in_or_null(column, values, is_null, exclude)`
+ * (src-tauri/agaric-store/src/filters/primitive.rs). INCLUDE: row matches if its
+ * value is in `values` OR (is_null AND value IS NULL). EXCLUDE: the shape
+ * depends on `is_null` (#2019). `is_null == false` KEEPS NULL rows ("not in the
+ * excluded set"), OR-joined: `col IS NULL OR col NOT IN (values)`.
+ * `is_null == true` means "exclude the listed values AND the NULL bucket",
+ * AND-joined: `col IS NOT NULL AND col NOT IN (values)`. OR-joining both parts
+ * (the previous bug) is a tautology — every row hits one side or the other, so
+ * the filter silently matched every row. An empty, null-less set is a no-op
+ * (matches every row), mirroring the legacy helper's early return.
+ */
+function inOrNullMatches(column: string | null, f: Record<string, unknown>): boolean {
+  const values = (f['values'] as string[] | undefined) ?? []
+  const isNull = (f['is_null'] as boolean | undefined) ?? false
+  const exclude = (f['exclude'] as boolean | undefined) ?? false
+  if (values.length === 0 && !isNull) return true
+  const inValues = column != null && values.includes(column)
+  if (exclude) {
+    return isNull ? column != null && !inValues : column == null || !inValues
+  }
+  return inValues || (isNull && column == null)
+}
+
+/**
+ * One arm per compound-filter primitive this surface accepts; a type with no
+ * entry is refused as `InvalidFilter` by {@link metaRowMatchesFilter}.
+ */
+const META_ROW_MATCHERS: Record<string, MetaRowMatcher> = {
+  Stub: (r) => r.childBlockCount === 0,
+  HasNoInboundLinks: (r) => r.inboundLinkCount === 0,
+  Orphan: (r) => r.inboundLinkCount === 0 && !r.hasOutboundLink,
+  Tag: (r, f) => {
+    const wanted = tagAndNestedIds(f['tag'] as string)
+    return [...(blockTags.get(r.id) ?? [])].some((t) => wanted.has(t))
+  },
+  // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
+  TagOrRef: (r, f) => refInclusiveTags(r.id).has(f['tag'] as string),
+  TagUnder: (r, f) => {
+    // `compile_tag_under`: the tag or one nested under it, attached, inline or inherited.
+    const wanted = tagAndNestedIds(f['tag'] as string)
+    return [...refInclusiveTags(r.id), ...inheritedTagIds(r.id)].some((t) => wanted.has(t))
+  },
+  // An outbound `block_links` edge to `target` (`compile_links_to`).
+  LinksTo: (r, f) => linksTo({ id: r.id, content: r.content }, f['target'] as string),
+  Priority: (r, f) => inOrNullMatches(r.priority, f),
+  PathGlob: (r, f) => {
+    // SQLite-`GLOB` dialect parity (#1910): brace expansion, `[class]`
+    // ranges, validation and ASCII-only folding — see `pageGlobFilterMatches`.
+    // On the title of the row's page (`page_id IN (SELECT … pages_cache)`), which
+    // for a page row is its own. A page absent from the cache is in no set.
+    const exclude = (f['exclude'] as boolean) ?? false
+    if (r.pageId === null) return false
+    const title = pagesCacheTitle(r.pageId)
+    if (title === null) return exclude
+    return pageGlobFilterMatches((f['pattern'] as string) ?? '', title, exclude)
+  },
+  HasProperty: (r, f) => hasPropertyMatches(r, f),
+  LastEdited: (r, f, lastEditedAt) =>
+    lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined, lastEditedAt),
+  // `in_or_null("b.todo_state", …)`, identical shape to `Priority`.
+  State: (r, f) => inOrNullMatches(r.todoState, f),
+  BlockType: (r, f) => {
+    // Membership over `blocks.block_type`; `exclude` negates. Empty set is a
+    // no-op (matches every row), mirroring the backend's early return.
+    const values = (f['values'] as string[] | undefined) ?? []
+    const exclude = (f['exclude'] as boolean | undefined) ?? false
+    if (values.length === 0) return true
+    const inValues = values.includes(r.blockType)
+    return exclude ? !inValues : inValues
+  },
+  DueDate: (r, f) =>
+    datePredicateMatches(r.dueDate, f['predicate'] as Record<string, unknown> | undefined),
+  Scheduled: (r, f) =>
+    datePredicateMatches(r.scheduledDate, f['predicate'] as Record<string, unknown> | undefined),
+  ChildOf: (r, f) => r.parentId === f['parent'],
+  // `b.space_id = ?`: the space of the block's page.
+  Space: (r, f) => ownerSpaceOf({ id: r.id, page_id: r.pageId }) === f['space_id'],
+  Created: (r, f) => createdInRange(r.id, f['after'], f['before']),
+  LinkedFrom: (r, f) => {
+    // A `block_links` row from `source` to this block; the table keeps a
+    // trashed source's rows, so its content still counts.
+    const source = blocks.get(f['source'] as string)
+    return source !== undefined && linksTo(source, r.id)
+  },
+  HasParentMatching: (r, f) => {
+    // `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND <matcher on p>)`:
+    // any parent row, trashed or not, judged on its own columns and its own
+    // last-edited stamp (`lastEditedAt` is the outer row's).
+    const parent = r.parentId === null ? undefined : blocks.get(r.parentId)
+    return (
+      parent !== undefined &&
+      metaRowMatchesExpr(
+        buildPageMetaRow(parent, [], []),
+        (f['matcher'] as Record<string, unknown> | undefined) ?? {},
+      )
+    )
+  },
 }
 
 /**

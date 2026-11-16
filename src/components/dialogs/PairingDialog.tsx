@@ -128,6 +128,12 @@ interface PolledPeerRefs {
   peers: PeerRef[]
 }
 
+/** `m:ss` for a live countdown, `null` once it has run out or before it starts. */
+function formatCountdown(seconds: number | null): string | null {
+  if (seconds === null || seconds <= 0) return null
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
 export function PairingDialog({
   open,
   onOpenChange,
@@ -1041,17 +1047,11 @@ export function PairingDialog({
 
   // #294: Format countdown for display (`isExpired` is derived up with the
   // countdown timer above — the live-pairing-window flag needs it there).
-  const countdownDisplay =
-    countdown !== null && countdown > 0
-      ? `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, '0')}`
-      : null
+  const countdownDisplay = formatCountdown(countdown)
 
   // #3469 — same `mm:ss` formatting for the joiner's post-confirm wait,
   // bounding it by the same `PAIRING_TIMEOUT_SECONDS` pending-marker TTL.
-  const waitCountdownDisplay =
-    waitCountdown !== null && waitCountdown > 0
-      ? `${Math.floor(waitCountdown / 60)}:${String(waitCountdown % 60).padStart(2, '0')}`
-      : null
+  const waitCountdownDisplay = formatCountdown(waitCountdown)
 
   // #430: Move focus to Retry button when error or expiry occurs
   useEffect(() => {
@@ -1194,86 +1194,87 @@ export function PairingDialog({
                 </div>
               )}
 
-              {/* QR + Passphrase display — host only. Gated on `pairingInfo`
-                  because it has nothing to render without a session. */}
-              {!loading && role === 'host' && pairingInfo && (
-                <PairingQrDisplay
-                  qrSvg={pairingInfo.qr_svg}
-                  passphrase={pairingInfo.passphrase}
-                  countdownDisplay={countdownDisplay}
-                  countdown={countdown}
-                  isExpired={isExpired}
-                  error={error}
-                  onRetry={handleRetry}
-                  retryBtnRef={retryBtnRef}
-                />
-              )}
-
-              {/* The affordance (#3463) that switches to the joiner path.
-                  Choosing this is what DECLARES the joiner role — see
-                  `handleSwitchToJoiner`. Deliberately NOT gated on
-                  `pairingInfo`: it must stay reachable even when the host
-                  session failed to start (error banner above) or resolved
-                  with no data, so a user can always get to the joiner path
-                  regardless of whether this device's own code loaded. */}
-              {!loading && role === 'host' && (
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="pairing-switch-to-joiner-btn self-start px-0 h-auto"
-                  onClick={() => void handleSwitchToJoiner()}
-                >
-                  {t('pairing.switchToJoinerLink')}
-                </Button>
-              )}
-
-              {/* Passphrase entry — joiner only, plus the affordance
-                  (#3463) that switches back to the host path. Reversible by
-                  design — see `handleSwitchToHost`. Hidden once the local
-                  proof is armed and this device has moved into the #3469
-                  WAITING phase below — there is nothing left to type and
-                  switching roles mid-wait would abandon the pending marker
-                  without going through the close guard. */}
-              {!loading && role === 'joiner' && joinerPhase === 'entry' && (
-                <>
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="pairing-switch-to-host-btn self-start px-0 h-auto"
-                    onClick={() => void handleSwitchToHost()}
-                  >
-                    {t('pairing.switchToHostLink')}
-                  </Button>
-                  <PairingEntryForm
-                    words={words}
-                    entryMode={entryMode}
-                    onEntryModeChange={setEntryMode}
-                    onWordChange={handleWordChange}
-                    onWordKeyDown={handleWordKeyDown}
-                    onQrScan={handleQrScan}
-                    onCancel={() => void handleCancel()}
-                    onPair={() => void handlePair()}
-                    pairLoading={pairLoading}
-                    isExpired={false}
-                  />
-                </>
-              )}
-
-              {/* #3469 — honest waiting state after `confirm_pairing`. This
-                  device has armed its local proof but cannot yet know
-                  whether it matches the peer's; see the polling/failure/
-                  timeout effects above for how this resolves. */}
-              {!loading && role === 'joiner' && joinerPhase === 'waiting' && (
-                <PairingWaitingState
-                  waitCountdownDisplay={waitCountdownDisplay}
-                  waitCountdown={waitCountdown}
-                  onCancel={() => void handleCancel()}
-                />
-              )}
-
-              {/* Paired Devices */}
               {!loading && (
-                <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
+                <>
+                  {role === 'host' && (
+                    <>
+                      {/* QR + Passphrase display — host only. Gated on `pairingInfo`
+                          because it has nothing to render without a session. */}
+                      {pairingInfo && (
+                        <PairingQrDisplay
+                          qrSvg={pairingInfo.qr_svg}
+                          passphrase={pairingInfo.passphrase}
+                          countdownDisplay={countdownDisplay}
+                          countdown={countdown}
+                          isExpired={isExpired}
+                          error={error}
+                          onRetry={handleRetry}
+                          retryBtnRef={retryBtnRef}
+                        />
+                      )}
+
+                      {/* The affordance (#3463) that switches to the joiner path.
+                          Choosing this is what DECLARES the joiner role — see
+                          `handleSwitchToJoiner`. Deliberately NOT gated on
+                          `pairingInfo`: it must stay reachable even when the host
+                          session failed to start (error banner above) or resolved
+                          with no data, so a user can always get to the joiner path
+                          regardless of whether this device's own code loaded. */}
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="pairing-switch-to-joiner-btn self-start px-0 h-auto"
+                        onClick={() => void handleSwitchToJoiner()}
+                      >
+                        {t('pairing.switchToJoinerLink')}
+                      </Button>
+                    </>
+                  )}
+
+                  {/* Joiner: passphrase entry, plus the affordance (#3463) that
+                      switches back to the host path. Reversible by design — see
+                      `handleSwitchToHost`. Replaced once the local proof is armed
+                      by the #3469 WAITING phase — there is nothing left to type
+                      and switching roles mid-wait would abandon the pending marker
+                      without going through the close guard. The waiting state is
+                      honest: this device has armed its local proof but cannot yet
+                      know whether it matches the peer's; see the polling/failure/
+                      timeout effects above for how it resolves. */}
+                  {role === 'joiner' &&
+                    (joinerPhase === 'entry' ? (
+                      <>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="pairing-switch-to-host-btn self-start px-0 h-auto"
+                          onClick={() => void handleSwitchToHost()}
+                        >
+                          {t('pairing.switchToHostLink')}
+                        </Button>
+                        <PairingEntryForm
+                          words={words}
+                          entryMode={entryMode}
+                          onEntryModeChange={setEntryMode}
+                          onWordChange={handleWordChange}
+                          onWordKeyDown={handleWordKeyDown}
+                          onQrScan={handleQrScan}
+                          onCancel={() => void handleCancel()}
+                          onPair={() => void handlePair()}
+                          pairLoading={pairLoading}
+                          isExpired={false}
+                        />
+                      </>
+                    ) : (
+                      <PairingWaitingState
+                        waitCountdownDisplay={waitCountdownDisplay}
+                        waitCountdown={waitCountdown}
+                        onCancel={() => void handleCancel()}
+                      />
+                    ))}
+
+                  {/* Paired Devices */}
+                  <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
+                </>
               )}
 
               {/* Status message for screen readers */}
