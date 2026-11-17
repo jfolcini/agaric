@@ -137,6 +137,10 @@ updates:
   #   • lint-and-build — oxlint, oxfmt, typescript, vite, tslib — bumping
   #                   these together avoids tsc/oxc rule churn
   #                   landing across multiple PRs in the same week.
+  #   • i18next     — `i18next` + `react-i18next` release majors as a pair
+  #                   and each react-i18next major peer-requires the
+  #                   matching i18next major, so a solo bump fails
+  #                   `npm ci` with ERESOLVE (#6868).
   #   • minor-and-patch — catch-all for everything else; majors stay
   #                   individual PRs.
   - package-ecosystem: npm
@@ -255,6 +259,13 @@ updates:
         applies-to: security-updates
         patterns:
           - '@stryker-mutator/*'
+      # Majors included on purpose (no `update-types`): the major pair is the
+      # case that split into #6867 / #6868. No security mirror: the peer is a
+      # `>=` range, not an exact pin, so a solo patch still installs.
+      i18next:
+        patterns:
+          - 'i18next'
+          - 'react-i18next'
       minor-and-patch:
         patterns:
           - '*'
