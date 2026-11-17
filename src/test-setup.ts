@@ -460,11 +460,11 @@ vi.mock('@/components/ui/tooltip', async () => {
 // See src/__tests__/mocks/ui-select.tsx for the mock implementation.
 vi.mock('@/components/ui/select', async () => await import('@/__tests__/mocks/ui-select'))
 
-// Stub HTMLCanvasElement.getContext — jsdom does not implement canvas, and
-// installing the `canvas` npm package would pull in heavy native cairo
-// bindings (~30MB platform-specific binaries) just to silence warnings from
-// pdf.js and mermaid in tests that already mock those modules. The tests
-// validate component behavior, not pixel output, so a no-op stub is enough.
+// Stub HTMLCanvasElement.getContext to return null in every environment, as
+// happy-dom (the default) already does. Without it, the files that opt into
+// jsdom would draw through `@napi-rs/canvas`, which jsdom loads whenever it
+// resolves and pdfjs-dist installs as an optional dependency. The tests check
+// component behavior, not pixels.
 if (typeof HTMLCanvasElement !== 'undefined') {
   HTMLCanvasElement.prototype.getContext = (() =>
     null) as typeof HTMLCanvasElement.prototype.getContext
