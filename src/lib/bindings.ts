@@ -777,6 +777,7 @@ export const commands = {
 	setMirrorFolder: (path: string | null, readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path, readBack })),
 	setMirrorReadBack: (on: boolean, confirmed: string[]) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, confirmed })),
 	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
+	setMirrorAskMassChange: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_ask_mass_change", { on })),
 	setMirrorSpace: (spaceId: string, mirrored: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_space", { spaceId, mirrored })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	/**
@@ -3283,6 +3284,17 @@ export type MirrorStatus = {
 	 *  ([`assets`]).
 	 */
 	copy_files: boolean,
+	/**
+	 *  Whether many files changed at once are read in only once the user
+	 *  says so ([`MirrorState::hold_mass_change`]).
+	 */
+	ask_mass_change: boolean,
+	/**
+	 *  The space folders whose changed files hold reading back until the
+	 *  user reads them in ([`MirrorState::hold_mass_change`]); each is listed
+	 *  under `failed` with why.
+	 */
+	held: string[],
 	/**  The spaces not mirrored; every other one is, a new one included. */
 	unmirrored_spaces: string[],
 };

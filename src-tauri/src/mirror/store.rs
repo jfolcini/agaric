@@ -24,6 +24,10 @@ pub const READ_BACK_KEY: &str = "mirror.read_back";
 /// `app_settings` key: `"true"` when the attachments pages link are copied
 /// into the folder ([`super::assets`]). Absent, they are not.
 const COPY_FILES_KEY: &str = "mirror.copy_files";
+/// `app_settings` key: `"false"` when many files changed outside Agaric at
+/// once are read in unasked ([`super::MirrorState::hold_mass_change`]).
+/// Absent, the mirror asks first.
+const ASK_MASS_CHANGE_KEY: &str = "mirror.ask_mass_change";
 /// `app_settings` key: the ids of the spaces not mirrored, as a JSON array.
 /// Absent, every space is, a new one included.
 const UNMIRRORED_KEY: &str = "mirror.unmirrored_spaces";
@@ -82,6 +86,9 @@ pub struct Settings {
     pub read_back: bool,
     /// Whether the attachments pages link are copied into the folder.
     pub copy_files: bool,
+    /// Whether many files changed at once are read in only once the user
+    /// says so (`ASK_MASS_CHANGE_KEY`).
+    pub ask_mass_change: bool,
     /// The spaces neither written nor read, every other one being both.
     pub unmirrored: Vec<String>,
     /// Whether the vault was restored from a snapshot since the folder was
@@ -91,10 +98,11 @@ pub struct Settings {
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
         COPY_FILES_KEY,
+        ASK_MASS_CHANGE_KEY,
         UNMIRRORED_KEY,
         RESTORED_KEY,
     )
@@ -118,6 +126,7 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
         folder: value(FOLDER_KEY),
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
         copy_files: value(COPY_FILES_KEY).as_deref() == Some("true"),
+        ask_mass_change: value(ASK_MASS_CHANGE_KEY).as_deref() != Some("false"),
         unmirrored,
         restored: value(RESTORED_KEY).is_some(),
     })
@@ -162,6 +171,10 @@ pub async fn set_read_back(pool: &SqlitePool, read_back: bool) -> Result<(), App
 
 pub async fn set_copy_files(pool: &SqlitePool, copy_files: bool) -> Result<(), AppError> {
     set_flag(pool, COPY_FILES_KEY, copy_files).await
+}
+
+pub async fn set_ask_mass_change(pool: &SqlitePool, ask: bool) -> Result<(), AppError> {
+    set_flag(pool, ASK_MASS_CHANGE_KEY, ask).await
 }
 
 async fn set_flag(pool: &SqlitePool, key: &str, on: bool) -> Result<(), AppError> {

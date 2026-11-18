@@ -1155,6 +1155,23 @@ async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_file() {
     );
 }
 
+/// Another folder chosen ends the pause too: chosen again before a tick, it
+/// is not taken for the folder the vault is older than, and started fresh.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_folder_chosen_ends_the_older_vault_pause() {
+    let (mut fx, _) = Fx::restored().await;
+    fx.tick().await;
+    assert!(fx.state.is_behind(), "the fixture: {:?}", fx.status().await);
+
+    let other = TempDir::new().unwrap();
+    let chosen = Some(path_string(other.path()));
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, chosen, true)
+        .await
+        .unwrap();
+
+    assert!(!fx.state.is_behind());
+}
+
 /// The folder chosen again keeps its copies too: one whose attachment the
 /// vault lacks may be the only copy of that file left, and one changed in
 /// the folder is the user's.

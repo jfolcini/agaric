@@ -2314,3 +2314,355 @@ async fn a_file_written_before_its_state_was_saved_is_adopted_not_read() {
     assert!(fx.status().await.diverged.is_empty(), "nothing to settle");
     assert_eq!(fx.events().len(), events, "nothing read in");
 }
+
+// ── Files moved outside the space folders, and mass changes (#6887 C) ───
+
+use super::super::read_back::MASS_CHANGE;
+
+/// The files listed as failed, each with why.
+async fn failed_files(fx: &Fx) -> Vec<(String, String)> {
+    let failed = fx.status().await.failed;
+    failed.into_iter().map(|f| (f.path, f.message)).collect()
+}
+
+/// Alpha's file moved to `outside`, a place in no space's folder: its page is
+/// held, the file listed, and moving it back lets the page be written again.
+async fn moved_outside_the_space_folders(outside: &str) {
+    let mut fx = Fx::new().await;
+    let (alpha, blocks) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    rename_at(&fx, ALPHA, outside);
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+
+    assert!(!is_trashed(&fx, &alpha).await, "not trashed");
+    assert_eq!(pages_titled(&fx, "Alpha").await, [alpha], "nor renamed");
+    assert!(fx.root.join(outside).exists(), "the file is left there");
+    assert!(!fx.root.join(ALPHA).exists(), "and not written twice");
+    let failed = failed_files(&fx).await;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].0, outside);
+    assert!(
+        failed[0].1.contains("outside the space folders"),
+        "{failed:?}"
+    );
+
+    rename_at(&fx, outside, ALPHA);
+    fx.edit(&blocks[0], "uno").await;
+    fx.settle_file().await;
+    assert_eq!(failed_files(&fx).await, []);
+    assert!(fx.read().contains("uno"), "moved back, it is written again");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_moved_to_the_folder_root_holds_its_page_untrashed() {
+    moved_outside_the_space_folders("Alpha.md").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_moved_into_a_folder_of_no_space_holds_its_page_untrashed() {
+    moved_outside_the_space_folders("Elsewhere/Alpha.md").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_outside_every_space_folder_is_listed_as_not_read() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "loose.md", "loose\n");
+    write_at(&fx, "Elsewhere/Note.md", "note\n");
+    write_at(&fx, ".hidden.md", "hidden\n");
+    fx.settle_file().await;
+
+    let failed = failed_files(&fx).await;
+    let paths: Vec<&str> = failed.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, ["Elsewhere/Note.md", "loose.md"]);
+    for (path, why) in &failed {
+        assert!(
+            why.contains("only inside a space's folder"),
+            "{path}: {why}"
+        );
+    }
+
+    std::fs::remove_file(fx.root.join("loose.md")).unwrap();
+    fx.tick().await;
+    let failed = failed_files(&fx).await;
+    assert_eq!(failed.len(), 1, "a file gone is no longer listed");
+    assert_eq!(failed[0].0, "Elsewhere/Note.md");
+}
+
+/// Alpha, then `count` more pages of the test space, each holding `text`,
+/// mirrored: Alpha's block, and the others' pages and files.
+async fn alpha_and_pages(fx: &mut Fx, count: usize) -> (String, Vec<(String, String)>) {
+    let (_, blocks) = fx.page("Alpha", &["one"]).await;
+    let mut made = Vec::new();
+    for n in 0..count {
+        let (page, _) = fx.page(&format!("Page {n}"), &["text"]).await;
+        made.push((page, format!("TestSpace/Page {n}.md")));
+    }
+    fx.tick().await;
+    (blocks[0].clone(), made)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn more_files_deleted_at_once_than_the_limit_trash_no_page_until_the_user_says_so() {
+    let mut fx = Fx::new().await;
+    let (block, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    let files: Vec<String> = made.iter().map(|(_, file)| file.clone()).collect();
+
+    for file in &files {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    fx.edit(&block, "uno").await;
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+
+    for (page, file) in &made {
+        assert!(!is_trashed(&fx, page).await, "{file}: not trashed");
+        assert!(!fx.root.join(file).exists(), "{file}: nor written again");
+    }
+    assert!(fx.events().is_empty());
+    assert!(
+        fx.read().contains("uno"),
+        "an unchanged file is still written"
+    );
+    let status = fx.status().await;
+    assert!(!status.read_back, "reading back waits for the user");
+    assert_eq!(status.pending, files);
+    let failed = failed_files(&fx).await;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    let (folder, why) = &failed[0];
+    assert_eq!(folder, "TestSpace");
+    assert!(
+        why.contains("changed or vanished outside Agaric at once"),
+        "{why}"
+    );
+
+    let status = confirm(&fx, status.pending).await.unwrap();
+    assert!(status.read_back);
+    assert_eq!(status.failed, []);
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+    for (page, file) in &made {
+        assert!(
+            is_trashed(&fx, page).await,
+            "{file}: trashed once confirmed"
+        );
+    }
+    let status = fx.status().await;
+    assert!(status.read_back, "and reading back stays on");
+    assert_eq!(status.failed, []);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn as_many_files_deleted_at_once_as_the_limit_trash_their_pages_unasked() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE).await;
+
+    for (_, file) in &made {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+
+    for (page, file) in &made {
+        assert!(is_trashed(&fx, page).await, "{file}");
+    }
+    let status = fx.status().await;
+    assert!(status.read_back);
+    assert_eq!(status.failed, []);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn more_files_edited_at_once_than_the_limit_are_read_in_only_once_the_user_says_so() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    let files: Vec<String> = made.iter().map(|(_, file)| file.clone()).collect();
+
+    for file in &files {
+        let edited = std::fs::read_to_string(fx.root.join(file)).unwrap();
+        write_at(&fx, file, edited.replace("text", "edited"));
+    }
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    for (page, file) in &made {
+        assert_eq!(fx.contents(page).await, ["text"], "{file}: not read in");
+    }
+    let status = fx.status().await;
+    assert!(!status.read_back, "reading back waits for the user");
+    assert_eq!(status.pending, files);
+
+    confirm(&fx, status.pending).await.unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    for (page, file) in &made {
+        assert_eq!(fx.contents(page).await, ["edited"], "{file}: read in");
+    }
+    assert!(fx.status().await.read_back);
+
+    // The choice was for the files as shown, not for their next change.
+    for file in &files {
+        let edited = std::fs::read_to_string(fx.root.join(file)).unwrap();
+        write_at(&fx, file, edited.replace("edited", "again"));
+    }
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    for (page, file) in &made {
+        assert_eq!(fx.contents(page).await, ["edited"], "{file}: asked again");
+    }
+    assert!(!fx.status().await.read_back);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_put_back_as_they_were_turn_reading_back_on_again() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    let mut written = Vec::new();
+    for (_, file) in &made {
+        written.push(std::fs::read(fx.root.join(file)).unwrap());
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    fx.settle_file().await;
+    assert!(!fx.status().await.read_back);
+
+    for ((_, file), bytes) in made.iter().zip(&written) {
+        write_at(&fx, file, bytes);
+    }
+    fx.tick().await;
+
+    let status = fx.status().await;
+    assert!(status.read_back);
+    assert_eq!(status.failed, []);
+    for (page, file) in &made {
+        assert!(!is_trashed(&fx, page).await, "{file}");
+    }
+}
+
+/// The hold is kept in memory only: files deleted while Agaric was closed, or
+/// before a restart, are asked about by the mirror that starts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_deleted_before_a_restart_trash_no_page_until_the_user_says_so() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    let files: Vec<String> = made.iter().map(|(_, file)| file.clone()).collect();
+    for file in &files {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+
+    fx.state = MirrorState::new(fx.state.app_data_dir().to_path_buf());
+    let ingest = Ingest {
+        pool: fx.pool.clone(),
+        materializer: fx.mat.clone(),
+        notify: Arc::new(|_| {}),
+    };
+    fx.mirror = Mirror::open(fx.pool.clone(), DEV.to_owned(), fx.state.clone())
+        .await
+        .unwrap()
+        .with_ingest(ingest);
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+
+    for (page, file) in &made {
+        assert!(!is_trashed(&fx, page).await, "{file}");
+    }
+    let status = fx.status().await;
+    assert!(!status.read_back);
+    assert_eq!(status.pending, files);
+}
+
+/// `read_back::pending` lists no file of an unmirrored space, so one held
+/// for could never be confirmed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_changed_files_of_a_space_turned_off_hold_no_reading_back() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    for (_, file) in &made {
+        write_at(&fx, file, "changed outside\n");
+    }
+    mirror_space(&fx, TEST_SPACE_ID, false).await;
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    let status = fx.status().await;
+    assert_eq!(status.diverged.len(), MASS_CHANGE + 1, "kept and listed");
+    assert!(status.read_back);
+    assert_eq!(status.failed, []);
+}
+
+/// A hold is the folder's: turning the mirror off forgets it, so the switch
+/// sent with the folder chosen next is reading back as the user left it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turning_the_mirror_off_forgets_its_hold() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    for (_, file) in &made {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    fx.settle_file().await;
+    assert!(!fx.status().await.read_back, "the fixture: held");
+
+    let off = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, None, false)
+        .await
+        .unwrap();
+
+    assert!(off.read_back, "reading back is on, as the user left it");
+}
+
+/// Obsidian rewrites every file linking a note as it renames it, which is
+/// more files changed at once than the mirror reads in unasked. Asking is a
+/// setting, on by default: off, such a rename is read in unasked, and a
+/// hold already shown ends at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rename_rewriting_many_links_asks_first_unless_asking_is_off() {
+    use crate::commands::mirror::set_mirror_ask_mass_change_inner;
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    let mut linking = Vec::new();
+    for n in 0..MASS_CHANGE {
+        let link = format!("see [[{alpha}]]");
+        fx.page(&format!("Page {n}"), &[&link]).await;
+        linking.push(format!("TestSpace/Page {n}.md"));
+    }
+    fx.tick().await;
+    assert!(fx.status().await.ask_mass_change, "on by default");
+
+    rename_at(&fx, ALPHA, "TestSpace/Gamma.md");
+    for file in &linking {
+        let text = std::fs::read_to_string(fx.root.join(file)).unwrap();
+        assert!(text.contains("[[Alpha]]"), "the fixture: {text}");
+        write_at(&fx, file, text.replace("[[Alpha]]", "[[Gamma]]"));
+    }
+    fx.settle_file().await;
+    fx.tick().await;
+    let held = fx.status().await;
+    assert!(!held.read_back, "asked first");
+    assert_eq!(held.held, ["TestSpace"]);
+    assert!(
+        pages_titled(&fx, "Gamma").await.is_empty(),
+        "nothing read in"
+    );
+
+    let off = set_mirror_ask_mass_change_inner(&fx.pool, DEV, &fx.state, false)
+        .await
+        .unwrap();
+    assert!(!off.ask_mass_change);
+    assert!(off.read_back, "the hold ends at once");
+    assert_eq!(off.held, Vec::<String>::new());
+    fx.settle_file().await;
+    fx.tick().await;
+
+    let status = fx.status().await;
+    assert!(status.read_back, "{:?}", status.failed);
+    assert_eq!(pages_titled(&fx, "Gamma").await, [alpha], "renamed");
+    assert_eq!(status.diverged, [], "every edit read in");
+}

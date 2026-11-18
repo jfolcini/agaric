@@ -467,6 +467,16 @@ export const common: Record<string, string> = {
   'data.mirrorCopyFilesDesc':
     'Imagens e arquivos vinculados nas suas páginas são copiados para uma pasta assets ao lado delas, e as páginas passam a apontar para as cópias. Uma cópia que você alterar lá é mantida e listada abaixo.',
   'data.mirrorCopyFilesFailed': 'A configuração de cópia de anexos não foi modificada: {{reason}}',
+  'data.mirrorAskMassChangeLabel': 'Perguntar antes de ler muitas alterações',
+  'data.mirrorAskMassChangeDesc':
+    'Quando muitos arquivos de um espaço mudam ou somem de uma vez, como ao excluir uma pasta, nada é lido de volta até você ver a lista e escolher lê-los. Desative se você costuma alterar muitos arquivos de propósito, como ao renomear uma nota para a qual muitas outras apontam.',
+  'data.mirrorAskMassChangeFailed':
+    'A configuração de perguntar antes de ler muitas alterações não foi modificada: {{reason}}',
+  'data.mirrorReadMassChangeDesc':
+    'Muitos arquivos de um espaço mudaram ou sumiram de uma vez fora do Agaric, por isso o Agaric pergunta antes de lê-los. Lê-los aplica cada alteração da lista, e uma página cujo arquivo foi excluído vai para a Lixeira.',
+  'data.mirrorMassChangeTurnOff':
+    'Se você altera muitos arquivos de uma vez de propósito, como ao renomear uma nota para a qual muitas outras apontam, pode fazer o Agaric parar de perguntar.',
+  'data.mirrorMassChangeShowSetting': 'Mostrar a configuração',
   'data.mirrorReadPendingTitle': 'Ler o que mudou?',
   'data.mirrorReadPendingDesc_one':
     'Este arquivo mudou fora do Agaric enquanto a leitura de volta estava desativada. Ativá-la faz a leitura dele.',

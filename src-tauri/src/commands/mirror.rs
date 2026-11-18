@@ -137,7 +137,9 @@ pub async fn set_mirror_folder_inner(
 /// ([`MirrorStatus::pending`], derived again here) is not among `confirmed`,
 /// the files the user was shown and chose to read in: a file that changed
 /// after the list was shown is never read in unseen. A plain turn-on
-/// confirms none.
+/// confirms none. It is also how the user answers a mirror that stopped
+/// reading back because many files changed at once
+/// ([`MirrorState::hold_mass_change`]): the files confirmed are then read in.
 ///
 /// # Errors
 ///
@@ -167,6 +169,7 @@ pub async fn set_mirror_read_back_inner(
         }
     }
     mirror::store::set_read_back(pool, on).await?;
+    mirror.confirm_read_back(confirmed);
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
@@ -184,6 +187,27 @@ pub async fn set_mirror_copy_files_inner(
     on: bool,
 ) -> Result<MirrorStatus, AppError> {
     mirror::store::set_copy_files(pool, on).await?;
+    get_mirror_status_inner(pool, device_id, mirror).await
+}
+
+/// Ask before reading in many files changed outside Agaric at once, or with
+/// `on: false` read them in unasked, as a workflow that renames notes many
+/// files link to wants ([`MirrorState::hold_mass_change`]). Off, a hold
+/// already shown ends at once.
+///
+/// # Errors
+///
+/// The setting cannot be stored.
+pub async fn set_mirror_ask_mass_change_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mirror: &MirrorState,
+    on: bool,
+) -> Result<MirrorStatus, AppError> {
+    mirror::store::set_ask_mass_change(pool, on).await?;
+    if !on {
+        mirror.confirm_read_back(&[]);
+    }
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
@@ -252,8 +276,9 @@ async fn pending(
     mirror::read_back::pending(root, device_id, &states, &folders)
 }
 
-/// The mirror's settings and what it is doing. While reading back is off,
-/// the files turning it on would read in, none when they cannot be told:
+/// The mirror's settings and what it is doing. While reading back is off or
+/// waits for the user ([`MirrorState::hold_mass_change`]), the files turning
+/// it on would read in, none when they cannot be told:
 /// [`set_mirror_read_back_inner`] refuses then, with the reason.
 ///
 /// # Errors
@@ -266,7 +291,7 @@ pub async fn get_mirror_status_inner(
 ) -> Result<MirrorStatus, AppError> {
     let settings = mirror::store::settings(pool).await?;
     let changed = match settings.folder.as_deref() {
-        Some(folder) if !settings.read_back => {
+        Some(folder) if !settings.read_back || mirror.read_back_held() => {
             pending(pool, device_id, mirror, Path::new(folder), false)
                 .await
                 .unwrap_or_else(|e| {
@@ -330,6 +355,20 @@ pub async fn set_mirror_copy_files(
     on: bool,
 ) -> Result<MirrorStatus, AppError> {
     set_mirror_copy_files_inner(&pool.0, device_id.as_str(), &mirror, on)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn set_mirror_ask_mass_change(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    mirror: State<'_, MirrorState>,
+    on: bool,
+) -> Result<MirrorStatus, AppError> {
+    set_mirror_ask_mass_change_inner(&pool.0, device_id.as_str(), &mirror, on)
         .await
         .map_err(sanitize_internal_error)
 }

@@ -20,6 +20,14 @@
 //! ([`MirrorState::is_behind`]), the mirror writes nothing and creates nothing.
 //! After a restore from a daily snapshot it is paused until the folder is
 //! chosen again ([`store::RESTORED_KEY`]).
+//!
+//! Reading back, it acts on few files at a time unasked: more files of one
+//! space changed or deleted outside Agaric at once than
+//! [`read_back::MASS_CHANGE`] are read in only once the user has seen them
+//! listed and said so ([`MirrorState::hold_mass_change`]), unless the user
+//! chose not to be asked ([`store::Settings::ask_mass_change`]). A file
+//! outside every space's folder is never read, and holds its page when it is
+//! that page's file moved there (`Mirror::hold_outside_file`).
 
 pub mod assets;
 pub mod ingest;
@@ -104,6 +112,13 @@ pub struct MirrorStatus {
     /// Whether the attachments pages link are copied into the folder
     /// ([`assets`]).
     pub copy_files: bool,
+    /// Whether many files changed at once are read in only once the user
+    /// says so ([`MirrorState::hold_mass_change`]).
+    pub ask_mass_change: bool,
+    /// The space folders whose changed files hold reading back until the
+    /// user reads them in ([`MirrorState::hold_mass_change`]); each is listed
+    /// under `failed` with why.
+    pub held: Vec<String>,
     /// The spaces not mirrored; every other one is, a new one included.
     pub unmirrored_spaces: Vec<String>,
 }
@@ -131,6 +146,10 @@ struct Inner {
     synced: HashSet<String>,
     full_pass: bool,
     paused: Option<String>,
+    /// Whether a tick found the vault older than the folder
+    /// ([`Mirror::behind`]), which, as [`Head::older`], only choosing a
+    /// folder ends.
+    behind: bool,
     /// Why the task could not start, until it does: no [`MirrorState::restart`]
     /// clears it.
     start_error: Option<String>,
@@ -147,6 +166,12 @@ struct Inner {
     /// older than it: the next tick drops its states and writes every page
     /// there as new.
     start_fresh: bool,
+    /// The space folders whose changed files hold reading back, and why
+    /// ([`MirrorState::hold_mass_change`]); none while nothing does.
+    held: BTreeMap<String, String>,
+    /// The files the user chose to read in, which hold nothing while they
+    /// stay changed.
+    confirmed: HashSet<String>,
 }
 
 impl MirrorState {
@@ -194,7 +219,7 @@ impl MirrorState {
     /// Whether the mirror is paused because the vault is older than the
     /// folder, as one restored from a backup is.
     pub fn is_behind(&self) -> bool {
-        self.lock().paused.as_deref() == Some(BEHIND)
+        self.lock().behind
     }
 
     /// Whether [`MirrorState::start_fresh`] is yet to drop the states.
@@ -207,16 +232,67 @@ impl MirrorState {
     }
 
     /// Start over in a new folder: forget the old one's diverged and failed
-    /// files and run a full pass on the next tick.
+    /// files, and whether it held reading back, and run a full pass on the
+    /// next tick.
     pub fn restart(&self) {
         let mut inner = self.lock();
         inner.full_pass = true;
         inner.paused = None;
+        inner.behind = false;
+        inner.held.clear();
         inner.diverged.clear();
         inner.failed.clear();
         inner.failed_files.clear();
         inner.kept_copies.clear();
         inner.failed_copies.clear();
+    }
+
+    /// Whether reading back waits for the user this tick: `changed`, every
+    /// file, by its path below the folder, that the tick is about to read in,
+    /// move or trash for a change made outside Agaric, holds more files of
+    /// one space's folder than [`read_back::MASS_CHANGE`] that the user has
+    /// not chosen to read in ([`MirrorState::confirm_read_back`]). While it
+    /// waits the status says reading back is off, lists the folder as failed
+    /// with the reason and under `held`, and its `pending` names the files,
+    /// as when reading back was turned off. Whatever is about to act on files
+    /// changed outside Agaric asks here first, once a tick, with all of them;
+    /// none while the user chose not to be asked.
+    pub fn hold_mass_change(&self, changed: &[String]) -> bool {
+        let mut inner = self.lock();
+        let now: HashSet<&str> = changed.iter().map(String::as_str).collect();
+        // A choice lasts while its file stays changed.
+        inner.confirmed.retain(|path| now.contains(path.as_str()));
+        let held: BTreeMap<String, String> = read_back::mass_changed(changed, &inner.confirmed)
+            .into_iter()
+            .map(|(folder, count)| {
+                let why = format!(
+                    "{count} of its files changed or vanished outside Agaric at once, more \
+                     than {}: nothing is read back until you turn reading changes back on and \
+                     read them in, or turn off asking before reading in many changes",
+                    read_back::MASS_CHANGE
+                );
+                (folder.to_owned(), why)
+            })
+            .collect();
+        if inner.held.is_empty() && !held.is_empty() {
+            tracing::warn!(?held, "the Markdown mirror holds reading back");
+        }
+        inner.held = held;
+        !inner.held.is_empty()
+    }
+
+    /// The user was shown `files` and chose to read them in, turned reading
+    /// back off, or chose not to be asked: nothing is held for them.
+    pub fn confirm_read_back(&self, files: &[String]) {
+        let mut inner = self.lock();
+        inner.held.clear();
+        inner.confirmed = files.iter().cloned().collect();
+    }
+
+    /// Whether reading back waits for the user
+    /// ([`MirrorState::hold_mass_change`]).
+    pub fn read_back_held(&self) -> bool {
+        !self.lock().held.is_empty()
     }
 
     /// The status, for `settings`, with `pending` from [`read_back::pending`].
@@ -226,6 +302,7 @@ impl MirrorState {
             folder,
             read_back,
             copy_files,
+            ask_mass_change,
             unmirrored,
             restored: _,
         } = settings;
@@ -271,6 +348,7 @@ impl MirrorState {
                         .failed_files
                         .iter()
                         .chain(&inner.failed_copies)
+                        .chain(&inner.held)
                         .filter(|_| on)
                         .map(|(path, message)| MirrorFailure {
                             page_id: String::new(),
@@ -280,9 +358,11 @@ impl MirrorState {
                 )
                 .collect(),
             last_pass_ms: inner.last_pass_ms,
-            read_back,
+            read_back: read_back && inner.held.is_empty(),
             pending,
             copy_files,
+            ask_mass_change,
+            held: inner.held.keys().filter(|_| on).cloned().collect(),
             unmirrored_spaces: unmirrored,
         }
     }
@@ -313,6 +393,10 @@ impl MirrorState {
 
     fn set_paused(&self, reason: Option<String>) {
         self.lock().paused = reason;
+    }
+
+    fn found_behind(&self) {
+        self.lock().behind = true;
     }
 
     fn set_copies(&self, kept: Vec<String>, failed: BTreeMap<String, String>) {
@@ -782,6 +866,75 @@ impl Mirror {
             .collect()
     }
 
+    /// The files this tick may read in, move or trash, for
+    /// [`MirrorState::hold_mass_change`]: of the pages an earlier tick found
+    /// missing their file or listed as diverged or failed, which are all a
+    /// tick acts on (an edit is read once two ticks read the same bytes, a
+    /// vanished file counts once it was missed), each file in a mirrored
+    /// space's folder that is gone or not the text last written there, as
+    /// [`read_back::pending`] tells them.
+    async fn outside_changes(&self, root: &Path) -> Result<Vec<String>, AppError> {
+        let pages: HashSet<String> = self
+            .seen
+            .missing
+            .keys()
+            .cloned()
+            .chain(self.state.retried())
+            .collect();
+        let files: Vec<&String> = pages
+            .iter()
+            .filter_map(|id| {
+                let state = self.pages.get(id)?;
+                let written = state.newest()?.text.as_bytes();
+                let unchanged = store::read_optional(&root.join(&state.path))
+                    .is_ok_and(|bytes| bytes.as_deref() == Some(written));
+                (!unchanged).then_some(&state.path)
+            })
+            .collect();
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        let spaces = self.space_folders().await?;
+        let mirrored = |path: &str| {
+            path.split_once('/')
+                .and_then(|(folder, _)| spaces.get(folder))
+                .is_some_and(|space| !self.unmirrored.contains(space))
+        };
+        Ok(files
+            .into_iter()
+            .filter(|path| mirrored(path))
+            .cloned()
+            .collect())
+    }
+
+    /// Whether reading back waits for the user this tick
+    /// ([`MirrorState::hold_mass_change`]): never while it is off, and never
+    /// while the user chose not to be asked (`ask`), which ends a hold.
+    async fn mass_change_held(&self, root: &Path, ask: bool) -> Result<bool, AppError> {
+        if self.ingest().is_none() {
+            return Ok(false);
+        }
+        let changed = if ask {
+            self.outside_changes(root).await?
+        } else {
+            Vec::new()
+        };
+        Ok(self.state.hold_mass_change(&changed))
+    }
+
+    /// Each space's id, mirrored or not, by its folder below the mirror's.
+    async fn space_folders(&self) -> Result<HashMap<String, String>, AppError> {
+        let spaces: Vec<(String, String)> = crate::commands::spaces::list_spaces_inner(&self.pool)
+            .await?
+            .into_iter()
+            .map(|space| (space.id, space.name))
+            .collect();
+        Ok(paths::space_folders(&spaces)
+            .into_iter()
+            .map(|(space, folder)| (folder, space))
+            .collect())
+    }
+
     /// Write what changed since the last tick, or every page when a full pass
     /// is due; nothing while the mirror is off or paused.
     ///
@@ -833,6 +986,7 @@ impl Mirror {
         let mut paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
         if paused.is_none() && self.behind().await? {
             paused = Some(BEHIND.to_owned());
+            self.state.found_behind();
         }
         let resumed = paused.is_none();
         self.state.set_paused(paused);
@@ -840,6 +994,10 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         }
+        // Before anything is read in: held, this tick reads nothing back.
+        self.read_back &= !self
+            .mass_change_held(&root, settings.ask_mass_change)
+            .await?;
         // New files first: an edit naming one, as Obsidian writes a link to a
         // note with the note, would otherwise make an empty page of that name.
         // A file that cannot be read stops no write.
@@ -904,7 +1062,8 @@ impl Mirror {
     /// or is to be, onto a new page of that space titled by its path below
     /// the space's folder (#5363 slice 3a), once two ticks read the same
     /// bytes ([`ingest::create`]). A file outside every space's folder is
-    /// left alone; one refused stays listed as failed until it changes.
+    /// never read onto a page ([`Mirror::hold_outside_file`]); one refused
+    /// stays listed as failed until it changes.
     async fn read_new_files(&mut self, root: &Path) -> Result<(), AppError> {
         let Some(ingest) = self.ingest() else {
             return Ok(());
@@ -926,23 +1085,19 @@ impl Mirror {
         if new.is_empty() {
             return Ok(());
         }
-        let spaces: Vec<(String, String)> = crate::commands::spaces::list_spaces_inner(&self.pool)
-            .await?
-            .into_iter()
-            .map(|space| (space.id, space.name))
-            .collect();
-        let by_folder: HashMap<String, String> = paths::space_folders(&spaces)
-            .into_iter()
-            .map(|(space, folder)| (folder, space))
-            .collect();
+        let by_folder = self.space_folders().await?;
         for path in new {
-            let Some((folder, below)) = path.split_once('/') else {
+            let in_space = path
+                .split_once('/')
+                .and_then(|(folder, below)| Some((by_folder.get(folder)?, below)));
+            let Some((space_id, below)) = in_space else {
+                self.hold_outside_file(root, &path);
                 continue;
             };
             let title = crate::commands::pages::folder_path_to_namespace_title(below);
-            let Some(space_id) = by_folder.get(folder).filter(|_| !title.is_empty()) else {
+            if title.is_empty() {
                 continue;
-            };
+            }
             if !self
                 .read_new_file(root, &ingest, space_id, &title, &path)
                 .await?
@@ -951,6 +1106,31 @@ impl Mirror {
             }
         }
         Ok(())
+    }
+
+    /// List the new file at `path`, outside every space's folder, as not
+    /// read. One that is a page's file moved there ([`Mirror::renamed_from`])
+    /// holds that page as a refused rename does, so the page is neither moved
+    /// nor trashed while a file sits there. Matched afresh every tick, the
+    /// bytes unsettled, since none are read in: a file listed before its
+    /// page's file was seen gone is still found to be that file.
+    fn hold_outside_file(&mut self, root: &Path, path: &str) {
+        // Only a page whose file is missing can have had it moved here.
+        let moved = (!self.seen.missing.is_empty())
+            .then(|| store::read_optional(&root.join(path)).ok().flatten())
+            .flatten()
+            .and_then(|bytes| Some((self.renamed_from(&bytes)?, bytes)));
+        match moved {
+            Some((page_id, bytes)) => self.refuse_rename(
+                &page_id,
+                path,
+                bytes,
+                "moved outside the space folders; move it back into a space's folder",
+            ),
+            None => self
+                .state
+                .file_failed(path, "files are read only inside a space's folder"),
+        }
     }
 
     /// [`Mirror::read_new_files`] for one file; `false` when the mirror

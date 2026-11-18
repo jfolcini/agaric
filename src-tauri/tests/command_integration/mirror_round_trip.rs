@@ -16,7 +16,9 @@ use proptest::prelude::*;
 use tokio::runtime::Runtime;
 
 use agaric_core::ulid::BlockId;
-use agaric_lib::commands::mirror::{get_mirror_status_inner, set_mirror_folder_inner};
+use agaric_lib::commands::mirror::{
+    get_mirror_status_inner, set_mirror_folder_inner, set_mirror_read_back_inner,
+};
 use agaric_lib::commands::tests::common::{
     DEV, TEST_SPACE_ID, ensure_test_space, mark_block_as_space, settle,
 };
@@ -184,7 +186,17 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
     for (path, bytes) in &written {
         std::fs::write(root.join(path), re_encoded(bytes, encoding)).unwrap();
     }
-    // One tick sees each file changed, the next reads it in.
+    // One tick sees each file changed and the next would read it in, but so
+    // many at once are read in only once the user has seen them listed and
+    // said so.
+    for _ in 0..2 {
+        mirror.tick().await.unwrap();
+    }
+    let held = get_mirror_status_inner(&pool, DEV, &state).await.unwrap();
+    prop_assert!(!held.read_back, "the mirror asks first");
+    set_mirror_read_back_inner(&pool, DEV, &state, true, &held.pending)
+        .await
+        .unwrap();
     for _ in 0..2 {
         mirror.tick().await.unwrap();
         settle(&mat).await;

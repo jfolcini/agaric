@@ -470,6 +470,16 @@ export const common: Record<string, string> = {
     'Bilder und Dateien, die deine Seiten verlinken, werden in einen assets-Ordner daneben kopiert, und die Seiten verlinken die Kopien. Eine Kopie, die du dort änderst, bleibt erhalten und wird unten aufgeführt.',
   'data.mirrorCopyFilesFailed':
     'Die Einstellung zum Kopieren von Anhängen wurde nicht geändert: {{reason}}',
+  'data.mirrorAskMassChangeLabel': 'Vor dem Einlesen vieler Änderungen fragen',
+  'data.mirrorAskMassChangeDesc':
+    'Wenn sich viele Dateien eines Bereichs auf einmal ändern oder verschwinden, etwa weil ein Ordner gelöscht wurde, wird nichts zurückgelesen, bis du sie aufgelistet gesehen und das Einlesen gewählt hast. Schalte es aus, wenn du oft absichtlich viele Dateien änderst, zum Beispiel beim Umbenennen einer Notiz, auf die viele andere verlinken.',
+  'data.mirrorAskMassChangeFailed':
+    'Die Einstellung zum Fragen vor dem Einlesen vieler Änderungen wurde nicht geändert: {{reason}}',
+  'data.mirrorReadMassChangeDesc':
+    'Viele Dateien eines Bereichs wurden außerhalb von Agaric auf einmal geändert oder sind verschwunden, deshalb fragt Agaric vor dem Einlesen. Beim Einlesen wird jede aufgeführte Änderung übernommen, und eine Seite, deren Datei gelöscht wurde, wandert in den Papierkorb.',
+  'data.mirrorMassChangeTurnOff':
+    'Wenn du absichtlich viele Dateien auf einmal änderst, zum Beispiel beim Umbenennen einer Notiz, auf die viele andere verlinken, kannst du das Fragen abschalten.',
+  'data.mirrorMassChangeShowSetting': 'Einstellung anzeigen',
   'data.mirrorReadPendingTitle': 'Geänderte Dateien einlesen?',
   'data.mirrorReadPendingDesc_one':
     'Diese Datei wurde außerhalb von Agaric geändert, während das Zurücklesen aus war. Beim Einschalten wird sie eingelesen.',

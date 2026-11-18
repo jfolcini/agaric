@@ -7,7 +7,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -42,21 +42,30 @@ let folder: string | null
 let picked: string | null
 let readBack: boolean
 let copyFiles: boolean
+let askMassChange: boolean
+/** The space folders whose many changed files hold reading back. */
+let held: string[]
 let pendingFiles: string[]
 let unmirrored: string[]
 let extra: Partial<MirrorStatus>
 
+const HOLD_REASON = '6 of its files changed or vanished outside Agaric at once, more than 5'
+
 function status(): MirrorStatus {
+  // A hold reports reading back off, as the backend does, while it stays stored on.
+  const reading = readBack && held.length === 0
   return {
     supported: true,
     folder,
     paused: null,
     diverged: [],
-    failed: [],
+    failed: held.map((path) => ({ page_id: '', path, message: HOLD_REASON })),
     last_pass_ms: null,
-    read_back: readBack,
-    pending: readBack ? [] : pendingFiles,
+    read_back: reading,
+    pending: reading ? [] : pendingFiles,
     copy_files: copyFiles,
+    ask_mass_change: askMassChange,
+    held,
     unmirrored_spaces: unmirrored,
     ...extra,
   }
@@ -74,6 +83,8 @@ beforeEach(() => {
   picked = PICKED
   readBack = true
   copyFiles = false
+  askMassChange = true
+  held = []
   pendingFiles = []
   unmirrored = []
   extra = {}
@@ -104,10 +115,17 @@ beforeEach(() => {
       }
       readBack = args['on'] as boolean
       if (readBack) pendingFiles = []
+      held = []
       return status()
     },
     set_mirror_copy_files: (args) => {
       copyFiles = args['on'] as boolean
+      return status()
+    },
+    set_mirror_ask_mass_change: (args) => {
+      askMassChange = args['on'] as boolean
+      // Off, a hold shown ends at once, as the backend ends it.
+      if (!askMassChange) held = []
       return status()
     },
   })
@@ -441,6 +459,154 @@ describe('MirrorSection', () => {
     )
     expect(screen.getByRole('switch', { name: t('data.mirrorCopyFilesLabel') })).not.toBeChecked()
     expect((await storedStatus()).copy_files).toBe(false)
+  })
+
+  it('the ask switch is on by default and turns asking before many changes off and on', async () => {
+    folder = PICKED
+    const user = userEvent.setup()
+    await renderLoaded()
+    const ask = screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') })
+    expect(ask).toBeChecked()
+
+    await user.click(ask)
+    await waitFor(() => {
+      expect(ask).not.toBeChecked()
+    })
+    expect((await storedStatus()).ask_mass_change).toBe(false)
+
+    await user.click(ask)
+    await waitFor(() => {
+      expect(ask).toBeChecked()
+    })
+    expect((await storedStatus()).ask_mass_change).toBe(true)
+  })
+
+  it('an ask switch the backend refuses says why and stays as it was', async () => {
+    const refused: AppError = { kind: 'io', message: 'disk full' }
+    vi.mocked(invoke).mockImplementation((cmd: string) =>
+      cmd === 'set_mirror_ask_mass_change' ? Promise.reject(refused) : Promise.resolve(status()),
+    )
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        t('data.mirrorAskMassChangeFailed', { reason: refused.message }),
+      )
+    })
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'MirrorSection',
+      'failed to change asking before many changes',
+      undefined,
+      refused,
+    )
+    expect(screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') })).toBeChecked()
+    expect((await storedStatus()).ask_mass_change).toBe(true)
+  })
+
+  it('a hold shows a button beside its line that moves to the ask switch', async () => {
+    folder = PICKED
+    held = ['Personal']
+    pendingFiles = ['Personal/A.md', 'Personal/B.md']
+    extra = {
+      failed: [
+        { page_id: '', path: 'Personal', message: HOLD_REASON },
+        { page_id: '', path: 'loose.md', message: 'files are read only inside a space folder' },
+      ],
+    }
+    const user = userEvent.setup()
+    await renderLoaded()
+    const failed = screen.getByRole('list', { name: t('data.mirrorFailedHeading') })
+    const [holdLine, otherLine] = within(failed).getAllByRole('listitem')
+    expect(holdLine).toHaveTextContent(HOLD_REASON)
+    expect(within(otherLine as HTMLElement).queryByRole('button')).toBeNull()
+
+    await user.click(
+      within(holdLine as HTMLElement).getByRole('button', {
+        name: t('data.mirrorMassChangeShowSetting'),
+      }),
+    )
+
+    expect(screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') })).toHaveFocus()
+  })
+
+  it('the read-in question for a hold says why, and its button moves to the ask switch', async () => {
+    folder = PICKED
+    held = ['Personal']
+    pendingFiles = ['Personal/A.md', 'Personal/B.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    const question = await screen.findByRole('alertdialog')
+    expect(question).toHaveTextContent(t('data.mirrorReadMassChangeDesc'))
+    expect(question).toHaveTextContent(t('data.mirrorMassChangeTurnOff'))
+    expect(question).toHaveTextContent('Personal/B.md')
+    await user.click(
+      within(question).getByRole('button', { name: t('data.mirrorMassChangeShowSetting') }),
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') })).toHaveFocus()
+    })
+    expect((await storedStatus()).read_back).toBe(false)
+
+    // Asked again and kept off, focus goes back to what asked, not to the ask switch.
+    const readBackSwitch = screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })
+    await user.click(readBackSwitch)
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: t('data.mirrorReadPendingCancel'),
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+    })
+    await waitFor(() => {
+      expect(readBackSwitch).toHaveFocus()
+    })
+  })
+
+  it('turning asking off ends a hold shown, and its button goes', async () => {
+    folder = PICKED
+    held = ['Personal']
+    pendingFiles = ['Personal/A.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+    expect(
+      screen.getByRole('button', { name: t('data.mirrorMassChangeShowSetting') }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorAskMassChangeLabel') }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).toBeChecked()
+    })
+    expect(screen.queryByRole('button', { name: t('data.mirrorMassChangeShowSetting') })).toBeNull()
+    expect((await storedStatus()).held).toEqual([])
+  })
+
+  it('has no a11y violations with a hold shown and its question open', async () => {
+    folder = PICKED
+    held = ['Personal']
+    pendingFiles = ['Personal/A.md']
+    const user = userEvent.setup()
+    const { baseElement, container } = await renderLoaded()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    await screen.findByRole('alertdialog')
+    await waitFor(async () => {
+      expect(await axe(baseElement)).toHaveNoViolations()
+    })
   })
 
   it('lists files no page owns, such as kept copies, one row each', async () => {

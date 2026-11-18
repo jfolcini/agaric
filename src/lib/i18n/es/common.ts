@@ -466,6 +466,16 @@ export const common: Record<string, string> = {
   'data.mirrorCopyFilesDesc':
     'Las imágenes y los archivos que enlazan tus páginas se copian en una carpeta assets junto a ellas, y las páginas enlazan las copias. Una copia que cambies allí se conserva y aparece abajo.',
   'data.mirrorCopyFilesFailed': 'No se ha cambiado la copia de adjuntos: {{reason}}',
+  'data.mirrorAskMassChangeLabel': 'Preguntar antes de leer muchos cambios',
+  'data.mirrorAskMassChangeDesc':
+    'Cuando muchos archivos de un espacio cambian o desaparecen a la vez, como al borrar una carpeta, no se lee nada hasta que los hayas visto en una lista y hayas decidido leerlos. Desactívalo si a menudo cambias muchos archivos a propósito, como al cambiar el nombre de una nota a la que enlazan muchas otras.',
+  'data.mirrorAskMassChangeFailed':
+    'No se ha cambiado la opción de preguntar antes de leer muchos cambios: {{reason}}',
+  'data.mirrorReadMassChangeDesc':
+    'Muchos archivos de un espacio han cambiado o desaparecido a la vez fuera de Agaric, así que Agaric pregunta antes de leerlos. Al leerlos se aplican todos los cambios de la lista, y una página cuyo archivo se borró pasa a la Papelera.',
+  'data.mirrorMassChangeTurnOff':
+    'Si cambias muchos archivos a la vez a propósito, como al cambiar el nombre de una nota a la que enlazan muchas otras, puedes hacer que Agaric deje de preguntar.',
+  'data.mirrorMassChangeShowSetting': 'Mostrar la opción',
   'data.mirrorReadPendingTitle': '¿Leer lo que ha cambiado?',
   'data.mirrorReadPendingDesc_one':
     'Este archivo ha cambiado fuera de Agaric mientras la lectura de cambios externos estaba desactivada. Al activarla, se lee.',
