@@ -6,7 +6,6 @@
  * This is the one entry point; each store's action is a no-op when current.
  */
 
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { notifyPageRenamed } from '@/lib/name-change-bus'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
@@ -30,9 +29,6 @@ export function renamePage(pageId: string, title: string, spaceId: string | null
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
   if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
-  // Graph node labels and the unlinked-references term are the title, and
-  // refresh on the structure counter (#5250).
-  recordGraphStructureChange()
 }
 
 /**

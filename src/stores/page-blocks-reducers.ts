@@ -66,6 +66,7 @@ export function notifyUndoNewAction(
     else if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
     else onNewAction(rootParentId, opRefs)
   }
+  // Now, not at the change feed: expires subtrees prefetched before this write.
   recordGraphStructureChange()
 }
 
@@ -1115,8 +1116,6 @@ export function createReducers({
         blocks: [...state.blocks, newBlock],
         blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
       }))
-      // The caller owns undo, so bump the graph signal here.
-      recordGraphStructureChange()
     },
   }
 }

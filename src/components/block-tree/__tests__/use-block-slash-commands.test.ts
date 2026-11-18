@@ -17,11 +17,6 @@ import { useSlashCommandMarks } from '@/components/block-tree/use-block-slash-co
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandTemplate'
-import {
-  _resetGraphStructureEventsForTest,
-  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
-  getGraphStructureKey,
-} from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
 import {
@@ -669,49 +664,6 @@ describe('useBlockSlashCommands handleTemplateSelect', () => {
       { templatePageId: 'TEMPLATE_1' },
       expect.any(Error),
     )
-  })
-
-  // #5292 — the inserted blocks can carry `[[links]]`, and the page-store `load()`
-  // that follows does not bump the graph-structure counter.
-  describe('graph-structure counter', () => {
-    beforeEach(() => {
-      vi.useFakeTimers()
-      _resetGraphStructureEventsForTest()
-    })
-
-    afterEach(() => {
-      vi.useRealTimers()
-    })
-
-    async function selectTemplate(params: ReturnType<typeof makeDefaultParams>): Promise<number> {
-      const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
-      await act(async () => {
-        await result.current.handleTemplateSelect('TEMPLATE_1')
-      })
-      act(() => {
-        vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
-      })
-      return getGraphStructureKey()
-    }
-
-    it('bumps after a template inserts blocks', async () => {
-      const params = makeDefaultParams()
-
-      expect(await selectTemplate(params)).toBe(1)
-      expect(params.load).toHaveBeenCalledTimes(1)
-    })
-
-    it.each([
-      ['an insert that fails', () => vi.mocked(insertTemplateBlocks).mockRejectedValueOnce('boom')],
-      [
-        'a template with no blocks',
-        () => vi.mocked(insertTemplateBlocks).mockResolvedValueOnce([]),
-      ],
-    ])('leaves the counter alone for %s', async (_label, arrange) => {
-      arrange()
-
-      expect(await selectTemplate(makeDefaultParams())).toBe(0)
-    })
   })
 })
 

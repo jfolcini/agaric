@@ -40,7 +40,6 @@ import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import {
   _resetGraphStructureEventsForTest,
-  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
@@ -1203,58 +1202,5 @@ describe('batch actions — resolve cache and graph', () => {
       expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))?.deleted).toBe(true)
     })
     expect(useResolveStore.getState().resolveStatus('P2')).toBe('active')
-  })
-
-  it('Add tag bumps the graph-structure counter', async () => {
-    const user = userEvent.setup()
-    stubInvoke({ list_all_tags_in_space: () => tagRows, add_tags_by_ids: () => 3 })
-    renderToolbar()
-    _resetGraphStructureEventsForTest()
-
-    await user.click(screen.getByTestId('page-batch-add-tag-btn'))
-    const select = await screen.findByRole('combobox', {
-      name: t('pageBrowser.batch.tagPlaceholder'),
-    })
-    await waitFor(() => {
-      expect(within(screenPicker()).getByRole('option', { name: 'alpha' })).toBeInTheDocument()
-    })
-    await user.selectOptions(select, 'TAG_A')
-    await user.click(screen.getByTestId('page-batch-tag-confirm'))
-
-    await waitFor(() => {
-      expect(getGraphStructureKey()).toBe(1)
-    })
-  })
-
-  it('a failed Add tag leaves the graph-structure counter alone', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    try {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-      stubInvoke({
-        list_all_tags_in_space: () => tagRows,
-        add_tags_by_ids: () => Promise.reject(new Error('backend boom')),
-      })
-      renderToolbar()
-      _resetGraphStructureEventsForTest()
-
-      await user.click(screen.getByTestId('page-batch-add-tag-btn'))
-      const select = await screen.findByRole('combobox', {
-        name: t('pageBrowser.batch.tagPlaceholder'),
-      })
-      await waitFor(() => {
-        expect(within(screenPicker()).getByRole('option', { name: 'alpha' })).toBeInTheDocument()
-      })
-      await user.selectOptions(select, 'TAG_A')
-      await user.click(screen.getByTestId('page-batch-tag-confirm'))
-
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.addTagFailed'))
-      })
-      // Past the counter's debounce, so a bump would have landed by now.
-      await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
-      expect(getGraphStructureKey()).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })

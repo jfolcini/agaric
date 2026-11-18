@@ -10,14 +10,12 @@
  * `[[link]]`, or block insert/delete/move. Those are exactly the mutations that
  * change the graph, so the graph stayed stale until the TTL elapsed.
  *
- * This counter is the correct axis: every local mutator that adds or removes a
- * node or an edge bumps it — delete, restore, batch delete, history revert, the
- * structural slash edits, `notifyPagesRemoved` — and so does an applied remote
- * batch (`sync:complete` in `src/hooks/useSyncEvents.ts`). `grep
- * recordGraphStructureChange` is the list; do not re-enumerate it here. Unlike
- * `block-property-events.ts` there is NO Tauri listener: the signal originates
- * in FE code, not a backend event, so a successful local op or an applied sync
- * batch increments it directly.
+ * This counter is the correct axis: the change feed's `blocks:changed` bumps it
+ * for every local commit in the `structure` domain (`src/hooks/derived-caches.ts`),
+ * and so does an applied remote batch (`sync:complete` in
+ * `src/hooks/useSyncEvents.ts`). A page-store write and a restore also bump it
+ * at once, ahead of the feed, for the prefetch expiry in
+ * `src/lib/prefetch-page-subtree.ts`.
  *
  * Mirrors the lazy-subscriber-set / `useSyncExternalStore` shape of
  * `src/lib/block-property-events.ts`. The React adapter lives in

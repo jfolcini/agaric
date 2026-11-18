@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -169,8 +168,6 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           next.delete(tagId)
           return next
         })
-        // #5250 — a tag-filtered graph view reads the structure counter.
-        recordGraphStructureChange()
       } catch (error) {
         logger.error('useBlockTags', 'Failed to add tag', { blockId, tagId }, error)
         notify.error(i18n.t('tags.addFailed'))
@@ -195,7 +192,6 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           next.delete(tagId)
           return next
         })
-        recordGraphStructureChange()
       } catch (error) {
         logger.error('useBlockTags', 'Failed to remove tag', { blockId, tagId }, error)
         notify.error(i18n.t('tags.deleteFailed'))

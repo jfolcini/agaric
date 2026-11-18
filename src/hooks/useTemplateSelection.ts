@@ -10,7 +10,6 @@
 import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
 
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '@/lib/template-utils'
@@ -97,7 +96,6 @@ export function useTemplateSelection({
           },
         })
         if (ids.length > 0) {
-          recordGraphStructureChange()
           await load()
           if (cursorBlockId) useBlockStore.getState().setFocused(cursorBlockId)
           notify.success(t('slash.templateInserted'))

@@ -36,7 +36,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 // `src/components/common/__tests__/CollapsibleGroupList.virtualization.test.tsx`.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-import { getGraphStructureKey } from '@/lib/graph-structure-events'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 
 // `usePropertyKeysCache` resolves through `propertyKeysQueryFn`
@@ -634,32 +634,6 @@ describe('UnlinkedReferences', () => {
     await user.click(linkItBtn)
 
     expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] here', null)
-  })
-
-  // "Link it" calls the command directly, not through the page-block store, so
-  // the structure counter that Linked References refreshes on must be bumped
-  // here; otherwise the panel above keeps the pre-link list until a remount.
-  it('"Link it" bumps the graph-structure counter', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'I mention My Page here' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-    await screen.findByText('I mention My Page here')
-    const before = getGraphStructureKey()
-
-    await user.click(screen.getByRole('button', { name: /link it/i }))
-
-    await waitFor(() => {
-      expect(getGraphStructureKey()).toBe(before + 1)
-    })
   })
 
   // 6b. "Link it" accessible name announces the mention content, not a ULID (#2281)
@@ -2051,6 +2025,8 @@ describe('UnlinkedReferences', () => {
 // #5249 — the panel went stale after a rename or a new alias, so "Link it" on
 // a row it then showed (or would have shown) failed. The fakes read the title
 // and aliases live, as `eval_unlinked_references` and `get_page_aliases` do.
+// `recordGraphStructureChange` stands in for the write's change-feed event
+// (the `structure` arm of `invalidateDomains`).
 describe('UnlinkedReferences — title and alias writes (#5249)', () => {
   const PAGE = 'PAGE_FOO'
   const SOURCE_BLOCKS = [
@@ -2092,6 +2068,7 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     title = 'Bar'
     act(() => {
       renamePage(PAGE, 'Bar', null)
+      recordGraphStructureChange()
     })
     rerender(
       <TooltipProvider>
@@ -2117,6 +2094,12 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     })
     act(() => {
       header.result.current.handleAddAlias()
+    })
+    await waitFor(() => {
+      expect(mockSetPageAliases).toHaveBeenCalled()
+    })
+    act(() => {
+      recordGraphStructureChange()
     })
 
     await user.click(await screen.findByRole('button', { name: /Link it: A note about Baz/i }))

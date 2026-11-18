@@ -9,13 +9,8 @@
  * isolation that keeps one broken subscriber from starving the others.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import {
-  _resetGraphStructureEventsForTest,
-  DEBOUNCE_MS,
-  getGraphStructureKey,
-} from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import {
   invalidateNameCaches,
@@ -131,19 +126,6 @@ describe('name-change bus (#4007)', () => {
 
     expect(seen).toEqual(['a', 'c'])
   })
-
-  // #5250 — a created page is a new graph node; GraphView's cache must see it.
-  it('notifyPageAdded bumps the graph-structure counter', () => {
-    _resetGraphStructureEventsForTest()
-    vi.useFakeTimers()
-    try {
-      notifyPageAdded('P1', 'Projects/Alpha', 'SPACE_1')
-      vi.advanceTimersByTime(DEBOUNCE_MS)
-      expect(getGraphStructureKey()).toBe(1)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
 })
 
 /**
@@ -233,27 +215,6 @@ describe('notifyPagesRemoved (#4524)', () => {
       unsubscribe()
     }
     expect(changes).toEqual([])
-  })
-
-  // #4963 — every page-removal surface converges here, so this is also where
-  // the graph, the reference panels and the journal badge counts learn that a
-  // node left the graph. The empty half is not decoration: it pins the bump
-  // BELOW the "publishes nothing for an empty cohort" guard, so a block-tree
-  // selection holding no pages does not invalidate a graph nothing changed.
-  it('bumps the graph-structure counter for a non-empty cohort only', () => {
-    _resetGraphStructureEventsForTest()
-    vi.useFakeTimers()
-    try {
-      notifyPagesRemoved([], 'SPACE_1')
-      vi.advanceTimersByTime(DEBOUNCE_MS)
-      expect(getGraphStructureKey()).toBe(0)
-
-      notifyPagesRemoved(['P1'], 'SPACE_1')
-      vi.advanceTimersByTime(DEBOUNCE_MS)
-      expect(getGraphStructureKey()).toBe(1)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   // #4524 review note 1 — a bare `string` is itself an `Iterable<string>` (it

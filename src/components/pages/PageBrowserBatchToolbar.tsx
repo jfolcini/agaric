@@ -242,8 +242,7 @@ export function PageBrowserBatchToolbar({
           // #4007 — the restored pages must become offerable again in the
           // `[[` picker, whose cache dropped them on the trash below.
           invalidateNameCaches()
-          // #4963 — the trash bumped via `notifyPagesRemoved`; the undo has no
-          // shared publisher.
+          // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
         })
@@ -343,8 +342,6 @@ export function PageBrowserBatchToolbar({
     setBusy(true)
     try {
       const count = unwrap(await commands.addTagsByIds(selectedIds, selectedTagId))
-      // #5250 — a tag-filtered graph view reads the structure counter.
-      recordGraphStructureChange()
       closePickers()
       onClearSelection()
       onMutated()
