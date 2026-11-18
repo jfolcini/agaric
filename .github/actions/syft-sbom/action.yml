@@ -15,8 +15,9 @@ inputs:
     required: true
   binaries:
     description: >-
-      Space-separated globs of the Rust binaries the artifact ships; each must
-      match at least one file.
+      Space-separated paths of the Rust executables the artifact ships, built
+      with cargo auditable; each must exist. Name the executables, not a glob
+      that also takes in cargo's `.d` and `.pdb` files.
     required: true
   output-prefix:
     description: Path the SBOM and OpenVEX files are written under, without extension.

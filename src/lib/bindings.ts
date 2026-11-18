@@ -5423,8 +5423,8 @@ changed_page_ids?: string[];
  *    (`sync_daemon::snapshot_transfer`) sends this: it reimports an
  *    entire space, so every block may have changed and counting them
  *    is neither cheap nor meaningful. The frontend falls back to a
- *    countless message plus a full reload — never to silence, so a
- *    producer that forgets this field is loud, not mute.
+ *    full reload, so a producer that forgets this field still
+ *    reloads.
  */
 changed_blocks?: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
 /**
@@ -5581,8 +5581,8 @@ changed_page_ids: string[];
  *    (`sync_daemon::snapshot_transfer`) sends this: it reimports an
  *    entire space, so every block may have changed and counting them
  *    is neither cheap nor meaningful. The frontend falls back to a
- *    countless message plus a full reload — never to silence, so a
- *    producer that forgets this field is loud, not mute.
+ *    full reload, so a producer that forgets this field still
+ *    reloads.
  */
 changed_blocks: number | null }) & { address?: never; blocked?: never; bytes_done?: never; bytes_total?: never; code?: never; files_done?: never; files_total?: never; message?: never; page_titles?: never; peer_is_older?: never; phase?: never; port?: never; reason?: never; reason_key?: never; space_ids?: never; state?: never } | ({ type: "error"; message: string; remote_device_id: string; 
 /**

@@ -158,6 +158,27 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
    * block, and a load whose snapshot would predate the command, wait for it.
    */
   const heldBlocks = new Map<string, Promise<void>>()
+  /** How many holds have been taken; a load that saw it move read too early. */
+  let holdsTaken = 0
+
+  /**
+   * Hold later writes and loads for `ids` until the returned function is
+   * called, once the command in flight has answered. It runs before the
+   * caller's reconcile or rollback: either may load(), which waits on this.
+   */
+  function hold(ids: readonly string[]): () => void {
+    let answered: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      answered = resolve
+    })
+    holdsTaken++
+    for (const id of ids) heldBlocks.set(id, held)
+    return () => {
+      // A later command may hold the same block by now.
+      for (const id of ids) if (heldBlocks.get(id) === held) heldBlocks.delete(id)
+      answered()
+    }
+  }
 
   /**
    * Per-block mover queue (#774). Movers read their target slot from `get()`
@@ -217,6 +238,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // snapshot, and read as deleted: its row dropped, the focus on it cleared.
       // A second Enter can start another create while this waits.
       while (heldBlocks.size > 0) await Promise.all(heldBlocks.values())
+      const holdsAtStart = holdsTaken
       const generation = ++loadGeneration
       // What the focused editor was based on as this load started (#6533).
       const startFocusedId = useBlockStore.getState().focusedBlockId
@@ -244,6 +266,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         if (get().rootParentId !== rootParentId) return
         // A newer load started; it owns the store, `loading` included (#753).
         if (generation !== loadGeneration) return
+        // A create, split or merge began while the snapshot was on its way, so
+        // it may predate the command: applied, it would drop the block Enter
+        // just made, and the focus with its editor (#6814). Read again after it.
+        if (holdsTaken !== holdsAtStart) return await get().load()
         // Reuse the held object for every unchanged row, so a reload that
         // changed one block does not memo-miss every mounted row (#3321).
         let newBlocks = reuseUnchangedBlocks(
@@ -332,8 +358,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     // Mutation reducers close over this store's `set`/`get`, the split guard,
-    // `heldBlocks` and the mover queue.
-    ...createReducers({ set, get, splitInProgress, heldBlocks, enqueueMove }),
+    // `heldBlocks` with its `hold` and the mover queue.
+    ...createReducers({ set, get, splitInProgress, heldBlocks, hold, enqueueMove }),
   }))
 
   // External `setState` (tests, ad-hoc callers) derives `blocksById` from

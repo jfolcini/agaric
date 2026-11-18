@@ -100,6 +100,8 @@ function stub(byType: { page: Answer; content: Answer }, outline: BlockRow[] = H
         { id: WORK, title: 'Work', block_type: 'page', deleted: false },
         { id: TAG, title: 'idea', block_type: 'tag', deleted: false },
       ],
+      // The child rows read their properties in one batch (#6747); these carry none.
+      get_batch_properties: () => ({}),
       load_page_subtree: (args) => {
         const blocks = args['rootBlockId'] === HOME ? outline : []
         return { blocks, truncated: false, total: blocks.length }

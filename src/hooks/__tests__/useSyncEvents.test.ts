@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
-import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
+import { mapBackendState, pressedSyncPeers, useSyncEvents } from '@/hooks/useSyncEvents'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -255,6 +255,7 @@ beforeEach(() => {
   mockLoad.mockResolvedValue(undefined)
   mockResolvedPages.clear()
   mockSyncPeers.length = 0
+  pressedSyncPeers.clear()
 })
 
 afterEach(() => {
@@ -412,48 +413,28 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('shows success toast counting the blocks that actually changed (#4305)', async () => {
+    // #6870 — a peer's changes land in the open page; the sync says nothing.
+    it('raises no toast or announcement for a sync that changed blocks (#6870)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
         expect(mockListen).toHaveBeenCalledTimes(3)
       })
 
-      const callback = getListenerCallback('sync:complete')
-      callback({
+      getListenerCallback('sync:complete')({
         payload: {
           type: 'complete',
           remote_device_id: 'device-42',
           ops_received: 3,
           ops_sent: 0,
+          changed_page_ids: ['PAGE_1'],
           changed_blocks: 3,
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 3 changes from device')
-
-      unmount()
-    })
-
-    it('shows singular "change" for changed_blocks === 1 (#4305)', async () => {
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(3)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-42',
-          ops_received: 1,
-          ops_sent: 0,
-          changed_blocks: 1,
-        },
-      })
-
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 1 change from device')
+      expect(mockLoad).toHaveBeenCalled()
+      expect(mockedToastSuccess).not.toHaveBeenCalled()
+      expect(mockedAnnounce).not.toHaveBeenCalled()
 
       unmount()
     })
@@ -761,7 +742,7 @@ describe('useSyncEvents', () => {
     // and `null` must NOT be read as "nothing changed". It is the loudest
     // change there is: it says so without claiming a number, and it takes the
     // full-reload path its empty `changed_page_ids` selects.
-    it('reports a countless change and reloads everything when changed_blocks is null (#4305)', async () => {
+    it('reloads everything, quietly, when changed_blocks is null (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -779,17 +760,17 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
+      expect(mockedToastSuccess).not.toHaveBeenCalled()
       expect(mockLoad).toHaveBeenCalled()
       expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, undefined)
 
       unmount()
     })
 
-    // #4305 — a producer that forgets the field must be LOUD, not mute. Silence
-    // is reserved for an explicit `0`, so a missing field can never silently
-    // swallow a real sync.
-    it('falls back to loud when changed_blocks is absent entirely (#4305)', async () => {
+    // #4305 — a producer that forgets the field must still reload. Skipping is
+    // reserved for an explicit `0`, so a missing field can never swallow a real
+    // sync.
+    it('reloads when changed_blocks is absent entirely (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -805,7 +786,6 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
       expect(mockLoad).toHaveBeenCalled()
 
       unmount()
@@ -1124,6 +1104,11 @@ describe('useSyncEvents', () => {
   })
 
   describe('sync:error handler', () => {
+    // #6870 — only a pressed sync's failure is toasted; most cases here are one.
+    beforeEach(() => {
+      pressedSyncPeers.add('device-42')
+    })
+
     it('sets error state with message', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
@@ -1167,6 +1152,29 @@ describe('useSyncEvents', () => {
         // network doesn't stack a toast per retry.
         expect.objectContaining({ id: 'sync-error' }),
       )
+
+      unmount()
+    })
+
+    it("leaves a background session's failure to the Sync button (#6870)", async () => {
+      pressedSyncPeers.clear()
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('sync:error')({
+        payload: {
+          type: 'error',
+          message: 'Connection timed out',
+          remote_device_id: 'device-42',
+        },
+      })
+
+      expect(mockSetState).toHaveBeenCalledWith('error', 'Connection timed out')
+      expect(mockedToastError).not.toHaveBeenCalled()
+      expect(mockedAnnounce).not.toHaveBeenCalled()
 
       unmount()
     })
@@ -1218,7 +1226,7 @@ describe('useSyncEvents', () => {
         await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
 
         getListenerCallback('sync:error')({
-          payload: { type: 'error', message: 'connection lost' },
+          payload: { type: 'error', message: 'connection lost', remote_device_id: 'device-42' },
         })
 
         const opts = mockedToastError.mock.calls[0]?.[1] as { action?: unknown }
@@ -1575,29 +1583,6 @@ describe('useSyncEvents', () => {
 
   // Screen-reader announcements paired with sync toast feedback
   describe('screen reader announcements', () => {
-    it('announces the changes a sync:complete actually applied (#4305)', async () => {
-      const { unmount } = renderHook(() => useSyncEvents())
-
-      await vi.waitFor(() => {
-        expect(mockListen).toHaveBeenCalledTimes(3)
-      })
-
-      const callback = getListenerCallback('sync:complete')
-      callback({
-        payload: {
-          type: 'complete',
-          remote_device_id: 'device-42',
-          ops_received: 3,
-          ops_sent: 0,
-          changed_blocks: 3,
-        },
-      })
-
-      expect(mockedAnnounce).toHaveBeenCalledWith('3 changes received from sync')
-
-      unmount()
-    })
-
     // #4305 — the assistive-technology twin of the silent no-op sync. A screen
     // reader user must not be read "changes received from sync" once a minute
     // on a converged pair any more than a sighted user should see the toast.
@@ -1623,7 +1608,8 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('announces sync failed on sync:error', async () => {
+    it('announces sync failed on a pressed sync:error', async () => {
+      pressedSyncPeers.add('device-42')
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
