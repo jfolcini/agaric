@@ -6,6 +6,7 @@ import {
   openPage,
   test,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 /**
@@ -131,6 +132,7 @@ test.describe('Page editor @editor @pages @journal @search', () => {
 
   test('Add block button creates a new block in page', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    await waitForStableBlockRows(page)
 
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
@@ -258,12 +260,8 @@ test.describe('Trash @editor @pages @journal @search', () => {
     // Navigate back to Getting Started page
     await openPage(page, 'Getting Started')
 
-    // Verify the purged block does NOT reappear (permanently gone)
-    const blocks = page.locator('[data-testid="sortable-block"]')
-    const blockTexts = await blocks.allTextContents()
-    // The block was permanently deleted, so the page should have fewer blocks
-    // than the original 5 seed blocks
-    expect(blockTexts.length).toBeLessThan(5)
+    // The purged block does not reappear: four of the five seed blocks are left.
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(4)
   })
 
   test('purge confirmation Escape dismisses without deleting', async ({ page }) => {
@@ -326,6 +324,7 @@ test.describe('Context menu actions @editor @pages @journal @search', () => {
 
   test('context menu Delete removes the block', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    await waitForStableBlockRows(page)
 
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)

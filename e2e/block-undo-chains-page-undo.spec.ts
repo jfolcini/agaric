@@ -11,6 +11,7 @@ import {
   selectEditorRange,
   test,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 /**
@@ -68,6 +69,8 @@ test.describe('Ctrl+Z in a block with no editor history runs the page undo @edit
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
+    // The tests count the rows; on the real backend they render after the title.
+    await waitForStableBlockRows(page)
   })
 
   test('after Enter, the new block is taken back and the caret returns to its source', async ({

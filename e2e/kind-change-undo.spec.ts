@@ -22,6 +22,10 @@ import {
  * checked after navigating away and back, against what the backend holds.
  * Ctrl+Z inside the editor, the editor's own history, brings the bullet back
  * too when it takes back the change that took it off.
+ *
+ * A task's `created_at` stamp comes and goes with its state, and a write made
+ * after the change, which the page's undo stack never recorded, survives the
+ * undo: the entry's refs leave it.
  */
 
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
@@ -80,6 +84,21 @@ async function kindOf(page: Page, blockId: string): Promise<Kind> {
     listStyle: props.find((p) => p.key === 'listStyle')?.value_text ?? null,
     todo: row.todo_state,
   }
+}
+
+/** Whether block `blockId` holds the `created_at` stamp a task state writes. */
+async function stampedOf(page: Page, blockId: string): Promise<boolean> {
+  const props = await ipc<Array<{ key: string }>>(page, 'get_properties', { blockId })
+  return props.some((p) => p.key === 'created_at')
+}
+
+/** A write the page's undo stack never records, made after the change: its undo must leave it. */
+async function laterWrite(page: Page, blockId: string): Promise<void> {
+  await ipc(page, 'set_priority', { blockId, level: '2' })
+}
+
+async function priorityOf(page: Page, blockId: string): Promise<string | null> {
+  return (await ipc<{ priority: string | null }>(page, 'get_block', { blockId })).priority
 }
 
 async function openViaPalette(page: Page, title: string): Promise<void> {
@@ -147,6 +166,9 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
   test.beforeEach(async ({ page }) => {
     // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry: the
     // clock steps past it, so the edit made first stays an entry of its own.
+    // Each Ctrl+Z here undoes the refs that entry holds (`undo_ops`), which the
+    // page groups by the browser's clock, so `page.clock` reaches the grouping
+    // on the real backend too.
     await page.clock.install()
     await waitForBoot(page)
   })
@@ -268,17 +290,83 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
       ids: [, , gamma, delta],
       reopen,
     } = await inBlockMode(page, 'Block bullet undo')
+    expect(await stampedOf(page, gamma)).toBe(true)
     await focusBlockById(page, gamma)
     await runSlashCommand(page, 'bullet', 'BULLET LIST — Insert unordered list')
     await saveBlock(page, 'Escape')
     await expect
       .poll(() => kindOf(page, gamma))
       .toEqual({ text: 'gamma', listStyle: 'bullet', todo: null })
+    expect(await stampedOf(page, gamma)).toBe(false)
+    await laterWrite(page, gamma)
 
     await pageUndo(page)
     await reopen()
 
     await expect.poll(() => kindOf(page, gamma)).toEqual(GAMMA)
+    expect(await stampedOf(page, gamma)).toBe(true)
+    expect(await priorityOf(page, gamma)).toBe('2')
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  test('block mode: a bullet made a task with /todo', async ({ page }) => {
+    const {
+      ids: [alpha, , , delta],
+      reopen,
+    } = await inBlockMode(page, 'Block todo undo')
+    await focusBlockById(page, alpha)
+    await page.keyboard.press('End')
+    await runSlashCommand(page, 'todo', 'TODO — Mark as to-do')
+    await saveBlock(page, 'Escape')
+    await expect
+      .poll(() => kindOf(page, alpha))
+      .toEqual({ text: 'alpha', listStyle: null, todo: 'TODO' })
+    expect(await stampedOf(page, alpha)).toBe(true)
+    await laterWrite(page, alpha)
+
+    await pageUndo(page)
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    expect(await stampedOf(page, alpha)).toBe(false)
+    expect(await priorityOf(page, alpha)).toBe('2')
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  test('block mode: two bullets made tasks from the batch toolbar', async ({ page }) => {
+    const {
+      ids: [alpha, beta, , delta],
+      reopen,
+    } = await inBlockMode(page, 'Block batch todo undo')
+    // The Escape that saved `delta` left it selected; a second clears the selection.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.block-selected')).toHaveCount(0)
+    for (const id of [alpha, beta]) {
+      await page
+        .locator(`[data-testid="block-static"][data-block-id="${id}"]`)
+        .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
+    }
+    const toolbar = page.getByTestId('batch-toolbar')
+    await expect(toolbar).toContainText('2 selected')
+    await toolbar.getByRole('button', { name: 'TODO' }).click()
+    for (const [id, text] of [
+      [alpha, 'alpha'],
+      [beta, 'beta'],
+    ] as const) {
+      await expect.poll(() => kindOf(page, id)).toEqual({ text, listStyle: null, todo: 'TODO' })
+      expect(await stampedOf(page, id)).toBe(true)
+    }
+    await expect(toolbar).toHaveCount(0)
+    await laterWrite(page, alpha)
+
+    await pageUndo(page)
+    await reopen()
+
+    await expect.poll(() => kindOf(page, alpha)).toEqual(ALPHA)
+    expect(await kindOf(page, beta)).toEqual(BETA)
+    expect(await stampedOf(page, alpha)).toBe(false)
+    expect(await stampedOf(page, beta)).toBe(false)
+    expect(await priorityOf(page, alpha)).toBe('2')
     expect(await kindOf(page, delta)).toEqual(DELTA)
   })
 
