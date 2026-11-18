@@ -1,4 +1,4 @@
-# Session 4270 — a redacted value in a bug report carries a tag
+# Session 4273 — a redacted value in a bug report carries a tag
 
 Follow-up to #6764 and #6880. The issue body showed `"peer_id":"[REDACTED]"` on twenty warnings, so nobody could tell one peer from several. The reporter's own AI-made redaction used `<IPV4_LAN_1>` / `<IPV4_LAN_2>` and kept the one fact that mattered: two different addresses. Our redactor erased it.
 
