@@ -68,8 +68,6 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // The shared definitions query, so a definition edited elsewhere reaches this
   // header's inputs through `invalidatePropertyCaches()` (#6946).
   const { data: storedDefs, error: defsError, isPending: defsPending } = useSpacePropertyDefList()
-  // FE-H-17: a failed slice falls back to an empty array so the user still
-  // sees the half that loaded.
   const definitions = useMemo(() => storedDefs ?? [], [storedDefs])
   const loading = isPending || defsPending
   const updateDefinitions = useCallback(
