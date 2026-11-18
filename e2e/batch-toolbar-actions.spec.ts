@@ -17,7 +17,7 @@ import {
  * Delete and Cycle priority, and Indent from the bulk context menu (the
  * toolbar has no indent button). `batch-operations.spec.ts` covers selection
  * and the TODO buttons. Each test re-reads the page after navigating away, so
- * the effect is the mock's stored state, not the optimistic render.
+ * the effect is the stored state, not the optimistic render.
  */
 
 const PAGE = 'Getting Started'

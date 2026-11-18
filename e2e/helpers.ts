@@ -1371,6 +1371,22 @@ export async function blurEditors(page: Page) {
   )
 }
 
+/** `UNDO_GROUP_WINDOW_MS` in `src/stores/undo.ts`. */
+const UNDO_GROUP_WINDOW_MS = 500
+
+/**
+ * Writes closer than the undo group window join one undo step: the page's own entries by the
+ * browser's clock, and the positional undo that an agent's or a peer's write falls back to by
+ * the backend's op stamps, which `page.clock` does not reach. Called once a write has landed,
+ * this waits the window out in real time, so the next write is a step of its own on both.
+ */
+export async function outlastUndoGroup(): Promise<void> {
+  const landed = Date.now()
+  await expect
+    .poll(() => Date.now() - landed, { intervals: [100] })
+    .toBeGreaterThan(UNDO_GROUP_WINDOW_MS)
+}
+
 /**
  * Save the current block by pressing Enter and wait for the editor to commit.
  *

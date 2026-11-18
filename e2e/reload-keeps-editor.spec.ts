@@ -10,6 +10,7 @@ import {
   installIpcRecorder,
   ipc,
   openPage,
+  outlastUndoGroup,
   selectEditorRange,
   test,
   waitForBoot,
@@ -398,9 +399,6 @@ test.describe('after an MCP write, Ctrl+Z undoes the agent’s op, then the user
   }
 
   test.beforeEach(async ({ page }) => {
-    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
-    // fast-forwards below keep each write an entry of its own.
-    await page.clock.install()
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
   })
@@ -413,16 +411,18 @@ test.describe('after an MCP write, Ctrl+Z undoes the agent’s op, then the user
     await page.keyboard.type(' typed')
     await blurEditors(page)
     await expect.poll(() => storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await focusBlockById(page, GS2)
     await page.keyboard.press('Control+Shift+1')
     await expect.poll(() => priorityOf(page, GS2)).toBe('1')
     await blurEditors(page)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await agentWrites(page)
 
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS1)).toBe(gs1)
+    // A press while an undo is still in flight is dropped; its toast shows once it has settled.
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
     await page.keyboard.press('Control+z')
     await expect.poll(() => priorityOf(page, GS2)).toBeNull()
     expect(await storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
@@ -438,7 +438,7 @@ test.describe('after an MCP write, Ctrl+Z undoes the agent’s op, then the user
     await expect.poll(() => storedContent(page, GS3)).toBe(`${GS3_TEXT} typed`)
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await agentWrites(page)
 
     await page.keyboard.press('Control+z')
@@ -515,9 +515,6 @@ test.describe('undo and redo across a reload (#6541) @editor @sync @mcp', () => 
   }
 
   test.beforeEach(async ({ page }) => {
-    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
-    // fast-forwards below keep each write an entry of its own.
-    await page.clock.install()
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
   })
@@ -526,11 +523,11 @@ test.describe('undo and redo across a reload (#6541) @editor @sync @mcp', () => 
     page,
   }) => {
     const gs2 = await typeAtEnd(page, GS2, ' first')
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await typeAtEnd(page, GS3, ' second')
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await peerSyncs(page)
 
     await page.keyboard.press('Control+z')
@@ -543,7 +540,7 @@ test.describe('undo and redo across a reload (#6541) @editor @sync @mcp', () => 
     await typeAtEnd(page, GS3, ' typed')
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await peerSyncs(page)
 
     await page.keyboard.press('Control+y')
@@ -560,7 +557,7 @@ test.describe('undo and redo across a reload (#6541) @editor @sync @mcp', () => 
     await typeAtEnd(page, GS3, ' typed')
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS3)).toBe(GS3_TEXT)
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await ipc(page, 'edit_block', { blockId: GS1, toText: AGENT_TEXT })
     await emitMockEvent(page, 'blocks:changed', {
       changed_page_ids: [PAGE_GS],

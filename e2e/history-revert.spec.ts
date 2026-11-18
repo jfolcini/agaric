@@ -1,12 +1,17 @@
+import type { Page } from '@playwright/test'
+
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   createPageFromPagesView,
   deleteBlockViaContextMenu,
   expect,
+  ipc,
   navigateToView,
   openPage,
   test,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 // HistoryView tests mutate and assert against the shared
@@ -22,6 +27,20 @@ test.describe.configure({ mode: 'serial' })
  *
  * The tauri-mock tracks an op log and supports batch revert.
  */
+
+async function storedText(page: Page, blockId: string): Promise<string> {
+  return (await ipc<{ content: string }>(page, 'get_block', { blockId })).content
+}
+
+/** The block's content, or `deleted` once it is soft-deleted or gone. */
+async function blockState(page: Page, blockId: string): Promise<string> {
+  try {
+    const row = await ipc<{ content: string; deleted_at: unknown }>(page, 'get_block', { blockId })
+    return row.deleted_at == null ? row.content : 'deleted'
+  } catch {
+    return 'deleted'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -77,46 +96,40 @@ test.describe('HistoryView batch revert @pages', () => {
   })
 
   test('batch revert reverses a create_block operation', async ({ page }) => {
-    await openPage(page, 'Getting Started')
+    const text = 'the block to revert'
+    const created = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: text,
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+      index: null,
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+      blockId: null,
+    })
 
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
-
-    // Create a new block
-    await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
-
-    // Navigate to History
     await navigateToView(page, 'History')
-    await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
-
-    // Find and select the create_block entry (most recent is first)
-    const createEntry = page
+    await page
       .locator('[data-history-item]')
       .filter({
         has: page.locator('[data-testid="history-type-badge"][data-op-type="create_block"]'),
       })
-      .first()
-    await expect(createEntry).toBeVisible()
-    const checkbox = createEntry.getByRole('checkbox')
-    await checkbox.click()
-
-    // Click "Revert selected"
-    await page.getByRole('button', { name: /Revert selected/i }).click()
-
-    // Confirm revert
-    await expect(page.getByRole('button', { name: 'Revert', exact: true })).toBeVisible()
+      .filter({ hasText: text })
+      .getByRole('checkbox')
+      .click()
+    const revertSelected = page.getByRole('button', { name: /Revert selected/i })
+    await revertSelected.click()
     await page.getByRole('button', { name: 'Revert', exact: true }).click()
+    // The selection leaves only once the revert succeeded.
+    await expect(revertSelected).toHaveCount(0)
 
-    // Selection should be cleared after revert
-    await expect(page.getByText(/^\d+ selected$/)).not.toBeVisible()
-
-    // Navigate back to the page and verify block is gone
     await openPage(page, 'Getting Started')
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
+    await waitForStableBlockRows(page)
+    await expect(page.locator('[data-testid="sortable-block"]', { hasText: text })).toHaveCount(0)
+    expect(await blockState(page, created.id)).toBe('deleted')
   })
 
   test('batch revert restores a deleted block', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    await waitForStableBlockRows(page)
 
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
@@ -153,6 +166,7 @@ test.describe('HistoryView batch revert @pages', () => {
 
   test('cancel in confirmation dialog does not revert', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    await waitForStableBlockRows(page)
     const blocksBefore = await page.locator('[data-testid="sortable-block"]').count()
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(blocksBefore + 1)
@@ -171,6 +185,39 @@ test.describe('HistoryView batch revert @pages', () => {
 
     // Selection should still be active
     await expect(page.getByText('1 selected')).toBeVisible()
+  })
+
+  // Reverting the op chosen, not the newest: a later edit of another block stays.
+  test('reverting one edit rolls its block back and keeps a later edit, durably', async ({
+    page,
+  }) => {
+    const [reverted, kept] = [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_3]
+    const before = await storedText(page, reverted)
+    await ipc(page, 'edit_block', { blockId: reverted, toText: 'the edit to revert' })
+    await ipc(page, 'edit_block', { blockId: kept, toText: 'the edit to keep' })
+
+    await navigateToView(page, 'History')
+    await page
+      .locator('[data-history-item]')
+      .filter({
+        has: page.locator('[data-testid="history-type-badge"][data-op-type="edit_block"]'),
+      })
+      .filter({ hasText: 'the edit to revert' })
+      .getByRole('checkbox')
+      .click()
+    const revertSelected = page.getByRole('button', { name: /Revert selected/i })
+    await revertSelected.click()
+    await page.getByRole('button', { name: 'Revert', exact: true }).click()
+    // The selection leaves only once the revert succeeded.
+    await expect(revertSelected).toHaveCount(0)
+
+    await openPage(page, 'Getting Started')
+    const row = (id: string) =>
+      page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+    await expect(row(reverted)).toHaveText(before)
+    await expect(row(kept)).toHaveText('the edit to keep')
+    expect(await storedText(page, reverted)).toBe(before)
+    expect(await storedText(page, kept)).toBe('the edit to keep')
   })
 
   // #6051 — reverting a page's delete is refused once a live page of the space

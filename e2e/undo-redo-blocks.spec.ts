@@ -1,12 +1,19 @@
+import type { Page } from '@playwright/test'
+
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  activeMenu,
   blurEditors,
   deleteBlockViaContextMenu,
   expect,
   focusBlock,
+  ipc,
   openPage,
+  outlastUndoGroup,
   reopenPage,
   test,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 // Block-level undo/redo tests mutate shared mock op-log state
@@ -17,14 +24,69 @@ test.describe.configure({ mode: 'serial' })
 /**
  * E2E tests for block-level undo/redo (#136).
  *
- * Block-level undo (Ctrl+Z when NOT inside contentEditable) calls
- * undoPageOp via the useUndoShortcuts hook. The mock reverses the
- * last operation. Since the frontend doesn't auto-refresh blocks
- * after undo, we navigate away and back to trigger a re-fetch from
- * the mock's updated state.
+ * Block-level undo (Ctrl+Z when NOT inside contentEditable) reverses
+ * the page's last step through the op log via the useUndoShortcuts
+ * hook. Each test reads the stored state back, from the backend and
+ * after navigating away and back.
  *
  * Seed data: see `SEED_IDS` in `src/lib/tauri-mock/seed.ts`.
  */
+
+const rows = (page: Page) => page.locator('[data-testid="sortable-block"]')
+const row = (page: Page, blockId: string) =>
+  page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
+
+/** Block `blockId`'s stored text, or `null` once it is deleted (`get_block` refuses it). */
+function storedText(page: Page, blockId: string): Promise<string | null> {
+  return ipc<{ content: string }>(page, 'get_block', { blockId }).then(
+    (block) => block.content,
+    () => null,
+  )
+}
+
+async function storedTodo(page: Page, blockId: string): Promise<string | null> {
+  return (await ipc<{ todo_state: string | null }>(page, 'get_block', { blockId })).todo_state
+}
+
+/** Open Getting Started once its rows have rendered, so a count read of them is whole. */
+async function openGettingStarted(page: Page): Promise<void> {
+  await openPage(page, 'Getting Started')
+  await waitForStableBlockRows(page)
+}
+
+/** Press a page undo or redo chord and wait for its toast: a press while one runs is dropped. */
+async function pageHistory(page: Page, chord: string, toast: string | RegExp): Promise<void> {
+  await page.keyboard.press(chord)
+  await expect(page.getByLabel('Notifications alt+T').getByText(toast)).toBeVisible()
+}
+
+/**
+ * Add a block at the end of the page and type `text` into it; resolves to its id. An empty block
+ * is deleted once it loses focus, so the create alone leaves nothing to undo. The text is typed
+ * once the create's undo step has closed, `UNDO_GROUP_WINDOW_MS` after it landed, so the create
+ * and the text are a page step each.
+ */
+async function addTypedBlock(page: Page, text: string): Promise<string> {
+  await page.getByRole('button', { name: 'Add block' }).click()
+  const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+  await expect(editor).toBeFocused()
+  const id = await editor.evaluate(
+    (el) => el.closest('[data-testid="sortable-block"]')?.getAttribute('data-block-id') ?? '',
+  )
+  await expect.poll(() => storedText(page, id)).toBe('')
+  await outlastUndoGroup()
+  await page.keyboard.type(text)
+  await blurEditors(page)
+  await expect.poll(() => storedText(page, id)).toBe(text)
+  return id
+}
+
+/** Set block `blockId` as a task from its block menu. */
+async function setTodoFromMenu(page: Page, blockId: string): Promise<void> {
+  await row(page, blockId).click({ button: 'right' })
+  await activeMenu(page).getByRole('menuitem', { name: 'Set as TODO' }).click()
+  await expect.poll(() => storedTodo(page, blockId)).toBe('TODO')
+}
 
 test.describe('Block-level undo/redo @editor', () => {
   test.beforeEach(async ({ page }) => {
@@ -32,33 +94,23 @@ test.describe('Block-level undo/redo @editor', () => {
   })
 
   test('undo reverses block creation', async ({ page }) => {
-    await openPage(page, 'Getting Started')
+    await openGettingStarted(page)
+    const countBefore = await rows(page).count()
+    const id = await addTypedBlock(page, 'added then undone')
+    await expect(rows(page)).toHaveCount(countBefore + 1)
 
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
+    // The first press takes back the text, the second the block.
+    await pageHistory(page, 'Control+z', 'Undid edit')
+    await expect.poll(() => storedText(page, id)).toBe('')
+    await pageHistory(page, 'Control+z', 'Undid create block')
+    await expect.poll(() => storedText(page, id)).toBeNull()
 
-    // Create a new block
-    await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
-
-    // Escape out of the editor so Ctrl+Z hits useUndoShortcuts
-    await blurEditors(page)
-
-    // Press Ctrl+Z — triggers block-level undo (useUndoShortcuts)
-    await page.keyboard.press('Control+z')
-
-    // Wait for the undo toast to confirm undo fired. The text is per-op-type
-    // ("Undid create block") with a generic "Undone" fallback, so match both.
-    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
-
-    // Navigate away and back to re-fetch blocks from mock's updated state
     await reopenPage(page, 'Getting Started')
-
-    // Block count should be back to original
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
+    await expect(rows(page)).toHaveCount(countBefore)
   })
 
   test('undo reverses block deletion', async ({ page }) => {
-    await openPage(page, 'Getting Started')
+    await openGettingStarted(page)
 
     const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
@@ -77,7 +129,7 @@ test.describe('Block-level undo/redo @editor', () => {
     await page.keyboard.press('Control+z')
     await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
 
-    // Navigate away and back to re-fetch from mock
+    // Navigate away and back to re-fetch from the backend
     await reopenPage(page, 'Getting Started')
 
     // Block count should be restored
@@ -85,30 +137,57 @@ test.describe('Block-level undo/redo @editor', () => {
   })
 
   test('redo re-applies after undo', async ({ page }) => {
-    await openPage(page, 'Getting Started')
+    await openGettingStarted(page)
+    const countBefore = await rows(page).count()
+    const id = await addTypedBlock(page, 'added, undone and redone')
+    await pageHistory(page, 'Control+z', 'Undid edit')
+    await pageHistory(page, 'Control+z', 'Undid create block')
+    await expect.poll(() => storedText(page, id)).toBeNull()
 
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
+    await pageHistory(page, 'Control+y', /^Redid /)
+    await expect.poll(() => storedText(page, id)).toBe('')
+    await pageHistory(page, 'Control+y', 'Redid edit')
+    await expect.poll(() => storedText(page, id)).toBe('added, undone and redone')
 
-    // Create a new block
-    await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
-
-    // Escape and blur out of any contentEditable
-    await blurEditors(page)
-
-    // Press Ctrl+Z — triggers undo
-    await page.keyboard.press('Control+z')
-    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
-
-    // Now redo with Ctrl+Y
-    await page.keyboard.press('Control+y')
-    await expect(page.getByLabel('Notifications alt+T').getByText(/Red(one|id)/)).toBeVisible()
-
-    // Navigate away and back to verify
     await reopenPage(page, 'Getting Started')
+    await expect(rows(page)).toHaveCount(countBefore + 1)
+    await expect(rows(page).last()).toHaveText('added, undone and redone')
+  })
 
-    // Block should be back (countBefore + 1)
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
+  // The block menu's "Set as TODO" is one `set_todo_state`, which the page's undo reverses
+  // through the op log. Each state is read back from the backend and again after a reopen.
+  test('Ctrl+Z clears the task state the block menu set, durably', async ({ page }) => {
+    await openGettingStarted(page)
+    const gs3 = SEED_IDS.BLOCK_GS_3
+    const marker = row(page, gs3).getByTestId('task-marker')
+    await setTodoFromMenu(page, gs3)
+    await expect(marker).toBeVisible()
+
+    await pageHistory(page, 'Control+z', 'Undid property change')
+    await expect.poll(() => storedTodo(page, gs3)).toBeNull()
+    await expect(marker).toHaveCount(0)
+
+    await reopenPage(page, 'Getting Started')
+    await expect(row(page, gs3)).toBeVisible()
+    await expect(marker).toHaveCount(0)
+    expect(await storedTodo(page, gs3)).toBeNull()
+  })
+
+  test('Ctrl+Y sets back the task state Ctrl+Z cleared, durably', async ({ page }) => {
+    await openGettingStarted(page)
+    const gs3 = SEED_IDS.BLOCK_GS_3
+    const marker = row(page, gs3).getByTestId('task-marker')
+    await setTodoFromMenu(page, gs3)
+    await pageHistory(page, 'Control+z', 'Undid property change')
+    await expect.poll(() => storedTodo(page, gs3)).toBeNull()
+
+    await pageHistory(page, 'Control+y', /Red(one|id)/)
+    await expect.poll(() => storedTodo(page, gs3)).toBe('TODO')
+    await expect(marker).toBeVisible()
+
+    await reopenPage(page, 'Getting Started')
+    await expect(marker).toBeVisible()
+    expect(await storedTodo(page, gs3)).toBe('TODO')
   })
 
   // ===========================================================================
@@ -231,9 +310,20 @@ test.describe('Block-level undo/redo @editor', () => {
       10,
     )
 
-    // Let the undo-group window (500ms) lapse so the scaffolding indent and the
-    // dedent below are SEPARATE undo groups — otherwise one Ctrl+Z reverts both.
-    await page.waitForTimeout(700)
+    // Let the undo-group window lapse after the indent has landed (the padding
+    // above is optimistic), so the scaffolding indent and the dedent below are
+    // SEPARATE undo groups — otherwise one Ctrl+Z reverts both.
+    await expect
+      .poll(
+        async () =>
+          (
+            await ipc<{ parent_id: string | null }>(page, 'get_block', {
+              blockId: SEED_IDS.BLOCK_GS_3,
+            })
+          ).parent_id,
+      )
+      .toBe(SEED_IDS.BLOCK_GS_2)
+    await outlastUndoGroup()
 
     // Dedent it back to root (Ctrl+Shift+ArrowLeft); editor is still open.
     await page.keyboard.press('Control+Shift+ArrowLeft')

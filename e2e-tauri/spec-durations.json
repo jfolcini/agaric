@@ -10,9 +10,7 @@
   "e2e-tauri/gutter-alignment.e2e.ts": 9,
   "e2e-tauri/hash-tag-typing.e2e.ts": 8,
   "e2e-tauri/history-agent-badge.e2e.ts": 5,
-  "e2e-tauri/history-redo-revert-restore.e2e.ts": 23,
   "e2e-tauri/journal-template-quick-capture.e2e.ts": 8,
-  "e2e-tauri/kind-change-undo.e2e.ts": 23,
   "e2e-tauri/markdown-reveal-persist.e2e.ts": 11,
   "e2e-tauri/mcp-agent-token.e2e.ts": 12,
   "e2e-tauri/mcp-create-tag-picker.e2e.ts": 7,
@@ -50,7 +48,6 @@
   "e2e-tauri/table-cell-link-backlink.e2e.ts": 9,
   "e2e-tauri/tag-color-synced.e2e.ts": 6,
   "e2e-tauri/trash-bulk-noncanonical-ids.e2e.ts": 6,
-  "e2e-tauri/undo-todo-state.e2e.ts": 6,
   "e2e-tauri/voice-note-record.e2e.ts": 12,
   "e2e-tauri/week-cross-day-clipboard.e2e.ts": 7
 }

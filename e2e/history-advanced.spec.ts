@@ -1,3 +1,6 @@
+import type { Page } from '@playwright/test'
+
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   clearInvokeCalls,
@@ -5,6 +8,7 @@ import {
   focusBlock,
   getInvokeCalls,
   installIpcRecorder,
+  ipc,
   navigateToView,
   openPage,
   replaceEditorText,
@@ -104,6 +108,51 @@ test.describe('HistoryView — restore to here @pages', () => {
     // is pinned by `restore_page_to_op.json`, which targets an older op.
     await expect(page.getByText('0 operations reverted successfully')).toBeVisible()
   })
+})
+
+/** Block `blockId`'s stored text, or `null` once it is deleted (`get_block` refuses it). */
+function storedText(page: Page, blockId: string): Promise<string | null> {
+  return ipc<{ content: string }>(page, 'get_block', { blockId }).then(
+    (row) => row.content,
+    () => null,
+  )
+}
+
+// History restores the whole space (`restore_page_to_op('__all__', …)`): every op after the
+// chosen one is reverted, an edit and a create alike, and the page read again shows it.
+test('restoring to an edit takes back every later op of the space, durably @pages', async ({
+  page,
+}) => {
+  await waitForBoot(page)
+  const gs1 = SEED_IDS.BLOCK_GS_1
+  await ipc(page, 'edit_block', { blockId: gs1, toText: 'the restore point' })
+  await ipc(page, 'edit_block', { blockId: gs1, toText: 'an edit after it' })
+  const { id: created } = await ipc<{ id: string }>(page, 'create_block', {
+    blockType: 'content',
+    content: 'a block made after it',
+    parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    index: null,
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+  })
+
+  await navigateToView(page, 'History')
+  await page
+    .locator('[data-history-item]')
+    .filter({
+      has: page.locator('[data-testid="history-type-badge"][data-op-type="edit_block"]'),
+    })
+    .filter({ hasText: 'the restore point' })
+    .locator('.restore-to-here-btn')
+    .click()
+  await activeAlertDialog(page).getByRole('button', { name: 'Restore', exact: true }).click()
+  await expect(page.getByText(/operations reverted successfully/)).toBeVisible()
+
+  await openPage(page, 'Getting Started')
+  const row = (id: string) => page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+  await expect(row(gs1)).toHaveText('the restore point')
+  await expect(row(created)).toHaveCount(0)
+  expect(await storedText(page, gs1)).toBe('the restore point')
+  expect(await storedText(page, created)).toBeNull()
 })
 
 test.describe('HistoryView — diff toggle @pages', () => {

@@ -529,30 +529,6 @@ export async function typeVerified(
 }
 
 /**
- * Create a block in the Journal daily view carrying a unique marker, and wait
- * for it to commit and render as a StaticBlock. Mounts the roving TipTap editor
- * via the first-block CTA (either "Add block" or the virgin-vault "Add your
- * first block" — see `openJournalBlockEditor`), types the marker with
- * read-back verification (`typeMarkerVerified` — retries dropped keystrokes),
- * then Enter flushes the create op through the live backend and moves the roving
- * editor to a fresh sibling; Escape blurs out of that new editor. The final
- * `waitForDisplayed` proves the real backend accepted the op and the frontend
- * reprojected it.
- *
- * Assumes the Journal view is active (call `navigateTo('Journal')` first if a
- * prior step moved away).
- */
-export async function addBlockWithMarker(marker: string): Promise<void> {
-  await openJournalBlockEditor()
-  await typeMarkerVerified(marker)
-  await browser.keys(['Enter'])
-  await browser.keys(['Escape'])
-
-  const committed = blockStaticByMarker(marker)
-  await committed.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
-
-/**
  * Every committed block row whose text contains `marker`, resolved ONCE into a
  * plain array (see the `getElements()` note in `openJournalBlockEditor`). For
  * a spec that seeds N marked rows and must assert on all N, not just the
@@ -1639,13 +1615,6 @@ export async function cycleTaskTo(id: string, state: string): Promise<void> {
     })
   }
   throw new Error(`the task checkbox never reached ${state}`)
-}
-
-/** Open block `id` in the editor, the cursor after a space at its end. */
-export async function editAtEnd(id: string): Promise<void> {
-  await $(`[data-testid="block-static"][data-block-id="${id}"]`).click()
-  await caretToEnd()
-  await browser.keys([' '])
 }
 
 /**
