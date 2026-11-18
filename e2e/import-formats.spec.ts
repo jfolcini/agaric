@@ -6,10 +6,16 @@ import JSZip from 'jszip'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   attachFile,
+  confirmEach,
   expect,
   focusBlockById,
+  importFile,
+  importFolder,
   ipc,
+  navigateToDataSettings,
   navigateToView,
+  reopenTitled,
+  rowOf,
   switchToSpace,
   test,
   waitForBoot,
@@ -50,97 +56,9 @@ const PDF = Buffer.from(
     'trailer<</Root 1 0 R>>\n%%EOF\n',
 )
 
-async function navigateToDataSettings(page: Page) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await page.getByRole('tab', { name: 'Data' }).click()
-  await expect(page.locator('[data-testid="import-panel-title"]')).toBeVisible()
-}
-
-/** Press `label` in each confirmation the import asks, in turn, each a dialog of its own. */
-async function confirmEach(page: Page, labels: readonly string[]) {
-  const dialogTexts = () =>
-    page
-      .locator('[role="alertdialog"], [role="dialog"]')
-      .evaluateAll((open) => open.map((dialog) => dialog.textContent ?? ''))
-  for (const label of labels) {
-    const button = page.getByRole('button', { name: label, exact: true })
-    await expect(button).toHaveCount(1)
-    const [asked] = (await dialogTexts()).slice(-1)
-    await button.click()
-    // The next confirmation can open in the same node, so wait for this one's text to go.
-    await expect.poll(dialogTexts).not.toContain(asked)
-  }
-}
-
-/** Pick the file `name` holding `contents` in the Data tab's input `testid`; wait for `summary`. */
-async function importFile(
-  page: Page,
-  testid: string,
-  name: string,
-  contents: string | Buffer,
-  summary: string,
-  confirm: readonly string[] = [],
-) {
-  await navigateToDataSettings(page)
-  await page
-    .getByTestId(testid)
-    .setInputFiles({ name, mimeType: '', buffer: Buffer.from(contents) })
-  await confirmEach(page, confirm)
-  await expect(page.getByTestId('import-result')).toContainText(summary)
-}
-
 /** Import `markdown` as the page `title`, a lone `.md` file. */
 function importMarkdownPage(page: Page, title: string, markdown: string) {
   return importFile(page, 'import-file-input', `${title}.md`, markdown, `Imported “${title}”`)
-}
-
-/**
- * Pick a folder `folder` holding `files` (path → contents) in the input `testid`.
- * The FileList is set in the page, each File carrying the `webkitRelativePath`
- * a folder picker gives it: Playwright's own directory upload cannot read a
- * file whose name is not ASCII (`Über.md`).
- */
-async function importFolder(
-  page: Page,
-  testid: string,
-  folder: string,
-  files: Record<string, string | Buffer>,
-  summary: string,
-  confirm: readonly string[] = [],
-) {
-  await navigateToDataSettings(page)
-  const entries = Object.entries(files).map(([rel, contents]) => ({
-    name: rel.slice(rel.lastIndexOf('/') + 1),
-    rel: `${folder}/${rel}`,
-    b64: Buffer.from(contents).toString('base64'),
-  }))
-  await page.getByTestId(testid).evaluate((input: HTMLInputElement, list) => {
-    const picked = new DataTransfer()
-    for (const { name, rel, b64 } of list) {
-      const file = new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name)
-      Object.defineProperty(file, 'webkitRelativePath', { value: rel })
-      picked.items.add(file)
-    }
-    input.files = picked.files
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  }, entries)
-  await confirmEach(page, confirm)
-  await expect(page.getByTestId('import-result')).toContainText(summary)
-}
-
-/** Open the page titled exactly `title` from Pages, after leaving the current view. */
-async function reopenTitled(page: Page, title: string) {
-  await navigateToView(page, 'Tags')
-  await navigateToView(page, 'Pages')
-  await page.locator(`span[data-page-title="${title}"]`).click()
-  await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
-}
-
-/** The open page's row of the block whose text holds `text`. */
-function rowOf(page: Page, text: string): Locator {
-  return page
-    .locator('li[data-block-id]')
-    .filter({ has: page.locator('[data-testid="block-static"]', { hasText: text }) })
 }
 
 /** The pages of `spaceId`. */

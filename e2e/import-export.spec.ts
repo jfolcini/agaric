@@ -2,17 +2,22 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import type { Locator, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import JSZip from 'jszip'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   getInvokeCalls,
+  importFile,
+  importFolder,
   installIpcRecorder,
   ipc,
+  navigateToDataSettings,
   navigateToView,
   openPage,
+  reopenTitled,
+  rowOf,
   test,
   waitForBoot,
 } from './helpers'
@@ -79,18 +84,6 @@ function exportedBlockLines(markdown: string): string[] {
   const lines = markdown.split('\n')
   const title = lines.findIndex((line) => line.startsWith('# '))
   return lines.slice(title + 1).filter((line) => line !== '' && !/^\s/.test(line))
-}
-
-// Helper: navigate to Settings → Data tab (where the import/export UI lives
-// After). The import panel used to live in the Status panel but was
-// moved to Settings → Data with the lazy-loaded DataSettingsTab component.
-// ===========================================================================
-
-async function navigateToDataSettings(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await page.getByRole('tab', { name: 'Data' }).click()
-  // DataSettingsTab is lazy-loaded (Suspense) — wait for it to mount.
-  await expect(page.locator('[data-testid="import-panel-title"]')).toBeVisible()
 }
 
 // ===========================================================================
@@ -534,57 +527,15 @@ test.describe('Evernote links between notes @markdown', () => {
 
 const LOGSEQ_CONFIG = '{:file/name-format :triple-lowbar}\n'
 
-/** Pick `name` holding `text` through the Data tab's file input; wait for its result. */
-async function importFile(page: Page, name: string, text: string, summary: string) {
-  await navigateToDataSettings(page)
-  await page.locator('[data-testid="import-file-input"]').setInputFiles({
-    name,
-    mimeType: 'text/markdown',
-    buffer: Buffer.from(text),
-  })
-  await expect(page.locator('[data-testid="import-result"]')).toContainText(summary)
-}
-
-/** Pick a folder `folder` holding `files` (path → text) through the folder input. */
-async function importFolder(
-  page: Page,
-  folder: string,
-  files: Record<string, string>,
-  summary: string,
-) {
-  const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'pw-import-')), folder)
-  for (const [name, text] of Object.entries(files)) {
-    mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
-    writeFileSync(path.join(root, name), text)
-  }
-  await navigateToDataSettings(page)
-  await page.locator('[data-testid="import-folder-input"]').setInputFiles(root)
-  await expect(page.locator('[data-testid="import-result"]')).toContainText(summary)
-}
-
 /** Import `markdown` as the page `title` of a Logseq graph, read as `LogseqOrg` (#6277 E1). */
 async function importLogseqPage(page: Page, title: string, markdown: string, summary?: string) {
   await importFolder(
     page,
+    'import-folder-input',
     `${title}-graph`,
     { 'logseq/config.edn': LOGSEQ_CONFIG, [`pages/${title}.md`]: markdown },
     summary ?? `Imported “${title}”`,
   )
-}
-
-/** Open the page titled exactly `title` from Pages, after leaving the current view. */
-async function reopenTitled(page: Page, title: string) {
-  await navigateToView(page, 'Tags')
-  await navigateToView(page, 'Pages')
-  await page.locator(`span[data-page-title="${title}"]`).click()
-  await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
-}
-
-/** The open page's row of the block whose text holds `text`. */
-function rowOf(page: Page, text: string): Locator {
-  return page
-    .locator('li[data-block-id]')
-    .filter({ has: page.locator('[data-testid="block-static"]', { hasText: text }) })
 }
 
 /** The id of the page titled `title` in Personal. */
@@ -618,6 +569,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
   }) => {
     await importFile(
       page,
+      'import-file-input',
       'nest-doc.md',
       '- nest-parent\n  - nest-child\n    - nest-leaf links [[nest-target]]\n',
       'Imported “nest-doc”: 3 blocks',
@@ -662,7 +614,13 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
     ].join('\n')
     // The intro, three headings, the fence, two numbered items, two starred
     // items and the nested one; the title line is not a block.
-    await importFile(page, 'readme-doc.md', markdown, 'Imported “readme-doc”: 10 blocks')
+    await importFile(
+      page,
+      'import-file-input',
+      'readme-doc.md',
+      markdown,
+      'Imported “readme-doc”: 10 blocks',
+    )
     await reopenTitled(page, 'readme-doc')
     for (const text of [
       'readme-intro',
@@ -693,7 +651,13 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
       'comment-said %%aside%% more',
       '',
     ].join('\n')
-    await importFile(page, 'comment-vault.md', markdown, 'Imported “comment-vault”')
+    await importFile(
+      page,
+      'import-file-input',
+      'comment-vault.md',
+      markdown,
+      'Imported “comment-vault”',
+    )
     await reopenTitled(page, 'comment-vault')
     const oneLine = rowOf(page, 'comment-oneline')
     await expect(oneLine.getByTestId('callout-block')).toHaveAttribute(
@@ -723,7 +687,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
       ]
       if (order === 'target-first') runs.reverse()
       for (const [name, text, title] of runs) {
-        await importFile(page, name, text, `Imported “${title}”`)
+        await importFile(page, 'import-file-input', name, text, `Imported “${title}”`)
       }
       const target = await pageIdTitled(page, 'adopt-B')
       await reopenTitled(page, 'adopt-B')
@@ -743,6 +707,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
   }) => {
     await importFolder(
       page,
+      'import-folder-input',
       'lsq-graph',
       {
         'logseq/config.edn':
@@ -853,6 +818,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
     const notesId = 'fedcba9876543210fedcba9876543210'
     await importFolder(
       page,
+      'import-folder-input',
       'notion-export',
       {
         [`Plan ${planId}.md`]: `# Plan\n\nReviewer: notion-ann\n\n- notion-link [Notes](Notes%20${notesId}.md)\n`,
@@ -898,6 +864,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
     const headlineId = '5f2c0000-0000-4000-8000-000000000001'
     await importFolder(
       page,
+      'import-folder-input',
       'roam-export',
       {
         'roam.org': [
@@ -944,6 +911,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
   }) => {
     await importFolder(
       page,
+      'import-folder-input',
       'txt-vault',
       { 'txt-a.md': '- txt-link [r](txt-reading.txt)\n', 'txt-reading.txt': '- txt-text\n' },
       'Imported “2 files”',
@@ -960,6 +928,7 @@ test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
   }) => {
     await importFolder(
       page,
+      'import-folder-input',
       'orgfile-vault',
       {
         'orgfile-a.org': '#+TITLE: orgfile Alpha\n* orgfile-alpha\n',
