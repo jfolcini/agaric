@@ -118,7 +118,7 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
     await result.getByRole('button', { name: 'Edit query' }).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog).toContainText('It can only be edited as text')
-    await expect(dialog.getByRole('button', { name: /Query$/ })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: /query$/ })).toBeDisabled()
   })
 
   test('the older text still matches tags by name prefix, inline ones too', async ({ page }) => {

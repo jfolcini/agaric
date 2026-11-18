@@ -246,7 +246,7 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
     await replaceEditorText(page, '.')
     const header = page
       .getByTestId('linked-references')
-      .getByRole('button', { name: /\d+ References?$/ })
+      .getByRole('button', { name: /\d+ references?$/ })
     await expect(header).toHaveAttribute('aria-expanded', 'true')
 
     await header.click()
@@ -264,7 +264,7 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
     await installIpcRecorder(page)
     const header = page
       .getByTestId('linked-references')
-      .getByRole('button', { name: /\d+ References?$/ })
+      .getByRole('button', { name: /\d+ references?$/ })
 
     await header.click()
 

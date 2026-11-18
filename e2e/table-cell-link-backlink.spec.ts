@@ -62,7 +62,7 @@ test.describe('A link in a table cell @editor @pages', () => {
 
     await openPage(page, 'Meetings')
     const references = page.getByTestId('linked-references')
-    await expect(references.getByRole('button', { name: /^Collapse \d+ References?$/ })).toHaveText(
+    await expect(references.getByRole('button', { name: /^Collapse \d+ references?$/ })).toHaveText(
       '1 reference',
     )
     await expect(references.locator('[data-backlink-item]')).toHaveCount(1)

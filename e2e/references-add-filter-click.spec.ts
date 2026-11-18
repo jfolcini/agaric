@@ -110,7 +110,7 @@ const CONTROLS: Control[] = [
     locate: (page) =>
       page
         .getByTestId('unlinked-references')
-        .getByRole('button', { name: /1 Unlinked Reference$/ }),
+        .getByRole('button', { name: /1 unlinked reference$/ }),
     expectLanded: (_page, control) => expect(control).toHaveAttribute('aria-expanded', 'true'),
   },
 ]
