@@ -19,6 +19,7 @@ import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
 import { PropertyField } from '@/components/properties/PropertyField'
 import { PropertyRowEditor, listDefinition } from '@/components/properties/PropertyRowEditor'
 import { readCurrentValue } from '@/components/properties/PropertyRowEditor/shared'
+import { SuggestedPropertyRows } from '@/components/properties/SuggestedPropertyRows'
 import { useRefTitle } from '@/components/properties/useRefTitle'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import {
@@ -33,6 +34,7 @@ import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { usePropertySave } from '@/hooks/usePropertySave'
+import { useSuggestedProperties } from '@/hooks/useSuggestedProperties'
 import { announce } from '@/lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
@@ -74,6 +76,8 @@ export function BlockPropertyDrawer({
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
+  // #6755 — keys the block's tags offer it, shown as empty rows.
+  const suggestions = useSuggestedProperties(open ? blockId : null)
 
   // Subscribe to built-in date fields from the block store so the drawer
   // updates reactively when dates are set via toolbar (H-12).
@@ -364,7 +368,7 @@ export function BlockPropertyDrawer({
                 aria-label={t('properties.loadingPropertiesTitle')}
                 data-testid="block-property-drawer-loading"
               />
-            ) : properties.length === 0 && !hasBuiltinDates ? (
+            ) : properties.length === 0 && !hasBuiltinDates && suggestions.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
             ) : (
               properties.map((prop) => {
@@ -409,6 +413,16 @@ export function BlockPropertyDrawer({
                   />
                 )
               })
+            )}
+            {!loading && blockId && (
+              <SuggestedPropertyRows
+                blockId={blockId}
+                suggestions={suggestions}
+                definitions={definitions}
+                shownKeys={existingKeys}
+                onSave={(key, def, raw) => void handleSave(key, raw, def?.value_type ?? 'text')}
+                onWritten={() => void reloadProperties()}
+              />
             )}
             {/* Add property from definitions — shown during load with a
                 tooltip-explained disabled state so the layout doesn't jump. */}

@@ -568,4 +568,30 @@ export const properties: Record<string, string> = {
   'filter.dimension.tag.description': 'Blöcke mit einem bestimmten #tag finden',
   'filter.dimension.property.description':
     'Ein bestimmtes Schlüssel/Wert-Paar einer eigenen Eigenschaft finden',
+
+  'property.suggestedFrom': 'von #{{tag}}',
+  'tagProperties.title': 'Eigenschaften für getaggte Blöcke',
+  'tagProperties.description':
+    'Blöcken mit diesem Tag werden diese Eigenschaften als leere Zeilen angeboten.',
+  'tagProperties.removeKey': '{{key}} entfernen',
+  'tagProperties.keyAdded': 'Blöcken mit diesem Tag wird jetzt {{key}} angeboten',
+  'tagProperties.keyRemoved': 'Blöcken mit diesem Tag wird {{key}} nicht mehr angeboten',
+  'tagProperties.loadFailed': 'Eigenschaften für getaggte Blöcke konnten nicht geladen werden',
+  'tagProperties.saveFailed': 'Eigenschaften für getaggte Blöcke konnten nicht gespeichert werden',
+  'tagProperties.setTitle': 'Auf getaggten Blöcken setzen',
+  'tagProperties.keyLabel': 'Zu setzende Eigenschaft',
+  'tagProperties.includeNested': 'Auch Blöcke mit verschachtelten Tags',
+  'tagProperties.overwrite': 'Vorhandene Werte überschreiben',
+  'tagProperties.setButton': 'Auf getaggten Blöcken setzen…',
+  'tagProperties.valueNeeded': 'Gib zuerst einen Wert ein',
+  'tagProperties.nothingToSet': 'Kein getaggter Block braucht {{key}}',
+  'tagProperties.confirmTitle': '{{key}} auf getaggten Blöcken setzen?',
+  'tagProperties.confirmDescription': 'Blöcke, die ihn erhalten: {{added}}.',
+  'tagProperties.confirmWithOverwrite':
+    'Blöcke, die ihn erhalten: {{added}}. Werte, die sich ändern: {{changed}}.',
+  'tagProperties.confirmButton': 'Setzen',
+  'tagProperties.setDone': '{{key}} auf getaggten Blöcken gesetzt: {{n}}',
+  'tagProperties.countsChanged':
+    'Die getaggten Blöcke haben sich inzwischen geändert; prüfe die neuen Zahlen',
+  'tagProperties.setFailed': 'Die Eigenschaft konnte nicht auf getaggten Blöcken gesetzt werden',
 }

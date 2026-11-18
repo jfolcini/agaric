@@ -148,6 +148,7 @@ describe('INTERNAL_PROPERTY_KEYS', () => {
         'attachments',
         'bookmark',
         'saved_view',
+        'tag_properties',
         'pdf_attachment',
         'pdf_page',
         'pdf_boxes',

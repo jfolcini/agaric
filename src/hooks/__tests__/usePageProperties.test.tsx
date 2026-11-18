@@ -87,6 +87,7 @@ beforeEach(() => {
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
       get_properties: () => storedRows,
+      list_suggested_properties: () => [],
       list_property_defs: () => ({
         items: [],
         next_cursor: null,

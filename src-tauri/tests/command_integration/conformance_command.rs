@@ -108,6 +108,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         PROPERTY_DEF_ATTRS,
         &[],
     ),
+    // #6755 — a set on a tag's blocks answers how many got the value and how
+    // many changed.
+    (
+        "set_property_on_tagged_blocks",
+        HEADED_ID_KEY,
+        &["added", "changed"],
+        &[],
+    ),
     // #5057 — the undo family all answer `UndoResult`, singly or in a list, so
     // they share one shape: the `OpRef`s it carries are dropped because the two
     // runners' device ids differ, leaving the two op_type fields and `is_redo`.

@@ -933,4 +933,36 @@ export const properties: Record<string, string> = {
   'filter.dimension.createdDate.description': 'When the block was first created',
   'filter.dimension.tag.description': 'Match blocks carrying a specific #tag',
   'filter.dimension.property.description': 'Match a custom property key/value pair',
+
+  // Translators: #6755 — a tag's suggested properties. `property.suggestedFrom` labels an empty
+  // property row a block is offered because its tag (`{{tag}}`, a tag name) lists the key. The
+  // `tagProperties.*` strings are the "Properties for tagged blocks" section on a tag's page: the
+  // keys listed as removable chips, toasts for adding or removing one, and "Set on tagged
+  // blocks": pick a key (`{{key}}`, a property name) and a value, two checkboxes, a confirmation
+  // counting the blocks that get the value (`{{added}}`) and the values it replaces
+  // (`{{changed}}`), and the toast after the write (`{{n}}` blocks written).
+  'property.suggestedFrom': 'from #{{tag}}',
+  'tagProperties.title': 'Properties for tagged blocks',
+  'tagProperties.description':
+    'Blocks tagged with this tag are offered these properties as empty rows.',
+  'tagProperties.removeKey': 'Remove {{key}}',
+  'tagProperties.keyAdded': 'Blocks tagged with this tag are now offered {{key}}',
+  'tagProperties.keyRemoved': 'Blocks tagged with this tag are no longer offered {{key}}',
+  'tagProperties.loadFailed': 'Failed to load the properties for tagged blocks',
+  'tagProperties.saveFailed': 'Failed to save the properties for tagged blocks',
+  'tagProperties.setTitle': 'Set on tagged blocks',
+  'tagProperties.keyLabel': 'Property to set',
+  'tagProperties.includeNested': 'Also blocks tagged with nested tags',
+  'tagProperties.overwrite': 'Overwrite existing values',
+  'tagProperties.setButton': 'Set on tagged blocks…',
+  'tagProperties.valueNeeded': 'Enter a value to set first',
+  'tagProperties.nothingToSet': 'No tagged block needs {{key}} set',
+  'tagProperties.confirmTitle': 'Set {{key}} on tagged blocks?',
+  'tagProperties.confirmDescription': 'Blocks that will get it: {{added}}.',
+  'tagProperties.confirmWithOverwrite':
+    'Blocks that will get it: {{added}}. Values that will change: {{changed}}.',
+  'tagProperties.confirmButton': 'Set',
+  'tagProperties.setDone': '{{key}} set on tagged blocks: {{n}}',
+  'tagProperties.countsChanged': 'The tagged blocks changed meanwhile; check the new counts',
+  'tagProperties.setFailed': 'Failed to set the property on tagged blocks',
 }

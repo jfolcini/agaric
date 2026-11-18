@@ -463,6 +463,7 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
   list_attachments_batch: () => ({}),
   get_batch_properties: () => ({}),
   get_properties: () => [],
+  list_suggested_properties: () => [],
   list_property_defs: () => emptyPage,
   list_tags_for_block: () => [],
   first_child_for_blocks: () => ({}),

@@ -14,9 +14,11 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
+import { SuggestedPropertyRows } from '@/components/properties/SuggestedPropertyRows'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePropertySave } from '@/hooks/usePropertySave'
+import { useSuggestedProperties } from '@/hooks/useSuggestedProperties'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -59,6 +61,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
   const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
+  // #6755 — keys the page's tags offer it, shown as empty rows.
+  const suggestions = useSuggestedProperties(pageId)
   const loading = isPending || definitionsLoading
 
   useEffect(() => {
@@ -343,7 +347,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const propertyCount = properties.length
 
-  if (!loading && properties.length === 0 && !forceExpanded) {
+  if (!loading && properties.length === 0 && suggestions.length === 0 && !forceExpanded) {
     return null
   }
 
@@ -394,6 +398,25 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                 />
               )
             })}
+
+          {!loading && (
+            <SuggestedPropertyRows
+              blockId={pageId}
+              suggestions={suggestions}
+              definitions={definitions}
+              shownKeys={new Set(properties.map((p) => p.key))}
+              onSave={(key, def, raw) => void doSaveProperty(key, def, raw)}
+              onWritten={() =>
+                void commands
+                  .getProperties(pageId)
+                  .then(unwrap)
+                  .then(setProperties)
+                  .catch((err: unknown) => {
+                    logger.warn('PagePropertyTable', 'reload after a write failed', { pageId }, err)
+                  })
+              }
+            />
+          )}
 
           {!loading && (
             <AddPropertyPopover

@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH direct(id, content, space_id) AS (\n               SELECT t.id, t.content, t.space_id FROM blocks t\n               WHERE t.block_type = 'tag' AND t.deleted_at IS NULL\n                 AND t.id IN (SELECT tag_id FROM block_tags WHERE block_id = ?1\n                              UNION SELECT tag_id FROM block_tag_refs WHERE source_id = ?1)\n                 AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = ?1 AND b.deleted_at IS NULL\n                     AND NOT EXISTS (SELECT 1 FROM block_properties tp\n                                     WHERE tp.block_id = b.page_id AND tp.key = 'template')\n                     AND b.id NOT IN (SELECT block_id FROM block_properties\n                                      WHERE key = 'saved_view'))\n           ),\n           givers(id, content) AS (\n               SELECT DISTINCT g.id, g.content FROM direct d\n               JOIN blocks g ON g.block_type = 'tag' AND g.deleted_at IS NULL\n                AND g.space_id IS d.space_id\n                AND (g.id = d.id\n                     OR substr(d.content, 1, length(g.content) + 1)\n                        = (g.content || '/') COLLATE NOCASE)\n           )\n           SELECT CAST(je.value AS TEXT) AS \"key!: String\", g.id AS \"tag_id!: String\",\n                  g.content AS \"tag_name!: String\"\n           FROM givers g\n           JOIN block_properties bp ON bp.block_id = g.id AND bp.key = 'tag_properties'\n           JOIN json_each(bp.value_list) je\n           WHERE je.type = 'text'\n             AND NOT EXISTS (SELECT 1 FROM block_properties h\n                             WHERE h.block_id = ?1 AND h.key = je.value)\n           ORDER BY g.content COLLATE NOCASE, g.id, je.key",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "tag_id!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "tag_name!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "5481e845b5bb2b52b4aec841ead3919f822cb544c9d6d3bc404ea0f4877f9e56"
+}

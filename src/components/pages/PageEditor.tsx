@@ -24,6 +24,7 @@ import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
+import { TagPropertiesSection } from '@/components/pages/TagPropertiesSection'
 import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { usePageMode } from '@/editor/page-mode/use-page-mode'
@@ -405,6 +406,12 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
         onEditModeChange={pageModeOffered ? pageMode.changeMode : undefined}
         editModeBlocked={pageMode.blocked}
       />
+
+      {isTagPage === true && (
+        <FeatureErrorBoundary name="TagPropertiesSection">
+          <TagPropertiesSection tagId={pageId} />
+        </FeatureErrorBoundary>
+      )}
 
       {isTagPage === true && (
         <FeatureErrorBoundary name="TaggedItemsSection">

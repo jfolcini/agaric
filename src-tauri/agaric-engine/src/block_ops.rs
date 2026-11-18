@@ -39,8 +39,8 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
     BuiltinPropertyDef, CreateBlockPayload, OpPayload, PropertyList, PropertyListItem,
-    PropertyValueFields, SPACE_PROPERTY_KEY, SetPropertyPayload, builtin_property_def,
-    is_reserved_property_key, validate_set_property,
+    PropertyValueFields, SPACE_PROPERTY_KEY, SetPropertyPayload, TAG_PROPERTIES_KEY,
+    builtin_property_def, is_reserved_property_key, validate_set_property,
 };
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
@@ -658,7 +658,9 @@ pub async fn load_value_types(
 /// [`validate_property_value`]'s list check (#6741): a list is taken by a
 /// definition that holds several values, which takes nothing else, and by an
 /// undeclared key, which takes any shape, but one the app keeps for itself
-/// ([`agaric_store::op::is_internal_property_key`]). Under a definition each
+/// ([`agaric_store::op::is_internal_property_key`]) other than
+/// [`TAG_PROPERTIES_KEY`], which takes only a list of user keys
+/// ([`validate_tag_properties`]). Under a definition each
 /// item is then held to its type as a single value is: a number under
 /// `number`, a string otherwise, which is a `YYYY-MM-DD` date under `date`, a
 /// stored datetime under `datetime`, a block id under `ref` and one of the
@@ -668,6 +670,9 @@ fn validate_list_value(
     declaration: Option<&PropertyDeclaration>,
 ) -> Result<(), AppError> {
     let key = &payload.key;
+    if key == TAG_PROPERTIES_KEY {
+        return validate_tag_properties(payload.value_list.as_ref());
+    }
     let list_decl = declaration.filter(|decl| decl.multiple);
     let Some(list) = &payload.value_list else {
         return match list_decl {
@@ -706,6 +711,29 @@ fn validate_list_value(
             (item, decl.value_type.as_str(), decl.options.as_ref())
         {
             validate_select_option(key, opts_json, s)?;
+        }
+    }
+    Ok(())
+}
+
+/// A tag's [`TAG_PROPERTIES_KEY`] (#6755): a list, each item the text of a
+/// key a user can set, so neither a built-in nor one the app keeps for itself.
+fn validate_tag_properties(list: Option<&PropertyList>) -> Result<(), AppError> {
+    let Some(list) = list else {
+        return Err(AppError::validation(format!(
+            "Property '{TAG_PROPERTIES_KEY}' holds a list; set it with value_list."
+        )));
+    };
+    for item in &list.0 {
+        let fits = matches!(item, PropertyListItem::Text(k)
+            if agaric_store::op::is_valid_property_key(k)
+                && !agaric_store::op::is_builtin_property_key(k)
+                && !agaric_store::op::is_internal_property_key(k));
+        if !fits {
+            return Err(AppError::validation(format!(
+                "Property '{TAG_PROPERTIES_KEY}' lists property keys a user can set, \
+                 got the item {item:?}."
+            )));
         }
     }
     Ok(())

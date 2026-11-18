@@ -115,7 +115,10 @@ beforeEach(() => {
 })
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+  // #6755 — the table reads the page's suggested properties; none here.
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({ list_suggested_properties: () => [], ...handlers }),
+  )
 }
 
 /**

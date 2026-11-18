@@ -879,6 +879,22 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // ── A tag's suggested properties (#6755) ──
+  //
+  // A bare `Vec<SuggestedProperty>` in the order offered, then the counts a
+  // set on the tag's blocks writes. MUST match the two arms in the Rust twin.
+  list_suggested_properties: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'key', attrKeys: ['tag_id', 'tag_name'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  preview_set_property_on_tagged_blocks: {
+    rows: { kind: 'bare-row' },
+    token: { kind: 'headed', head: 'tagged_write_counts', attrKeys: ['added', 'changed'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
   // MUST match the `preview_unfit_property_move` arm in the Rust twin.
   preview_unfit_property_move: {
     rows: { kind: 'bare-row' },
