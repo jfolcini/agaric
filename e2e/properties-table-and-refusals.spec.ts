@@ -153,6 +153,19 @@ test.describe('Inline property refused by the backend @editor', () => {
     expectLoggedThenClear(page, 'Failed to set inline property from :: syntax')
   })
 
+  // The control for the two Escape tests here: the cleanup does run under this sequence, so a
+  // kept block is the property branch's doing, not a cleanup that never fired.
+  test('control: Escape on a blank block an Enter created drops it', async ({ page }) => {
+    const blockId = await newBlockAfterFirst(page)
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => storedContent(page, blockId)).toBe('deleted')
+    await reopenPage(page, 'Getting Started')
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`),
+    ).toHaveCount(0)
+  })
+
   test('a new block holding only an accepted line keeps it as the property after Escape', async ({
     page,
   }) => {

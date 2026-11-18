@@ -657,7 +657,7 @@ export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe
  * The qualification every `present` verdict has to carry.
  *
  * WDIO's timeout message contains `this.selector` and nothing else, so for
- * `row.$('[data-testid="task-marker"]')` (reserved-property-roundtrip.e2e.ts)
+ * `row.$('[data-testid="task-marker"]')`
  * the probe sees only the child half and resolves it across the WHOLE
  * document. If that row's marker never rendered while any other block on the
  * page has one, the probe reads a real element that the assertion was never

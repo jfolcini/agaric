@@ -1,11 +1,13 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeMenu,
   activePopover,
   activeSheet,
   chooseSelectOption,
   expect,
+  ipc,
   navigateToView,
   openPage,
   openSettingsTab,
@@ -128,4 +130,57 @@ test('a ref chip shows its page renamed after navigating away and back, and open
   await expect(row.getByTestId('property-chip')).toHaveText(['Owner:Inbox'])
   await row.getByRole('button', { name: 'Open Inbox', exact: true }).click()
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Inbox')
+})
+
+// `todo_state` is a reserved property, written by `set_todo_state`, not the block's text edit.
+test('a TODO set from the block menu is still a task after navigating away and back @editor', async ({
+  page,
+}) => {
+  await openPage(page, 'Getting Started')
+  await blockRow(page, GS_1).click({ button: 'right' })
+  await activeMenu(page).getByRole('menuitem', { name: 'Set as TODO' }).click()
+  const marker = blockRow(page, GS_1).getByTestId('task-marker')
+  await expect(marker).toHaveAttribute('aria-label', /^Task: TODO/)
+  await expect
+    .poll(
+      async () =>
+        (await ipc<{ todo_state: string | null }>(page, 'get_block', { blockId: GS_1 })).todo_state,
+    )
+    .toBe('TODO')
+
+  await reopenFromPages(page, 'Getting Started')
+  await expect(blockRow(page, GS_1).getByTestId('task-marker')).toHaveAttribute(
+    'aria-label',
+    /^Task: TODO/,
+  )
+})
+
+// The ref picker's trigger read the title from the resolve cache without subscribing to it, so a
+// title that reached the cache after the row mounted never reached the label: the backend's
+// answer comes after the table mounts. An agent's rename while the page is open is the same bug,
+// and the smoke lane's MCP spec covers that path.
+test('an open ref property shows its target’s title once it resolves (#6427) @editor @pages', async ({
+  page,
+}) => {
+  const spaceId = SEED_IDS.SPACE_PERSONAL
+  await ipc(page, 'create_property_def', {
+    spaceId,
+    key: 'mentor',
+    valueType: 'ref',
+    options: null,
+  })
+  const [target, holder] = await Promise.all(
+    ['Mentor target', 'Mentor holder'].map((content) =>
+      ipc<string>(page, 'create_page_in_space', { parentId: null, content, spaceId }),
+    ),
+  )
+  await ipc(page, 'set_property', {
+    blockId: holder,
+    key: 'mentor',
+    value: { value_ref: target },
+  })
+  await openPage(page, 'Mentor holder')
+  await page.locator('.page-property-table-header').click()
+  const value = page.getByRole('button', { name: 'mentor value', exact: true })
+  await expect(value).toHaveText('Mentor target')
 })
