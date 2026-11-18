@@ -6,9 +6,10 @@ description: >-
   entry keyed on exactly the files the runner image's own lists resolve to; on
   a hit the install runs with no `apt-get update` and no network. Otherwise a
   bounded `apt-get update` runs first, and one that does not finish is a
-  WARNING. An install that runs out its bound on its last attempt, or cannot
-  download its packages twice, exits 75 (not 1) so "this job could not run" is
-  distinguishable from "this job failed".
+  WARNING. An install that runs out its bound on its last attempt, cannot
+  download its packages twice, or cannot resolve them on a runner whose apt
+  holds no release-pocket index, exits 75 (not 1) so "this job could not run"
+  is distinguishable from "this job failed".
 inputs:
   packages:
     description: >-
@@ -134,8 +135,10 @@ runs:
         # (`W:` / `E:`) always prints.
         apt_log="${RUNNER_TEMP}/apt-install.log"
         apt_err="${RUNNER_TEMP}/apt-install.err"
+        update_log="${RUNNER_TEMP}/apt-update.log"
+        : >"${update_log}"
         print_apt_log() {
-          cat "${apt_log}"
+          cat "${update_log}" "${apt_log}"
           cat "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
         }
 
@@ -192,7 +195,7 @@ runs:
             : >"${apt_log}"
             # -k: plain `timeout N` waits forever on a child that ignores SIGTERM.
             # shellcheck disable=SC2024 # the log is the runner's own file; sudo only elevates apt
-            sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${apt_log}" || update_status=$?
+            sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${update_log}" || update_status=$?
             [ "${update_status}" -eq 0 ] && return
             print_apt_log
             # 124 when apt-get honours the SIGTERM, 137 when the SIGKILL ends it.
@@ -208,6 +211,32 @@ runs:
             wait_for_apt_locks
           done
           echo "::warning::#4163: apt-get update did not complete in 2 attempts; retrying the install against the lists already on the image."
+        }
+
+        # Every package our jobs install is in the release pocket's main or
+        # universe, which never changes after release and whose indexes InRelease
+        # verifies: a mirror cannot serve them without those packages. So when a
+        # name will not resolve and apt holds no release-pocket index for either
+        # component, this runner's sources or lists are broken, not the diff, and
+        # only a new runner helps (job 135071285274: after an update that returned
+        # 0, every universe package was "Unable to locate"). `indextargets` lists
+        # only the indexes that are on disk.
+        archive_indexed() {
+          local component files f codename missing=0
+          codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)"
+          echo "apt's Packages indexes for the ${codename} release pocket:"
+          for component in main universe; do
+            # shellcheck disable=SC2016 # $(FILENAME) is apt's field, not the shell's
+            files="$(apt-get indextargets --format '$(FILENAME)' 'Created-By: Packages' \
+                       "Component: ${component}" "Suite: ${codename}")"
+            if [ -n "${files}" ]; then
+              while read -r f; do echo "  ${component}: ${f}"; done <<<"${files}"
+            else
+              echo "  ${component}: none (not in the sources, or not on disk)"
+              missing=1
+            fi
+          done
+          return "${missing}"
         }
 
         update_status=0
@@ -277,6 +306,9 @@ runs:
         fi
         if [ "${update_status}" -ne 0 ]; then
           infra "apt-get update never completed and apt-get install then failed (exit ${install_status})."
+        fi
+        if grep -qE 'Unable to locate package|has no installation candidate' "${apt_err}" && ! archive_indexed; then
+          infra "apt holds no index for the release pocket's main or universe, so the packages cannot resolve on this runner."
         fi
 
         # The index refreshed and the install still failed: an ordinary failure,

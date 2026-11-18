@@ -49,7 +49,8 @@ const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
  * lock tools, all first on PATH. `apt-get update` exits `updateStatus`; `apt-get
  * install` fails `failures` times with `errors` on stderr and exit 100 (what
  * apt exits when a download or a lookup fails), then succeeds. `cacheHit` is
- * the restore step's output.
+ * the restore step's output. `indexes` maps a component to the release-pocket
+ * Packages index files `apt-get indextargets` lists for it.
  */
 function runAction({
   failures,
@@ -59,6 +60,7 @@ function runAction({
   installStatus = 100,
   installOut = [],
   mirrors = '',
+  indexes = { main: ['noble_main_Packages'], universe: ['noble_universe_Packages'] },
 }) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
@@ -69,6 +71,15 @@ function runAction({
     const mirrorsFile = join(dir, 'apt-mirrors.txt')
     for (const file of [installs, sleeps, updates, output]) writeFileSync(file, '')
     writeFileSync(mirrorsFile, mirrors)
+    const indexLines = []
+    for (const [component, files] of Object.entries(indexes)) {
+      indexLines.push(
+        `if [ "$5" = ${JSON.stringify(`Component: ${component}`)} ]; then`,
+        ...files.map((name) => `  echo ${JSON.stringify(join(dir, name))}`),
+        '  exit 0',
+        'fi',
+      )
+    }
     const stub = (name, body) => {
       const path = join(dir, name)
       writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`)
@@ -78,7 +89,11 @@ function runAction({
     stub(
       'apt-get',
       [
-        `if [ "$1" = update ]; then echo update >> ${JSON.stringify(updates)}; exit ${updateStatus}; fi`,
+        `if [ "$1" = update ]; then echo update >> ${JSON.stringify(updates)}; echo 'Hit:1 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble InRelease'; exit ${updateStatus}; fi`,
+        'if [ "$1" = indextargets ]; then',
+        ...indexLines.map((line) => `  ${line}`),
+        '  exit 0',
+        'fi',
         `echo "$@" >> ${JSON.stringify(installs)}`,
         `if [ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]; then`,
         ...installOut.map((line) => `  echo ${JSON.stringify(line)}`),
@@ -148,6 +163,35 @@ void test('a package apt cannot find fails at once with apt’s own status', () 
   assert.doesNotMatch(run.stdout, /AGARIC_APT_INFRA/)
   assert.equal(run.installs, 1)
   assert.equal(run.sleeps, 0)
+})
+
+void test('a package apt cannot find keeps the refresh’s output and lists the indexes', () => {
+  const run = runAction({ failures: Infinity, errors: MISSING_PACKAGE_ERRORS })
+  assert.match(run.stdout, /Hit:1 http:\/\/us-east-2\.ec2\.archive\.ubuntu\.com/)
+  assert.match(run.stdout, /main: .*noble_main_Packages/)
+  assert.match(run.stdout, /universe: .*noble_universe_Packages/)
+})
+
+void test('a package that cannot resolve because apt holds no universe index is infra, exit 75', () => {
+  const run = runAction({
+    failures: Infinity,
+    errors: MISSING_PACKAGE_ERRORS,
+    indexes: { main: ['noble_main_Packages'] },
+  })
+  assert.equal(run.status, 75, run.stdout + run.stderr)
+  assert.match(run.stdout, /AGARIC_APT_INFRA/)
+  assert.match(run.stdout, /universe: none/)
+  assert.equal(run.installs, 1)
+})
+
+void test('a main package with no candidate because apt holds no main index is infra, exit 75', () => {
+  const run = runAction({
+    failures: Infinity,
+    errors: ["E: Package 'libgtk-3-dev' has no installation candidate"],
+    indexes: { universe: ['noble_universe_Packages'] },
+  })
+  assert.equal(run.status, 75, run.stdout + run.stderr)
+  assert.match(run.stdout, /main: none/)
 })
 
 void test('a refresh that never completes before a failed install is an infra failure, exit 75', () => {
