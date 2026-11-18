@@ -275,7 +275,7 @@ pub async fn preview_set_property_on_tagged_blocks_inner(
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when the counts differ from `acknowledged`.
 /// - [`AppError::Validation`] when it would write more ops than one undo
-///   reverts ([`MAX_REVERT_OPS`]).
+///   reverts (`MAX_REVERT_OPS`).
 #[instrument(skip(pool, device_id, materializer, write), err)]
 pub async fn set_property_on_tagged_blocks_inner(
     pool: &SqlitePool,
