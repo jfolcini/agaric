@@ -47,7 +47,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Contexts | Separate vaults | Spaces inside one database, each with its own journal, pages, tags and property definitions |
 | PDF | A viewer, and export of a note to PDF. Annotation is on the roadmap, not shipped | A viewer with highlights and pinned comments, each saved as a block. *Print…* hands a page to the system's print dialog; no export to PDF of its own |
 | Voice | An audio recorder; voice capture on iOS | `/voice` records a voice note; the system voice reads a block or page aloud on macOS, Windows and Android. No transcription |
-| Web capture | An official Web Clipper for the major browsers | None. Pasted HTML becomes blocks, and an `agaric://capture` link opens Quick Capture on desktop |
+| Web capture | An official Web Clipper for the major browsers | None. Pasted HTML becomes blocks, an `agaric://capture` link opens Quick Capture on desktop, and on Android text shared from another app opens it |
 | Publishing and sharing | Obsidian Publish; shared vaults through Sync; real-time collaboration is on the roadmap | None; single user by design |
 | History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it |
 | Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client. An agent can also edit the files directly. No first-party MCP server was found | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
@@ -107,7 +107,7 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 - **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
 - **A tag name holds no spaces.**
 - **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
-- **Capture is thinner.** No web clipper (#6753) and, for now, nothing in Android's share sheet (#6555).
+- **Capture is thinner.** No web clipper (#6753), and Android's share sheet takes text only, into Quick Capture (#6555).
 - **English**, mostly (#6750).
 
 ## Sources
