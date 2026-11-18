@@ -4,6 +4,7 @@ import type { FileChooser, Page } from '@playwright/test'
 
 import {
   activeSuggestionList,
+  attachFile,
   blurEditors,
   expect,
   focusBlockById,
@@ -30,36 +31,11 @@ import {
  * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   BLOCK_GS_1 ('0000000000000000000B10CK01') — first child of "Getting Started"
  *
- * The mock's attachment store (Map) persists state across IPC calls within a
- * single page session, so we can add attachments via invoke before navigating.
+ * Attachments are added through the real command (`attachFile`) before the
+ * page that shows them is opened.
  */
 
 const BLOCK_GS_1 = '0000000000000000000B10CK01'
-
-interface MockAttachmentWindow extends Window {
-  __addMockAttachment?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    sizeBytes: number,
-  ) => Record<string, unknown>
-}
-
-/** Add an attachment to the mock store via the exposed window global. */
-async function addMockAttachment(
-  page: import('@playwright/test').Page,
-  blockId: string,
-  filename: string,
-  mimeType: string,
-  sizeBytes: number,
-) {
-  await page.evaluate(
-    ({ blockId: bId, filename: fName, mimeType: mType, sizeBytes: size }) => {
-      ;(window as unknown as MockAttachmentWindow).__addMockAttachment?.(bId, fName, mType, size)
-    },
-    { blockId, filename, mimeType, sizeBytes },
-  )
-}
 
 /** A block's attachment rows as the mock backend holds them, not as the UI last rendered them. */
 async function listAttachmentRows(
@@ -108,7 +84,7 @@ test.describe('Attachment section exists @attachments', () => {
 
   test('attachment badge appears and shows count', async ({ page }) => {
     // Seed an attachment before navigating to the page
-    await addMockAttachment(page, BLOCK_GS_1, 'notes.pdf', 'application/pdf', 24576)
+    await attachFile(page, BLOCK_GS_1, 'notes.pdf', 'application/pdf', new Uint8Array(24576))
 
     await openPage(page, 'Getting Started')
 
@@ -119,7 +95,7 @@ test.describe('Attachment section exists @attachments', () => {
   })
 
   test('clicking badge toggles attachment list open', async ({ page }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'screenshot.png', 'image/png', 54321)
+    await attachFile(page, BLOCK_GS_1, 'screenshot.png', 'image/png', new Uint8Array(54321))
 
     await openPage(page, 'Getting Started')
 
@@ -143,7 +119,7 @@ test.describe('Attachment section exists @attachments', () => {
 
   test('attachment list renders file details (name, size, time)', async ({ page }) => {
     // 1 048 576 bytes = exactly 1.0 MB
-    await addMockAttachment(page, BLOCK_GS_1, 'document.pdf', 'application/pdf', 1048576)
+    await attachFile(page, BLOCK_GS_1, 'document.pdf', 'application/pdf', new Uint8Array(1048576))
 
     await openPage(page, 'Getting Started')
 
@@ -172,7 +148,7 @@ test.describe('Delete attachment @attachments', () => {
   })
 
   test('delete attachment via two-click confirmation removes it', async ({ page }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'report.pdf', 'application/pdf', 99999)
+    await attachFile(page, BLOCK_GS_1, 'report.pdf', 'application/pdf', new Uint8Array(99999))
 
     await openPage(page, 'Getting Started')
 
@@ -225,7 +201,7 @@ test.describe('Rename attachment @attachments', () => {
   test('a renamed attachment keeps its new name after reopening the page, and History lists the rename', async ({
     page,
   }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'notes.pdf', 'application/pdf', 24576)
+    await attachFile(page, BLOCK_GS_1, 'notes.pdf', 'application/pdf', new Uint8Array(24576))
     await openPage(page, 'Getting Started')
 
     await page.getByRole('button', { name: '1 attachment', exact: true }).click()
@@ -358,22 +334,6 @@ test.describe('/attach through the file chooser @attachments', () => {
 // 6. A transcript seeks its recording
 // ===========================================================================
 
-interface MockRecordingWindow extends Window {
-  __addMockAttachment?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    sizeBytes: number,
-    content: string,
-  ) => Record<string, unknown>
-  __addMockAttachmentWithBytes?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    bytes: number[],
-  ) => Record<string, unknown>
-}
-
 /** `seconds` of 8 kHz, 8-bit mono silence as a WAV file, which Chromium plays. */
 function silentWav(seconds: number): number[] {
   const samples = 8000 * seconds
@@ -400,14 +360,8 @@ test.describe('A transcript seeks its recording @attachments', () => {
     page,
   }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, wav, transcript }) => {
-        const w = window as unknown as MockRecordingWindow
-        w.__addMockAttachment?.(blockId, 'standup.transcript.md', 'text/markdown', 0, transcript)
-        w.__addMockAttachmentWithBytes?.(blockId, 'standup.wav', 'audio/wav', wav)
-      },
-      { blockId: BLOCK_GS_1, wav: silentWav(20), transcript: STANDUP_TRANSCRIPT },
-    )
+    await attachFile(page, BLOCK_GS_1, 'standup.transcript.md', 'text/markdown', STANDUP_TRANSCRIPT)
+    await attachFile(page, BLOCK_GS_1, 'standup.wav', 'audio/wav', silentWav(20))
 
     const seekFromTranscript = async () => {
       const section = page.getByTestId('attachment-section')
@@ -447,13 +401,7 @@ test.describe('The audio player on a touch screen @attachments', () => {
 
   test('is at least 44 px tall under a coarse pointer', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, wav }) => {
-        const w = window as unknown as MockRecordingWindow
-        w.__addMockAttachmentWithBytes?.(blockId, 'standup.wav', 'audio/wav', wav)
-      },
-      { blockId: BLOCK_GS_1, wav: silentWav(2) },
-    )
+    await attachFile(page, BLOCK_GS_1, 'standup.wav', 'audio/wav', silentWav(2))
     await openPageMobile(page, 'Getting Started')
     const player = page.getByTestId('attachment-section').getByLabel('Audio standup.wav')
     await expect(player).toBeVisible()

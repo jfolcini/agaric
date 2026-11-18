@@ -1,6 +1,14 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
-import { expect, openPage, openPageMobile, reopenPage, test, waitForBoot } from './helpers'
+import {
+  attachFile,
+  expect,
+  openPage,
+  openPageMobile,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * #5928 — block lists on a phone spend no height on what is not shown: a task
@@ -42,10 +50,12 @@ test.describe('Block lists on a phone (#5928) @editor @journal @mobile', () => {
   }) => {
     await waitForBoot(page)
     // "Update dependencies" gets an attachment, its only chip.
-    await page.evaluate(() =>
-      (
-        window as unknown as { __addMockAttachment: (...args: unknown[]) => unknown }
-      ).__addMockAttachment('0000000000000000000B10CK15', 'notes.pdf', 'application/pdf', 100),
+    await attachFile(
+      page,
+      '0000000000000000000B10CK15',
+      'notes.pdf',
+      'application/pdf',
+      new Uint8Array(100),
     )
     await openPageMobile(page, 'Projects')
     const row = page.locator('[data-testid="sortable-block"]', { hasText: 'Fix login bug' })

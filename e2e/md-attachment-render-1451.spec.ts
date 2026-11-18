@@ -1,50 +1,16 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { attachFile, expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E for #1451 — `.md` / text attachments render as an inline rich-text
  * preview (reusing `renderRichContent`) instead of a download-only file chip.
  *
- * The mock's `__addMockAttachment` helper accepts an optional 5th `content`
- * argument (#1451) that stores UTF-8 bytes so `read_attachment` round-trips the
- * markdown source; the inline preview then parses + renders it.
+ * The attachment is added with its markdown source as bytes (`attachFile`), so
+ * `read_attachment` returns it; the inline preview then parses + renders it.
  *
  * Seed block: BLOCK_GS_1 — first child of "Getting Started".
  */
 
 const BLOCK_GS_1 = '0000000000000000000B10CK01'
-
-interface MockAttachmentWindow extends Window {
-  __addMockAttachment?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    sizeBytes: number,
-    content?: string,
-  ) => Record<string, unknown>
-}
-
-/** Seed an attachment (with optional text content) via the exposed window global. */
-async function addMockAttachment(
-  page: import('@playwright/test').Page,
-  blockId: string,
-  filename: string,
-  mimeType: string,
-  sizeBytes: number,
-  content?: string,
-) {
-  await page.evaluate(
-    (args) => {
-      ;(window as unknown as MockAttachmentWindow).__addMockAttachment?.(
-        args.blockId,
-        args.filename,
-        args.mimeType,
-        args.sizeBytes,
-        args.content,
-      )
-    },
-    { blockId, filename, mimeType, sizeBytes, content },
-  )
-}
 
 const MD_SOURCE = [
   '# Release notes',
@@ -62,7 +28,7 @@ test.describe('Markdown attachment inline preview (#1451) @markdown @attachments
   })
 
   test('renders a .md attachment as formatted rich text inline', async ({ page }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'release.md', 'text/markdown', 0, MD_SOURCE)
+    await attachFile(page, BLOCK_GS_1, 'release.md', 'text/markdown', MD_SOURCE)
 
     await openPage(page, 'Getting Started')
 
@@ -85,7 +51,7 @@ test.describe('Markdown attachment inline preview (#1451) @markdown @attachments
   })
 
   test('collapse/expand toggle hides and re-shows the preview body', async ({ page }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'notes.md', 'text/markdown', 0, MD_SOURCE)
+    await attachFile(page, BLOCK_GS_1, 'notes.md', 'text/markdown', MD_SOURCE)
 
     await openPage(page, 'Getting Started')
 
@@ -102,7 +68,7 @@ test.describe('Markdown attachment inline preview (#1451) @markdown @attachments
   })
 
   test('non-markdown attachments still render the file chip (no regression)', async ({ page }) => {
-    await addMockAttachment(page, BLOCK_GS_1, 'document.pdf', 'application/pdf', 24576)
+    await attachFile(page, BLOCK_GS_1, 'document.pdf', 'application/pdf', new Uint8Array(24576))
 
     await openPage(page, 'Getting Started')
 

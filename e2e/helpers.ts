@@ -1831,6 +1831,27 @@ export function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
   ) as Promise<T>
 }
 
+/**
+ * Attach a file to a block through `add_attachment_with_bytes`, on the mock and
+ * the bridge alike; a string is its UTF-8 text. A view already showing the
+ * block learns of it on its next read, so attach before opening the page.
+ */
+export function attachFile(
+  page: Page,
+  blockId: string,
+  filename: string,
+  mimeType: string,
+  content: string | Uint8Array | number[],
+): Promise<{ id: string; size_bytes: number }> {
+  const bytes = Buffer.from(typeof content === 'string' ? content : Uint8Array.from(content))
+  return ipc(page, 'add_attachment_with_bytes', {
+    blockId,
+    filename,
+    mimeType,
+    bytes: bytes.toString('base64'),
+  })
+}
+
 /** Fire a backend event at the app's `listen()` callbacks, as `emit()` from the Rust side would. */
 export function emitMockEvent(page: Page, event: string, payload: unknown): Promise<void> {
   return page.evaluate(

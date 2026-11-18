@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
+  attachFile,
   expect,
   ipc,
   openPage,
@@ -30,15 +31,6 @@ const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TWO_PAGE_PDF_B64 =
   'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA0IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNSAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNyAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNiAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNyAwIFIgPj4gPj4gPj4KZW5kb2JqCjUgMCBvYmoKPDwgL0xlbmd0aCAzOSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDQwIDEwMCBUZCAoUGFnZSBvbmUpIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNiAwIG9iago8PCAvTGVuZ3RoIDM5ID4+CnN0cmVhbQpCVCAvRjEgMjQgVGYgNDAgMTAwIFRkIChQYWdlIHR3bykgVGogRVQKZW5kc3RyZWFtCmVuZG9iago3IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDgKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDEyMSAwMDAwMCBuIAowMDAwMDAwMjQ3IDAwMDAwIG4gCjAwMDAwMDAzNzMgMDAwMDAgbiAKMDAwMDAwMDQ2MiAwMDAwMCBuIAowMDAwMDAwNTUxIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgOCAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNjIxCiUlRU9G'
 
-interface MockBytesWindow extends Window {
-  __addMockAttachmentWithBytes?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    bytes: number[],
-  ) => Record<string, unknown>
-}
-
 interface AttachmentRow {
   id: string
   filename: string
@@ -54,16 +46,13 @@ interface HighlightBlock {
 
 /** Seed the two-page `report.pdf` on GS_1, with bytes. */
 async function seedPdf(page: Page): Promise<void> {
-  await page.evaluate((b64) => {
-    const bin = atob(b64)
-    const bytes = Array.from({ length: bin.length }, (_, i) => bin.charCodeAt(i))
-    ;(window as unknown as MockBytesWindow).__addMockAttachmentWithBytes?.(
-      '0000000000000000000B10CK01',
-      'report.pdf',
-      'application/pdf',
-      bytes,
-    )
-  }, TWO_PAGE_PDF_B64)
+  await attachFile(
+    page,
+    '0000000000000000000B10CK01',
+    'report.pdf',
+    'application/pdf',
+    Buffer.from(TWO_PAGE_PDF_B64, 'base64'),
+  )
 }
 
 /** Switch the open page to page mode, which does not outlast a navigation. */

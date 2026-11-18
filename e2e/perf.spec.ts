@@ -56,6 +56,7 @@ import type { Browser, CDPSession, Page } from '@playwright/test'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
+  attachFile,
   expect,
   focusBlock,
   navigateToView,
@@ -1886,14 +1887,8 @@ test('perf: opening a two-hour transcript (#5364) @attachments', async ({ page }
 
   for (let repeat = 0; repeat < MODE_REPEATS; repeat += 1) {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, text }) => {
-        const w = window as unknown as Record<string, (...args: unknown[]) => unknown>
-        w['__addMockAttachmentWithBytes']?.(blockId, 'standup.ogg', 'audio/ogg', [79, 103, 103, 83])
-        w['__addMockAttachment']?.(blockId, 'standup.transcript.md', 'text/markdown', 0, text)
-      },
-      { blockId: TRANSCRIPT_BLOCK, text: transcript },
-    )
+    await attachFile(page, TRANSCRIPT_BLOCK, 'standup.ogg', 'audio/ogg', [79, 103, 103, 83])
+    await attachFile(page, TRANSCRIPT_BLOCK, 'standup.transcript.md', 'text/markdown', transcript)
     await openPage(page, 'Getting Started')
     const toggle = page
       .getByTestId('transcript-attachment')

@@ -1,5 +1,6 @@
 import {
   activeDialog,
+  attachFile,
   expect,
   ipc,
   openPage,
@@ -35,30 +36,9 @@ const BLOCK_GS_1 = '0000000000000000000B10CK01'
 const PDF_B64 =
   'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAzNyA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDUwIDEwMCBUZCAoSGkgNi4wKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMyOCAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjM5OAolJUVPRg=='
 
-interface MockBytesWindow extends Window {
-  __addMockAttachmentWithBytes?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    bytes: number[],
-  ) => Record<string, unknown>
-}
-
-/** Seed a real PDF attachment (with bytes) into the mock store. */
+/** Attach a real PDF to `blockId`. */
 async function seedPdf(page: import('@playwright/test').Page, blockId: string, filename: string) {
-  await page.evaluate(
-    ({ blockId: innerBlockId, filename: innerFilename, b64 }) => {
-      const bin = atob(b64)
-      const bytes = Array.from({ length: bin.length }, (_, i) => bin.charCodeAt(i))
-      ;(window as unknown as MockBytesWindow).__addMockAttachmentWithBytes?.(
-        innerBlockId,
-        innerFilename,
-        'application/pdf',
-        bytes,
-      )
-    },
-    { blockId, filename, b64: PDF_B64 },
-  )
+  await attachFile(page, blockId, filename, 'application/pdf', Buffer.from(PDF_B64, 'base64'))
 }
 
 test.describe('PDF annotation viewer (#1452) @attachments', () => {
