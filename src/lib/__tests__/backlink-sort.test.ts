@@ -26,4 +26,10 @@ describe('propertySortFields', () => {
     ])
     expect(fields.map((field) => field.key)).toEqual(['effort'])
   })
+
+  // #6758 — a datetime's canonical UTC value orders by `value_date` as a date does.
+  it('sorts a datetime key as a date', () => {
+    const [field] = propertySortFields([def('meeting', 'datetime', false)])
+    expect(field?.toSort('Asc')).toEqual({ type: 'PropertyDate', key: 'meeting', dir: 'Asc' })
+  })
 })

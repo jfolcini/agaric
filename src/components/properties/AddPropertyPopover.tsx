@@ -234,6 +234,7 @@ export function AddPropertyPopover({
               <SelectItem value="text">{t('pageProperty.textType')}</SelectItem>
               <SelectItem value="number">{t('pageProperty.numberType')}</SelectItem>
               <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
+              <SelectItem value="datetime">{t('pageProperty.datetimeType')}</SelectItem>
               <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
               <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
               <SelectItem value="boolean">{t('pageProperty.booleanType')}</SelectItem>

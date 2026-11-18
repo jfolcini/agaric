@@ -12,6 +12,7 @@
 
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
+import { formatDatetimeForDisplay } from '@/lib/datetime-value'
 import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { APP_MANAGED_BUILTIN_KEYS } from '@/lib/property-save-utils'
 
@@ -30,12 +31,16 @@ export const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
 
 /** Render a property row to a display string, or `null` when it carries no
  * value. Mirrors the typed-column precedence used elsewhere (text → num →
- * date → ref → bool); a list (#6741) is its items joined, as its chip shows it. */
+ * date → ref → bool); a list (#6741) is its items joined, and a datetime
+ * (#6758) its local date and time, as its chip shows it. */
 export function propertyRowDisplay(row: PropertyRow): string | null {
-  if (row.value_list != null) return row.value_list.map(String).join(', ')
+  if (row.value_list != null) {
+    return row.value_list.map((item) => formatDatetimeForDisplay(String(item))).join(', ')
+  }
   if (row.value_text != null && row.value_text !== '') return row.value_text
   if (row.value_num != null) return String(row.value_num)
-  if (row.value_date != null && row.value_date !== '') return row.value_date
+  if (row.value_date != null && row.value_date !== '')
+    return formatDatetimeForDisplay(row.value_date)
   if (row.value_ref != null && row.value_ref !== '') return row.value_ref
   if (row.value_bool != null) return row.value_bool ? 'true' : 'false'
   return null

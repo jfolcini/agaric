@@ -843,7 +843,7 @@ pub fn compose_list_pages_with_metadata_sql(
 #[instrument(skip(pool), err)]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
-    filter: ListPagesWithMetadataFilter,
+    mut filter: ListPagesWithMetadataFilter,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
@@ -877,7 +877,14 @@ pub async fn list_pages_with_metadata_inner(
     // `?2 .. ?{1 + filter_bind_count}` (right after `?1 = space_id`); the
     // keyset then numbers its own placeholders from `base` so SQLite's
     // positional binding stays aligned. Gate + cost-order + AND-join all
-    // happen in `compile_pages_filters`.
+    // happen in `compile_pages_filters`, after an operand on one of the
+    // space's `datetime` keys is read as the stored instants compare (#6758).
+    agaric_store::filters::datetime_operand::read_datetime_operands_of(
+        pool,
+        Some(std::slice::from_ref(&filter.space_id)),
+        &mut filter.filters,
+    )
+    .await?;
     let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
     let base = 1 + filter_binds.len();
 

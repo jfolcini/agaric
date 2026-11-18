@@ -50,14 +50,19 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Whether a property of this definition type has an order worth sorting by,
- * the one rule every sort control applies to the user's properties. `number`
- * and `date` order by value; `select` orders by its option text, A to Z in
+ * the one rule every sort control applies to the user's properties. `number`,
+ * `date` and `datetime` order by value; `select` orders by its option text, A to Z in
  * byte order, since the backend has no option-order sort. `text` is left out
  * because the backend orders it by bytes, not by locale (`Zed` before
  * `apple`); `url`, `ref` and `boolean` have no useful order.
  */
 export function isSortablePropertyType(valueType: string): boolean {
-  return valueType === 'number' || valueType === 'date' || valueType === 'select'
+  return (
+    valueType === 'number' ||
+    valueType === 'date' ||
+    valueType === 'datetime' ||
+    valueType === 'select'
+  )
 }
 
 /**

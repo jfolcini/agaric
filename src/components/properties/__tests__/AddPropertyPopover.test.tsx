@@ -488,6 +488,33 @@ describe('AddPropertyPopover', () => {
     expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url', null, false)
   })
 
+  // #6758 — the popover offers a date-and-time definition by its label.
+  it('creates a datetime definition through onCreateDef', async () => {
+    const user = userEvent.setup()
+    const onCreateDef = vi.fn()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={onCreateDef}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await user.type(await screen.findByLabelText('Search definitions'), 'meeting')
+    await user.click(screen.getByText(/Create "meeting"/))
+
+    const typeSelect = (await screen.findByLabelText('Value type')) as HTMLSelectElement
+    const option = Array.from(typeSelect.options).find((o) => o.value === 'datetime')
+    expect(option?.textContent).toBe(t('pageProperty.datetimeType'))
+    await user.selectOptions(typeSelect, 'datetime')
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    expect(onCreateDef).toHaveBeenCalledWith('meeting', 'datetime', null, false)
+  })
+
   // #6741 D5 — the create flow declares a list with its item type.
   it('creates a definition that holds several values through onCreateDef', async () => {
     const user = userEvent.setup()

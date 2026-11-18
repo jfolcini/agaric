@@ -74,7 +74,7 @@ function listFits(list: readonly unknown[], def: DefState): boolean {
       if (typeof item === 'number') return def.value_type === 'number'
       if (typeof item !== 'string' || item.replace(RUST_TRIM, '') === '') return false
       if (def.value_type === 'number' || def.value_type === 'boolean') return false
-      if (def.value_type === 'date' || def.value_type === 'ref') {
+      if (def.value_type === 'date' || def.value_type === 'datetime' || def.value_type === 'ref') {
         return coerce(item, def.value_type) === item
       }
       return options === null || options.includes(item)

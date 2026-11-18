@@ -70,7 +70,9 @@ pub use agaric_store::block_descendants::MAX_BLOCK_DEPTH;
 /// (`crate::recurrence::compute`), and the app command surface (via the
 /// `crate::domain::block_ops` glob) all resolve `block_ops::validate_date_format`
 /// / `block_ops::is_valid_iso_date` unchanged.
-pub use agaric_core::date_validation::{is_valid_iso_date, validate_date_format};
+pub use agaric_core::date_validation::{
+    is_canonical_datetime, is_valid_iso_date, read_datetime, validate_date_format,
+};
 
 /// The `(value_text, value_num, value_date, value_ref, value_bool)` tuple
 /// that positionally matches [`set_property_in_tx`]'s trailing args. Named
@@ -131,7 +133,8 @@ pub fn typed_property_args_for_string_value(key: &str, value: String) -> TypedPr
 /// unknown frontmatter keys are stored as `value_text` exactly like an
 /// unknown inline `key:: value` property.
 ///
-/// A coercion failure (a `number`-typed key whose value isn't a valid `f64`)
+/// A coercion failure (a `number`-typed key whose value isn't a valid `f64`,
+/// a `datetime`-typed one whose value [`read_datetime`] does not read)
 /// falls back to `value_text`, which the declared type then refuses, as a
 /// `select` refuses a value outside its options and a `date` one that is not
 /// `YYYY-MM-DD`. A surface that must not fail on one such line checks it with
@@ -152,6 +155,11 @@ pub fn typed_property_args_for_registry_value(
             _ => (Some(value), None, None, None, None),
         },
         Some("date") => (None, None, Some(value), None, None),
+        // A time with no zone is the device's local time (#6758).
+        Some("datetime") => match read_datetime(value.trim(), &chrono::Local) {
+            Some(read) => (None, None, Some(read.canonical), None, None),
+            None => (Some(value), None, None, None, None),
+        },
         // text / select / ref / url / unknown declared type, or no definition
         // at all: fall back to the reserved-key-aware string routing (`ref` is
         // overridden by the caller with a title→ULID reverse lookup).
@@ -653,7 +661,8 @@ pub async fn load_value_types(
 /// ([`agaric_store::op::is_internal_property_key`]). Under a definition each
 /// item is then held to its type as a single value is: a number under
 /// `number`, a string otherwise, which is a `YYYY-MM-DD` date under `date`, a
-/// block id under `ref` and one of the options under `select`.
+/// stored datetime under `datetime`, a block id under `ref` and one of the
+/// options under `select`.
 fn validate_list_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
@@ -681,6 +690,7 @@ fn validate_list_value(
             (PropertyListItem::Num(_), ty) => ty == "number",
             (PropertyListItem::Text(_), "number" | "boolean") => false,
             (PropertyListItem::Text(s), "date") => is_valid_iso_date(s),
+            (PropertyListItem::Text(s), "datetime") => is_canonical_datetime(s),
             (PropertyListItem::Text(s), "ref") => {
                 agaric_core::ulid::canonical_ulid(s).is_ok_and(|id| id == *s)
             }
@@ -714,7 +724,7 @@ fn validate_declared_type(
         "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
         "ref" => payload.value_ref.is_some(),
         "number" => payload.value_num.is_some(),
-        "date" => payload.value_date.is_some(),
+        "date" | "datetime" => payload.value_date.is_some(),
         "boolean" => payload.value_bool.is_some(),
         "url" => payload.value_text.is_some(),
         _ => true,
@@ -768,7 +778,8 @@ fn validate_select_option(key: &str, opts_json: &str, actual: &str) -> Result<()
 ///   1. [`validate_set_property`] — key format (alphanumeric + `-_`,
 ///      1–64 chars), exactly-one non-null value field (or all-null for
 ///      reserved keys), finite numbers, non-empty string fields.
-///   2. ISO-8601 (`YYYY-MM-DD`) format check on `value_date` if present.
+///   2. Format check on `value_date` if present: `YYYY-MM-DDTHH:MMZ` under a
+///      `datetime` declaration, ISO-8601 (`YYYY-MM-DD`) otherwise.
 ///   3. Reserved-key field-shape check: `due_date`/`scheduled_date`
 ///      require `value_date`; `todo_state`/`priority` require `value_text`.
 ///      All-null payloads are treated as "clear" and skip the rest of the
@@ -789,13 +800,21 @@ pub(crate) fn validate_property_value(
     // 1. Key format + exactly-one-value invariants.
     validate_set_property(payload)?;
 
-    // 2. ISO-date format check on `value_date`.
-    if let Some(ref date_str) = payload.value_date
-        && !is_valid_iso_date(date_str)
-    {
-        return Err(AppError::validation(format!(
-            "Invalid date format: '{date_str}'. Expected YYYY-MM-DD."
-        )));
+    // 2. Format check on `value_date`: a stored datetime under a `datetime`
+    //    key (#6758), an ISO date under any other.
+    let datetime = declaration.is_some_and(|decl| decl.value_type == "datetime");
+    match &payload.value_date {
+        Some(value) if datetime && !is_canonical_datetime(value) => {
+            return Err(AppError::validation(format!(
+                "Invalid datetime: '{value}'. Expected YYYY-MM-DDTHH:MMZ, in UTC."
+            )));
+        }
+        Some(value) if !datetime && !is_valid_iso_date(value) => {
+            return Err(AppError::validation(format!(
+                "Invalid date format: '{value}'. Expected YYYY-MM-DD."
+            )));
+        }
+        _ => {}
     }
 
     // "Clear" calls (all-null) are only valid for reserved keys —
@@ -1797,5 +1816,105 @@ mod validate_property_value_tests {
     fn validate_property_value_reserved_clear_succeeds() {
         let p = empty_payload("todo_state");
         validate_property_value(&p, None).expect("all-null reserved-key clear should pass");
+    }
+
+    // --- datetime-typed declarations (#6758) --------------------------------
+
+    fn validation_message(result: Result<(), AppError>) -> String {
+        match result.expect_err("must be refused") {
+            AppError::Validation { message, .. } => message,
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_property_value_datetime_takes_only_the_stored_form_6758() {
+        let d = decl("datetime", None);
+        let held = |value_date: &str| {
+            let mut p = empty_payload("starts");
+            p.value_date = Some(value_date.into());
+            validate_property_value(&p, Some(&d))
+        };
+        held("2026-11-14T08:30Z").expect("the stored form fits");
+        for unfit in [
+            "2026-11-14",
+            "2026-11-14T09:30",
+            "2026-11-14T09:30+01:00",
+            "2026-11-14T08:30:00Z",
+            "2026-02-30T08:30Z",
+        ] {
+            assert_eq!(
+                validation_message(held(unfit)),
+                format!("Invalid datetime: '{unfit}'. Expected YYYY-MM-DDTHH:MMZ, in UTC."),
+            );
+        }
+        let mut text = empty_payload("starts");
+        text.value_text = Some("2026-11-14T08:30Z".into());
+        assert_eq!(
+            validation_message(validate_property_value(&text, Some(&d))),
+            "Property 'starts' expects type 'datetime', got 'text'."
+        );
+    }
+
+    /// The other half: a stored datetime is a date nowhere else.
+    #[test]
+    fn validate_property_value_keeps_a_datetime_out_of_other_keys_6758() {
+        let mut p = empty_payload("deadline");
+        p.value_date = Some("2026-11-14T08:30Z".into());
+        for declaration in [Some(decl("date", None)), None] {
+            assert_eq!(
+                validation_message(validate_property_value(&p, declaration.as_ref())),
+                "Invalid date format: '2026-11-14T08:30Z'. Expected YYYY-MM-DD."
+            );
+        }
+        p.key = "due_date".into();
+        let due: PropertyDeclaration = builtin_property_def("due_date").unwrap().into();
+        assert_eq!(
+            validation_message(validate_property_value(&p, Some(&due))),
+            "Invalid date format: '2026-11-14T08:30Z'. Expected YYYY-MM-DD."
+        );
+    }
+
+    #[test]
+    fn validate_property_value_datetime_list_items_are_stored_datetimes_6758() {
+        let d = PropertyDeclaration {
+            multiple: true,
+            ..decl("datetime", None)
+        };
+        let held = |items: &[&str]| {
+            let mut p = empty_payload("sessions");
+            p.value_list = Some(PropertyList(
+                items
+                    .iter()
+                    .map(|item| PropertyListItem::Text((*item).to_owned()))
+                    .collect(),
+            ));
+            validate_property_value(&p, Some(&d))
+        };
+        held(&["2026-11-14T08:30Z", "2026-11-15T08:30Z"]).expect("stored datetimes fit");
+        assert_eq!(
+            validation_message(held(&["2026-11-14T08:30Z", "2026-11-15"])),
+            "Property 'sessions' expects a list of 'datetime', got the item Text(\"2026-11-15\")."
+        );
+    }
+
+    /// A file's text under a `datetime` key is read into the stored form; one
+    /// that is no datetime stays text, which the type then refuses.
+    #[test]
+    fn registry_value_reads_a_datetime_into_its_stored_form_6758() {
+        let read = |value: &str| {
+            typed_property_args_for_registry_value("starts", value.to_owned(), Some("datetime"))
+        };
+        let stored = |value: &str| (None, None, Some(value.to_owned()), None, None);
+        assert_eq!(read("2026-11-14T09:30+01:00"), stored("2026-11-14T08:30Z"));
+        assert_eq!(read("2026-11-14 09:30:59Z"), stored("2026-11-14T09:30Z"));
+        assert_eq!(
+            read("2026-11-14"),
+            (Some("2026-11-14".to_owned()), None, None, None, None)
+        );
+        assert!(
+            check_property_value("starts", &read("2026-11-14"), Some(&decl("datetime", None)))
+                .is_err()
+        );
     }
 }

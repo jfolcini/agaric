@@ -5582,6 +5582,7 @@ async fn pp_vault() -> (sqlx::SqlitePool, TempDir, Materializer, PpVault) {
         ("link", "ref"),
         ("note", "text"),
         ("stage", "text"),
+        ("starts", "datetime"),
     ] {
         create_property_def_inner(
             &pool,
@@ -5602,6 +5603,7 @@ async fn pp_vault() -> (sqlx::SqlitePool, TempDir, Materializer, PpVault) {
         (&typed, "link", "ref", target.as_str()),
         (&typed, "note", "text", "hello"),
         (&typed, "stage", "text", "2026-04-04"),
+        (&typed, "starts", "date", "2026-11-14T08:30Z"),
         (&local, "note", "ref", target.as_str()),
         (&local, "owner", "date", "2026-02-01"),
         (&local, "stage", "text", "soon"),
@@ -5712,6 +5714,7 @@ async fn property_rows_reconcile_with_the_engine_in_every_form_6206() {
             ("link", &target_ref),
             ("note", r#"value_text "hello""#),
             ("stage", r#"value_date "2026-04-04""#),
+            ("starts", r#"value_date "2026-11-14T08:30Z""#),
             ("when", r#"value_date "2026-01-05""#),
         ]),
         "the typed block holds each value in its type's column"
@@ -5869,8 +5872,8 @@ async fn each_property_definition_drift_is_reported_against_the_doc_6206() {
     assert_eq!(
         keys,
         [
-            "assignee", "count", "done", "effort", "link", "location", "note", "stage", "status",
-            "url", "when"
+            "assignee", "count", "done", "effort", "link", "location", "note", "stage", "starts",
+            "status", "url", "when"
         ],
         "the space holds its defaults and its own definitions for the check to compare"
     );

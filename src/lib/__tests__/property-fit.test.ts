@@ -27,6 +27,7 @@ const TYPES: ReadonlyArray<[string, FitDefinition, readonly PropertyValueForm[]]
   ['k-open', { value_type: 'select', options: null }, ['number', 'date', 'boolean']],
   ['k-number', { value_type: 'number', options: null }, ['text', 'date', 'ref', 'boolean']],
   ['k-date', { value_type: 'date', options: null }, ['text', 'number', 'ref', 'boolean']],
+  ['k-datetime', { value_type: 'datetime', options: null }, ['text', 'number', 'ref', 'boolean']],
   ['k-boolean', { value_type: 'boolean', options: null }, ['text', 'number', 'date', 'ref']],
   ['k-ref', { value_type: 'ref', options: null }, ['text', 'number', 'date', 'boolean']],
 ]
@@ -114,6 +115,10 @@ describe('fitsDefinition under a key that holds several values (#6741)', () => {
     }
     expect(fit(several('date'), ['2026-01-05', '2026-02-28'])).toBe(true)
     expect(fit(several('date'), ['2026-01-05', '2026-02-30'])).toBe(false)
+    expect(fit(several('date'), ['2026-01-05T09:30Z'])).toBe(false)
+    expect(fit(several('datetime'), ['2026-01-05T09:30Z', '2026-02-28T23:59Z'])).toBe(true)
+    expect(fit(several('datetime'), ['2026-01-05T09:30Z', '2026-01-05'])).toBe(false)
+    expect(fit(several('datetime'), ['2026-01-05 09:30'])).toBe(false)
     expect(fit(several('select', '["a","b"]'), ['b', 'a'])).toBe(true)
     expect(fit(several('select', '["a","b"]'), ['a', 'z'])).toBe(false)
     expect(fit(several('select'), ['z'])).toBe(true)

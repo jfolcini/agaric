@@ -10,7 +10,7 @@ use agaric_store::op::PropertyDefWrite;
 
 /// Apply `SetPropertyDef` through `p.space_id`'s engine, then project it to
 /// SQL. When the definition moves the key's `Str` values to another column
-/// (`str_column_for`), every value of the space under the key is re-typed from
+/// (`retype_moves_str_values`), every value of the space under the key is re-typed from
 /// the engine in the caller's transaction.
 pub async fn apply_set_property_def_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -19,7 +19,7 @@ pub async fn apply_set_property_def_via_loro(
     p: &SetPropertyDefPayload,
 ) -> Result<(), AppError> {
     use crate::loro::projection::{
-        project_property_def_to_sql, reproject_key_values, str_column_for,
+        project_property_def_to_sql, reproject_key_values, retype_moves_str_values,
     };
     let space_id = p.space_id.as_str();
     let declared = sqlx::query_scalar!(
@@ -30,7 +30,7 @@ pub async fn apply_set_property_def_via_loro(
     .fetch_optional(&mut *conn)
     .await?;
     let value_type = p.def.as_ref().map(|def| def.value_type.as_str());
-    let retyped = str_column_for(declared.as_deref()) != str_column_for(value_type);
+    let retyped = retype_moves_str_values(declared.as_deref(), value_type);
     let holders = {
         let mut guard = state.registry.for_space_recording(
             &agaric_store::space::SpaceId::from_trusted(space_id),
@@ -110,7 +110,7 @@ fn new_type(write: &PropertyDefWrite) -> Option<&str> {
 /// Apply `RewriteProperties` through `p.space_id`'s engine, then project it
 /// to SQL: the definitions first, so the values are typed by them. A
 /// definition that moves its key's `Str` values to another column
-/// (`str_column_for`) re-types every value of the space under the key from the
+/// (`retype_moves_str_values`) re-types every value of the space under the key from the
 /// engine afterwards, as `SetPropertyDef` does: a type change writes only the
 /// values whose engine form it changes (#5841).
 pub async fn apply_rewrite_properties_via_loro(
@@ -121,16 +121,14 @@ pub async fn apply_rewrite_properties_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection::{
         project_property_def_to_sql, project_property_value_writes, reproject_key_values,
-        str_column_for,
+        retype_moves_str_values,
     };
     let space_id = p.space_id.as_str();
     let declared = crate::block_ops::load_value_types(conn, space_id).await?;
     let retyped: Vec<&PropertyDefWrite> = p
         .defs
         .iter()
-        .filter(|w| {
-            str_column_for(declared.get(&w.key).map(String::as_str)) != str_column_for(new_type(w))
-        })
+        .filter(|w| retype_moves_str_values(declared.get(&w.key).map(String::as_str), new_type(w)))
         .collect();
     let holders = {
         let mut guard = state.registry.for_space_recording(

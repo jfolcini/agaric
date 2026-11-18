@@ -1,7 +1,8 @@
 /**
  * ListEditor — the items of a property whose definition holds several values
  * (#6741): each item a removable chip, then an add control of the item type
- * (text and url an input, number a number input, date the date input, select
+ * (text and url an input, number a number input, date the date input, datetime
+ * the date and time inputs, its items shown in local time (#6758), select
  * the options not yet in the list, ref the page picker). Every change writes
  * the whole list (`savePropertyList`); removing the last item deletes the
  * property. A ref item shows its target's title.
@@ -12,6 +13,7 @@ import type React from 'react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DatetimeInput } from '@/components/properties/DatetimeInput'
 import { RefEditor } from '@/components/properties/PropertyRowEditor/RefEditor'
 import { parseSelectOptions } from '@/components/properties/PropertyRowEditor/shared'
 import type { RefPickerEditorState } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
@@ -28,6 +30,7 @@ import {
 } from '@/components/ui/select'
 import { useDateInput } from '@/hooks/useDateInput'
 import type { OpRef, PropertyDefinition, PropertyList, PropertyRow } from '@/lib/bindings'
+import { formatDatetimeForDisplay } from '@/lib/datetime-value'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { savePropertyList } from '@/lib/property-save-utils'
@@ -114,7 +117,7 @@ interface ListItemChipProps {
 function ListItemChip({ item, isRef, disabled, onRemove }: ListItemChipProps): React.ReactElement {
   const { t } = useTranslation()
   const title = useRefTitle(isRef && typeof item === 'string' ? item : null)
-  const label = title ?? String(item)
+  const label = title ?? formatDatetimeForDisplay(String(item))
   const removeLabel = t('property.removeListItem', { item: label })
   return (
     <Badge tone="secondary" className="max-w-full gap-0.5 pr-0.5">
@@ -172,6 +175,9 @@ function AddItemControl(props: AddItemControlProps): React.ReactElement {
     }
     case 'date': {
       return <AddDateItem ariaLabel={ariaLabel} busy={disabled} onAdd={onAdd} />
+    }
+    case 'datetime': {
+      return <DatetimeInput value={null} ariaLabel={ariaLabel} busy={disabled} onCommit={onAdd} />
     }
     default: {
       return (

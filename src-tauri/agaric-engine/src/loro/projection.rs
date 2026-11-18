@@ -1785,16 +1785,25 @@ pub async fn reproject_block_properties_from_engine(
 /// The `block_properties` column a `Str` value the type takes lands in under a
 /// definition of `value_type` (`None`: the key is undeclared), as
 /// `reproject_property_row_from_engine` routes it; one it does not take lands
-/// in `value_text`. A definition change moves the key's values only when this
-/// changes (#5841).
+/// in `value_text`. A definition change moves the key's values when this
+/// changes (#5841), or as [`retype_moves_str_values`] says.
 pub fn str_column_for(value_type: Option<&str>) -> &'static str {
     match value_type {
         Some("number") => "value_num",
         Some("boolean") => "value_bool",
-        Some("date") => "value_date",
+        Some("date" | "datetime") => "value_date",
         Some("ref") => "value_ref",
         _ => "value_text",
     }
+}
+
+/// Whether a definition change from `from` to `to` (`None`: undeclared) moves
+/// the key's `Str` values, so that they are re-typed from the engine: to
+/// another column ([`str_column_for`]), or between `datetime` and `date`,
+/// which share `value_date` and take different strings (#6758).
+pub fn retype_moves_str_values(from: Option<&str>, to: Option<&str>) -> bool {
+    let datetime = |value_type| value_type == Some("datetime");
+    str_column_for(from) != str_column_for(to) || datetime(from) != datetime(to)
 }
 
 /// Project `space_id`'s definition of `key` (#5841): upsert `def`, or delete
@@ -4757,6 +4766,26 @@ mod tests {
             Some((None, None, None, None, Some(0))),
             "false is false"
         );
+    }
+
+    /// #6758 — a definition change re-types a key's strings when they move to
+    /// another column, and between `date` and `datetime`, which share one.
+    #[test]
+    fn a_retype_between_date_and_datetime_moves_the_strings_6758() {
+        let moves = |from, to| {
+            (
+                retype_moves_str_values(from, to),
+                retype_moves_str_values(to, from),
+            )
+        };
+        assert_eq!(moves(Some("date"), Some("datetime")), (true, true));
+        assert_eq!(moves(Some("text"), Some("datetime")), (true, true));
+        assert_eq!(moves(None, Some("datetime")), (true, true));
+        assert_eq!(moves(Some("datetime"), Some("datetime")), (false, false));
+        assert_eq!(moves(Some("text"), Some("url")), (false, false));
+        assert_eq!(moves(None, Some("select")), (false, false));
+        assert_eq!(moves(Some("text"), Some("date")), (true, true));
+        assert_eq!(str_column_for(Some("datetime")), "value_date");
     }
 
     /// #5841 S3 — a string under a date is in `value_date` only when it is a

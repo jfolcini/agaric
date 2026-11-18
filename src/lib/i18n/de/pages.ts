@@ -430,6 +430,7 @@ export const pages: Record<string, string> = {
   'pageProperty.textType': 'Text',
   'pageProperty.numberType': 'Zahl',
   'pageProperty.dateType': 'Datum',
+  'pageProperty.datetimeType': 'Datum und Uhrzeit',
   'pageProperty.selectType': 'Auswahl',
   'pageProperty.refType': 'Verweis',
   'pageProperty.booleanType': 'Wahrheitswert',

@@ -603,6 +603,8 @@ describe('PropertyDefinitionsList', () => {
     // #4710 — a `url` definition is declarable from Settings too, not only
     // from the page property table's Add-property popover.
     expect(optionValues).toContain('url')
+    // #6758 — and a date-and-time definition.
+    expect(optionValues).toContain('datetime')
   })
 
   it('shows a lock on a built-in and offers no edit or delete for it', async () => {

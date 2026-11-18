@@ -265,7 +265,8 @@ export function propertyValueKindForType(valueType: string | null | undefined): 
     case 'number': {
       return 'Num'
     }
-    case 'date': {
+    case 'date':
+    case 'datetime': {
       return 'Date'
     }
     case 'ref': {

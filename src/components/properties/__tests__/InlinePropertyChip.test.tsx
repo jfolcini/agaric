@@ -65,6 +65,45 @@ describe('InlinePropertyChip', () => {
     expect(onEditProp).toHaveBeenCalledExactlyOnceWith({ key: 'effort', value: '2h' })
   })
 
+  // #6758 — a datetime's chip shows its local date and time; the editor gets the stored value.
+  it('shows a datetime as its local date and time', async () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const user = userEvent.setup()
+      const onEditProp = vi.fn()
+      renderChip({ key: 'meeting', value: '2026-11-14T08:30Z', kind: 'date' }, { onEditProp })
+
+      await user.click(screen.getByRole('button', { name: 'Meeting: 2026-11-14 09:30' }))
+
+      expect(onEditProp).toHaveBeenCalledExactlyOnceWith({
+        key: 'meeting',
+        value: '2026-11-14T08:30Z',
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('shows a datetime list as its items in local time', () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const items = ['2026-11-14T08:30Z', '2026-11-15T23:00Z']
+      renderChip(
+        { key: 'slots', value: items.join(', '), kind: 'list', items },
+        { onShowProperties: vi.fn() },
+      )
+
+      expect(
+        screen.getByRole('button', { name: 'Slots: 2026-11-14 09:30, 2026-11-16 00:00' }),
+      ).toBeInTheDocument()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   describe('ref value', () => {
     it("shows the target's title and follows a rename", () => {
       cacheTitle('Quick Notes')

@@ -687,6 +687,103 @@ async fn set_property_happy_path() {
     assert_eq!(result["id"], block.id.as_str());
 }
 
+/// #6758 — a datetime key takes a date and time as the agent wrote it, alone,
+/// in a batch and item for item in a list, and holds it in its stored form;
+/// a day is refused, and a date key still takes only a day.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_reads_a_datetime_keys_value_6758() {
+    use agaric_store::op::PropertyDefState;
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    for (key, value_type, multiple) in [
+        ("starts", "datetime", false),
+        ("sessions", "datetime", true),
+        ("day", "date", false),
+    ] {
+        let def = PropertyDefState {
+            value_type: value_type.into(),
+            options: None,
+            multiple,
+        };
+        crate::commands::create_property_def_state_inner(&pool, DEV, &mat, &space, key.into(), def)
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+    let call = |name: &'static str, args: Value| {
+        let (tools, ctx) = (&tools, test_ctx_agent());
+        async move { tools.call_tool(name, args, &ctx).await }
+    };
+    let set = |key: &'static str, extra: Value| {
+        let mut args = json!({ "block_id": block.id.clone(), "key": key, "space_id": space });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        call("set_property", args)
+    };
+    let held = |key: &'static str, slot: &'static str| {
+        let read = call(
+            "get_block",
+            json!({ "block_id": block.id.clone(), "space_id": space }),
+        );
+        async move {
+            let read = read.await.expect("get_block");
+            let rows = read["properties"].as_array().unwrap().clone();
+            let row = rows.into_iter().find(|row| row["key"] == key);
+            row.map_or(Value::Null, |row| row[slot].clone())
+        }
+    };
+    let message = |err: AppError| match err {
+        AppError::Validation { message, .. } => message,
+        other => panic!("expected a Validation, got {other:?}"),
+    };
+
+    set(
+        "starts",
+        json!({ "value_date": "2026-11-14 09:30:20+01:00" }),
+    )
+    .await
+    .expect("a datetime with an offset");
+    assert_eq!(
+        held("starts", "value_date").await,
+        json!("2026-11-14T08:30Z")
+    );
+    let batch = json!({
+        "ops": [{ "op": "set_property", "block_id": block.id.clone(), "key": "starts", "value_date": "2026-11-14T10:45-05:00" }],
+        "space_id": space,
+    });
+    call("batch", batch).await.expect("a datetime in a batch");
+    assert_eq!(
+        held("starts", "value_date").await,
+        json!("2026-11-14T15:45Z")
+    );
+    set(
+        "sessions",
+        json!({ "value_list": ["2026-11-14T09:30+01:00", "2026-11-15T08:30Z"] }),
+    )
+    .await
+    .expect("a list of datetimes");
+    assert_eq!(
+        held("sessions", "value_list").await,
+        json!(["2026-11-14T08:30Z", "2026-11-15T08:30Z"])
+    );
+
+    let a_day = set("starts", json!({ "value_date": "2026-11-14" })).await;
+    assert_eq!(
+        message(a_day.expect_err("a day is no datetime")),
+        "Invalid datetime: '2026-11-14'. Expected YYYY-MM-DDTHH:MMZ, in UTC."
+    );
+    let a_time = set("day", json!({ "value_date": "2026-11-14T09:30+01:00" })).await;
+    assert_eq!(
+        message(a_time.expect_err("a date key takes a day")),
+        "Invalid date format: '2026-11-14T09:30+01:00'. Expected YYYY-MM-DD."
+    );
+    assert_eq!(
+        held("starts", "value_date").await,
+        json!("2026-11-14T15:45Z")
+    );
+}
+
 /// #6741 — a key whose definition holds several values takes `value_list`,
 /// alone and in a batch, a ref item by its page's title; the read tools show
 /// the list; any other key refuses one, and a list beside a single value is

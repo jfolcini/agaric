@@ -3685,3 +3685,59 @@ async fn group_by_list_property_puts_a_block_in_each_item_group_6741() {
     // B1..B4 and the two tag blocks: six, though B1 sits in two groups.
     assert_eq!(agg_at(&resp, 0).count, Some(6));
 }
+
+/// #6758 — a filter on a key the space declares `datetime` compares stored
+/// instants: an operand with an offset is the instant it names, whatever the
+/// device's zone, and the same operand on an undeclared key stays text.
+#[tokio::test]
+async fn a_datetime_keys_operand_is_read_before_the_filter_compiles_6758() {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, created_at) \
+         VALUES (?, 'starts', 'datetime', '2026-01-01T00:00:00.000Z')",
+    )
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_property_date(
+        &pool,
+        "01B1000000000000000000000",
+        "starts",
+        "2026-11-14T08:30Z",
+    )
+    .await;
+    set_property_date(
+        &pool,
+        "01B2000000000000000000000",
+        "starts",
+        "2026-11-14T08:31Z",
+    )
+    .await;
+    set_property(
+        &pool,
+        "01B3000000000000000000000",
+        "note",
+        "2026-11-14T09:30+01:00",
+    )
+    .await;
+    let on = |key: &str, predicate: fn(PropertyValue) -> PropertyPredicate| {
+        req(leaf(FilterPrimitive::HasProperty {
+            key: key.to_owned(),
+            predicate: predicate(PropertyValue::Text {
+                value: "2026-11-14T09:30+01:00".to_owned(),
+            }),
+        }))
+    };
+    let eq = |value| PropertyPredicate::Eq { value };
+    let gt = |value| PropertyPredicate::Gt { value };
+
+    let resp = compile_and_run(&pool, on("starts", eq)).await.unwrap();
+    assert_eq!(ids(&resp), set(&["01B1000000000000000000000"]));
+    let resp = compile_and_run(&pool, on("starts", gt)).await.unwrap();
+    assert_eq!(ids(&resp), set(&["01B2000000000000000000000"]));
+    let resp = compile_and_run(&pool, on("note", eq)).await.unwrap();
+    assert_eq!(ids(&resp), set(&["01B3000000000000000000000"]));
+}

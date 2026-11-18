@@ -370,10 +370,12 @@ export function BlockPropertyDrawer({
               properties.map((prop) => {
                 const propType = getType(prop.key)
                 const def = definitions.find((d) => d.key === prop.key)
-                // A ref's page picker, a boolean's checkbox and a list's items (#6741),
-                // declared or not, are the page Properties table's.
+                // A ref's page picker, a boolean's checkbox, a datetime's date and time
+                // (#6758) and a list's items (#6741), declared or not, are the page
+                // Properties table's.
                 const list = listDefinition(prop, def) !== null
-                if ((propType === 'ref' || propType === 'boolean' || list) && blockId) {
+                const typed = ['ref', 'boolean', 'datetime'].includes(propType)
+                if ((typed || list) && blockId) {
                   return (
                     <PropertyRowEditor
                       key={prop.key}

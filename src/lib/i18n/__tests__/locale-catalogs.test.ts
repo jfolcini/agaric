@@ -188,6 +188,7 @@ const SAME_AS_ENGLISH: Partial<Record<SupportedLocale, readonly string[]>> = {
     'properties.optionsCount_one',
     'properties.optionsCount_other',
     'propertiesView.createType',
+    'property.datetimeDateLabel',
     'property.effort',
     'query.column.page',
     'queryBuilder.mode.simple',

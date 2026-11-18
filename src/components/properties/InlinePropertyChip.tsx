@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { PropertyChip } from '@/components/properties/PropertyChip'
 import { useRefTitle, useRefTitles } from '@/components/properties/useRefTitle'
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
+import { formatDatetimeForDisplay } from '@/lib/datetime-value'
 
 interface InlinePropertyChipProps {
   blockId: string
@@ -24,7 +25,8 @@ interface InlinePropertyChipProps {
 
 /**
  * One property chip of a block's metadata row. Its key renames the key. A
- * text, date or number value opens the chip editor; a ref shows its target's
+ * text, date or number value opens the chip editor, a datetime shown as its
+ * local date and time (#6758); a ref shows its target's
  * title as the resolve cache holds it now, so a rename shows at once, and opens
  * the target; a boolean says its state in words and opens the property drawer;
  * a list (#6741) shows its items joined, a ref list its targets' titles, and
@@ -58,7 +60,9 @@ export function InlinePropertyChip({
     ) : (
       <PropertyChip
         propKey={key}
-        value={value}
+        value={
+          property.items?.map((item) => formatDatetimeForDisplay(String(item))).join(', ') ?? value
+        }
         onClick={onOpenDrawer}
         onKeyClick={onKeyClick}
         unfit={unfit}
@@ -90,7 +94,7 @@ export function InlinePropertyChip({
   return (
     <PropertyChip
       propKey={key}
-      value={value}
+      value={kind === 'date' ? formatDatetimeForDisplay(value) : value}
       onClick={readOnly ? undefined : () => onEditProp({ key, value })}
       onKeyClick={onKeyClick}
       unfit={unfit}

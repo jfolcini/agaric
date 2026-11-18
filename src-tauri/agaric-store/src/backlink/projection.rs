@@ -399,7 +399,7 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
     let col = match value {
         PropertyValue::Text { .. } => "value_text",
         PropertyValue::Ref { .. } => "value_ref",
-        PropertyValue::Date { .. } => "value_date",
+        PropertyValue::Date { .. } | PropertyValue::DatetimeDay { .. } => "value_date",
         PropertyValue::Num { .. } => "value_num",
     };
     let numeric = matches!(value, PropertyValue::Num { .. });
@@ -409,7 +409,8 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
                 PropertyValue::Num { value } => Bind::Real(*value),
                 PropertyValue::Text { value }
                 | PropertyValue::Ref { value }
-                | PropertyValue::Date { value } => Bind::Text(value.clone()),
+                | PropertyValue::Date { value }
+                | PropertyValue::DatetimeDay { from: value, .. } => Bind::Text(value.clone()),
             };
             (op, val_bind)
         }
@@ -420,7 +421,9 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
                 PropertyValue::Text { value }
                 | PropertyValue::Ref { value }
                 | PropertyValue::Date { value } => value.clone(),
-                PropertyValue::Num { .. } => return WhereClause::new("1=0", Vec::new()),
+                PropertyValue::Num { .. } | PropertyValue::DatetimeDay { .. } => {
+                    return WhereClause::new("1=0", Vec::new());
+                }
             };
             let escaped = escape_like(&raw);
             let pattern = if contains {

@@ -165,10 +165,11 @@ describe('INTERNAL_PROPERTY_KEYS', () => {
 })
 
 describe('isSortablePropertyType', () => {
-  it('offers number, date and select', () => {
-    expect(['number', 'date', 'select'].filter(isSortablePropertyType)).toEqual([
+  it('offers number, date, datetime and select', () => {
+    expect(['number', 'date', 'datetime', 'select'].filter(isSortablePropertyType)).toEqual([
       'number',
       'date',
+      'datetime',
       'select',
     ])
   })

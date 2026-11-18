@@ -9,6 +9,7 @@
  */
 
 import type { PropertyValueForm } from '@/lib/bindings'
+import { isCanonicalDatetime } from '@/lib/datetime-value'
 import { logger } from '@/lib/logger'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
@@ -39,6 +40,7 @@ const FORMS_TAKEN: Readonly<Record<string, readonly PropertyValueForm[]>> = {
   url: ['text'],
   number: ['number'],
   date: ['date'],
+  datetime: ['date'],
   boolean: ['boolean'],
   ref: ['ref'],
 }
@@ -86,6 +88,9 @@ function itemFit(def: FitDefinition): (item: unknown) => boolean {
     }
     case 'date': {
       return (item) => typeof item === 'string' && isIsoDate(item)
+    }
+    case 'datetime': {
+      return (item) => typeof item === 'string' && isCanonicalDatetime(item)
     }
     case 'select': {
       const options = def.options === null ? null : selectOptions(def.options)

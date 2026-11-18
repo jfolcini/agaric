@@ -2,16 +2,23 @@
 //! type change applies to each value, and the one the SQL projection applies
 //! to a string value under its key's declared type.
 //!
-//! | from \ to | text, url, select, unknown | number | date | boolean | ref |
-//! |---|---|---|---|---|---|
-//! | `Str(s)` | `Str(s)` | `s` trimmed, parsed as `f64`, finite | `s` if `YYYY-MM-DD` | `"true"` / `"false"` only | `s` if a ULID, uppercased |
-//! | `Num(n)` | its text | itself, if finite | none | none | none |
-//! | `Bool(b)` | `"true"` / `"false"` | none | none | itself | none |
+//! | from \ to | text, url, select, unknown | number | date | datetime | boolean | ref |
+//! |---|---|---|---|---|---|---|
+//! | `Str(s)` | `Str(s)` | `s` trimmed, parsed as `f64`, finite | `s` if `YYYY-MM-DD` | `s` if `YYYY-MM-DDTHH:MMZ` | `"true"` / `"false"` only | `s` if a ULID, uppercased |
+//! | `Num(n)` | its text | itself, if finite | none | none | none | none |
+//! | `Bool(b)` | `"true"` / `"false"` | none | none | none | itself | none |
+//!
+//! A type change ([`coerce_in`]) also takes to `datetime` a string
+//! `read_datetime` reads, a time with no zone as the device's local time, and
+//! takes a stored datetime to its local day under `date` and to its local
+//! time with its offset under a type that keeps any string.
 //!
 //! `Null` is no value, so nothing converts it, and a `List` is no scalar, so it
 //! converts to nothing either: it lands in `value_list` under any type.
 
-use agaric_core::date_validation::is_valid_iso_date;
+use agaric_core::date_validation::{
+    is_canonical_datetime, is_valid_iso_date, read_datetime, write_datetime,
+};
 use agaric_core::ulid::{BlockId, canonical_ulid};
 use agaric_store::op::PropertyValueFields;
 
@@ -30,6 +37,7 @@ pub fn coerce(value: &PropertyValue, to: &str) -> Option<PropertyValue> {
             .filter(|n| n.is_finite())
             .map(Num),
         (Str(s), "date") => is_valid_iso_date(s).then(|| value.clone()),
+        (Str(s), "datetime") => is_canonical_datetime(s).then(|| value.clone()),
         (Str(s), "boolean") => match s.as_str() {
             "true" => Some(Bool(true)),
             "false" => Some(Bool(false)),
@@ -39,19 +47,50 @@ pub fn coerce(value: &PropertyValue, to: &str) -> Option<PropertyValue> {
         (Str(_), _) => Some(value.clone()),
         (Num(n), "number") => n.is_finite().then_some(Num(*n)),
         (Bool(b), "boolean") => Some(Bool(*b)),
-        (Num(_) | Bool(_), "number" | "date" | "boolean" | "ref") => None,
+        (Num(_) | Bool(_), "number" | "date" | "datetime" | "boolean" | "ref") => None,
         (Num(_) | Bool(_), _) => value.as_legacy_string().map(Str),
     }
 }
 
+/// [`coerce`] as a type change from `from` applies it (#6758), in the
+/// device's zone `tz`. Under `datetime` a string is read as the user wrote
+/// it, a time with no zone being local. A stored datetime leaving a
+/// `datetime` key becomes its local day under `date`, and under a type that
+/// keeps any string its local time with its offset, as Markdown writes it.
+/// The projection uses [`coerce`], which must not depend on the device.
+pub fn coerce_in<Tz: chrono::TimeZone>(
+    value: &PropertyValue,
+    from: Option<&str>,
+    to: &str,
+    tz: &Tz,
+) -> Option<PropertyValue>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let PropertyValue::Str(s) = value else {
+        return coerce(value, to);
+    };
+    if to == "datetime" {
+        return read_datetime(s, tz).map(|read| PropertyValue::Str(read.canonical));
+    }
+    let local = (from == Some("datetime"))
+        .then(|| write_datetime(s, tz))
+        .flatten();
+    match (local, to) {
+        (Some(local), "date") => Some(PropertyValue::Str(local.split_at_checked(10)?.0.to_owned())),
+        (Some(_), "number" | "boolean" | "ref") | (None, _) => coerce(value, to),
+        (Some(local), _) => Some(PropertyValue::Str(local)),
+    }
+}
+
 /// `value` in the slot a local write under `value_type` puts it in: a string
-/// in `value_date` under a date, in `value_ref` under a ref and in
+/// in `value_date` under a date or a datetime, in `value_ref` under a ref and in
 /// `value_text` otherwise; a number, a boolean or a list in its own.
 pub fn value_fields_under(value: &PropertyValue, value_type: &str) -> PropertyValueFields {
     let mut fields = PropertyValueFields::default();
     match value {
         PropertyValue::Str(s) => match value_type {
-            "date" => fields.value_date = Some(s.clone()),
+            "date" | "datetime" => fields.value_date = Some(s.clone()),
             "ref" => fields.value_ref = Some(BlockId::from_trusted(s)),
             _ => fields.value_text = Some(s.clone()),
         },
@@ -70,7 +109,9 @@ mod tests {
     use PropertyValue::{Bool, Null, Num, Str};
     use proptest::prelude::*;
 
-    const TYPES: [&str; 7] = ["text", "number", "date", "select", "ref", "boolean", "url"];
+    const TYPES: [&str; 8] = [
+        "text", "number", "date", "select", "ref", "boolean", "url", "datetime",
+    ];
     const ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
     fn s(v: &str) -> PropertyValue {
@@ -103,6 +144,21 @@ mod tests {
             (s("2026-1-5"), "date", None),
             (s(" 2026-01-05"), "date", None),
             (s("soon"), "date", None),
+            // Str → datetime: the stored form only.
+            (
+                s("2026-11-14T08:30Z"),
+                "datetime",
+                Some(s("2026-11-14T08:30Z")),
+            ),
+            (s("2026-11-14T09:30"), "datetime", None),
+            (s("2026-11-14T09:30+01:00"), "datetime", None),
+            (s("2026-11-14"), "datetime", None),
+            (s("2026-02-30T08:30Z"), "datetime", None),
+            (s("soon"), "datetime", None),
+            // A stored datetime is no date, and is text as it reads.
+            (s("2026-11-14T08:30Z"), "date", None),
+            (s("2026-11-14T08:30Z"), "text", Some(s("2026-11-14T08:30Z"))),
+            (s("2026-11-14T08:30Z"), "url", Some(s("2026-11-14T08:30Z"))),
             // Str → boolean: exactly true or false.
             (s("true"), "boolean", Some(Bool(true))),
             (s("false"), "boolean", Some(Bool(false))),
@@ -121,6 +177,7 @@ mod tests {
             (Num(1.0), "boolean", None),
             (Num(20_260_105.0), "date", None),
             (Num(1.0), "ref", None),
+            (Num(20_261_114.0), "datetime", None),
             // Bool.
             (Bool(true), "text", Some(s("true"))),
             (Bool(false), "url", Some(s("false"))),
@@ -128,6 +185,7 @@ mod tests {
             (Bool(true), "number", None),
             (Bool(true), "date", None),
             (Bool(true), "ref", None),
+            (Bool(true), "datetime", None),
             // Null is no value.
             (Null, "text", None),
             (Null, "number", None),
@@ -135,6 +193,92 @@ mod tests {
         for (value, to, want) in cases {
             assert_eq!(&coerce(value, to), want, "{value:?} under {to}");
         }
+    }
+
+    /// A type change reads a string as the user wrote it: a time with no zone
+    /// is local, a day alone is never promoted, and no other type's rule
+    /// changes.
+    #[test]
+    fn a_type_change_reads_a_datetime_in_the_device_zone_6758() {
+        let paris = chrono::FixedOffset::east_opt(3600).unwrap();
+        let cases: &[(PropertyValue, &str, Option<PropertyValue>)] = &[
+            (
+                s("2026-11-14T09:30"),
+                "datetime",
+                Some(s("2026-11-14T08:30Z")),
+            ),
+            (
+                s("2026-11-14 09:30:59"),
+                "datetime",
+                Some(s("2026-11-14T08:30Z")),
+            ),
+            (
+                s("2026-11-14T09:30-05:00"),
+                "datetime",
+                Some(s("2026-11-14T14:30Z")),
+            ),
+            (
+                s("2026-11-14T08:30Z"),
+                "datetime",
+                Some(s("2026-11-14T08:30Z")),
+            ),
+            (s("2026-11-14"), "datetime", None),
+            (s("soon"), "datetime", None),
+            (Num(20_261_114.0), "datetime", None),
+            (Bool(true), "datetime", None),
+            (Null, "datetime", None),
+            (s("2026-11-14T08:30Z"), "date", None),
+            (s("2026-11-14T08:30Z"), "text", Some(s("2026-11-14T08:30Z"))),
+            (s(" 4 "), "number", Some(Num(4.0))),
+        ];
+        for (value, to, want) in cases {
+            for from in [Some("text"), Some("date"), None] {
+                assert_eq!(
+                    &coerce_in(value, from, to, &paris),
+                    want,
+                    "{value:?} under {to}"
+                );
+            }
+        }
+    }
+
+    /// A stored datetime leaves its type as the device reads it: the local
+    /// day under a date, the local time with its offset as text.
+    #[test]
+    fn a_type_change_takes_a_datetime_out_in_the_device_zone_6758() {
+        let paris = chrono::FixedOffset::east_opt(3600).unwrap();
+        let late = s("2026-11-14T23:30Z");
+        let cases: &[(&str, Option<PropertyValue>)] = &[
+            ("date", Some(s("2026-11-15"))),
+            ("text", Some(s("2026-11-15T00:30+01:00"))),
+            ("url", Some(s("2026-11-15T00:30+01:00"))),
+            ("select", Some(s("2026-11-15T00:30+01:00"))),
+            ("datetime", Some(s("2026-11-14T23:30Z"))),
+            ("number", None),
+            ("boolean", None),
+            ("ref", None),
+        ];
+        for (to, want) in cases {
+            assert_eq!(
+                &coerce_in(&late, Some("datetime"), to, &paris),
+                want,
+                "under {to}"
+            );
+        }
+        // A value the datetime key held without fitting it converts as it is.
+        let unfit = s("2026-11-14");
+        assert_eq!(
+            coerce_in(&unfit, Some("datetime"), "date", &paris),
+            Some(unfit.clone())
+        );
+        assert_eq!(
+            coerce_in(&unfit, Some("datetime"), "text", &paris),
+            Some(unfit)
+        );
+        assert_eq!(
+            coerce_in(&Num(3.0), Some("datetime"), "text", &paris),
+            Some(s("3"))
+        );
     }
 
     #[test]
@@ -151,6 +295,10 @@ mod tests {
         assert_eq!(
             only(value_fields_under(&s("2026-01-05"), "date")),
             (None, None, Some("2026-01-05".into()), None, None)
+        );
+        assert_eq!(
+            only(value_fields_under(&s("2026-11-14T08:30Z"), "datetime")),
+            (None, None, Some("2026-11-14T08:30Z".into()), None, None)
         );
         assert_eq!(
             only(value_fields_under(&s(ULID), "ref")),
@@ -189,6 +337,7 @@ mod tests {
             "[ -~]{1,12}".prop_map(Str),
             "[+-]?[0-9]{1,6}(\\.[0-9]{0,4})?([eE][+-]?[0-9]{1,3})?".prop_map(Str),
             "20[0-9]{2}-[01][0-9]-[0-3][0-9]".prop_map(Str),
+            "20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]Z?".prop_map(Str),
             prop_oneof![Just("true"), Just("false"), Just("yes")].prop_map(s),
             "[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}".prop_map(Str),
         ]
@@ -204,6 +353,7 @@ mod tests {
             "[ -~]{1,12}".prop_map(|t| (Some(t), None, None, None, None)),
             any::<f64>().prop_map(|n| (None, Some(n), None, None, None)),
             DATE.prop_map(|d| (None, None, Some(d), None, None)),
+            DATE.prop_map(|d| (None, None, Some(format!("{d}T08:30Z")), None, None)),
             BLOCK_ID.prop_map(|r| (None, None, None, Some(r), None)),
             any::<bool>().prop_map(|b| (None, None, None, None, Some(b))),
         ]

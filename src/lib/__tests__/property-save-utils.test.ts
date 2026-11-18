@@ -105,6 +105,28 @@ describe('buildPropertyParams', () => {
     })
   })
 
+  it('returns the canonical UTC valueDate for a datetime, typed or canonical (#6758)', () => {
+    expect(buildPropertyParams('B1', 'start', '2026-11-14T08:30Z', 'datetime')).toEqual({
+      ok: true,
+      params: { blockId: 'B1', key: 'start', valueDate: '2026-11-14T08:30Z' },
+    })
+    expect(buildPropertyParams('B1', 'start', '2026-11-14 09:30+01:00', 'datetime')).toEqual({
+      ok: true,
+      params: { blockId: 'B1', key: 'start', valueDate: '2026-11-14T08:30Z' },
+    })
+  })
+
+  it('refuses a datetime that names no instant, a day alone included (#6758)', () => {
+    expect(buildPropertyParams('B1', 'start', '2026-11-14', 'datetime')).toEqual({
+      ok: false,
+      error: 'invalidDatetime',
+    })
+    expect(buildPropertyParams('B1', 'start', 'soon', 'datetime')).toEqual({
+      ok: false,
+      error: 'invalidDatetime',
+    })
+  })
+
   it('treats unknown types as text', () => {
     const result = buildPropertyParams('B1', 'custom', 'val', 'ref')
     expect(result).toEqual({
@@ -170,6 +192,20 @@ describe('buildInitParams', () => {
     // negative-offset timezones get tomorrow's date by default.
     const result = buildInitParams('B1', makeDef('due', 'date'))
     expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: getTodayString() })
+  })
+
+  it('returns the current minute in UTC as valueDate for a datetime (#6758)', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date(Date.UTC(2026, 10, 14, 8, 30, 45)))
+      expect(buildInitParams('B1', makeDef('start', 'datetime'))).toEqual({
+        blockId: 'B1',
+        key: 'start',
+        valueDate: '2026-11-14T08:30Z',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('returns null for unknown types', () => {
@@ -404,6 +440,12 @@ describe('carriedRenameDefinition', () => {
         row({ value_date: '2026-09-15' }),
       ),
     ).toEqual({ valueType: 'date', options: null })
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'datetime', options: null },
+        row({ value_date: '2026-09-15T08:30Z' }),
+      ),
+    ).toEqual({ valueType: 'datetime', options: null })
     expect(
       carriedRenameDefinition({ value_type: 'boolean', options: null }, row({ value_bool: 0 })),
     ).toEqual({ valueType: 'boolean', options: null })

@@ -664,14 +664,14 @@ fn tool_desc_set_property() -> ToolDescription {
                 "key":      { "type": "string", "description": "Property key (see list_property_defs). The reserved key `space` is rejected — space membership is not a content property." },
                 "value_text": { "type": "string", "description": "Text value (exactly one value_* must be set)." },
                 "value_num":  { "type": "number", "description": "Numeric value (exactly one value_* must be set)." },
-                "value_date": { "type": "string", "description": "ISO-8601 date (exactly one value_* must be set)." },
+                "value_date": { "type": "string", "description": "A YYYY-MM-DD date, or under a datetime definition a date and time: `2026-11-14T09:30` in the device's local time, or with `Z` or an offset such as `+01:00` (exactly one value_* must be set)." },
                 "value_ref":  { "type": "string", "description": "Block ULID reference (exactly one value_* must be set)." },
                 "value_bool": { "type": "boolean", "description": "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions." },
                 "value_list": {
                     "type": "array",
                     "minItems": 1,
                     "items": { "type": ["string", "number"] },
-                    "description": "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title.",
+                    "description": "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, a date and time as value_date takes one, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title.",
                 },
                 "space_id": {
                     "type": "string",
@@ -1375,6 +1375,38 @@ async fn handle_update_block_content(
     with_warnings(&block, &warnings)
 }
 
+/// A `datetime` key's value as the agent wrote it, taken to its stored form
+/// (#6758): a time with no zone is the device's local time. One the reader
+/// does not read is left for the write to refuse.
+async fn read_datetime_value(
+    conn: &mut sqlx::SqliteConnection,
+    args: &mut SetPropertyArgs,
+) -> Result<(), AppError> {
+    use agaric_store::op::PropertyListItem;
+    if args.value_date.is_none() && args.value_list.is_none() {
+        return Ok(());
+    }
+    let declared =
+        agaric_engine::block_ops::block_property_declaration(conn, &args.block_id, &args.key)
+            .await?;
+    if declared.is_none_or(|decl| decl.value_type != "datetime") {
+        return Ok(());
+    }
+    let stored = |text: &mut String| {
+        let read = agaric_core::date_validation::read_datetime(text.trim(), &chrono::Local);
+        if let Some(read) = read {
+            *text = read.canonical;
+        }
+    };
+    args.value_date.iter_mut().for_each(stored);
+    for item in args.value_list.iter_mut().flat_map(|list| &mut list.0) {
+        if let PropertyListItem::Text(text) = item {
+            stored(text);
+        }
+    }
+    Ok(())
+}
+
 async fn handle_set_property(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -1385,6 +1417,7 @@ async fn handle_set_property(
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
     let space_id = normalize_ulid_arg(&args.space_id);
     let mut args = prepare_set_property(args)?;
+    read_datetime_value(&mut *pool.acquire().await?, &mut args).await?;
     let list = args.list_value();
     let block_id = args.block_id;
     // The exactly-one-value invariant is enforced inside
@@ -2520,6 +2553,7 @@ async fn set_property_in_batch(
 ) -> Result<Value, AppError> {
     let active_id =
         crate::ulid::verify_active_in_tx(tx, &BlockId::from_trusted(&args.block_id)).await?;
+    read_datetime_value(tx, &mut args).await?;
     if let Some(value) = args.list_value() {
         let set = set_property_list_in_tx(tx, loro, device_id, active_id, args.key, value);
         return to_tool_result(&set.await?);

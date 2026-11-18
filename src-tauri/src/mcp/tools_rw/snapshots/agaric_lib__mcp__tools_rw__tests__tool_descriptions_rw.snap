@@ -61,10 +61,10 @@ expression: wire
         description: "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions."
         type: boolean
       value_date:
-        description: ISO-8601 date (exactly one value_* must be set).
+        description: "A YYYY-MM-DD date, or under a datetime definition a date and time: `2026-11-14T09:30` in the device's local time, or with `Z` or an offset such as `+01:00` (exactly one value_* must be set)."
         type: string
       value_list:
-        description: "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title."
+        description: "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, a date and time as value_date takes one, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title."
         items:
           type:
             - string
@@ -387,10 +387,10 @@ expression: wire
                   description: "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions."
                   type: boolean
                 value_date:
-                  description: ISO-8601 date (exactly one value_* must be set).
+                  description: "A YYYY-MM-DD date, or under a datetime definition a date and time: `2026-11-14T09:30` in the device's local time, or with `Z` or an offset such as `+01:00` (exactly one value_* must be set)."
                   type: string
                 value_list:
-                  description: "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title."
+                  description: "The whole list, replacing the one the block holds (exactly one value_* must be set). Numbers under a number definition; strings otherwise: a YYYY-MM-DD date, a date and time as value_date takes one, one of a select's options, and under a ref definition a block ULID, `[[Title]]` or a page title."
                   items:
                     type:
                       - string

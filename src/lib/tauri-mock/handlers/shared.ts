@@ -27,6 +27,7 @@ import {
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
+import { isCanonicalDatetime, localDayStartUtc } from '@/lib/datetime-value'
 import { CROCKFORD_BASE32, ulidToDate } from '@/lib/format'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
@@ -188,6 +189,23 @@ export function assertValidDateFormat(s: string): void {
   if (!isJournalDayTitle(s)) {
     throw validationRejection(`expected YYYY-MM-DD format with calendar-valid date, got '${s}'`)
   }
+}
+
+/**
+ * A `value_date` under `key`: a datetime key's is its canonical UTC value
+ * (#6758), any other declared key's a calendar day, and an undeclared key's
+ * either.
+ */
+export function assertValidDateValue(spaceId: string | null, key: string, s: string): void {
+  const valueType = propertyDefinition(spaceId, key)?.['value_type']
+  if (valueType === 'datetime') {
+    if (!isCanonicalDatetime(s)) {
+      throw validationRejection(`expected a YYYY-MM-DDTHH:MMZ datetime for '${key}', got '${s}'`)
+    }
+    return
+  }
+  // The backend's `validate_property_value`: only a datetime key's slot holds a time.
+  assertValidDateFormat(s)
 }
 
 /** `YYYY-MM-DD` and a real calendar day: the backend's `validate_date_format`. */
@@ -583,7 +601,8 @@ export function assertValidListValue(
         : typeof item === 'string' &&
           valueType !== 'number' &&
           valueType !== 'boolean' &&
-          ((valueType !== 'date' && valueType !== 'ref') || coerce(item, valueType) === item)
+          ((valueType !== 'date' && valueType !== 'datetime' && valueType !== 'ref') ||
+            coerce(item, valueType) === item)
     if (!fits) {
       throw validationRejection(
         `Property '${key}' expects a list of '${valueType}', got the item ${JSON.stringify(item)}.`,
@@ -1376,9 +1395,38 @@ export function propertyValueColumn(
   }
 }
 
+/**
+ * #6758 — a day-only operand against a datetime value is the device's local
+ * day, `[start, nextStart)` in UTC: the bounds, or null for any other pair.
+ */
+function localDayBounds(held: string | number, wanted: string | number): [string, string] | null {
+  if (typeof held !== 'string' || typeof wanted !== 'string') return null
+  if (!isCanonicalDatetime(held) || !isIsoDate(wanted)) return null
+  const [y, m, d] = wanted.split('-').map(Number) as [number, number, number]
+  const next = new Date(0)
+  next.setUTCFullYear(y, m - 1, d + 1)
+  return [localDayStartUtc(wanted), localDayStartUtc(next.toISOString().slice(0, 10))]
+}
+
+/** `=`: the same value, or a datetime within an operand's local day. */
+function sameProperty(held: string | number, wanted: string | number): boolean {
+  const day = localDayBounds(held, wanted)
+  return day === null ? held === wanted : held >= day[0] && held < day[1]
+}
+
 /** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
- * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise. */
+ * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise; a
+ * datetime against a day-only operand compares with the local day's bounds. */
 export function compareProperty(op: string, a: string | number, b: string | number): boolean {
+  const day = localDayBounds(a, b)
+  if (day !== null) {
+    const held = a as string
+    if (op === 'Lt') return held < day[0]
+    if (op === 'Lte') return held < day[1]
+    if (op === 'Gt') return held >= day[1]
+    if (op === 'Gte') return held >= day[0]
+    return false
+  }
   // TEXT compares by UTF-8 bytes in SQLite where JS `<` compares UTF-16 code
   // units; numeric properties keep the numeric comparison.
   const cmp =
@@ -1434,7 +1482,7 @@ export function propertyEqMatches(
 ): boolean {
   const vc = propertyValueColumn(value)
   if (!prop || !vc) return false
-  return heldValues(prop, vc).includes(vc.wanted)
+  return heldValues(prop, vc).some((held) => sameProperty(held, vc.wanted))
 }
 
 /** `Lt`/`Gt`/`Lte`/`Gte`: ordered compare, value column guarded `IS NOT NULL`, or of a

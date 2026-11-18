@@ -581,13 +581,21 @@ fn map_fts_error(e: sqlx::Error) -> AppError {
 #[tracing::instrument(skip_all, err)]
 pub async fn compile_and_run(
     pool: &SqlitePool,
-    request: AdvancedQueryRequest,
+    mut request: AdvancedQueryRequest,
 ) -> Result<AdvancedQueryResponse, AppError> {
     // 1. Depth gate — bound the unbounded compile recursion.
     request.filter.validate_depth()?;
 
     // 2. Leaf gate — reject unsupported keys and malformed values before compiling.
     gate_leaves(&request.filter)?;
+
+    // 2b. Operands on the space's `datetime` keys, as stored instants (#6758).
+    crate::filters::datetime_operand::read_datetime_operands(
+        pool,
+        Some(std::slice::from_ref(&request.space_id)),
+        &mut request.filter,
+    )
+    .await?;
 
     let limit = validate_limit(request.limit)?;
 

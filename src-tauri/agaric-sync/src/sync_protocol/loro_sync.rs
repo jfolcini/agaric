@@ -1168,7 +1168,7 @@ async fn project_pass_defs(
     def_keys: &[String],
 ) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
     use agaric_engine::loro::projection::{
-        project_property_def_to_sql, reproject_key_values, str_column_for,
+        project_property_def_to_sql, reproject_key_values, retype_moves_str_values,
     };
     if def_keys.is_empty() {
         return Ok(Vec::new());
@@ -1179,8 +1179,10 @@ async fn project_pass_defs(
         for key in def_keys {
             let def = engine.read_property_def(key)?;
             let value_type = def.as_ref().map(|def| def.value_type.clone());
-            let retyped = str_column_for(declared.get(key).map(String::as_str))
-                != str_column_for(value_type.as_deref());
+            let retyped = retype_moves_str_values(
+                declared.get(key).map(String::as_str),
+                value_type.as_deref(),
+            );
             let holders = if retyped {
                 engine.read_property_holders(key)?
             } else {

@@ -55,6 +55,7 @@
 
 import { trailingBackslashRun } from '@/editor/markdown-parse/vocab'
 import type { PropertyDefinition, PropertyList } from '@/lib/bindings'
+import { parseDatetimeInput } from '@/lib/datetime-value'
 import { readFiniteNumber, splitListItems } from '@/lib/property-list'
 
 /**
@@ -243,6 +244,9 @@ export interface InlineSetPropertyParams {
  *     free text through would store a garbage date that downstream agenda
  *     code parses as ISO 8601. Anything else returns `null` — line stays
  *     literal,
+ *   - `datetime` → `valueDate`, the canonical UTC value `parseDatetimeInput`
+ *     reads (a zone-less time is the device's); a day alone or anything else
+ *     returns `null` — line stays literal (#6758),
  *   - `boolean` → only the exact strings `true` / `false` are accepted;
  *     anything else returns `null`. DIVERGENCE from the drawer, which maps
  *     any non-'true' string to `false` — fine for a checkbox UI, silent data
@@ -276,6 +280,10 @@ export function buildInlinePropertySetParams(
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
       return { blockId, key, valueDate: value }
     }
+    case 'datetime': {
+      const canonical = parseDatetimeInput(value)
+      return canonical === null ? null : { blockId, key, valueDate: canonical }
+    }
     case 'boolean': {
       if (value !== 'true' && value !== 'false') return null
       return { blockId, key, valueBool: value === 'true' }
@@ -301,6 +309,10 @@ function listItems(value: string, valueType: string): PropertyList | null {
       list.push(num)
     } else if (valueType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(item)) {
       return null
+    } else if (valueType === 'datetime') {
+      const canonical = parseDatetimeInput(item)
+      if (canonical === null) return null
+      list.push(canonical)
     } else {
       list.push(item)
     }

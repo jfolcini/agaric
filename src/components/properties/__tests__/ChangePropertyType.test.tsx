@@ -118,6 +118,40 @@ describe('ChangePropertyType', () => {
     expect(changeButton('due_date')).not.toBeInTheDocument()
   })
 
+  // #6758 — a datetime to date keeps its local day; the preview shows the time it drops.
+  it('previews a datetime to date as its local value and the day it becomes', async () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const user = userEvent.setup()
+      const defs = spacePropertyDefs(PERSONAL.id)
+      defs.set('context', { ...defs.get('context'), value_type: 'datetime' })
+      const held = properties.get(WELCOME) ?? new Map()
+      held.set('context', {
+        key: 'context',
+        value_text: null,
+        value_num: null,
+        value_date: '2026-11-14T08:30Z',
+        value_ref: null,
+        value_bool: null,
+      })
+      properties.set(WELCOME, held)
+      render(<PropertyDefinitionsList />)
+      const dialog = await pickType('date')
+
+      expect(await within(dialog).findByText(converts(1))).toBeInTheDocument()
+      await user.click(
+        within(dialog).getByRole('tab', {
+          name: t('propertiesView.typeChangeConvertedTab', { count: 1 }),
+        }),
+      )
+      expect(await within(dialog).findByText('2026-11-14 09:30 → 2026-11-14')).toBeInTheDocument()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('previews the counts and lists the blocks of each tab', async () => {
     const user = userEvent.setup()
     await setContext(WELCOME, '042')

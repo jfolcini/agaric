@@ -218,6 +218,7 @@ export const properties: Record<string, string> = {
   'property.addProperty': 'Adicionar propriedade',
   'property.invalidNumber': 'Valor numérico inválido',
   'property.invalidBoolean': 'Valor booleano inválido — use true ou false',
+  'property.invalidDatetime': 'Data e hora inválidas: use AAAA-MM-DD HH:MM',
   'property.deleteConfirm': 'Excluir esta propriedade?',
   'property.deleteConfirmDesc': 'Isso removerá a propriedade do bloco.',
   'property.createDefFailed': 'Não foi possível criar a definição da propriedade',
@@ -374,6 +375,13 @@ export const properties: Record<string, string> = {
   'propertiesView.convertInTrash_other': '{{count}} na Lixeira',
   'propertiesView.convertReplacementLabel': 'Substituto para {{value}}',
   'propertiesView.convertLeave': 'Deixar como está',
+  'propertiesView.convertAllDaysTimeLabel': 'Hora para todos os dias',
+  'propertiesView.convertAllDaysConfirm_one': 'Definir {{count}} dia para esta hora',
+  'propertiesView.convertAllDaysConfirm_other': 'Definir todos os {{count}} para esta hora',
+  'propertiesView.convertAllDaysSkipped_one':
+    '{{count}} dia fica como está: essa hora não existe em {{days}}',
+  'propertiesView.convertAllDaysSkipped_other':
+    '{{count}} dias ficam como estão: essa hora não existe em {{days}}',
   'propertiesView.convertSummary_one': '{{count}} bloco será alterado.',
   'propertiesView.convertSummary_other': '{{count}} blocos serão alterados.',
   'propertiesView.convertConfirm_one': 'Converter {{count}}',
@@ -501,6 +509,8 @@ export const properties: Record<string, string> = {
   'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
   'property.dateParseError': 'Não foi possível interpretar a data',
   'property.dateParsing': 'Interpretando…',
+  'property.datetimeDateLabel': '{{label}}, data',
+  'property.datetimeTimeLabel': '{{label}}, hora',
   'property.repeatHelpLabel': 'Ajuda da sintaxe de repetição',
   'property.repeatHelpTitle': 'Sintaxe de repetição',
   'property.repeatHelpCatchup':

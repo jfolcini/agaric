@@ -15,6 +15,7 @@ import type {
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
+import { parseDatetimeInput } from '@/lib/datetime-value'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -40,7 +41,7 @@ export interface SetPropertyParams {
 
 export type BuildResult =
   | { ok: true; params: SetPropertyParams }
-  | { ok: false; error: 'invalidNumber' }
+  | { ok: false; error: 'invalidNumber' | 'invalidDatetime' }
 
 /** A built-in property definition: fixed in code, the same in every vault. */
 export interface BuiltinPropertyDef {
@@ -132,8 +133,17 @@ const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'space',
 ])
 
-/** The seven `value_type`s `create_property_def_inner` accepts. */
-const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'])
+/** The `value_type`s `create_property_def_inner` accepts. */
+const DEFINABLE_VALUE_TYPES = new Set([
+  'text',
+  'number',
+  'date',
+  'datetime',
+  'select',
+  'ref',
+  'boolean',
+  'url',
+])
 
 /**
  * Types with no valid empty initializer: the backend refuses an empty
@@ -209,7 +219,8 @@ export function carriedRenameDefinition(
       case 'number': {
         return oldRow.value_num != null
       }
-      case 'date': {
+      case 'date':
+      case 'datetime': {
         return oldRow.value_date != null
       }
       case 'boolean': {
@@ -370,6 +381,10 @@ export function buildInitParams(
       // users in negative-offset timezones.
       return { blockId, key: def.key, valueDate: getTodayString() }
     }
+    case 'datetime': {
+      // The current minute, as the canonical UTC value.
+      return { blockId, key: def.key, valueDate: `${new Date().toISOString().slice(0, 16)}Z` }
+    }
     case 'boolean': {
       // A freshly-added boolean property defaults to false.
       return { blockId, key: def.key, valueBool: false }
@@ -385,7 +400,8 @@ export function buildInitParams(
  *
  * Handles number validation and type-appropriate field mapping.
  * Returns `{ ok: false, error: 'invalidNumber' }` when the raw value
- * looks non-empty but cannot be parsed as a number.
+ * looks non-empty but cannot be parsed as a number, and `'invalidDatetime'`
+ * when a datetime's names no instant (`parseDatetimeInput`).
  */
 export function buildPropertyParams(
   blockId: string,
@@ -406,6 +422,12 @@ export function buildPropertyParams(
   }
   if (valueType === 'date') {
     return { ok: true, params: { blockId, key, valueDate: value || null } }
+  }
+  if (valueType === 'datetime') {
+    if (value === '') return { ok: true, params: { blockId, key, valueDate: null } }
+    const canonical = parseDatetimeInput(value)
+    if (canonical === null) return { ok: false, error: 'invalidDatetime' }
+    return { ok: true, params: { blockId, key, valueDate: canonical } }
   }
   if (valueType === 'boolean') {
     // Boolean values are passed in as 'true'/'false' (or '' to clear).

@@ -222,6 +222,7 @@ export const properties: Record<string, string> = {
   'property.addProperty': 'Ajouter une propriété',
   'property.invalidNumber': 'Valeur numérique non valide',
   'property.invalidBoolean': 'Valeur booléenne non valide — utilisez true ou false',
+  'property.invalidDatetime': 'Date et heure non valides : utilisez AAAA-MM-JJ HH:MM',
   'property.deleteConfirm': 'Supprimer cette propriété\u00A0?',
   'property.deleteConfirmDesc': 'La propriété sera retirée du bloc.',
   'property.createDefFailed': 'Impossible de créer la définition de propriété',
@@ -380,6 +381,13 @@ export const properties: Record<string, string> = {
   'propertiesView.convertInTrash_other': '{{count}} dans la corbeille',
   'propertiesView.convertReplacementLabel': 'Remplacement de {{value}}',
   'propertiesView.convertLeave': 'Laisser tel quel',
+  'propertiesView.convertAllDaysTimeLabel': 'Heure pour chaque jour',
+  'propertiesView.convertAllDaysConfirm_one': 'Mettre {{count}} jour à cette heure',
+  'propertiesView.convertAllDaysConfirm_other': 'Mettre les {{count}} à cette heure',
+  'propertiesView.convertAllDaysSkipped_one':
+    '{{count}} jour laissé tel quel : cette heure n’existe pas le {{days}}',
+  'propertiesView.convertAllDaysSkipped_other':
+    '{{count}} jours laissés tels quels : cette heure n’existe pas le {{days}}',
   'propertiesView.convertSummary_one': '{{count}} bloc sera modifié.',
   'propertiesView.convertSummary_other': '{{count}} blocs seront modifiés.',
   'propertiesView.convertConfirm_one': 'Convertir {{count}}',
@@ -510,6 +518,8 @@ export const properties: Record<string, string> = {
   'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
   'property.dateParseError': 'Impossible d’interpréter la date',
   'property.dateParsing': 'Analyse…',
+  'property.datetimeDateLabel': '{{label}}, date',
+  'property.datetimeTimeLabel': '{{label}}, heure',
   'property.repeatHelpLabel': 'Aide sur la syntaxe de répétition',
   'property.repeatHelpTitle': 'Syntaxe de répétition',
   'property.repeatHelpCatchup':

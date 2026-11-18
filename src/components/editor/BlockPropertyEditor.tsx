@@ -19,6 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { unwrap } from '@/lib/app-error'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { formatDatetimeForDisplay } from '@/lib/datetime-value'
 import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -515,11 +516,12 @@ export function BlockPropertyEditor({
           type="text"
           className="rounded border px-2 py-1 text-sm w-32"
           aria-label={t('block.editProperty')}
-          defaultValue={editingProp.value}
+          // A datetime is edited as its local `YYYY-MM-DD HH:MM` (#6758).
+          defaultValue={formatDatetimeForDisplay(editingProp.value)}
           onBlur={(e) =>
             void (async () => {
               const newValue = e.target.value.trim()
-              if (newValue !== editingProp.value) {
+              if (newValue !== formatDatetimeForDisplay(editingProp.value)) {
                 // #4010 (clear half) — an emptied chip means "remove this
                 // value", and for a user-defined key that is only expressible
                 // as a delete. `buildPropertyParams` would send `value_text:
@@ -619,7 +621,13 @@ export function BlockPropertyEditor({
                   resolvedValueType,
                 )
                 if (!result.ok) {
-                  notify.error(t('property.invalidNumber'))
+                  notify.error(
+                    t(
+                      result.error === 'invalidDatetime'
+                        ? 'property.invalidDatetime'
+                        : 'property.invalidNumber',
+                    ),
+                  )
                 } else {
                   try {
                     unwrap(

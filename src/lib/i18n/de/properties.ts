@@ -222,6 +222,7 @@ export const properties: Record<string, string> = {
   'property.addProperty': 'Eigenschaft hinzufügen',
   'property.invalidNumber': 'Ungültiger Zahlenwert',
   'property.invalidBoolean': 'Ungültiger Wahrheitswert — verwende true oder false',
+  'property.invalidDatetime': 'Ungültiges Datum mit Uhrzeit – verwende JJJJ-MM-TT HH:MM',
   'property.deleteConfirm': 'Diese Eigenschaft löschen?',
   'property.deleteConfirmDesc': 'Dadurch wird die Eigenschaft aus dem Block entfernt.',
   'property.createDefFailed': 'Eigenschaftsdefinition konnte nicht erstellt werden',
@@ -381,6 +382,13 @@ export const properties: Record<string, string> = {
   'propertiesView.convertInTrash_other': '{{count}} im Papierkorb',
   'propertiesView.convertReplacementLabel': 'Ersatz für {{value}}',
   'propertiesView.convertLeave': 'Unverändert lassen',
+  'propertiesView.convertAllDaysTimeLabel': 'Uhrzeit für jeden Tag',
+  'propertiesView.convertAllDaysConfirm_one': '{{count}} Tag auf diese Uhrzeit setzen',
+  'propertiesView.convertAllDaysConfirm_other': 'Alle {{count}} auf diese Uhrzeit setzen',
+  'propertiesView.convertAllDaysSkipped_one':
+    '{{count}} Tag bleibt unverändert: Diese Uhrzeit gibt es am {{days}} nicht',
+  'propertiesView.convertAllDaysSkipped_other':
+    '{{count}} Tage bleiben unverändert: Diese Uhrzeit gibt es am {{days}} nicht',
   'propertiesView.convertSummary_one': '{{count}} Block wird geändert.',
   'propertiesView.convertSummary_other': '{{count}} Blöcke werden geändert.',
   'propertiesView.convertConfirm_one': '{{count}} umwandeln',
@@ -508,6 +516,8 @@ export const properties: Record<string, string> = {
   'property.datePlaceholder': 'today, +3d, Apr 15, 2025-04-15',
   'property.dateParseError': 'Datum konnte nicht erkannt werden',
   'property.dateParsing': 'Wird erkannt…',
+  'property.datetimeDateLabel': '{{label}}, Datum',
+  'property.datetimeTimeLabel': '{{label}}, Uhrzeit',
   'property.repeatHelpLabel': 'Hilfe zur Wiederholungssyntax',
   'property.repeatHelpTitle': 'Wiederholungssyntax',
   'property.repeatHelpCatchup':

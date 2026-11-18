@@ -2539,6 +2539,14 @@ fn oracle_is_date(s: &str) -> bool {
             .is_ok_and(|date| date.format("%Y-%m-%d").to_string() == s)
 }
 
+/// `s` is a `datetime` property's stored form, `YYYY-MM-DDTHH:MMZ` (#6758).
+fn oracle_is_datetime(s: &str) -> bool {
+    const STORED: &str = "%Y-%m-%dT%H:%MZ";
+    s.len() == 17
+        && chrono::NaiveDateTime::parse_from_str(s, STORED)
+            .is_ok_and(|at| at.format(STORED).to_string() == s)
+}
+
 /// One `block_properties` value, by the column that holds it.
 #[derive(Debug, Clone, PartialEq)]
 enum PropertyCell {
@@ -2583,9 +2591,10 @@ fn stored_cell(row: &BaseProperty) -> Option<PropertyCell> {
 /// * a number, a boolean: its own column, whatever the type; a null: no row;
 /// * a list: `value_list`, whatever the type; under a ref key only the items
 ///   whose block has a row, and no row when none has;
-/// * a string under a number, boolean or date key: that column when it parses
-///   as the type (trimmed and finite, exactly `true` / `false`, a strict
-///   calendar date), else `value_text`;
+/// * a string under a number, boolean, date or datetime key: that column
+///   (`value_date` for a datetime) when it parses as the type (trimmed and
+///   finite, exactly `true` / `false`, a strict calendar date, a stored
+///   `YYYY-MM-DDTHH:MMZ`), else `value_text`;
 /// * a string under a ref key: `value_ref`, uppercased, when it is a ULID whose
 ///   block has a row, no row when that block has none (the FK guard, and the
 ///   purge cascade that deletes a row its target takes with it), else
@@ -2643,6 +2652,11 @@ fn admissible_rows(
             _ => text,
         }],
         Some("date") => vec![as_date.unwrap_or(text)],
+        Some("datetime") => vec![if oracle_is_datetime(s) {
+            Some(C::Date(s.clone()))
+        } else {
+            text
+        }],
         Some("ref") => vec![as_ref.unwrap_or(text)],
         _ => std::iter::once(text).chain(as_ref).chain(as_date).collect(),
     }

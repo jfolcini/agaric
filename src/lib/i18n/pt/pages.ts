@@ -425,6 +425,7 @@ export const pages: Record<string, string> = {
   'pageProperty.textType': 'texto',
   'pageProperty.numberType': 'número',
   'pageProperty.dateType': 'data',
+  'pageProperty.datetimeType': 'data e hora',
   'pageProperty.selectType': 'seleção',
   'pageProperty.refType': 'referência',
   'pageProperty.booleanType': 'booleano',

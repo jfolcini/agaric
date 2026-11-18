@@ -30,6 +30,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   assertValidDateFormat,
+  assertValidDateValue,
   assertValidListValue,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
@@ -638,7 +639,7 @@ export const propertiesHandlers = {
     // `value_date` is a non-blank calendar day.
     if (v.valueDate !== null) {
       if (v.valueDate.trim() === '') throw validationRejection('set_property.value_date.empty')
-      assertValidDateFormat(v.valueDate)
+      assertValidDateValue(defSpace, key, v.valueDate)
     }
     // `fetch_live_block_in_tx`.
     const target = blocks.get(blockId)
@@ -1013,7 +1014,8 @@ export const propertiesHandlers = {
         // `(date, block_id)` and `column:due_date` outranks `column:scheduled_date`
         // in `DESIRED_AGENDA_SQL`. Only those two column sources are modelled
         // here. `DESIRED_AGENDA_SQL` also derives `property:<key>` (from any
-        // `block_properties.value_date`) and `tag:<tag_id>`, and both outrank the
+        // `block_properties.value_date` that is a day, never a datetime) and
+        // `tag:<tag_id>`, and both outrank the
         // columns — so a block carrying a custom date property on the same day
         // as its `due_date` is `property:<key>` on the backend and
         // `column:due_date` here.

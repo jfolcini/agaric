@@ -11,17 +11,20 @@
  * start from the value, an item it can read or a list's items. Each
  * value sends the counts it showed as its acknowledgement; when the backend
  * refuses that, the step says so and reads the values again, keeping what
- * was typed for each value.
+ * was typed for each value. A datetime key's day values (#6758) can all take
+ * one local time at once: each becomes that day at that time, a day the time
+ * does not exist on is left as it is and named.
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { SearchCheck } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { DatetimeInput } from '@/components/properties/DatetimeInput'
 import { parseSelectOptions } from '@/components/properties/PropertyRowEditor/shared'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
@@ -45,9 +48,11 @@ import type {
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { isCanonicalDatetime, localPartsToDatetime } from '@/lib/datetime-value'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 export interface ConvertUnfitValuesProps {
@@ -115,6 +120,24 @@ export function ConvertUnfitValues({
   const draftOf = (value: string): string => drafts[value] ?? (startsFromValue ? value : '')
   const mapped = groups.filter((group) => draftOf(group.value) !== '')
   const blocks = mapped.reduce((sum, group) => sum + group.unfit + group.unfit_in_trash, 0)
+  const setsAllDays = type === 'datetime' && !several
+  // "Set all N" covers every day value in one write, so every page is read first.
+  useEffect(() => {
+    if (setsAllDays && hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [setsAllDays, hasNextPage, isFetchingNextPage, fetchNextPage])
+  const days = setsAllDays && !hasNextPage ? groups.filter((g) => isIsoDate(g.value)) : []
+  const [skipped, setSkipped] = useState<string[]>([])
+  const setAllDays = (time: string): void => {
+    const filled: Record<string, string> = {}
+    const left: string[] = []
+    for (const { value } of days) {
+      const canonical = localPartsToDatetime(value, time)
+      if (canonical === null) left.push(value)
+      else filled[value] = canonical
+    }
+    setDrafts((prev) => ({ ...prev, ...filled }))
+    setSkipped(left)
+  }
 
   const convert = async (): Promise<void> => {
     setWriting(true)
@@ -191,6 +214,20 @@ export function ConvertUnfitValues({
           {t('propertiesView.typeChangeCountsChanged')}
         </p>
       )}
+      {days.length > 0 && (
+        <AllDaysTime
+          count={days.reduce((sum, group) => sum + group.unfit + group.unfit_in_trash, 0)}
+          onSet={setAllDays}
+        />
+      )}
+      {skipped.length > 0 && (
+        <output className="block text-muted-foreground">
+          {t('propertiesView.convertAllDaysSkipped', {
+            count: skipped.length,
+            days: skipped.join(', '),
+          })}
+        </output>
+      )}
       {list()}
       <p>{t('propertiesView.convertSummary', { count: blocks })}</p>
     </div>
@@ -218,6 +255,32 @@ export function ConvertUnfitValues({
 }
 
 type Translate = ReturnType<typeof useTranslation>['t']
+
+/** One local time for every day value, midnight to begin with. */
+function AllDaysTime({
+  count,
+  onSet,
+}: {
+  count: number
+  onSet: (time: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const [time, setTime] = useState('00:00')
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        className="w-auto"
+        type="time"
+        value={time}
+        onChange={(e) => setTime(e.target.value)}
+        aria-label={t('propertiesView.convertAllDaysTimeLabel')}
+      />
+      <Button variant="outline" disabled={time === ''} onClick={() => onSet(time)}>
+        {t('propertiesView.convertAllDaysConfirm', { count })}
+      </Button>
+    </div>
+  )
+}
 
 /** A boolean's two values, or a select's options; null when the key takes typed text. */
 function choicesFor(definition: PropertyDefinition, t: Translate): Choice[] | null {
@@ -250,7 +313,10 @@ interface ReplacementInputProps {
   onDraft: (draft: string) => void
 }
 
-/** A choice among `choices` and Leave as it is, or an input for the type's text. */
+/**
+ * A choice among `choices` and Leave as it is, or an input for the type's text;
+ * a datetime's a date and a time, its draft the canonical value (#6758).
+ */
 function ReplacementInput({
   label,
   type,
@@ -259,6 +325,15 @@ function ReplacementInput({
   onDraft,
 }: ReplacementInputProps): React.ReactElement {
   const { t } = useTranslation()
+  if (choices === null && type === 'datetime') {
+    return (
+      <DatetimeInput
+        value={isCanonicalDatetime(draft) ? draft : null}
+        ariaLabel={label}
+        onCommit={onDraft}
+      />
+    )
+  }
   if (choices === null) {
     return (
       <Input
