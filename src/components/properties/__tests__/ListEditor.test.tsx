@@ -6,7 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -207,6 +207,44 @@ describe('ListEditor', () => {
     await user.type(addInput(), 'someday soon{Enter}')
 
     expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  // #6758 — each item a canonical UTC value, shown and added in local time.
+  it('a datetime list shows its items locally and adds a local date and time as UTC', async () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const user = userEvent.setup()
+      stubInvoke({ set_property: () => written })
+      const { rerender } = renderList(listDef('datetime'), ['2026-11-14T08:30Z'])
+      expect(screen.getByText('2026-11-14 09:30')).toBeInTheDocument()
+
+      const label = t('property.addListItem', { key: 'tags' })
+      await user.type(
+        screen.getByLabelText(t('property.datetimeDateLabel', { label })),
+        '2026-11-20',
+      )
+      const time = screen.getByLabelText(t('property.datetimeTimeLabel', { label }))
+      fireEvent.change(time, { target: { value: '18:05' } })
+      fireEvent.keyDown(time, { key: 'Enter' })
+
+      await waitFor(() => expect(writtenList()).toEqual(['2026-11-14T08:30Z', '2026-11-20T17:05Z']))
+      rerender(
+        <PropertyRowEditor
+          blockId="BLOCK_1"
+          prop={makePropertyRow({
+            key: 'tags',
+            value_list: ['2026-11-14T08:30Z', '2026-11-20T17:05Z'],
+          })}
+          def={listDef('datetime')}
+          onSave={vi.fn()}
+        />,
+      )
+      expect(screen.getByLabelText(t('property.datetimeTimeLabel', { label }))).toHaveValue('')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('a select list offers only the options not yet in it, and adds the one picked', async () => {

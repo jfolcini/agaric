@@ -23,7 +23,16 @@ export function formatPropertyName(key: string): string {
 }
 
 /** The `value_type`s a definition can have. */
-export const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
+export const VALUE_TYPES = [
+  'text',
+  'number',
+  'date',
+  'datetime',
+  'select',
+  'ref',
+  'boolean',
+  'url',
+] as const
 
 /** A definition's type as the definitions show it: `select`, or `select · several values` for a list. */
 export function valueTypeLabel(

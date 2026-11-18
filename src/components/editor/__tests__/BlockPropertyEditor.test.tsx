@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 /**
@@ -161,6 +161,7 @@ import {
   BlockPropertyEditor,
   type BlockPropertyEditorProps,
 } from '@/components/editor/BlockPropertyEditor'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { useSpaceStore } from '@/stores/space'
@@ -430,6 +431,70 @@ describe('BlockPropertyEditor', () => {
         expect(mockToastError).toHaveBeenCalledWith('Invalid number value')
       })
       expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+
+    // #6758 — the chip edits a datetime as its local `YYYY-MM-DD HH:MM` and saves it as UTC.
+    describe('datetime', () => {
+      afterEach(() => {
+        vi.unstubAllEnvs()
+      })
+      /** Berlin is UTC+1 in November; a worker that ignores `TZ` (Stryker's threads) skips. */
+      function inBerlin(): boolean {
+        vi.stubEnv('TZ', 'Europe/Berlin')
+        return new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() === 9
+      }
+      const setEditingProp = vi.fn()
+      const renderDatetime = () =>
+        render(
+          <BlockPropertyEditor
+            {...makeProps({
+              editingProp: { key: 'meeting', value: '2026-11-14T08:30Z' },
+              valueType: 'datetime',
+              setEditingProp,
+            })}
+          />,
+        )
+
+      it('shows the local value and commits an edit as the canonical UTC value_date', async () => {
+        if (!inBerlin()) return
+        renderDatetime()
+        const input = screen.getByRole('textbox')
+        expect(input).toHaveValue('2026-11-14 09:30')
+        fireEvent.change(input, { target: { value: '2026-11-14 10:15' } })
+        fireEvent.blur(input)
+
+        await waitFor(() => {
+          expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'meeting', {
+            value_text: null,
+            value_num: null,
+            value_date: '2026-11-14T09:15Z',
+            value_ref: null,
+            value_bool: null,
+          })
+        })
+      })
+
+      it('writes nothing for an untouched value', async () => {
+        if (!inBerlin()) return
+        renderDatetime()
+        fireEvent.blur(screen.getByRole('textbox'))
+        await waitFor(() => {
+          expect(setEditingProp).toHaveBeenCalledWith(null)
+        })
+        expect(mockSetProperty).not.toHaveBeenCalled()
+      })
+
+      it('refuses a value that names no instant, a day alone included', async () => {
+        renderDatetime()
+        const input = screen.getByRole('textbox')
+        fireEvent.change(input, { target: { value: '2026-11-14' } })
+        fireEvent.blur(input)
+
+        await waitFor(() => {
+          expect(mockToastError).toHaveBeenCalledWith(t('property.invalidDatetime'))
+        })
+        expect(mockSetProperty).not.toHaveBeenCalled()
+      })
     })
 
     it('carries the typed value_num column over on key rename instead of nulling it', async () => {

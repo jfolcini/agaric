@@ -78,7 +78,7 @@ export function propertySortFields(defs: readonly PropertyDefinition[]): Propert
         toSort: (dir: SortDir): BacklinkSort =>
           def.value_type === 'number'
             ? { type: 'PropertyNum', key, dir }
-            : def.value_type === 'date'
+            : def.value_type === 'date' || def.value_type === 'datetime'
               ? { type: 'PropertyDate', key, dir }
               : { type: 'PropertyText', key, dir },
       }

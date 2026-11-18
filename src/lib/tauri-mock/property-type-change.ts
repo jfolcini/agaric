@@ -13,6 +13,11 @@
  */
 
 import type { ListSeparator, PropertyTypeChangeCounts } from '@/lib/bindings'
+import {
+  datetimeToLocalParts,
+  formatDatetimeWithOffset,
+  isCanonicalDatetime,
+} from '@/lib/datetime-value'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import {
@@ -52,17 +57,31 @@ export interface TypeTarget {
   separator: ListSeparator | null
 }
 
-/** `ConversionRule::item`: `coerce`, then a select's options. */
-function convertItem(value: HeldValue, to: DefState): HeldValue | null {
-  const converted = coerce(value, to.value_type)
+/**
+ * #6758 — what a datetime becomes under another type: its local day under
+ * `date`, its local time with its offset under text and url (as Markdown
+ * writes it); under any other type, what `coerce` makes of it.
+ */
+function fromDatetime(value: string, to: string): HeldValue | null {
+  if (to === 'date') return datetimeToLocalParts(value).date
+  if (to === 'text' || to === 'url') return formatDatetimeWithOffset(value)
+  return coerce(value, to)
+}
+
+/** `ConversionRule::item`: `coerce`, then a select's options; a datetime's own rule first. */
+function convertItem(value: HeldValue, to: DefState, from: string): HeldValue | null {
+  const converted =
+    from === 'datetime' && typeof value === 'string' && isCanonicalDatetime(value)
+      ? fromDatetime(value, to.value_type)
+      : coerce(value, to.value_type)
   if (to.value_type !== 'select' || converted === null) return converted
   const options = JSON.parse(to.options ?? '[]') as string[]
   return typeof converted === 'string' && options.includes(converted) ? converted : null
 }
 
 /** `ConversionRule::list`: every item converted, and at least one, or null. */
-function convertList(items: readonly HeldValue[], to: DefState): Held | null {
-  const converted = items.map((item) => convertItem(item, to))
+function convertList(items: readonly HeldValue[], to: DefState, from: string): Held | null {
+  const converted = items.map((item) => convertItem(item, to, from))
   const fits = converted.length > 0 && converted.every((item) => typeof item !== 'boolean')
   return fits && !converted.includes(null) ? (converted as (string | number)[]) : null
 }
@@ -73,21 +92,27 @@ function convertList(items: readonly HeldValue[], to: DefState): Held | null {
  * parts its text splits into at the separator; a list of one item becomes that
  * item, and a longer one only a text or URL, joined by the separator.
  */
-function convert(value: Held, to: DefState, separator: ListSeparator | null): Held | null {
+function convert(
+  value: Held,
+  to: DefState,
+  from: string,
+  separator: ListSeparator | null,
+): Held | null {
   if (isList(value)) {
-    if (to.multiple === true) return convertList(value, to)
-    if (value.length === 1) return convertItem(value[0] as HeldValue, to)
+    if (to.multiple === true) return convertList(value, to, from)
+    if (value.length === 1) return convertItem(value[0] as HeldValue, to, from)
     const joins = separator !== null && (to.value_type === 'text' || to.value_type === 'url')
     return joins ? value.map(heldText).join(separator === 'comma' ? ', ' : '; ') : null
   }
-  if (to.multiple !== true) return convertItem(value, to)
-  if (typeof value !== 'string' || separator === null) return convertList([value], to)
+  if (to.multiple !== true) return convertItem(value, to, from)
+  if (typeof value !== 'string' || separator === null) return convertList([value], to, from)
   const parts = value
     .split(separator === 'comma' ? ',' : ';')
     .map((part) => part.replace(RUST_TRIM, ''))
   return convertList(
     parts.filter((part) => part !== ''),
     to,
+    from,
   )
 }
 
@@ -127,9 +152,10 @@ function heldValues(
   to: DefState,
   separator: ListSeparator | null,
 ): HeldRow[] {
+  const from = defState(userDef(spaceId, key)).value_type
   return rowHolders(spaceId, key).map((blockId) => {
     const value = heldValueOf(properties.get(blockId)?.get(key) ?? {}) as Held
-    return { blockId, value, converted: convert(value, to, separator) }
+    return { blockId, value, converted: convert(value, to, from, separator) }
   })
 }
 
@@ -251,6 +277,7 @@ const DECLARED_SLOTS: Readonly<Record<string, readonly string[]>> = {
   ref: ['value_ref'],
   number: ['value_num'],
   date: ['value_date'],
+  datetime: ['value_date'],
   boolean: ['value_bool'],
   url: ['value_text'],
 }
@@ -262,7 +289,9 @@ const DECLARED_SLOTS: Readonly<Record<string, readonly string[]>> = {
  */
 function fitsDeclaredType(fields: Row, valueType: string): boolean {
   if (!admitsShape(fields, valueType)) return false
-  return fields['value_date'] == null || isIsoDate(fields['value_date'] as string)
+  const date = fields['value_date'] as string | null | undefined
+  if (date == null) return true
+  return valueType === 'datetime' ? isCanonicalDatetime(date) : isIsoDate(date)
 }
 
 /** `declared_type_admits_shape`: `fields` are in a slot `valueType` takes. */

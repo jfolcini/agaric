@@ -6,6 +6,7 @@
  * `property-type-change.ts` can both import it.
  */
 
+import { parseDatetimeInput } from '@/lib/datetime-value'
 import { joinListItems, readFiniteNumber } from '@/lib/property-list'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
@@ -29,6 +30,8 @@ const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 const STRING_COERCIONS: Readonly<Record<string, (s: string) => HeldValue | null>> = {
   number: (s) => readFiniteNumber(s.replace(RUST_TRIM, '')),
   date: (s) => (isIsoDate(s) ? s : null),
+  // #6758 — what a datetime reads, as its canonical UTC value; a day alone is none.
+  datetime: parseDatetimeInput,
   boolean: (s) => (s === 'true' ? true : s === 'false' ? false : null),
   ref: (s) => (ULID.test(s) ? s.toUpperCase() : null),
 }

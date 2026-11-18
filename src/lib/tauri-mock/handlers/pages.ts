@@ -22,6 +22,11 @@ import { base64UrlToUtf8 } from '@/lib/base64url'
 import type { PageHeading } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import {
+  formatDatetimeWithOffset,
+  isCanonicalDatetime,
+  parseDatetimeInput,
+} from '@/lib/datetime-value'
+import {
   INLINE_PROPERTY_RESERVED_KEYS,
   foldPropertyKey,
   isInlinePropertyKey,
@@ -38,6 +43,7 @@ import {
   appErrorRejection,
   assertTagFilterWithinCap,
   assertValidDateFormat,
+  assertValidDateValue,
   assertValidListValue,
   assertValidSetPropertyValue,
   blockLastEditedAt,
@@ -337,7 +343,8 @@ const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
 /**
  * `frontmatter_row_value` with no titles: a ref value is its id. A list is one
  * line of text (#6741), and so is a text under a key `def` says holds a list:
- * a list of one, which reads back as one item.
+ * a list of one, which reads back as one item. A datetime (#6758) is its local
+ * time with its offset, which reads back as the same instant.
  */
 function frontMatterValue(
   row: Record<string, unknown>,
@@ -349,7 +356,11 @@ function frontMatterValue(
     return joinListItems([row['value_text']])
   }
   const text = row['value_date'] ?? row['value_text'] ?? row['value_ref']
-  if (typeof text === 'string') return text
+  if (typeof text === 'string') {
+    return isCanonicalDatetime(text) && row['value_date'] === text
+      ? formatDatetimeWithOffset(text)
+      : text
+  }
   if (typeof row['value_num'] === 'number') return String(row['value_num'])
   return row['value_bool'] == null ? '' : String(row['value_bool'] !== 0)
 }
@@ -1171,6 +1182,8 @@ function lineColumns(spaceId: string | null, key: string, value: string): Record
     return { value_bool: word.toLowerCase() === 'true' }
   }
   if (type === 'date') return { value_date: value }
+  // #6758 — what the datetime reads, as its canonical value; one it does not is refused.
+  if (type === 'datetime') return { value_date: parseDatetimeInput(word) ?? value }
   return { value_text: value }
 }
 
@@ -1198,7 +1211,8 @@ function checkValue(spaceId: string | null, key: string, value: string): void {
     return
   }
   assertValidSetPropertyValue(spaceId, key, value)
-  if (lineColumns(spaceId, key, value)['value_date'] !== undefined) assertValidDateFormat(value)
+  const date = lineColumns(spaceId, key, value)['value_date'] as string | undefined
+  if (date !== undefined) assertValidDateValue(spaceId, key, date)
   if (def?.['value_type'] === 'ref') resolveRefValue(value, spaceId)
 }
 

@@ -15,9 +15,9 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
@@ -463,6 +463,84 @@ describe('PropertyRowEditor NL date input', () => {
       t('pageProperty.valueLabel', { key: 'due' }),
     ) as HTMLInputElement
     expect(input.placeholder).toBe(t('property.datePlaceholder'))
+  })
+})
+
+// #6758 — a datetime row is a date and a time in the device's time zone.
+describe('PropertyRowEditor datetime input', () => {
+  const label = t('pageProperty.valueLabel', { key: 'meeting' })
+  const dateInput = () => screen.getByLabelText(t('property.datetimeDateLabel', { label }))
+  const timeInput = () => screen.getByLabelText(t('property.datetimeTimeLabel', { label }))
+  /** Berlin is UTC+1 in November; a worker that ignores `TZ` (Stryker's threads) skips. */
+  function inBerlin(): boolean {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    return new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() === 9
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('saves a typed local date and time as the canonical UTC value, once both are set', async () => {
+    if (!inBerlin()) return
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    const { container } = render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('meeting', { value_text: 'soon' })}
+        def={makeDef('meeting', 'datetime')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+    expect(dateInput()).toHaveValue('')
+    await user.type(dateInput(), '2026-11-14')
+    await user.tab()
+    expect(onSave).not.toHaveBeenCalled()
+    fireEvent.change(timeInput(), { target: { value: '09:30' } })
+    fireEvent.blur(timeInput())
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledWith('2026-11-14T08:30Z')
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('starts empty on a day that does not fit, never reading it as a time', () => {
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('meeting', { value_date: '2026-11-14' })}
+        def={makeDef('meeting', 'datetime')}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    )
+    expect(dateInput()).toHaveValue('')
+    expect(timeInput()).toHaveValue('')
+  })
+
+  it('writes nothing when an untouched value is left', () => {
+    if (!inBerlin()) return
+    const onSave = vi.fn()
+    render(
+      <PropertyRowEditor
+        blockId="BLOCK_1"
+        prop={makeProp('meeting', { value_date: '2026-11-14T08:30Z' })}
+        def={makeDef('meeting', 'datetime')}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />,
+    )
+    expect(dateInput()).toHaveValue('2026-11-14')
+    expect(timeInput()).toHaveValue('09:30')
+    fireEvent.blur(dateInput())
+    fireEvent.blur(timeInput())
+    // Positive control: an edit to the same field does save.
+    expect(onSave).not.toHaveBeenCalled()
+    fireEvent.change(timeInput(), { target: { value: '09:45' } })
+    fireEvent.blur(timeInput())
+    expect(onSave).toHaveBeenCalledWith('2026-11-14T08:45Z')
   })
 })
 

@@ -219,6 +219,8 @@ describe('propertyValueKindForType', () => {
   it.each<[string | null | undefined, PropertyValueKind]>([
     ['number', 'Num'],
     ['date', 'Date'],
+    // #6758 — a datetime compares `value_date`; a day operand is its local day.
+    ['datetime', 'Date'],
     ['ref', 'Ref'],
     ['text', 'Text'],
     ['select', 'Text'],

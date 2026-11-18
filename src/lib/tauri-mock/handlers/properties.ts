@@ -30,6 +30,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   assertValidDateFormat,
+  assertValidDateValue,
   assertValidListValue,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
@@ -638,7 +639,7 @@ export const propertiesHandlers = {
     // `value_date` is a non-blank calendar day.
     if (v.valueDate !== null) {
       if (v.valueDate.trim() === '') throw validationRejection('set_property.value_date.empty')
-      assertValidDateFormat(v.valueDate)
+      assertValidDateValue(defSpace, key, v.valueDate)
     }
     // `fetch_live_block_in_tx`.
     const target = blocks.get(blockId)

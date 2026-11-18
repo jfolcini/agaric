@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { PropertyRow } from '@/lib/bindings'
@@ -33,6 +33,23 @@ describe('propertyRowDisplay', () => {
     expect(propertyRowDisplay(row({ key: 'k', value_ref: 'B9' }))).toBe('B9')
     expect(propertyRowDisplay(row({ key: 'k', value_bool: 1 }))).toBe('true')
     expect(propertyRowDisplay(row({ key: 'k', value_bool: 0 }))).toBe('false')
+  })
+
+  // #6758 — a datetime shows its local date and time, as its chip does.
+  it('shows a datetime, alone or in a list, as its local date and time', () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      expect(propertyRowDisplay(row({ key: 'k', value_date: '2026-11-14T08:30Z' }))).toBe(
+        '2026-11-14 09:30',
+      )
+      expect(propertyRowDisplay(row({ key: 'k', value_list: ['2026-11-14T08:30Z'] }))).toBe(
+        '2026-11-14 09:30',
+      )
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   // #6741 — a list shows its items, as the property chip does.

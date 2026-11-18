@@ -8,10 +8,10 @@
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
@@ -348,6 +348,119 @@ describe('ConvertUnfitValues', () => {
     })
     expect(textOf(MTG_1, 'size')).toBe('many')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  // #6758 — a datetime key's replacement is a local date and time, sent as its canonical UTC value.
+  it('converts a local date and time to a datetime', async () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const user = userEvent.setup()
+      await declare('when', 'datetime')
+      holds(MTG_1, 'when', { value_text: 'soon' })
+      render(<PropertyDefinitionsList />)
+      const dialog = await openConvert('when')
+      await findRow(dialog, 'soon')
+      const label = t('propertiesView.convertReplacementLabel', { value: 'soon' })
+
+      await user.type(
+        within(dialog).getByLabelText(t('property.datetimeDateLabel', { label })),
+        '2026-11-14',
+      )
+      const time = within(dialog).getByLabelText(t('property.datetimeTimeLabel', { label }))
+      fireEvent.change(time, { target: { value: '09:30' } })
+      fireEvent.blur(time)
+      await user.click(convertButton(dialog, 1))
+
+      await waitFor(() => {
+        expect(dateOf(MTG_1, 'when')).toBe('2026-11-14T08:30Z')
+      })
+      expect(sentReplacements()).toEqual([
+        {
+          value: 'soon',
+          replacement: '2026-11-14T08:30Z',
+          acknowledged: { unfit: 1, unfit_in_trash: 0 },
+        },
+      ])
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  // #6758 — a datetime key's day values (a date key changed to datetime) get one
+  // time for all: each day at that local time, sent as one convert, one Undo.
+  describe('set all days to one time', () => {
+    /** Berlin is UTC+1 in November; a worker that ignores `TZ` (Stryker's threads) skips. */
+    function inBerlin(): boolean {
+      vi.stubEnv('TZ', 'Europe/Berlin')
+      return new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() === 9
+    }
+    const timeField = (dialog: HTMLElement) =>
+      within(dialog).getByLabelText(t('propertiesView.convertAllDaysTimeLabel'))
+    const setAll = (dialog: HTMLElement, count: number) =>
+      within(dialog).getByRole('button', {
+        name: t('propertiesView.convertAllDaysConfirm', { count }),
+      })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('fills each day with that local time, and converts them in one write', async () => {
+      if (!inBerlin()) return
+      const user = userEvent.setup()
+      await declare('when', 'datetime')
+      holds(MTG_1, 'when', { value_text: '2026-11-14' })
+      holds(PROJ_1, 'when', { value_text: '2026-11-14' })
+      holds(MTG_2, 'when', { value_text: 'later' })
+      render(<PropertyDefinitionsList />)
+      const dialog = await openConvert('when')
+      await findRow(dialog, 'later')
+      expect(timeField(dialog)).toHaveValue('00:00')
+      expect(await axe(dialog)).toHaveNoViolations()
+
+      fireEvent.change(timeField(dialog), { target: { value: '09:30' } })
+      await user.click(setAll(dialog, 2))
+      expect(
+        within(dialog).getByText(t('propertiesView.convertSummary', { count: 2 })),
+      ).toBeVisible()
+      await user.click(convertButton(dialog, 2))
+
+      await waitFor(() => {
+        expect(dateOf(MTG_1, 'when')).toBe('2026-11-14T08:30Z')
+      })
+      expect(dateOf(PROJ_1, 'when')).toBe('2026-11-14T08:30Z')
+      expect(textOf(MTG_2, 'when')).toBe('later')
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'convert_unfit_property_values'),
+      ).toHaveLength(1)
+    })
+
+    it('leaves a day the time does not exist on as it is, and says so', async () => {
+      if (!inBerlin()) return
+      const user = userEvent.setup()
+      await declare('when', 'datetime')
+      holds(MTG_1, 'when', { value_text: '2026-03-29' })
+      holds(MTG_2, 'when', { value_text: '2026-03-30' })
+      render(<PropertyDefinitionsList />)
+      const dialog = await openConvert('when')
+      await findRow(dialog, '2026-03-30')
+
+      fireEvent.change(timeField(dialog), { target: { value: '02:30' } })
+      await user.click(setAll(dialog, 2))
+
+      expect(
+        within(dialog).getByText(
+          t('propertiesView.convertAllDaysSkipped', { count: 1, days: '2026-03-29' }),
+        ),
+      ).toBeVisible()
+      await user.click(convertButton(dialog, 1))
+      await waitFor(() => {
+        expect(dateOf(MTG_2, 'when')).toBe('2026-03-30T00:30Z')
+      })
+      expect(textOf(MTG_1, 'when')).toBe('2026-03-29')
+    })
   })
 
   it('converts a typed number to a number', async () => {

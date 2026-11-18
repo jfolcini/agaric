@@ -425,9 +425,35 @@ describe('buildInlinePropertySetParams', () => {
       expect(buildInlinePropertySetParams('B', 'k', '2026-01-02x', list('date'))).toBeNull()
     })
 
+    it('reads datetime items as their canonical UTC values, refusing a day alone (#6758)', () => {
+      expect(
+        buildInlinePropertySetParams(
+          'B',
+          'k',
+          '2026-11-14T08:30Z, 2026-11-14 09:30+01:00',
+          list('datetime'),
+        ),
+      ).toEqual({ blockId: 'B', key: 'k', valueList: ['2026-11-14T08:30Z', '2026-11-14T08:30Z'] })
+      expect(
+        buildInlinePropertySetParams('B', 'k', '2026-11-14T08:30Z, 2026-11-14', list('datetime')),
+      ).toBeNull()
+    })
+
     it('refuses a line with no item', () => {
       expect(buildInlinePropertySetParams('B', 'k', ', ,', list('text'))).toBeNull()
     })
+  })
+
+  it('stores a datetime as its canonical UTC value_date, and refuses one it does not read (#6758)', () => {
+    expect(
+      buildInlinePropertySetParams('B', 'start', '2026-11-14T09:30-02:00', def('datetime')),
+    ).toEqual({
+      blockId: 'B',
+      key: 'start',
+      valueDate: '2026-11-14T11:30Z',
+    })
+    expect(buildInlinePropertySetParams('B', 'start', '2026-11-14', def('datetime'))).toBeNull()
+    expect(buildInlinePropertySetParams('B', 'start', 'tomorrow 9am', def('datetime'))).toBeNull()
   })
 
   it('stores value_text when there is no definition', () => {

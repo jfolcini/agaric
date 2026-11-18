@@ -25,6 +25,7 @@ import type {
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { formatDatetimeForDisplay } from '@/lib/datetime-value'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { useResolveStore } from '@/stores/resolve'
@@ -182,7 +183,10 @@ function TypeChangeValues({
   )
 }
 
-/** A row's value, and what it becomes; a ref shows its target's title as the cache holds it now. */
+/**
+ * A row's value, and what it becomes; a ref shows its target's title as the
+ * cache holds it now, a datetime its local date and time (#6758).
+ */
 function ValueText({
   row,
   refs,
@@ -192,7 +196,7 @@ function ValueText({
 }): React.ReactElement {
   const valueTitle = useRefTitle(refs.value ? row.value : null)
   const convertedTitle = useRefTitle(refs.converted ? row.converted : null)
-  const value = valueTitle ?? row.value
+  const value = valueTitle ?? formatDatetimeForDisplay(row.value)
   return (
     <span className="max-w-[40%] shrink-0 truncate text-muted-foreground">
       {row.converted === null ? value : `${value} → ${convertedTitle ?? row.converted}`}

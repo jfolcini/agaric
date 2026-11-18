@@ -1,7 +1,7 @@
 /**
  * PropertyRowEditor — renders a single property row with typed input.
  *
- * Supports text, number, date, select, boolean, and ref value types with
+ * Supports text, number, date, datetime, select, boolean, and ref value types with
  * inline editing. For select properties, includes a popover to manage the
  * set of allowed options (add / remove / save). For ref properties, includes
  * a page picker popover to search and select a linked page. A definition that
@@ -19,6 +19,7 @@
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { DatetimeInput } from '@/components/properties/DatetimeInput'
 import { BooleanEditor } from '@/components/properties/PropertyRowEditor/BooleanEditor'
 import { DateEditor } from '@/components/properties/PropertyRowEditor/DateEditor'
 import { ListEditor } from '@/components/properties/PropertyRowEditor/ListEditor'
@@ -38,6 +39,7 @@ import { useRefTitle } from '@/components/properties/useRefTitle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { isCanonicalDatetime } from '@/lib/datetime-value'
 import { isUnfit, valueForm } from '@/lib/property-fit'
 import { formatPropertyName } from '@/lib/property-utils'
 
@@ -212,6 +214,16 @@ export function EditorSlot({
     }
     case 'date': {
       return <DateEditor state={bag.date} ariaLabel={valueLabel} />
+    }
+    case 'datetime': {
+      const held = prop.value_date
+      return (
+        <DatetimeInput
+          value={held !== null && isCanonicalDatetime(held) ? held : null}
+          ariaLabel={valueLabel}
+          onCommit={onSave}
+        />
+      )
     }
     default: {
       return <TextEditor state={bag.textLike} ariaLabel={valueLabel} />

@@ -103,6 +103,7 @@ const PROPERTY_DEF_VALUE_TYPES = new Set([
   'text',
   'number',
   'date',
+  'datetime',
   'select',
   'ref',
   'boolean',
@@ -136,7 +137,7 @@ export function validatePropertyDefShape(
   refusePropertyKeyShape(key)
   if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
     throw validation(
-      `invalid value_type '${valueType}': must be text, number, date, select, ref, boolean, or url`,
+      `invalid value_type '${valueType}': must be text, number, date, datetime, select, ref, boolean, or url`,
     )
   }
   if (valueType === 'select') {
@@ -475,6 +476,7 @@ function strColumnFor(valueType: unknown): string {
     number: 'value_num',
     boolean: 'value_bool',
     date: 'value_date',
+    datetime: 'value_date',
     ref: 'value_ref',
   }
   return (typeof valueType === 'string' && typed[valueType]) || 'value_text'
@@ -550,16 +552,25 @@ function reprojectKey(spaceId: string, key: string): void {
 }
 
 /**
+ * Whether a key's other strings move on a change from `from` to `to`: its
+ * slot changed, or it is `date` ↔ `datetime`, which share `value_date` but
+ * read it differently (#6758), so a day under datetime goes to `value_text`.
+ */
+function slotOrReadingChanged(from: unknown, to: unknown): boolean {
+  if (strColumnFor(from) !== strColumnFor(to)) return true
+  const dated = new Set<unknown>(['date', 'datetime'])
+  return from !== to && dated.has(from) && dated.has(to)
+}
+
+/**
  * The engine's rewrite apply: each definition, then each value, set or
  * removed, in the slot its key's type uses; then the other values of a key
- * whose type's slot changed move with it. A value of a block purged since the
+ * whose type's slot or reading changed move with it. A value of a block purged since the
  * op was written is dropped.
  */
 export function applyRewrite(p: RewritePayload): void {
   const retyped = p.defs
-    .filter(
-      (w) => strColumnFor(declaredType(p.space_id, w.key)) !== strColumnFor(w.def?.value_type),
-    )
+    .filter((w) => slotOrReadingChanged(declaredType(p.space_id, w.key), w.def?.value_type))
     .map((w) => w.key)
   applyDefWrites(p.space_id, p.defs)
   for (const write of p.values) {

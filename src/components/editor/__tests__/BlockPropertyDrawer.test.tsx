@@ -11,11 +11,11 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createElement } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
@@ -1170,6 +1170,83 @@ describe('BlockPropertyDrawer', () => {
         expect(toast.error).toHaveBeenCalledWith(t('property.saveFailed'))
       })
       expect(await checkbox()).not.toBeChecked()
+    })
+  })
+
+  // #6758 — a datetime is a date and a time in the device's time zone, saved
+  // as its canonical UTC value.
+  describe('datetime property', () => {
+    const blockId = SEED_IDS.BLOCK_GS_1
+    const timeInput = () =>
+      screen.findByLabelText(
+        t('property.datetimeTimeLabel', {
+          label: t('pageProperty.valueLabel', { key: 'meeting' }),
+        }),
+      )
+    const dateInput = () =>
+      screen.findByLabelText(
+        t('property.datetimeDateLabel', {
+          label: t('pageProperty.valueLabel', { key: 'meeting' }),
+        }),
+      )
+    /** Berlin is UTC+1 in November; a worker that ignores `TZ` (Stryker's threads) skips. */
+    function inBerlin(): boolean {
+      vi.stubEnv('TZ', 'Europe/Berlin')
+      return new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() === 9
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('shows the local date and time, and saves an edit as UTC against the real mock', async () => {
+      if (!inBerlin()) return
+      seedBlocks()
+      spacePropertyDefs('SPACE_PERSONAL').set('meeting', {
+        key: 'meeting',
+        value_type: 'datetime',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        builtin: false,
+      })
+      properties.set(
+        blockId,
+        new Map([['meeting', makeProp('meeting', { value_date: '2026-11-14T08:30Z' })]]),
+      )
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      const { unmount } = renderWithProvider(
+        <BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />,
+      )
+      expect(await dateInput()).toHaveValue('2026-11-14')
+      expect(await timeInput()).toHaveValue('09:30')
+      const sheet = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
+      expect(await axe(sheet)).toHaveNoViolations()
+
+      fireEvent.change(await timeInput(), { target: { value: '10:15' } })
+      fireEvent.blur(await timeInput())
+
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('meeting')?.['value_date']).toBe('2026-11-14T09:15Z')
+      })
+      unmount()
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      expect(await timeInput()).toHaveValue('10:15')
+    })
+
+    it('says so when the write is refused', async () => {
+      setupMock(
+        [makeProp('meeting', { value_date: '2026-11-14T08:30Z' })],
+        [makeDef('meeting', 'datetime')],
+        { set_property: () => Promise.reject(new Error('refused')) },
+      )
+      renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+      fireEvent.change(await dateInput(), { target: { value: '2026-11-20' } })
+      fireEvent.blur(await dateInput())
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('property.saveFailed'))
+      })
     })
   })
 

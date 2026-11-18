@@ -96,6 +96,27 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
     expect(toast.error).toHaveBeenCalledExactlyOnceWith('Kept as text: due:: soon')
   })
 
+  // #6758 — a datetime key reads a local or zoned time to its canonical UTC
+  // value; a day alone is no datetime and stays as text.
+  it('a value a `datetime` definition reads is stored as UTC, and one it does not stays as text', async () => {
+    dispatch('create_property_def', {
+      spaceId: 'SPACE_PERSONAL',
+      key: 'start',
+      valueType: 'datetime',
+      options: null,
+    })
+    const edit = await commit('task\nstart:: 2026-11-14T09:30+01:00')
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task')
+    expect(stored().properties.find((p) => p.key === 'start')?.value_date).toBe('2026-11-14T08:30Z')
+
+    vi.clearAllMocks()
+    const kept = await commit('task\nstart:: 2026-11-20')
+    expect(kept).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\nstart:: 2026-11-20')
+    expect(stored().properties.find((p) => p.key === 'start')?.value_date).toBe('2026-11-14T08:30Z')
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith('Kept as text: start:: 2026-11-20')
+  })
+
   it('a ref value names a page by title or `[[id]]`, and one naming none stays text (D11)', async () => {
     for (const key of ['owner', 'approver', 'watcher']) {
       dispatch('create_property_def', {
