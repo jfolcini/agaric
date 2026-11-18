@@ -136,11 +136,14 @@ pub struct MirrorStatus {
 
 /// Whether `root` holds nothing but hidden entries, as the mirror's marker.
 pub fn is_emptied(root: &Path) -> bool {
-    !std::fs::read_dir(root).is_ok_and(|entries| {
-        entries
-            .flatten()
-            .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-    })
+    !std::fs::read_dir(root).is_ok_and(holds_visible)
+}
+
+/// Whether a folder's `entries` hold one that is not hidden.
+fn holds_visible(entries: std::fs::ReadDir) -> bool {
+    entries
+        .flatten()
+        .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
 }
 
 /// What the mirror's task shares with the commands and the sync sink.
@@ -567,14 +570,13 @@ pub fn check_folder(folder: &Path, device_id: &str, app_data_dir: &Path) -> Resu
         ),
         None => {
             // An unreadable folder is refused, never taken for an empty one.
-            std::fs::read_dir(folder).map_err(unreadable)?;
-            if is_emptied(folder) {
-                Ok(())
-            } else {
+            if holds_visible(std::fs::read_dir(folder).map_err(unreadable)?) {
                 refuse(
                     "the mirror folder must be empty, or one this device already mirrors to: \
                      choose an empty folder (hidden files such as .git or .DS_Store may stay)",
                 )
+            } else {
+                Ok(())
             }
         }
     }

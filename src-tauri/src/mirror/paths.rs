@@ -119,10 +119,7 @@ pub fn unowned(
     };
     found
         .into_iter()
-        .filter(|path| {
-            !owned.contains(path.as_str())
-                && (respelled.is_empty() || !respelled.contains(&fold(path)))
-        })
+        .filter(|path| !owned.contains(path.as_str()) && !respelled.contains(&fold(path)))
         .collect()
 }
 
