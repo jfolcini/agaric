@@ -1,4 +1,4 @@
-# Session 4246 — a key typed right after Enter while a pull reloads the page
+# Session 4248 — a key typed right after Enter while a pull reloads the page
 
 #6814: while a peer's edits were pulled in, the key after an Enter could reach `<body>`. The open question was whether the reload after the pull or a refused Sync press's toast took the focus. It was the reload.
 
