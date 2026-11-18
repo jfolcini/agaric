@@ -61,7 +61,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 - **You want your notes as files**, readable and editable by anything, with any backup or sync tool.
 - **Your devices are not on one network**, or you use an iPhone or iPad.
 - **You want plugins**, community themes, a CLI, or a workflow someone has already built.
-- **You keep a database of notes**: Bases, list properties, cards and a draggable kanban.
+- **You keep a database of notes**: Bases' cards layout and computed columns (#6757), over files, with a board for any property.
 - **You think visually**: Canvas, and drawing through plugins.
 - **You clip the web, publish a site, or share a vault.**
 - **You want Vim keys, multiple cursors, split or pop-out windows.**
@@ -88,7 +88,7 @@ Settings › Data has an *Obsidian vault* button. [docs/features/import-export.m
 **Changed or lost:**
 
 - The vault stops being files. On desktop the Markdown mirror writes every page back out as a `.md` file and reads edits in, but it starts from an empty folder: it does not adopt an existing vault in place.
-- A YAML list becomes one comma-joined value, except `tags` and `aliases`.
+- A YAML list is kept item for item, except under a key defined to hold one value, where its items are joined by a comma.
 - `.canvas` and `.base` files are not imported.
 - Dataview, Templater and other plugin code blocks stay as text.
 - A comment block becomes a comment callout: its text is kept and marked as an aside, but shown. A `%%comment%%` inside a sentence stays text.
@@ -102,7 +102,7 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 - **Every paragraph is a block.** A page is an outline, with a handle per paragraph, until you turn on page mode (off by default, #6536). There is no reading view, and long pages past the page-mode cap stay in blocks (#6224).
 - **Your plugins do not come with you.** Dataview and Templater blocks arrive as code, and there is no Canvas, Excalidraw, or community theme. Tasks-plugin dates, priorities and recurrence are the exception: Agaric reads them as its own.
 - **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
-- **List properties flatten.** `authors: [a, b]` becomes one text value (#6741), and there is no date-and-time type (#6758).
+- **No date-and-time property type** (#6758). Lists are kept: `authors: [a, b]` stays two values.
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
 - **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
 - **A tag name holds no spaces.**

@@ -14,9 +14,11 @@ What was stale:
 - The mirror row said the latest release had only the writing half; 0.25.0 carries the read-back.
 - The Flathub manifest builds from source now (#6788).
 
+A second pass, after the orchestrator's review, checked every negative claim ("no", "none", "lost", "flatten", "only", Gap, Partial, the gaps and better-tool lists) against main, and every cited issue against its open or closed state. It found claims #6741 and #6754 had made false: the Obsidian vault-fidelity row and prose said YAML lists flatten, the prose's better-tool list credited Obsidian with list properties and a draggable kanban, and the Logseq import-drops row said `{{query}}` is never translated. The URI row cited the closed #6555 for Android's missing handler; it now cites the feature doc. The README's update-check line, stale since #6726, was fixed too.
+
 Added rows: the Logseq matrix gains *Board view* (§7) and *Outgoing links* (§4). The scorecards were recounted with `node scripts/comparison-scorecard.mjs --write`.
 
-Not done here: the README's line that only the desktop app checks for updates is stale for the same reason (#6726); it is outside these four files. #6877 and #6879 change the supply-chain and language rows but were not on `main`.
+#6877 and #6879 change the supply-chain and language rows but were not on `main`.
 
 ## What ran
 
