@@ -108,7 +108,7 @@ test.describe('HistoryView batch revert @pages', () => {
     await page.getByRole('button', { name: 'Revert', exact: true }).click()
 
     // Selection should be cleared after revert
-    await expect(page.getByText(/selected/)).not.toBeVisible()
+    await expect(page.getByText(/^\d+ selected$/)).not.toBeVisible()
 
     // Navigate back to the page and verify block is gone
     await openPage(page, 'Getting Started')
@@ -144,7 +144,7 @@ test.describe('HistoryView batch revert @pages', () => {
     await page.getByRole('button', { name: /Revert selected/i }).click()
     await expect(page.getByRole('button', { name: 'Revert', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Revert', exact: true }).click()
-    await expect(page.getByText(/selected/)).not.toBeVisible()
+    await expect(page.getByText(/^\d+ selected$/)).not.toBeVisible()
 
     // Navigate back and verify block is restored
     await openPage(page, 'Getting Started')

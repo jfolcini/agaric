@@ -45,7 +45,9 @@ test("Ctrl+Shift+Y lists the focused block's edits and none of another block's @
   await page.keyboard.press('Control+Shift+Y')
 
   const sheet = page.getByRole('dialog', { name: 'Block history' })
-  const rows = sheet.locator('[data-testid^="block-history-item-"]')
+  // Edits only: on the real backend the seed was written by `create_block`, so
+  // the block's history also ends with that create; the mock seeds no op.
+  const rows = sheet.locator('[data-testid^="block-history-item-"]').filter({ hasText: /^Edit/ })
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('Alpha second edit')
   await expect(rows.nth(1)).toContainText('Alpha first edit')

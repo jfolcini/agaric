@@ -32,9 +32,10 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view @pages'
       scope: { kind: 'active', space_id: spaceId },
       cursor: null,
       limit: 50,
-    })) as { items: unknown[]; has_more: boolean }
-    // One page, so End's target is loaded without a load-more.
-    return res.has_more ? -1 : res.items.length
+    })) as { items: unknown[] }
+    // End goes to the last loaded row. The real backend's seed holds more than
+    // one page of ops, so that is the first page's last row, not the log's.
+    return res.items.length
   }, SEED_IDS.SPACE_PERSONAL)
   expect(total).toBeGreaterThanOrEqual(SEEDED_BLOCKS)
 
