@@ -1,7 +1,17 @@
 import type { Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, focusBlockById, ipc, openPage, saveBlock, test, waitForBoot } from './helpers'
+import { blockRow } from './domain'
+import {
+  expect,
+  focusBlockById,
+  ipc,
+  openPage,
+  reopenPage,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * #5160 D8 / N7: typing `#project` and a space, or `#[[multi word]]`, in a
@@ -79,5 +89,30 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
     await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
     const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
     expect((await tagNames(page)).get(id as string)).toBe('work')
+  })
+
+  test('a #name made a tag after the page reopened shows as the tag (#6953)', async ({ page }) => {
+    const editor = await focusBlockById(page, GS1)
+    await editor.press('End')
+    await page.keyboard.type(' #newtagname', { delay: 30 })
+    await page.keyboard.press('Escape')
+    // The new tag is created only after the page has been read again.
+    await page.evaluate(() => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, ...rest: unknown[]) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = async (cmd, ...rest) => {
+        if (cmd === 'create_block') await new Promise((resolve) => setTimeout(resolve, 500))
+        return invoke(cmd, ...rest)
+      }
+    })
+    await saveBlock(page, 'Escape')
+    await reopenPage(page, PAGE)
+
+    await expect(blockRow(page, GS1).getByTestId('tag-ref-chip')).toHaveText('newtagname')
+    expect(await storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
   })
 })

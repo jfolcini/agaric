@@ -90,7 +90,7 @@ function announceCreatedNames(rows: readonly BlockRow[], spaceId: string | null)
  * `state` with one block's content replaced, copying that slot and key only,
  * so every other row keeps its object and skips its memoized render (#2200).
  */
-function withContent(
+export function withContent(
   state: PageBlockState,
   blockId: string,
   content: string,
