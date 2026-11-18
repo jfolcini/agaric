@@ -8,9 +8,9 @@
 // the marker is back in the accessibility tree, which after a cold start can
 // only come from what the app wrote to disk.
 //
-// The strings it drives on are English literals copied from
-// `src/lib/i18n/common.ts`; a renamed value there, or a non-English device,
-// fails this with a healthy app (the same caveat as `android-e2e-safe-area.mjs`).
+// The strings it drives on are read from the English catalog
+// (`android-ui-labels.mjs`); a non-English device fails this with a healthy app
+// (the same caveat as `android-e2e-safe-area.mjs`).
 //
 // Run by `.github/workflows/android-launch-smoke.yml` after the launch smoke,
 // which installs the APK. Needs one booted, unlocked device or emulator on adb.
@@ -21,15 +21,20 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { english } from './android-ui-labels.mjs'
+
 const PKG = 'com.agaric.app'
 const ACTIVITY = `${PKG}/${PKG}.MainActivity`
 /** `t('action.addBlock')`: on a fresh day it focuses the day's empty seed block. */
-const ADD_BLOCK = 'Add block'
+const ADD_BLOCK = english('action.addBlock')
 /**
  * `t('welcome.getStarted')` and `t('gestures.coachmark.dismiss')`: a fresh install
  * opens on the modal welcome dialog and the next launch on the gesture coach-mark.
  */
-const FIRST_RUN_DISMISS = new Set(['Get Started', 'Got it'])
+const FIRST_RUN_DISMISS = new Set([
+  english('welcome.getStarted'),
+  english('gestures.coachmark.dismiss'),
+])
 const DUMP_PATH = '/sdcard/agaric-e2e-persist.xml'
 const READY_TIMEOUT_MS = 40_000
 const POLL_MS = 750

@@ -54,6 +54,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, writeSync } from 'node:fs'
 
+import { english } from './android-ui-labels.mjs'
+
 /**
  * The application id to drive. Overridable with `--pkg` because a locally
  * built debug APK cannot be installed over a release-signed one without
@@ -67,23 +69,19 @@ const ACTIVITY_CLASS = 'com.agaric.app.MainActivity'
 
 // ── the UI strings this drives on ────────────────────────────────────
 //
-// These are HARDCODED ENGLISH LITERALS copied from `src/lib/i18n/common.ts`.
-// A plain .mjs script cannot import a .ts module, so nothing keeps the two in
-// step: renaming a key's value there, or running against a device whose locale
-// is not English, silently turns every lookup below into "not found". Rather
-// than build a pipeline to share them, the failure paths that use them SAY SO
-// (see `waitForApp`) — a wrong answer that explains how it could be wrong is
-// worth more here than one that is merely confident.
+// Read from the English catalog, so a reworded value there cannot leave a stale
+// copy here. A device whose locale is not English still turns every lookup into
+// "not found"; the failure paths say so (see `waitForApp`).
 
-/** `t('sidebar.openMenu')` in `src/lib/i18n/common.ts` — the hamburger's aria-label. */
-const MENU_LABEL = 'Open navigation menu'
+/** `t('sidebar.openMenu')`: the hamburger's aria-label. */
+const MENU_LABEL = english('sidebar.openMenu')
 /**
  * `t('sidebar.settings')` / `t('bookmarks.title')`. The drawer-open marker has
  * to be something that is absent while the drawer is closed; the drawer-only
  * entries qualify and the sr-only sheet title does not always surface as its
  * own node.
  */
-const DRAWER_MARKERS = ['Settings', 'Bookmarks']
+const DRAWER_MARKERS = [english('sidebar.settings'), english('bookmarks.title')]
 /**
  * `t('welcome.getStarted')` and `t('gestures.coachmark.dismiss')`. A fresh
  * install opens on the modal welcome dialog, and the next launch on the gesture
@@ -93,7 +91,7 @@ const DRAWER_MARKERS = ['Settings', 'Bookmarks']
  * useless: the app is fine and the test is standing in front of a dialog.
  * Dismissing them is part of driving the app, not a workaround.
  */
-const FIRST_RUN_DISMISS = ['Get Started', 'Got it']
+const FIRST_RUN_DISMISS = [english('welcome.getStarted'), english('gestures.coachmark.dismiss')]
 
 const READY_TIMEOUT_MS = 40_000
 const POLL_MS = 750
@@ -489,10 +487,9 @@ async function waitForApp() {
             '\n  that was dismissed. Check whether it is actually reachable/dismissable.'
           : `  a first-run dialog was tapped ${dismissTaps} time(s) but the app still never settled.`,
       '',
-      `  BEFORE debugging the app: '${MENU_LABEL}' is a hardcoded ENGLISH literal`,
-      '  in this script, copied from `sidebar.openMenu` in src/lib/i18n/common.ts',
-      '  and checked against it by nothing. Editing that value, or running on a',
-      '  non-English device, produces this exact message with a healthy app.',
+      `  BEFORE debugging the app: '${MENU_LABEL}' is the ENGLISH value of`,
+      '  `sidebar.openMenu` in src/lib/i18n/common.ts; running on a non-English',
+      '  device produces this exact message with a healthy app.',
       locale
         ? `  device locale: ${locale}${
             looksEnglish ? '' : ' — NOT English, which alone explains this failure.'
