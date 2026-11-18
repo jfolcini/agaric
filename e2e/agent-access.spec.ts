@@ -34,7 +34,8 @@ test.describe('Agent access settings tab @mcp @settings', () => {
     await expect(page.getByText('No active connections.')).toHaveCount(0)
 
     await toggle.click()
-    await expect(socket).toHaveText('/mock/agaric/mcp.sock')
+    // The vault's socket: the mock's fixed path, or the bridge vault's own.
+    await expect(socket).toHaveText(/[/\\]mcp\.sock$/)
     await expect(page.getByText('No active connections.')).toBeVisible()
 
     // The mock reports 0 active connections, so the kill switch does not render.
@@ -57,27 +58,29 @@ test.describe('Agent access settings tab @mcp @settings', () => {
     await expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('a failed toggle reverts the optimistic state and shows an error toast', async ({
-    page,
-  }) => {
-    await page.evaluate(() => {
-      ;(
-        window as unknown as { __injectMockError?: (cmd: string, message: string) => void }
-      ).__injectMockError?.('mcp_set_enabled', 'backend exploded')
-    })
+  test(
+    'a failed toggle reverts the optimistic state and shows an error toast',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await page.evaluate(() => {
+        ;(
+          window as unknown as { __injectMockError: (cmd: string, message: string) => void }
+        ).__injectMockError('mcp_set_enabled', 'backend exploded')
+      })
 
-    const toggle = page.getByRole('switch', { name: 'Let agents connect' })
-    await toggle.click()
+      const toggle = page.getByRole('switch', { name: 'Let agents connect' })
+      await toggle.click()
 
-    await expect(page.getByText('Failed to toggle agent access')).toBeVisible()
-    // `revert()` restores the pre-click snapshot (no refetch on the error branch).
-    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+      await expect(page.getByText('Failed to toggle agent access')).toBeVisible()
+      // `revert()` restores the pre-click snapshot (no refetch on the error branch).
+      await expect(toggle).toHaveAttribute('aria-checked', 'false')
 
-    // This test deliberately drives the IPC-rejection path, which logs via
-    // `logger.error` (console.error) per AGENTS.md's error-path convention
-    // — the same documented opt-out error-scenarios.spec.ts uses.
-    clearConsoleErrors(page)
-  })
+      // This test deliberately drives the IPC-rejection path, which logs via
+      // `logger.error` (console.error) per AGENTS.md's error-path convention
+      // — the same documented opt-out error-scenarios.spec.ts uses.
+      clearConsoleErrors(page)
+    },
+  )
 
   test('activity feed renders the empty state', async ({ page }) => {
     await expect(

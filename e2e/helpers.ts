@@ -1,5 +1,6 @@
+import { readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { basename, relative } from 'node:path'
+import { basename, join, relative } from 'node:path'
 
 import { test as baseTest, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 
@@ -1860,6 +1861,22 @@ export async function pasteText(editor: Locator, text: string): Promise<void> {
   }, text)
 }
 
+/** Dispatch a native paste of one file, its bytes given as base64, onto `editor`. */
+export async function pasteFile(
+  editor: Locator,
+  file: { name: string; type: string; base64: string },
+): Promise<void> {
+  await editor.evaluate((el, { name, type, base64 }) => {
+    const data = new DataTransfer()
+    data.items.add(
+      new File([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], name, { type }),
+    )
+    el.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+  }, file)
+}
+
 /** Call a mock backend command directly, the way the frontend's IPC does; resolves to its result. */
 export function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
   return page.evaluate(
@@ -2160,4 +2177,45 @@ export function rowOf(page: Page, text: string): Locator {
   return page
     .locator('li[data-block-id]')
     .filter({ has: page.locator('[data-testid="block-static"]', { hasText: text }) })
+}
+
+/** What `get_mirror_status` reports of the Markdown mirror's passes. */
+export interface MirrorStatus {
+  last_pass_ms: number | null
+  diverged: Array<{ page_id: string; path: string }>
+  failed: Array<{ page_id: string; path: string; message: string }>
+}
+
+/** Point the bridge vault's Markdown mirror at `folder` and wait for its first pass there. */
+export async function startMirror(page: Page, folder: string, readBack = true): Promise<void> {
+  await ipc(page, 'set_mirror_folder', { path: folder, readBack })
+  await expect
+    .poll(async () => (await ipc<MirrorStatus>(page, 'get_mirror_status', {})).last_pass_ms)
+    .not.toBeNull()
+}
+
+/** The mirror's file for page `title` under `folder`, wherever its space put it. */
+export function mirrorFile(folder: string, title: string): string | undefined {
+  return readdirSync(folder, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === `${title}.md`)
+    .map((entry) => join(entry.parentPath, entry.name))[0]
+}
+
+/** The text of the mirror's file for page `title`, or '' while it has none. */
+export function mirrorText(folder: string, title: string): string {
+  const file = mirrorFile(folder, title)
+  return file === undefined ? '' : readFileSync(file, 'utf8')
+}
+
+/** The mirror's status once a pass that began after this call has ended. */
+export async function mirrorPassAfter(page: Page): Promise<MirrorStatus> {
+  const since = (await ipc<MirrorStatus>(page, 'get_mirror_status', {})).last_pass_ms
+  let status: MirrorStatus | undefined
+  await expect
+    .poll(async () => {
+      status = await ipc<MirrorStatus>(page, 'get_mirror_status', {})
+      return status.last_pass_ms !== since
+    })
+    .toBe(true)
+  return status as MirrorStatus
 }

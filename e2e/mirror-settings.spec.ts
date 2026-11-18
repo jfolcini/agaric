@@ -7,7 +7,9 @@ import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './he
  * so persistence shows by leaving Settings and coming back.
  */
 
-// `MOCK_MIRROR_FOLDER` in src/lib/tauri-mock/handlers/system.ts.
+// `MOCK_MIRROR_FOLDER` in src/lib/tauri-mock/handlers/system.ts. On the real
+// backend the folder comes from the OS dialog, which nothing headless can
+// answer, so the tests that choose one are `@mock-only`.
 const MOCK_FOLDER = '/home/mock/Agaric mirror'
 
 async function openMirrorCard(page: import('@playwright/test').Page) {
@@ -21,53 +23,61 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
     await waitForBoot(page)
   })
 
-  test('choosing a folder turns the mirror on, and Turn off clears it', async ({ page }) => {
-    await openMirrorCard(page)
-    await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
+  test(
+    'choosing a folder turns the mirror on, and Turn off clears it',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await openMirrorCard(page)
+      await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Choose folder…' }).click()
-    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
-    await expect(page.getByText('No file has changed outside Agaric.')).toBeVisible()
+      await page.getByRole('button', { name: 'Choose folder…' }).click()
+      await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+      await expect(page.getByText('No file has changed outside Agaric.')).toBeVisible()
 
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
 
-    await page.getByRole('button', { name: 'Turn off' }).click()
-    await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
-    await expect(page.getByTestId('mirror-folder')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Turn off' }).click()
+      await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
+      await expect(page.getByTestId('mirror-folder')).toHaveCount(0)
 
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
-  })
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(page.getByText('Off. No folder chosen.')).toBeVisible()
+    },
+  )
 
-  test('reading changes back is chosen with the folder and changed later', async ({ page }) => {
-    await openMirrorCard(page)
-    const readBack = page.getByRole('switch', { name: 'Read changes back' })
-    await expect(readBack).toBeChecked()
+  test(
+    'reading changes back is chosen with the folder and changed later',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await openMirrorCard(page)
+      const readBack = page.getByRole('switch', { name: 'Read changes back' })
+      await expect(readBack).toBeChecked()
 
-    await readBack.click()
-    await page.getByRole('button', { name: 'Choose folder…' }).click()
-    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+      await readBack.click()
+      await page.getByRole('button', { name: 'Choose folder…' }).click()
+      await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
 
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(readBack).not.toBeChecked()
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(readBack).not.toBeChecked()
 
-    // Choosing a folder while mirroring keeps reading back as it is.
-    await page.getByRole('button', { name: 'Choose folder…' }).click()
-    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(readBack).not.toBeChecked()
+      // Choosing a folder while mirroring keeps reading back as it is.
+      await page.getByRole('button', { name: 'Choose folder…' }).click()
+      await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(readBack).not.toBeChecked()
 
-    await readBack.click()
-    await expect(readBack).toBeChecked()
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(readBack).toBeChecked()
-  })
+      await readBack.click()
+      await expect(readBack).toBeChecked()
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(readBack).toBeChecked()
+    },
+  )
 })
 
 test.describe('Settings › Data: asking before many changes @settings @markdown', () => {
@@ -75,7 +85,7 @@ test.describe('Settings › Data: asking before many changes @settings @markdown
     await waitForBoot(page)
   })
 
-  test('is on by default, and turned off stays off', async ({ page }) => {
+  test('is on by default, and turned off stays off', { tag: '@mock-only' }, async ({ page }) => {
     await openMirrorCard(page)
     await page.getByRole('button', { name: 'Choose folder…' }).click()
     await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
@@ -183,25 +193,29 @@ test.describe('Settings › Data: which spaces are mirrored @settings @markdown'
     await waitForBoot(page)
   })
 
-  test('a space turned off stays off, and the others stay mirrored', async ({ page }) => {
-    await openMirrorCard(page)
-    await page.getByRole('button', { name: 'Choose folder…' }).click()
-    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
-    const work = page.getByRole('switch', { name: 'Work', exact: true })
-    const personal = page.getByRole('switch', { name: 'Personal', exact: true })
-    await expect(work).toBeChecked()
-    await expect(personal).toBeChecked()
+  test(
+    'a space turned off stays off, and the others stay mirrored',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await openMirrorCard(page)
+      await page.getByRole('button', { name: 'Choose folder…' }).click()
+      await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+      const work = page.getByRole('switch', { name: 'Work', exact: true })
+      const personal = page.getByRole('switch', { name: 'Personal', exact: true })
+      await expect(work).toBeChecked()
+      await expect(personal).toBeChecked()
 
-    await work.click()
-    await expect(work).not.toBeChecked()
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(work).not.toBeChecked()
-    await expect(personal).toBeChecked()
+      await work.click()
+      await expect(work).not.toBeChecked()
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(work).not.toBeChecked()
+      await expect(personal).toBeChecked()
 
-    await work.click()
-    await navigateToView(page, 'Journal')
-    await openMirrorCard(page)
-    await expect(work).toBeChecked()
-  })
+      await work.click()
+      await navigateToView(page, 'Journal')
+      await openMirrorCard(page)
+      await expect(work).toBeChecked()
+    },
+  )
 })

@@ -239,15 +239,10 @@ test.describe('A PDF highlight or comment becomes a block that links back to its
   test('a block moved to another space still follows its file to the newer copy', async ({
     page,
   }) => {
-    // Into the seeded second space, "Work".
-    await page.reload()
-    await waitForBoot(page)
-    await seedPdf(page)
-
     await openPage(page, 'Getting Started')
     const first = await highlightPageTwoAndSave(page)
     const [block] = await highlightBlocksOf(page, first)
-    // The highlight block goes to a page of its own, and that page to Work.
+    // The highlight block goes to a page of its own, and that page to the seeded "Work".
     const notesId = await ipc<string>(page, 'create_page_in_space', {
       parentId: null,
       content: 'Reading notes',
