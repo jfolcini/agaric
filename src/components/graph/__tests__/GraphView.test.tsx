@@ -380,7 +380,7 @@ describe('GraphView', () => {
     const svg = screen.getByTestId('graph-svg')
     expect(svg).toBeInTheDocument()
     expect(svg.tagName).toBe('svg')
-    expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
+    expect(svg).toHaveAttribute('aria-label', 'Page relationships')
   })
 
   it('hides journal pages by default in a space with no stored filters (#5370)', async () => {
@@ -983,7 +983,7 @@ describe('GraphView', () => {
 
     const svg = screen.getByTestId('graph-svg')
     expect(svg).toHaveAttribute('role', 'listbox')
-    expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
+    expect(svg).toHaveAttribute('aria-label', 'Page relationships')
   })
 
   // Keyboard users must discover that graph nodes are activatable.

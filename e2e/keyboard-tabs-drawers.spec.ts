@@ -183,9 +183,9 @@ test.describe('Block drawer shortcuts @editor @pages', () => {
     await page.keyboard.up('Shift')
     await page.keyboard.up('Control')
 
-    // The drawer (a right-side Sheet) is visible with its "Block Properties"
+    // The drawer (a right-side Sheet) is visible with its "Block properties"
     // title — the user-visible effect for the focused block.
-    await expect(page.getByRole('dialog', { name: 'Block Properties' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Block properties' })).toBeVisible()
   })
 
   test('Ctrl+Shift+Y opens the block history drawer', async ({ page }) => {
@@ -200,8 +200,8 @@ test.describe('Block drawer shortcuts @editor @pages', () => {
     await page.keyboard.up('Shift')
     await page.keyboard.up('Control')
 
-    // The history side-sheet is visible with its "Block History" title.
-    await expect(page.getByRole('dialog', { name: 'Block History' })).toBeVisible()
+    // The history side-sheet is visible with its "Block history" title.
+    await expect(page.getByRole('dialog', { name: 'Block history' })).toBeVisible()
   })
 
   test('Ctrl+Shift+D opens the date picker for the focused block', async ({ page }) => {

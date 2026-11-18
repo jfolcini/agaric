@@ -331,7 +331,7 @@ vi.mock('@/lib/list-style', async (importOriginal) => {
 // #1016 — wrap the real QueryBuilderModal so a test can drive its `onSave`
 // with controlled timing (re-open the builder for a different block while the
 // save promise is still in flight) and read back `open` to assert whether the
-// dialog was closed. The real component still renders (existing "Build Query"
+// dialog was closed. The real component still renders (existing "Build query"
 // tests keep working); we only intercept the props.
 let capturedQuerySave: ((expression: string) => void) | undefined
 let capturedQueryOpen = false
@@ -4781,7 +4781,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     // #215 — the builder opens (deferred a tick); it no longer dumps raw
     // `{{query …}}` into the editor. Full flow is covered in query-blocks.spec.ts.
     await waitFor(() => {
-      expect(screen.getByText('Build Query')).toBeInTheDocument()
+      expect(screen.getByText('Build query')).toBeInTheDocument()
     })
     expect(mockInsertContent).not.toHaveBeenCalled()
   })
@@ -5920,7 +5920,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
     expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
 
-    // … so "Insert Query" still has a block to write the expression into.
+    // … so "Insert query" still has a block to write the expression into.
     await act(async () => {
       await (capturedQuerySave as unknown as (e: string) => Promise<void>)?.('todo')
     })

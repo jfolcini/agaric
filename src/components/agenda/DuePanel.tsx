@@ -241,9 +241,9 @@ export function DuePanel({
     if (sourceFilter === null && visibleCount > 0) {
       const { due, scheduled, property } = sourceCounts
       const parts: string[] = []
-      if (due > 0) parts.push(`${due} ${t('duePanel.filterDue')}`)
-      if (scheduled > 0) parts.push(`${scheduled} ${t('duePanel.filterScheduled')}`)
-      if (property > 0) parts.push(`${property} ${t('duePanel.filterProperties')}`)
+      if (due > 0) parts.push(t('duePanel.countDue', { count: due }))
+      if (scheduled > 0) parts.push(t('duePanel.countScheduled', { count: scheduled }))
+      if (property > 0) parts.push(t('duePanel.countProperties', { count: property }))
       if (parts.length > 1) return parts.join(' \u00B7 ')
     }
     return visibleCount === 1

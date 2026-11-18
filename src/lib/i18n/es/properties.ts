@@ -457,8 +457,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vacío)',
   'tagFilter.loadingMessage': 'Cargando...',
   'tagFilter.loadMoreButton': 'Cargar más',
-  'tagFilter.selectedTags_one': 'con {{count}} etiqueta ({{mode}})',
-  'tagFilter.selectedTags_other': 'con {{count}} etiquetas ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} bloque coincide con {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} bloques coinciden con {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} etiqueta',
+  'tagFilter.tagCount_other': '{{count}} etiquetas',
   'tagFilter.addPrefixButton': 'Empieza por',
   'tagFilter.addPrefixLabel':
     'Empieza por el texto escrito: coincide con todas las etiquetas que empiezan por él',

@@ -1,6 +1,6 @@
 /**
  * E2E — first-run Welcome modal (#5741): shown on a fresh vault, dismissed with
- * "Get Started", and not shown on the next launch.
+ * "Get started", and not shown on the next launch.
  *
  * In `e2e/` because the whole contract is frontend: the onboarding flag lives in
  * localStorage (`@/lib/onboarding`) and the App shell's `useWelcomeGate` reads it
@@ -36,7 +36,7 @@ test('Welcome modal shows on first run, dismisses, and stays dismissed on the ne
 
   const welcome = page.getByRole('dialog', { name: 'Welcome to Agaric' })
   await expect(welcome).toBeVisible()
-  await welcome.getByRole('button', { name: 'Get Started' }).click()
+  await welcome.getByRole('button', { name: 'Get started' }).click()
   await expect(welcome).toHaveCount(0)
 
   // Next launch: a fresh boot sharing this browser's storage.

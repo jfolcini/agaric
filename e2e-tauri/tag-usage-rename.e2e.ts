@@ -93,7 +93,7 @@ describe('Agaric real-backend tag usage and rename (#5366) @pages', () => {
     await waitForAppReady()
     await navigateTo('Tags')
     await typeInputVerified('[aria-label="New tag name"]', TAG)
-    const addTag = $('button*=Add Tag')
+    const addTag = $('button*=Add tag')
     await addTag.waitForClickable({ timeout: ACTION_TIMEOUT })
     await addTag.click()
     await $(tagItem(TAG)).waitForDisplayed({ timeout: ACTION_TIMEOUT })

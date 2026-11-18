@@ -4,7 +4,7 @@
  * Validates:
  *  - Shows when localStorage has no onboarding flag
  *  - Does NOT show when onboarding flag is set
- *  - "Get Started" dismisses and sets localStorage
+ *  - "Get started" dismisses and sets localStorage
  *  - "Create sample pages" routes through createPageInSpace + createBlock
  *  - Does not show during boot loading state
  *  - a11y compliance
@@ -192,17 +192,17 @@ describe('WelcomeModal', () => {
   })
 
   // Enter on open must trigger the primary action, not "Create sample pages".
-  it('opens with focus on the primary Get Started button', () => {
+  it('opens with focus on the primary Get started button', () => {
     render(<WelcomeModal />)
 
-    expect(screen.getByRole('button', { name: 'Get Started' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Get started' })).toHaveFocus()
   })
 
-  it('opens with focus on the primary Get Started button in the phone sheet', () => {
+  it('opens with focus on the primary Get started button in the phone sheet', () => {
     mockedUseIsMobile.mockReturnValue(true)
     render(<WelcomeModal />)
 
-    expect(screen.getByRole('button', { name: 'Get Started' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Get started' })).toHaveFocus()
   })
 
   it('does NOT show when onboarding flag is set', () => {
@@ -281,11 +281,11 @@ describe('WelcomeModal', () => {
     expect(screen.queryByText('Reference syntax')).not.toBeInTheDocument()
   })
 
-  it('"Get Started" dismisses and sets localStorage', async () => {
+  it('"Get started" dismisses and sets localStorage', async () => {
     const user = userEvent.setup()
     render(<WelcomeModal />)
 
-    const getStartedBtn = screen.getByRole('button', { name: 'Get Started' })
+    const getStartedBtn = screen.getByRole('button', { name: 'Get started' })
     await user.click(getStartedBtn)
 
     expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
@@ -833,7 +833,7 @@ describe('WelcomeModal', () => {
       expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
       // Workflow list still renders inline on mobile (#214 Phase 1B: 3 rows).
       expect(screen.getAllByRole('listitem')).toHaveLength(3)
-      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Get started' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
     })
 
@@ -844,7 +844,7 @@ describe('WelcomeModal', () => {
 
       expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
       expect(screen.getAllByRole('listitem')).toHaveLength(3)
-      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Get started' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
     })
   })

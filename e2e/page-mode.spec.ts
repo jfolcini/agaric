@@ -683,7 +683,7 @@ test.describe('a new page in page mode (#5691) @editor @pages', () => {
 
     await page
       .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .click()
     const title = page
       .getByTestId('new-page-dialog')
@@ -1692,7 +1692,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     // The drawer clears a date.
     await caret(page, 1, 'end')
     await page.keyboard.press('Control+Shift+P')
-    const drawer = page.getByRole('dialog', { name: 'Block Properties' })
+    const drawer = page.getByRole('dialog', { name: 'Block properties' })
     await drawer.getByRole('button', { name: 'Clear due date' }).click()
     await expect.poll(async () => (await row(ids[1])).due_date).toBeNull()
     await page.keyboard.press('Escape')
@@ -1766,7 +1766,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(menu.locator('#suggestion-query')).toBeVisible()
     await page.keyboard.press('Enter')
     await page.getByLabel('Tag prefix').fill('work')
-    await page.getByRole('button', { name: 'Insert Query' }).click()
+    await page.getByRole('button', { name: 'Insert query' }).click()
     const added = (await shown(page))[3]?.id
     await expect
       .poll(async () => (await backend(page, pageId))[3]?.text)

@@ -452,7 +452,7 @@ describe('compileQueryText: what it cannot run, named with its column', () => {
       {
         token: 'state:todo',
         column: 11,
-        message: t('searchQuery.unknownValue', { noun: 'state', value: 'todo' }),
+        message: t('searchQuery.unknownState', { value: 'todo' }),
       },
     ])
   })

@@ -128,6 +128,12 @@ export const agenda: Record<string, string> = {
   'duePanel.filterScheduledTooltip': 'Início agendado flexível — não fica atrasado se já passou',
   'duePanel.filterPropertiesTooltip':
     'Filtrar por propriedades do bloco (esforço, responsável etc.)',
+  'duePanel.countDue_one': '{{count}} com vencimento',
+  'duePanel.countDue_other': '{{count}} com vencimento',
+  'duePanel.countScheduled_one': '{{count}} agendada',
+  'duePanel.countScheduled_other': '{{count}} agendadas',
+  'duePanel.countProperties_one': '{{count}} por propriedade',
+  'duePanel.countProperties_other': '{{count}} por propriedade',
   'duePanel.emptyContent': '(vazio)',
   'duePanel.duePanelLabel': 'Agenda',
   'duePanel.hideFutureScheduled': 'Ocultar agendamentos futuros',

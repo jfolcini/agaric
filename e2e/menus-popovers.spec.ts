@@ -274,20 +274,20 @@ test.describe('JournalCalendarDropdown (#1171 surface 4) @pages @search @journal
 })
 
 // ===========================================================================
-// 5. HasTagFilterForm tag picker (backlink "Has Tag" filter)
+// 5. HasTagFilterForm tag picker (backlink "Has tag" filter)
 // ===========================================================================
 //
 // The backlink BacklinkFilterBuilder (LinkedReferences.tsx lines 356-366)
 // exposes an "Add filter" button (backlink.addFilterLabel = "Add filter",
 // BacklinkFilterBuilder.tsx lines 202-211). It reveals AddFilterRow, whose
-// category Select offers "Has Tag" (AddFilterRow.tsx line 251), mounting
+// category Select offers "Has tag" (AddFilterRow.tsx line 251), mounting
 // HasTagFilterForm. That form's trigger
 // (data-testid="tag-search-popover", HasTagFilterForm.tsx line 87) opens a
 // Radix popover wrapping a cmdk Command list of seed tags; selecting one fires
 // handleSelect → close (lines 75-78).
 
 test.describe('HasTagFilterForm tag picker (#1171 surface 5) @pages @search @journal', () => {
-  test('Has Tag filter → tag picker opens → select a tag → Escape closes', async ({ page }) => {
+  test('Has tag filter → tag picker opens → select a tag → Escape closes', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
 
@@ -299,10 +299,10 @@ test.describe('HasTagFilterForm tag picker (#1171 surface 5) @pages @search @jou
     // the pages-view "Add filter").
     await refs.getByRole('button', { name: 'Add filter', exact: true }).click()
 
-    // Pick the "Has Tag" category from the Select. The trigger is labelled
+    // Pick the "Has tag" category from the Select. The trigger is labelled
     // "Filter category" (backlink.filterCategoryLabel, references.ts:109).
     await refs.getByRole('combobox', { name: 'Filter category' }).click()
-    await page.getByRole('option', { name: 'Has Tag' }).click()
+    await page.getByRole('option', { name: 'Has tag' }).click()
 
     // HasTagFilterForm mounts its trigger button (data-testid
     // "tag-search-popover", HasTagFilterForm.tsx lines 82-90).
@@ -351,7 +351,7 @@ test.describe('HasTagFilterForm tag picker (#1171 surface 5) @pages @search @jou
         return 0
       }
     })
-    await page.getByRole('option', { name: 'Has Tag' }).click()
+    await page.getByRole('option', { name: 'Has tag' }).click()
 
     await page.getByTestId('tag-search-popover').click()
     const popover = activePopover(page)

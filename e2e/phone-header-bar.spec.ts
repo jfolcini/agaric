@@ -52,7 +52,7 @@ function layoutViolations(bar: Locator): Promise<string[]> {
   )
 }
 
-const VIEWS = ['Pages', 'Settings', 'Search', 'History', 'Advanced Query'] as const
+const VIEWS = ['Pages', 'Settings', 'Search', 'History', 'Advanced query'] as const
 const JOURNAL_MODES = ['Day', 'Week', 'Month', 'Stream', 'Agenda'] as const
 
 for (const viewport of [

@@ -1,7 +1,7 @@
 /**
  * Shortcut labels tell the truth on the platform they run on (#6548).
  * Playwright's Chromium reports Linux, so a label may not carry a Mac
- * modifier glyph, and the Quick Reference must keep each chord alternative
+ * modifier glyph, and the Quick reference must keep each chord alternative
  * on one line without spilling into the Action column.
  */
 
@@ -57,7 +57,7 @@ test.describe('shortcut labels on Linux @search @settings @editor', () => {
     await expect(list).not.toContainText(MAC_MODIFIER_GLYPH)
   })
 
-  test('the Quick Reference keeps every chord alternative on one line', async ({ page }) => {
+  test('the Quick reference keeps every chord alternative on one line', async ({ page }) => {
     await page.locator('header').first().click()
     await page.keyboard.type('?')
     const sheet = activeSheet(page)

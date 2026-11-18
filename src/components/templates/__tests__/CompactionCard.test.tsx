@@ -5,8 +5,8 @@
  *  - Starts collapsed, eligible ops or not; the stats show once expanded
  *  - Shows loading skeleton while fetching
  *  - Shows stats when loaded (total ops, eligible ops, oldest date)
- *  - "Compact Now" always enabled (backend handles no-op case)
- *  - Clicking "Compact Now" opens confirm dialog
+ *  - "Compact now" always enabled (backend handles no-op case)
+ *  - Clicking "Compact now" opens confirm dialog
  *  - Confirm dialog shows warning text with op count
  *  - Confirming calls compactOpLog
  *  - Shows toast on success
@@ -169,7 +169,7 @@ describe('CompactionCard', () => {
     })
   })
 
-  it('"Compact Now" is enabled when eligible_ops is 0 (backend handles no-op case)', async () => {
+  it('"Compact now" is enabled when eligible_ops is 0 (backend handles no-op case)', async () => {
     const user = userEvent.setup()
     stubCompaction({ get_compaction_status: () => emptyStatus })
 
@@ -181,11 +181,11 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-total-ops')).toHaveTextContent('42')
     })
 
-    const compactBtn = screen.getByRole('button', { name: /Compact Now/i })
+    const compactBtn = screen.getByRole('button', { name: /Compact now/i })
     expect(compactBtn).not.toBeDisabled()
   })
 
-  it('"Compact Now" is enabled when eligible_ops > 0', async () => {
+  it('"Compact now" is enabled when eligible_ops > 0', async () => {
     const user = userEvent.setup()
     stubCompaction()
 
@@ -196,11 +196,11 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
 
-    const compactBtn = screen.getByRole('button', { name: /Compact Now/i })
+    const compactBtn = screen.getByRole('button', { name: /Compact now/i })
     expect(compactBtn).not.toBeDisabled()
   })
 
-  it('clicking "Compact Now" opens confirm dialog', async () => {
+  it('clicking "Compact now" opens confirm dialog', async () => {
     const user = userEvent.setup()
     stubCompaction()
 
@@ -211,9 +211,9 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
 
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
-    expect(screen.getByText('Compact Op Log?')).toBeInTheDocument()
+    expect(screen.getByText('Compact op log?')).toBeInTheDocument()
   })
 
   it('confirm dialog shows warning text with op count and retention days', async () => {
@@ -227,7 +227,7 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('300')
     })
 
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
     expect(
       screen.getByText(/This will permanently delete 300 operations older than 90 days/),
@@ -249,7 +249,7 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
     })
 
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
     expect(
       screen.getByText(
@@ -273,7 +273,7 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
     })
 
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
     await user.click(screen.getByRole('button', { name: /^Compact$/i }))
 
     await waitFor(() => {
@@ -293,7 +293,7 @@ describe('CompactionCard', () => {
     })
 
     // Open confirm dialog
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
     // Click Compact button in dialog
     await user.click(screen.getByRole('button', { name: /^Compact$/i }))
@@ -321,7 +321,7 @@ describe('CompactionCard', () => {
     })
 
     // Open confirm dialog
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
     // Click Compact button
     await user.click(screen.getByRole('button', { name: /^Compact$/i }))
@@ -381,7 +381,7 @@ describe('CompactionCard', () => {
     })
 
     // Open confirm dialog
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
 
     // Click Compact button
     await user.click(screen.getByRole('button', { name: /^Compact$/i }))
@@ -412,14 +412,14 @@ describe('CompactionCard', () => {
     })
 
     // Open the destructive confirm dialog.
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
-    expect(screen.getByText('Compact Op Log?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
+    expect(screen.getByText('Compact op log?')).toBeInTheDocument()
 
     // Cancel is auto-focused — reflex Enter dismisses without firing the action.
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(screen.queryByText('Compact Op Log?')).not.toBeInTheDocument()
+      expect(screen.queryByText('Compact op log?')).not.toBeInTheDocument()
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('compact_op_log_cmd', expect.anything())
@@ -437,14 +437,14 @@ describe('CompactionCard', () => {
     })
 
     // Open confirm dialog
-    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
-    expect(screen.getByText('Compact Op Log?')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Compact now/i }))
+    expect(screen.getByText('Compact op log?')).toBeInTheDocument()
 
     // Click Cancel
     await user.click(screen.getByRole('button', { name: /Cancel/i }))
 
     // Dialog should close
-    expect(screen.queryByText('Compact Op Log?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Compact op log?')).not.toBeInTheDocument()
 
     // compactOpLog should NOT have been called
     expect(mockedInvoke).not.toHaveBeenCalledWith('compact_op_log_cmd', expect.anything())
@@ -498,7 +498,7 @@ describe('CompactionCard', () => {
   // #6535 — History opens on the operations, not on a red destructive button:
   // the card stays collapsed even when there are ops it could remove.
   describe('collapsed by default', () => {
-    it('keeps Compact Now hidden after a status with eligible ops loads', async () => {
+    it('keeps Compact now hidden after a status with eligible ops loads', async () => {
       const user = userEvent.setup()
       const pending = deferred<CommandReturns['get_compaction_status']>()
       stubCompaction({ get_compaction_status: () => pending.promise })
@@ -509,7 +509,7 @@ describe('CompactionCard', () => {
       })
 
       expect(screen.getByRole('button', { name: TITLE })).toHaveAttribute('aria-expanded', 'false')
-      expect(screen.queryByRole('button', { name: /Compact Now/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Compact now/i })).not.toBeInTheDocument()
 
       // The status had loaded: expanding shows it without another fetch.
       await user.click(screen.getByRole('button', { name: TITLE }))

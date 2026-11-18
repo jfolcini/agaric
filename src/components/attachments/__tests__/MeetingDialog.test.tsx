@@ -519,7 +519,7 @@ describe('MeetingDialog — mutation triage (#5364)', () => {
       await user.click(screen.getByRole('button', { name: t('meeting.create') }))
       await created(onClose)
       const [message, options] = vi.mocked(toast.success).mock.calls[0] ?? []
-      expect(message).toBe(t('meeting.created', { title }))
+      expect(message).toBe(`Created "${title}"`)
       expect((options as { action?: { label: string } } | undefined)?.action?.label).toBe(
         t('action.undo'),
       )

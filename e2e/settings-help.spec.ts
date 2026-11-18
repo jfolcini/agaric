@@ -112,7 +112,7 @@ test.describe('Settings › Help @settings', () => {
     await expect(welcome).toBeVisible()
     await expect(welcome.getByText('Welcome to Agaric', { exact: true })).toBeVisible()
 
-    await welcome.getByRole('button', { name: 'Get Started', exact: true }).click()
+    await welcome.getByRole('button', { name: 'Get started', exact: true }).click()
     await expect(welcome).toHaveCount(0)
 
     // The next launch mounts the modal only without this flag (`useWelcomeGate`,

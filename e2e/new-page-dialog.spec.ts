@@ -42,7 +42,7 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
     await waitForBoot(page)
   })
 
-  test('the Pages view leads with search, focused, and New Page creates through the dialog', async ({
+  test('the Pages view leads with search, focused, and New page creates through the dialog', async ({
     page,
   }) => {
     // A first visit right after boot can mount the lazy view after App's
@@ -54,7 +54,7 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
 
     await page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .click()
     await createInOpenDialog(page, 'Quarterly plan')
 
@@ -64,11 +64,11 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
   const openers: ReadonlyArray<[string, (page: Page) => Promise<void>]> = [
     ['the Ctrl+N chord', (page) => page.keyboard.press('Control+n')],
     [
-      'the sidebar New Page button',
+      'the sidebar New page button',
       (page) =>
         page
           .locator('[data-slot="sidebar"]')
-          .getByRole('button', { name: 'New Page', exact: true })
+          .getByRole('button', { name: 'New page', exact: true })
           .click(),
     ],
     [
@@ -134,7 +134,7 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
     await navigateToView(page, 'Pages')
     const newPage = page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
     await newPage.click()
     await expect(titleInput(page)).toBeFocused()
 
@@ -168,10 +168,10 @@ test.describe('New page dialog (phone) @pages @mobile', () => {
     await expect(page.locator('input:focus, textarea:focus')).toHaveCount(0)
   })
 
-  test('New Page creates a page through the dialog', async ({ page }) => {
+  test('New page creates a page through the dialog', async ({ page }) => {
     await page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .tap()
     await createInOpenDialog(page, 'Phone page')
     await expectOnePageTitled(page, 'Phone page')
@@ -180,7 +180,7 @@ test.describe('New page dialog (phone) @pages @mobile', () => {
   test('an exact duplicate is reported and Create stays disabled', async ({ page }) => {
     await page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .tap()
     await expect(titleInput(page)).toBeFocused()
     await titleInput(page).fill('PROJECTS')

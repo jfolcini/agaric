@@ -1,5 +1,5 @@
 /**
- * The Advanced Query board (#6542): a State grouping laid out as one column
+ * The Advanced query board (#6542): a State grouping laid out as one column
  * per task state. Each column runs the mock's flat `run_advanced_query` path
  * with its own `State` leaf, so a column that selects the wrong blocks, or a
  * board that keeps the list's single query, shows up here as cards in the
@@ -50,15 +50,15 @@ async function moveCard(page: Page, from: string, text: string, to: string): Pro
 const announced = (page: Page, text: string): Locator =>
   page.locator('[id^="DndLiveRegion-"]').filter({ hasText: text })
 
-/** Leave Advanced Query and come back, so every column is queried afresh. */
+/** Leave Advanced query and come back, so every column is queried afresh. */
 async function reopenBoard(page: Page): Promise<void> {
   await navigateToView(page, 'Pages')
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await expect(page.getByTestId('query-board')).toBeVisible()
 }
 
 async function openStateBoard(page: Page): Promise<void> {
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await expect(page.getByRole('radio', { name: 'Board' })).toBeDisabled()
   await chooseSelectOption(page, 'Group by', 'State')
   await page.getByRole('radio', { name: 'Board' }).click()
@@ -145,7 +145,7 @@ test('undo on the card’s page takes a board move back @search @editor', async 
   await page.keyboard.press('Control+z')
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Undid' })).toBeVisible()
 
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await expect(card(page, 'TODO', 'Board spec undone')).toHaveCount(1)
   await expect(card(page, 'DONE', 'Board spec undone')).toHaveCount(0)
 })

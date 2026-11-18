@@ -48,7 +48,7 @@ test.describe('A tag name holds no whitespace (#6278 I4) @pages', () => {
 
   test('creating `deep work` says to use a dash and makes no tag', async ({ page }) => {
     await page.getByPlaceholder('New tag name...').fill('deep work')
-    await page.getByRole('button', { name: 'Add Tag' }).click()
+    await page.getByRole('button', { name: 'Add tag' }).click()
 
     await expect(toast(page)).toBeVisible()
     // The Tags view logs a refused create as an error.
