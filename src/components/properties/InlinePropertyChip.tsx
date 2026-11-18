@@ -18,6 +18,8 @@ interface InlinePropertyChipProps {
   unfit?: boolean | undefined
   /** A list's items are refs (its key is declared `ref`), shown by their targets' titles. */
   refItems?: boolean | undefined
+  /** Draws the chip with no control, as an embedded row does (#6747). */
+  readOnly?: boolean | undefined
 }
 
 /**
@@ -38,11 +40,12 @@ export function InlinePropertyChip({
   onShowProperties,
   unfit,
   refItems,
+  readOnly = false,
 }: InlinePropertyChipProps): React.ReactElement {
   const { t } = useTranslation()
   const { key, value, kind } = property
-  const onKeyClick = () => onEditKey({ oldKey: key, value })
-  const onOpenDrawer = onShowProperties && (() => onShowProperties(blockId))
+  const onKeyClick = readOnly ? undefined : () => onEditKey({ oldKey: key, value })
+  const onOpenDrawer = !readOnly && onShowProperties ? () => onShowProperties(blockId) : undefined
   if (kind === 'list') {
     return refItems ? (
       <RefListPropertyChip
@@ -67,7 +70,7 @@ export function InlinePropertyChip({
       <RefPropertyChip
         propKey={key}
         targetId={value}
-        onNavigate={onNavigate}
+        onNavigate={readOnly ? undefined : onNavigate}
         onKeyClick={onKeyClick}
         unfit={unfit}
       />
@@ -88,7 +91,7 @@ export function InlinePropertyChip({
     <PropertyChip
       propKey={key}
       value={value}
-      onClick={() => onEditProp({ key, value })}
+      onClick={readOnly ? undefined : () => onEditProp({ key, value })}
       onKeyClick={onKeyClick}
       unfit={unfit}
     />
@@ -105,7 +108,7 @@ function RefPropertyChip({
   propKey: string
   targetId: string
   onNavigate?: ((id: string) => void) | undefined
-  onKeyClick: () => void
+  onKeyClick: (() => void) | undefined
   unfit?: boolean | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -132,7 +135,7 @@ function RefListPropertyChip({
   propKey: string
   targetIds: readonly string[]
   onClick?: (() => void) | undefined
-  onKeyClick: () => void
+  onKeyClick: (() => void) | undefined
   unfit?: boolean | undefined
 }): React.ReactElement {
   const titles = useRefTitles(targetIds)

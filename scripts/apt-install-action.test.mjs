@@ -18,18 +18,19 @@ const ACTION_PATH = join(
 // when the test fails — the runner owns the failure report and the exit code.
 
 /**
- * The composite action's one `run: |` script, as the runner executes it. Read
- * line by line because scripts/ carries no YAML dependency (the reason is in
+ * The `install` step's `run: |` script, as the runner executes it. Read line by
+ * line because scripts/ carries no YAML dependency (the reason is in
  * `check-mutants-scope.mjs`).
  */
 function actionScript() {
   const lines = readFileSync(ACTION_PATH, 'utf8').split('\n')
-  const starts = lines.flatMap((line, i) => (/^\s*run: \|$/.test(line) ? [i] : []))
-  assert.equal(starts.length, 1, 'apt-install has exactly one run step')
+  const id = lines.findIndex((line) => /^\s*id: install$/.test(line))
+  assert.ok(id >= 0, 'apt-install has a step with id: install')
+  const start = lines.findIndex((line, i) => i > id && /^\s*run: \|$/.test(line))
   const indentOf = (line) => line.search(/\S/)
-  const keyIndent = indentOf(lines[starts[0]])
+  const keyIndent = indentOf(lines[start])
   const body = []
-  for (const line of lines.slice(starts[0] + 1)) {
+  for (const line of lines.slice(start + 1)) {
     if (line.trim() !== '' && indentOf(line) <= keyIndent) break
     body.push(line)
   }
@@ -45,17 +46,29 @@ const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
 
 /**
  * Run the action's script against stubbed `sudo`, `apt-get`, `sleep` and the
- * lock tools, all first on PATH. `apt-get update` always succeeds; `apt-get
+ * lock tools, all first on PATH. `apt-get update` exits `updateStatus`; `apt-get
  * install` fails `failures` times with `errors` on stderr and exit 100 (what
- * apt exits when a download or a lookup fails), then succeeds.
+ * apt exits when a download or a lookup fails), then succeeds. `cacheHit` is
+ * the restore step's output.
  */
-function runAction({ failures, errors }) {
+function runAction({
+  failures,
+  errors,
+  updateStatus = 0,
+  cacheHit = '',
+  installStatus = 100,
+  installOut = [],
+  mirrors = '',
+}) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
     const installs = join(dir, 'installs')
     const sleeps = join(dir, 'sleeps')
-    writeFileSync(installs, '')
-    writeFileSync(sleeps, '')
+    const updates = join(dir, 'updates')
+    const output = join(dir, 'output')
+    const mirrorsFile = join(dir, 'apt-mirrors.txt')
+    for (const file of [installs, sleeps, updates, output]) writeFileSync(file, '')
+    writeFileSync(mirrorsFile, mirrors)
     const stub = (name, body) => {
       const path = join(dir, name)
       writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`)
@@ -65,11 +78,12 @@ function runAction({ failures, errors }) {
     stub(
       'apt-get',
       [
-        '[ "$1" = update ] && exit 0',
+        `if [ "$1" = update ]; then echo update >> ${JSON.stringify(updates)}; exit ${updateStatus}; fi`,
         `echo "$@" >> ${JSON.stringify(installs)}`,
         `if [ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]; then`,
+        ...installOut.map((line) => `  echo ${JSON.stringify(line)}`),
         ...errors.map((line) => `  echo ${JSON.stringify(line)} >&2`),
-        '  exit 100',
+        `  exit ${installStatus}`,
         'fi',
         'echo "Setting up libfoo (1.0) ..."',
       ].join('\n'),
@@ -91,6 +105,9 @@ function runAction({ failures, errors }) {
         APT_INSTALL_TIMEOUT: '300',
         RUNNER_TEMP: dir,
         GITHUB_STEP_SUMMARY: join(dir, 'summary'),
+        GITHUB_OUTPUT: output,
+        APT_CACHE_HIT: cacheHit,
+        APT_MIRRORS: mirrorsFile,
       },
     })
     const lines = (file) => readFileSync(file, 'utf8').split('\n').filter(Boolean)
@@ -100,6 +117,9 @@ function runAction({ failures, errors }) {
       stderr: result.stderr,
       installs: lines(installs).length,
       sleeps: lines(sleeps).length,
+      updates: lines(updates).length,
+      output: readFileSync(output, 'utf8'),
+      mirrors: readFileSync(mirrorsFile, 'utf8'),
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -111,6 +131,7 @@ void test('a download the mirror cannot serve twice is an infra failure, exit 75
   assert.equal(run.status, 75, run.stdout + run.stderr)
   assert.match(run.stdout, /AGARIC_APT_INFRA/)
   assert.equal(run.installs, 2)
+  assert.equal(run.updates, 1)
   assert.equal(run.sleeps, 1)
 })
 
@@ -118,6 +139,7 @@ void test('a download that fails once is retried and the step passes', () => {
   const run = runAction({ failures: 1, errors: FETCH_ERRORS })
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 2)
+  assert.equal(run.updates, 1)
 })
 
 void test('a package apt cannot find fails at once with apt’s own status', () => {
@@ -128,9 +150,73 @@ void test('a package apt cannot find fails at once with apt’s own status', () 
   assert.equal(run.sleeps, 0)
 })
 
-void test('an install that works the first time passes with no retry', () => {
+void test('a refresh that never completes before a failed install is an infra failure, exit 75', () => {
+  const run = runAction({ failures: Infinity, errors: MISSING_PACKAGE_ERRORS, updateStatus: 124 })
+  assert.equal(run.status, 75, run.stdout + run.stderr)
+  assert.match(run.stdout, /AGARIC_APT_INFRA/)
+  assert.equal(run.updates, 2)
+})
+
+void test('without a cache hit the index is refreshed first, and the install is cacheable', () => {
   const run = runAction({ failures: 0, errors: [] })
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 1)
-  assert.equal(run.sleeps, 0)
+  assert.equal(run.updates, 1)
+  assert.equal(run.output, 'cacheable=true\n')
+})
+
+void test('on a cache hit the install touches no index', () => {
+  const run = runAction({ failures: 0, errors: [], cacheHit: 'true' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.installs, 1)
+  assert.equal(run.updates, 0)
+})
+
+void test('on a cache hit a failed install refreshes the index once before its retry', () => {
+  const run = runAction({ failures: 1, errors: MISSING_PACKAGE_ERRORS, cacheHit: 'true' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.installs, 2)
+  assert.equal(run.updates, 1)
+})
+
+const MIRRORS = [
+  'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1',
+  'https://archive.ubuntu.com/ubuntu/\tpriority:2',
+  'https://security.ubuntu.com/ubuntu/\tpriority:3',
+  '',
+].join('\n')
+
+void test('an attempt that runs out its bound sends the host it was fetching from last', () => {
+  const run = runAction({
+    failures: 1,
+    errors: [],
+    installStatus: 124,
+    installOut: [
+      'Get:5 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/main amd64 libwebkit2gtk-4.1-0 amd64 2.52.6 [25.5 MB]',
+    ],
+    mirrors: MIRRORS,
+  })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(
+    run.mirrors,
+    [
+      'https://archive.ubuntu.com/ubuntu/\tpriority:2',
+      'https://security.ubuntu.com/ubuntu/\tpriority:3',
+      'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:99',
+      '',
+    ].join('\n'),
+  )
+})
+
+void test('a failure that is not a timeout leaves the mirror order alone', () => {
+  const run = runAction({
+    failures: 1,
+    errors: FETCH_ERRORS,
+    installOut: [
+      'Get:5 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble/main amd64 libfoo [1 kB]',
+    ],
+    mirrors: MIRRORS,
+  })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.mirrors, MIRRORS)
 })

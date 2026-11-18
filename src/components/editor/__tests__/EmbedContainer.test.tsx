@@ -113,6 +113,8 @@ function installBackend(): void {
         return toRow(b)
       },
       load_page_subtree: (args) => subtreeOf(args['rootBlockId'] as string),
+      // The embed reads its rows' properties in one batch (#6747); these rows carry none.
+      get_batch_properties: () => ({}),
       edit_block: (args) => {
         const b = graph.get(args['blockId'] as string)
         if (!b) throw new Error('block not found')
