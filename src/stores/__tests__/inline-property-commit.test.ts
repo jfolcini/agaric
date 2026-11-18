@@ -100,7 +100,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   // value; a day alone is no datetime and stays as text.
   it('a value a `datetime` definition reads is stored as UTC, and one it does not stays as text', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'start',
       valueType: 'datetime',
       options: null,

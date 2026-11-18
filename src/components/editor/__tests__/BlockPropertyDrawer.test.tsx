@@ -1202,7 +1202,7 @@ describe('BlockPropertyDrawer', () => {
     it('shows the local date and time, and saves an edit as UTC against the real mock', async () => {
       if (!inBerlin()) return
       seedBlocks()
-      spacePropertyDefs('SPACE_PERSONAL').set('meeting', {
+      spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('meeting', {
         key: 'meeting',
         value_type: 'datetime',
         options: null,

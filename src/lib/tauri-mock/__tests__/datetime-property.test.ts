@@ -12,7 +12,7 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { propertyCompareMatches, propertyEqMatches } from '@/lib/tauri-mock/handlers/shared'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const X = SEED_IDS.BLOCK_GS_1
 const Y = SEED_IDS.BLOCK_GS_2
 const Z = SEED_IDS.BLOCK_GS_3
