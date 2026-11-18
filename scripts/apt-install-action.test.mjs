@@ -51,14 +51,24 @@ const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
  * apt exits when a download or a lookup fails), then succeeds. `cacheHit` is
  * the restore step's output.
  */
-function runAction({ failures, errors, updateStatus = 0, cacheHit = '' }) {
+function runAction({
+  failures,
+  errors,
+  updateStatus = 0,
+  cacheHit = '',
+  installStatus = 100,
+  installOut = [],
+  mirrors = '',
+}) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
     const installs = join(dir, 'installs')
     const sleeps = join(dir, 'sleeps')
     const updates = join(dir, 'updates')
     const output = join(dir, 'output')
+    const mirrorsFile = join(dir, 'apt-mirrors.txt')
     for (const file of [installs, sleeps, updates, output]) writeFileSync(file, '')
+    writeFileSync(mirrorsFile, mirrors)
     const stub = (name, body) => {
       const path = join(dir, name)
       writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`)
@@ -71,8 +81,9 @@ function runAction({ failures, errors, updateStatus = 0, cacheHit = '' }) {
         `if [ "$1" = update ]; then echo update >> ${JSON.stringify(updates)}; exit ${updateStatus}; fi`,
         `echo "$@" >> ${JSON.stringify(installs)}`,
         `if [ "$(wc -l < ${JSON.stringify(installs)})" -le ${failures === Infinity ? 999 : failures} ]; then`,
+        ...installOut.map((line) => `  echo ${JSON.stringify(line)}`),
         ...errors.map((line) => `  echo ${JSON.stringify(line)} >&2`),
-        '  exit 100',
+        `  exit ${installStatus}`,
         'fi',
         'echo "Setting up libfoo (1.0) ..."',
       ].join('\n'),
@@ -96,6 +107,7 @@ function runAction({ failures, errors, updateStatus = 0, cacheHit = '' }) {
         GITHUB_STEP_SUMMARY: join(dir, 'summary'),
         GITHUB_OUTPUT: output,
         APT_CACHE_HIT: cacheHit,
+        APT_MIRRORS: mirrorsFile,
       },
     })
     const lines = (file) => readFileSync(file, 'utf8').split('\n').filter(Boolean)
@@ -107,6 +119,7 @@ function runAction({ failures, errors, updateStatus = 0, cacheHit = '' }) {
       sleeps: lines(sleeps).length,
       updates: lines(updates).length,
       output: readFileSync(output, 'utf8'),
+      mirrors: readFileSync(mirrorsFile, 'utf8'),
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -164,4 +177,46 @@ void test('on a cache hit a failed install refreshes the index once before its r
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 1)
+})
+
+const MIRRORS = [
+  'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1',
+  'https://archive.ubuntu.com/ubuntu/\tpriority:2',
+  'https://security.ubuntu.com/ubuntu/\tpriority:3',
+  '',
+].join('\n')
+
+void test('an attempt that runs out its bound sends the host it was fetching from last', () => {
+  const run = runAction({
+    failures: 1,
+    errors: [],
+    installStatus: 124,
+    installOut: [
+      'Get:5 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/main amd64 libwebkit2gtk-4.1-0 amd64 2.52.6 [25.5 MB]',
+    ],
+    mirrors: MIRRORS,
+  })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(
+    run.mirrors,
+    [
+      'https://archive.ubuntu.com/ubuntu/\tpriority:2',
+      'https://security.ubuntu.com/ubuntu/\tpriority:3',
+      'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:99',
+      '',
+    ].join('\n'),
+  )
+})
+
+void test('a failure that is not a timeout leaves the mirror order alone', () => {
+  const run = runAction({
+    failures: 1,
+    errors: FETCH_ERRORS,
+    installOut: [
+      'Get:5 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble/main amd64 libfoo [1 kB]',
+    ],
+    mirrors: MIRRORS,
+  })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.mirrors, MIRRORS)
 })

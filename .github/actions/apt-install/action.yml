@@ -160,6 +160,23 @@ runs:
           sudo dpkg --configure -a || true
         }
 
+        # apt's mirrorlist fails over on an error, never on a slow host, so a
+        # host that trickled out a whole bound would serve the retry too
+        # (us-east-2.ec2 at ~100 KB/s, #6889's run 44254849878). The host the
+        # attempt was last fetching from goes last before the retry.
+        mirrors="${APT_MIRRORS:-/etc/apt/apt-mirrors.txt}"
+        demote_slow_mirror() {
+          local host
+          host="$(grep -oE '^(Get|Ign):[0-9]+ https?://[^/ ]+' "${apt_log}" | tail -n 1 | sed -E 's/^[^ ]+ //')"
+          [ -n "${host}" ] && [ -r "${mirrors}" ] || return 0
+          awk -v h="${host}/" 'index($0, h) == 1 { next } { print }' "${mirrors}" >"${RUNNER_TEMP}/apt-mirrors.new"
+          awk -v h="${host}/" 'index($0, h) == 1 { sub(/priority:[0-9]+/, "priority:99"); print }' "${mirrors}" >>"${RUNNER_TEMP}/apt-mirrors.new"
+          if ! cmp -s "${mirrors}" "${RUNNER_TEMP}/apt-mirrors.new"; then
+            sudo cp "${RUNNER_TEMP}/apt-mirrors.new" "${mirrors}"
+            echo "::warning::apt-install: ${host} ran out the bound; the retry tries it last"
+          fi
+        }
+
         # apt exits 100 both for a mirror it could not reach and for a package that
         # does not exist; only its `E:` lines tell the two apart.
         fetch_failed() {
@@ -222,6 +239,7 @@ runs:
               echo "::warning::apt-get install attempt ${attempt} exceeded ${APT_INSTALL_TIMEOUT}s (exit ${install_status}); the Ubuntu mirror is slow, this is not the diff"
               reap_apt
               wait_for_apt_locks
+              demote_slow_mirror
               ;;
             *)
               if fetch_failed; then
