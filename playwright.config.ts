@@ -29,6 +29,7 @@ const REAL_BACKEND_SPECS = [
   'advanced-query-saved-views.spec.ts',
   'block-history-sheet.spec.ts',
   'header-search-button.spec.ts',
+  'history-advanced.spec.ts',
   'history-keyboard-controls.spec.ts',
   'history-keyboard.spec.ts',
   'history-page-scope.spec.ts',
