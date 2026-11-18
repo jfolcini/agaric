@@ -66,32 +66,33 @@ async function pressSyncKeepingFocus(): Promise<void> {
 }
 
 /**
- * Answer the app's next `load_page_subtree` of `pageId` LATE_MS late, with the
- * snapshot the backend read when it was asked. `window.__lateRead` says when
- * it was asked and when it answered.
+ * Answer every `load_page_subtree` of `pageId` asked until `stopLateReads`
+ * LATE_MS late, with the snapshot the backend read when it was asked: a pull
+ * reloads the open page on `sync:complete` and again on the `blocks:changed`
+ * after its cache rebuild, and the newer load wins. Tauri's IPC posts each
+ * command through `fetch` (its `invoke` is read-only), so the wrapper sits
+ * there.
  */
-async function answerNextReadLate(pageId: string): Promise<void> {
+async function answerReadsLate(pageId: string): Promise<void> {
   await browser.execute(
     (id: string, lateMs: number) => {
-      type Invoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>
-      const w = window as unknown as {
-        __TAURI_INTERNALS__: { invoke: Invoke }
-        __lateRead: { asked: boolean; answered: boolean }
-      }
-      const internals = w.__TAURI_INTERNALS__
-      const original = internals.invoke
-      const state = { asked: false, answered: false }
-      w.__lateRead = state
-      internals.invoke = (cmd, args, options) => {
-        const root = (args as { rootBlockId?: string } | undefined)?.rootBlockId
-        if (cmd !== 'load_page_subtree' || root !== id) return original(cmd, args, options)
-        internals.invoke = original
-        state.asked = true
-        const snapshot = original(cmd, args, options)
+      const state = { late: true, asked: 0, answered: 0 }
+      ;(window as unknown as { __lateReads: typeof state }).__lateReads = state
+      const original = window.fetch
+      window.fetch = (input, init) => {
+        const read =
+          state.late &&
+          typeof input === 'string' &&
+          input.endsWith('/load_page_subtree') &&
+          typeof init?.body === 'string' &&
+          init.body.includes(id)
+        if (!read) return original(input, init)
+        state.asked++
+        const snapshot = original(input, init)
         return new Promise((resolve) => setTimeout(resolve, lateMs))
           .then(() => snapshot)
           .finally(() => {
-            state.answered = true
+            state.answered++
           })
       }
     },
@@ -100,12 +101,24 @@ async function answerNextReadLate(pageId: string): Promise<void> {
   )
 }
 
-const lateRead = (key: 'asked' | 'answered') =>
+interface LateReads {
+  late: boolean
+  asked: number
+  answered: number
+}
+
+const lateReads = () =>
   browser.execute(
-    (k: string) =>
-      (window as unknown as { __lateRead?: Record<string, boolean> }).__lateRead?.[k] === true,
-    key,
-  )
+    () => (window as unknown as { __lateReads: LateReads }).__lateReads,
+  ) as Promise<LateReads>
+
+/** Answer later reads on time; returns how many were answered late. */
+const stopLateReads = () =>
+  browser.execute(() => {
+    const state = (window as unknown as { __lateReads: LateReads }).__lateReads
+    state.late = false
+    return state.asked
+  })
 
 describe('Agaric real-backend key typed after Enter while a pull reloads the page (#6814) @sync @editor', () => {
   let peer: SyncPeer | undefined
@@ -158,11 +171,11 @@ describe('Agaric real-backend key typed after Enter while a pull reloads the pag
 
     await blockStaticByMarker(KEPT).click()
     await caretToEnd()
-    await answerNextReadLate(pageId)
+    await answerReadsLate(pageId)
     await peer.editBlock(edited, PEER_AFTER)
     await browser.waitUntil(
       async () => {
-        if (await lateRead('asked')) return true
+        if ((await lateReads()).asked > 0) return true
         if (await syncIdle()) await pressSyncKeepingFocus()
         return false
       },
@@ -174,9 +187,10 @@ describe('Agaric real-backend key typed after Enter while a pull reloads the pag
     )
 
     await enterBlankSibling()
-    await browser.waitUntil(() => lateRead('answered'), {
+    const late = await stopLateReads()
+    await browser.waitUntil(async () => (await lateReads()).answered === late, {
       timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'the late read never answered',
+      timeoutMsg: 'the late reads never answered',
     })
     await blockStaticByMarker(PEER_AFTER).waitForDisplayed({ timeout: ACTION_TIMEOUT })
     const focus = await browser.execute(() => {

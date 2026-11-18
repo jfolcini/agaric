@@ -11,7 +11,13 @@ Not built here: #6811's maintainer comment asks for a deterministic Rust sync si
 ## Tests
 
 - `src/stores/__tests__/page-blocks.split-merge.test.ts`: a reload asked before `splitOff` and answered after it keeps both halves shown throughout. Red without the fix (the new block went missing).
-- `e2e-tauri/enter-during-pull.e2e.ts`: pairs `e2e_sync_peer`, opens a page the peer wrote, has the peer edit it and the app pull. The app's next read of the page is answered 3 s late with the snapshot taken when asked (a wrapper on `__TAURI_INTERNALS__.invoke`), and Enter is pressed while it is on its way. The focus must still be in the editor once the read lands, and the key typed then must be in the new block after a nav round-trip. The Sync press is a script click, which leaves the focus in the editor.
+- `e2e-tauri/enter-during-pull.e2e.ts`: pairs `e2e_sync_peer`, opens a page the peer wrote, has the peer edit it and the app pull. Every read of the page asked before Enter is answered 3 s late, with the snapshot taken when it was asked, and Enter is pressed while one is on its way. The wrapper sits on `window.fetch`: Tauri's `__TAURI_INTERNALS__.invoke` is read-only, so a wrapper assigned there silently does nothing. It has to delay every read, not only the first: the pull reloads the page on `sync:complete` and again on `blocks:changed`, and the newer load's generation discards the older one, so with only the first read late the spec passed on `main`. The focus must still be in the editor once the read lands, and the key typed then must be in the new block after a nav round-trip. The Sync press is a script click, which leaves the focus in the editor.
 
 ## What ran
-- `npx vitest run src/stores/__tests__/page-blocks*`: green with the fix, the new test red without it.
+
+- `npx vitest run src/stores src/editor src/hooks/__tests__/useSyncEvents*`: green. The new store test was red without the fix.
+- `just e2e-real`-equivalent runs (local Xvfb, the debug app built by `npm run tauri -- build --debug --no-bundle …`, then `WDIO_SKIP_TAURI_BUILD=1 scripts/e2e-tauri-local.sh`): `enter-during-pull` red on `main`'s store (`Expected: "editor"`, `Received: "BODY"`), green three times with the fix. `sync-refresh`, `sync-ref-to-new-block` and `page-mode-sync` green with the fix.
+- Playwright (mock): `reload-keeps-editor`, `enter-split-caret`, `journal-add-block-while-editing`, `enter-after-caret-key`, `editor-lifecycle`: 43 passed.
+- `just lint`, `npm run typecheck`, `npm run typecheck:e2e-tauri`.
+
+Trap: `just e2e-real` failed here before reaching the spec, because the Tauri build spawned from WDIO's `onPrepare` breaks vite's React Compiler preset (`define_import_meta_default.resolve is not a function`), while the same `npm run build` run by hand works. Building first and running with `WDIO_SKIP_TAURI_BUILD=1` works around it.
