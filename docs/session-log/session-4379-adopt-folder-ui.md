@@ -1,4 +1,4 @@
-# Session 4375 — Open a folder of notes, the Settings entry (#6540 slice C)
+# Session 4379 — Open a folder of notes, the Settings entry (#6540 slice C)
 
 Slice C of #6540: the user-facing half of adopting a folder of notes in place, on the backend #6974 merged. The maintainer chose how the folder reaches the importer (decision on #6540): one native folder pick, the folder's files served by the desktop app to the existing folder import, a Logseq graph refused before anything is written, then the preview and the adoption.
 
