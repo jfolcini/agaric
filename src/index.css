@@ -286,6 +286,19 @@
   /* Black, the colour `<mark>` took from the browser before it had a token; the
    * dark themes keep --highlight light enough to carry it (#6528). */
   --highlight-foreground: oklch(0 0 0);
+  /* Highlight colours (#6759), Obsidian's six; each on black, as --highlight is. */
+  --highlight-red: oklch(0.89 0.08 25);
+  --highlight-orange: oklch(0.9 0.09 60);
+  --highlight-yellow: oklch(0.95 0.12 102);
+  --highlight-green: oklch(0.9 0.09 145);
+  --highlight-blue: oklch(0.89 0.07 245);
+  --highlight-purple: oklch(0.88 0.08 305);
+  --highlight-red-foreground: oklch(0 0 0);
+  --highlight-orange-foreground: oklch(0 0 0);
+  --highlight-yellow-foreground: oklch(0 0 0);
+  --highlight-green-foreground: oklch(0 0 0);
+  --highlight-blue-foreground: oklch(0 0 0);
+  --highlight-purple-foreground: oklch(0 0 0);
   /* Block reference chip */
   --block-ref: oklch(0.91 0.05 293);
   --block-ref-foreground: oklch(0.45 0.2 293);
@@ -458,6 +471,12 @@
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.57 0.14 66);
+  --highlight-red: oklch(0.64 0.15 25);
+  --highlight-orange: oklch(0.66 0.14 60);
+  --highlight-yellow: oklch(0.7 0.13 95);
+  --highlight-green: oklch(0.64 0.13 145);
+  --highlight-blue: oklch(0.64 0.12 245);
+  --highlight-purple: oklch(0.64 0.14 305);
   /* Block reference chip */
   --block-ref: oklch(0.3 0.06 293);
   --block-ref-foreground: oklch(0.78 0.14 293);
@@ -1760,6 +1779,33 @@
    (`.search-result-mark`). */
 .ProseMirror mark {
   @apply bg-highlight text-highlight-foreground rounded px-0.5;
+}
+
+/* A coloured highlight (#6759), editing and reading alike: the editor's and
+   the renderer's `<mark>` carry `data-highlight-color`. */
+mark[data-highlight-color='red'] {
+  background-color: var(--highlight-red);
+  color: var(--highlight-red-foreground);
+}
+mark[data-highlight-color='orange'] {
+  background-color: var(--highlight-orange);
+  color: var(--highlight-orange-foreground);
+}
+mark[data-highlight-color='yellow'] {
+  background-color: var(--highlight-yellow);
+  color: var(--highlight-yellow-foreground);
+}
+mark[data-highlight-color='green'] {
+  background-color: var(--highlight-green);
+  color: var(--highlight-green-foreground);
+}
+mark[data-highlight-color='blue'] {
+  background-color: var(--highlight-blue);
+  color: var(--highlight-blue-foreground);
+}
+mark[data-highlight-color='purple'] {
+  background-color: var(--highlight-purple);
+  color: var(--highlight-purple-foreground);
 }
 
 /* #5745 — the block *Read aloud* is speaking: the highlight token, tinted under the text.

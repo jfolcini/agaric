@@ -29,6 +29,11 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Makes the text italic. _italic_ works too.',
   'markdownReference.highlight.title': 'Highlight',
   'markdownReference.highlight.description': 'Highlights the text.',
+  // Translators: "==" and the six emoji are literal Markdown; keep them as written. "Obsidian" is
+  // another app's name; "selection bubble" is the small toolbar over selected text.
+  'markdownReference.highlightColor.title': 'Coloured highlight',
+  'markdownReference.highlightColor.description':
+    'A colour emoji after the == colours the highlight: 🔴 🟠 🟡 🟢 🔵 🟣, as Obsidian writes it. The selection bubble picks one too.',
   'markdownReference.strike.title': 'Strikethrough',
   'markdownReference.strike.description': 'Crosses the text out.',
   // Translators: "the tags" are the <u>…</u> HTML tags shown in the syntax example.

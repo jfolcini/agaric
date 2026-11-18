@@ -29,6 +29,7 @@ import {
   unresolvedTagLabel,
 } from '@/lib/block-title'
 import { isMarkdownRevealEnabled } from '@/lib/editor-preferences'
+import { asHighlightColor, highlightColorEmoji } from '@/lib/highlight-colors'
 
 const EMPHASIS_MARKS = ['bold', 'italic', 'strike', 'highlight', 'code'] as const
 type EmphasisMark = (typeof EMPHASIS_MARKS)[number]
@@ -224,7 +225,10 @@ function delimiters(state: EditorState, run: MarkRun): { open: string; close: st
   const name = run.mark.type.name as RevealedMark
   if (name === 'code') return inlineCodeDelimiters(state.doc.textBetween(run.from, run.to))
   if (name === 'link') return { open: '[', close: `](${String(run.mark.attrs['href'])})` }
-  return { open: OPEN_DELIMITER[name], close: CLOSE_DELIMITER[name] }
+  // A coloured highlight's opener carries its colour's emoji (#6759).
+  const color = name === 'highlight' ? asHighlightColor(run.mark.attrs['color']) : null
+  const open = OPEN_DELIMITER[name] + (color ? highlightColorEmoji(color) : '')
+  return { open, close: CLOSE_DELIMITER[name] }
 }
 
 function markersOf(state: EditorState, run: MarkRun): MarkMarker[] {

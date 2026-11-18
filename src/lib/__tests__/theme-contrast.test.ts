@@ -21,6 +21,8 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { HIGHLIGHT_COLORS } from '@/lib/highlight-colors'
+
 type Oklch = readonly [L: number, C: number, h: number]
 
 /** OKLCH (D65) → linear-light sRGB, per the Oklab/CSS Color 4 matrices. */
@@ -633,6 +635,10 @@ describe('every foreground token clears WCAG on its background in every theme (#
     const generated = GENERATED_PAIRS.map(({ fg }) => fg)
     expect(generated).toContain('op-tag-foreground')
     expect(generated).toContain('primary-foreground')
+    // Each highlight colour (#6759) is measured in every theme.
+    for (const color of HIGHLIGHT_COLORS) {
+      expect(generated).toContain(`highlight-${color.id}-foreground`)
+    }
     // Pinned above with the 3:1 glyph threshold, so not re-measured at 4.5.
     expect(generated).not.toContain('task-done-foreground')
   })

@@ -35,6 +35,7 @@ import { Underline } from '@/editor/extensions/underline'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { isOutsideHeadingMarker, markerBesideCaret } from '@/editor/revealed-markers'
 import type { DocNode } from '@/editor/types'
+import { HighlightWithShortcut } from '@/editor/use-roving-editor'
 import {
   unresolvedBlockLabel,
   unresolvedBlockRefLabel,
@@ -597,6 +598,13 @@ describe('MarkdownReveal with the preference on', () => {
     expect(pressKey(ed, 'ArrowRight')).toBe(true)
     typeKey(ed, 'b')
     expect(markdown(ed)).toBe('==hia==b z')
+  })
+
+  it('reveals a coloured highlight’s emoji with its opening == (#6759)', () => {
+    const ed = createEditor('==🔴hi== z', [HighlightWithShortcut])
+    ed.commands.setTextSelection(2)
+    expect(markers(ed)).toEqual(['==🔴', '=='])
+    expect(markdown(ed)).toBe('==🔴hi== z')
   })
 
   it('Backspace after a highlight’s opening == takes the highlight off its whole range, and undo brings it back', () => {

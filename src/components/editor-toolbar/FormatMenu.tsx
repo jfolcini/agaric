@@ -37,6 +37,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { HighlightColorPicker } from '@/components/editor-toolbar/HighlightColorPicker'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import {
   createMarkToggles,
@@ -88,34 +89,39 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
   })
 
   return (
-    <div role="toolbar" aria-label={t('toolbar.format')} className="flex items-center gap-0.5">
-      {markToggles.map((btn) => {
-        const tooltip = withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])
-        const active = btn.activeKey ? (state[btn.activeKey as keyof typeof state] ?? false) : false
-        const disabled = btn.disabledWhenFalse
-          ? !state[btn.disabledWhenFalse as keyof typeof state]
-          : undefined
-        return (
-          <Tooltip key={btn.label} delayDuration={200}>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t(btn.label)}
-                aria-pressed={active}
-                disabled={disabled}
-                className={cn(active && toolbarActiveClass)}
-                {...toolbarPressHandlers(btn.action)}
-              >
-                <btn.icon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              {tooltip}
-            </TooltipContent>
-          </Tooltip>
-        )
-      })}
+    <div className="flex flex-col gap-1">
+      <div role="toolbar" aria-label={t('toolbar.format')} className="flex items-center gap-0.5">
+        {markToggles.map((btn) => {
+          const tooltip = withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])
+          const active = btn.activeKey
+            ? (state[btn.activeKey as keyof typeof state] ?? false)
+            : false
+          const disabled = btn.disabledWhenFalse
+            ? !state[btn.disabledWhenFalse as keyof typeof state]
+            : undefined
+          return (
+            <Tooltip key={btn.label} delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t(btn.label)}
+                  aria-pressed={active}
+                  disabled={disabled}
+                  className={cn(active && toolbarActiveClass)}
+                  {...toolbarPressHandlers(btn.action)}
+                >
+                  <btn.icon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={6}>
+                {tooltip}
+              </TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </div>
+      <HighlightColorPicker editor={editor} />
     </div>
   )
 }

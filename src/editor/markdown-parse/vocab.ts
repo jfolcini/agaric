@@ -24,6 +24,7 @@ import type {
   TagRefNode,
   TextNode,
 } from '@/editor/types'
+import type { HighlightColor } from '@/lib/highlight-colors'
 
 // -- Constants ----------------------------------------------------------------
 
@@ -376,6 +377,9 @@ export interface InlineState {
   italicOpenPos: number
   strikeOpenPos: number
   highlightOpenPos: number
+  /** The open highlight's delimiter: `==`, or `==` and its colour emoji (#6759). */
+  highlightOpenDelim: string
+  highlightColor: HighlightColor | null
   underlineOpenPos: number
   /**
    * Which delimiter char opened the currently-open bold/italic run — `'*'` or
@@ -408,6 +412,8 @@ export function createInlineState(line: string, depth: number): InlineState {
     italicOpenPos: -1,
     strikeOpenPos: -1,
     highlightOpenPos: -1,
+    highlightOpenDelim: '==',
+    highlightColor: null,
     underlineOpenPos: -1,
     boldDelim: null,
     italicDelim: null,
@@ -426,7 +432,13 @@ export function currentMarks(st: InlineState): PMMark[] {
   if (st.inBold) m.push({ type: 'bold' })
   if (st.inItalic) m.push({ type: 'italic' })
   if (st.inStrike) m.push({ type: 'strike' })
-  if (st.inHighlight) m.push({ type: 'highlight' })
+  if (st.inHighlight) {
+    m.push(
+      st.highlightColor
+        ? { type: 'highlight', attrs: { color: st.highlightColor } }
+        : { type: 'highlight' },
+    )
+  }
   return m
 }
 
