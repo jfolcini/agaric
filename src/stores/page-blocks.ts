@@ -219,6 +219,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     completedLoads: 0,
     truncatedTotal: null,
     staleFocusedBlock: null,
+    seeding: null,
 
     getBlockById: (id: string) => get().blocksById.get(id),
 

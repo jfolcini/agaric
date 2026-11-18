@@ -53,6 +53,13 @@ export interface PageBlockState {
    */
   staleFocusedBlock: { id: string; content: FlatBlock['content'] } | null
 
+  /**
+   * The page's empty first block while BlockTree is creating it, resolving to
+   * its id once it is in the store, or to `null` if it never got there. An
+   * "Add block" meanwhile takes that block instead of adding a second.
+   */
+  seeding: Promise<string | null> | null
+
   /** `state.blocksById.get(id)`. */
   getBlockById: (id: string) => FlatBlock | undefined
 

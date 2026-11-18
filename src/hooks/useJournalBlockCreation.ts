@@ -178,6 +178,14 @@ export function useJournalBlockCreation({
             useBlockStore.getState().setFocused(first.id)
           }
         } else {
+          // The day's BlockTree is still creating its first block: that block
+          // is the one asked for, so a second is not added under the caret.
+          const seeding = getPageStore(pageId)?.getState().seeding
+          const seeded = seeding ? await seeding : null
+          if (seeded != null) {
+            useBlockStore.getState().setFocused(seeded)
+            return
+          }
           const blankTail = unfocusedBlankTail(
             getPageStore(pageId)?.getState().blocks ?? [],
             pageId,
