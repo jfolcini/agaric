@@ -107,6 +107,21 @@ Single user, multiple devices they own, no cloud. There is no malicious actor.
 - **Do not add hardening that assumes adversarial peers.** No DoS protection, rate limiting, or traversal guards against sync peers.
 - Spend defensive effort on data integrity: no accidental corruption, hash-chain consistency, transaction atomicity.
 
+## Supply-chain pinning
+
+Everything that enters the build from outside the repo is pinned by digest, so a replaced or compromised upstream cannot change what CI runs or what ships:
+
+- **Packages:** the lockfiles (`package-lock.json` integrity, `Cargo.lock` checksums); CI installs with `npm ci`, and `verify-lockfiles` fails on drift.
+- **GitHub Actions:** a 40-char commit SHA.
+- **Every other tool and download:** `pins.txt`, the one place versions and sha256s live. Workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh` (`fetch` checks the sha256 before the file is used). Never write a version or a digest anywhere else; `pins.test.mjs` fails on one.
+- **Gradle dependencies (Android):** `src-tauri/gen/android/gradle/verification-metadata.xml`. When a Tauri or plugin bump fails verification, CI regenerates it and commits it to the PR for review; by hand, `just update-gradle-verification` ([docs/BUILD.md](docs/BUILD.md#android)).
+
+Where the installer takes no hash, `pins.txt` pins the exact version, never a range, tag, `latest` or bare major (`setup-java`, sdkmanager packages and the emulator build, a dated nightly, `cargo install`, `cargo binstall`, `uv tool`); `.nvmrc` and `rust-toolchain.toml` do the same for Node and Rust. Runner images, apt and brew packages are the accepted floating exceptions.
+
+Dependabot cannot see these pins. `just pin-bump <name> <version>` moves one and recomputes its sha256s from the new downloads (review that diff: the hashes are trusted on first use), and the weekly `stale-pins` lane of `scheduled-deep-checks.yml` (`just pins-stale`) goes red when one falls behind its upstream past the 7-day cooldown.
+
+Each release artifact ships SBOMs and an OpenVEX document generated together (`.github/actions/syft-sbom`; SECURITY.md § Mitigations). A waiver added to `deny.toml` or `.nsprc` becomes a VEX statement with its `reason` as the impact statement, so write the reason for a reader outside the repo.
+
 ## Database
 
 - `notes.db` under the app data dir; WAL mode; foreign keys on; pool of 2 writers + 4 readers.

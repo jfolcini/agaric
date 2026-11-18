@@ -1,0 +1,31 @@
+name: Tauri AppImage tools
+description: >-
+  Seeds `~/.cache/tauri/` with copies checked against pins.txt of the three x86_64 tools
+  tauri-bundler would otherwise download unverified while building an AppImage
+  (`prepare_tools` in tauri-bundler's `linux/appimage/linuxdeploy.rs`). The
+  bundler skips any download whose file already exists. Run it after `npm ci`
+  and before the Tauri build.
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify the AppImage tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The linuxdeploy file name embeds the commit tauri-bundler pins. A
+        # Tauri CLI that pins another commit would download its own copy,
+        # unverified, so refuse to build until pins.txt is refreshed.
+        ld="$(bash scripts/pins.sh version linuxdeploy)"
+        cli=node_modules/@tauri-apps/cli-linux-x64-gnu/cli.linux-x64-gnu.node
+        if ! grep -aq "$ld" "$cli"; then
+          echo "::error file=pins.txt::$cli no longer pins linuxdeploy-$ld. Take the new name and URLs from prepare_tools in tauri-bundler's linux/appimage/linuxdeploy.rs at the new CLI tag and update pins.txt (just pin-bump linuxdeploy <commit>)." >&2
+          exit 1
+        fi
+        cache="$HOME/.cache/tauri"
+        mkdir -p "$cache"
+        # tauri-bundler's file names for the three tools.
+        bash scripts/pins.sh fetch apprun linux-x86_64 "$cache/AppRun-x86_64"
+        bash scripts/pins.sh fetch linuxdeploy linux-x86_64 "$cache/linuxdeploy-$ld-x86_64.AppImage"
+        bash scripts/pins.sh fetch linuxdeploy-plugin-appimage linux-x86_64 "$cache/linuxdeploy-plugin-appimage.AppImage"
+        chmod 770 "$cache/AppRun-x86_64" "$cache/linuxdeploy-$ld-x86_64.AppImage" "$cache/linuxdeploy-plugin-appimage.AppImage"

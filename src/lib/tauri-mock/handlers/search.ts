@@ -1785,7 +1785,7 @@ const parseJsonWithSource = JSON.parse as unknown as (
  * not one engine. It is excluded from shipped builds (`main.tsx` gates the
  * import on `!import.meta.env.PROD`, so it never runs in a Tauri webview) and
  * runs in exactly three places: `vitest` on Node (`package.json` `engines`
- * allows `^22.22.2`), Playwright's Chromium against the `VITE_E2E` preview
+ * allows `^22.23.4`), Playwright's Chromium against the `VITE_E2E` preview
  * build, and whatever browser a developer points at `vite dev`. The oldest of
  * those is the constraint, and it is not pinned anywhere — hence detection plus
  * the documented fallback in {@link cursorVersionSlotIsU8}, not a hard

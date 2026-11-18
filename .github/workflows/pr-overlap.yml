@@ -571,7 +571,6 @@ jobs:
         # Node than the gate would be answering a different question.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies

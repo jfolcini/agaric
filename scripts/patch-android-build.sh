@@ -9,6 +9,8 @@
 #   - compileOptions.sourceCompatibility / targetCompatibility = VERSION_17
 #   - distributionSha256Sum in the Gradle wrapper properties, so the wrapper
 #     refuses a Gradle distribution that differs from the one we vetted.
+#   - asserts gradle/verification-metadata.xml is present, so Gradle checks
+#     every dependency's sha256 (regenerate: scripts/update-gradle-verification.sh).
 #   - launcher icons: replace Tauri's generic placeholder with the agaric
 #     mushroom (regenerated from app-icon.json -> public/agaric.svg).
 #
@@ -130,6 +132,16 @@ for section in '<cloud-backup>' '<device-transfer>'; do
 done
 
 echo "checked $APP_MAIN — backup and device transfer opted out"
+
+# Gradle verifies dependencies only when this tracked file is present; without
+# it every dependency resolves unchecked. CI restores it with the other tracked
+# overrides after `android init`.
+VERIFICATION="src-tauri/gen/android/gradle/verification-metadata.xml"
+if [[ ! -f "$VERIFICATION" ]]; then
+  echo "error: $VERIFICATION is missing — restore it with 'git checkout -- $VERIFICATION' (regenerate: scripts/update-gradle-verification.sh)" >&2
+  exit 1
+fi
+echo "checked $VERIFICATION — Gradle dependency verification on"
 
 # ── Launcher icons ────────────────────────────────────────────────────
 # `cargo tauri android init` emits Tauri's generic placeholder launcher

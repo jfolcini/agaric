@@ -2028,8 +2028,9 @@ export type BugReport_Deserialize = {
 	arch: string,
 	device_id: string,
 	/**
-	 *  Last `RECENT_ERRORS_CAP` error/warn lines from the recent
-	 *  `agaric.log.YYYY-MM-DD` files, newest last.
+	 *  Last `RECENT_ERRORS_CAP` distinct error/warn lines from the recent
+	 *  `agaric.log.YYYY-MM-DD` files, newest last. Lines that differ only in
+	 *  their timestamp appear once, at the newest, prefixed `[logged N×]`.
 	 * 
 	 *  #4216: this is a recency window, not a calendar-day one — the walk
 	 *  crosses UTC day boundaries backwards until the cap is full or the
@@ -2064,8 +2065,9 @@ export type BugReport_Serialize = {
 	arch: string,
 	device_id: string,
 	/**
-	 *  Last `RECENT_ERRORS_CAP` error/warn lines from the recent
-	 *  `agaric.log.YYYY-MM-DD` files, newest last.
+	 *  Last `RECENT_ERRORS_CAP` distinct error/warn lines from the recent
+	 *  `agaric.log.YYYY-MM-DD` files, newest last. Lines that differ only in
+	 *  their timestamp appear once, at the newest, prefixed `[logged N×]`.
 	 * 
 	 *  #4216: this is a recency window, not a calendar-day one — the walk
 	 *  crosses UTC day boundaries backwards until the cap is full or the

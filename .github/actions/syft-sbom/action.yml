@@ -1,0 +1,63 @@
+name: SBOM and OpenVEX
+description: >-
+  Writes `<output-prefix>.spdx.json`, `<output-prefix>.cyclonedx.json` and
+  `<output-prefix>.openvex.json` for one release artifact. syft (checked
+  against pins.txt) scans the bundle for the installer and bundled OS
+  libraries, and the shipped binaries for the crate list `cargo auditable`
+  embedded in them; scripts/sbom.mjs folds those crates in with their
+  Cargo.lock hashes, adds the frontend's npm packages, and fails an SBOM
+  missing either half; scripts/generate-vex.mjs then writes the OpenVEX for
+  that same SBOM. The binaries must have been built with cargo auditable.
+
+inputs:
+  source:
+    description: A syft source for the bundle, e.g. `dir:path/to/bundle` or `file:app.apk`.
+    required: true
+  binaries:
+    description: >-
+      Space-separated globs of the Rust binaries the artifact ships; each must
+      match at least one file.
+    required: true
+  output-prefix:
+    description: Path the SBOM and OpenVEX files are written under, without extension.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write the SBOMs and the OpenVEX
+      shell: bash
+      env:
+        SYFT_CHECK_FOR_APP_UPDATE: 'false'
+        SOURCE: ${{ inputs.source }}
+        BINARIES: ${{ inputs.binaries }}
+        OUT: ${{ inputs.output-prefix }}
+      run: |
+        set -euo pipefail
+        platform="$(bash scripts/pins.sh platform)"
+        dir="$RUNNER_TEMP/syft"
+        mkdir -p "$dir/binaries"
+        if [ "$RUNNER_OS" = Windows ]; then
+          bash scripts/pins.sh fetch syft "$platform" "$dir/syft.zip"
+          7z x -y -o"$dir" "$dir/syft.zip" syft.exe >/dev/null
+          syft="$dir/syft.exe"
+        else
+          bash scripts/pins.sh fetch syft "$platform" "$dir/syft.tgz"
+          tar -xzf "$dir/syft.tgz" -C "$dir" syft
+          syft="$dir/syft"
+        fi
+        shopt -s nullglob
+        for pattern in $BINARIES; do
+          # shellcheck disable=SC2206 # the glob expands here, on purpose
+          matches=($pattern)
+          if [ "${#matches[@]}" -eq 0 ]; then
+            echo "::error file=.github/actions/syft-sbom/action.yml::no binary matches $pattern" >&2
+            exit 1
+          fi
+          cp "${matches[@]}" "$dir/binaries/"
+        done
+        "$syft" scan "$SOURCE" -o "spdx-json=$OUT.spdx.json" -o "cyclonedx-json=$OUT.cyclonedx.json"
+        "$syft" scan "dir:$dir/binaries" -o "cyclonedx-json=$dir/binaries.cyclonedx.json"
+        node scripts/sbom.mjs augment --cyclonedx "$OUT.cyclonedx.json" --spdx "$OUT.spdx.json" --binaries-cyclonedx "$dir/binaries.cyclonedx.json"
+        node scripts/sbom.mjs check --cyclonedx "$OUT.cyclonedx.json"
+        node scripts/generate-vex.mjs --sbom "$OUT.cyclonedx.json" --output "$OUT.openvex.json"
