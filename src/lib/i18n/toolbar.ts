@@ -82,14 +82,6 @@ export const toolbar: Record<string, string> = {
   'toolbar.codeTip': 'Inline code',
   'toolbar.strikethroughTip': 'Strikethrough',
   'toolbar.highlightTip': 'Highlight',
-  'toolbar.highlightColor': 'Highlight colour',
-  'toolbar.highlightDefault': 'Default highlight',
-  'toolbar.highlight.red': 'Red highlight',
-  'toolbar.highlight.orange': 'Orange highlight',
-  'toolbar.highlight.yellow': 'Yellow highlight',
-  'toolbar.highlight.green': 'Green highlight',
-  'toolbar.highlight.blue': 'Blue highlight',
-  'toolbar.highlight.purple': 'Purple highlight',
   'toolbar.underlineTip': 'Underline (Ctrl+U)',
   'toolbar.linkTip': 'External link (Ctrl+K)',
   'toolbar.pageLinkTip': 'Page link ([[)',
@@ -195,4 +187,16 @@ export const toolbar: Record<string, string> = {
   'toolbar.indentTip': 'Indent block',
   'toolbar.outdent': 'Outdent',
   'toolbar.outdentTip': 'Outdent block',
+
+  // Translators: The highlight-colour picker of the selection bubble and the Format menu.
+  // "Highlight colour" is the button that opens it and the name of its row of swatches; each other
+  // string names one swatch, the default highlight or a coloured one (#6759).
+  'toolbar.highlightColor': 'Highlight colour',
+  'toolbar.highlightDefault': 'Default highlight',
+  'toolbar.highlight.red': 'Red highlight',
+  'toolbar.highlight.orange': 'Orange highlight',
+  'toolbar.highlight.yellow': 'Yellow highlight',
+  'toolbar.highlight.green': 'Green highlight',
+  'toolbar.highlight.blue': 'Blue highlight',
+  'toolbar.highlight.purple': 'Purple highlight',
 }

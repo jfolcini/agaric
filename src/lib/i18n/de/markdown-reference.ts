@@ -19,6 +19,9 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Macht den Text kursiv. _italic_ funktioniert auch.',
   'markdownReference.highlight.title': 'Hervorhebung',
   'markdownReference.highlight.description': 'Hebt den Text hervor.',
+  'markdownReference.highlightColor.title': 'Farbige Hervorhebung',
+  'markdownReference.highlightColor.description':
+    'Ein Farb-Emoji nach dem == färbt die Hervorhebung: 🔴 🟠 🟡 🟢 🔵 🟣, wie Obsidian es schreibt. Die Leiste über der Auswahl bietet die Farben ebenfalls an.',
   'markdownReference.strike.title': 'Durchgestrichen',
   'markdownReference.strike.description': 'Streicht den Text durch.',
   'markdownReference.underline.title': 'Unterstrichen',

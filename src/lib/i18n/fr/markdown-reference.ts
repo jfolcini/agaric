@@ -19,6 +19,9 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Met le texte en italique. _italic_ fonctionne aussi.',
   'markdownReference.highlight.title': 'Surlignage',
   'markdownReference.highlight.description': 'Surligne le texte.',
+  'markdownReference.highlightColor.title': 'Surlignage en couleur',
+  'markdownReference.highlightColor.description':
+    'Un emoji de couleur après le == colore le surlignage\u00A0: 🔴 🟠 🟡 🟢 🔵 🟣, comme l’écrit Obsidian. La barre au-dessus de la sélection permet aussi d’en choisir un.',
   'markdownReference.strike.title': 'Barré',
   'markdownReference.strike.description': 'Barre le texte.',
   'markdownReference.underline.title': 'Souligné',
