@@ -61,7 +61,9 @@ pub async fn run(
             domains: Some(pending.domains.into_iter().collect()),
             local_command: true,
         });
-        // What the headless bridge's `settle` waits for.
+        // What the headless bridge's `settle` waits for. The emit above has
+        // already reached the bridge: its app never runs, so the main-thread
+        // task ran inline, and its socket sends events before replies.
         #[cfg(feature = "test-util")]
         materializer.change_feed().emitted();
     }
