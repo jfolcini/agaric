@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
     const ids = new WeakMap<object, number>()
     let next = 1
     const id = (n: EventTarget | null): string => {
-      if (!(n instanceof Element)) return String(n)
+      if (!(n instanceof Element)) return n === null ? 'null' : n.constructor.name
       if (!ids.has(n)) ids.set(n, next++)
       return `${n.tagName.toLowerCase()}#${ids.get(n)}[${n.getAttribute('aria-label') ?? n.textContent?.slice(0, 20) ?? ''}]${n.isConnected ? '' : '(detached)'}`
     }
