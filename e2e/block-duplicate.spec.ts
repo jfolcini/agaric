@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { blockRow } from './domain'
 import { blurEditors, expect, focusBlockById, ipc, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -11,7 +12,7 @@ import { blurEditors, expect, focusBlockById, ipc, reopenPage, test, waitForBoot
  * paste it back, so a multi-line block came back as one block per line and
  * every copy lost its task state, priority, dates, list style and properties.
  * It is now one `duplicate_block` command that copies rows. Every assertion
- * reads the mock backend back (`list_blocks`) or re-renders the page, never
+ * reads the backend back (`list_blocks`) or re-renders the page, never
  * which IPC fired.
  */
 
@@ -41,6 +42,36 @@ async function childrenOf(page: Page, parentId: string): Promise<Row[]> {
 async function nextSiblingOf(page: Page, id: string): Promise<Row | undefined> {
   const rows = await childrenOf(page, PAGE_ID)
   return rows[rows.findIndex((r) => r.id === id) + 1]
+}
+
+const text = (value_text: string) => ({
+  value_text,
+  value_num: null,
+  value_date: null,
+  value_ref: null,
+  value_bool: null,
+})
+
+/** The value of property `key` the backend holds for block `blockId`, or null. */
+async function propertyOf(page: Page, blockId: string, key: string): Promise<string | null> {
+  const props = await ipc<Array<{ key: string; value_text: string | null }>>(
+    page,
+    'get_properties',
+    { blockId },
+  )
+  return props.find((p) => p.key === key)?.value_text ?? null
+}
+
+/** Duplicate block `id` with Ctrl+Shift+J; resolves to the copy, read back from the backend. */
+async function duplicateByChord(page: Page, id: string): Promise<Row> {
+  const before = (await childrenOf(page, PAGE_ID)).length
+  await focusBlockById(page, id)
+  await page.keyboard.press('Control+Shift+J')
+  await expect.poll(async () => (await childrenOf(page, PAGE_ID)).length).toBe(before + 1)
+  await blurEditors(page)
+  const copy = await nextSiblingOf(page, id)
+  expect(copy?.id).not.toBe(id)
+  return copy as Row
 }
 
 async function addChild(page: Page, parentId: string, content: string): Promise<string> {
@@ -143,5 +174,48 @@ test.describe('Duplicate block (#5140 Phase 3a) @editor', () => {
     await expect(
       page.locator(`[data-testid="sortable-block"][data-block-id="${copy?.id}"]`),
     ).toHaveCount(0)
+  })
+
+  // The command copies through the Document buffer (#6190), where a bulleted
+  // block is a `- ` item and a task `- [ ] x`: only the real render and read show
+  // that the copy keeps its kind.
+  test('Ctrl+Shift+J copies a bulleted block bulleted and a task as a task (#6190)', async ({
+    page,
+  }) => {
+    await ipc(page, 'set_property', { blockId: GS1, key: 'listStyle', value: text('bullet') })
+    await ipc(page, 'set_todo_state', { blockId: GS3, state: 'TODO' })
+    await reopenPage(page, PAGE)
+
+    const bullet = await duplicateByChord(page, GS1)
+    const task = await duplicateByChord(page, GS3)
+    for (const id of [GS1, bullet.id]) {
+      expect(await propertyOf(page, id, 'listStyle')).toBe('bullet')
+    }
+    expect(task.todo_state).toBe('TODO')
+    expect(await propertyOf(page, task.id, 'listStyle')).toBeNull()
+
+    await reopenPage(page, PAGE)
+    for (const id of [GS1, bullet.id]) {
+      await expect(blockRow(page, id).getByTestId('list-marker')).toBeVisible()
+    }
+    for (const id of [GS3, task.id]) {
+      await expect(blockRow(page, id).getByTestId('task-checkbox-todo')).toBeVisible()
+    }
+  })
+
+  // The buffer used to leave the recurrence rule out (#5160 P4), so the copy of
+  // a weekly task was a task that did not repeat.
+  test('the Ctrl+Shift+J copy of a weekly task repeats weekly', async ({ page }) => {
+    await ipc(page, 'set_todo_state', { blockId: GS3, state: 'TODO' })
+    await ipc(page, 'set_property', { blockId: GS3, key: 'repeat', value: text('+1w') })
+    await reopenPage(page, PAGE)
+    await expect(blockRow(page, GS3).locator('.repeat-indicator')).toBeVisible()
+
+    const copy = await duplicateByChord(page, GS3)
+    expect(copy.todo_state).toBe('TODO')
+    expect(await propertyOf(page, copy.id, 'repeat')).toBe('+1w')
+
+    await reopenPage(page, PAGE)
+    await expect(blockRow(page, copy.id).locator('.repeat-indicator')).toBeVisible()
   })
 })

@@ -23,7 +23,7 @@ import {
  * splits only what the edit ADDED. Phones get the Shift+Enter action as a
  * toolbar button.
  *
- * The desktop test seeds the content through the mock's `edit_block` IPC —
+ * The desktop test seeds the content through `edit_block` —
  * exactly the shape a Source-mode save or an import stores — and re-queries
  * the block through `get_block` after the blur (durable state, not call
  * shape).
@@ -81,9 +81,10 @@ async function splitOffStatusLine(page: Page, stored = 'intro\nstatus:: done') {
   await reopenGettingStarted(page)
 
   const rows = page.locator('[data-testid="sortable-block"]')
-  const rowCount = await rows.count()
   const editor = await focusBlock(page, 0)
   await expect(editor).toHaveText(shown(stored))
+  // Counted once the tree shows the stored text: a count read before it renders is 0.
+  const rowCount = await rows.count()
   // The caret at the start of the second line, after the break.
   await page.evaluate(() => {
     const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
@@ -106,6 +107,9 @@ async function splitOffStatusLine(page: Page, stored = 'intro\nstatus:: done') {
   const splitEditor = split.locator('[data-testid="block-editor"] [contenteditable="true"]')
   await expect(splitEditor).toHaveText(shown(stored.slice(stored.indexOf('status::'))))
   await expect(splitEditor).toBeFocused()
+  // The row's id is provisional until `split_block` answers; until then a
+  // `get_block` on it throws, and a poll whose read throws fails at once.
+  await expect.poll(() => blockState(page, splitId)).not.toBe(CLEARED)
   return { rows, rowCount, splitId, splitEditor }
 }
 
@@ -133,11 +137,11 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
     await reopenGettingStarted(page)
 
     const rows = page.locator('[data-testid="sortable-block"]')
-    const rowCount = await rows.count()
     const first = rows.first().locator('[data-testid="block-static"]')
     // At rest the break is visible, not a space.
     await expect(first.locator('br')).toHaveCount(1)
     await expect(first).toHaveText('helloworld')
+    const rowCount = await rows.count()
 
     await focusBlock(page, 0)
     await page.keyboard.press('Control+End')
@@ -149,7 +153,7 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
 
     await expect(rows).toHaveCount(rowCount)
     await expect(first.locator('br')).toHaveCount(1)
-    expect(await blockContent(page, BLOCK_GS_1)).toBe('hello\nworld!')
+    await expect.poll(() => blockContent(page, BLOCK_GS_1)).toBe('hello\nworld!')
   })
 
   test('a stored two-paragraph block is not rewritten by a focus and a blur with no edit', async ({
@@ -276,6 +280,79 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
     await expect(row.getByTestId('property-chip').filter({ hasText: 'done' })).toBeVisible()
     expect(await blockContent(page, splitId)).toBe('')
   })
+
+  // The new block reads the task marker, the `#name` and the `key:: value` as
+  // typed, so the one leave commits all three (#5834, #5851).
+  test('a task line, a #name and a key:: value line split off with Enter commit on one leave (#5851)', async ({
+    page,
+  }) => {
+    const TASK = 'call the plumber'
+    const TAG = 'splitcall'
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await invokeIn(page)('edit_block', {
+      blockId: BLOCK_GS_1,
+      toText: `intro\n- [ ] ${TASK} #${TAG}\nstatus:: done`,
+    })
+    await reopenGettingStarted(page)
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    const rows = page.locator('[data-testid="sortable-block"]')
+    await expect(rows.first()).toContainText(TASK)
+
+    // Into the block by its first line, clear of the task line's checkbox.
+    await page
+      .locator(`[data-testid="block-static"][data-block-id="${BLOCK_GS_1}"]`)
+      .click({ position: { x: 6, y: 6 } })
+    await expect(
+      page.locator(`[data-testid="block-editor"][data-block-id="${BLOCK_GS_1}"]`),
+    ).toBeVisible()
+    // The caret at the start of the editor's second paragraph, the task line.
+    await editor.evaluate((el) => {
+      const { editor: tiptap } = el as HTMLElement & {
+        editor: {
+          state: { doc: { child: (i: number) => { nodeSize: number } } }
+          commands: { setTextSelection: (pos: number) => boolean }
+        }
+      }
+      tiptap.commands.setTextSelection(1 + tiptap.state.doc.child(0).nodeSize)
+    })
+    await page.keyboard.press('Enter')
+    const split = page
+      .locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+      .filter({ hasText: TASK })
+    await expect(split).not.toHaveAttribute('data-block-id', BLOCK_GS_1)
+    const splitId = (await split.getAttribute('data-block-id')) as string
+
+    // One leave, then away and back: what the rows show is what the backend stored.
+    await page.keyboard.press('Escape')
+    // Temporary, until #6953: a reopen before the tag rewrite lands shows the
+    // `#name` as text. Drop this wait once that is fixed. `blockState`: the id
+    // is provisional, as in `splitOffStatusLine`.
+    await expect
+      .poll(() => blockState(page, splitId), { timeout: 30_000 })
+      .toMatch(/#\[[0-9A-Z]{26}\]/)
+    await reopenPage(page, 'Getting Started')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${splitId}"]`)
+    await expect(rows.filter({ hasText: TASK })).toHaveCount(1)
+    await expect(row.getByTestId('task-marker')).toHaveAttribute('aria-label', /^Task: TODO\./)
+    await expect(row.getByTestId('tag-ref-chip')).toHaveText(TAG)
+    await expect(row.getByTestId('property-chip')).toContainText('done')
+    await expect(row.getByTestId('block-static')).not.toContainText('[ ]')
+    await expect(row.getByTestId('block-static')).not.toContainText('status::')
+    await expect(rows.first()).not.toContainText(TASK)
+
+    // The tag's page lists the block, from what the materializer derived from the tag.
+    await expect(async () => {
+      await page
+        .locator('[data-slot="sidebar"]')
+        .getByRole('button', { name: 'Tags', exact: true })
+        .click()
+      await page.getByTestId(`tag-item-${TAG}`).click({ timeout: 3_000 })
+      await expect(
+        page.getByTestId('tagged-items').locator(`[data-backlink-item="${splitId}"]`),
+      ).toBeVisible({ timeout: 3_000 })
+    }).toPass()
+  })
 })
 
 const iPhone13 = devices['iPhone 13']
@@ -315,8 +392,7 @@ test.describe('The toolbar New line button (iPhone 13 viewport) @editor @mobile'
     // Enter at the end commits the block and moves on; the block keeps both
     // lines instead of being split.
     await saveBlock(page, 'Enter')
-    const content = await blockContent(page, blockId as string)
-    expect(content.endsWith('one\ntwo')).toBe(true)
+    await expect.poll(() => blockContent(page, blockId as string)).toMatch(/one\ntwo$/)
     const committed = page.locator(
       `[data-testid="sortable-block"][data-block-id="${blockId as string}"] [data-testid="block-static"]`,
     )

@@ -14,7 +14,7 @@
 // but a write within `UNDO_GROUP_WINDOW_MS` (500 ms) of the text's own commit
 // joins that commit's entry and is reversed with it. The Journal round-trip
 // below puts seconds between the two — and it doubles as the blur that commits
-// the text (`draft-blur-persist`).
+// the text.
 //
 // WHY NOT undoing a block CREATE, which this spec used to attempt: an empty
 // block cannot survive losing focus. BlockTree's #4729 leaked-empty-block
