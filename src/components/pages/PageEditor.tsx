@@ -24,6 +24,8 @@ import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
+import { TagNotesSection } from '@/components/pages/TagNotesSection'
+import { TagPageLink } from '@/components/pages/TagPageLink'
 import { TagPropertiesSection } from '@/components/pages/TagPropertiesSection'
 import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
@@ -33,6 +35,7 @@ import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { isDateFormattedPage } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
+import { tagOfPageTitle } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { useBlockStore } from '@/stores/blocks'
@@ -221,9 +224,11 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
   }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection, pageMode.wanted])
 
   // #4725 — a tag holds the blocks tagged with it, never children of its own,
-  // so its page is read-only. `isTagPage` is null until `get_block` answers for
-  // THIS page, and every editing affordance below stays off while it is: the
-  // auto-create effect must not race ahead and seed a block the backend rejects.
+  // so its page has no block tree of its own; its notes are the blocks of its
+  // paired page (`TagNotesSection`, #6755). `isTagPage` is null until
+  // `get_block` answers for THIS page, and every editing affordance below stays
+  // off while it is: the auto-create effect must not race ahead and seed a
+  // block the backend rejects.
   const [pageBlockType, setPageBlockType] = useState<{ pageId: string; isTag: boolean } | null>(
     null,
   )
@@ -406,6 +411,14 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
         onEditModeChange={pageModeOffered ? pageMode.changeMode : undefined}
         editModeBlocked={pageMode.blocked}
       />
+
+      {isTagPage === false && tagOfPageTitle(title) !== null && <TagPageLink pageTitle={title} />}
+
+      {isTagPage === true && (
+        <FeatureErrorBoundary name="TagNotesSection">
+          <TagNotesSection tagId={pageId} tagName={title} onNavigateToPage={onNavigateToPage} />
+        </FeatureErrorBoundary>
+      )}
 
       {isTagPage === true && (
         <FeatureErrorBoundary name="TagPropertiesSection">

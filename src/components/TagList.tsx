@@ -48,7 +48,7 @@ import { requireActiveScope } from '@/lib/space-scope'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
-import { renamePage } from '@/stores/page-rename'
+import { renamePage, renameTagPagePartner } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -286,7 +286,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // `handleDeleteTag`'s capture above.
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
-        unwrap(await commands.editBlock(renameTarget.id, trimmed, null))
+        const renamed = unwrap(await commands.editBlock(renameTarget.id, trimmed, null))
         setTags((prev) =>
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )
@@ -296,6 +296,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // #4007 — `renamePage` broadcasts a PAGE rename; the `#` picker's
         // cache needs the tag one. #4391 — as in `handleDeleteTag`.
         if (spaceId != null) notifyTagRenamed(renameTarget.id, trimmed, spaceId)
+        // #6755 — a second op ref is the tag's page, renamed with it.
+        if (renamed.op_refs.length > 1) {
+          void renameTagPagePartner('tag', renameTarget.name, trimmed, spaceId)
+        }
         notify.success(t('tags.renameSuccess'))
       } catch (error) {
         logger.warn(
@@ -313,6 +317,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           notify.error(t('tags.duplicateName'))
         } else if (validationCode(error) === ValidationCode.TagNameWhitespace) {
           notify.error(t('tags.nameHasWhitespace'))
+        } else if (validationCode(error) === ValidationCode.TagPageTitleTaken) {
+          // #6755 — the tag's page would move onto another page's title.
+          notify.error(t('tags.pageTitleTaken'))
         } else {
           notify.error(`${t('tags.renameFailed')}: ${String(error)}`)
         }

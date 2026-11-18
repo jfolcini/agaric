@@ -110,6 +110,8 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
       BuiltinPropertyLocked: 'BuiltinPropertyLocked',
       UnacknowledgedPropertyLoss: 'UnacknowledgedPropertyLoss',
       TagNameWhitespace: 'TagNameWhitespace',
+      ReservedTagPageTitle: 'ReservedTagPageTitle',
+      TagPageTitleTaken: 'TagPageTitleTaken',
     })
   })
 

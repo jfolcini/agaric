@@ -207,6 +207,7 @@ const SAME_AS_ENGLISH: Partial<Record<SupportedLocale, readonly string[]>> = {
     'tagList.color.orange',
     'tagList.color.rose',
     'tagList.color.violet',
+    'tagNotes.title',
     'taggedItems.pages',
     'toolbar.emoji',
   ],

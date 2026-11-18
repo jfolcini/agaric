@@ -48,7 +48,7 @@ import type { EditMode } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { announcePagesMovedOut } from '@/stores/page-move'
-import { renamePage } from '@/stores/page-rename'
+import { renamePage, renameTagPagePartner } from '@/stores/page-rename'
 import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -69,6 +69,18 @@ export interface PageHeaderProps {
   onEditModeChange?: ((mode: EditMode) => void) | undefined
   /** Why page mode is not offered for this page. */
   editModeBlocked?: string | null | undefined
+}
+
+/**
+ * The message for each refusal of a rename that is the user's to resolve: a
+ * title clash (#4723), a tag name holding whitespace (#6278 I4), a page
+ * renamed across a tag's path and a tag whose page cannot follow (#6755).
+ */
+const RENAME_REFUSALS: Partial<Record<ValidationCode, string>> = {
+  [ValidationCode.DuplicatePageTitle]: 'pageHeader.renameDuplicateTitle',
+  [ValidationCode.TagNameWhitespace]: 'tags.nameHasWhitespace',
+  [ValidationCode.ReservedTagPageTitle]: 'tags.pageTitleReserved',
+  [ValidationCode.TagPageTitleTaken]: 'tags.pageTitleTaken',
 }
 
 export function PageHeader({
@@ -484,21 +496,16 @@ export function PageHeader({
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.
         renamePage(pageId, newTitle, spaceId)
+        // #6755 — a second op ref is the tag or page renamed with it.
+        if (resp.op_refs.length > 1) {
+          void renameTagPagePartner(resp.block_type, title, newTitle, spaceId)
+        }
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
-        // #4723 — a title clash is the user's to resolve, so name it; so is a
-        // tag page's name holding whitespace (#6278 I4).
+        // The refusals that are the user's to resolve are named.
         const code = validationCode(err)
-        notify.error(
-          t(
-            code === ValidationCode.DuplicatePageTitle
-              ? 'pageHeader.renameDuplicateTitle'
-              : code === ValidationCode.TagNameWhitespace
-                ? 'tags.nameHasWhitespace'
-                : 'pageHeader.renameFailed',
-          ),
-        )
+        notify.error(t((code && RENAME_REFUSALS[code]) ?? 'pageHeader.renameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
       }

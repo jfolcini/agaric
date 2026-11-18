@@ -79,9 +79,49 @@ pub fn name_key(name: &str) -> String {
     }
 }
 
+/// The path a tag's page lives under (#6755): tag `x` of a space is paired
+/// with the page titled `Tag/x` of that space, found under [`name_key`].
+pub const TAG_PAGE_PREFIX: &str = "Tag/";
+
+/// The title of the page paired with the tag named `tag_name`.
+pub fn tag_page_title(tag_name: &str) -> String {
+    format!("{TAG_PAGE_PREFIX}{}", tag_name.trim())
+}
+
+/// The tag name a page titled `title` is paired with: what follows `Tag/`
+/// in any letter case. `None` for a title outside the path, `Tag` alone
+/// included.
+pub fn tag_of_page_title(title: &str) -> Option<&str> {
+    let (prefix, name) = title.trim().split_at_checked(TAG_PAGE_PREFIX.len())?;
+    prefix.eq_ignore_ascii_case(TAG_PAGE_PREFIX).then_some(name)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{name_key, normalize_tag_name};
+    use super::{name_key, normalize_tag_name, tag_of_page_title, tag_page_title};
+
+    #[test]
+    fn tag_of_page_title_reads_the_name_after_the_path_in_any_case() {
+        assert_eq!(tag_of_page_title("Tag/x"), Some("x"));
+        assert_eq!(
+            tag_of_page_title(" tAG/projects/web "),
+            Some("projects/web")
+        );
+        assert_eq!(tag_of_page_title("Tag/"), Some(""));
+        assert_eq!(tag_of_page_title("Tag"), None);
+        assert_eq!(tag_of_page_title("Tags/x"), None);
+        assert_eq!(tag_of_page_title("Notes/Tag/x"), None);
+        // A multi-byte character across the split point is no panic.
+        assert_eq!(tag_of_page_title("Tagé"), None);
+        assert_eq!(tag_of_page_title("éééé"), None);
+    }
+
+    #[test]
+    fn tag_page_title_round_trips_through_tag_of_page_title() {
+        assert_eq!(tag_page_title("projects/web"), "Tag/projects/web");
+        assert_eq!(tag_of_page_title(&tag_page_title("x")), Some("x"));
+    }
+
     use proptest::prelude::*;
 
     proptest! {

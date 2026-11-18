@@ -14,6 +14,7 @@
  */
 
 import type { AddMeetingInput, MeetingFileInput } from '@/lib/bindings'
+import { tagOfPageTitle } from '@/lib/name-tokens'
 import { withoutEvents } from '@/lib/tauri-mock/events'
 import {
   attachmentsHandlers,
@@ -33,6 +34,7 @@ import {
   findLivePageByTitle,
   isLiveSpace,
   notFoundRejection,
+  reservedTagPageTitle,
   type TypedHandlers,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -145,6 +147,8 @@ export const meetingsHandlers = {
     if (!isLiveSpace(spaceId)) throw validationRejection(`'${spaceId}' is not a live space`)
     const title = (input.title ?? '').trim() || 'Meeting'
     const pageTitle = `${title} ${input.date}`
+    // #6755 — a meeting's page is no way under a tag's path.
+    if (tagOfPageTitle(pageTitle) !== null) throw reservedTagPageTitle(pageTitle)
     if (pageNameHolder(pageTitle, spaceId) !== null) {
       throw validationRejection(`a page named '${pageTitle}' already exists in the space`)
     }

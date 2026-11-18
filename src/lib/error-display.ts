@@ -51,6 +51,8 @@ export const VALIDATION_CODE_KEYS: Record<ValidationCode, string | null> = {
   BuiltinPropertyLocked: 'errorCode.builtinPropertyLocked',
   UnacknowledgedPropertyLoss: 'errorCode.unacknowledgedPropertyLoss',
   TagNameWhitespace: 'tags.nameHasWhitespace',
+  ReservedTagPageTitle: 'tags.pageTitleReserved',
+  TagPageTitleTaken: 'tags.pageTitleTaken',
 }
 
 /** The `(err: <id>)` that ends a message `sanitize_internal_error` wrote. */

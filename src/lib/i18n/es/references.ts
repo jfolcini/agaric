@@ -185,6 +185,16 @@ export const references: Record<string, string> = {
   'taggedItems.moreChildren_one': '{{count}} bloque más — abre el bloque para verlo',
   'taggedItems.moreChildren_other': '{{count}} bloques más — abre el bloque para verlos',
   'taggedItems.searchUnder': 'Buscar todo lo que hay bajo #{{name}}',
+  'tagNotes.title': 'Notas',
+  'tagNotes.empty': 'Todavía no hay nada escrito en esta etiqueta.',
+  'tagNotes.add': 'Añadir notas',
+  'tagNotes.createFailed': 'No se han podido iniciar las notas de esta etiqueta',
+  'tagNotes.loadFailed': 'No se han podido cargar las notas de esta etiqueta',
+  'tagNotes.openTag': 'Notas de la etiqueta #{{name}}',
+  'tags.pageTitleReserved':
+    'Las páginas bajo "Tag/" pertenecen a sus etiquetas. Crea la etiqueta o cámbiale el nombre.',
+  'tags.pageTitleTaken':
+    'Una etiqueta y su página de notas cambian de nombre juntas, y otra página o etiqueta ya tiene ese nombre. Cámbiale el nombre o elimínala primero.',
   'backlink.searchTextRequired': 'El texto de búsqueda es obligatorio',
   'backlink.propertyKeyRequired': 'La clave de propiedad es obligatoria',
   'backlink.propertyNotFound': 'Ningún bloque tiene la propiedad "{{key}}"',

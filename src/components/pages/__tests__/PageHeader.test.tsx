@@ -28,6 +28,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { invalidateDomains } from '@/hooks/derived-caches'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { AppError } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -248,6 +249,7 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
         content: args?.toText,
         parent_id: null,
         position: null,
+        op_refs: [{ device_id: 'dev1', seq: 9 }],
       }
     if (cmd === 'get_properties') return []
     if (cmd === 'list_property_defs')
@@ -496,6 +498,40 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
     expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(titleEl).toHaveTextContent('Original Title')
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe("PageHeader rename across a tag's path (#6755)", () => {
+  // A page is not renamed into `Tag/`, and a tag is not renamed while its
+  // page cannot follow: each refusal is coded and names what to do.
+  it.each([
+    ['ReservedTagPageTitle', 'tags.pageTitleReserved'],
+    ['TagPageTitleTaken', 'tags.pageTitleTaken'],
+  ] as const)('shows the %s toast and restores the previous title', async (code, key) => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'edit_block') {
+        const rejection: AppError = { kind: 'validation', code, message: 'refused' }
+        throw rejection
+      }
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Plain" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Tag/plain')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t(key))
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('pageHeader.renameFailed'))
+    expect(titleEl).toHaveTextContent('Plain')
   })
 })
 
@@ -2941,6 +2977,26 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
     rerender(headerFor(PAGE, 'Projects'))
     expect(await screen.findByText('project')).toBeInTheDocument()
     expect(screen.queryByText('work')).not.toBeInTheDocument()
+  })
+
+  // #6755 — a tag and its notes page `Tag/<tag>` are renamed together.
+  it("carries a rename of a tag's notes page to the tag's name everywhere", async () => {
+    const user = userEvent.setup()
+    useSpaceStore.setState({
+      currentSpaceId: blocks.get(SEED_IDS.TAG_WORK)?.['space_id'] as string,
+    })
+    const notes = (await dispatch('create_tag_page', { tagId: SEED_IDS.TAG_WORK })) as BlockRow
+    render(headerFor(notes.id, 'Tag/work'))
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Tag/project')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(SEED_IDS.TAG_WORK)).toBe('project')
+    })
+    expect(blocks.get(SEED_IDS.TAG_WORK)?.['content']).toBe('project')
   })
 
   it('stops offering a tag deleted on its own page', async () => {

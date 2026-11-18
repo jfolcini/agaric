@@ -52,6 +52,10 @@ export const ValidationCode = {
   UnacknowledgedPropertyLoss: 'UnacknowledgedPropertyLoss',
   /** A tag created or renamed to a name holding whitespace (#6278 I4). */
   TagNameWhitespace: 'TagNameWhitespace',
+  /** A page created under `Tag/`, or renamed across its tag's path, other than by the tag (#6755). */
+  ReservedTagPageTitle: 'ReservedTagPageTitle',
+  /** A tag rename whose page would move onto a title another page holds (#6755). */
+  TagPageTitleTaken: 'TagPageTitleTaken',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

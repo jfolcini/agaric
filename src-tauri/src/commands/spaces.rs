@@ -238,6 +238,10 @@ pub async fn create_page_in_space_inner(
 /// page, as a tag takes one (#6529). `None` mints one. An id a block already
 /// holds is refused by [`create_block_in_tx`]; a title the space already
 /// holds answers with that page and leaves `client_id` unused.
+///
+/// A new page under `Tag/` is refused with
+/// [`ValidationCode::ReservedTagPageTitle`] (#6755): its tag makes it
+/// (`create_tag_page_inner`). One that exists is answered as any other.
 #[instrument(skip(pool, materializer, content), err)]
 pub async fn create_page_in_space_inner_with_id(
     pool: &SqlitePool,
@@ -248,29 +252,87 @@ pub async fn create_page_in_space_inner_with_id(
     space_id: String,
     client_id: Option<BlockId>,
 ) -> Result<BlockId, AppError> {
-    // Normalize ULID to uppercase per AGENTS.md invariant #8.
-    // Strict ULID-typed args from Tauri are already uppercase by
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here. Mirrors
-    // the pattern used by every other command that accepts a ULID
-    // (`commands/blocks/crud.rs`, `commands/pages.rs`, `commands/tags.rs`).
+    // Normalize ULID to uppercase per AGENTS.md invariant #8: raw String args
+    // from MCP tools and scripted imports are not uppercase by construction.
     let space_id = space_id.to_ascii_uppercase();
-
-    // CommandTx couples commit + post-commit dispatch. The
-    // previous implementation returned without dispatching and the
-    // wrapper re-queried op_log to find the two freshly-appended rows —
-    // a classic "missing dispatch" footgun if a future caller forgot
-    // the re-query step. Enqueuing the two op records during the
-    // transaction makes dispatch structurally inseparable from commit.
     let mut tx = CommandTx::begin_immediate(pool, "create_page_in_space").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    if agaric_core::tag_norm::tag_of_page_title(&content).is_some()
+        && find_live_page_by_name(&mut tx, &space_id, &content, None)
+            .await?
+            .is_none()
+    {
+        return Err(reserved_tag_page_title(&content));
+    }
+    let page = Box::pin(create_page_in_space_in_tx(
+        &mut tx,
+        device_id,
+        materializer,
+        parent_id,
+        content,
+        &space_id,
+        client_id,
+    ))
+    .await?;
+    page.commit(tx, materializer).await
+}
 
+/// The refusal of a page title under `Tag/` that its tag did not write.
+pub(crate) fn reserved_tag_page_title(title: &str) -> AppError {
+    AppError::validation_coded(
+        ValidationCode::ReservedTagPageTitle,
+        format!(
+            "the page '{title}' is under 'Tag/', where a page belongs to its tag; create or rename the tag instead"
+        ),
+    )
+}
+
+/// The page [`create_page_in_space_in_tx`] resolved to.
+pub(crate) enum PageInSpace {
+    /// The live page of the space already holding the title.
+    Existing(BlockId),
+    /// A page it created.
+    Created(BlockId),
+}
+
+impl PageInSpace {
+    /// Commit `tx`, dispatching the ops of a page it created.
+    pub(crate) async fn commit(
+        self,
+        tx: CommandTx,
+        materializer: &Materializer,
+    ) -> Result<BlockId, AppError> {
+        match self {
+            Self::Existing(page) => {
+                tx.commit_without_dispatch().await?;
+                Ok(page)
+            }
+            Self::Created(page) => {
+                tx.commit_and_dispatch(materializer).await?;
+                Ok(page)
+            }
+        }
+    }
+}
+
+/// [`create_page_in_space_inner`] inside the caller's rollback-armed
+/// transaction, for an uppercase `space_id`. It does not refuse a title under
+/// `Tag/`: its callers do, or are the tag (#6755).
+pub(crate) async fn create_page_in_space_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    parent_id: Option<String>,
+    content: String,
+    space_id: &str,
+    client_id: Option<BlockId>,
+) -> Result<PageInSpace, AppError> {
     // 1. Validate `space_id` upfront inside the tx.
-    require_live_space_in_tx(&mut tx, &space_id).await?;
+    require_live_space_in_tx(tx, space_id).await?;
 
     if let Some(parent) = parent_id.as_deref() {
-        require_parent_in_space_in_tx(&mut tx, parent, &space_id).await?;
+        require_parent_in_space_in_tx(tx, parent, space_id).await?;
     }
 
     // #4723 — a title is unique among live pages of one space, and a caller
@@ -278,10 +340,9 @@ pub async fn create_page_in_space_inner_with_id(
     // it, create nothing, append nothing. Another page's alias is refused
     // instead: a caller that stamps the page it gets back (a template) would
     // stamp a page it never named.
-    match find_live_page_by_name(&mut tx, &space_id, &content, None).await? {
+    match find_live_page_by_name(tx, space_id, &content, None).await? {
         Some(PageNameHolder::Title(existing)) => {
-            tx.commit_without_dispatch().await?;
-            return Ok(BlockId::from_trusted(&existing));
+            return Ok(PageInSpace::Existing(BlockId::from_trusted(&existing)));
         }
         Some(holder) => return Err(holder.refusal(&content)),
         None => {}
@@ -297,7 +358,7 @@ pub async fn create_page_in_space_inner_with_id(
     // 2. Create the page block. `create_block_in_tx` generates the ULID,
     //    appends a `CreateBlock` op, and inserts the materialized row.
     let (block, page_op_record) = create_block_in_tx(
-        &mut tx,
+        &mut *tx,
         materializer.loro_state(),
         device_id,
         "page".to_string(),
@@ -318,7 +379,7 @@ pub async fn create_page_in_space_inner_with_id(
     //    steady state. Not dispatched: a fresh block has nothing to
     //    re-scope (#5275, the `space` arm of `push_property_op_invalidations`).
     let (_block, space_op_record) = set_property_in_tx(
-        &mut tx,
+        &mut *tx,
         materializer.loro_state(),
         device_id,
         block.id.clone().into_string(),
@@ -326,7 +387,7 @@ pub async fn create_page_in_space_inner_with_id(
         None,
         None,
         None,
-        Some(space_id.clone()),
+        Some(space_id.to_owned()),
         None,
     )
     .await?;
@@ -336,18 +397,17 @@ pub async fn create_page_in_space_inner_with_id(
         // Boxed: inline, the template's future makes `create_block`'s too
         // large for the stack (`clippy::large_futures`).
         Box::pin(crate::commands::journal::apply_journal_template_in_tx(
-            &mut tx,
+            &mut *tx,
             materializer,
             device_id,
             new_page_id.as_str(),
             &date,
-            &space_id,
+            space_id,
         ))
         .await?;
     }
 
-    tx.commit_and_dispatch(materializer).await?;
-    Ok(new_page_id)
+    Ok(PageInSpace::Created(new_page_id))
 }
 
 /// Refuse a `parent_id` outside `space_id`: a frontend bug (a parent resolved

@@ -27,6 +27,7 @@ import {
   sortOpLogNewestFirst,
   validationRejection,
   readActiveSpaceScope,
+  withTagPathPartners,
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
@@ -404,7 +405,8 @@ export const historyHandlers = {
     // the page's scope. Re-entering `undo_page_op` per iteration did not.
     const pageId = a['pageId'] as string
     const group = enumerateUndoGroup(pageId, depth, windowMs, pageSubtreeIds(pageId))
-    return group.map((picked) => applyUndoForTarget(effectiveUndoTarget(picked)))
+    // #6755 — a tag's rename and its page's are reverted together.
+    return withTagPathPartners(group.map(effectiveUndoTarget)).map(applyUndoForTarget)
   }),
 
   revert_ops: allOrNothing((args) => {
@@ -412,12 +414,12 @@ export const historyHandlers = {
     const ops = a['ops'] as Array<{ device_id: string; seq: number }>
     const results: Array<Record<string, unknown>> = []
 
-    const sorted = [...ops].toSorted((x, y) => y.seq - x.seq)
+    const found = ops.flatMap(
+      (opRef) => opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq) ?? [],
+    )
 
-    for (const opRef of sorted) {
-      const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
-      if (!target) continue
-
+    // #6755 — newest first, a tag's rename and its page's together.
+    for (const target of withTagPathPartners(found)) {
       // #4870 — a reverse row carries a genuine forward payload of its reverse
       // type, so reverting one re-applies the op it reversed, exactly as on the
       // backend. This used to skip such rows (`isBookkeepingRow`): their
@@ -616,7 +618,8 @@ export const historyHandlers = {
     const newestFirst = [...ops].toSorted((x, y) => y.seq - x.seq)
     // Validate ALL before applying ANY (atomic-abort).
     const targets = newestFirst.map((ref) => resolveUndoTarget(ref))
-    return targets.map((target) => applyUndoForTarget(target))
+    // #6755 — a tag's rename and its page's are reverted together.
+    return withTagPathPartners(targets).map((target) => applyUndoForTarget(target))
   }),
 
   compute_edit_diff: (args) => {

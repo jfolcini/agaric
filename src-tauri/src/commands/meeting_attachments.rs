@@ -484,6 +484,11 @@ async fn create_meeting_page_in_tx(
     };
     let day = date.format("%Y-%m-%d").to_string();
     let page_title = format!("{title} {day}");
+    if agaric_core::tag_norm::tag_of_page_title(&page_title).is_some() {
+        return Err(crate::commands::spaces::reserved_tag_page_title(
+            &page_title,
+        ));
+    }
     if crate::commands::spaces::find_live_page_by_name(tx, space_id, &page_title, None)
         .await?
         .is_some()

@@ -379,6 +379,30 @@ export const references: Record<string, string> = {
   // including blocks that inherit it. {{name}} = tag name; keep the # before it.
   'taggedItems.searchUnder': 'Search everything under #{{name}}',
 
+  // Translators: A tag's own page: the section holding the notes written on the tag (the blocks of
+  // its page "Tag/<name>"). Section heading, the hint and the button shown before any note exists,
+  // error toasts.
+  'tagNotes.title': 'Notes',
+  'tagNotes.empty': 'Nothing is written on this tag yet.',
+  'tagNotes.add': 'Add notes',
+  'tagNotes.createFailed': 'Failed to start the notes of this tag',
+  'tagNotes.loadFailed': 'Failed to load the notes of this tag',
+
+  // Translators: A page titled "Tag/<name>" holds the notes of the tag <name>: link button under
+  // its title that opens the tag. {{name}} = tag name; keep the # before it.
+  'tagNotes.openTag': 'Notes of the tag #{{name}}',
+
+  // Translators: Error when a page is created with a title starting "Tag/", renamed into such a
+  // title, or a tag's notes page renamed out of it: those pages are made by their tag. Keep "Tag/" as
+  // it is, it is the literal start of the title.
+  'tags.pageTitleReserved':
+    'Pages under "Tag/" belong to their tags. Create or rename the tag instead.',
+
+  // Translators: Error when renaming a tag or its notes page "Tag/<name>": the two are renamed
+  // together, and another page or tag already has the new name.
+  'tags.pageTitleTaken':
+    'A tag and its notes page are renamed together, and another page or tag already has that name. Rename or delete it first.',
+
   // Translators: References panel › Add filter row: error toasts when a filter cannot be applied.
   // {{key}} = the property key typed. "after"/"before" are the two date fields; YYYY-MM-DD is the
   // required date format (ISO).

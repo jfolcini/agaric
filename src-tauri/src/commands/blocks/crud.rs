@@ -490,6 +490,10 @@ pub async fn edit_block_inner_with_base(
 /// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
 /// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
 /// drains every enqueued op in FIFO order.
+///
+/// A tag and its page are renamed together, a second `EditBlock` in the same
+/// transaction, and a page is not renamed into or out of a tag's path
+/// (#6755, [`crate::commands::tag_pages`]).
 #[instrument(skip(tx, state, device_id, to_text, base_text), err)]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
@@ -499,6 +503,46 @@ pub(crate) async fn edit_block_in_tx(
     to_text: String,
     base_text: Option<&str>,
 ) -> Result<BlockRow, AppError> {
+    let (existing, to_text) =
+        load_edit_in_tx(tx, state, device_id, &block_id, to_text, base_text).await?;
+    let partner = crate::commands::tag_pages::tag_path_rename(tx, &existing, &to_text).await?;
+    // Boxed: inline, the two writes make every caller's future too large for
+    // the stack (`clippy::large_futures`).
+    let row = Box::pin(write_edit_in_tx(tx, state, device_id, existing, to_text)).await?;
+    // After the block's own name rules, so a clash of its own name says so.
+    if let Some((partner_id, name)) = partner {
+        let (other, name) = load_edit_in_tx(tx, state, device_id, &partner_id, name, None).await?;
+        Box::pin(write_edit_in_tx(tx, state, device_id, other, name))
+            .await
+            .map_err(crate::commands::tag_pages::taken_by_another)?;
+    }
+    Ok(row)
+}
+
+/// [`edit_block_in_tx`] without the rules of a tag's path (#6755), for a
+/// repair renaming the later page of a name tie, which is no user's rename.
+pub(crate) async fn edit_block_off_tag_path_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+    to_text: String,
+) -> Result<BlockRow, AppError> {
+    let (existing, to_text) =
+        load_edit_in_tx(tx, state, device_id, &block_id, to_text, None).await?;
+    write_edit_in_tx(tx, state, device_id, existing, to_text).await
+}
+
+/// The live block an edit targets and the text it writes: `to_text`, rebased
+/// when the editor started from `base_text`.
+async fn load_edit_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &str,
+    to_text: String,
+    base_text: Option<&str>,
+) -> Result<(BlockRow, String), AppError> {
     // Validate content length BEFORE fetching any row. Content length is a
     // pure function of the input needing no DB state, so an over-length
     // payload is rejected without the wasted existence fetch (fail fast on
@@ -521,13 +565,26 @@ pub(crate) async fn edit_block_in_tx(
         Some(base) => {
             // The text the edit is diffed against: the engine's, which a sync
             // import reaches before the row.
-            let block = BlockId::from_trusted(&block_id);
+            let block = BlockId::from_trusted(block_id);
             let engine_text = engine_block_content(tx, state, device_id, &block).await?;
             let current = engine_text.as_deref().or(existing.content.as_deref());
             rebased_onto(current.unwrap_or_default(), base, to_text)?
         }
         None => to_text,
     };
+    Ok((existing, to_text))
+}
+
+/// Write `to_text` to the live block `existing`: the name rules, the
+/// `EditBlock` op, its projection and its background work.
+async fn write_edit_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    existing: BlockRow,
+    to_text: String,
+) -> Result<BlockRow, AppError> {
+    let block_id = existing.id.as_str().to_owned();
     if existing.block_type == "tag" {
         reject_spaced_tag_name(&to_text)?;
     }

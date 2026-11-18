@@ -9,11 +9,14 @@
  * store.
  */
 
+import type { BlockRow } from '@/lib/bindings'
+import { tagPageTitle } from '@/lib/name-tokens'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TagExprNode,
   type TypedHandlers,
   assertTagFilterWithinCap,
+  createPageInSpace,
   invalidOperationRejection,
   notFoundRejection,
   ownerSpaceOf,
@@ -370,8 +373,28 @@ export const tagsHandlers = {
     const a = args as Record<string, unknown>
     return inheritedTagIds(a['blockId'] as string)
   },
+
+  // #6755 — `create_tag_page_inner`: the page titled `Tag/<name>` of the live
+  // tag's space, the one already holding that title or a new one.
+  create_tag_page: (args) => {
+    const tagId = (args as Record<string, unknown>)['tagId'] as string
+    const tag = blocks.get(tagId)
+    const spaceId = tag?.['space_id']
+    if (
+      tag === undefined ||
+      tag['block_type'] !== 'tag' ||
+      tag['deleted_at'] != null ||
+      typeof tag['content'] !== 'string' ||
+      typeof spaceId !== 'string'
+    ) {
+      throw notFoundRejection(`tag '${tagId}' (not found or deleted)`)
+    }
+    const pageId = createPageInSpace(null, tagPageTitle(tag['content']), spaceId, true)
+    return { ...blocks.get(pageId) } as BlockRow
+  },
 } satisfies Pick<
   TypedHandlers,
+  | 'create_tag_page'
   | 'add_tag'
   | 'remove_tag'
   | 'add_tags_by_ids'

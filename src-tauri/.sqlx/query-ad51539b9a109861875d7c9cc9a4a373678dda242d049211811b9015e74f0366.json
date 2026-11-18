@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content AS \"name!\", space_id AS \"space_id!\" FROM blocks\n           WHERE id = ?1 AND block_type = 'tag' AND deleted_at IS NULL\n             AND content IS NOT NULL AND space_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "space_id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "ad51539b9a109861875d7c9cc9a4a373678dda242d049211811b9015e74f0366"
+}

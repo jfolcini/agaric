@@ -1762,6 +1762,9 @@ async fn revert_ops_in_tx(
         )));
     }
 
+    // #6755 — a tag's rename and its page's are reverted together.
+    let ops = crate::commands::tag_pages::with_tag_path_partners(tx, ops).await?;
+
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
     let (reverses, computed_skipped, moves_recorded_priors) =
         compute_reverses_newest_first(pool, &ops, skip_non_reversible).await?;
@@ -3419,9 +3422,10 @@ pub async fn undo_op_inner(
     op_ref: OpRef,
 ) -> Result<UndoResult, AppError> {
     let mut results = undo_ops_inner(pool, device_id, materializer, vec![op_ref]).await?;
-    // Exactly one input ref + `skip_non_reversible = false` (errors abort
-    // via `?` above) ⇒ exactly one result. The branch is unreachable; it
-    // exists so a future contract drift fails loudly instead of panicking.
+    // One input ref + `skip_non_reversible = false` (errors abort via `?`
+    // above) ⇒ at least one result (two for half of a tag and page rename,
+    // #6755). The branch is unreachable; it exists so a future contract drift
+    // fails loudly instead of panicking.
     results.pop().ok_or_else(|| {
         AppError::Internal(
             "undo_op produced no result for a single-ref batch (revert_ops_in_tx \

@@ -123,6 +123,13 @@ pub enum ValidationCode {
     /// which Obsidian's `#tag` cannot spell. Coded so the tag surfaces can
     /// suggest `-`.
     TagNameWhitespace,
+    /// Creating a page under `Tag/`, or renaming a page into or out of its
+    /// tag's path, other than through the tag (#6755). Coded so the page
+    /// surfaces can point at the tag.
+    ReservedTagPageTitle,
+    /// Renaming a tag whose page would move onto a title another page of the
+    /// space holds (#6755).
+    TagPageTitleTaken,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -907,7 +914,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 14] = [
+        let cases: [(ValidationCode, &str); 16] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -928,6 +935,8 @@ mod tests {
                 "UnacknowledgedPropertyLoss",
             ),
             (ValidationCode::TagNameWhitespace, "TagNameWhitespace"),
+            (ValidationCode::ReservedTagPageTitle, "ReservedTagPageTitle"),
+            (ValidationCode::TagPageTitleTaken, "TagPageTitleTaken"),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -972,6 +981,8 @@ mod tests {
                 ValidationCode::BuiltinPropertyLocked => "BuiltinPropertyLocked",
                 ValidationCode::UnacknowledgedPropertyLoss => "UnacknowledgedPropertyLoss",
                 ValidationCode::TagNameWhitespace => "TagNameWhitespace",
+                ValidationCode::ReservedTagPageTitle => "ReservedTagPageTitle",
+                ValidationCode::TagPageTitleTaken => "TagPageTitleTaken",
             }
         }
         for code in [
@@ -989,6 +1000,8 @@ mod tests {
             ValidationCode::BuiltinPropertyLocked,
             ValidationCode::UnacknowledgedPropertyLoss,
             ValidationCode::TagNameWhitespace,
+            ValidationCode::ReservedTagPageTitle,
+            ValidationCode::TagPageTitleTaken,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

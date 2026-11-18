@@ -29,6 +29,7 @@ import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { isCanonicalDatetime, localDayStartUtc } from '@/lib/datetime-value'
 import { CROCKFORD_BASE32, ulidToDate } from '@/lib/format'
+import { nameKey, tagOfPageTitle } from '@/lib/name-tokens'
 import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
@@ -127,6 +128,15 @@ export function nextDenseRank(parentId: string | null, spaceId: string | null): 
   return siblings + 1
 }
 
+/** Mock twin of `reserved_tag_page_title` (`src-tauri/src/commands/spaces.rs`, #6755). */
+export function reservedTagPageTitle(title: string): Error {
+  return appErrorRejection({
+    kind: 'validation',
+    code: 'ReservedTagPageTitle',
+    message: `the page '${title}' is under 'Tag/', where a page belongs to its tag; create or rename the tag instead`,
+  })
+}
+
 /**
  * Mirror of `create_page_in_space_inner`: a page in `spaceId` titled
  * `content`, its `space` stamped in the same step. An existing title under
@@ -134,15 +144,20 @@ export function nextDenseRank(parentId: string | null, spaceId: string | null): 
  * refused. A date title names a journal day, so the page is born
  * with the space's journal template ({@link copyJournalTemplateBlocks},
  * #5395), as the backend does for the journal view, Quick Capture and the MCP
- * `journal_for_date` tool alike. Returns the page id.
+ * `journal_for_date` tool alike. A new page under `Tag/` is refused unless its
+ * tag makes it (`byTag`, #6755). Returns the page id.
  */
 export function createPageInSpace(
   parentId: string | null,
   content: string | null,
   spaceId: string | null,
+  byTag = false,
 ): string {
   const holder = content === null || spaceId === null ? null : pageNameHolder(content, spaceId)
   if (holder?.by === 'title') return holder.id
+  if (!byTag && holder === null && content !== null && tagOfPageTitle(content) !== null) {
+    throw reservedTagPageTitle(content)
+  }
   if (holder) throw pageNameRefusal(holder, content ?? '')
   const id = fakeId()
   const position = nextDenseRank(parentId, spaceId)
@@ -2838,6 +2853,35 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
     )
   }
   return effective
+}
+
+/**
+ * Mock twin of `with_tag_path_partners` (#6755): `entries` with the other half
+ * of each tag and page rename among them, the adjacent `edit_block` of a tag
+ * and of the page titled with its path, newest first.
+ */
+export function withTagPathPartners(entries: MockOpLogEntry[]): MockOpLogEntry[] {
+  const all = [...entries]
+  for (const entry of entries) {
+    for (const seq of [entry.seq - 1, entry.seq + 1]) {
+      const partner = opLog.find((o) => o.device_id === entry.device_id && o.seq === seq)
+      if (partner && !all.includes(partner) && isTagPathPair(entry, partner)) all.push(partner)
+    }
+  }
+  return all.toSorted((x, y) => y.seq - x.seq)
+}
+
+function isTagPathPair(a: MockOpLogEntry, b: MockOpLogEntry): boolean {
+  if (a.op_type !== 'edit_block' || b.op_type !== 'edit_block') return false
+  if (Boolean(a.is_undo) !== Boolean(b.is_undo)) return false
+  const payloadOf = (o: MockOpLogEntry) => JSON.parse(o.payload) as Record<string, unknown>
+  const typeOf = (o: MockOpLogEntry) =>
+    blocks.get(payloadBlockId(payloadOf(o)) as string)?.['block_type']
+  const textOf = (o: MockOpLogEntry) => (payloadOf(o)['to_text'] as string | undefined) ?? ''
+  const [tag, page] = typeOf(a) === 'tag' ? [a, b] : [b, a]
+  if (typeOf(tag) !== 'tag' || typeOf(page) !== 'page') return false
+  const name = tagOfPageTitle(textOf(page))
+  return name !== null && nameKey(name) === nameKey(textOf(tag))
 }
 
 /**

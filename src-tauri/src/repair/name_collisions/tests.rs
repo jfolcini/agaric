@@ -418,6 +418,35 @@ async fn the_rename_takes_the_first_name_no_page_holds() {
     pair.shutdown();
 }
 
+/// #6755 — two devices each start their tag's page, and the tie's later page
+/// takes its suffix under `Tag/`, which no user's rename may write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tie_under_the_tag_path_is_renamed_as_any_other() {
+    let pair = pair().await;
+    let tag = pair.a.tag(&pair.space, "book").await;
+    sync(&pair.a, &pair.b, &pair.space).await;
+    let mut pages = Vec::new();
+    for device in [&pair.a, &pair.b] {
+        let page = crate::commands::create_tag_page_inner(
+            &device.pool,
+            device.id,
+            &device.mat,
+            BlockId::from_trusted(&tag),
+        )
+        .await
+        .unwrap();
+        pages.push(page.id.into_string());
+    }
+    sync_both(&pair.a, &pair.b, &pair.space).await;
+    let (creator, _) = pair.creator_of_later(&pages[0], &pages[1]);
+    let later = pages[0].clone().max(pages[1].clone());
+
+    creator.pass().await;
+
+    assert_eq!(creator.content(&later).await, "Tag/book (2)");
+    pair.shutdown();
+}
+
 /// Two same-named tags: the later tag's creator gives the keeper to each
 /// block holding the later tag, rewrites `#[LATER]` in each block naming it,
 /// and deletes the emptied tag, as housekeeping ops the engine agrees with. A
