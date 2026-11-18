@@ -1806,6 +1806,32 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockIndented')
     })
 
+    // A failed create puts focus back on the block Enter left, so a Tab
+    // queued behind it indents that block rather than being dropped.
+    it('a Tab before a failed create indents the block Enter came from', async () => {
+      const held = heldCreate()
+      const params = makeDefaultParams({ createBelow: held.createBelow })
+      const { result, rerender } = renderHook(() => useBlockActionOrchestration(params))
+
+      let enter: Promise<void> = Promise.resolve()
+      act(() => {
+        enter = result.current.handleEnterSave()
+      })
+      params.rovingEditor.activeBlockId = 'NEW_1'
+      params.focusedBlockId = 'NEW_1'
+      rerender()
+      act(() => {
+        result.current.handleIndent()
+      })
+      expect(params.indent).not.toHaveBeenCalled()
+      await act(async () => {
+        held.answer(null)
+        await enter
+      })
+
+      expect(params.indent).toHaveBeenCalledExactlyOnceWith('B')
+    })
+
     it('a create that fails after the user moved on leaves the focus where it is', async () => {
       const held = heldCreate()
       const params = makeDefaultParams({ createBelow: held.createBelow })
