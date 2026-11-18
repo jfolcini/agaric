@@ -31,36 +31,14 @@
 # proxy and 403 on GitHub release-tarball downloads. Every installer below
 # that pulls a prebuilt GitHub release tarball (lychee, cargo-binstall
 # itself) therefore falls back to `cargo binstall`, then `cargo install
-# --locked`, before giving up. Separately, a crate's newest release can
-# require a newer rustc than this box's pinned toolchain (MSRV skew), which
-# fails both binstall AND the from-source fallback identically — see
-# `msrv_fallback_version_for()` below for the pinned-version retry that
-# handles that case.
+# --locked`, before giving up.
 #
-# Two DIFFERENT version tables, opposite precedence (issue #3602, and #3611
-# for the sequel): a crate CI pins explicitly (today: sqruff, `sqruff@0.44.0`
-# in the `tool:` lists of `.github/workflows/_validate.yml` and
-# `scheduled-deep-checks.yml`) must install that EXACT version here too, and
-# — #3611 — REPLACE a differing one already on PATH, not just skip installing
-# because *something* is already there. `cargo_get` used to try latest first
-# and only fall back to the pinned value if that failed, so on any box where
-# binstall could fetch a newer sqruff, local silently ran a different linter
-# version than CI. That got one layer worse before it got fixed: routing the
-# pin through a branch INSIDE `cargo_get` still lost to `cargo_get`'s own
-# `have "$bin"` early return (grep `if have "$bin"` to land on it — the first
-# statement `cargo_get` runs after its `local` declaration; this cited a line
-# number until #3619 found the number had rotted to a stale "~230", so a
-# greppable anchor replaced it rather than a fresher number that would rot
-# the same way) on any box that had already
-# installed a wrong version — which, for a crate #3602 had just made local
-# ever install unpinned, was every box that ran this script before the pin
-# existed. So a pinned crate is instead routed to `cargo_get_pinned` directly
-# at its call site — `cargo_get` is never invoked for it at all, and has no
-# pin-handling branch to bypass. `pinned_version_for()` is the version TABLE
-# a pinned crate's `cargo_get_pinned` call reads from; it is a distinct
-# concept from `msrv_fallback_version_for()`'s MSRV-skew escape hatch, which
-# stays tried SECOND inside `cargo_get`, only after a real latest-install
-# attempt fails, for a crate with no CI pin.
+# Every tool installs at an exact version and replaces a differing one already
+# on PATH (#3602, #3611): `pinned_version_for` holds the versions CI shares,
+# checked against the workflows by scripts/check-tool-pins.mjs. A tarball this
+# script downloads itself is checked against a sha256 recorded here (AGENTS.md
+# § Supply-chain pinning); binstall, `uv tool` and `cargo install` take no hash,
+# so for them the exact version is the pin.
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -204,8 +182,8 @@ ensure_cargo_binstall() {
       warn "prebuilt cargo-binstall download/verify failed — falling back to cargo install"
     fi
   fi
-  if cargo install --locked cargo-binstall >/dev/null 2>&1; then
-    ok "cargo-binstall (cargo install)"
+  if cargo install --locked "cargo-binstall@${BINSTALL_VERSION}" >/dev/null 2>&1; then
+    ok "cargo-binstall ${BINSTALL_VERSION} (cargo install)"
   else
     warn "cargo-binstall unavailable — remaining cargo tools will compile from source (slow)"
   fi
@@ -283,40 +261,12 @@ ensure_uv() {
   rm -rf "$tmp"
 }
 
-# pinned_version_for <crate> — echoes the EXACT version this crate must
-# install as, matching a version CI pins explicitly (today: sqruff, via
-# `sqruff@0.44.0` in the `taiki-e/install-action` `tool:` lists of
-# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`; and,
-# since #3742, prek/taplo-cli/typos-cli in the same lists). This is
-# purely a DATA table — it does not itself install anything and is not
-# consulted by `cargo_get`. A pinned crate's `cargo_get_pinned` call site
-# (see sqruff's below) reads it and WINS outright: no "try latest, fall back
-# to this on failure" (#3602), and no "skip because something is already on
-# PATH" either (#3611 — that is exactly what `cargo_get`'s early return would
-# do, which is why a pinned crate is never routed through `cargo_get` at
-# all). If a pinned install fails, `cargo_get_pinned` warns rather than
-# silently falling through to latest, because installing *something* that
-# isn't the pin is not actually a fix for "local ran the wrong version" — it
-# is the same bug with different arithmetic.
-#
-# prek is pinned for a DIFFERENT reason than the MSRV-skew concern behind
-# sqruff's pin (#602): prek IS the hook runner, so there is no wrapper for it
-# the way zizmor-hook.sh wraps zizmor with a runtime `--version` assertion —
-# an unpinned prek just silently runs whatever `cargo_get` last fetched.
-# #3742 hit this live: CI resolved a newer prek than any dev box had
-# installed, and that newer prek enforces a YAML parser limit
-# (`.github/zizmor.yml`'s comment-count cap) the older local prek does not —
-# a green tree went red with no repo change, and the fix that passed locally
-# still failed in CI, unreproducible by construction until the two matched.
-#
-# The shellcheck and shfmt rows are not crates: `release_get_pinned` reads them
-# for the same reason, local and CI running one version.
-#
-# A plain `case` (not an associative array) so this stays bash-3.2/macOS
-# compatible. Keep in lockstep with the `tool:` pins above — bumping one
-# without the other reintroduces the exact drift this table exists to
-# prevent (there is no automated cross-check of *installability*, only of
-# the version strings agreeing — see scripts/check-tool-pins.mjs).
+# pinned_version_for <crate> — the EXACT version a tool installs at, shared
+# with CI (the `taiki-e/install-action` `tool:` lists, and sqruff's
+# .github/actions/install-sqruff). prek is pinned because it IS the hook
+# runner (#3742): a newer CI prek enforced a YAML limit the local one did not.
+# The shellcheck and shfmt rows are not crates: `release_get_pinned` reads
+# them. A plain `case` so this stays bash-3.2/macOS compatible.
 pinned_version_for() {
   case "$1" in
     sqruff) echo "0.44.0" ;;
@@ -325,60 +275,45 @@ pinned_version_for() {
     typos-cli) echo "1.52.0" ;;
     shellcheck) echo "0.11.0" ;;
     shfmt) echo "3.14.1" ;;
+    cargo-deny) echo "0.20.2" ;;
+    cargo-machete) echo "0.9.2" ;;
+    cargo-audit) echo "0.22.2" ;;
+    cargo-nextest) echo "0.9.151" ;;
     *) echo "" ;;
   esac
 }
 
-# msrv_fallback_version_for <crate> — echoes a known-good OLDER version to
-# retry SECOND, only after a real "install latest" attempt has already
-# failed, when the crate's LATEST release outpaces this box's rustc (MSRV
-# skew). Symptom (issue #2535, verified with sqruff 0.39.0 vs. rustc 1.95):
-# both `cargo binstall -y <crate>` AND its from-source fallback fail
-# identically with an MSRV error, because binstall's source fallback still
-# targets the newest crates.io release. Pinning a slightly older version
-# sidesteps it.
-#
-# This is NOT a substitute for `pinned_version_for` above and the two must
-# not be confused (that confusion is how #3602 happened: this function used
-# to be named `fallback_version_for` and carried sqruff's entry too, so the
-# same table served both "install this first, it must match CI" and "retry
-# this after latest fails" with opposite precedence under one name). A crate
-# CI pins belongs in `pinned_version_for`, tried first, full stop — not
-# here. This table is empty for every REAL crate today (sqruff moved to
-# `pinned_version_for` above); it stays as the escape hatch for a FUTURE
-# crate that has MSRV skew but no CI pin. A plain `case` (not an associative
-# array) so this stays bash-3.2/macOS compatible.
-msrv_fallback_version_for() {
-  case "$1" in
-    *) echo "" ;;
-  esac
-}
-
-# prebuilt_get <crate> <version|""> <binary> — fetch a prebuilt binary by its
+# prebuilt_get <crate> <version> <binary> — fetch a prebuilt binary by its
 # release URL, for a box where binstall cannot: a cloud session's proxy 403s
 # api.github.com, which binstall needs to find a release, so every tool there
 # compiled from source (#6560). Release downloads pass that proxy. The tarball
-# is cargo-quickinstall's, the one binstall's quick-install strategy picks;
-# taplo-cli has none there, so it comes from upstream's release. An empty
-# version means the newest on crates.io.
+# is cargo-quickinstall's, the one binstall's quick-install strategy picks, so
+# like binstall it has no recorded sha256 and the exact version is the pin;
+# taplo-cli has none there, so it comes from upstream's release, sha256-checked.
 prebuilt_get() {
   local crate="$1" version="$2" bin="$3" arch libc tmp
   local dest="${CARGO_HOME:-$HOME/.cargo}/bin"
   [ "$OS" = Linux ] || return 1
   arch="$(uname -m)"
   [ "$arch" = arm64 ] && arch=aarch64
-  [ -n "$version" ] || version="$(cargo info "$crate" 2>/dev/null | awk '$1 == "version:" { print $2; exit }')"
   [ -n "$version" ] || return 1
   mkdir -p "$dest" || return 1
   if [ "$crate" = taplo-cli ]; then
+    local sha
+    case "$version-$arch" in
+      0.10.0-x86_64) sha=8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156 ;;
+      0.10.0-aarch64) sha=033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3 ;;
+      *) return 1 ;; # no recorded sha256 for this version: refresh the case above
+    esac
     tmp="$(mktemp)"
     [ -n "$tmp" ] || return 1
-    if curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${version}/taplo-linux-${arch}.gz" 2>/dev/null \
-      | gunzip >"$tmp" 2>/dev/null && install -m 0755 "$tmp" "$dest/taplo"; then
-      rm -f "$tmp"
+    if curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${version}/taplo-linux-${arch}.gz" -o "$tmp.gz" 2>/dev/null \
+      && verify_sha256 "$tmp.gz" "$sha" && gunzip -c "$tmp.gz" >"$tmp" 2>/dev/null \
+      && install -m 0755 "$tmp" "$dest/taplo"; then
+      rm -f "$tmp" "$tmp.gz"
       return 0
     fi
-    rm -f "$tmp"
+    rm -f "$tmp" "$tmp.gz"
     return 1
   fi
   for libc in gnu musl; do
@@ -390,74 +325,12 @@ prebuilt_get() {
   return 1
 }
 
-# cargo_get <crate> [binary] — install a Rust hook tool at LATEST (with an
-# MSRV-skew fallback). Precedence:
-#   1. Already on PATH: skip. "Some recent version" is fine here — that is
-#      the whole point of this function, and exactly why it is the WRONG
-#      function for a crate whose local/CI version agreement is itself the
-#      property being bought (see cargo_get_pinned's docstring).
-#   2. Not present: install latest (prebuilt via binstall or `prebuilt_get`,
-#      else from source).
-#   3. Latest failed: `msrv_fallback_version_for`'s pinned-version retry, for
-#      a crate with MSRV skew but no CI pin.
-#
-# Deliberately does NOT consult `pinned_version_for` (#3611): it used to,
-# via a branch here that stopped at rule 1 for anything already installed —
-# so a box that had already picked up a wrong sqruff via rule 1 never even
-# reached the pin branch, the exact defect #3602's fix was meant to close.
-# A crate with a CI pin is instead wired directly to `cargo_get_pinned` at
-# its own call site (see sqruff below); `cargo_get` is never called for it.
-# Do not re-add a pin branch here — that is how the same bug comes back one
-# layer up with a different shape.
-#
-# binstall runs without its compile strategy everywhere in this file: when it
-# finds no prebuilt it would build from source and report success, so the
-# faster routes after it were never tried. `cargo install` is the last one.
-cargo_get() {
-  local crate="$1" bin="${2:-$1}" msrv_fallback
-  if have "$bin"; then
-    ok "$bin (already installed)"
-    return
-  fi
-
-  msrv_fallback="$(msrv_fallback_version_for "$crate")"
-  if have cargo-binstall; then
-    if cargo binstall -y --disable-strategies compile "$crate" >/dev/null 2>&1; then
-      ok "$bin (binstall)"
-      return
-    fi
-    if [ -n "$msrv_fallback" ] && cargo binstall -y --disable-strategies compile "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
-      ok "$bin (binstall ${msrv_fallback} — latest release exceeds this box's rustc)"
-      return
-    fi
-  fi
-  if prebuilt_get "$crate" "" "$bin"; then
-    ok "$bin (prebuilt)"
-    return
-  fi
-  if [ -n "$msrv_fallback" ] && cargo install --locked "${crate}@${msrv_fallback}" >/dev/null 2>&1; then
-    ok "$bin (cargo install ${msrv_fallback} — pinned fallback)"
-    return
-  fi
-  if cargo install --locked "$crate" >/dev/null 2>&1; then
-    ok "$bin (cargo install)"
-  elif [ -n "$msrv_fallback" ]; then
-    warn "could not install $crate — tried latest and pinned fallback ${msrv_fallback} — run: cargo install --locked ${crate}@${msrv_fallback}"
-  else
-    warn "could not install $crate — run: cargo install --locked $crate"
-  fi
-}
-
 # cargo_get_pinned <crate> <version> [binary] — install an EXACT version, and
 # REPLACE a differing one that is already on PATH.
 #
-# `cargo_get` returns early for any binary that exists, which is the right
-# policy for tools where "some recent version" is fine. It is the wrong policy
-# where local/CI version agreement is itself the property being bought
-# (#3476): zizmor's audit SET changes between releases, so a box holding an
-# older build silently gates pushes with fewer rules than CI applies. The
-# version is read from the hook wrapper so this script cannot drift from the
-# constant the wrapper asserts against.
+# Skipping any binary that merely exists is wrong where local/CI agreement is
+# the property being bought (#3476): zizmor's audit SET changes between
+# releases, so an older local build gates pushes with fewer rules than CI.
 # <version-awk> lets a caller share the EXACT field-extraction its own
 # `--version` assertion uses (see zizmor's ZIZMOR_VERSION_AWK below) instead
 # of this function guessing its own — two independent awk programs parsing
@@ -477,9 +350,8 @@ cargo_get_pinned() {
   # the exact failure this file was being changed to prevent (#3545).
   [ -n "$field" ] || field='NR == 1 { print $NF }'
   if [ -z "$version" ]; then
-    warn "no pinned version found for $crate — falling back to an unpinned install"
-    cargo_get "$crate" "$bin"
-    return
+    warn "no pinned version found for $crate — not installing it unpinned"
+    return 1
   fi
   if have "$bin"; then
     current="$("$bin" --version 2>/dev/null | awk "$field")"
@@ -691,128 +563,117 @@ release_get_pinned() {
   rm -rf "$tmp"
 }
 
-# lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
-# back to a slow from-source compile), so — exactly like CI — pull the official
-# prebuilt release tarball instead. macOS prefers brew.
-#
-# Egress-proxy hardening (issue #2535, verified live): some remote-container
-# sessions' proxy 403s the GitHub release-tarball download below (only
-# crates.io + cargo-binstall's own source are allowed through), and the
-# warning used to scroll past unnoticed until a later `git push` hard-failed
-# on the missing `lychee` hook. If the tarball download fails for ANY reason
-# — proxy 403, network, layout change — fall back to `cargo binstall`
-# (crates.io, reachable), then `cargo install --locked` (slow from-source
-# compile) as the last resort, instead of just warning and stopping.
+# lychee is a heavy crate that cargo-binstall can't fetch prebuilt, so — like
+# CI — pull the release tarball at CI's version and check its sha256. If that
+# download fails (some sandbox proxies 403 GitHub release assets, #2535), fall
+# back to binstall, then `cargo install --locked`, at the same version.
+LYCHEE_VERSION=0.24.2
 install_lychee() {
-  if have lychee; then
-    ok "lychee (already installed)"
+  if have lychee && [ "$(lychee --version 2>/dev/null | awk 'NR == 1 { print $NF }')" = "$LYCHEE_VERSION" ]; then
+    ok "lychee $LYCHEE_VERSION (already installed)"
     return
   fi
-  if [ "$OS" = "Darwin" ] && have brew && brew install lychee >/dev/null 2>&1; then
-    ok "lychee (brew)"
-    return
-  fi
-  local arch triple
-  arch="$(uname -m)"
-  case "$OS-$arch" in
-    Linux-x86_64) triple=x86_64-unknown-linux-gnu ;;
-    Linux-aarch64 | Linux-arm64) triple=aarch64-unknown-linux-gnu ;;
-    Darwin-x86_64) triple=x86_64-apple-darwin ;;
-    Darwin-arm64 | Darwin-aarch64) triple=aarch64-apple-darwin ;;
-    *) triple="" ;;
+  local triple="" sha=""
+  case "$OS-$(uname -m)" in
+    Linux-x86_64) triple=x86_64-unknown-linux-gnu sha=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a ;;
+    Linux-aarch64 | Linux-arm64) triple=aarch64-unknown-linux-gnu sha=91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c ;;
+    Darwin-x86_64) triple=x86_64-apple-darwin sha=887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978 ;;
+    Darwin-arm64 | Darwin-aarch64) triple=aarch64-apple-darwin sha=c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977 ;;
   esac
   if [ -n "$triple" ]; then
-    local url="https://github.com/lycheeverse/lychee/releases/latest/download/lychee-${triple}.tar.gz"
-    mkdir -p "$HOME/.local/bin"
-    # Extract to a temp dir and FIND the binary rather than hard-coding its
-    # path: recent release tarballs nest it under `lychee-<triple>/lychee`,
-    # older ones under `<triple>/lychee`, and pinning one layout silently
-    # broke the install when upstream changed it (the curl|tar just found no
-    # such member and the hook went missing). `find` is layout- and portable
-    # across GNU/bsd tar.
+    local url="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${triple}.tar.gz"
     local tmp bin=""
     tmp="$(mktemp -d)"
-    # Same guard, same reasoning as ensure_cargo_binstall above (#3622): a
-    # failed `mktemp -d` leaves $tmp empty and neither `set -u` nor (absent)
-    # `set -e` stops the script. Here nothing is written at the filesystem
-    # root — `tar -C ""` fails first — but the resulting "prebuilt lychee
-    # tarball unreachable (proxy/network)" is a lie about the cause, and
-    # `rm -rf ""` cleans nothing. Fail with the real reason instead.
+    # A failed `mktemp -d` leaves $tmp empty and nothing stops the script
+    # (#3622); fail with the real reason instead of a misleading one.
     if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
       warn "mktemp -d failed (no writable temp dir?) — skipping the prebuilt lychee download, falling back to cargo binstall"
     else
-      if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
+      # Find the binary rather than hard-code its path: the tarball layout
+      # has changed between releases.
+      if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/lychee.tgz" \
+        && verify_sha256 "$tmp/lychee.tgz" "$sha" \
+        && tar -xzf "$tmp/lychee.tgz" -C "$tmp" >/dev/null 2>&1; then
         bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
       fi
-      if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
-        ok "lychee (prebuilt $triple)"
+      if [ -n "$bin" ] && mkdir -p "$HOME/.local/bin" && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
+        ok "lychee $LYCHEE_VERSION (prebuilt $triple)"
         rm -rf "$tmp"
         return
       fi
       rm -rf "$tmp"
-      warn "prebuilt lychee tarball unreachable (proxy/network) — falling back to cargo binstall"
+      warn "prebuilt lychee tarball unreachable or failed its sha256 check — falling back to cargo binstall"
     fi
   else
-    warn "no prebuilt lychee tarball for $OS-$arch — falling back to cargo binstall"
+    warn "no prebuilt lychee tarball for $OS-$(uname -m) — falling back to cargo binstall"
   fi
-  if have cargo && have cargo-binstall && cargo binstall -y --disable-strategies compile lychee >/dev/null 2>&1; then
-    ok "lychee (binstall fallback)"
+  if have cargo && have cargo-binstall && cargo binstall -y --disable-strategies compile "lychee@${LYCHEE_VERSION}" >/dev/null 2>&1; then
+    ok "lychee $LYCHEE_VERSION (binstall fallback)"
     return
   fi
-  if have cargo && cargo install --locked lychee >/dev/null 2>&1; then
-    ok "lychee (cargo install fallback, slow from-source build)"
+  if have cargo && cargo install --locked "lychee@${LYCHEE_VERSION}" >/dev/null 2>&1; then
+    ok "lychee $LYCHEE_VERSION (cargo install fallback, slow from-source build)"
     return
   fi
-  warn "could not install lychee (prebuilt tarball and cargo fallbacks all failed) — install manually (https://github.com/lycheeverse/lychee/releases)"
+  warn "could not install lychee $LYCHEE_VERSION (prebuilt tarball and cargo fallbacks all failed) — install it by hand from https://github.com/lycheeverse/lychee/releases"
 }
 
 # cargo-nextest is never compiled here: from source it was the longest step of
 # a cloud session's boot, and it competed with the agent's own first cargo run.
-# binstall without its compile fallback, then upstream's prebuilt tarball.
+# binstall without its compile fallback, then upstream's sha256-checked tarball.
 install_nextest() {
-  if have cargo-nextest; then
-    ok "cargo-nextest (already installed)"
+  local version
+  version="$(pinned_version_for cargo-nextest)"
+  if have cargo-nextest && [ "$(cargo-nextest --version 2>/dev/null | awk 'NR == 1 { print $2 }')" = "$version" ]; then
+    ok "cargo-nextest $version (already installed)"
     return
   fi
-  if have cargo-binstall && cargo binstall -y --disable-strategies compile cargo-nextest >/dev/null 2>&1; then
-    ok "cargo-nextest (binstall)"
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile "cargo-nextest@${version}" >/dev/null 2>&1; then
+    ok "cargo-nextest $version (binstall)"
     return
   fi
-  local platform=""
+  local target="" sha=""
   case "$OS-$(uname -m)" in
-    Linux-x86_64) platform=linux ;;
-    Linux-aarch64 | Linux-arm64) platform=linux-arm ;;
-    Darwin-*) platform=mac ;;
+    Linux-x86_64) target=x86_64-unknown-linux-gnu sha=1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4 ;;
+    Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-gnu sha=3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd ;;
+    Darwin-*) target=universal-apple-darwin sha=d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd ;;
   esac
-  local dest="${CARGO_HOME:-$HOME/.cargo}/bin"
-  if [ -n "$platform" ] && mkdir -p "$dest" \
-    && curl -LsSf "https://get.nexte.st/latest/$platform" | tar zxf - -C "$dest" >/dev/null 2>&1 \
+  local dest="${CARGO_HOME:-$HOME/.cargo}/bin" tmp
+  local url="https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${version}/cargo-nextest-${version}-${target}.tar.gz"
+  tmp="$(mktemp -d)"
+  if [ -n "$target" ] && [ -n "$tmp" ] && mkdir -p "$dest" \
+    && curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/nextest.tgz" \
+    && verify_sha256 "$tmp/nextest.tgz" "$sha" \
+    && tar -xzf "$tmp/nextest.tgz" -C "$dest" >/dev/null 2>&1 \
     && have cargo-nextest; then
-    ok "cargo-nextest (prebuilt $platform)"
+    ok "cargo-nextest $version (prebuilt $target)"
+    rm -rf "$tmp"
     return
   fi
-  warn "could not install cargo-nextest — run: curl -LsSf https://get.nexte.st/latest/${platform:-linux} | tar zxf - -C \"$dest\""
+  [ -n "$tmp" ] && rm -rf "$tmp"
+  warn "could not install cargo-nextest $version — download $url, check its sha256 against install_nextest in scripts/setup-hooks.sh, and extract it into $dest"
 }
 
-# sqlx-cli needs custom features (rustls + sqlite only) — same as CI.
+# sqlx-cli needs custom features (rustls + sqlite only) — same as CI, and at
+# CI's version.
+SQLX_CLI_VERSION=0.9.0
 install_sqlx_cli() {
-  # sqlx-cli ships both `cargo-sqlx` and `sqlx`; check either so the skip fires.
-  if have cargo-sqlx || have sqlx; then
-    ok "sqlx-cli (already installed)"
+  if have sqlx && [ "$(sqlx --version 2>/dev/null | awk 'NR == 1 { print $NF }')" = "$SQLX_CLI_VERSION" ]; then
+    ok "sqlx-cli $SQLX_CLI_VERSION (already installed)"
     return
   fi
-  if have cargo-binstall && cargo binstall -y --disable-strategies compile sqlx-cli >/dev/null 2>&1; then
-    ok "sqlx-cli (binstall)"
+  if have cargo-binstall && cargo binstall -y --disable-strategies compile "sqlx-cli@${SQLX_CLI_VERSION}" >/dev/null 2>&1; then
+    ok "sqlx-cli $SQLX_CLI_VERSION (binstall)"
     return
   fi
-  if prebuilt_get sqlx-cli "" sqlx; then
-    ok "sqlx-cli (prebuilt)"
+  if prebuilt_get sqlx-cli "$SQLX_CLI_VERSION" sqlx; then
+    ok "sqlx-cli $SQLX_CLI_VERSION (prebuilt)"
     return
   fi
-  if cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite >/dev/null 2>&1; then
-    ok "sqlx-cli (cargo install)"
+  if cargo install --locked --force sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features rustls,sqlite >/dev/null 2>&1; then
+    ok "sqlx-cli $SQLX_CLI_VERSION (cargo install)"
   else
-    warn "install sqlx-cli manually: cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite"
+    warn "install sqlx-cli by hand: cargo install --locked sqlx-cli --version $SQLX_CLI_VERSION --no-default-features --features rustls,sqlite"
   fi
 }
 
@@ -835,8 +696,8 @@ else
   # run a different version than CI — as it did live, when a newer prek
   # enforced a YAML limit the locally-installed 0.3.8 did not.
   cargo_get_pinned prek "$(pinned_version_for prek)" prek "$PREK_VERSION_AWK"
-  cargo_get cargo-deny
-  cargo_get cargo-machete
+  cargo_get_pinned cargo-deny "$(pinned_version_for cargo-deny)"
+  cargo_get_pinned cargo-machete "$(pinned_version_for cargo-machete)"
   cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"
   cargo_get_pinned typos-cli "$(pinned_version_for typos-cli)" typos "$TYPOS_VERSION_AWK"
   cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"
@@ -889,9 +750,9 @@ fi
 
 # --- Tools only the pre-push stage and the verifier need -------------------
 if have cargo; then
-  cargo_get cargo-audit
+  cargo_get_pinned cargo-audit "$(pinned_version_for cargo-audit)"
   install_nextest
-  cargo_get just
+  cargo_get_pinned just 1.59.0
   install_lychee
   install_sqlx_cli
 fi

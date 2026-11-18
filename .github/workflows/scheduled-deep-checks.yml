@@ -1051,7 +1051,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.151
 
       - name: Run the #[ignore]d perf gates (#639)
         working-directory: src-tauri
@@ -1304,7 +1304,7 @@ jobs:
         # list is divided — a floating version can change either.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-mutants@27.1.0,cargo-nextest
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.151
 
       - name: Mutation-scope guard (#3386) — config is readable and every glob is live
         # Runs BEFORE the expensive step, because every failure mode it checks
@@ -3187,7 +3187,7 @@ jobs:
         # No cargo-nextest: no prek hook runs it.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit
+          tool: cargo-deny@0.20.2,cargo-machete@0.9.2,cargo-audit@0.22.2
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
@@ -3390,7 +3390,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.151
 
       - name: Cargo nextest (full suite, shard ${{ matrix.shard }}/2)
         working-directory: src-tauri
