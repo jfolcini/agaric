@@ -19,6 +19,9 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Deixa o texto em itálico. _italic_ também funciona.',
   'markdownReference.highlight.title': 'Realce',
   'markdownReference.highlight.description': 'Realça o texto.',
+  'markdownReference.highlightColor.title': 'Realce colorido',
+  'markdownReference.highlightColor.description':
+    'Um emoji de cor depois do == dá cor ao realce: 🔴 🟠 🟡 🟢 🔵 🟣, como o Obsidian o escreve. A barra da seleção também permite escolher uma.',
   'markdownReference.strike.title': 'Tachado',
   'markdownReference.strike.description': 'Risca o texto.',
   'markdownReference.underline.title': 'Sublinhado',

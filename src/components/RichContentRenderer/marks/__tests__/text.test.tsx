@@ -181,3 +181,25 @@ describe('highlight text colour (#6528)', () => {
     expect(container.querySelector('mark')).toHaveClass('text-highlight-foreground')
   })
 })
+
+describe('highlight colours (#6759)', () => {
+  it('marks a coloured highlight with its colour, which index.css paints', () => {
+    const { container } = render(
+      <>
+        {renderTextInline(
+          textNode('x', [{ type: 'highlight', attrs: { color: 'green' } }]),
+          'k',
+          ctx,
+        )}
+      </>,
+    )
+    expect(container.querySelector('mark')).toHaveAttribute('data-highlight-color', 'green')
+  })
+
+  it('leaves the default highlight unmarked', () => {
+    const { container } = render(
+      <>{renderTextInline(textNode('x', [{ type: 'highlight' }]), 'k', ctx)}</>,
+    )
+    expect(container.querySelector('mark')).not.toHaveAttribute('data-highlight-color')
+  })
+})

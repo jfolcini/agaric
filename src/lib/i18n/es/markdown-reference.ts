@@ -19,6 +19,9 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Pone el texto en cursiva. _italic_ también funciona.',
   'markdownReference.highlight.title': 'Resaltado',
   'markdownReference.highlight.description': 'Resalta el texto.',
+  'markdownReference.highlightColor.title': 'Resaltado de color',
+  'markdownReference.highlightColor.description':
+    'Un emoji de color tras el == da color al resaltado: 🔴 🟠 🟡 🟢 🔵 🟣, como lo escribe Obsidian. La barra de la selección también permite elegir uno.',
   'markdownReference.strike.title': 'Tachado',
   'markdownReference.strike.description': 'Tacha el texto.',
   'markdownReference.underline.title': 'Subrayado',

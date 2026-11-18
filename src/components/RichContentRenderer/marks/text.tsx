@@ -5,6 +5,7 @@ import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { LinkMark, TextNode } from '@/editor/types'
 import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { openAttachmentLink } from '@/lib/attachment-utils'
+import type { HighlightColor } from '@/lib/highlight-colors'
 import { i18n } from '@/lib/i18n'
 import { openUrl } from '@/lib/open-url'
 import { isAllowedUrl } from '@/lib/url-validation'
@@ -94,6 +95,7 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   let hasCode = false
   let hasStrike = false
   let hasHighlight = false
+  let highlightColor: HighlightColor | null = null
   let hasItalic = false
   let hasBold = false
   let hasUnderline = false
@@ -114,6 +116,7 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
         }
         case 'highlight': {
           hasHighlight = true
+          highlightColor = m.attrs?.color ?? null
           break
         }
         case 'italic': {
@@ -157,7 +160,12 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     // high-contrast. This is DISTINCT from the search-match semantic
     // (`.search-result-mark`); the split is intentional.
     content = (
-      <mark className="bg-highlight text-highlight-foreground rounded px-0.5">{content}</mark>
+      <mark
+        className="bg-highlight text-highlight-foreground rounded px-0.5"
+        data-highlight-color={highlightColor ?? undefined}
+      >
+        {content}
+      </mark>
     )
   }
   if (hasItalic) {

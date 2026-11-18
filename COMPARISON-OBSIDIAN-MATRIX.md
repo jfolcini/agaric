@@ -45,7 +45,7 @@
 | Callouts | `> [!type]`, custom titles, foldable with `+` / `-`, custom types through CSS | The built-in styles (`CALLOUT_TYPES` in `src/components/RichContentRenderer/context.ts`); Obsidian's and GitHub's type names map to the nearest of them. A `-` or `+` after the type folds or opens the callout with a toggle; the fold is not saved (`src/editor/extensions/callout-blockquote.ts`) | Partial |
 | Footnotes | `[^id]`, plus a Footnotes view core plugin | `[^label]` references numbered by first use and `[^label]:` definition blocks (`src/editor/extensions/footnote.ts`). No footnotes panel | Done |
 | Comments | `%%hidden%%` | A block that is one comment imports, pastes and saves from *Edit as Markdown* as a `comment` callout of its text, shown in the quietest callout style; it is kept and marked, not hidden. A comment inside a sentence stays text with its `%%` markers, counted in one import warning (`comment_as_callout` in `src-tauri/agaric-engine/src/import.rs`, `docs/features/import-export.md`, #6751) | Partial |
-| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) (#6759) | Gap |
+| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | The same six, stored in Obsidian's form (`==🔴text==`), picked from the selection bubble or the Format popover, each drawn from a theme token (`src/lib/highlight-colors.ts`, #6759) | Done |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
 | Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode; the Search view replaces literal text across pages, with a preview and an Undo (`docs/SEARCH.md`) | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | None | Gap |
@@ -327,7 +327,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | Section | Ahead | Level | Behind | Not ranked |
 | --- | :---: | :---: | :---: | :---: |
 | 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
-| 2. Editor | 1 | 9 | 9 | 2 |
+| 2. Editor | 1 | 10 | 8 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
 | 4. Properties and Bases | 3 | 4 | 4 | 0 |
 | 5. Tags | 1 | 3 | 1 | 0 |
@@ -352,7 +352,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **48** | **87** | **22** |
+| **Total (175 rows)** | **18** | **49** | **86** | **22** |
 <!-- scorecard:end -->
 
 How to read it:

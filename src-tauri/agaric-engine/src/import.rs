@@ -9502,6 +9502,15 @@ mod tests_foreign_inline_6033 {
         }
     }
 
+    /// An Obsidian coloured highlight is Agaric's form too (#6759): the colour
+    /// emoji after the opening `==` is the highlight's colour, kept as written.
+    #[test]
+    fn a_coloured_highlight_is_left_as_written() {
+        for text in ["==🔴x==", "a ==🟢agreed== b", "==🔵a== ==🟣b=="] {
+            assert_eq!(normalized(text), text, "{text:?}");
+        }
+    }
+
     /// An escaped form is text: an odd run of backslashes before it.
     #[test]
     fn an_escaped_form_is_left_as_written() {
