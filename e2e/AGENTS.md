@@ -46,7 +46,7 @@ What a spec can rely on there differs from the mock:
 - **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event.
 - **`plugin:*` commands stay in the browser**, on the mock's handlers.
 - **Not carried**: a `Channel` argument's messages (an import's progress).
-- **No daemon runs**: MCP, the mirror and sync keep their state, so their Settings panels read it, but no server, mirror pass or peer runs behind them.
+- **The mirror runs; MCP and sync do not**: each vault copy runs the Markdown mirror, which writes once a spec chooses a folder (`set_mirror_folder` with a temp directory of the spec's own). MCP and sync keep their state, so their Settings panels read it, but no server or peer runs behind them.
 
 The nightly `full-suite` lane of `scheduled-deep-checks.yml` runs specs this way: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`; a test tagged `@real-only` asserts what only the real backend does (BM25 ranking, a second page of results) and the mock run skips it. On every PR the same tests run on a mock that withholds its hooks as the bridge does, so a hook call in a listed spec fails there unless its test is tagged `@mock-only`. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
 

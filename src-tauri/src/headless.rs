@@ -9,11 +9,12 @@
 //! serialization. Only the transport differs.
 //!
 //! [`HeadlessApp::new`] holds the state [`crate::register_managed_state`]
-//! registers and no more; [`HeadlessApp::boot`] adds the recovery status and
-//! the change feed (`crate::change_feed`), whose `blocks:changed` the bridge
-//! forwards. Both also hold the state [`crate::boot`] manages beside its
-//! daemons (MCP, the mirror, the mDNS and bind status), so their commands
-//! answer, but nothing here starts a server or a daemon.
+//! registers and no more; [`HeadlessApp::boot`] adds the recovery status, the
+//! change feed (`crate::change_feed`), whose `blocks:changed` the bridge
+//! forwards, and the Markdown mirror (`crate::mirror`), which writes to a
+//! folder only once a spec chooses one. Both also hold the state
+//! [`crate::boot`] manages for MCP and the mDNS and bind status, so their
+//! commands answer, but no MCP server or sync daemon starts.
 //!
 //! Compiled under `test-util` only, so nothing here ships.
 
@@ -36,15 +37,15 @@ pub struct HeadlessDataDir(pub PathBuf);
 pub struct HeadlessApp {
     pub app: tauri::App<MockRuntime>,
     webview: tauri::WebviewWindow<MockRuntime>,
-    /// A booted app's change feed, stopped with the app: the task holds its
-    /// materializer for as long as it runs.
-    change_feed: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// A booted app's change feed and mirror, stopped with the app: each
+    /// holds the vault's pools or materializer for as long as it runs.
+    tasks: Vec<tauri::async_runtime::JoinHandle<()>>,
 }
 
 impl Drop for HeadlessApp {
     fn drop(&mut self) {
-        if let Some(feed) = &self.change_feed {
-            feed.abort();
+        for task in &self.tasks {
+            task.abort();
         }
     }
 }
@@ -93,11 +94,26 @@ impl HeadlessApp {
             &lifecycle,
             app_data_dir,
         );
-        headless.change_feed = Some(crate::change_feed::spawn(
-            headless.app.handle(),
-            read,
-            materializer,
-        ));
+        let mirror = crate::mirror::spawn(
+            read.clone(),
+            headless
+                .app
+                .state::<agaric_sync::device::DeviceId>()
+                .as_str()
+                .to_owned(),
+            headless
+                .app
+                .state::<crate::mirror::MirrorState>()
+                .inner()
+                .clone(),
+            crate::mirror::ingest::Ingest::for_app(
+                headless.app.handle().clone(),
+                headless.app.state::<crate::db::WritePool>().0.clone(),
+                materializer.clone(),
+            ),
+        );
+        let feed = crate::change_feed::spawn(headless.app.handle(), read, materializer);
+        headless.tasks = vec![feed, mirror];
         // The app asks for it as it boots.
         crate::surface_recovery_status(&headless.app, &report);
         Ok(headless)
@@ -154,7 +170,7 @@ impl HeadlessApp {
             lifecycle,
         );
         // What boot manages beside its daemons, for the Settings panels'
-        // reads; the daemons themselves stay off.
+        // reads; `boot` starts the mirror's, and no other.
         app.manage(Arc::new(crate::mcp::McpLifecycle::new()));
         app.manage(crate::commands::McpToggleGate::new());
         app.manage(crate::mcp::activity::McpActivityRing::new());
@@ -168,7 +184,7 @@ impl HeadlessApp {
         Self {
             app,
             webview,
-            change_feed: None,
+            tasks: Vec::new(),
         }
     }
 

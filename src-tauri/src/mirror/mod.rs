@@ -445,8 +445,14 @@ pub fn check_folder(folder: &Path, device_id: &str, app_data_dir: &Path) -> Resu
     }
 }
 
-/// Run the mirror's task on Tauri's runtime for the life of the app.
-pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState, ingest: Ingest) {
+/// Run the mirror's task on Tauri's runtime, until the handle is aborted or
+/// the app exits.
+pub fn spawn(
+    pool: SqlitePool,
+    device_id: String,
+    state: MirrorState,
+    ingest: Ingest,
+) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut mirror = None;
         loop {
@@ -472,7 +478,7 @@ pub fn spawn(pool: SqlitePool, device_id: String, state: MirrorState, ingest: In
                 tracing::warn!(error = %e, "Markdown mirror pass failed");
             }
         }
-    });
+    })
 }
 
 /// A live page's place in the mirror: its path below the folder and its
