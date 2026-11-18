@@ -2050,7 +2050,7 @@ describe('useUndoStore', () => {
       expect(pageState?.redoGroupSizes).toEqual([])
 
       expect(mockedToastDefault).toHaveBeenCalledExactlyOnceWith('Undid delete', { duration: 1500 })
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('Undone')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
       expect(mockedToastError).not.toHaveBeenCalled()
       expect(mockLoad).toHaveBeenCalledTimes(1)
     })

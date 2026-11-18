@@ -116,7 +116,7 @@ describe('HistoryRestoreDialog', () => {
     await waitFor(() => {
       expect(mockNotify.error).toHaveBeenCalledWith('Failed to restore — please try again')
     })
-    expect(mockAnnounce).not.toHaveBeenCalledWith('Restore failed')
+    expect(mockAnnounce).not.toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
   })
 

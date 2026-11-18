@@ -106,7 +106,7 @@ describe('HistoryRevertDialog', () => {
     await waitFor(() => {
       expect(mockNotify.error).toHaveBeenCalledWith('Failed to revert operations')
     })
-    expect(mockAnnounce).not.toHaveBeenCalledWith('Revert failed')
+    expect(mockAnnounce).not.toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
   })
 

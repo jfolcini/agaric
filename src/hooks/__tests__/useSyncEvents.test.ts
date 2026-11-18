@@ -1493,7 +1493,7 @@ describe('useSyncEvents', () => {
           expect.objectContaining({ id: 'sync-error' }),
         )
         // The toast is announced by the toaster's live region; not twice.
-        expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
+        expect(mockedAnnounce).not.toHaveBeenCalled()
         unmount()
       })
     })
@@ -1632,7 +1632,7 @@ describe('useSyncEvents', () => {
         'Sync failed: Connection timed out',
         expect.objectContaining({ id: 'sync-error' }),
       )
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
 
       unmount()
     })

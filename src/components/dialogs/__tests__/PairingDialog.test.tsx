@@ -1538,6 +1538,8 @@ describe('PairingDialog', () => {
         // firings — the plain sync advanceTimersByTime used for the
         // purely-synchronous countdown ticks elsewhere in this file would
         // not wait for that promise to settle.
+        // Waiting was announced; from here on, success is the toast's alone.
+        vi.mocked(announce).mockClear()
         await act(async () => {
           await vi.advanceTimersByTimeAsync(2000)
         })
@@ -1545,7 +1547,7 @@ describe('PairingDialog', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false)
         expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
         // The toast is a live region; a second announcement would double it.
-        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).not.toHaveBeenCalled()
         expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
 
         // axe-core's internal engine relies on real timers/promises — it
@@ -2056,7 +2058,7 @@ describe('PairingDialog', () => {
           await vi.advanceTimersByTimeAsync(2000)
         })
         expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
-        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).not.toHaveBeenCalled()
         expect(onOpenChange).toHaveBeenCalledWith(false)
 
         rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)

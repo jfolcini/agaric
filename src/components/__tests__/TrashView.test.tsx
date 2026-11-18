@@ -2073,9 +2073,7 @@ describe('TrashView', () => {
         'Removed 1 item before an error interrupted emptying trash',
       )
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith(
-      'Trash partially emptied — 1 item permanently deleted before an error interrupted it',
-    )
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
   })
 
@@ -2360,9 +2358,7 @@ describe('TrashView', () => {
           `Restored ${MAX_BATCH_BLOCK_IDS} items before an error interrupted restoring all`,
         )
       })
-      expect(mockedAnnounce).not.toHaveBeenCalledWith(
-        `Restore all partially completed — ${MAX_BATCH_BLOCK_IDS} items restored before an error interrupted it`,
-      )
+      expect(mockedAnnounce).not.toHaveBeenCalled()
       expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
       expect(restoreCalls).toBe(2)
       // The two invalidations the failure path used to skip.
@@ -2569,7 +2565,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('2 blocks restored')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('2 blocks restored from trash')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('toasts the batch purge count after confirmation, without a second announcement', async () => {
@@ -2599,7 +2595,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('2 blocks permanently deleted')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('2 blocks permanently deleted')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // #1888 — batch restore failure must surface the error (a toast, mirroring
@@ -2633,7 +2629,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to restore selected blocks')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Batch restore failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
 
     // Selection preserved (toolbar still shows 2 selected, both rows checked).
@@ -2687,7 +2683,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to purge selected blocks')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Batch purge failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
 
     // Confirmation dialog closed, but selection preserved for retry.
@@ -2746,9 +2742,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
         'The trash listing was out of date and has been refreshed',
       )
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith(
-      'Trash listing was out of date and has been refreshed',
-    )
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     // NOT the generic failure copy — a retry-worded toast would be
     // misleading here since the same selection would fail identically.
     expect(mockedToastError).not.toHaveBeenCalledWith('Failed to purge selected blocks')
@@ -2786,7 +2780,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Trash emptied (5 items permanently deleted)')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Trash emptied — 5 items permanently deleted')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('toasts the failure when empty trash backend rejects, without a second announcement', async () => {
@@ -2815,7 +2809,7 @@ describe('TrashView screen reader feedback is the toast alone', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to empty trash')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Empty trash failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 })
 

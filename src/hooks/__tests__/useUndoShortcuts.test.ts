@@ -566,7 +566,7 @@ describe('journal view undo/redo', () => {
       [NO_DAY_YET, { duration: 2500 }],
       [NO_DAY_YET, { duration: 2500 }],
     ])
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('No day to undo in yet')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
@@ -634,7 +634,7 @@ describe('journal view undo/redo', () => {
       expect(handled).toBe(false)
       expect(mockUndo).not.toHaveBeenCalled()
       expect(mockedToast).toHaveBeenCalledWith(NO_DAY_YET, { duration: 2500 })
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('No day to undo in yet')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
     })
   })
 })
@@ -1104,7 +1104,7 @@ describe('screen reader feedback is the toast alone', () => {
     await vi.waitFor(() => {
       expect(mockedToast).toHaveBeenCalledWith('Undid edit', { duration: 1500 })
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Undone')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
@@ -1119,7 +1119,7 @@ describe('screen reader feedback is the toast alone', () => {
     await vi.waitFor(() => {
       expect(mockedToast).toHaveBeenCalledWith('Redid edit', { duration: 1500 })
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Redone')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
@@ -1134,7 +1134,7 @@ describe('screen reader feedback is the toast alone', () => {
     await vi.waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Undo failed')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Undo failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
@@ -1149,7 +1149,7 @@ describe('screen reader feedback is the toast alone', () => {
     await vi.waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Redo failed')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Redo failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })

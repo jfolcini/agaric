@@ -1164,9 +1164,8 @@ describe('useSyncTrigger', () => {
         await result.current.syncAll({ userInitiated: true })
       })
 
-      expect(mockedAnnounce).toHaveBeenCalledWith('Sync started')
       expect(toast.success).toHaveBeenCalledWith('Sync complete')
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync completed')
+      expect(mockedAnnounce.mock.calls).toEqual([['Sync started']])
     })
 
     // #4305 — and a scheduled tick announces neither, for the same reason it
@@ -1213,7 +1212,7 @@ describe('useSyncTrigger', () => {
         'Sync failed',
         expect.objectContaining({ id: 'sync-error' }),
       )
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
+      expect(mockedAnnounce.mock.calls).toEqual([['Sync started']])
     })
   })
 

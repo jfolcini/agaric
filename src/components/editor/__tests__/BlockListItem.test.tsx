@@ -843,7 +843,7 @@ describe('BlockListItem — handleDateSelect', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-20'))
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Task rescheduled to 2025-01-20')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('shows error toast when getBlock fails and setDueDate also fails', async () => {
@@ -889,7 +889,7 @@ describe('BlockListItem — handleDateSelect', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Reschedule failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('calls onReschedule callback and skips IPC when provided', async () => {

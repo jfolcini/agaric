@@ -497,7 +497,7 @@ describe('useBlockActionOrchestration handleDeleteBlock', () => {
       // Backspace key, so it says why in a toast, as the neighbouring
       // last-block bail does; the toaster's live region voices it.
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.cannotDeleteParentAtTop')
-      expect(mockedAnnounce).not.toHaveBeenCalledWith('blockTree.cannotDeleteParentAtTop')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
     })
 
     // `BlockTree` hands the hook a `moveBlocks` wrapper that re-reads the tree

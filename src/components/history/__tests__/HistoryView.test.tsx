@@ -1781,7 +1781,7 @@ describe('HistoryView screen reader announcements', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('history.revertFailed'))
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Revert failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // ===========================================================================

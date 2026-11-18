@@ -408,7 +408,7 @@ describe('PageHeader title editing', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith('Page renamed')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page renamed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // A no-change blur (title unchanged) must be silent.
@@ -492,7 +492,7 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
     })
     expect(mockedToastError).not.toHaveBeenCalledWith('Failed to rename page')
     expect(mockedToastSuccess).not.toHaveBeenCalled()
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page rename failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(titleEl).toHaveTextContent('Original Title')
     expect(await axe(container)).toHaveNoViolations()
   })
@@ -1879,7 +1879,7 @@ describe('PageHeader error paths', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith('Markdown copied to clipboard')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page exported to clipboard')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('export_page_markdown rejection shows error toast', async () => {
@@ -1903,7 +1903,7 @@ describe('PageHeader error paths', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Export failed')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Export failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('delete_block rejection shows error toast and leaves the tabs alone', async () => {
@@ -1941,7 +1941,7 @@ describe('PageHeader error paths', () => {
         }),
       )
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page delete failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(useTabsStore.getState().tabs).toBe(tabsBefore)
   })
 
@@ -2583,7 +2583,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page moved')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // #2785 — moving the CURRENTLY-VIEWED page used to reload the
@@ -2687,7 +2687,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(expect.stringMatching(/Failed to move page/i))
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page move failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     // #5248 — nothing moved, so its chips stay live.
     expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
   })
@@ -2821,7 +2821,7 @@ describe('PageHeader delete from the page-actions menu', () => {
         }),
       )
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Page deleted')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     expect(useTabsStore.getState().tabs).toEqual([
       { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },

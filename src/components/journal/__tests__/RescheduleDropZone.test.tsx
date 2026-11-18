@@ -183,7 +183,7 @@ describe('RescheduleDropZone', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-15'))
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Task rescheduled to 2025-01-15')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // 5. Shows error toast when setDueDate fails
@@ -202,7 +202,7 @@ describe('RescheduleDropZone', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
-    expect(mockedAnnounce).not.toHaveBeenCalledWith('Reschedule failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // 6. Ignores drag events without the reschedule MIME type
