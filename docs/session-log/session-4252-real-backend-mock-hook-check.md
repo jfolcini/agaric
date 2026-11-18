@@ -1,4 +1,4 @@
-# Session 4247 — a listed real-backend spec meets the bridge's hook surface on every PR
+# Session 4252 — a listed real-backend spec meets the bridge's hook surface on every PR
 
 Part of #6529, after stages 1a–1c. Every spec on `REAL_BACKEND_SPECS` also runs nightly on the real backend, but per-PR CI runs it only on the mock, so a test that calls a mock hook (`window.__setMockLatency`, `__addMock*`, …) passed its PR and failed the next night (#6852, fixed by #6855's `@mock-only` tag).
 
