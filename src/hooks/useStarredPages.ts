@@ -87,12 +87,17 @@ export function useStarredPages(): UseStarredPagesReturn {
       const planned = plan(queryClient.getQueryData<Bookmark[]>(key) ?? EMPTY)
       if (planned === null) return
       queryClient.setQueryData(key, planned.next)
-      writeBookmarks(planned).catch((err: unknown) => {
-        logger.warn('useStarredPages', 'writing a bookmark failed', { spaceId }, err)
-        // `writeBookmarks` rejects once per call, so a batch shows one toast.
-        notify.error(t('bookmarks.writeFailed'))
-        void queryClient.invalidateQueries({ queryKey: key })
-      })
+      writeBookmarks(planned).then(
+        // A names event read before the write committed has put back the old
+        // list, and the write's own event (`properties`) re-reads nothing here.
+        () => queryClient.invalidateQueries({ queryKey: key }),
+        (err: unknown) => {
+          logger.warn('useStarredPages', 'writing a bookmark failed', { spaceId }, err)
+          // `writeBookmarks` rejects once per call, so a batch shows one toast.
+          notify.error(t('bookmarks.writeFailed'))
+          void queryClient.invalidateQueries({ queryKey: key })
+        },
+      )
     },
     [spaceId],
   )

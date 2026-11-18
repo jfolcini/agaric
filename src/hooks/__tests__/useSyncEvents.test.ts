@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { mapBackendState, pressedSyncPeers, useSyncEvents } from '@/hooks/useSyncEvents'
+import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
+import { getRecordedGraphStructureChanges } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
@@ -192,7 +194,10 @@ vi.mock('@/lib/announcer', () => ({
 // #6049 — a spy that still drops the caches; which caches is `derived-caches.test.ts`.
 vi.mock('@/hooks/derived-caches', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/derived-caches')>()
-  return { invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches) }
+  return {
+    invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches),
+    invalidateDomains: actual.invalidateDomains,
+  }
 })
 
 import { toast } from 'sonner'
@@ -1006,9 +1011,11 @@ describe('useSyncEvents', () => {
     })
 
     // #6545 — a typing commit sends one; a reload would remount the editor.
-    it("ignores the change feed's event for a local commit", async () => {
+    it("drops only the named domain's caches for a local commit, reloading no page", async () => {
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const structureBefore = getRecordedGraphStructureChanges()
+      const attachmentsBefore = getAttachmentInvalidationKey()
       const { unmount } = renderHook(() => useSyncEvents())
       await vi.waitFor(() => {
         expect(mockListen).toHaveBeenCalledTimes(3)
@@ -1018,14 +1025,44 @@ describe('useSyncEvents', () => {
         payload: {
           changed_page_ids: ['PAGE_1'],
           local_ops_appended: true,
-          domains: ['structure'],
+          domains: ['names'],
           local_command: true,
         },
       })
 
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+      expect(getRecordedGraphStructureChanges()).toBe(structureBefore)
+      expect(getAttachmentInvalidationKey()).toBe(attachmentsBefore)
       expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockLoad2).not.toHaveBeenCalled()
       expect(mockReanchorUndo).not.toHaveBeenCalled()
-      expect(changes).toEqual([])
+      expect(mockPreload).not.toHaveBeenCalled()
+
+      unsubscribe()
+      unmount()
+    })
+
+    it('drops every cache for a local commit that names no domains, reloading no page', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const structureBefore = getRecordedGraphStructureChanges()
+      const attachmentsBefore = getAttachmentInvalidationKey()
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('blocks:changed')({
+        payload: { changed_page_ids: ['PAGE_1'], local_ops_appended: true, local_command: true },
+      })
+
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+      expect(getRecordedGraphStructureChanges()).toBe(structureBefore + 1)
+      expect(getAttachmentInvalidationKey()).toBe(attachmentsBefore + 1)
+      expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockLoad2).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).not.toHaveBeenCalled()
+      expect(mockPreload).not.toHaveBeenCalled()
 
       unsubscribe()
       unmount()

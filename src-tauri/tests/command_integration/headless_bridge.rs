@@ -199,6 +199,47 @@ fn a_listened_event_is_pushed_once_and_listening_ends_with_the_vault() {
     );
 }
 
+/// #6545 — a booted vault runs the change feed, so the page hears a local
+/// write's `blocks:changed`, which it takes in place of a refetch after each
+/// command.
+#[test]
+fn a_local_write_pushes_the_change_feeds_event() {
+    let root = tempfile::TempDir::new().unwrap();
+    let mut bridge = Bridge::start(root.path()).expect("start the bridge");
+    let mut events = bridge.events();
+    call(
+        &mut bridge,
+        json!({ "op": "listen", "event": "blocks:changed" }),
+    )
+    .expect("listen");
+
+    let page = create_page(&mut bridge, "a page");
+
+    // The feed sends once the write's rebuilds have run, after the answer.
+    let deadline = Instant::now() + WAIT;
+    let event = loop {
+        let found = pushed(&mut events, "blocks:changed")
+            .into_iter()
+            .find(|payload| payload["changed_page_ids"] == json!([page]));
+        if let Some(event) = found {
+            break event;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no change-feed event named the page"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(event["local_command"], true, "{event}");
+    assert_eq!(event["local_ops_appended"], true, "{event}");
+    assert!(
+        event["domains"]
+            .as_array()
+            .is_some_and(|domains| domains.contains(&json!("structure"))),
+        "a page create stales the structure domain: {event}"
+    );
+}
+
 #[test]
 fn a_request_and_an_event_cross_the_websocket() {
     let root = tempfile::TempDir::new().unwrap();

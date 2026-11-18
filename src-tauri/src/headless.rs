@@ -9,8 +9,9 @@
 //! serialization. Only the transport differs.
 //!
 //! [`HeadlessApp::new`] holds the state [`crate::register_managed_state`]
-//! registers and no more; [`HeadlessApp::boot`] adds the recovery status.
-//! Nothing here starts a server, a daemon or a background task, and a command
+//! registers and no more; [`HeadlessApp::boot`] adds the recovery status and
+//! the change feed (`crate::change_feed`), whose `blocks:changed` the bridge
+//! forwards. Nothing here starts a server or a daemon, and a command
 //! that reads state [`crate::boot`] registers elsewhere (the mirror, the mDNS
 //! and bind status, MCP) is refused by tauri as unmanaged. Register a state
 //! here when a spec's commands first read it.
@@ -36,6 +37,17 @@ pub struct HeadlessDataDir(pub PathBuf);
 pub struct HeadlessApp {
     pub app: tauri::App<MockRuntime>,
     webview: tauri::WebviewWindow<MockRuntime>,
+    /// A booted app's change feed, stopped with the app: the task holds its
+    /// materializer for as long as it runs.
+    change_feed: Option<tauri::async_runtime::JoinHandle<()>>,
+}
+
+impl Drop for HeadlessApp {
+    fn drop(&mut self) {
+        if let Some(feed) = &self.change_feed {
+            feed.abort();
+        }
+    }
 }
 
 impl HeadlessApp {
@@ -74,7 +86,19 @@ impl HeadlessApp {
         // Recovery runs once per process, and one process boots many vaults.
         agaric_sync::recovery::reset_recovery_guard();
         let report = crate::recover_and_bootstrap(&pools, &device_id, &materializer)?;
-        let headless = Self::over(pools, device_id, materializer, &lifecycle, app_data_dir);
+        let read = pools.read.clone();
+        let mut headless = Self::over(
+            pools,
+            device_id,
+            materializer.clone(),
+            &lifecycle,
+            app_data_dir,
+        );
+        headless.change_feed = Some(crate::change_feed::spawn(
+            headless.app.handle(),
+            read,
+            materializer,
+        ));
         // The app asks for it as it boots.
         crate::surface_recovery_status(&headless.app, &report);
         Ok(headless)
@@ -130,7 +154,11 @@ impl HeadlessApp {
             Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new()),
             lifecycle,
         );
-        Self { app, webview }
+        Self {
+            app,
+            webview,
+            change_feed: None,
+        }
     }
 
     /// Send one IPC request and hand its outcome to `respond`, on whichever

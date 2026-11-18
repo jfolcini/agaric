@@ -20,7 +20,7 @@
  * Resolves issues #276, #386, #378.
  */
 
-import { invalidateDerivedCaches } from '@/hooks/derived-caches'
+import { invalidateDerivedCaches, invalidateDomains } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import {
   type BlocksChangedEvent,
@@ -338,8 +338,12 @@ export function useSyncEvents(): void {
     EVENT_BLOCKS_CHANGED,
     (event) => {
       try {
-        // #6545: the change feed's event for local commits; S2a maps its domains to invalidations.
-        if (event.payload.local_command === true) return
+        // #6545: the change feed's event for local commits. The page stores
+        // already hold those writes, and a reload would remount the editor.
+        if (event.payload.local_command === true) {
+          invalidateDomains(event.payload.domains)
+          return
+        }
         const { changed_page_ids, local_ops_appended } = event.payload
         reloadChangedPageStores(changed_page_ids, { reanchorUndo: local_ops_appended !== false })
       } catch (err: unknown) {

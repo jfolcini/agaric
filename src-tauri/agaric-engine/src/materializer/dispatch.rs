@@ -1115,7 +1115,9 @@ impl Materializer {
                 }
                 drop(st);
                 // #6545: the change feed holds a lifecycle op's event until
-                // this fire, rather than forcing it from its settle.
+                // the lifecycle instance's fire, rather than forcing it from
+                // its settle. The inbound-sync instance wakes it too, which
+                // costs the feed one pass over an empty set.
                 mat.change_feed.wake();
             } else {
                 // Wait out the remaining window; wake early on a fresh arm

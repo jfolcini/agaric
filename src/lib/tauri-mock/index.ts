@@ -9,6 +9,7 @@
  *   - `seed.ts`      — shared state, seed data, helpers
  *   - `handlers.ts`  — per-command dispatch map
  *   - `injection.ts` — error and latency injection for E2E tests
+ *   - `change-feed.ts` — the `blocks:changed` the backend sends after local writes
  *   - `bridge.ts`    — the real backend in the mock's place (#6529)
  */
 
@@ -17,6 +18,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
 import { logger } from '@/lib/logger'
 import { bridgeUrl, setupBridge } from '@/lib/tauri-mock/bridge'
+import { afterCommand } from '@/lib/tauri-mock/change-feed'
 import { setEventSink } from '@/lib/tauri-mock/events'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -60,7 +62,9 @@ function answer(cmd: string, args: unknown): unknown {
     // as Tauri rejects (now a typed AppError, so no lint suppression needed).
     throw injectedError
   }
-  return dispatch(cmd, args)
+  const response = dispatch(cmd, args)
+  afterCommand(cmd)
+  return response
 }
 
 export function setupMock(): void {

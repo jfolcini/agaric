@@ -8,10 +8,13 @@ import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } f
  * #5242, #5255).
  *
  * A "peer" here is the mock backend written to directly through
- * `__TAURI_INTERNALS__.invoke`, the way a synced device's ops land in the real
- * database without any local command, followed by the `sync:complete` event
- * `useSyncEvents` reconciles on. No local surface announces the change, so each
- * assertion holds only if that reconciliation refreshes the surface.
+ * `__TAURI_INTERNALS__.invoke`, past every local surface, followed by the
+ * `sync:complete` event `useSyncEvents` reconciles on. The mock also answers
+ * that write with the change feed's `blocks:changed` (#6545), as it cannot tell
+ * it from a local command, so these specs show the surfaces refresh after an
+ * out-of-band write. The `sync:complete` path alone is pinned by
+ * `useSyncEvents.test.ts` and by `e2e-tauri/sync-refresh.e2e.ts`, where a real
+ * peer's ops send no feed event.
  *
  * Seed ids: src/lib/tauri-mock/seed.ts `SEED_IDS`.
  */
@@ -33,7 +36,7 @@ interface PeerWindow {
   __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
 }
 
-/** Write to the backend as a synced peer would: no local command, no event. */
+/** Write to the backend past every local surface, as a synced peer's ops land. */
 function peerWrite<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
   return page.evaluate(
     ({ cmd: c, args: a }) => (window as unknown as PeerWindow).__TAURI_INTERNALS__.invoke(c, a),

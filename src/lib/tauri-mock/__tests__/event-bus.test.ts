@@ -116,4 +116,52 @@ describe('mock event bus (#2683)', () => {
 
     unlisten()
   })
+
+  describe("the change feed's event (#6545)", () => {
+    type Invoke = (cmd: string, args?: unknown) => Promise<unknown>
+    const ipc = (cmd: string, args?: unknown): Promise<unknown> =>
+      (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__.invoke(
+        cmd,
+        args,
+      )
+    const nextTask = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+    it('follows the writes answered in one task with one event naming every domain', async () => {
+      const handler = vi.fn()
+      const unlisten = await listen('blocks:changed', handler)
+
+      await ipc('set_priority', { blockId: SEED_IDS.BLOCK_GS_1, level: '1' })
+      await ipc('set_priority', { blockId: SEED_IDS.BLOCK_GS_1, level: '2' })
+      expect(handler).not.toHaveBeenCalled()
+      await nextTask()
+
+      expect(handler).toHaveBeenCalledTimes(1)
+      expect(handler).toHaveBeenCalledWith({
+        event: 'blocks:changed',
+        payload: {
+          changed_page_ids: [],
+          local_ops_appended: true,
+          domains: null,
+          local_command: true,
+        },
+      })
+
+      unlisten()
+    })
+
+    it('sends none after a read, a write that changes no note, a plugin call or a refused write', async () => {
+      const handler = vi.fn()
+      const unlisten = await listen('blocks:changed', handler)
+
+      await ipc('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+      await ipc('record_page_open', { pageId: SEED_IDS.PAGE_GETTING_STARTED })
+      await ipc('plugin:clipboard-manager|write_text', { text: 'copied' })
+      await expect(ipc('set_priority', { blockId: 'NO_SUCH_BLOCK', level: '1' })).rejects.toThrow()
+      await nextTask()
+
+      expect(handler).not.toHaveBeenCalled()
+
+      unlisten()
+    })
+  })
 })

@@ -117,7 +117,8 @@ test('returning to Pages after a synced edit shows it @pages', async ({ page }) 
   await expect(row.locator('[data-page-flag]')).toHaveCount(0)
   await openFromPages(page, 'Quick Notes')
 
-  // A peer's write: straight to the backend, past the app's commands.
+  // A peer's write, straight to the backend. The mock answers it with the change
+  // feed's event too (#6545); `useSyncEvents.test.ts` pins the `sync:complete` path.
   await page.evaluate(
     async ({ blockId, pageId }) => {
       const w = window as unknown as MockWindow

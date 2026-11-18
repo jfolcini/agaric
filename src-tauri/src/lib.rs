@@ -2102,16 +2102,7 @@ fn spawn_background_tasks(
 
     // #6545: one `blocks:changed` per burst of local commits, after their
     // background rebuilds.
-    tauri::async_runtime::spawn(change_feed::run(
-        pools.read.clone(),
-        materializer.clone(),
-        {
-            let app = app.clone();
-            move |event| {
-                main_thread::emit(&app, agaric_sync::sync_events::EVENT_BLOCKS_CHANGED, event);
-            }
-        },
-    ));
+    change_feed::spawn(&app, pools.read.clone(), materializer.clone());
 
     // Issue #157 — MaintenanceDaemon, wired with its full job
     // vector (wal_checkpoint_truncate, op_log_compact,
