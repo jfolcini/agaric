@@ -801,6 +801,10 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: xdg('xdg-config'),
     XDG_STATE_HOME: xdg('xdg-state'),
     XDG_CACHE_HOME: xdg('xdg-cache'),
+    // The app's language follows the webview's, which WebKitGTK takes from the
+    // environment, and the specs select by English text. Playwright pins its
+    // own `en-US`; this lane has no such default.
+    LANGUAGE: 'en_US',
   }
 }
 

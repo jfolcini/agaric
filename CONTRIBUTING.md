@@ -149,6 +149,14 @@ Every change must:
 2. Add tests for new or changed behaviour. Minimum bar per AGENTS.md: happy-path + error-path for exported functions; render + interaction + `axe(container)` for components.
 3. Not introduce architectural change without discussion first. The "Architectural Stability" section of AGENTS.md lists the specific guardrails (no new op types, tables, stores, or sync message types without explicit approval).
 
+## Translations
+
+The interface ships in English, German, Spanish, French and Portuguese, and every shipped language is complete.
+
+- **Changing English text, or adding a key:** put a `// Translators:` note on it saying where it appears and what its placeholders hold, and translate it in every language directory under `src/lib/i18n/` in the same change. `npx vitest run src/lib/i18n` fails on a key a language lacks or on a key without a note.
+- **Adding a language or a regional variant** (`pt-PT`, `fr-CA`): follow [docs/TRANSLATING.md](docs/TRANSLATING.md). A language is a folder of namespace files, a line in `LOCALES` and a loader; the completeness test lists every key still missing, with the file it belongs in. Work namespace by namespace on your branch; the language ships once the test passes. A variant holds only the keys that differ from its base language, and everything else falls back to the base, then English.
+- **Reviewing a translation:** the checklist and the shared glossary are in [docs/TRANSLATING.md](docs/TRANSLATING.md).
+
 ## Patch submission
 
 - Open a pull request against `main`.

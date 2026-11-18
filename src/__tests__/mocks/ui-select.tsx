@@ -205,6 +205,7 @@ interface SelectItemProps {
   value: string
   children?: React.ReactNode
   disabled?: boolean
+  lang?: string
   /**
    * Mirror of the real `SelectItem`'s `endContent` slot — content rendered
    * AFTER `<SelectPrimitive.ItemText>`, outside the auto-mirror surface.
@@ -217,9 +218,10 @@ interface SelectItemProps {
   endContent?: React.ReactNode
 }
 
-export function SelectItem({ value, children, disabled, endContent }: SelectItemProps) {
+export function SelectItem({ value, children, disabled, lang, endContent }: SelectItemProps) {
   const attrs: Record<string, unknown> = { value }
   if (disabled !== undefined) attrs['disabled'] = disabled
+  if (lang !== undefined) attrs['lang'] = lang
   const optionEl = createElement('option', attrs, children)
   if (endContent === undefined || endContent === null) return optionEl
   // Fragment + portal-to-`document.body` so the `<option>` stays a

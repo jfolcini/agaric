@@ -45,19 +45,24 @@ describe('GeneralTab', () => {
 // strings the tab actually renders, and `documentElement.lang`), not through
 // the call shape of a setter.
 describe('GeneralTab — language', () => {
-  it('defaults to English, not to the device', () => {
+  it('defaults to following the device', () => {
     render(<GeneralTab />)
-    // Phase 1 ships one substantially-translated locale. Following the device
-    // would put a Spanish-OS user into a ~99% English UI announced as Spanish
-    // — see the `agaric-language` preference for the full argument, and flip
-    // both together when a second catalog is real.
-    expect(screen.getByLabelText(t('settings.languageLabel'))).toHaveValue('en')
+    // Every shipped catalog is complete (`locale-catalogs.test.ts`), so a
+    // Spanish-OS user who never opens Settings gets a Spanish UI.
+    expect(screen.getByLabelText(t('settings.languageLabel'))).toHaveValue('system')
   })
 
-  it('offers exactly system/en/es', () => {
+  it('offers system plus every shipped locale, each named in its own language', () => {
     render(<GeneralTab />)
     const select = screen.getByLabelText(t('settings.languageLabel')) as HTMLSelectElement
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['system', 'en', 'es'])
+    expect(Array.from(select.options).map((o) => [o.value, o.lang, o.text])).toEqual([
+      ['system', '', t('settings.languageSystem')],
+      ['de', 'de', 'Deutsch'],
+      ['en', 'en', 'English'],
+      ['es', 'es', 'Español'],
+      ['fr', 'fr', 'Français'],
+      ['pt', 'pt', 'Português'],
+    ])
   })
 
   it('reflects a stored preference on mount', () => {
@@ -79,9 +84,20 @@ describe('GeneralTab — language', () => {
       expect(screen.getByLabelText('Idioma')).toBeInTheDocument()
     })
     expect(document.documentElement.lang).toBe('es')
-    // An untranslated key on the same screen still renders English, which is
-    // the partial-catalog fallback working rather than a bug.
-    expect(screen.getByLabelText('Week starts on')).toBeInTheDocument()
+    expect(screen.getByLabelText('La semana empieza el')).toBeInTheDocument()
+  })
+
+  it('choosing Português persists it and re-renders the tab in Portuguese', async () => {
+    const user = userEvent.setup()
+    render(<GeneralTab />)
+
+    await user.selectOptions(screen.getByLabelText(t('settings.languageLabel')), 'pt')
+
+    expect(localStorage.getItem(LANGUAGE_KEY)).toBe('pt')
+    await waitFor(() => {
+      expect(screen.getByLabelText('A semana começa em')).toBeInTheDocument()
+    })
+    expect(document.documentElement.lang).toBe('pt')
   })
 
   it('switching back to English restores the English labels', async () => {
