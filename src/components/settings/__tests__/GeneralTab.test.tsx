@@ -17,6 +17,7 @@ import { axe } from 'vitest-axe'
 
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { i18n, t } from '@/lib/i18n'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 const LANGUAGE_KEY = 'agaric-language'
 
@@ -124,5 +125,41 @@ describe('GeneralTab — language', () => {
       expect(screen.getByLabelText('Idioma')).toBeInTheDocument()
     })
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// The pseudo-locale is a layout check, not a language: the options test above
+// pins that it is absent while debug mode is off.
+describe('GeneralTab — pseudo-locale', () => {
+  const PSEUDO_LABEL = '⟦Ĺáñğúáğé ~ ~⟧'
+
+  it('is offered in debug mode', () => {
+    writePreference(PREFERENCES.debugMode, true)
+    render(<GeneralTab />)
+    const select = screen.getByLabelText(t('settings.languageLabel')) as HTMLSelectElement
+    const option = Array.from(select.options).find((o) => o.value === 'en-XA')
+    expect([option?.lang, option?.text]).toEqual(['en-XA', 'Pseudo-locale (en-XA)'])
+  })
+
+  it('choosing it persists it and re-renders the tab accented, padded and in markers', async () => {
+    writePreference(PREFERENCES.debugMode, true)
+    const user = userEvent.setup()
+    render(<GeneralTab />)
+
+    await user.selectOptions(screen.getByLabelText(t('settings.languageLabel')), 'en-XA')
+
+    expect(localStorage.getItem(LANGUAGE_KEY)).toBe('en-XA')
+    await waitFor(() => {
+      expect(screen.getByLabelText(PSEUDO_LABEL)).toBeInTheDocument()
+    })
+    expect(document.documentElement.lang).toBe('en-XA')
+  })
+
+  it('stays selectable while it is the stored choice, after debug mode is off', async () => {
+    localStorage.setItem(LANGUAGE_KEY, 'en-XA')
+    render(<GeneralTab />)
+    await waitFor(() => {
+      expect(screen.getByLabelText(PSEUDO_LABEL)).toHaveValue('en-XA')
+    })
   })
 })

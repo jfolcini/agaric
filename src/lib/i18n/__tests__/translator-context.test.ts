@@ -22,7 +22,12 @@ import { DEFAULT_LOCALE } from '@/lib/i18n/locales'
 
 // The runner's cwd is the project root (see catalog-parity.test.ts).
 const CATALOG_DIR = join(process.cwd(), 'src', 'lib', 'i18n')
-const NOT_A_NAMESPACE = new Set(['index.ts', 'locales.ts', 'set-locale.ts'])
+const NOT_A_NAMESPACE = new Set([
+  'english-in-every-locale.ts',
+  'index.ts',
+  'locales.ts',
+  'set-locale.ts',
+])
 
 const OBJECT_START = /^export const \w+: Record<string, string> = \{$/
 const KEY_LINE = /^\s*'([^']+)':/

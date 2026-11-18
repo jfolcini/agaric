@@ -45,6 +45,10 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['fr-CA'])).toBe('fr')
   })
 
+  it("matches a device set to Android's developer pseudo-locale", () => {
+    expect(resolveLocale('system', ['en-XA'])).toBe('en-XA')
+  })
+
   it('strips subtags one at a time, so a script subtag does not block the match', () => {
     expect(resolveLocale('system', ['pt-Latn-BR'])).toBe('pt')
   })
@@ -148,13 +152,11 @@ describe('loadLocale / setLocale', () => {
     expect(lookupDateLocale('pt')?.code).toBe('pt-BR')
   })
 
-  it.each(SUPPORTED_LOCALES)(
-    '%s registers its own date-fns locale with its catalog',
-    async (tag) => {
-      await loadLocale(tag)
-      expect(lookupDateLocale(tag)?.code.split('-')[0]).toBe(tag)
-    },
-  )
+  // A variant dates like its base (`en-XA` like `en`).
+  it.each(SUPPORTED_LOCALES)('%s dates in its language once its catalog loads', async (tag) => {
+    await loadLocale(tag)
+    expect(lookupDateLocale(tag)?.code.split('-')[0]).toBe(tag.split('-')[0])
+  })
 
   it('merges the catalog exactly once, however many callers ask', async () => {
     await loadLocale('es')
