@@ -39,12 +39,14 @@ import {
 } from '@/stores/inline-property-commit'
 
 // Saves whose text write lands only after an IPC answers (the checkbox and
-// property branches), by block id (#5448). Until then the page store shows the
-// pre-edit content, blank for a new block, so the empty-block cleanup awaits
-// this (`settlePendingSaves`) rather than delete under the commit.
-const pendingSaves = new Map<string, Promise<boolean>>()
+// property branches, a paste into the block), by block id (#5448, #6952). Until
+// then the page store shows the pre-edit content, blank for a new block, so the
+// empty-block cleanup awaits this (`settlePendingSaves`) rather than delete
+// under the commit.
+const pendingSaves = new Map<string, Promise<unknown>>()
 
-function trackPendingSave(blockId: string, outcome: Promise<boolean>): Promise<boolean> {
+/** Register `outcome` as a save of `blockId` that defers its text write. */
+export function trackPendingSave<T>(blockId: string, outcome: Promise<T>): Promise<T> {
   pendingSaves.set(blockId, outcome)
   // By identity, so a newer save that replaced this entry is kept.
   const settled = () => {

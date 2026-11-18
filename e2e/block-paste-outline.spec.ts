@@ -418,6 +418,44 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
     }
   })
 
+  test('Escape before the paste answers keeps both items, the first in the empty block (#6952)', async ({
+    page,
+  }) => {
+    const empty = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: '',
+      parentId: PAGE_ID,
+      index: null,
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+      blockId: null,
+    })
+    await openPage(page, PAGE)
+    const live = await focusBlockById(page, empty.id)
+    // Only the paste answers late, as on a real backend, where it is the slowest
+    // call: the empty-block cleanup's probe answers first.
+    await page.evaluate(() => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, ...rest: unknown[]) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = async (cmd, ...rest) => {
+        if (cmd === 'paste_blocks') await new Promise((resolve) => setTimeout(resolve, 300))
+        return invoke(cmd, ...rest)
+      }
+    })
+
+    await pasteText(live, '- a\n- b')
+    await page.keyboard.press('Escape')
+
+    await expect(page.getByText('Pasted 2 blocks')).toBeVisible()
+    await reopenPage(page, PAGE)
+    const rows = await childrenOf(page, PAGE_ID)
+    const at = rows.findIndex((r) => r.id === empty.id)
+    expect(rows.slice(at, at + 2).map((r) => r.content)).toEqual(['a', 'b'])
+  })
+
   test('a page copy pastes as one title heading and its blocks, its front matter no block (#6277 E4)', async ({
     page,
   }) => {

@@ -35,6 +35,7 @@ import { notify } from '@/lib/notify'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { latestUndoEntry } from '@/stores/undo'
+import { trackPendingSave } from '@/stores/unmount-flush'
 
 export interface PasteIntoBlockTarget {
   /** The focused block the paste lands in. */
@@ -123,10 +124,13 @@ async function takeBack(
 }
 
 /** Paste `payload` into the target block; see the module doc. */
-export async function pasteIntoBlock(
-  target: PasteIntoBlockTarget,
-  payload: PastePayload,
-): Promise<void> {
+export function pasteIntoBlock(target: PasteIntoBlockTarget, payload: PastePayload): Promise<void> {
+  // The block is blank until the paste answers, so an Escape meanwhile must
+  // not let the empty-block cleanup delete it from under the paste (#6952).
+  return trackPendingSave(target.blockId, landPaste(target, payload))
+}
+
+async function landPaste(target: PasteIntoBlockTarget, payload: PastePayload): Promise<void> {
   const { input, splice, asText } = payload
   await flushActiveDraft()
   const ids = await target.pageStore
