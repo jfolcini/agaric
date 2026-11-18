@@ -270,6 +270,35 @@ pub struct Shadow {
     /// ingest saves against; `None` in a state written before ingests.
     #[serde(default)]
     pub buffer: Option<String>,
+    /// The page's render `text` was written from, the base a later write
+    /// splices against ([`super::splice::splice`]); `None` in a state written
+    /// before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<Render>,
+}
+
+/// A page's render: its text and the id of the block starting on each line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Render {
+    pub text: String,
+    pub line_ids: Vec<Option<String>>,
+}
+
+impl Render {
+    pub fn of(file: &crate::commands::pages::PageFile) -> Self {
+        Self {
+            text: file.text.clone(),
+            line_ids: file.line_ids.clone(),
+        }
+    }
+}
+
+impl Shadow {
+    /// The base [`super::splice::splice`] takes from this text.
+    pub fn base(&self) -> Option<(&str, &[Option<String>])> {
+        let render = self.render.as_ref()?;
+        Some((render.text.as_str(), render.line_ids.as_slice()))
+    }
 }
 
 /// A page's file as the mirror last wrote it: the path below the folder,

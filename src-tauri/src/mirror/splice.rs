@@ -5,6 +5,12 @@
 //! user's `*` bullets, `1)` markers, 4-space indents, front matter keys in
 //! their own order. A write keeps those bytes for every block the render did
 //! not change, and takes the render's lines only for the blocks that differ.
+//!
+//! A file can also hold a block that does not read as its render at all, as
+//! one written by another editor that Agaric reads in its own way. Given the
+//! render the file was last written from, its `base`, a write keeps such a
+//! block's lines too while its render is still what it was then: only a block
+//! changed in Agaric since takes the render's lines.
 
 use std::collections::HashMap;
 
@@ -14,11 +20,15 @@ use agaric_engine::import::{self, ParseOutput, ParsedBlock};
 /// lines, written over `old`, the file as it stands with its own line ids:
 /// the render's blocks in its order, each with `old`'s lines where `old` holds
 /// that block as the render reads it, and the render's lines otherwise; the
-/// front matter likewise. Returns the text and its line ids. When the result
-/// would not read back as the render does, block for block, it is the render.
+/// front matter likewise. With `base`, the render `old` was written from
+/// and its line ids, `old`'s lines are also kept for a block, or the front
+/// matter, whose render `base` already held so. Returns the text and its line
+/// ids. When the result would not read back as the render does, block for
+/// block, but for those kept by `base`, it is the render.
 pub fn splice(
     old: &str,
     old_ids: &[Option<String>],
+    base: Option<(&str, &[Option<String>])>,
     new: &str,
     new_ids: &[Option<String>],
 ) -> (String, Vec<Option<String>>) {
@@ -26,6 +36,24 @@ pub fn splice(
     let (Some(old), Some(new)) = (Laid::of(old, old_ids), Laid::of(new, new_ids)) else {
         return rendered();
     };
+    let base = base.and_then(|(text, ids)| Laid::of(text, ids));
+    let base_by_id: HashMap<&str, &Segment> = base
+        .iter()
+        .flat_map(|base| base.segments.iter().rev())
+        .filter_map(|segment| Some((segment.id.as_deref()?, segment)))
+        .collect();
+    // Whether the render of `segment`, a block of `new`, is what `base` held.
+    let unchanged = |segment: &Segment| {
+        let (Some(base), Some(id)) = (&base, segment.id.as_deref()) else {
+            return false;
+        };
+        base_by_id
+            .get(id)
+            .is_some_and(|was| same_block(base, was, &new, segment))
+    };
+    let front_unchanged = base
+        .as_ref()
+        .is_some_and(|base| same_front(&base.parsed, &new.parsed));
     let by_id: HashMap<&str, &Segment> = old
         .segments
         .iter()
@@ -34,7 +62,7 @@ pub fn splice(
         .collect();
     let mut lines: Vec<&str> = Vec::new();
     let mut ids: Vec<Option<String>> = Vec::new();
-    let front = if same_front(&old.parsed, &new.parsed) {
+    let front = if front_unchanged || same_front(&old.parsed, &new.parsed) {
         &old.lines[..old.front_end]
     } else {
         &new.lines[..new.front_end]
@@ -46,7 +74,7 @@ pub fn splice(
             .id
             .as_deref()
             .and_then(|id| by_id.get(id))
-            .filter(|kept| same_block(&old, kept, &new, segment));
+            .filter(|kept| unchanged(segment) || same_block(&old, kept, &new, segment));
         let body = match kept {
             Some(kept) => &old.lines[kept.start..kept.body_end],
             None => &new.lines[segment.start..segment.body_end],
@@ -59,7 +87,7 @@ pub fn splice(
     }
     let text = lines.join("\n");
     match Laid::of(&text, &ids) {
-        Some(written) if written.reads_as(&new) => (text, ids),
+        Some(written) if written.reads_as(&new, front_unchanged, &unchanged) => (text, ids),
         _ => rendered(),
     }
 }
@@ -132,15 +160,17 @@ impl<'a> Laid<'a> {
     }
 
     /// Whether this reads as `other` does: the same front matter and the
-    /// same blocks, each under the same id, in the same order.
-    fn reads_as(&self, other: &Laid) -> bool {
-        same_front(&self.parsed, &other.parsed)
+    /// same blocks, each under the same id, in the same order; the front
+    /// matter when `front_kept`, and a block of `other` that is `kept`, may
+    /// read otherwise.
+    fn reads_as(&self, other: &Laid, front_kept: bool, kept: &dyn Fn(&Segment) -> bool) -> bool {
+        (front_kept || same_front(&self.parsed, &other.parsed))
             && self.segments.len() == other.segments.len()
             && self
                 .segments
                 .iter()
                 .zip(&other.segments)
-                .all(|(a, b)| a.id == b.id && same_block(self, a, other, b))
+                .all(|(a, b)| a.id == b.id && (kept(b) || same_block(self, a, other, b)))
     }
 }
 

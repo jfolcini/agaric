@@ -2077,6 +2077,7 @@ fn of_the_texts_explaining_a_file_as_well_the_shortest_is_its_base() {
         text: text.into(),
         line_ids: Vec::new(),
         buffer: None,
+        render: None,
     };
     let shadows = [shadow("a\nb\nc"), shadow("a\nb\nc\nd")];
     assert_eq!(closest(&shadows, "a\nb").unwrap().text, "a\nb\nc");

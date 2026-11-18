@@ -425,11 +425,12 @@ fn write_back(
             *slot = id;
         }
     }
-    let (text, line_ids) = splice(text, &ids, &now.text, &now.line_ids);
+    let (text, line_ids) = splice(text, &ids, None, &now.text, &now.line_ids);
     Shadow {
         text,
         line_ids,
         buffer: Some(now.buffer.clone()),
+        render: Some(super::store::Render::of(now)),
     }
 }
 
