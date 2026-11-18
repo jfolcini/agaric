@@ -47,7 +47,6 @@ import {
 import { SearchHeader } from '@/components/SearchPanel/SearchHeader'
 import { SearchStatusRegion } from '@/components/SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from '@/components/SearchPanel/useAliasResolution'
-import { useFilterSyntaxIntroToast } from '@/components/SearchPanel/useFilterSyntaxIntroToast'
 import { useSearchHistoryControls } from '@/components/SearchPanel/useSearchHistoryControls'
 import { useSearchReplace, useSearchReplaceMode } from '@/components/SearchPanel/useSearchReplace'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
@@ -372,10 +371,6 @@ export function SearchPanel(): React.ReactElement {
       useCommandPaletteStore.getState().setPendingViewQuery(null)
     }
   }, [setQueryAndCaret])
-
-  // one-time migration toast pointing users at the help
-  // dialog so they discover the inline filter syntax.
-  useFilterSyntaxIntroToast()
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value

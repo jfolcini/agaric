@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -11,6 +12,7 @@ import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 describe('EditorTab', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     localStorage.clear()
   })
 
@@ -52,6 +54,16 @@ describe('EditorTab', () => {
     writePreference(PREFERENCES.linkPreviewHoverFetch, false)
     render(<EditorTab />)
     expect(screen.getByTestId('link-preview-fetch-toggle')).not.toBeChecked()
+  })
+
+  it('changing the external-image policy persists it and raises no toast', async () => {
+    const user = userEvent.setup()
+    render(<EditorTab />)
+    const select = screen.getByTestId('external-image-policy-select')
+    await user.selectOptions(select, 'never')
+    expect(select).toHaveValue('never')
+    expect(localStorage.getItem('external-image-policy')).toBe('never')
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('labels the external-image select by its row and describes it with the help text', () => {

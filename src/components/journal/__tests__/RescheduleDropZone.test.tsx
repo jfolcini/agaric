@@ -183,6 +183,7 @@ describe('RescheduleDropZone', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-15'))
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // 5. Shows error toast when setDueDate fails
@@ -201,6 +202,7 @@ describe('RescheduleDropZone', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // 6. Ignores drag events without the reschedule MIME type
@@ -346,22 +348,6 @@ describe('RescheduleDropZone', () => {
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
   })
 
-  // Screen-reader announcement after successful reschedule
-  it('announces task rescheduled after successful drop', async () => {
-    render(
-      <RescheduleDropZone dateStr="2025-01-15">
-        <span>Content</span>
-      </RescheduleDropZone>,
-    )
-
-    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
-    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-1') })
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Task rescheduled to 2025-01-15')
-    })
-  })
-
   // Keyboard-equivalent path is documented in the source JSDoc.
   // Drag-only is OK because users can reschedule via DateChip → DateChipEditor.
   // This guards against an accidental removal of the JSDoc that explains why
@@ -374,23 +360,5 @@ describe('RescheduleDropZone', () => {
     const source = fs.readFileSync(sourcePath, 'utf8')
     expect(source).toMatch(/DateChipEditor/)
     expect(source).toMatch(/Keyboard accessibility/i)
-  })
-
-  // Screen-reader announcement when reschedule fails
-  it('announces reschedule failed when setDueDate rejects', async () => {
-    mockSetDueDate.mockRejectedValueOnce(new Error('Network error'))
-
-    render(
-      <RescheduleDropZone dateStr="2025-01-15">
-        <span>Content</span>
-      </RescheduleDropZone>,
-    )
-
-    const zone = screen.getByTestId('reschedule-drop-zone-2025-01-15')
-    fireEvent.drop(zone, { dataTransfer: makeDataTransfer('block-fail') })
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Reschedule failed')
-    })
   })
 })

@@ -56,7 +56,6 @@ export function HistoryRevertDialog({
         logger.warn('HistoryView', 'revert refused: a name is taken', { selectedCount: count }, err)
         notify.error(takenName)
       }
-      announce(t('announce.revertFailed'))
     }
     setReverting(false)
     onOpenChange(false)

@@ -325,7 +325,7 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT kann keinen Filter negieren; verwende seine not-Form',
   'searchQuery.emptyGroup': 'leere Klammern',
   'search.filterSyntaxIntro':
-    'Die Filtersyntax ist live — tippe tag:#name oder path:Journal/* in das Suchfeld oder verwende die Schaltfläche "Filter hinzufügen". Drücke ? für Hilfe.',
+    'Filtere mit tag:#name oder path:Journal/* oder verwende “Filter hinzufügen”. Drücke ? für Hilfe.',
   'search.searchTags': 'Tags suchen...',
   'search.searchPages': 'Seiten suchen...',
   'search.noTagsFound': 'Keine Tags gefunden',

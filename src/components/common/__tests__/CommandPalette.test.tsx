@@ -1415,7 +1415,7 @@ describe('CommandPalette — commands mode', () => {
     }
   })
 
-  it('selecting "export-page-markdown" copies the exported markdown and announces (#2942)', async () => {
+  it('selecting "export-page-markdown" copies the exported markdown and toasts (#2942)', async () => {
     useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_OPEN', title: 'Open Page' }], label: '' }],
       activeTabIndex: 0,
@@ -1436,7 +1436,8 @@ describe('CommandPalette — commands mode', () => {
       expect(mockedWriteText).toHaveBeenCalledWith('# Open Page\n\ncontent')
     })
     expect(mockedNotify.success).toHaveBeenCalledWith(t('pageHeader.exportCopied'))
-    expect(announce).toHaveBeenCalledWith(t('announce.exported'))
+    // The toast is announced by the toaster's live region; nothing else is.
+    expect(announce).not.toHaveBeenCalled()
   })
 
   it('selecting "export-page-markdown" with no page open shows an error toast and does not call the IPC (#2942)', async () => {

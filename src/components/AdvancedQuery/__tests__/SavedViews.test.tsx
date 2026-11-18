@@ -137,7 +137,7 @@ describe('SavedViews', () => {
     expect(builder.children).toHaveLength(0)
   })
 
-  it('renames a view and keeps the new name', async () => {
+  it('renames a view and keeps the new name, with no toast to repeat it', async () => {
     renderPicker()
     const user = userEvent.setup()
     await user.click(
@@ -155,6 +155,7 @@ describe('SavedViews', () => {
 
     expect(await screen.findByText('Renamed view')).toBeInTheDocument()
     expect(await storedNames()).toEqual(['Renamed view'])
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
   })
 
   it('refuses a rename onto a title the space holds, and keeps the name', async () => {

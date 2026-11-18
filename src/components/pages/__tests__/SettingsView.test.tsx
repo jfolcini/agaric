@@ -815,26 +815,20 @@ describe('SettingsView', () => {
       expect(screen.getByLabelText(t('settings.weekStartLabel'))).toHaveValue('0')
     })
 
-    // Week-start change must produce a user-visible toast that
-    // names the chosen day, otherwise the only cue is calendar grids
-    // silently re-laying out.
-    it('shows a success toast naming the chosen day on change', async () => {
+    it('changing the day shows it in the select and raises no toast', async () => {
       const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.weekStartLabel'))
 
       await user.selectOptions(select, '0')
       await waitFor(() => {
-        expect(toast.success).toHaveBeenCalledWith(
-          t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }),
-        )
+        expect(select).toHaveValue('0')
       })
 
       await user.selectOptions(select, '1')
       await waitFor(() => {
-        expect(toast.success).toHaveBeenCalledWith(
-          t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }),
-        )
+        expect(select).toHaveValue('1')
       })
+      expect(toast.success).not.toHaveBeenCalled()
     })
   })
 
@@ -877,16 +871,15 @@ describe('SettingsView', () => {
       expect(screen.getByLabelText(t('settings.journalDateFormatLabel'))).toHaveValue('dd/MM/yyyy')
     })
 
-    it('shows a success toast with a worked example on change', async () => {
+    it('changing the format shows it in the select and raises no toast', async () => {
       const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
 
       await user.selectOptions(select, 'MMMM d, yyyy')
       await waitFor(() => {
-        expect(toast.success).toHaveBeenCalledWith(
-          t('settings.journalDateFormatUpdated', { example: 'June 17, 2026' }),
-        )
+        expect(select).toHaveValue('MMMM d, yyyy')
       })
+      expect(toast.success).not.toHaveBeenCalled()
     })
 
     it('the journal-date-format control is accessibly labelled (no a11y violations)', async () => {

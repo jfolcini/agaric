@@ -196,6 +196,20 @@ describe('PageBrowser', () => {
         await waitFor(() => expect(appliedTagIds()).toEqual(['TAG_HERE', 'TAG_ELSEWHERE']))
       })
 
+      it('names the applied view on its trigger, with no toast to repeat it', async () => {
+        await applyTaggedView(() =>
+          Promise.resolve([
+            { tag_id: 'TAG_HERE', name: 'here', usage_count: 1, updated_at: '' },
+            { tag_id: 'TAG_ELSEWHERE', name: 'elsewhere', usage_count: 1, updated_at: '' },
+          ]),
+        )
+
+        await waitFor(() =>
+          expect(screen.getByTestId('saved-views-trigger')).toHaveTextContent('Tagged'),
+        )
+        expect(mockedToastSuccess).not.toHaveBeenCalled()
+      })
+
       it('replaces the default journal chip of a space with nothing stored (#5370)', async () => {
         usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
         await applyTaggedView(() =>

@@ -17,7 +17,6 @@ export const settings: Record<string, string> = {
   'settings.showWelcomeTour.description':
     'Rouvrir la fenêtre de bienvenue du premier lancement, avec l’option de créer les pages d’exemple.',
   'settings.showWelcomeTour.button': 'Lancer la visite',
-  'settings.showWelcomeTour.success': 'Visite de bienvenue rouverte',
   'settings.tabGeneral': 'Général',
   'settings.tabSpaces': 'Espaces',
   'settings.spaces.description':
@@ -49,7 +48,6 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageAlways': 'Toujours charger',
   'settings.editor.externalImageClick': 'Demander à chaque fois (recommandé)',
   'settings.editor.externalImageNever': 'Ne jamais charger',
-  'settings.editor.externalImageUpdated': 'Règle des images externes mise à jour',
   'settings.editor.externalImageAllowedHosts': 'Domaines d’images autorisés',
   'settings.editor.externalImageRemoveHost': 'Retirer {{host}}',
   'settings.editor.linkPreviewLabel': 'Charger l’aperçu des liens au survol',
@@ -290,7 +288,6 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'Premier jour de la semaine',
   'settings.weekStartMonday': 'Lundi',
   'settings.weekStartSunday': 'Dimanche',
-  'settings.weekStartUpdated': 'Premier jour de la semaine\u00A0: {{day}}',
   'settings.journalDateFormatLabel': 'Format de date du journal',
   'settings.journalDateFormatHelp':
     'La façon dont les titres du journal sont affichés. Les pages sont toujours stockées au format AAAA-MM-JJ, ce réglage n’affecte donc jamais les journaux existants.',
@@ -299,7 +296,5 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Mois J, AAAA (p. ex. juin 17, 2026)',
   'settings.journalDateFormatSlash': 'JJ/MM/AAAA (p. ex. 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Jjj, Mmm J (p. ex. mer., juin 17)',
-  'settings.journalDateFormatUpdated':
-    'Les dates du journal s’affichent désormais ainsi\u00A0: {{example}}',
   'settings.valueClamped': 'Valeur ramenée dans la plage {{min}}–{{max}}',
 }
