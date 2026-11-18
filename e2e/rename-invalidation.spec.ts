@@ -29,8 +29,14 @@ async function renameOpenPage(page: Page, title: string): Promise<void> {
 async function addBlock(page: Page, text: string): Promise<void> {
   await page.getByRole('button', { name: /add block/i }).click()
   const editor = page.getByRole('textbox', { name: 'Block editor' })
-  await expect(editor).toBeVisible()
+  await expect(editor).toBeFocused()
+  // ProseMirror writes its selection back 20 ms after the mount's focus, a frame late; a key typed
+  // before then is lost.
+  await editor.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20))),
+  )
   await editor.pressSequentially(text, { delay: 30 })
+  await expect(editor).toHaveText(text)
   await editor.press('Enter')
   await expect(page.getByText(text)).toBeVisible()
 }
@@ -127,6 +133,42 @@ test.describe('Rename and create invalidation @pages', () => {
     await linkAlias.click()
     await expect(linkAlias).toHaveCount(0)
     await expect(linkFailedToast(page)).toHaveCount(0)
+  })
+
+  test('the Pages filter and the [[ picker find a renamed page by its new title only (#5365)', async ({
+    page,
+  }) => {
+    // Both read a copy the materializer keeps (the pages list, FTS past two characters), not the
+    // block, so only the bridge shows a copy the rename missed. No word is shared between titles.
+    await openPage(page, 'Meetings')
+    await renameOpenPage(page, 'Velvet lantern')
+
+    await navigateToView(page, 'Tags')
+    await navigateToView(page, 'Pages')
+    const titles = page.getByRole('grid').locator('.page-browser-item-title')
+    await expect(titles.filter({ hasText: /^Velvet lantern$/ })).toHaveCount(1)
+    await expect(titles.filter({ hasText: /^Meetings$/ })).toHaveCount(0)
+    const filter = page
+      .locator('.page-browser-header')
+      .getByRole('textbox', { name: 'Search pages...' })
+    await filter.fill('Velvet lantern')
+    await expect(titles).toHaveText(['Velvet lantern'])
+    await filter.fill('Meetings')
+    await expect(titles).toHaveCount(0)
+    await filter.fill('')
+
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' [[Velvet lan', { delay: 20 })
+    const items = activeSuggestionList(page).locator('[data-testid="suggestion-item"]')
+    const existing = items.and(page.locator(':not(#suggestion-__create__)'))
+    await expect(existing.filter({ hasText: 'Velvet lantern' })).toHaveCount(1)
+    await page.keyboard.press('Escape')
+    await page.keyboard.type(' [[Meetings', { delay: 20 })
+    // The create item names the query, so once it reads the whole old title the items answer it.
+    await expect(page.locator('#suggestion-__create__')).toContainText('Meetings')
+    await expect(existing).toHaveCount(0)
   })
 
   test('a [[Parent/Child]] page created from the picker appears in the parent Pages section (#5253)', async ({

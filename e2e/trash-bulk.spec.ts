@@ -33,6 +33,9 @@ import {
  * or staying gone on their origin page), not just dialog wiring.
  */
 
+/** Getting Started's seeded blocks: a count read before they render would be 0. */
+const GETTING_STARTED_BLOCKS = 5
+
 test.describe('Trash bulk restore/purge @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -41,7 +44,8 @@ test.describe('Trash bulk restore/purge @pages', () => {
 
   test('multi-select two roots and batch-restore brings both back', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
+    const countBefore = GETTING_STARTED_BLOCKS
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
 
     // Delete two root blocks via the context menu (same path as
     // features-coverage.spec.ts / keyboard-collisions.spec.ts).
@@ -81,7 +85,8 @@ test.describe('Trash bulk restore/purge @pages', () => {
     page,
   }) => {
     await openPage(page, 'Getting Started')
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
+    const countBefore = GETTING_STARTED_BLOCKS
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
 
     for (let i = 0; i < 2; i++) {
       const row = page.locator('[data-testid="sortable-block"]').first()
@@ -164,7 +169,8 @@ test.describe('Trash — Restore all / Empty trash @pages', () => {
     page,
   }) => {
     await openPage(page, 'Getting Started')
-    const gsCountBefore = await page.locator('[data-testid="sortable-block"]').count()
+    const gsCountBefore = GETTING_STARTED_BLOCKS
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(gsCountBefore)
 
     for (let i = 0; i < 3; i++) {
       const row = page.locator('[data-testid="sortable-block"]').first()
@@ -209,7 +215,8 @@ test.describe('Trash — Restore all / Empty trash @pages', () => {
 
   test('Restore all: No leaves items intact, Yes restores everything', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    const gsCountBefore = await page.locator('[data-testid="sortable-block"]').count()
+    const gsCountBefore = GETTING_STARTED_BLOCKS
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(gsCountBefore)
 
     for (let i = 0; i < 2; i++) {
       const row = page.locator('[data-testid="sortable-block"]').first()
