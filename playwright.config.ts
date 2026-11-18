@@ -52,6 +52,7 @@ const REAL_BACKEND_SPECS = [
   'history-keyboard.spec.ts',
   'history-page-scope.spec.ts',
   'history-revert.spec.ts',
+  'import-export.spec.ts',
   'in-page-replace.spec.ts',
   'keyboard-chords-page.spec.ts',
   'navigation-history.spec.ts',

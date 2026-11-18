@@ -12,8 +12,8 @@
 // the dropped line gone), asserted after a navigation round-trip, on what the
 // backend stored. Which blocks keep their ids is the Rust tests'.
 //
-// The file is picked as import-markdown-readme.e2e.ts picks its fixture:
-// WebDriver's Element Send Keys on the Data tab's hidden `<input type="file">`.
+// The file is picked through WebDriver's Element Send Keys on the Data tab's
+// hidden `<input type="file">`, which sets its FileList from a path.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import type { Locator, Page } from '@playwright/test'
 import JSZip from 'jszip'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
@@ -10,6 +11,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   ipc,
+  navigateToView,
   openPage,
   test,
   waitForBoot,
@@ -22,7 +24,7 @@ import {
  *  1. Export page as markdown — trigger export from kebab menu, verify clipboard content
  *  2. Import markdown — upload a .md file via StatusPanel, verify blocks are created
  *  3. Export preserves block structure — export page with multiple blocks, verify hierarchy
- *  4. Export includes tags and links — verify #[tag_id] and [[block_id]] tokens in export
+ *  4. Export includes tags and links — the export names them (backend only)
  *  5. Round-trip fidelity — export a page, verify content matches original blocks
  *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export this space",
  *     capture the real browser download, and unzip it (via the same `jszip`
@@ -31,6 +33,8 @@ import {
  *     appends one representative parse warning (handlers.ts, "dev-preview mock:
  *     attachments are not imported"); assert the result panel's warnings
  *     heading + list render it.
+ *  8. The real importer — depth, links, task keywords, properties and callouts,
+ *     which the mock's import does not model (backend only)
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks, some with [[link]] and #[tag] tokens
@@ -318,42 +322,46 @@ test.describe('Import markdown @markdown', () => {
   // tags resolve since #5160 N4), so the result panel's warnings summary is exercisable on
   // ANY import — no special seeding required. This was never asserted despite
   // every other import test in this file uploading a file that triggers it.
-  test('import result panel shows the warning count and message', async ({ page }) => {
-    await navigateToDataSettings(page)
+  test(
+    'import result panel shows the warning count and message',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await navigateToDataSettings(page)
 
-    const fileInput = page.locator('[data-testid="import-file-input"]')
-    const mdContent = '- A single content block\n'
-    await fileInput.setInputFiles({
-      name: 'warnings-check.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from(mdContent),
-    })
+      const fileInput = page.locator('[data-testid="import-file-input"]')
+      const mdContent = '- A single content block\n'
+      await fileInput.setInputFiles({
+        name: 'warnings-check.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from(mdContent),
+      })
 
-    await expect(page.getByText(/Imported \d+ blocks/)).toBeVisible({ timeout: 5000 })
+      await expect(page.getByText(/Imported \d+ blocks/)).toBeVisible({ timeout: 5000 })
 
-    const importResult = page.locator('[data-testid="import-result"]')
-    await expect(importResult).toBeVisible()
+      const importResult = page.locator('[data-testid="import-result"]')
+      await expect(importResult).toBeVisible()
 
-    // Collapsed <details> — the heading itself is visible without expanding.
-    const detailsToggle = page.getByTestId('import-warnings-heading')
-    await expect(detailsToggle).toBeVisible()
-    await expect(detailsToggle).toHaveText('1 warning')
+      // Collapsed <details> — the heading itself is visible without expanding.
+      const detailsToggle = page.getByTestId('import-warnings-heading')
+      await expect(detailsToggle).toBeVisible()
+      await expect(detailsToggle).toHaveText('1 warning')
 
-    // Expand the <details> to reveal the actual warning message.
-    await page.getByTestId('import-result-details').locator('summary').click()
-    const warningItem = page.getByTestId('import-warning-item')
-    await expect(warningItem).toBeVisible()
-    await expect(warningItem).toContainText('attachments are not imported')
-  })
+      // Expand the <details> to reveal the actual warning message.
+      await page.getByTestId('import-result-details').locator('summary').click()
+      const warningItem = page.getByTestId('import-warning-item')
+      await expect(warningItem).toBeVisible()
+      await expect(warningItem).toContainText('attachments are not imported')
+    },
+  )
 
-  // #2707 — the mock also counts `key:: value` property lines into
-  // `properties_set` (handlers.ts `propertiesSet`), driving the result
-  // summary's ", N properties" suffix. Never asserted.
+  // #2707 — `key:: value` property lines count into `properties_set`, driving
+  // the result summary's ", N properties" suffix. A paragraph, as a `- ` item
+  // also stores its list style (#6190), which the mock does not count.
   test('import result summary includes the properties-set count', async ({ page }) => {
     await navigateToDataSettings(page)
 
     const fileInput = page.locator('[data-testid="import-file-input"]')
-    const mdContent = '- A task with a property\nmood:: open\n'
+    const mdContent = 'A paragraph with a property\nmood:: open\n'
     await fileInput.setInputFiles({
       name: 'properties-check.md',
       mimeType: 'text/markdown',
@@ -369,8 +377,7 @@ test.describe('Import markdown @markdown', () => {
 // ===========================================================================
 // 2b. Folder import of other formats (#6032). The mock models titles and block
 // text but no property, task keyword or nesting, so the Org task state, the
-// Notion properties and the resolved links are in
-// e2e-tauri/import-notion-org.e2e.ts.
+// Notion properties and the resolved links are under "The real importer".
 // ===========================================================================
 
 test.describe('Folder import of Notion, Org and text files @markdown', () => {
@@ -519,6 +526,458 @@ test.describe('Evernote links between notes @markdown', () => {
 })
 
 // ===========================================================================
+// 2c. What only the real importer stores. The mock's `import_markdown` is a
+// declared approximation (flat, no nesting, links, task keywords, properties or
+// callouts; src/lib/tauri-mock/handlers/pages.ts), so these run on the bridge
+// only. Each asserts on a page reopened from a fresh backend read.
+// ===========================================================================
+
+const LOGSEQ_CONFIG = '{:file/name-format :triple-lowbar}\n'
+
+/** Pick `name` holding `text` through the Data tab's file input; wait for its result. */
+async function importFile(page: Page, name: string, text: string, summary: string) {
+  await navigateToDataSettings(page)
+  await page.locator('[data-testid="import-file-input"]').setInputFiles({
+    name,
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(text),
+  })
+  await expect(page.locator('[data-testid="import-result"]')).toContainText(summary)
+}
+
+/** Pick a folder `folder` holding `files` (path → text) through the folder input. */
+async function importFolder(
+  page: Page,
+  folder: string,
+  files: Record<string, string>,
+  summary: string,
+) {
+  const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'pw-import-')), folder)
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
+    writeFileSync(path.join(root, name), text)
+  }
+  await navigateToDataSettings(page)
+  await page.locator('[data-testid="import-folder-input"]').setInputFiles(root)
+  await expect(page.locator('[data-testid="import-result"]')).toContainText(summary)
+}
+
+/** Import `markdown` as the page `title` of a Logseq graph, read as `LogseqOrg` (#6277 E1). */
+async function importLogseqPage(page: Page, title: string, markdown: string, summary?: string) {
+  await importFolder(
+    page,
+    `${title}-graph`,
+    { 'logseq/config.edn': LOGSEQ_CONFIG, [`pages/${title}.md`]: markdown },
+    summary ?? `Imported “${title}”`,
+  )
+}
+
+/** Open the page titled exactly `title` from Pages, after leaving the current view. */
+async function reopenTitled(page: Page, title: string) {
+  await navigateToView(page, 'Tags')
+  await navigateToView(page, 'Pages')
+  await page.locator(`span[data-page-title="${title}"]`).click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+}
+
+/** The open page's row of the block whose text holds `text`. */
+function rowOf(page: Page, text: string): Locator {
+  return page
+    .locator('li[data-block-id]')
+    .filter({ has: page.locator('[data-testid="block-static"]', { hasText: text }) })
+}
+
+/** The id of the page titled `title` in Personal. */
+async function pageIdTitled(page: Page, title: string): Promise<string> {
+  const pages = await ipc<{ id: string; content: string | null }[]>(
+    page,
+    'list_all_pages_in_space',
+    { scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }, tagIds: null },
+  )
+  const found = pages.filter((p) => p.content === title)
+  expect(found, `pages titled ${title}`).toHaveLength(1)
+  return found[0]?.id ?? ''
+}
+
+/** The task marker of `text`'s row reads `state`. */
+async function expectTaskState(page: Page, text: string, state: string) {
+  await expect(rowOf(page, text).getByTestId('task-marker')).toHaveAttribute(
+    'aria-label',
+    new RegExp(`^Task: ${state}`),
+  )
+}
+
+test.describe('The real importer @markdown', { tag: '@real-only' }, () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  // #4671 — two-space indentation is depth; a `[[link]]` creates its page.
+  test('an indented list keeps its depth, and its [[link]] resolves to the page it creates', async ({
+    page,
+  }) => {
+    await importFile(
+      page,
+      'nest-doc.md',
+      '- nest-parent\n  - nest-child\n    - nest-leaf links [[nest-target]]\n',
+      'Imported “nest-doc”: 3 blocks',
+    )
+    await reopenTitled(page, 'nest-doc')
+    await expect(rowOf(page, 'nest-parent')).toHaveAttribute('aria-level', '1')
+    await expect(rowOf(page, 'nest-child')).toHaveAttribute('aria-level', '2')
+    await expect(rowOf(page, 'nest-leaf')).toHaveAttribute('aria-level', '3')
+    await expect(rowOf(page, 'nest-leaf').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      await pageIdTitled(page, 'nest-target'),
+    )
+  })
+
+  // #5160 — the title line is the title, a heading owns nothing, a fence is one
+  // block, and list items nest by their content column (#6277 decision 1).
+  test('a README is headings owning nothing, paragraphs, a fence and nested list items', async ({
+    page,
+  }) => {
+    const markdown = [
+      '# readme-doc',
+      '',
+      'readme-intro is a tiny grep clone.',
+      '',
+      '## readme-install',
+      '',
+      '```sh',
+      'cargo install readme-bin',
+      '```',
+      '',
+      '## readme-usage',
+      '',
+      '1. readme-build the index',
+      '2. readme-search for a needle',
+      '',
+      '## readme-features',
+      '',
+      '* readme-regex support',
+      '* readme-ignore files',
+      '  * readme-nested ignore files',
+      '',
+    ].join('\n')
+    // The intro, three headings, the fence, two numbered items, two starred
+    // items and the nested one; the title line is not a block.
+    await importFile(page, 'readme-doc.md', markdown, 'Imported “readme-doc”: 10 blocks')
+    await reopenTitled(page, 'readme-doc')
+    for (const text of [
+      'readme-intro',
+      'readme-install',
+      'readme-features',
+      'cargo install readme-bin',
+      'readme-build',
+      'readme-regex',
+    ]) {
+      await expect(rowOf(page, text)).toHaveAttribute('aria-level', '1')
+    }
+    await expect(rowOf(page, 'readme-nested')).toHaveAttribute('aria-level', '2')
+    await expect(rowOf(page, 'readme-doc')).toHaveCount(0)
+  })
+
+  // #6751 — a block that is one comment is a comment callout; one inside a sentence stays text.
+  test('an Obsidian comment block is a comment callout, and one inside a sentence stays text', async ({
+    page,
+  }) => {
+    const markdown = [
+      '%%comment-oneline%%',
+      '',
+      '%%',
+      'comment-first',
+      'comment-second',
+      '%%',
+      '',
+      'comment-said %%aside%% more',
+      '',
+    ].join('\n')
+    await importFile(page, 'comment-vault.md', markdown, 'Imported “comment-vault”')
+    await reopenTitled(page, 'comment-vault')
+    const oneLine = rowOf(page, 'comment-oneline')
+    await expect(oneLine.getByTestId('callout-block')).toHaveAttribute(
+      'data-callout-type',
+      'comment',
+    )
+    await expect(oneLine).not.toContainText('%%')
+    const multiLine = rowOf(page, 'comment-first')
+    await expect(multiLine.getByTestId('callout-block')).toHaveAttribute(
+      'data-callout-type',
+      'comment',
+    )
+    await expect(multiLine).toContainText('comment-second')
+    await expect(multiLine).not.toContainText('%%')
+    const inline = rowOf(page, 'comment-said')
+    await expect(inline).toContainText('%%aside%%')
+    await expect(inline.getByTestId('callout-block')).toHaveCount(0)
+  })
+
+  // #5160 D12 — one file per IPC, in pick order: a file titled like the empty
+  // page an earlier file's link created adopts it, in either order.
+  for (const order of ['linker-first', 'target-first'] as const) {
+    test(`a second file adopts the page an earlier link created (${order})`, async ({ page }) => {
+      const runs: [string, string, string][] = [
+        ['adopt-A.md', '- adopt-links [[adopt-B]]\n', 'adopt-A'],
+        ['adopt-B.md', '- adopt-body\n', 'adopt-B'],
+      ]
+      if (order === 'target-first') runs.reverse()
+      for (const [name, text, title] of runs) {
+        await importFile(page, name, text, `Imported “${title}”`)
+      }
+      const target = await pageIdTitled(page, 'adopt-B')
+      await reopenTitled(page, 'adopt-B')
+      await expect(rowOf(page, 'adopt-body')).toBeVisible()
+      await reopenTitled(page, 'adopt-A')
+      await expect(rowOf(page, 'adopt-links').getByTestId('block-link-chip')).toHaveAttribute(
+        'data-id',
+        target,
+      )
+    })
+  }
+
+  // #6033 — a graph's page and journal titles are Logseq's; the backend makes
+  // `2026-10-21` that day's journal page and resolves the link to it.
+  test('a Logseq graph imports a namespaced page and a journal, the link to it naming its day @journal @pages', async ({
+    page,
+  }) => {
+    await importFolder(
+      page,
+      'lsq-graph',
+      {
+        'logseq/config.edn':
+          '{:journal/page-title-format "MMM do, yyyy"\n :file/name-format :triple-lowbar}\n',
+        'logseq/bak/pages/lsq___b/2026.md': '- lsq-backup\n',
+        'pages/lsq___b.md': '- lsq-link [[Oct 21st, 2026]]\n',
+        'journals/2026_10_21.md': '- lsq-day\n',
+      },
+      // The backup under `logseq/` is no page: two files import.
+      'Imported “2 files”',
+    )
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+    const journal = await ipc<{ id: string } | null>(page, 'get_journal_page_by_date', {
+      date: '2026-10-21',
+      scope,
+    })
+    expect(journal).not.toBeNull()
+    const { blocks } = await ipc<{ blocks: { content: string | null }[] }>(
+      page,
+      'load_page_subtree',
+      { rootBlockId: journal?.id, scope },
+    )
+    expect(blocks.map(({ content }) => content)).toContain('lsq-day')
+    await reopenTitled(page, 'lsq/b')
+    await expect(rowOf(page, 'lsq-link').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      journal?.id ?? '',
+    )
+  })
+
+  // #6754 — a translatable `{{query}}` is a live query block over the tags and
+  // task states the import stored; any other is kept, counted in one warning.
+  test('a Logseq query is a live query block, and one with no equivalent a counted code block @search', async ({
+    page,
+  }) => {
+    const untranslatable = '{{query (between -7d today)}}'
+    await importLogseqPage(
+      page,
+      'lq-dash',
+      [
+        '- {{query (and (task TODO) [[lq-tag]])}}',
+        `- ${untranslatable}`,
+        '- TODO lq-hit #lq-tag',
+        '- DONE lq-miss #lq-tag',
+        '',
+      ].join('\n'),
+    )
+    await page.getByTestId('import-result-details').locator('summary').click()
+    await expect(
+      page.getByTestId('import-warning-item').filter({ hasText: 'Logseq quer' }),
+    ).toHaveText(['1 Logseq query has no equivalent here and was kept as a code block to rebuild.'])
+
+    await reopenTitled(page, 'lq-dash')
+    const results = page.getByTestId('query-result-item')
+    await expect(results.filter({ hasText: 'lq-hit' })).toHaveCount(1)
+    await expect(results.filter({ hasText: 'lq-miss' })).toHaveCount(0)
+    const kept = rowOf(page, 'between')
+    await expect(kept).toContainText(untranslatable)
+    await expect(kept).toContainText('Logseq query, not translated:')
+  })
+
+  // #5160 D7 — the keyword, the priority cookie and the planning line are the
+  // stored task state, priority and scheduled date.
+  test('a Logseq `TODO [#A]` with a SCHEDULED line is a TODO with a priority and a date', async ({
+    page,
+  }) => {
+    // Two blocks: the planning line is consumed, not made a block or a warning.
+    await importLogseqPage(
+      page,
+      'lst-doc',
+      '- TODO [#A] lst-task\n  SCHEDULED: <2031-10-01 Wed>\n- lst-plain\n',
+      'Imported “lst-doc”: 2 blocks',
+    )
+    await reopenTitled(page, 'lst-doc')
+    const task = rowOf(page, 'lst-task')
+    await expect(task.getByTestId('block-static')).not.toContainText('TODO')
+    await expect(task.getByTestId('block-static')).not.toContainText('[#A]')
+    await expect(rowOf(page, 'lst-plain')).toBeVisible()
+    await expectTaskState(page, 'lst-task', 'TODO')
+    // `[#A]` is the first built-in priority level, `1`.
+    await expect(task.getByTestId('priority-badge')).toContainText('1')
+    await expect(task.locator('.scheduled-chip')).toHaveAttribute('aria-label', /Oct 1, 2031/)
+  })
+
+  test('a Logseq `STARTED` task is a DOING task (#6033)', async ({ page }) => {
+    await importLogseqPage(page, 'lst-started', '- STARTED lst-started-task\n')
+    await reopenTitled(page, 'lst-started')
+    await expect(rowOf(page, 'lst-started-task').getByTestId('block-static')).not.toContainText(
+      'STARTED',
+    )
+    await expectTaskState(page, 'lst-started-task', 'DOING')
+  })
+
+  test('a Logseq `#+BEGIN_NOTE` block is a note callout (#6033)', async ({ page }) => {
+    await importLogseqPage(page, 'lst-note', '- #+BEGIN_NOTE\n  lst-note-body\n  #+END_NOTE\n')
+    await reopenTitled(page, 'lst-note')
+    const block = rowOf(page, 'lst-note-body')
+    await expect(block).not.toContainText('#+BEGIN_NOTE')
+    await expect(block.getByTestId('callout-block')).toHaveAttribute('data-callout-type', 'note')
+  })
+
+  // #6032 — what the Markdown the frontend writes for a Notion export or an Org
+  // file stores: properties, resolved links, task keywords, dates and depth.
+  test('a Notion export stores its properties and links, and an Org file its tasks, dates, properties and depth', async ({
+    page,
+  }) => {
+    const planId = '0123456789abcdef0123456789abcdef'
+    const notesId = 'fedcba9876543210fedcba9876543210'
+    await importFolder(
+      page,
+      'notion-export',
+      {
+        [`Plan ${planId}.md`]: `# Plan\n\nReviewer: notion-ann\n\n- notion-link [Notes](Notes%20${notesId}.md)\n`,
+        [`Notes ${notesId}.md`]: '# Notes\n\n- notion-notes\n',
+        [`Tasks ${planId}.csv`]: 'Name,Status\n',
+        'tasks.org': [
+          '#+TITLE: notion Org',
+          '* TODO org-task',
+          '  SCHEDULED: <2031-10-01 Wed>',
+          '  :PROPERTIES:',
+          '  :owner: org-alice',
+          '  :END:',
+          '** DONE org-sub',
+          '',
+        ].join('\n'),
+        'reading.txt': '- notion-text\n',
+      },
+      'Imported “4 files”',
+    )
+    await reopenTitled(page, 'Plan')
+    await expect(rowOf(page, 'notion-link').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      await pageIdTitled(page, 'Notes'),
+    )
+    await page.locator('.page-property-table-header').click()
+    await expect(page.getByLabel('reviewer value', { exact: true })).toHaveValue('notion-ann')
+
+    await reopenTitled(page, 'notion Org')
+    await expectTaskState(page, 'org-task', 'TODO')
+    await expectTaskState(page, 'org-sub', 'DONE')
+    const task = rowOf(page, 'org-task')
+    await expect(task).toHaveAttribute('aria-level', '1')
+    await expect(rowOf(page, 'org-sub')).toHaveAttribute('aria-level', '2')
+    await expect(task.locator('.scheduled-chip')).toHaveAttribute('aria-label', /Oct 1, 2031/)
+    await expect(task.getByTestId('property-chip').filter({ hasText: 'org-alice' })).toHaveCount(1)
+  })
+
+  // #6032 N4, N7 — an Org file's own vocabulary and links.
+  test('an Org file’s `#+TODO` keywords, headline tags and `id:` links are read, and a heading link makes no page', async ({
+    page,
+  }) => {
+    const fileId = '5f2c0000-0000-4000-8000-000000000002'
+    const headlineId = '5f2c0000-0000-4000-8000-000000000001'
+    await importFolder(
+      page,
+      'roam-export',
+      {
+        'roam.org': [
+          ':PROPERTIES:',
+          `:ID: ${fileId}`,
+          ':END:',
+          '#+TITLE: org Roam',
+          '#+TODO: TODO NEXT | DONE',
+          '* NEXT roam-next :orgtag:',
+          '* roam-target',
+          '  :PROPERTIES:',
+          `  :ID: ${headlineId}`,
+          '  :END:',
+          '',
+        ].join('\n'),
+        'links.org': [
+          `* roam-ref [[id:${headlineId}][the target]] and [[*Budget]]`,
+          `* roam-back [[id:${fileId}][roam]]`,
+          '',
+        ].join('\n'),
+      },
+      'Imported “2 files”',
+    )
+    await navigateToView(page, 'Pages')
+    await expect(page.locator('span[data-page-title="links"]')).toBeVisible()
+    await expect(page.locator('span[data-page-title="*Budget"]')).toHaveCount(0)
+
+    await reopenTitled(page, 'org Roam')
+    await expectTaskState(page, 'roam-next', 'TODO')
+    await expect(rowOf(page, 'roam-next').getByTestId('tag-ref-chip')).toHaveText('orgtag')
+
+    await reopenTitled(page, 'links')
+    await expect(
+      rowOf(page, 'roam-ref').getByTestId('block-ref-chip').locator('.block-ref-chip-label'),
+    ).toHaveText('roam-target')
+    await expect(rowOf(page, 'roam-back').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      await pageIdTitled(page, 'org Roam'),
+    )
+  })
+
+  test('a Markdown link to a sibling .txt note links to the page it imports as (#6032)', async ({
+    page,
+  }) => {
+    await importFolder(
+      page,
+      'txt-vault',
+      { 'txt-a.md': '- txt-link [r](txt-reading.txt)\n', 'txt-reading.txt': '- txt-text\n' },
+      'Imported “2 files”',
+    )
+    await reopenTitled(page, 'txt-a')
+    await expect(rowOf(page, 'txt-link').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      await pageIdTitled(page, 'txt-reading'),
+    )
+  })
+
+  test('an Org `file:` link links to the page the linked file’s `#+TITLE` names (#6032)', async ({
+    page,
+  }) => {
+    await importFolder(
+      page,
+      'orgfile-vault',
+      {
+        'orgfile-a.org': '#+TITLE: orgfile Alpha\n* orgfile-alpha\n',
+        'orgfile-b.org': '* orgfile-link [[file:orgfile-a.org][see]]\n',
+      },
+      'Imported “2 files”',
+    )
+    await navigateToView(page, 'Pages')
+    await expect(page.locator('span[data-page-title="orgfile-a"]')).toHaveCount(0)
+    await reopenTitled(page, 'orgfile-b')
+    await expect(rowOf(page, 'orgfile-link').getByTestId('block-link-chip')).toHaveAttribute(
+      'data-id',
+      await pageIdTitled(page, 'orgfile Alpha'),
+    )
+  })
+})
+
+// ===========================================================================
 // 3. Export preserves block structure
 // ===========================================================================
 
@@ -592,55 +1051,32 @@ test.describe('Export includes tags and links @markdown', () => {
     await waitForBoot(page)
   })
 
-  test('exported Getting Started page contains [[link]] tokens', async ({ page }) => {
-    const markdown = (await page.evaluate(() => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
-    })) as string
+  // The export names a link's page and a tag as the user reads them; the mock
+  // keeps the stored ids, as its export writes no names (#5071).
+  test(
+    'exported Getting Started page names its links and tags',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      const markdown = await ipc<string>(page, 'export_page_markdown', {
+        pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      })
+      expect(markdown).toContain('See [[Quick Notes]] for tips.')
+      expect(markdown).toContain('Try tagging blocks with #work or #personal')
+      expect(markdown).not.toContain(SEED_IDS.PAGE_QUICK_NOTES)
+      expect(markdown).not.toContain(SEED_IDS.TAG_WORK)
+    },
+  )
 
-    // Block GS_2 content: "Use the sidebar ... See [[PAGE_QUICK_NOTES]] for tips."
-    // The export should contain the [[ULID]] link token
-    expect(markdown).toContain('[[00000000000000000000PAGE02]]')
-  })
-
-  test('exported Getting Started page contains #[tag] tokens', async ({ page }) => {
-    const markdown = (await page.evaluate(() => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
-    })) as string
-
-    // Block GS_4 content: "Try tagging blocks with #[TAG_WORK] or #[TAG_PERSONAL]..."
-    expect(markdown).toContain('#[000000000000000000000TAG01]')
-    expect(markdown).toContain('#[000000000000000000000TAG02]')
-  })
-
-  test('Quick Notes export contains backlink to Getting Started', async ({ page }) => {
-    const markdown = (await page.evaluate(() => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE02' })
-    })) as string
-
-    // Block QN_1 references [[PAGE_GETTING_STARTED]]
-    expect(markdown).toContain('[[00000000000000000000PAGE01]]')
-  })
+  test(
+    'Quick Notes export names its link to Getting Started',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      const markdown = await ipc<string>(page, 'export_page_markdown', {
+        pageId: SEED_IDS.PAGE_QUICK_NOTES,
+      })
+      expect(markdown).toContain('the [[Getting Started]] guide')
+    },
+  )
 })
 
 // ===========================================================================
@@ -682,81 +1118,34 @@ test.describe('Round-trip fidelity @markdown', () => {
   })
 
   test('import then export preserves block content', async ({ page }) => {
-    // Import some markdown content
-    const originalContent = '# Round Trip Test\n\n- Alpha block\n- Beta block\n- Gamma block\n'
+    await navigateToDataSettings(page)
+    await page.locator('[data-testid="import-file-input"]').setInputFiles({
+      name: 'round-trip.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Round Trip Test\n\n- Alpha block\n- Beta block\n- Gamma block\n'),
+    })
+    // Title is filename-derived (#1919): 'round-trip.md' -> 'round-trip'. 4 blocks:
+    // the `# Round Trip Test` heading line is content, plus the three bullets.
+    await expect(page.locator('[data-testid="import-result"]')).toContainText(
+      'Imported “round-trip”: 4 blocks',
+    )
 
-    const importResult = (await page.evaluate(
-      ({ content, spaceId }) => {
-        const invoke = (
-          window as unknown as {
-            __TAURI_INTERNALS__: {
-              invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-            }
-          }
-        ).__TAURI_INTERNALS__.invoke
-        return invoke('import_markdown', {
-          content,
-          filename: 'round-trip.md',
-          spaceId,
-        })
-      },
-      { content: originalContent, spaceId: SEED_IDS.SPACE_PERSONAL },
-    )) as { page_title: string; blocks_created: number }
+    const pages = await ipc<{ id: string; content: string | null }[]>(
+      page,
+      'list_all_pages_in_space',
+      { scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }, tagIds: null },
+    )
+    const imported = pages.find((p) => p.content === 'round-trip')
+    expect(imported).toBeTruthy()
+    const exportedMd = await ipc<string>(page, 'export_page_markdown', { pageId: imported?.id })
 
-    // Title is filename-derived (#1919): 'round-trip.md' -> 'round-trip'.
-    expect(importResult.page_title).toBe('round-trip')
-    // 4 blocks: the `# Round Trip Test` heading line is content (1) plus the
-    // three `- ` bullets (Alpha/Beta/Gamma).
-    expect(importResult.blocks_created).toBe(4)
-
-    // Now find the imported page and export it
-    // We need to find the page ID by listing all pages
-    const pages = (await page.evaluate((spaceId) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('list_blocks', {
-        scope: { kind: 'active', space_id: spaceId },
-        blockType: 'page',
-        parentId: null,
-        showDeleted: null,
-        tagId: null,
-        agendaDate: null,
-        agendaSource: null,
-        cursor: null,
-        limit: null,
-      })
-    }, SEED_IDS.SPACE_PERSONAL)) as { items: Array<{ id: string; content: string }> }
-
-    const importedPage = pages.items.find((p) => p.content === 'round-trip')
-    expect(importedPage).toBeTruthy()
-
-    // Export the imported page
-    const exportedMd = (await page.evaluate((pageId) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('export_page_markdown', { pageId })
-    }, importedPage?.id)) as string
-
-    // The export header is the (filename-derived) page title (#1919).
+    // The export header is the (filename-derived) page title (#1919), and the
+    // original `# Round Trip Test` heading is ordinary content, a block of its
+    // own. The list marker each block opens with is the backend's (#6277 E2):
+    // the mock stamps no list style, so its blocks come back as paragraphs.
     expect(exportedMd).toMatch(/^# round-trip\n\n/)
-    // The original `# Round Trip Test` heading is now ordinary content, so it
-    // round-trips as a heading block rather than the page title, written as a
-    // `+` item, being the first block, so a file without the title line does
-    // not read it as the title (#6277 E2), and the body content still
-    // round-trips faithfully. The mock stamps no list style, so its blocks come
-    // back as paragraphs.
-    expect(exportedBlockLines(exportedMd)).toEqual([
-      '+ # Round Trip Test',
+    expect(exportedBlockLines(exportedMd).map((line) => line.replace(/^[-+*] /, ''))).toEqual([
+      '# Round Trip Test',
       'Alpha block',
       'Beta block',
       'Gamma block',
