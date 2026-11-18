@@ -66,8 +66,10 @@ export interface UseAdoptFolder {
   start: () => Promise<void>
   /** Adopt the folder asked about, `onAdopted` given the mirror's status. */
   confirm: () => Promise<void>
-  /** Leave the folder as it is: its notes stay in their new space. */
+  /** Leave the folder as it is, saying so: its notes stay in their new space. */
   decline: () => void
+  /** Close the question, as confirming or dismissing it does, saying nothing. */
+  dismiss: () => void
 }
 
 export function useAdoptFolder(onAdopted: (status: MirrorStatus) => void): UseAdoptFolder {
@@ -128,5 +130,7 @@ export function useAdoptFolder(onAdopted: (status: MirrorStatus) => void): UseAd
     setQuestion(null)
   }, [t, question])
 
-  return { runner, question, start, confirm, decline }
+  const dismiss = useCallback(() => setQuestion(null), [])
+
+  return { runner, question, start, confirm, decline, dismiss }
 }
