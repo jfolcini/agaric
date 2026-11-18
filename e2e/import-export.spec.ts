@@ -458,7 +458,7 @@ test.describe('Restore of a whole-vault export @markdown @spaces', () => {
     await expect(page.locator('[data-testid="import-result"]')).toContainText('2 files')
 
     const spaces = await ipc<{ id: string; name: string }[]>(page, 'list_spaces', undefined)
-    expect(spaces.map(({ name }) => name).toSorted()).toEqual(['Personal', 'Travel/x'])
+    expect(spaces.map(({ name }) => name).toSorted()).toEqual(['Personal', 'Travel/x', 'Work'])
     const spaceId = (name: string) => spaces.find((space) => space.name === name)?.id
     const titles = async (name: string): Promise<(string | null)[]> =>
       (
