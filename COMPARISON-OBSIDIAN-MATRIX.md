@@ -297,7 +297,7 @@
 | --- | --- | --- | --- |
 | Vault scale | No published benchmark found. The 1.15.1 notes say search results "appear much faster when a search matches thousands of notes". Community reports of vaults with tens of thousands of notes are **unverified** | A weekly latency gate on backend commands at `FIXTURE_SIZE` blocks (`src-tauri/benches/interactive_slo.rs`); page mode stops at `PAGE_MODE_BLOCK_CAP`; no Android number, no memory number | Unverified |
 | Accessibility | No accessibility statement found in the help source (**unverified**) | Keyboard reach for every action; `axe` assertions in the component tests under `src/` and a rendered axe sweep of every top-level view in the light and dark themes (`e2e/views-axe.spec.ts`); text and surface colour pairs held to WCAG AA across the themes (`src/lib/__tests__/theme-contrast.test.ts`); reduced-motion handling (`docs/FEATURE-MAP.md`) and an *Animations* setting that follows the system, speeds motion up or turns it off. No screen-reader audit on record | Unverified |
-| Interface languages | Many, by volunteer translators (help) | English, plus Spanish for error messages and a few settings strings (`src/lib/i18n/es/`, #6750) | Gap |
+| Interface languages | Many, by volunteer translators (help) | English, German, Spanish, French and Portuguese, each complete and held there by `locale-catalogs.test.ts`; a contributor path in `docs/TRANSLATING.md` (#6750) | Partial |
 | Right-to-left | A right-to-left setting; 1.14 added a layout flip | Automatic per paragraph, by its first strong letter (`docs/features/appearance.md`); the interface stays left to right, and there is no direction setting | Partial |
 
 ## 25. Platforms, Packaging and Updates

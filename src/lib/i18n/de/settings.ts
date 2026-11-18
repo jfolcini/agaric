@@ -22,10 +22,10 @@ export const settings: Record<string, string> = {
   'settings.tabGeneral': 'Allgemein',
   'settings.tabSpaces': 'Bereiche',
   'settings.spaces.description':
-    'Bereiche halten getrennte Kontexte wie Arbeit und Privates auseinander. Seiten, Journale, Tags und Links wechseln nie zwischen Bereichen. Wechsle den Bereich oben in der Seitenleiste.',
+    'Bereiche halten getrennte Kontexte wie Arbeit und Privates auseinander. Seiten, Journale, Tags und Links bleiben immer in ihrem Bereich. Wechsle den Bereich oben in der Seitenleiste.',
   'settings.spaces.openOnLaunchLabel': 'Beim Start öffnen',
   'settings.spaces.openOnLaunchHelp':
-    'Der Bereich, in dem dieses Gerät beim Start von Agaric öffnet. "Zuletzt verwendet" behält den Bereich bei, in dem du zuletzt warst.',
+    'Der Bereich, in dem Agaric auf diesem Gerät startet. "Zuletzt verwendet" behält den Bereich bei, in dem du zuletzt warst.',
   'settings.spaces.lastUsed': 'Zuletzt verwendet',
   'settings.tabProperties': 'Eigenschaften',
   'settings.tabAppearance': 'Darstellung',
@@ -43,7 +43,7 @@ export const settings: Record<string, string> = {
     'Tab und Shift+Tab rücken Blöcke ein und aus. Schalte dies aus, um Tab zum Verschieben des Fokus zu behalten und stattdessen mit Ctrl/Cmd+Shift+Arrow einzurücken. Drücke Escape, um den Editor zu verlassen.',
   'settings.editor.revealMarkdownLabel': 'Markdown-Syntax um den Cursor anzeigen',
   'settings.editor.revealMarkdownHelp':
-    'Steht der Cursor in formatiertem Text, einer Überschrift oder einem Link, wird dessen Markdown-Syntax angezeigt; neben einem Seiten-, Tag- oder Blockverweis-Chip werden dessen Klammern nur zum Lesen angezeigt. Lösche eine Markierung, um die Formatierung zu entfernen, eine Überschrift herabzustufen oder den Link vom Text zu entfernen.',
+    'Steht der Cursor in formatiertem Text, einer Überschrift oder einem Link, wird dessen Markdown-Syntax angezeigt; neben einem Seiten-, Tag- oder Blockverweis-Chip werden dessen Klammern nur zum Lesen angezeigt. Lösche ein Markdown-Zeichen, um die Formatierung zu entfernen, eine Überschrift herabzustufen oder den Link vom Text zu entfernen.',
   'settings.editor.externalImageLabel': 'Externe Bilder',
   'settings.editor.externalImageHelp':
     'Wenn ein Bild von einer anderen Website geladen wird, erfährt diese Website, dass du die Seite geöffnet hast. Wählst du bei einem blockierten Bild "Laden", wird seine Domain für das nächste Mal gemerkt. Lokale, eingefügte und angehängte Bilder sind nie betroffen.',
@@ -118,13 +118,13 @@ export const settings: Record<string, string> = {
   'settings.tabHelp': 'Über',
   'settings.tabNotifications': 'Aufgaben & Erinnerungen',
   'notifications.description':
-    'Erhalte am Fälligkeitstag einer Aufgabe eine native Benachrichtigung des Betriebssystems und sende dir eine Testbenachrichtigung, um zu prüfen, ob sie dich erreichen.',
+    'Erhalte am Fälligkeitstag einer Aufgabe eine native Benachrichtigung des Betriebssystems und sende dir eine Testbenachrichtigung, um zu prüfen, ob Benachrichtigungen dich erreichen.',
   'notifications.enableLabel': 'An fällige Aufgaben erinnern',
   'notifications.enableDescription':
-    'Jede offene Aufgabe wird einmal an ihrem Fälligkeitsdatum zur unten angegebenen Erinnerungszeit angekündigt, solange Agaric läuft oder minimiert ist. Erinnerungen gelten pro Gerät.',
+    'Jede offene Aufgabe wird einmal an ihrem Fälligkeitsdatum zur unten angegebenen Erinnerungszeit gemeldet, solange Agaric läuft oder minimiert ist. Erinnerungen gelten pro Gerät.',
   'notifications.reminderTimeLabel': 'Erinnerungszeit',
   'notifications.reminderTimeDescription':
-    'Ortszeit, zu der eine heute fällige Aufgabe angekündigt wird. Wenn du Agaric später am Tag öffnest, wird sie trotzdem einmal angekündigt.',
+    'Ortszeit, zu der eine heute fällige Aufgabe gemeldet wird. Wenn du Agaric später am Tag öffnest, wird sie trotzdem einmal gemeldet.',
   'notifications.settingsLoadFailed': 'Die Erinnerungseinstellungen konnten nicht geladen werden',
   'notifications.settingsSaveFailed':
     'Die Erinnerungseinstellungen konnten nicht gespeichert werden',
@@ -157,7 +157,7 @@ export const settings: Record<string, string> = {
     'Ersetzt dein Benutzerverzeichnis durch ~ und entfernt die Geräte-ID aus jeder Protokollzeile.',
   'bugReport.previewError': 'Protokoll für die Vorschau konnte nicht gelesen werden',
   'bugReport.previewHint': 'Genau das wird in den Text des GitHub-Issues eingefügt.',
-  'bugReport.previewLabel': 'Vorschau von {{filename}}',
+  'bugReport.previewLabel': 'Vorschau von {{filename}} anzeigen',
   'bugReport.previewLoading': 'Vorschau wird geladen…',
   'bugReport.previewTitle': 'Vorschau',
   'bugReport.previewTruncated': 'Die ersten {{shown}} von {{total}} Byte werden angezeigt…',
@@ -171,7 +171,7 @@ export const settings: Record<string, string> = {
   'bugReport.copy': 'Bericht kopieren',
   'bugReport.copied': 'Bericht in die Zwischenablage kopiert',
   'bugReport.copyFailed': 'Bericht konnte nicht kopiert werden',
-  'bugReport.openIssue': 'In GitHub öffnen',
+  'bugReport.openIssue': 'Auf GitHub öffnen',
   'bugReport.openGitHubIssue': 'GitHub-Issue öffnen',
   'bugReport.downloadZip': 'ZIP herunterladen',
   'bugReport.zipDownloadHint':
@@ -277,7 +277,7 @@ export const settings: Record<string, string> = {
   'agentAccess.agents.namePlaceholder': 'Claude Desktop',
   'agentAccess.agents.modeLabel': 'Zugriff',
   'agentAccess.agents.readOnlyNote':
-    'Ein Agent mit Lesezugriff ändert nichts, außer dass das Öffnen eines Journaltags innerhalb eines Jahres ab heute diese Seite erstellen kann.',
+    'Ein Agent mit Lesezugriff ändert nichts, außer dass das Öffnen eines Journaltages, der höchstens ein Jahr von heute entfernt liegt, diese Seite erstellen kann.',
   'agentAccess.agents.allSpacesCheckbox': 'Alle Bereiche, auch neue',
   'agentAccess.agents.spacesLegend': 'Bereiche',
   'agentAccess.agents.cancel': 'Abbrechen',
@@ -294,7 +294,7 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'Woche beginnt am',
   'settings.weekStartMonday': 'Montag',
   'settings.weekStartSunday': 'Sonntag',
-  'settings.weekStartUpdated': 'Erster Wochentag: {{day}}',
+  'settings.weekStartUpdated': 'Die Woche beginnt jetzt am {{day}}',
   'settings.journalDateFormatLabel': 'Datumsformat des Journals',
   'settings.journalDateFormatHelp':
     'Wie Journaltitel angezeigt werden. Seiten werden immer als YYYY-MM-DD gespeichert, daher wirkt sich eine Änderung nie auf bestehende Journale aus.',

@@ -24,8 +24,8 @@ export const common: Record<string, string> = {
   'sidebar.pages': 'Páginas',
   'sidebar.journal': 'Diario',
   'sidebar.newPage': 'Nueva página',
-  'sidebar.sync': 'Sincronización',
-  'sidebar.search': 'Buscar',
+  'sidebar.sync': 'Sincronizar',
+  'sidebar.search': 'Búsqueda',
   'sidebar.tags': 'Etiquetas',
   'sidebar.trash': 'Papelera',
   'sidebar.history': 'Historial',
@@ -129,7 +129,7 @@ export const common: Record<string, string> = {
   'announce.pairingSucceeded': 'Dispositivo emparejado correctamente',
   'announce.pairingProofRejected': 'La frase de contraseña de emparejamiento no coincide',
   'announce.pairingWaitTimedOut':
-    'Se ha agotado el tiempo de espera del otro dispositivo para el emparejamiento',
+    'Se ha agotado el tiempo de emparejamiento esperando al otro dispositivo',
   'announce.undone': 'Deshecho',
   'announce.undoFailed': 'No se ha podido deshacer',
   'announce.redone': 'Rehecho',
@@ -262,7 +262,7 @@ export const common: Record<string, string> = {
   'accessibility.skipToMain': 'Saltar al contenido principal',
   'sidebar.label': 'Barra lateral',
   'sidebar.mobileDescription': 'Muestra la barra lateral móvil.',
-  'breadcrumb.showHidden': 'Mostrar migas de pan ocultas',
+  'breadcrumb.showHidden': 'Mostrar las partes ocultas de la ruta de navegación',
   'ui.close': 'Cerrar',
   'ui.loading': 'Cargando…',
   'sidebar.themeDark': 'Modo oscuro',
@@ -380,9 +380,9 @@ export const common: Record<string, string> = {
   'data.importJexLabel': 'Joplin',
   'data.importBibliographyLabel': 'Bibliografía',
   'data.importBibliographyResult_one':
-    'Se ha importado {{count}} página de referencia ({{skipped}} omitidas)',
+    'Se ha importado {{count}} página de referencia (entradas omitidas: {{skipped}})',
   'data.importBibliographyResult_other':
-    'Se han importado {{count}} páginas de referencia ({{skipped}} omitidas)',
+    'Se han importado {{count}} páginas de referencia (entradas omitidas: {{skipped}})',
   'data.importBibliographyUnsupported':
     'No se puede importar {{name}}: solo se admiten archivos de bibliografía .bib y .json.',
   'data.importBibliographyEmpty': 'No se puede importar {{name}}: el archivo está vacío.',

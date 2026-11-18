@@ -15,7 +15,7 @@ export const errors: Record<string, string> = {
   'error.saveFailed': 'Impossible d’enregistrer',
   'error.createBlockFailed': 'Impossible de créer le bloc',
   'error.blockNotFound': 'Impossible de trouver ce bloc sur la page',
-  'error.sectionCrashed': '{{section}} a rencontré une erreur',
+  'error.sectionCrashed': '{{section}}\u00A0: une erreur s’est produite',
   'error.unexpected': 'Une erreur inattendue s’est produite',
   'storage.full':
     'Le disque est plein\u00A0: les modifications ne sont pas enregistrées. Libérez de l’espace, puis réessayez.',

@@ -118,7 +118,7 @@ export const references: Record<string, string> = {
   'graph.local.active': 'Affichage des voisins de "{{page}}"',
   'graph.local.back': 'Retour à "{{page}}"',
   'graph.local.noPage': 'Ouvrez une page pour y centrer le graphe',
-  'graph.local.seedHidden': '"{{page}}" est masquée par les filtres actifs',
+  'graph.local.seedHidden': 'La page "{{page}}" est masquée par les filtres actifs',
   'graph.local.seedIsTag': '"{{page}}" est une étiquette, et le graphe n’affiche que des pages',
   'graph.local.depthLabel': 'Sauts',
   'graph.local.depthOption_one': '{{count}} saut',
@@ -134,7 +134,7 @@ export const references: Record<string, string> = {
   'graph.filter.selectDimension': 'Sélectionner une dimension',
   'graph.filter.filtersApplied_one': '{{count}} filtre appliqué',
   'graph.filter.filtersApplied_other': '{{count}} filtres appliqués',
-  'graph.filter.showingCount': 'Affichage de {{filtered}} pages sur {{total}}',
+  'graph.filter.showingCount': 'Affichage de {{filtered}} sur {{total}} pages',
   'graph.filter.edgesTruncated':
     'Affichage de {{shown}} liens sur {{total}} — grand graphe tronqué',
   'graph.filter.backlinksUnavailableTruncated':
@@ -267,7 +267,7 @@ export const references: Record<string, string> = {
   'backlink.sortPriority': 'Priorité',
   'backlink.sortCompleted': 'Date d’achèvement',
   'backlink.sortDirectionLabel': 'Tri {{direction}}, cliquez pour inverser',
-  'backlink.showingCount': 'Affichage de {{filtered}} rétroliens sur {{total}}',
+  'backlink.showingCount': 'Affichage de {{filtered}} sur {{total}} rétroliens',
   'backlinks.linkMention': 'Lier\u00A0: {{text}}',
   'search.failed': 'Échec de la recherche',
   'search.loadResultsFailed': 'Échec du chargement des résultats de recherche',
@@ -313,8 +313,8 @@ export const references: Record<string, string> = {
   'searchQuery.unknownValue': "valeur de {{noun}} inconnue\u00A0: '{{value}}'",
   'searchQuery.dateExpectedAfterOperator': "YYYY-MM-DD attendu après '{{op}}', reçu '{{rest}}'",
   'searchQuery.unknownDate': "date inconnue\u00A0: '{{value}}'",
-  'searchQuery.propKeyValueRequired': '{{prefix}}\u00A0: forme clé=valeur requise',
-  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}\u00A0: 'clé=valeur' attendu",
+  'searchQuery.propKeyValueRequired': '{{prefix}}\u00A0: forme key=value requise',
+  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}\u00A0: 'key=value' attendu",
   'searchQuery.propKeyEmpty': '{{prefix}}\u00A0: la clé ne peut pas être vide',
   'searchQuery.tagBesideUnder':
     'tag: et #tag ne peuvent pas être combinés avec under:\u00A0; utilisez under: pour chaque étiquette',
@@ -577,7 +577,7 @@ export const references: Record<string, string> = {
     'Les filtres glob sont <strong>insensibles à la casse</strong> et portent sur le titre de la page. Un élément simple comme <mono>path:Journal</mono> devient <mono>*Journal*</mono> (correspondance de sous-chaîne)\u00A0; ajoutez <mono>*</mono>, <mono>?</mono> ou <mono>[...]</mono> pour une syntaxe glob explicite. L’expansion d’accolades <mono>{{brace}}</mono> est prise en charge (sans imbrication).',
   'search.help.filter.examplesIntro': 'Exemples\u00A0:',
   'search.help.filter.example.todo':
-    '<mono>TODO path:Journal/2026-* tag:#urgent</mono> — les TODO des pages du journal de janvier 2026 étiquetées urgent.',
+    '<mono>TODO path:Journal/2026-* tag:#urgent</mono> — les TODO étiquetés urgent dans les pages du journal de janvier 2026.',
   'search.help.filter.example.meeting':
     '<mono>tag:#meeting not-path:Archive/**</mono> — les réunions en dehors de l’archive.',
   'search.help.filter.example.brace':

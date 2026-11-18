@@ -23,6 +23,10 @@ import {
 } from '@/lib/i18n/locales'
 import { loadLocale, setLocale } from '@/lib/i18n/set-locale'
 
+/** ISO 639 reserves `qaa`–`qtz` for local use, so no catalog will ever ship under them. */
+const UNSHIPPED = 'qaa'
+const UNSHIPPED_REGION = 'qab-QA'
+
 describe('resolveLocale', () => {
   it('returns an explicit preference verbatim, ignoring the device', () => {
     expect(resolveLocale('en', ['es-ES'])).toBe('en')
@@ -46,8 +50,8 @@ describe('resolveLocale', () => {
   })
 
   it('takes the first supported language in the device list, not the first entry', () => {
-    expect(resolveLocale('system', ['it-IT', 'ja', 'es-MX'])).toBe('es')
-    expect(resolveLocale('system', ['it-IT', 'pt-BR', 'es-MX'])).toBe('pt')
+    expect(resolveLocale('system', [UNSHIPPED_REGION, UNSHIPPED, 'es-MX'])).toBe('es')
+    expect(resolveLocale('system', [UNSHIPPED_REGION, 'pt-BR', 'es-MX'])).toBe('pt')
   })
 
   it('skips a malformed device tag instead of throwing', () => {
@@ -55,7 +59,7 @@ describe('resolveLocale', () => {
   })
 
   it('falls back to the default locale when nothing matches', () => {
-    expect(resolveLocale('system', ['it-IT', 'ja'])).toBe(DEFAULT_LOCALE)
+    expect(resolveLocale('system', [UNSHIPPED_REGION, UNSHIPPED])).toBe(DEFAULT_LOCALE)
     expect(resolveLocale('system', [])).toBe(DEFAULT_LOCALE)
   })
 })
@@ -63,7 +67,7 @@ describe('resolveLocale', () => {
 describe('the supported-locale allowlist', () => {
   it('accepts every shipped locale and rejects anything else', () => {
     for (const locale of SUPPORTED_LOCALES) expect(isSupportedLocale(locale)).toBe(true)
-    expect(isSupportedLocale('it')).toBe(false)
+    expect(isSupportedLocale(UNSHIPPED)).toBe(false)
     expect(isSupportedLocale('es-ES')).toBe(false)
     expect(isSupportedLocale('toString')).toBe(false)
     expect(isSupportedLocale('')).toBe(false)
@@ -72,7 +76,7 @@ describe('the supported-locale allowlist', () => {
   it('accepts every stored preference value and rejects anything else', () => {
     for (const pref of LANGUAGE_PREFERENCES) expect(isLanguagePreference(pref)).toBe(true)
     expect(isLanguagePreference('auto')).toBe(false)
-    expect(isLanguagePreference('it')).toBe(false)
+    expect(isLanguagePreference(UNSHIPPED)).toBe(false)
   })
 
   it('includes the default locale, which must be statically bundled', () => {

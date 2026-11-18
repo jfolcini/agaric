@@ -37,7 +37,7 @@ describe('useLanguage', () => {
   })
 
   it('falls back to the default for an unsupported stored value', () => {
-    localStorage.setItem(KEY, 'it')
+    localStorage.setItem(KEY, 'qaa')
     const { result } = renderHook(() => useLanguage())
     expect(result.current.language).toBe('system')
   })

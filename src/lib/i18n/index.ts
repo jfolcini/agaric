@@ -15,7 +15,8 @@
  * `src/lib/i18n/<locale>/` and arrives via `loadLocale()` in `set-locale.ts`.
  *
  * To add a new key: pick the namespace file that matches the key's first
- * segment, add the entry there, and add its translation to the same file in
+ * segment, add the entry there under a `// Translators:` note saying where it
+ * appears (`translator-context.test.ts`), and add its translation to the same file in
  * every base-locale directory (`de/`, `es/`, `fr/`, …) in the same change —
  * `locale-catalogs.test.ts` fails on a key any of them lacks. English is the
  * source of truth for wording. A plural is always an explicit `_one` /

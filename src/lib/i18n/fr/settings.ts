@@ -155,7 +155,7 @@ export const settings: Record<string, string> = {
     'Remplace votre dossier personnel par ~ et efface l’ID de l’appareil dans chaque ligne des journaux.',
   'bugReport.previewError': 'Impossible de lire le journal pour l’aperçu',
   'bugReport.previewHint': 'Voici exactement ce qui sera placé dans le corps du ticket GitHub.',
-  'bugReport.previewLabel': 'Aperçu de {{filename}}',
+  'bugReport.previewLabel': 'Prévisualiser {{filename}}',
   'bugReport.previewLoading': 'Chargement de l’aperçu…',
   'bugReport.previewTitle': 'Aperçu',
   'bugReport.previewTruncated': 'Affichage des {{shown}} premiers octets sur {{total}}…',

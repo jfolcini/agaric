@@ -44,7 +44,7 @@ export const references: Record<string, string> = {
   'refPeek.open': 'Öffnen',
   'refPeek.copyReference': 'Verweis kopieren',
   'refPeek.deleted':
-    '{{title}} liegt im Papierkorb. Stelle es aus dem Papierkorb wieder her, um diesem Verweis zu folgen.',
+    '{{title}} liegt im Papierkorb. Stelle den Block aus dem Papierkorb wieder her, um diesem Verweis zu folgen.',
   'refPeek.unresolved':
     'Dieser Block ist nicht im aktuellen Bereich. Wechsle den Bereich, um dem Verweis zu folgen.',
   'refPeek.error': 'Dieser Block konnte gerade nicht geladen werden.',
@@ -105,7 +105,7 @@ export const references: Record<string, string> = {
   'graph.tagsLoadFailed': 'Tags für den Filter konnten nicht geladen werden',
   'graph.title': 'Seitenbeziehungen',
   'graph.keyboardHint':
-    'Mit Tab gelangst du in den Graphen, danach bewegst du dich mit den Pfeiltasten oder durch Eintippen eines Namens zwischen den Knoten. Space oder ein Klick wählt einen Knoten aus; Enter oder ein zweiter Klick öffnet seine Seite; Escape hebt die Auswahl auf.',
+    'Mit Tab gelangst du in den Graphen, danach bewegst du dich mit den Pfeiltasten oder durch Eintippen eines Namens zwischen den Knoten. Die Leertaste oder ein Klick wählt einen Knoten aus; Enter oder ein zweiter Klick öffnet seine Seite; Escape hebt die Auswahl auf.',
   'graph.selected': '"{{page}}" ausgewählt',
   'graph.zoomIn': 'Vergrößern',
   'graph.zoomOut': 'Verkleinern',
@@ -220,7 +220,7 @@ export const references: Record<string, string> = {
   'filterState.doing': 'DOING',
   'filterState.done': 'DONE',
   'filterState.cancelled': 'CANCELLED',
-  'filterState.none': 'Keiner',
+  'filterState.none': 'Keine',
   'backlink.priorityValueLabel': 'Prioritätswert',
   'backlink.highPriority': 'Hoch [1]',
   'backlink.mediumPriority': 'Mittel [2]',
@@ -312,11 +312,11 @@ export const references: Record<string, string> = {
   'searchQuery.dateExpectedAfterOperator':
     "nach '{{op}}' wurde YYYY-MM-DD erwartet, erhalten: '{{rest}}'",
   'searchQuery.unknownDate': "unbekanntes Datum '{{value}}'",
-  'searchQuery.propKeyValueRequired': '{{prefix}}: Schlüssel=Wert erforderlich',
-  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: 'Schlüssel=Wert' erwartet",
+  'searchQuery.propKeyValueRequired': '{{prefix}}: key=value erforderlich',
+  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: 'key=value' erwartet",
   'searchQuery.propKeyEmpty': '{{prefix}}: Der Schlüssel darf nicht leer sein',
   'searchQuery.tagBesideUnder':
-    'tag: und #tag können nicht mit under: kombiniert werden; verwende under: für jeden Tag',
+    'tag: und #tag können nicht mit under: kombiniert werden; verwende under: für alle Tags',
   'searchQuery.unbalancedParen': 'diese Klammer hat kein Gegenstück',
   'searchQuery.orMissingSide': 'OR braucht auf jeder Seite einen Filter',
   'searchQuery.textBesideFilterOr':
@@ -492,7 +492,7 @@ export const references: Record<string, string> = {
   'palette.cmdGroupAction': 'Aktionen',
   'palette.cmdGoJournal': 'Journalansicht öffnen',
   'palette.cmdGoPages': 'Seitenansicht öffnen',
-  'palette.cmdGoTags': 'Tag-Ansicht öffnen',
+  'palette.cmdGoTags': 'Tags-Ansicht öffnen',
   'palette.cmdGoGraph': 'Graphansicht öffnen',
   'palette.cmdShowPageInGraph': 'Diese Seite im Graphen anzeigen',
   'palette.cmdGoTemplates': 'Vorlagenansicht öffnen',

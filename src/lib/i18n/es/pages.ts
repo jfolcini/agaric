@@ -26,7 +26,7 @@ export const pages: Record<string, string> = {
   'journal.emptyHint':
     'Escribe / para ver los comandos · plantillas del diario configurables por espacio',
   'journal.dayAriaLabel': 'Diario de {{date}}',
-  'journal.dueBadge': 'vence',
+  'journal.dueBadge': 'venc.',
   'journal.refsBadge': 'refs.',
   'journal.addBlockFailed': 'No se ha podido añadir el bloque',
   'journal.configureTemplate': 'Configurar la plantilla del diario',
@@ -310,7 +310,7 @@ export const pages: Record<string, string> = {
   'newPageDialog.cancel': 'Cancelar',
   'pageBrowser.countAll_one': '{{count}} página',
   'pageBrowser.countAll_other': '{{count}} páginas',
-  'pageBrowser.countFiltered': '{{loaded}} de {{total}} coincidencias',
+  'pageBrowser.countFiltered': '{{loaded}} de {{total}} coinciden',
   'pageBrowser.countMatching_one': '{{count}} página coincidente',
   'pageBrowser.countMatching_other': '{{count}} páginas coincidentes',
   'pageBrowser.sortLabel': 'Orden',

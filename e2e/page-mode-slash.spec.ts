@@ -108,7 +108,7 @@ const COMMANDS: Command[] = [
   {
     query: 'link',
     id: 'link',
-    after: pick('Block links', 'Projects'),
+    after: pick('Page links', 'Projects'),
     stored: [['buy milk [[00000000000000000000PAGE04]]', null, null, []], NEXT],
   },
   {

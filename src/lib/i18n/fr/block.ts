@@ -101,9 +101,9 @@ export const block: Record<string, string> = {
   'status.peerAddressNotSet': 'Aucune adresse',
   'status.editAddress': 'Modifier',
   'status.addressUpdated': 'Adresse mise à jour',
-  'status.addressInvalid': 'Format d’adresse non valide (hôte:port attendu)',
+  'status.addressInvalid': 'Format d’adresse non valide (host:port attendu)',
   'status.addressInvalidWithFormat':
-    'Format d’adresse non valide. Utilisez hôte:port (par ex. {{format}}).',
+    'Format d’adresse non valide. Utilisez host:port (par ex. {{format}}).',
   'status.manualIpHint':
     'L’association nécessite que les deux appareils soient sur le même réseau local\u00A0; vous ne pouvez pas associer un appareil en saisissant une adresse. Si un appareil associé sur ce réseau n’est plus détecté par la suite, définissez son adresse ci-dessous.',
   'status.importTitle': 'Importation',
@@ -155,7 +155,7 @@ export const block: Record<string, string> = {
   'status.exportRefusedMessage_other':
     'Les modifications des espaces {{spaces}} n’atteignent pas vos autres appareils\u00A0: leurs données de synchronisation et leur base de données ne concordent pas au sujet d’un bloc supprimé.',
   'status.exportRefusedHint':
-    'Agaric répare ce problème à la prochaine synchronisation lorsque c’est possible. Si ce message persiste, redémarrez Agaric et réessayez chaque modification listée sous “Modifications de synchronisation qui n’ont pas pu être appliquées” dans Paramètres › Synchronisation et appareils. S’il est toujours là ensuite, signalez un bug depuis l’Aide.',
+    'Agaric répare ce problème à la prochaine synchronisation lorsque c’est possible. Si ce message persiste, redémarrez Agaric et réessayez chaque modification listée sous “Modifications synchronisées qui n’ont pas pu être appliquées” dans Paramètres › Synchronisation et appareils. S’il est toujours là ensuite, signalez un bug depuis l’Aide.',
   'status.syncStatusTitle': 'État de la synchronisation',
   'status.syncIdle': 'Inactif',
   'status.syncSyncing': 'Synchronisation...',
@@ -170,7 +170,7 @@ export const block: Record<string, string> = {
   'status.opsSentLabel': 'Opérations envoyées',
   'status.importingMessage': 'Importation...',
   'blockTree.updateFailedMessage': 'Échec de la mise à jour de {{failCount}} sur {{totalCount}}',
-  'blockTree.setStateMessage': 'État {{state}} appliqué à {{successCount}} bloc(s)',
+  'blockTree.setStateMessage': 'État de {{successCount}} bloc(s) défini sur {{state}}',
   'blockTree.deleteFailedMessage': 'Échec de la suppression de {{failCount}} sur {{totalCount}}',
   'blockTree.deletedMessageUndo_one': '{{count}} bloc supprimé',
   'blockTree.deletedMessageUndo_other': '{{count}} blocs supprimés',
@@ -202,7 +202,7 @@ export const block: Record<string, string> = {
   'blockTree.attachmentTypeNotAllowed':
     '{{type}} ne peut pas être joint — types autorisés\u00A0: images, audio, texte, PDF, JSON, ZIP, TAR',
   'blockTree.attachmentTooLarge':
-    'Le fichier fait {{size}} — la taille maximale est de 50 Mo. Compressez-le et réessayez.',
+    'Le fichier fait {{size}} — la taille maximale est de 50 MB. Compressez-le et réessayez.',
   'blockTree.cannotDeleteLastBlock': 'Impossible de supprimer le dernier bloc d’une page',
   'blockTree.cannotDeleteParentAtTop':
     'Impossible de supprimer le premier bloc tant qu’il a des enfants — il n’y a rien au-dessus sous quoi les déplacer',
@@ -233,8 +233,8 @@ export const block: Record<string, string> = {
   'blockTree.dnd.movingSubtree_other': 'Déplacement de {{count}} blocs au niveau {{depth}}',
   'block.emptyPlaceholder': 'Tapez / pour les commandes...',
   'block.attachHint':
-    'Déposez des fichiers ici ou collez-les — images, texte, PDF, JSON, ZIP (50 Mo max)',
-  'block.attachDropZoneCaption': 'Déposez pour joindre — images, texte, PDF, JSON, ZIP (50 Mo max)',
+    'Déposez des fichiers ici ou collez-les — images, texte, PDF, JSON, ZIP (50 MB max)',
+  'block.attachDropZoneCaption': 'Déposez pour joindre — images, texte, PDF, JSON, ZIP (50 MB max)',
   'blockContext.selected': 'sélectionné(s)',
   'blockContext.clear': 'Effacer',
   'blockContext.todoLabel': 'TODO',

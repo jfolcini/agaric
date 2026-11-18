@@ -25,7 +25,7 @@ export const errors: Record<string, string> = {
     'Die Datenbank ist beschädigt, daher schlagen einige Aktionen fehl. Exportiere deine Notizen (Einstellungen › Daten), bevor du etwas anderes änderst.',
   'errorBoundary.dataSafe': 'Deine Daten sind sicher — "Erneut versuchen" lädt diese Ansicht neu.',
   'errorBoundary.section.pageEditor': 'Seiteneditor',
-  'errorBoundary.section.tabBar': 'Tableiste',
+  'errorBoundary.section.tabBar': 'Tab-Leiste',
   'errorBoundary.section.quickAccess': 'Schnellzugriff',
   'errorBoundary.section.findInPage': 'Auf der Seite suchen',
   'errorBoundary.section.commandPalette': 'Befehlspalette',

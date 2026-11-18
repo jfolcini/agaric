@@ -273,7 +273,7 @@ export const properties: Record<string, string> = {
   'propertiesView.duplicateKey': 'Já existe uma propriedade com esta chave',
   'propertiesView.deadlineWarning': 'Aviso de prazo',
   'propertiesView.deadlineWarningDesc':
-    'Mostra na lista Próximos da Agenda as tarefas que vencem dentro deste número de dias. 0 desativa.',
+    'Mostra na lista Próximas da Agenda as tarefas que vencem dentro deste número de dias. 0 desativa.',
   'propertiesView.builtIn': 'Nativa',
   'propertiesView.definitionsIn': 'Definições em',
   'propertiesView.copyToSpaceTooltip': 'Copiar para espaço…',
@@ -350,7 +350,7 @@ export const properties: Record<string, string> = {
   'propertiesView.unfitLabel_other': '{{count}} não se encaixam: revise os valores de {{key}}',
   'propertiesView.unfitTitle': 'Valores de {{key}} que não se encaixam',
   'propertiesView.unfitDescription':
-    'Estes valores não se encaixam no tipo ou nas opções de {{key}}, então não contam como {{type}}. Remover os tira de seus blocos, inclusive os da Lixeira; Desfazer os coloca de volta.',
+    'Estes valores não se encaixam no tipo ou nas opções de {{key}}, então não contam como valores do tipo {{type}}. Remover os tira de seus blocos, inclusive os da Lixeira; Desfazer os coloca de volta.',
   'propertiesView.unfitCount_one': '{{count}} valor não se encaixa.',
   'propertiesView.unfitCount_other': '{{count}} valores não se encaixam.',
   'propertiesView.unfitInTrash_one': 'Mais {{count}} na Lixeira.',
@@ -456,8 +456,8 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vazio)',
   'tagFilter.loadingMessage': 'Carregando...',
   'tagFilter.loadMoreButton': 'Carregar mais',
-  'tagFilter.selectedTags_one': '{{count}} etiqueta ({{mode}})',
-  'tagFilter.selectedTags_other': '{{count}} etiquetas ({{mode}})',
+  'tagFilter.selectedTags_one': 'a {{count}} etiqueta ({{mode}})',
+  'tagFilter.selectedTags_other': 'a {{count}} etiquetas ({{mode}})',
   'tagFilter.addPrefixButton': 'Começa com',
   'tagFilter.addPrefixLabel':
     'Começa com o texto digitado: corresponde a todas as etiquetas que começam com ele',

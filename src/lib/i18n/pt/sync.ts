@@ -176,7 +176,7 @@ export const sync: Record<string, string> = {
   'sync.quarantineTitle_one': '{{count}} alteração de sincronização não pôde ser aplicada',
   'sync.quarantineTitle_other': '{{count}} alterações de sincronização não puderam ser aplicadas',
   'sync.quarantineBody':
-    'Essas alterações chegaram de outro dispositivo, mas o Agaric não conseguiu mesclá-las após várias reinicializações e parou de tentar. Elas ficam guardadas neste dispositivo; o conteúdo delas não está nas suas notas. Tentar novamente aplica uma delas outra vez na próxima vez que o Agaric for iniciado.',
+    'Essas alterações chegaram de outro dispositivo, mas o Agaric não conseguiu mesclá-las após várias reinicializações e parou de tentar. Elas ficam guardadas neste dispositivo; o conteúdo delas não está nas suas notas. O botão Tentar novamente tenta aplicar uma delas de novo na próxima vez que o Agaric for iniciado.',
   'sync.quarantineListLabel': 'Alterações de sincronização que não puderam ser aplicadas',
   'sync.quarantineRowMeta': 'Vista pela primeira vez {{when}} · {{size}}',
   'sync.quarantineLoadFailed':
@@ -191,9 +191,9 @@ export const sync: Record<string, string> = {
   'pairing.inProgress': 'Pareamento em andamento...',
   'device.editAddressTitle': 'Endereço do par',
   'device.editAddressPopoverLabel': 'Editar endereço do par',
-  'device.addressInputLabel': 'Endereço (host:porta)',
-  'device.addressHint': 'Formato: host:porta (ex.: 192.168.1.100:5000)',
-  'device.addressFormatInvalid': 'O formato deve ser host:porta (ex.: 192.168.1.100:5000)',
+  'device.addressInputLabel': 'Endereço (host:port)',
+  'device.addressHint': 'Formato: host:port (ex.: 192.168.1.100:5000)',
+  'device.addressFormatInvalid': 'O formato deve ser host:port (ex.: 192.168.1.100:5000)',
   'device.addressPortInvalid': 'A porta deve estar entre 1 e 65535',
   'device.saveAddressButton': 'Salvar',
   'device.cancelAddressButton': 'Cancelar',

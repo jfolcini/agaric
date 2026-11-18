@@ -24,7 +24,7 @@ export const common: Record<string, string> = {
   'sidebar.pages': 'Pages',
   'sidebar.journal': 'Journal',
   'sidebar.newPage': 'Nouvelle page',
-  'sidebar.sync': 'Synchronisation',
+  'sidebar.sync': 'Synchroniser',
   'sidebar.search': 'Recherche',
   'sidebar.tags': 'Étiquettes',
   'sidebar.trash': 'Corbeille',
@@ -47,7 +47,7 @@ export const common: Record<string, string> = {
   'bookmarks.remove': 'Retirer {{title}} des favoris',
   'bookmarks.writeFailed': 'Impossible d’enregistrer vos favoris. La liste a été restaurée.',
   'bookmarks.reorderInstructions':
-    'Pour réorganiser un favori, appuyez sur la barre d’espace pour le saisir, utilisez les flèches haut et bas pour le déplacer, puis appuyez de nouveau sur la barre d’espace pour le déposer. Appuyez sur Esc pour annuler. Appuyez sur Enter pour ouvrir la page.',
+    'Pour réorganiser un favori, appuyez sur la barre d’espace pour le saisir, utilisez les flèches haut et bas pour le déplacer, puis appuyez de nouveau sur la barre d’espace pour le déposer. Appuyez sur Échap pour annuler. Appuyez sur Entrée pour ouvrir la page.',
   'space.switch': 'Changer d’espace',
   'space.manage': 'Gérer les espaces…',
   'space.moveTo': 'Déplacer vers un espace',
@@ -135,7 +135,7 @@ export const common: Record<string, string> = {
   'announce.undoFailed': 'Échec de l’annulation',
   'announce.redone': 'Rétabli',
   'announce.redoFailed': 'Échec du rétablissement',
-  'announce.journalNoDay': 'Aucun jour où annuler pour l’instant',
+  'announce.journalNoDay': 'Rien à annuler dans le journal pour l’instant',
   'announce.blockRestored': 'Bloc restauré depuis la corbeille',
   'announce.blockPurged': 'Bloc supprimé définitivement',
   'announce.blocksSelected_one': '{{count}} bloc sélectionné',
@@ -286,7 +286,7 @@ export const common: Record<string, string> = {
   'welcome.workflowFormat': 'Sélectionnez du texte pour le mettre en forme',
   'welcome.workflowFormatDesc':
     'Sélectionnez n’importe quel texte pour le mettre en gras, en italique ou le souligner.',
-  'welcome.workflowFormatTouch': 'Mettre en forme avec la barre d’outils',
+  'welcome.workflowFormatTouch': 'Mettez en forme avec la barre d’outils',
   'welcome.workflowFormatDescTouch':
     'Touchez un bloc, puis utilisez la barre d’outils au-dessus du clavier pour mettre le texte en gras, en italique ou le souligner.',
   'welcome.importNotes': 'Importer des notes',
@@ -326,7 +326,7 @@ export const common: Record<string, string> = {
   'tabs.nextTab': 'Onglet suivant',
   'tabs.previousTab': 'Onglet précédent',
   'tabs.reorderInstructions':
-    'Pour déplacer un onglet, appuyez sur la barre d’espace pour le saisir, utilisez les flèches gauche et droite pour le déplacer, puis appuyez de nouveau sur la barre d’espace pour le déposer. Appuyez sur Esc pour annuler.',
+    'Pour déplacer un onglet, appuyez sur la barre d’espace pour le saisir, utilisez les flèches gauche et droite pour le déplacer, puis appuyez de nouveau sur la barre d’espace pour le déposer. Appuyez sur Échap pour annuler.',
   'quickCapture.fabLabel': 'Capture rapide',
   'gestures.coachmark.title': 'Gestes tactiles',
   'gestures.coachmark.description':
@@ -502,7 +502,7 @@ export const common: Record<string, string> = {
   'data.mirrorFailedItem': '{{path}}\u00A0: {{message}}',
   'data.mirrorReadBackLabel': 'Réintégrer les modifications',
   'data.mirrorReadBackDesc':
-    'Les modifications, nouveaux fichiers, renommages et déplacements effectués sur les fichiers hors d’Agaric sont réintégrés dans Agaric. Désactivé, Agaric écrit toujours les fichiers et n’écrase jamais un fichier modifié ailleurs.',
+    'Les modifications, nouveaux fichiers, renommages et déplacements effectués sur les fichiers hors d’Agaric sont réintégrés dans Agaric. Si l’option est désactivée, Agaric écrit toujours les fichiers et n’écrase jamais un fichier modifié ailleurs.',
   'data.mirrorReadBackFailed':
     'Le réglage de réintégration des modifications n’a pas été changé\u00A0: {{reason}}',
   'data.mirrorSpacesHeading': 'Espaces mis en miroir',
@@ -706,7 +706,7 @@ export const common: Record<string, string> = {
     'Ouvrir la recherche complète pour les filtres, les regex et l’historique',
   'searchSheet.dragHandleLabel': 'Faire glisser vers le bas pour fermer la recherche',
   'searchSheet.scopePinHint': 'Appuyez longuement sur une portée pour l’épingler par défaut',
-  'searchSheet.scopePinned': '“{{scope}}” épinglé comme portée de recherche par défaut',
+  'searchSheet.scopePinned': '“{{scope}}” est désormais la portée de recherche par défaut',
   'searchSheet.scopeUnpinned': 'Portée de recherche par défaut désépinglée',
   'searchSheet.scopePinnedBadge': 'Épinglé par défaut',
   'searchSheet.recentSearchesTitle': 'Recherches récentes',
@@ -714,11 +714,11 @@ export const common: Record<string, string> = {
   'searchSheet.recentSearchRunLabel': 'Rechercher à nouveau “{{term}}”',
   'dnd.genericBlock': 'bloc',
   'dnd.pickedUp': '{{block}} saisi.',
-  'dnd.movedOver': '{{block}} déplacé au-dessus de {{target}}.',
-  'dnd.movedOutside': '{{block}} n’est plus au-dessus d’une zone de dépôt.',
+  'dnd.movedOver': '{{block}} déplacé sur {{target}}.',
+  'dnd.movedOutside': '{{block}} n’est plus sur une zone de dépôt.',
   'dnd.dropped': '{{block}} déposé sur {{target}}.',
   'dnd.droppedOutside': '{{block}} déposé.',
   'dnd.cancelled': 'Déplacement de {{block}} annulé.',
   'dnd.screenReaderInstructions':
-    'Pour saisir un bloc, appuyez sur la barre d’espace ou sur Enter. Pendant le glissement, utilisez les flèches pour déplacer le bloc vers le haut, vers le bas ou modifier son niveau de retrait. Appuyez de nouveau sur la barre d’espace ou sur Enter pour déposer le bloc à sa nouvelle position, ou appuyez sur Esc pour annuler.',
+    'Pour saisir un bloc, appuyez sur la barre d’espace ou sur Entrée. Pendant le glissement, utilisez les flèches pour déplacer le bloc vers le haut, vers le bas ou modifier son niveau de retrait. Appuyez de nouveau sur la barre d’espace ou sur Entrée pour déposer le bloc à sa nouvelle position, ou appuyez sur Échap pour annuler.',
 }

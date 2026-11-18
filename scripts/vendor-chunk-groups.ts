@@ -63,7 +63,13 @@ export const VENDOR_CHUNK_GROUPS = [
   // date-fns — shared by startup date utils and the lazy date picker; MUST
   // outrank `datepicker`, which otherwise captures it as a dependency and the
   // startup import drags react-day-picker onto the cold-start path (#5441).
-  { name: 'date-fns' as const, test: /[\\/]node_modules[\\/]date-fns[\\/]/, priority: 35 },
+  // A non-English `date-fns/locale/*` stays out, so it lands in the lazy
+  // catalog chunk of the language that imports it (`src/lib/i18n/<tag>/`).
+  {
+    name: 'date-fns' as const,
+    test: /[\\/]node_modules[\\/]date-fns[\\/](?!locale[\\/](?!en-US[\\/.]|_lib[\\/]))/,
+    priority: 35,
+  },
   // Date picker (calendar popover) — date properties + journal date selection.
   {
     name: 'datepicker' as const,

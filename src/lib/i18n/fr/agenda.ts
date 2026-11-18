@@ -80,7 +80,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.tag': 'Étiquette',
   'agendaFilter.property': 'Propriété',
   'agendaFilter.propertyKey': 'Clé de propriété',
-  'agendaFilter.propertyValue': 'Valeur (facultatif)',
+  'agendaFilter.propertyValue': 'Valeur (facultative)',
   'agendaFilter.propertyValuePlaceholder': 'Valeur du filtre...',
   'agendaFilter.selectProperty': 'Sélectionner une propriété...',
   'agendaFilter.tagPlaceholder': 'Rechercher des étiquettes...',
@@ -103,7 +103,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.editFilter': 'Modifier le filtre {{label}}',
   'agendaFilter.removeFilterLabel': 'Retirer le filtre {{label}}',
   'agendaFilter.valuedSubsumedByIsSet':
-    'Aucun effet — la propriété est déjà filtrée sur "est définie"',
+    'Aucun effet — la propriété est déjà filtrée sur "est défini"',
   'duePanel.headerOne': '1 à l’agenda',
   'duePanel.header': '{{count}} à l’agenda',
   'duePanel.groupDoing': 'DOING',

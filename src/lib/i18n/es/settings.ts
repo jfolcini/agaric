@@ -119,7 +119,7 @@ export const settings: Record<string, string> = {
     'Recibe una notificación nativa del sistema operativo el día en que vence una tarea y envíate una de prueba para confirmar que te llegan.',
   'notifications.enableLabel': 'Recordarme las tareas que vencen',
   'notifications.enableDescription':
-    'Cada tarea abierta se avisa una vez en su fecha de vencimiento, a la hora de recordatorio indicada abajo, mientras Agaric está en ejecución o minimizado. Los recordatorios son por dispositivo.',
+    'Se avisa de cada tarea abierta una vez en su fecha de vencimiento, a la hora de recordatorio indicada abajo, mientras Agaric está en ejecución o minimizado. Los recordatorios son por dispositivo.',
   'notifications.reminderTimeLabel': 'Hora del recordatorio',
   'notifications.reminderTimeDescription':
     'Hora local a la que se avisa de una tarea que vence hoy. Si abres Agaric más tarde ese día, se avisa igualmente una vez.',

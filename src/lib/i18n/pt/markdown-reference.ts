@@ -11,7 +11,7 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.group.tasks': 'Tarefas',
   'markdownReference.group.properties': 'Propriedades',
   'markdownReference.group.media': 'Imagens e fórmulas',
-  'markdownReference.group.commands': 'Menus e emoji',
+  'markdownReference.group.commands': 'Menus e emojis',
 
   'markdownReference.bold.title': 'Negrito',
   'markdownReference.bold.description': 'Deixa o texto em negrito. __bold__ também funciona.',
@@ -74,7 +74,7 @@ export const markdownReference: Record<string, string> = {
     'Cria um link para uma página. Se nenhuma página tiver esse nome, ela é criada.',
   'markdownReference.pageLinkLabel.title': 'Link de página com seu próprio texto',
   'markdownReference.pageLinkLabel.description':
-    'Cria um link para uma página, mas mostra o texto depois da barra.',
+    'Cria um link para uma página, mas mostra o texto depois da barra vertical.',
   'markdownReference.blockRef.title': 'Referência de bloco',
   'markdownReference.blockRef.description':
     'Mostra o texto de outro bloco, escolhido em uma lista.',
@@ -127,7 +127,7 @@ export const markdownReference: Record<string, string> = {
     'Mostra a imagem daquele endereço. O texto entre colchetes a descreve.',
   'markdownReference.imageWidth.title': 'Largura da imagem',
   'markdownReference.imageWidth.description':
-    'Um número depois de uma barra define a largura da imagem em pixels.',
+    'Um número depois de uma barra vertical define a largura da imagem em pixels.',
   'markdownReference.pastedImage.title': 'Imagem colada',
   'markdownReference.pastedImage.description':
     'Uma imagem colada ou arrastada é salva com suas notas e escrita assim.',

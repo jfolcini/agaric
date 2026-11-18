@@ -24,8 +24,8 @@ export const common: Record<string, string> = {
   'sidebar.pages': 'Páginas',
   'sidebar.journal': 'Diário',
   'sidebar.newPage': 'Nova página',
-  'sidebar.sync': 'Sincronização',
-  'sidebar.search': 'Pesquisar',
+  'sidebar.sync': 'Sincronizar',
+  'sidebar.search': 'Pesquisa',
   'sidebar.tags': 'Etiquetas',
   'sidebar.trash': 'Lixeira',
   'sidebar.history': 'Histórico',
@@ -274,7 +274,8 @@ export const common: Record<string, string> = {
   'sidebar.hoursAgo': 'há {{count}} h',
   'sidebar.daysAgo': 'há {{count}} d',
   'welcome.title': 'Boas-vindas ao Agaric',
-  'welcome.description': 'Um aplicativo de notas local-first para organizar suas ideias.',
+  'welcome.description':
+    'Um aplicativo de notas que funciona localmente para organizar suas ideias.',
   'welcome.workflowSlash': 'Digite / para tarefas e datas',
   'welcome.workflowSlashDesc':
     'Abra o menu de comandos para adicionar tarefas, datas, títulos e muito mais.',
@@ -295,7 +296,7 @@ export const common: Record<string, string> = {
   'welcome.samplePagesFailed': 'Não foi possível criar as páginas de exemplo',
   'welcome.sampleGettingStartedTitle': 'Primeiros passos',
   'welcome.sampleGettingStartedBody1':
-    'Boas-vindas ao Agaric! Este é um aplicativo de notas local-first.',
+    'Boas-vindas ao Agaric! Este é um aplicativo de notas que funciona localmente.',
   'welcome.sampleGettingStartedBody2':
     'Cada página é feita de **blocos** — pequenos trechos de texto que você pode aninhar e reorganizar.',
   'welcome.sampleGettingStartedBody3':
@@ -496,11 +497,11 @@ export const common: Record<string, string> = {
   'data.mirrorFailedItem': '{{path}}: {{message}}',
   'data.mirrorReadBackLabel': 'Ler alterações de volta',
   'data.mirrorReadBackDesc':
-    'Edições, novos arquivos, renomeações e movimentações feitas nos arquivos fora do Agaric são lidas de volta para o Agaric. Desativado, o Agaric continua gravando os arquivos e nunca sobrescreve um que foi alterado em outro lugar.',
+    'Edições, novos arquivos, renomeações e movimentações feitas nos arquivos fora do Agaric são lidas de volta para o Agaric. Com esta opção desativada, o Agaric continua gravando os arquivos e nunca sobrescreve um que foi alterado em outro lugar.',
   'data.mirrorReadBackFailed':
     'A configuração de leitura de alterações não foi modificada: {{reason}}',
   'data.mirrorSpacesHeading': 'Espaços espelhados',
-  'data.mirrorSpaceFailed': 'Os espaços espelhados não foram alterados: {{reason}}',
+  'data.mirrorSpaceFailed': 'A seleção de espaços espelhados não foi alterada: {{reason}}',
   'data.mirrorCopyFilesLabel': 'Copiar anexos para a pasta',
   'data.mirrorCopyFilesDesc':
     'Imagens e arquivos vinculados nas suas páginas são copiados para uma pasta assets ao lado delas, e as páginas passam a apontar para as cópias. Uma cópia que você alterar lá é mantida e listada abaixo.',
@@ -667,7 +668,7 @@ export const common: Record<string, string> = {
   'findInPage.replaceAll': 'Substituir tudo',
   'findInPage.replaceAllHint': 'Substituir todos os resultados da página (Ctrl+Alt+Enter)',
   'findInPage.replacing': 'Substituindo',
-  'findInPage.replaceUnavailable': 'Substituir não está disponível nesta visualização',
+  'findInPage.replaceUnavailable': 'A substituição não está disponível nesta visualização',
   'findInPage.unreplaceable_one':
     '{{count}} resultado está em um link, etiqueta ou referência de bloco e será mantido como está',
   'findInPage.unreplaceable_other':
@@ -679,7 +680,7 @@ export const common: Record<string, string> = {
     '{{count}} em links, etiquetas ou referências mantidos como estão',
   'findInPage.replaceFailed_one': 'Falha ao salvar: interrompido após {{count}} substituição',
   'findInPage.replaceFailed_other': 'Falha ao salvar: interrompido após {{count}} substituições',
-  'announce.findInPageOpened': 'Localizar na página aberto',
+  'announce.findInPageOpened': 'Barra Localizar na página aberta',
   'headerSearch.label': 'Pesquisar',
   'searchSheet.openButton': 'Pesquisar',
   'searchSheet.title': 'Pesquisa',
@@ -694,7 +695,7 @@ export const common: Record<string, string> = {
   'searchSheet.escalateLabel': 'Abrir a pesquisa completa para filtros, regex e histórico',
   'searchSheet.dragHandleLabel': 'Arraste para baixo para fechar a pesquisa',
   'searchSheet.scopePinHint': 'Mantenha um escopo pressionado para fixá-lo como padrão',
-  'searchSheet.scopePinned': '“{{scope}}” fixado como seu escopo de pesquisa padrão',
+  'searchSheet.scopePinned': 'Escopo de pesquisa padrão fixado: “{{scope}}”',
   'searchSheet.scopeUnpinned': 'Escopo de pesquisa padrão desafixado',
   'searchSheet.scopePinnedBadge': 'Padrão fixado',
   'searchSheet.recentSearchesTitle': 'Pesquisas recentes',

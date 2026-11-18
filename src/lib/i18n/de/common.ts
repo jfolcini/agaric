@@ -24,7 +24,7 @@ export const common: Record<string, string> = {
   'sidebar.pages': 'Seiten',
   'sidebar.journal': 'Journal',
   'sidebar.newPage': 'Neue Seite',
-  'sidebar.sync': 'Synchronisierung',
+  'sidebar.sync': 'Synchronisieren',
   'sidebar.search': 'Suche',
   'sidebar.tags': 'Tags',
   'sidebar.trash': 'Papierkorb',
@@ -52,7 +52,7 @@ export const common: Record<string, string> = {
   'space.switch': 'Bereich wechseln',
   'space.manage': 'Bereiche verwalten…',
   'space.moveTo': 'In Bereich verschieben',
-  'space.movedToast': 'Seite nach {{space}} verschoben',
+  'space.movedToast': 'Seite in den Bereich {{space}} verschoben',
   'space.moveFailed': 'Seite konnte nicht verschoben werden',
   'spaceMove.lossTitle': 'Verschieben und Eigenschaften entfernen?',
   'spaceMove.lossDescription':
@@ -67,7 +67,7 @@ export const common: Record<string, string> = {
   'spaceMove.valuesFailed': 'Die Werte konnten nicht geladen werden',
   'space.notReady': 'Bereiche werden geladen…',
   'space.activeDeletedNotification':
-    'Dein aktiver Bereich wurde auf einem anderen Gerät gelöscht. Zu {{space}} gewechselt.',
+    'Dein aktiver Bereich wurde auf einem anderen Gerät gelöscht. Zum Bereich {{space}} gewechselt.',
   'space.renameLabel': 'Bereich umbenennen',
   'space.accentColorLabel': 'Akzentfarbe',
   'space.accentSwatchLabel': 'Akzentfarbe {{color}} verwenden',
@@ -429,9 +429,9 @@ export const common: Record<string, string> = {
   'data.importMergeTitle_one': 'Eine vorhandene Seite aktualisieren?',
   'data.importMergeTitle_other': '{{count}} vorhandene Seiten aktualisieren?',
   'data.importMergeDescription_one':
-    'Eine Datei trägt den Titel dieser Seite, daher aktualisiert der Import sie direkt: Geänderte Zeilen aktualisieren ihre Blöcke, neue Zeilen fügen Blöcke hinzu, und Zeilen, die in der Datei fehlen, kommen in den Papierkorb. Rückgängig auf der Seite macht die Aktualisierung rückgängig.',
+    'Eine Datei trägt den Titel dieser Seite, daher aktualisiert der Import sie direkt: Geänderte Zeilen aktualisieren ihre Blöcke, neue Zeilen fügen Blöcke hinzu, und Zeilen, die in der Datei fehlen, kommen in den Papierkorb. Rückgängig auf der Seite nimmt die Aktualisierung zurück.',
   'data.importMergeDescription_other':
-    'Diese Dateien tragen die Titel vorhandener Seiten, daher aktualisiert der Import jede davon direkt: Geänderte Zeilen aktualisieren ihre Blöcke, neue Zeilen fügen Blöcke hinzu, und Zeilen, die in einer Datei fehlen, kommen in den Papierkorb. Rückgängig auf einer Seite macht deren Aktualisierung rückgängig.',
+    'Diese Dateien tragen die Titel vorhandener Seiten, daher aktualisiert der Import jede davon direkt: Geänderte Zeilen aktualisieren ihre Blöcke, neue Zeilen fügen Blöcke hinzu, und Zeilen, die in einer Datei fehlen, kommen in den Papierkorb. Rückgängig auf einer Seite nimmt deren Aktualisierung zurück.',
   'data.importMergeConfirm': 'Aktualisieren und importieren',
   'data.importMergeSpace': 'Im Bereich {{name}}:',
   'data.importVaultTitle_one': '{{count}} Bereich wiederherstellen?',
@@ -481,7 +481,7 @@ export const common: Record<string, string> = {
   'data.snapshotOpenFolderFailed': 'Der Datenordner konnte nicht geöffnet werden',
   'data.mirrorTitle': 'Markdown-Spiegel',
   'data.mirrorDesc':
-    'Agaric schreibt jede Seite als .md-Datei in einen Ordner deiner Wahl und hält ihn aktuell. Eine Datei, die du anderswo bearbeitest, wird in ihre Seite zurückgelesen, und ein einziges Rückgängig macht das wieder rückgängig.',
+    'Agaric schreibt jede Seite als .md-Datei in einen Ordner deiner Wahl und hält ihn aktuell. Eine Datei, die du anderswo bearbeitest, wird in ihre Seite zurückgelesen, und ein einziges Rückgängig nimmt das zurück.',
   'data.mirrorFolderLabel': 'Spiegelordner',
   'data.mirrorUnsupported':
     'Auf diesem Gerät noch nicht verfügbar: Der Spiegel läuft nur in der Desktop-App. Schalte ihn auf deinem Computer ein; hier geschriebene Notizen gelangen per Synchronisierung in seinen Ordner.',
@@ -569,7 +569,7 @@ export const common: Record<string, string> = {
     '{{count}} Blöcke haben IDs in nicht standardmäßiger Form (Sammelaktionen im Papierkorb überspringen sie).',
   'integrity.groupIdsTitle': 'Blöcke mit IDs in nicht standardmäßiger Form',
   'integrity.groupIdsDetail':
-    'Diese Blöcke wurden unter einer ID gespeichert, die anders geschrieben ist als in der Standardform, vermutlich von einer älteren Version. Sammelaktionen im Papierkorb wie Papierkorb leeren und Alle wiederherstellen überspringen sie. Eine Neuerstellung ändert keine IDs.',
+    'Diese Blöcke wurden unter einer ID gespeichert, die anders geschrieben ist als in der Standardform, vermutlich von einer älteren Version. Sammelaktionen im Papierkorb wie "Papierkorb leeren" und "Alle wiederherstellen" überspringen sie. Eine Neuerstellung ändert keine IDs.',
   'integrity.groupIdsAction':
     'Kopiere den Bericht und melde einen Fehler, damit über die Reparatur entschieden werden kann.',
   'integrity.problem.idForm': 'IDs in nicht standardmäßiger Form',
@@ -689,7 +689,7 @@ export const common: Record<string, string> = {
   'searchSheet.openButton': 'Suchen',
   'searchSheet.title': 'Suche',
   'searchSheet.dialogDescription':
-    'Suche in der aktuellen Seite oder in allen Seiten. Wechsle den Suchumfang mit dem Segmentschalter.',
+    'Suche auf der aktuellen Seite oder auf allen Seiten. Wechsle den Suchumfang mit dem Segmentschalter.',
   'searchSheet.segmentInPage': 'Diese Seite',
   'searchSheet.segmentAllPages': 'Alle Seiten',
   'searchSheet.emptyInPage': 'Noch keine Seite geöffnet — versuche stattdessen "Alle Seiten".',

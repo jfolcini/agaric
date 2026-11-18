@@ -26,7 +26,7 @@ export const block: Record<string, string> = {
   'readAloud.noPage': 'Öffne eine Seite, um sie vorlesen zu lassen',
   'readAloud.noVoice':
     'Zum Vorlesen ist keine Stimme verfügbar. Füge in den Sprachausgabe-Einstellungen deines Systems eine hinzu.',
-  'readAloud.failed': 'Vorlesen beendet: Die Sprachausgabe hat einen Fehler gemeldet',
+  'readAloud.failed': 'Vorlesen abgebrochen: Die Sprachausgabe hat einen Fehler gemeldet',
   'block.reorder': 'Block verschieben (ziehen oder Tastatur verwenden)',
   'block.reorderTip': 'Verschieben — Ctrl+Shift+↑/↓',
   'block.reorderKeyshortcuts': 'Control+Shift+ArrowUp Control+Shift+ArrowDown',
@@ -152,7 +152,7 @@ export const block: Record<string, string> = {
   'status.exportRefusedMessage_other':
     'Änderungen in den Bereichen {{spaces}} erreichen deine anderen Geräte nicht: Ihre Sync-Daten und ihre Datenbank sind sich über einen gelöschten Block uneinig.',
   'status.exportRefusedHint':
-    'Agaric behebt das bei der nächsten Synchronisierung, sofern möglich. Bleibt diese Meldung bestehen, starte Agaric neu und versuche jede Änderung erneut, die unter “Sync-Änderungen, die nicht angewendet werden konnten” in Einstellungen › Synchronisierung & Geräte aufgeführt ist. Ist sie danach immer noch da, melde einen Fehler über die Hilfe.',
+    'Agaric behebt das bei der nächsten Synchronisierung, sofern möglich. Bleibt diese Meldung bestehen, starte Agaric neu und versuche jede Änderung erneut, die unter “Synchronisierungsänderungen, die nicht übernommen werden konnten” in Einstellungen › Synchronisierung & Geräte aufgeführt ist. Ist sie danach immer noch da, melde einen Fehler über die Hilfe.',
   'status.syncStatusTitle': 'Sync-Status',
   'status.syncIdle': 'Bereit',
   'status.syncSyncing': 'Wird synchronisiert...',
@@ -216,14 +216,14 @@ export const block: Record<string, string> = {
   'blockTree.createFirstBlockFailed': 'Erster Block konnte nicht erstellt werden',
   'blockTree.setDueDateFailed': 'Fälligkeitsdatum konnte nicht gesetzt werden',
   'blockTree.insertDateLinkFailed': 'Datumslink konnte nicht eingefügt werden',
-  'blockTree.repeatUntilMessage': 'Wiederholen bis {{date}}',
+  'blockTree.repeatUntilMessage': 'Wiederholt sich bis {{date}}',
   'blockTree.setRepeatEndDateFailed': 'Enddatum der Wiederholung konnte nicht gesetzt werden',
   'blockTree.setScheduledDateFailed': 'Geplantes Datum konnte nicht gesetzt werden',
   'blockTree.propertyKeptAsText': 'Als Text beibehalten: {{lines}}',
   'blockTree.pasteKeptAsText': 'Ein Teil des eingefügten Inhalts wurde als Text beibehalten',
   'blockTree.loadingLabel': 'Blöcke werden geladen',
   'blockTree.truncatedNotice':
-    'Es werden die ersten {{shown}} von {{total}} Blöcken angezeigt — diese Seite ist sehr groß. Einige Blöcke werden nicht angezeigt; teile sie am besten in kleinere Seiten auf.',
+    'Es werden die ersten {{shown}} von {{total}} Blöcken angezeigt — diese Seite ist sehr groß. Einige Blöcke werden nicht angezeigt; am besten teilst du die Seite in kleinere auf.',
   'blockTree.mountBoundary_one': '{{count}} weiteren Block anzeigen',
   'blockTree.mountBoundary_other': '{{count}} weitere Blöcke anzeigen',
   'blockTree.dnd.moving': 'Wird auf Ebene {{depth}} verschoben',
@@ -244,7 +244,7 @@ export const block: Record<string, string> = {
   'blockContext.deleteConfirmDescription':
     'Die ausgewählten Blöcke werden in den Papierkorb verschoben. Von dort kannst du sie wiederherstellen.',
   'blockContext.deleteConfirmAction': 'Ja, löschen',
-  'task.noneState': 'keiner',
+  'task.noneState': 'keinen Status',
   'block.daysUnit': 'Tage',
   'block.repeatStatus': 'Wiederholt sich {{value}}',
 }

@@ -66,7 +66,7 @@ export const history: Record<string, string> = {
   'diff.regionLabel': 'Conteúdo da comparação',
   'history.filterLabel': 'Filtro:',
   'history.allTypesOption': 'Todos os tipos',
-  'history.selectedBadge': 'selecionados',
+  'history.selectedBadge': 'selecionada',
   'history.revertingButton': 'Revertendo...',
   'history.revertSelectedButton': 'Reverter selecionados',
   'history.clearSelectionButton': 'Limpar seleção',
@@ -202,7 +202,7 @@ export const history: Record<string, string> = {
   'history.revertFailed': 'Não foi possível reverter as operações',
   'history.restoreUndoFailed': 'Não foi possível desfazer a restauração',
   'history.restoreUndone': 'Restauração desfeita',
-  'history.restoreToHereLabel': 'Redefinir até este ponto',
+  'history.restoreToHereLabel': 'Redefinir para este ponto',
   'history.restoreToHereTooltip':
     'Desfaz todas as operações após este ponto — use a ação Reverter de cada entrada para entradas individuais.',
   'history.restoreToHereTouchLabel': 'Redefinir',

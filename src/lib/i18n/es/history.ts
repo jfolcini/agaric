@@ -67,7 +67,7 @@ export const history: Record<string, string> = {
   'diff.regionLabel': 'Contenido de las diferencias',
   'history.filterLabel': 'Filtro:',
   'history.allTypesOption': 'Todos los tipos',
-  'history.selectedBadge': 'seleccionado',
+  'history.selectedBadge': 'seleccionada',
   'history.revertingButton': 'Revirtiendo...',
   'history.revertSelectedButton': 'Revertir selección',
   'history.clearSelectionButton': 'Quitar selección',
@@ -204,11 +204,11 @@ export const history: Record<string, string> = {
   'history.revertFailed': 'No se han podido revertir las operaciones',
   'history.restoreUndoFailed': 'No se ha podido deshacer la restauración',
   'history.restoreUndone': 'Restauración deshecha',
-  'history.restoreToHereLabel': 'Restablecer hasta este punto',
+  'history.restoreToHereLabel': 'Restablecer a este punto',
   'history.restoreToHereTooltip':
     'Deshace todas las operaciones posteriores a este punto — usa la acción Revertir de cada entrada para entradas individuales.',
   'history.restoreToHereTouchLabel': 'Restablecer',
-  'history.restoreToTitle': '¿Restaurar a {{timestamp}}?',
+  'history.restoreToTitle': '¿Restaurar al estado del {{timestamp}}?',
   'history.restoreToDescription':
     'Se revertirán todas las operaciones posteriores a este punto. Las operaciones irreversibles (eliminación definitiva) se omitirán. Esta acción también se puede deshacer, y las operaciones originales permanecen en el historial.',
   'history.restoreSuccess_one': '{{count}} operación revertida correctamente',
@@ -274,7 +274,7 @@ export const history: Record<string, string> = {
   'compaction.loadFailed': 'No se ha podido cargar el estado de la compactación',
   'trash.deletedPrefix': 'Eliminado:',
   'history.restoreConfirmDescription':
-    'Se sustituirá el contenido actual del bloque por la versión de {{timestamp}}. Puedes deshacer este cambio.',
+    'Se sustituirá el contenido actual del bloque por la versión del {{timestamp}}. Puedes deshacer este cambio.',
   'history.diff.empty': 'Sin cambios',
   'compactionCard.errorBoundary': 'El estado de la compactación no está disponible.',
 }

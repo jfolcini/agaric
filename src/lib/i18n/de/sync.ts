@@ -18,7 +18,7 @@ export const sync: Record<string, string> = {
   'pairing.unpairFailed': 'Das Gerät konnte nicht entkoppelt werden: {{message}}',
   'pairing.awaitingPeerMessage': 'Warte auf das andere Gerät…',
   'pairing.waitingDescription':
-    'Dieses Gerät hat seine Seite des Kopplungs-Handshakes vorbereitet. Es bestätigt automatisch, sobald sich das andere Gerät verbindet.',
+    'Dieses Gerät hat seine Seite des Kopplungs-Handshakes vorbereitet. Es bestätigt die Kopplung automatisch, sobald sich das andere Gerät verbindet.',
   'pairing.pairSuccessMessage': 'Gerät erfolgreich gekoppelt',
   'pairing.proofRejectedError':
     'Die Passphrase stimmte nicht überein. Prüfe sie und versuche es erneut.',

@@ -102,7 +102,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.editFilter': 'Editar el filtro {{label}}',
   'agendaFilter.removeFilterLabel': 'Quitar el filtro {{label}}',
   'agendaFilter.valuedSubsumedByIsSet':
-    "No tiene efecto — la propiedad ya se filtra como 'está definida'",
+    "No tiene efecto — la propiedad ya se filtra como 'tiene valor'",
   'duePanel.headerOne': '1 en la agenda',
   'duePanel.header': '{{count}} en la agenda',
   'duePanel.groupDoing': 'DOING',
@@ -125,7 +125,8 @@ export const agenda: Record<string, string> = {
   'duePanel.filterAllTooltip':
     'Todos los bloques con cualquier fecha de vencimiento o programada, o con un filtro de propiedad',
   'duePanel.filterDueTooltip': 'Fecha de vencimiento estricta — vencida si ya ha pasado',
-  'duePanel.filterScheduledTooltip': 'Inicio programado flexible — no vence si ya ha pasado',
+  'duePanel.filterScheduledTooltip':
+    'Inicio programado flexible — no se considera vencida si ya ha pasado',
   'duePanel.filterPropertiesTooltip':
     'Filtrar por propiedades del bloque (esfuerzo, responsable, etc.)',
   'duePanel.emptyContent': '(vacío)',

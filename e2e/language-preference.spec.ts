@@ -17,7 +17,7 @@
 
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, focusBlock, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * The labels this spec navigates by, per language: the option that picks it,
@@ -83,7 +83,9 @@ test.describe('Language preference @settings', () => {
     await waitForBoot(page)
   })
 
-  test('switching to Español survives a navigation round trip', async ({ page }) => {
+  test('switching to Español translates the whole shell and survives a round trip', async ({
+    page,
+  }) => {
     await openGeneral(page, LABELS.en)
 
     // A browser set to English follows it, with `<html lang>` following
@@ -97,17 +99,40 @@ test.describe('Language preference @settings', () => {
     await expect(page.getByRole('combobox', { name: LABELS.es.weekStart })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
 
-    // Navigate away and back, through the Spanish shell. The preference is
-    // device-scoped localStorage, so it must still be Spanish on return.
+    // A toast.
+    await pickLanguage(page, LABELS.es.weekStart, 'Domingo')
+    await expect(page.getByText('Primer día de la semana: Domingo')).toBeVisible()
+
+    // The sidebar (navigating by its Spanish label), the journal header and
+    // the formatting toolbar of a focused block.
     await navigateToView(page, LABELS.es.journal)
     await expect(page.locator('[data-testid="settings-panel-general"]')).not.toBeVisible()
+    await expect(page.getByRole('button', { name: 'Ir a hoy' })).toBeVisible()
+    await focusBlock(page, 0)
+    await expect(
+      page.getByTestId('formatting-toolbar').getByRole('button', { name: 'Convertir en' }),
+    ).toBeVisible()
+
+    // A dialog: the shortcuts sheet `?` opens.
+    await page.keyboard.press('Escape')
+    await page.locator('header').first().click()
+    await page.keyboard.type('?')
+    await expect(page.getByRole('heading', { name: 'Referencia rápida' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // Back to Settings: the preference is device-scoped localStorage, so it is
+    // still Spanish on return.
     await openGeneral(page, LABELS.es)
 
     await expect(page.getByRole('combobox', { name: LABELS.es.language })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
   })
 
-  for (const tag of ['pt', 'de', 'fr'] as const) {
+  // Spanish has the full walk above; every other language gets the shell check.
+  const others = (Object.keys(LABELS) as (keyof typeof LABELS)[]).filter(
+    (tag) => tag !== 'en' && tag !== 'es',
+  )
+  for (const tag of others) {
     const labels = LABELS[tag]
     test(`switching to ${labels.option} renders the shell in it`, async ({ page }) => {
       await openGeneral(page, LABELS.en)

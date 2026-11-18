@@ -81,7 +81,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.property': 'Eigenschaft',
   'agendaFilter.propertyKey': 'Eigenschaftsschlüssel',
   'agendaFilter.propertyValue': 'Wert (optional)',
-  'agendaFilter.propertyValuePlaceholder': 'Wert filtern...',
+  'agendaFilter.propertyValuePlaceholder': 'Filterwert...',
   'agendaFilter.selectProperty': 'Eigenschaft auswählen...',
   'agendaFilter.tagPlaceholder': 'Tags suchen...',
   'agendaFilter.tagName': 'Tag-Name',

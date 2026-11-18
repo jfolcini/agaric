@@ -35,6 +35,8 @@ extend-exclude = [
     "src/lib/i18n/es/",
     "src/lib/i18n/fr/",
     "src/lib/i18n/pt/",
+    # The translator guide's glossary and style tables are in every language.
+    "docs/TRANSLATING.md",
 ]
 
 [default.extend-words]

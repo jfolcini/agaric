@@ -119,7 +119,7 @@ export const pages: Record<string, string> = {
   'templates.variableToday': 'Date du jour (YYYY-MM-DD)',
   'templates.variableTime': 'Heure actuelle (HH:MM)',
   'templates.variableDatetime': 'Date et heure actuelles',
-  'templates.variablePageTitle': 'Titre de la page dans laquelle vous insérez',
+  'templates.variablePageTitle': 'Titre de la page où le modèle est inséré',
   'templates.variableTodayFormat': 'Date avec un format personnalisé (aussi time:/datetime:)',
   'templates.variableDateMath': 'Aujourd’hui ± N jours (p. ex. date+7, date-1)',
   'templates.variableWeekday': 'Nom du jour actuel (p. ex. lundi)',
@@ -176,7 +176,7 @@ export const pages: Record<string, string> = {
   'pageSource.countEdited_other': '{{count}} modifiés',
   'pageSource.countMoved_one': '{{count}} déplacé',
   'pageSource.countMoved_other': '{{count}} déplacés',
-  'pageSource.reportCreated': 'Créés\u00A0:',
+  'pageSource.reportCreated': 'Créées\u00A0:',
   'pageSource.reportWarnings': 'Enregistré différemment de ce qui était écrit\u00A0:',
   'pageSource.undoStale':
     'La page a changé après l’enregistrement, l’annulation n’est donc plus possible ici',
@@ -246,7 +246,7 @@ export const pages: Record<string, string> = {
     'Fusionner enregistre votre texte en y intégrant les modifications faites ailleurs. Là où les deux côtés ont modifié un bloc différemment, les deux versions sont conservées.',
   'pageSource.overwrite': 'Écraser',
   'pageSource.overwriteWarning':
-    'Écraser fait primer votre texte sur tout ce qui a changé ailleurs depuis son ouverture\u00A0: les modifications faites ailleurs sont annulées, les blocs ajoutés ailleurs sont supprimés, les blocs supprimés ailleurs reviennent sous forme de nouvelles copies, et une page renommée ailleurs est liée par son ancien nom, ce qui crée une nouvelle page.',
+    'Écraser fait primer votre texte sur tout ce qui a changé ailleurs depuis que vous avez ouvert la source\u00A0: les modifications faites ailleurs sont annulées, les blocs ajoutés ailleurs sont supprimés, les blocs supprimés ailleurs reviennent sous forme de nouvelles copies, et une page renommée ailleurs est liée par son ancien nom, ce qui crée une nouvelle page.',
   'pageHeader.pageDeleted': 'Page supprimée',
   'pageHeader.deleteFailed': 'Impossible de supprimer la page',
   'pageHeader.deleteConfirm':
@@ -290,7 +290,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.spaceNotReady': 'Chargement des espaces… réessayez dans un instant',
   'pageBrowser.searchPlaceholder': 'Rechercher des pages...',
   'pageBrowser.noMatches': 'Aucune page correspondante',
-  'pageBrowser.createPageNamed': 'Créer la page “{{name}}”',
+  'pageBrowser.createPageNamed': 'Créer la page «\u00A0{{name}}\u00A0»',
   'newPageDialog.title': 'Nouvelle page',
   'newPageDialog.description':
     'Les pages au nom similaire sont listées ci-dessous, pour que vous puissiez en ouvrir une à la place.',
@@ -592,7 +592,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetLinkedFromDesc': 'Blocs avec un lien entrant depuis une page.',
   'pageBrowser.filter.facetHasParentMatching': 'Parent correspondant',
   'pageBrowser.filter.facetHasParentMatchingDesc':
-    'Blocs dont le parent remplit un filtre imbriqué.',
+    'Blocs dont le parent satisfait un filtre imbriqué.',
   'pageBrowser.filter.linkTargetLabel': 'Page cible',
   'pageBrowser.filter.linkSourceLabel': 'Page source',
   'pageBrowser.filter.linkPickPage': 'Choisir une page…',
@@ -602,7 +602,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.tagNoTags': 'Aucune étiquette correspondante',
   'pageBrowser.filter.hasParentMatchingLabel': 'Critère du parent',
   'pageBrowser.filter.hasParentMatchingHint':
-    'Construisez le filtre que le bloc parent doit remplir.',
+    'Construisez le filtre que le bloc parent doit satisfaire.',
   'pageBrowser.filter.hasParentMatchingEmpty':
     'Ajoutez au moins une condition pour le critère du parent.',
   'pageBrowser.filter.summaryLinksTo': 'lien vers {{target}}',

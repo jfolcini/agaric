@@ -149,7 +149,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 
 - **Every user-visible string** uses `t()`. Includes toasts, `aria-label`, empty / error states, `announce()` calls, validation messages.
 - **Keys live in `src/lib/i18n/{namespace}.ts`** (agenda / block / common / editor / errors / history / pages / properties / references / settings / shortcuts / sync / toolbar). Choose the namespace by feature.
-- **Every new key is translated in the same change.** Add it to the same namespace file under every locale directory (`src/lib/i18n/<tag>/`); `locale-catalogs.test.ts` fails otherwise. Plurals are an explicit `_one` / `_other` pair, never a bare key.
+- **Every new key carries translator context and is translated in the same change.** Head its group with a `// Translators:` note (where it appears, what kind of text it is, what its placeholders hold), and add it to the same namespace file under every locale directory (`src/lib/i18n/<tag>/`); `translator-context.test.ts` and `locale-catalogs.test.ts` fail otherwise. Plurals are an explicit `_one` / `_other` pair, never a bare key. Guide: `docs/TRANSLATING.md`.
 - **Adding a language or a regional variant:** see the docblock of `src/lib/i18n/locales.ts`.
 - **Component code** imports `t` via `useTranslation()`. Non-React code (class components, plain modules) imports `i18n` from `@/lib/i18n` and calls `i18n.t('key')`.
 - **Tests** assert through `t('key')`, or via `role` / `aria-label`. Never assert on hardcoded English.

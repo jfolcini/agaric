@@ -93,7 +93,7 @@ export const markdownReference: Record<string, string> = {
     'Muestra un bloque y sus hijos dentro de un bloque sin más contenido.',
   'markdownReference.footnote.title': 'Nota al pie',
   'markdownReference.footnote.description':
-    'Muestra el número de una nota al pie: 1, 2, 3 en el orden en que cada identificador aparece por primera vez en la página. Al hacer clic, va a la nota.',
+    'Muestra el número de una nota al pie: 1, 2, 3 en el orden en que cada identificador aparece por primera vez en la página. Haz clic en él para ir a la nota.',
   'markdownReference.footnoteDefinition.title': 'Texto de la nota al pie',
   'markdownReference.footnoteDefinition.description':
     'Al principio de un bloque, convierte el bloque en el texto de la nota al pie, marcado con su número.',
@@ -103,9 +103,9 @@ export const markdownReference: Record<string, string> = {
     'Al principio de un bloque, lo convierte en una tarea por hacer.',
   'markdownReference.taskDoing.title': 'En curso',
   'markdownReference.taskDoing.description': 'Convierte el bloque en una tarea en curso.',
-  'markdownReference.taskDone.title': 'Hecha',
+  'markdownReference.taskDone.title': 'Hecho',
   'markdownReference.taskDone.description': 'Convierte el bloque en una tarea terminada.',
-  'markdownReference.taskCancelled.title': 'Cancelada',
+  'markdownReference.taskCancelled.title': 'Cancelado',
   'markdownReference.taskCancelled.description': 'Convierte el bloque en una tarea cancelada.',
   'markdownReference.priority.title': 'Prioridad',
   'markdownReference.priority.description':

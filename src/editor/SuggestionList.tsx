@@ -71,7 +71,7 @@ export interface PickerItem {
 export interface SuggestionListProps {
   items: PickerItem[]
   command: (item: PickerItem) => void
-  /** Accessible label for the suggestion listbox (e.g. "Tags", "Block links"). */
+  /** Accessible label for the suggestion listbox (e.g. "Tags", "Page links"). */
   label?: string
   /**
    * Trigger character that opened this picker (e.g. '@', '[[', '((', '/', '::').

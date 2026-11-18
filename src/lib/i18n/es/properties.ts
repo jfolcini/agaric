@@ -24,7 +24,7 @@ export const properties: Record<string, string> = {
   'query.resultCountPartial_one': '{{count}} cargado hasta ahora',
   'query.resultCountPartial_other': '{{count}} cargados hasta ahora',
   'query.sortPartialNotice_one':
-    'Ordenado solo entre {{count}} fila cargada — carga más para ordenar todos los resultados.',
+    'Solo se ha ordenado {{count}} fila cargada — carga más para ordenar todos los resultados.',
   'query.sortPartialNotice_other':
     'Ordenado solo entre las {{count}} filas cargadas — carga más para ordenar todos los resultados.',
   'query.advancedQueryLabel_one': 'Consulta avanzada · {{count}} condición',
@@ -119,8 +119,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.negate': 'NOT',
   'advancedQuery.builder.negateTitle': 'Negar {{kind}} (envolver en NOT)',
   'advancedQuery.builder.negateOnTitle': 'Negación activa — haz clic para dejar de negar {{kind}}',
-  'advancedQuery.builder.kindGroup': 'grupo',
-  'advancedQuery.builder.kindLeaf': 'condición',
+  'advancedQuery.builder.kindGroup': 'el grupo',
+  'advancedQuery.builder.kindLeaf': 'la condición',
   'advancedQuery.builder.addFilter': 'Añadir filtro',
   'advancedQuery.builder.addGroup': 'Añadir grupo',
   'advancedQuery.builder.removeNode': 'Quitar {{kind}}',
@@ -206,7 +206,7 @@ export const properties: Record<string, string> = {
   'queryBuilder.advanced.notText':
     'Este filtro no se puede escribir como texto, así que el bloque lo guarda en forma codificada.',
   'queryBuilder.textOnly':
-    'Esta consulta usa un filtro que el generador no puede controlar. Solo se puede editar como texto, en el propio bloque.',
+    'Esta consulta usa un filtro que el generador no puede representar. Solo se puede editar como texto, en el propio bloque.',
   'property.drawerTitle': 'Propiedades del bloque',
   'property.drawerDescription':
     'Consulta, edita y añade propiedades a este bloque (estado, prioridad, fechas, campos personalizados).',
@@ -274,7 +274,7 @@ export const properties: Record<string, string> = {
   'propertiesView.duplicateKey': 'Ya existe una propiedad con esta clave',
   'propertiesView.deadlineWarning': 'Aviso de fecha límite',
   'propertiesView.deadlineWarningDesc':
-    'Muestra las tareas que vencen dentro de este número de días en la lista de próximas tareas de la agenda. 0 lo desactiva.',
+    'Muestra las tareas que vencen dentro de este número de días en la lista Próximas de la agenda. 0 lo desactiva.',
   'propertiesView.builtIn': 'Predefinida',
   'propertiesView.definitionsIn': 'Definiciones en',
   'propertiesView.copyToSpaceTooltip': 'Copiar a un espacio…',
@@ -458,8 +458,8 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vacío)',
   'tagFilter.loadingMessage': 'Cargando...',
   'tagFilter.loadMoreButton': 'Cargar más',
-  'tagFilter.selectedTags_one': '{{count}} etiqueta ({{mode}})',
-  'tagFilter.selectedTags_other': '{{count}} etiquetas ({{mode}})',
+  'tagFilter.selectedTags_one': 'con {{count}} etiqueta ({{mode}})',
+  'tagFilter.selectedTags_other': 'con {{count}} etiquetas ({{mode}})',
   'tagFilter.addPrefixButton': 'Empieza por',
   'tagFilter.addPrefixLabel':
     'Empieza por el texto escrito: coincide con todas las etiquetas que empiezan por él',

@@ -247,7 +247,7 @@ export const pages: Record<string, string> = {
     '"Zusammenführen" speichert deinen Text zusammen mit den Änderungen, die an anderer Stelle vorgenommen wurden. Wurde ein Block hier und dort unterschiedlich geändert, bleiben beide Versionen erhalten.',
   'pageSource.overwrite': 'Überschreiben',
   'pageSource.overwriteWarning':
-    '"Überschreiben" setzt deinen Text über alles, was seit dem Öffnen an anderer Stelle geändert wurde: Dortige Bearbeitungen werden zurückgesetzt, dort hinzugefügte Blöcke gelöscht, dort gelöschte Blöcke kommen als neue Kopien zurück, und eine dort umbenannte Seite wird unter ihrem alten Namen verknüpft, wodurch eine neue Seite entsteht.',
+    '"Überschreiben" gibt deinem Text Vorrang vor allem, was seit dem Öffnen an anderer Stelle geändert wurde: Dortige Bearbeitungen werden zurückgesetzt, dort hinzugefügte Blöcke gelöscht, dort gelöschte Blöcke kommen als neue Kopien zurück, und eine dort umbenannte Seite wird unter ihrem alten Namen verknüpft, wodurch eine neue Seite entsteht.',
   'pageHeader.pageDeleted': 'Seite gelöscht',
   'pageHeader.deleteFailed': 'Seite konnte nicht gelöscht werden',
   'pageHeader.deleteConfirm':
@@ -291,7 +291,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.spaceNotReady': 'Bereiche werden geladen… versuche es gleich noch einmal',
   'pageBrowser.searchPlaceholder': 'Seiten durchsuchen...',
   'pageBrowser.noMatches': 'Keine passenden Seiten',
-  'pageBrowser.createPageNamed': 'Seite “{{name}}” erstellen',
+  'pageBrowser.createPageNamed': 'Seite „{{name}}“ erstellen',
   'newPageDialog.title': 'Neue Seite',
   'newPageDialog.description':
     'Seiten mit ähnlichem Namen werden unten aufgelistet, damit du stattdessen eine davon öffnen kannst.',
@@ -436,7 +436,7 @@ export const pages: Record<string, string> = {
   'pageProperty.dateType': 'Datum',
   'pageProperty.selectType': 'Auswahl',
   'pageProperty.refType': 'Verweis',
-  'pageProperty.booleanType': 'Boolesch',
+  'pageProperty.booleanType': 'Wahrheitswert',
   'pageProperty.urlType': 'URL',
   'pageProperty.createDefinitionButton': 'Definition erstellen',
   'pageProperty.updateOptionsFailed': 'Optionen konnten nicht aktualisiert werden',

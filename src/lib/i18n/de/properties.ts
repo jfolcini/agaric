@@ -231,7 +231,7 @@ export const properties: Record<string, string> = {
   'property.createdAt': 'Erstellt am',
   'property.completedAt': 'Abgeschlossen am',
   'property.effort': 'Aufwand',
-  'property.assignee': 'Zuständig',
+  'property.assignee': 'Zuständigkeit',
   'property.location': 'Ort',
   'property.repeat': 'Wiederholung',
   'property.repeatUntil': 'Wiederholen bis',
@@ -278,7 +278,7 @@ export const properties: Record<string, string> = {
   'propertiesView.duplicateKey': 'Eine Eigenschaft mit diesem Schlüssel existiert bereits',
   'propertiesView.deadlineWarning': 'Fristwarnung',
   'propertiesView.deadlineWarningDesc':
-    'Aufgaben, die innerhalb so vieler Tage fällig sind, in der Liste "Demnächst" der Agenda anzeigen. 0 schaltet es aus.',
+    'Aufgaben, die innerhalb so vieler Tage fällig sind, in der Liste "Demnächst" der Agenda anzeigen. 0 schaltet die Warnung aus.',
   'propertiesView.builtIn': 'Integriert',
   'propertiesView.definitionsIn': 'Definitionen in',
   'propertiesView.copyToSpaceTooltip': 'In Bereich kopieren…',
@@ -463,8 +463,8 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(leer)',
   'tagFilter.loadingMessage': 'Wird geladen...',
   'tagFilter.loadMoreButton': 'Mehr laden',
-  'tagFilter.selectedTags_one': '{{count}} Tag ({{mode}})',
-  'tagFilter.selectedTags_other': '{{count}} Tags ({{mode}})',
+  'tagFilter.selectedTags_one': 'zu {{count}} Tag ({{mode}})',
+  'tagFilter.selectedTags_other': 'zu {{count}} Tags ({{mode}})',
   'tagFilter.addPrefixButton': 'Beginnt mit',
   'tagFilter.addPrefixLabel':
     'Beginnt mit dem eingegebenen Text: alle Tags finden, die damit beginnen',

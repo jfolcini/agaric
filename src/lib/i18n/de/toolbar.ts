@@ -27,7 +27,7 @@ export const toolbar: Record<string, string> = {
   'toolbar.formatTip': 'Textformatierung',
   'toolbar.turnInto': 'Umwandeln in',
   'toolbar.turnIntoTip': 'Umwandeln in (Blocktyp)',
-  'toolbar.bulletList': 'Aufzählungsliste',
+  'toolbar.bulletList': 'Aufzählung',
   'toolbar.internalLink': 'Interner Link',
   'toolbar.insertBlockRef': 'Blockverweis',
   'toolbar.insertQuery': 'Abfrage einfügen',

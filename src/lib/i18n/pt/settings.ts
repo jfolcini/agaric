@@ -37,7 +37,7 @@ export const settings: Record<string, string> = {
   'settings.editor.editModePage': 'Página',
   'settings.editor.emojiPickerLabel': 'Seletor de emoji',
   'settings.editor.emojiPickerHelp':
-    'Digite : seguido de um código (ex.: :joy) para inserir um emoji no texto. Desative para digitar dois-pontos literais sem pop-up.',
+    'Digite : seguido de um código (ex.: :joy) para inserir um emoji no texto. Desative para digitar um dois-pontos literal sem abrir o pop-up.',
   'settings.editor.tabIndentLabel': 'Tab altera o recuo dos blocos',
   'settings.editor.tabIndentHelp':
     'Tab e Shift+Tab aumentam e diminuem o recuo dos blocos. Desative para usar o Tab para mover o foco e alterar o recuo com Ctrl/Cmd+Shift+Arrow. Pressione Escape para sair do editor.',
@@ -58,7 +58,7 @@ export const settings: Record<string, string> = {
     'Passar o mouse sobre um link externo ou focá-lo busca o título e o ícone dele, o que informa a esse site que você tem o link. Quando desativado, as pré-visualizações em cache continuam aparecendo, e um link que você cola ou insere ainda é buscado uma vez.',
   'settings.tabSync': 'Sincronização e dispositivos',
   'settings.tabData': 'Dados',
-  'settings.history.label': 'Navegar e reverter alterações',
+  'settings.history.label': 'Ver e reverter alterações',
   'settings.history.description':
     'Veja as alterações anteriores nas suas notas e desfaça as que quiser.',
   'settings.history.openButton': 'Abrir histórico de edições',
@@ -292,7 +292,7 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'A semana começa em',
   'settings.weekStartMonday': 'Segunda-feira',
   'settings.weekStartSunday': 'Domingo',
-  'settings.weekStartUpdated': 'Início da semana alterado para {{day}}',
+  'settings.weekStartUpdated': 'Novo início da semana: {{day}}',
   'settings.journalDateFormatLabel': 'Formato de data do diário',
   'settings.journalDateFormatHelp':
     'Como os títulos do diário são exibidos. As páginas são sempre armazenadas como AAAA-MM-DD, então alterar isto nunca afeta os diários existentes.',
@@ -300,7 +300,7 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatIso': 'AAAA-MM-DD (ex.: 2026-06-17)',
   'settings.journalDateFormatLong': 'Mês D, AAAA (ex.: junho 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/AAAA (ex.: 17/06/2026)',
-  'settings.journalDateFormatWeekday': 'Ddd, Mmm D (ex.: qua, jun 17)',
+  'settings.journalDateFormatWeekday': 'Ddd, Mmm D (ex.: quarta, jun 17)',
   'settings.journalDateFormatUpdated': 'As datas do diário agora aparecem como {{example}}',
   'settings.valueClamped': 'Valor limitado a {{min}}–{{max}}',
 }

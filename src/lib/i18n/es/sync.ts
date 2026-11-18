@@ -56,7 +56,7 @@ export const sync: Record<string, string> = {
   'pairing.pairedDevicesTitle': 'Dispositivos emparejados',
   'pairing.confirmCloseTitle': '¿Cancelar el emparejamiento?',
   'pairing.confirmCloseDescription':
-    'Hay un emparejamiento en curso. Si cierras este diálogo, se cancelará el protocolo y el otro dispositivo tendrá que empezar de nuevo.',
+    'Hay un emparejamiento en curso. Si cierras este diálogo, se cancelará el proceso y el otro dispositivo tendrá que empezar de nuevo.',
   'pairing.confirmCloseAction': 'Cancelar emparejamiento',
   'pairing.confirmCloseKeep': 'Seguir emparejando',
   'pairing.srCountdownMinutes_one': 'La sesión caduca en {{count}} minuto',
@@ -149,7 +149,7 @@ export const sync: Record<string, string> = {
   'sync.changesAppliedUnknownCount': 'Se han sincronizado cambios desde el dispositivo',
   'sync.failed': 'La sincronización ha fallado: {{message}}',
   'sync.localTextKept':
-    'Otro dispositivo ha eliminado o movido “{{title}}”. Los bloques que añadiste aquí debajo y que aún no se habían sincronizado están en la papelera.',
+    'Otro dispositivo ha eliminado o movido “{{title}}”. Los bloques que le añadiste en este dispositivo y que aún no se habían sincronizado están en la papelera.',
   'sync.versionMismatchUpdatePeer':
     '{{peer}} usa una versión anterior de Agaric. Actualiza Agaric en {{peer}} y vuelve a sincronizar.',
   'sync.versionMismatchUpdatePeerUnnamed':
@@ -190,11 +190,11 @@ export const sync: Record<string, string> = {
   'sync.quarantineRetryFailed': 'No se ha podido reintentar el cambio de sincronización',
   'device.deviceNameLabel': 'Nombre del dispositivo',
   'pairing.inProgress': 'Emparejamiento en curso...',
-  'device.editAddressTitle': 'Dirección del par',
-  'device.editAddressPopoverLabel': 'Editar la dirección del par',
-  'device.addressInputLabel': 'Dirección (host:puerto)',
-  'device.addressHint': 'Formato: host:puerto (p. ej., 192.168.1.100:5000)',
-  'device.addressFormatInvalid': 'El formato debe ser host:puerto (p. ej., 192.168.1.100:5000)',
+  'device.editAddressTitle': 'Dirección del dispositivo',
+  'device.editAddressPopoverLabel': 'Editar la dirección del dispositivo',
+  'device.addressInputLabel': 'Dirección (host:port)',
+  'device.addressHint': 'Formato: host:port (p. ej., 192.168.1.100:5000)',
+  'device.addressFormatInvalid': 'El formato debe ser host:port (p. ej., 192.168.1.100:5000)',
   'device.addressPortInvalid': 'El puerto debe estar entre 1 y 65535',
   'device.saveAddressButton': 'Guardar',
   'device.cancelAddressButton': 'Cancelar',

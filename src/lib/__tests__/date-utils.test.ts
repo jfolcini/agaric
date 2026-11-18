@@ -21,6 +21,7 @@ import {
 } from '@/lib/date-utils'
 import { i18n } from '@/lib/i18n'
 import {
+  isSupportedLocale,
   registerDateLocale,
   SUPPORTED_LOCALES,
   __unregisterDateLocaleForTests,
@@ -281,11 +282,20 @@ describe('formatDateDisplay — locale tracking (#4555)', () => {
   // miss: the per-test coverage that picks which tests run against a mutant
   // must see this test execute the store, not only the hit (#3752).
   it('reuses one formatter per locale (#5440)', async () => {
-    await i18n.changeLanguage('it')
+    const unshipped = ['it', 'nl', 'sv', 'pl'].find((tag) => !isSupportedLocale(tag))
+    expect(unshipped).toBeDefined()
+    const day17 = new Date(2026, 5, 17)
+    const expected = day17.toLocaleDateString(unshipped, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+    await i18n.changeLanguage(unshipped)
     const construct = vi.spyOn(Intl, 'DateTimeFormat')
     try {
       for (let day = 1; day <= 5; day++) formatDateDisplay(new Date(2026, 5, day))
-      expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('mer 17 giu 2026')
+      expect(formatDateDisplay(day17)).toBe(expected)
       expect(construct).toHaveBeenCalledTimes(1)
     } finally {
       construct.mockRestore()

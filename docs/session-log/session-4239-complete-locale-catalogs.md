@@ -1,6 +1,6 @@
 # Session 4239 — complete Spanish, Portuguese, German and French catalogs, enforced at 100%
 
-The ask: finish Spanish, add Portuguese completely, and add a test that requires every string to be translated, so new copy cannot ship English-only. Regional variants (`pt-BR`, `pt-PT`) should be cheap to add later. German and French were added mid-session.
+The ask: finish Spanish, add Portuguese completely, and add a test that requires every string to be translated, so new copy cannot ship English-only. Regional variants (`pt-BR`, `pt-PT`) should be cheap to add later. German and French were added mid-session. A second round gave every message translator context, double-checked every translation against it, and closed out #6750.
 
 ## What shipped
 
@@ -10,12 +10,19 @@ The ask: finish Spanish, add Portuguese completely, and add a test that requires
 - **Regional variants.** `LOCALES` in `locales.ts` is the one registry (tag → endonym). A tag with a region is a variant whose catalog holds only overrides. `baseLocale()` derives its base from the primary subtag, `loadLocale` merges the base first, and i18next's default `load: 'all'` resolves `pt-PT` → `pt` → `en`. `lookupDateLocale` falls back to the base's date-fns locale. `resolveLocale('system')` now does RFC 4647 lookup on canonicalized device tags, skipping malformed ones.
 - **Settings.** The language select renders `LOCALES`, alphabetical by endonym, each option carrying `lang` so AT voices "Español" as Spanish. `settings.languageEnglish` and `settings.languageSpanish` left the catalog. The `agaric-language` default flips from `'en'` to `'system'`, as its docblock prescribed once coverage was real.
 
+- **Translator context (#6750 round).** Every English key now sits in a group headed by a `// Translators:` note: the surface (named after `docs/UI-MAP.md`), the kind of text (button, `aria-label`, toast, chip …), what each placeholder holds, and constraints (inserted into another string, split on `:`, must stay English). `translator-context.test.ts` fails on an uncovered key and fails closed (the keys it scans must equal the merged catalog). Subagents wrote the notes from the call sites, with a checker that kept every entry byte-identical to HEAD.
+- **Review pass.** A reviewer per namespace group and language reread every translation against those notes and `docs/TRANSLATING.md`, and fixed what was wrong: senses (French "annuler la réunion" meant calling the meeting off; Spanish "sin editar" read as "unedited"; German "Bereich auswählen" read as "select a space"), fragments glued to other strings (`tagFilter.selectedTags` needs "con"/"à"/"zu"/"a" after `blockMatch`), plurals that fail at 0 or 1 in Portuguese and French, and glossary drift.
+- **`docs/TRANSLATING.md`** is the translator guide: how catalogs work, adding a language or a variant, the rules, the kinds of text, per-language style and the shared glossary. `CONTRIBUTING.md` points to it. README and both Obsidian comparisons now list five complete languages.
+- **Fixes found on the way.** The `date-fns` vendor chunk captured every `date-fns/locale/*`, so all four languages' calendar data loaded at startup; non-English locales now ride in their language's lazy chunk, and the startup chunk shrank below its old size. The bulk task-state toast passed a literal English `'none'`; it now uses `task.noneState`. The `[[` picker was announced as "Block links" though it lists pages; it is "Page links".
+- **Journal template day and month names.** `/template` insertion already follows the app language, but a journal day the backend creates expands `<% weekday %>` / `<% month %>` with chrono's English names (`journal.rs`). Following the language needs the UI locale on every command that creates a day, which an MCP-created day does not have, plus chrono's locale data: left English, as a follow-up.
+
 ## Traps
 
 - TypeScript 7 has no JS compiler API; the validator parses with `oxc-parser`.
 - `CompactionCard` splits translated strings on `:`. The brief told translators to keep the label colon, and they did.
 - `parse-date.ts` only understands English words, so the date placeholders stay English in every locale. Localized date input is a follow-up, not done here.
 - The slash-command menu labels in `src/lib/slash-commands.ts` are hardcoded English and also what a typed query matches, so the menu stays English in every locale. Localizing them changes matching and is left for its own change.
+- A real language used as the "unsupported" example in a test breaks the day that language ships: the throwaway Italian run of the add-a-language steps found three. They use the reserved private-use tag `qaa` now, or pick the first unshipped tag from a list.
 - The Write tool turns a `\u00A0` escape into the raw character; the French files are normalized to the escape, uppercase per oxlint `unicorn/escape-case`.
 
 ## What ran
@@ -25,3 +32,14 @@ The ask: finish Spanish, add Portuguese completely, and add a test that requires
 - `npm run typecheck`: clean. `prek run --files` over the change: passed.
 - Full `npx vitest run`: before German and French, 1130 files and 27179 tests passed. With them, 27201 passed and one failed: `date-utils`' formatter cache-miss test used `fr` as the locale nothing else formats, and the per-shipped-locale test above it now formats French first. It moved to `it`; the file reruns green.
 - Not run: the real-backend `e2e-tauri/` lane (no `tauri-cli` here). The `'system'` default makes it follow the runner's webview locale, so a non-English CI locale would show there first.
+- Second round: `translator-context.test.ts` reddened by renaming one `// Translators:` note (six uncovered keys listed) and, fail-closed, by changing a file's `export const` line so the scan misses it. The `use-block-multi-select` test for the cleared-state toast reddened with the literal `'none'` restored ("…como none"). The add-a-language steps were followed for a throwaway Italian locale: `npm run typecheck` demanded the loader, and `locale-catalogs.test.ts` listed every missing key with its file.
+- `npm run build` then `node scripts/check-bundle-budget.mjs`: within budget once non-English `date-fns` locales left the vendor group (it failed before, at `date-fns` 10719 B against 8234 B).
+- `e2e/language-preference.spec.ts` (the Spanish walk over a toast, the sidebar, the journal header, the toolbar and a dialog), `e2e/picker-happy-paths.spec.ts` and `e2e/page-mode-slash.spec.ts` (the "Page links" rename): passed.
+- Full `npx vitest run` after the reviews: 1131 files, 27219 tests passed.
+
+## Follow-ups not done here
+
+- Journal template `<% weekday %>` / `<% month %>` in backend-created days stay English (above).
+- The slash-command labels in `src/lib/slash-commands.ts` are hardcoded English and are what a typed query matches.
+- The context writers found English keys with no call site (`property.*` field labels, most `toolbar.*Tip` keys, `history.selectedBadge`, `journal.daily`, …); each still costs four translations.
+- The reviewers flagged English source strings: Title Case labels against the sentence-case rule (`pageBrowser.newPage`, `sidebar.newPage`, `history.title`, `queryBuilder.title`, `property.createdAt`, …), fragments glued to other strings (`tagFilter.selectedTags` after `blockMatch`, `duePanel.filterDue` after a bare count), `meeting.created` repeating "Meeting", `searchQuery.unknownValue` inserting an English noun, and `diff.hunkCounter` without a plural.

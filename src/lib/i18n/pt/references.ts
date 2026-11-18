@@ -105,7 +105,7 @@ export const references: Record<string, string> = {
   'graph.tagsLoadFailed': 'Não foi possível carregar as etiquetas para o filtro',
   'graph.title': 'Relações entre páginas',
   'graph.keyboardHint':
-    'Use Tab para entrar no grafo e depois as teclas de seta ou digite um nome para se mover entre os nós. Space ou um clique seleciona um nó; Enter ou um segundo clique abre a página dele; Escape limpa a seleção.',
+    'Use Tab para entrar no grafo e depois as teclas de seta, ou digite um nome, para se mover entre os nós. A barra de espaço ou um clique seleciona um nó; Enter ou um segundo clique abre a página dele; Esc limpa a seleção.',
   'graph.selected': 'Página "{{page}}" selecionada',
   'graph.zoomIn': 'Ampliar',
   'graph.zoomOut': 'Reduzir',
@@ -179,7 +179,7 @@ export const references: Record<string, string> = {
   'taggedItems.blocksIn': 'Blocos em {{title}}',
   'taggedItems.noPages': 'Nenhuma página tem esta etiqueta.',
   'taggedItems.noBlocks': 'Nenhum bloco tem esta etiqueta.',
-  'taggedItems.loadFailed': 'Não foi possível carregar onde esta etiqueta está.',
+  'taggedItems.loadFailed': 'Não foi possível carregar os itens com esta etiqueta.',
   'taggedItems.noChildren': 'Nenhum bloco filho.',
   'taggedItems.moreChildren_one': 'Mais {{count}} bloco — abra o bloco para vê-lo',
   'taggedItems.moreChildren_other': 'Mais {{count}} blocos — abra o bloco para vê-los',
@@ -254,7 +254,7 @@ export const references: Record<string, string> = {
   'backlink.sortGroupLabel': 'Ordenar referências',
   'backlink.sortByLabel': 'Ordenar por',
   'backlink.sortPrefix': 'Ordenar:',
-  'backlink.sortGroupBuiltin': 'Padrão',
+  'backlink.sortGroupBuiltin': 'Nativos',
   'backlink.sortGroupProperties': 'Suas propriedades',
   'backlink.sortCreated': 'Criação',
   'backlink.sortDue': 'Data de vencimento',
@@ -306,11 +306,11 @@ export const references: Record<string, string> = {
   'search.invalidFilterWithError': 'Filtro inválido: {{label}} — {{error}}',
   'search.invalidFilterError': '{{label}}: {{error}}',
   'searchQuery.valueRequired': '{{prefix}} requer um valor',
-  'searchQuery.unknownValue': "{{noun}} desconhecido '{{value}}'",
-  'searchQuery.dateExpectedAfterOperator': "esperado AAAA-MM-DD após '{{op}}', recebido '{{rest}}'",
+  'searchQuery.unknownValue': "valor desconhecido para {{noun}}: '{{value}}'",
+  'searchQuery.dateExpectedAfterOperator': "esperado YYYY-MM-DD após '{{op}}', recebido '{{rest}}'",
   'searchQuery.unknownDate': "data desconhecida '{{value}}'",
-  'searchQuery.propKeyValueRequired': '{{prefix}}: chave=valor obrigatório',
-  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: esperado 'chave=valor'",
+  'searchQuery.propKeyValueRequired': '{{prefix}}: requer key=value',
+  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: esperado 'key=value'",
   'searchQuery.propKeyEmpty': '{{prefix}}: a chave não pode ficar vazia',
   'searchQuery.tagBesideUnder':
     'tag: e #tag não podem ser combinados com under:; use under: para todas as etiquetas',
@@ -618,7 +618,8 @@ export const references: Record<string, string> = {
     '<strong>Recupere pesquisas recentes com</strong> <kbd>↑</kbd> / <kbd>↓</kbd> quando o campo estiver vazio.',
   'search.help.tips.dedupe':
     'O histórico remove duplicatas — enviar a mesma consulta de novo a move para o início.',
-  'search.help.tips.perSpace': 'Separado por espaço — a recuperação fica restrita ao espaço atual.',
+  'search.help.tips.perSpace':
+    'Histórico por espaço — a recuperação fica restrita ao espaço atual.',
   'search.help.tips.dropdown':
     'A lista suspensa mostra as últimas 20 consultas enviadas; avançar além da entrada mais recente limpa o campo.',
   'search.help.tips.clear':

@@ -144,5 +144,5 @@ export const markdownReference: Record<string, string> = {
     'Ouvre le menu des commandes\u00A0: titres, tâches, dates, encadrés et plus encore.',
   'markdownReference.emoji.title': 'Emoji',
   'markdownReference.emoji.description':
-    'Le nom d’un emoji entre deux-points devient l’emoji. Deux-points suivis de deux lettres ouvrent une liste.',
+    'Le nom d’un emoji entre deux-points devient l’emoji. Un deux-points suivi de deux lettres ouvre une liste.',
 }

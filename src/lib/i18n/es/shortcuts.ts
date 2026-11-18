@@ -35,9 +35,9 @@ export const shortcuts: Record<string, string> = {
   'keyboard.condition.atStartOfBlock': 'al principio del bloque',
   'keyboard.condition.inEditor': 'en el editor',
   'keyboard.condition.inTable': 'en una tabla',
-  'keyboard.condition.notEditing': 'sin editar',
+  'keyboard.condition.notEditing': 'sin estar editando',
   'keyboard.condition.notEditingOrAtBlockEdge':
-    'sin editar, o con la selección de texto en el borde del bloque',
+    'sin estar editando, o con la selección de texto en el borde del bloque',
   'keyboard.condition.onCursorBlock': 'en el bloque bajo el cursor de selección',
   'keyboard.condition.withSelection': 'con selección',
   'keyboard.condition.outsideEditor': 'fuera del editor',
@@ -166,8 +166,9 @@ export const shortcuts: Record<string, string> = {
   'keyboard.settings.editShortcutFor': 'Editar el atajo de {{action}}',
   'keyboard.settings.saveButton': 'Guardar',
   'keyboard.settings.cancelButton': 'Cancelar',
-  'keyboard.settings.resetButton': 'Restablecer el valor predeterminado',
-  'keyboard.settings.resetShortcutFor': 'Restablecer {{action}} al valor predeterminado',
+  'keyboard.settings.resetButton': 'Restablecer',
+  'keyboard.settings.resetShortcutFor':
+    'Restablecer el atajo de {{action}} al valor predeterminado',
   'keyboard.settings.resetAllButton': 'Restablecer todo a los valores predeterminados',
   'keyboard.settings.resetAllConfirm':
     '¿Restablecer todos los atajos de teclado a sus asignaciones predeterminadas?',

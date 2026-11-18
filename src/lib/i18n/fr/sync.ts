@@ -68,7 +68,7 @@ export const sync: Record<string, string> = {
   'device.localDeviceIdLabel': 'ID de l’appareil local',
   'device.localAddressLabel': 'Adresse de cet appareil',
   'device.localAddressDescription':
-    'Saisissez-la comme adresse manuelle sur l’autre appareil lorsque les deux ne se trouvent pas.',
+    'Saisissez-la comme adresse manuelle sur l’autre appareil lorsque les deux ne parviennent pas à se trouver.',
   'device.localAddressNoNetwork':
     'Aucun réseau local. Les autres appareils ne peuvent pas joindre celui-ci tant qu’il n’est pas connecté à un réseau.',
   'device.deviceIdCopied': 'ID de l’appareil copié',
@@ -108,9 +108,9 @@ export const sync: Record<string, string> = {
   'device.syncingAllMessage': 'Synchronisation avec tous les appareils associés...',
   'device.syncProgressOps': 'Synchronisation\u00A0: {{sent}} messages envoyés, {{received}} reçus',
   'device.syncProgressSending':
-    'Envoi des pièces jointes\u00A0: {{filesDone}} fichiers sur {{filesTotal}}, {{bytesDone}} sur {{bytesTotal}}',
+    'Envoi des pièces jointes\u00A0: {{filesDone}} sur {{filesTotal}} fichiers, {{bytesDone}} sur {{bytesTotal}}',
   'device.syncProgressReceiving':
-    'Réception des pièces jointes\u00A0: {{filesDone}} fichiers sur {{filesTotal}}, {{bytesDone}} sur {{bytesTotal}}',
+    'Réception des pièces jointes\u00A0: {{filesDone}} sur {{filesTotal}} fichiers, {{bytesDone}} sur {{bytesTotal}}',
   'device.syncProgressBarLabel': 'Transfert de pièces jointes avec {{name}}',
   'device.syncErrorMessage': 'Erreur de synchronisation\u00A0: {{error}}',
   'device.retryButton': 'Réessayer',
@@ -162,9 +162,9 @@ export const sync: Record<string, string> = {
   'sync.waitingForPeer': 'En attente de {{peer}}, dernière synchronisation {{time}}',
   'sync.waitingForPeerNeverSynced': 'En attente de {{peer}}',
   'sync.ownHistoryFork':
-    '{{peer}} contient des modifications faites par cet appareil et qu’il n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
+    '{{peer}} contient des modifications que cet appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
   'sync.ownHistoryForkUnnamed':
-    'L’autre appareil contient des modifications faites par cet appareil et qu’il n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
+    'L’autre appareil contient des modifications que cet appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
   'sync.retryAction': 'Relancer la synchronisation',
   'sync.backOnline': 'De nouveau en ligne. Synchronisation…',
   'sync.noPeersTitle': 'Aucun appareil associé',
@@ -182,7 +182,7 @@ export const sync: Record<string, string> = {
   'sync.quarantineLoadFailed':
     'Impossible de vérifier les modifications synchronisées qui n’ont pas pu être appliquées',
   'sync.quarantineRetry': 'Réessayer',
-  'sync.quarantineRetryLabel': 'Réessayer la modification synchronisée de {{space}}',
+  'sync.quarantineRetryLabel': 'Réessayer la modification synchronisée de l’espace {{space}}',
   'sync.quarantineRetried': 'Nouvelle tentative au prochain démarrage d’Agaric',
   'sync.quarantineRestartNow': 'Redémarrer maintenant',
   'sync.quarantineRetryFailed': 'Impossible de réessayer la modification synchronisée',
@@ -190,9 +190,9 @@ export const sync: Record<string, string> = {
   'pairing.inProgress': 'Association en cours...',
   'device.editAddressTitle': 'Adresse du pair',
   'device.editAddressPopoverLabel': 'Modifier l’adresse du pair',
-  'device.addressInputLabel': 'Adresse (hôte:port)',
-  'device.addressHint': 'Format\u00A0: hôte:port (par ex. 192.168.1.100:5000)',
-  'device.addressFormatInvalid': 'Le format doit être hôte:port (par ex. 192.168.1.100:5000)',
+  'device.addressInputLabel': 'Adresse (host:port)',
+  'device.addressHint': 'Format\u00A0: host:port (par ex. 192.168.1.100:5000)',
+  'device.addressFormatInvalid': 'Le format doit être host:port (par ex. 192.168.1.100:5000)',
   'device.addressPortInvalid': 'Le port doit être compris entre 1 et 65535',
   'device.saveAddressButton': 'Enregistrer',
   'device.cancelAddressButton': 'Annuler',
