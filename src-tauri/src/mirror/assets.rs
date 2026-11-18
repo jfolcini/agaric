@@ -20,6 +20,7 @@ use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
 
+use super::store::StateDir;
 use crate::commands::pages::PageFile;
 
 /// The folder below a space's folder that holds its copies.
@@ -247,6 +248,34 @@ pub struct Copy {
     pub modified_ms: Option<u128>,
 }
 
+impl Copy {
+    /// The copy of `id` as the file at `target` stands now.
+    fn written(id: String, target: &Path) -> Self {
+        let (len, modified_ms) = stat(target).unwrap_or_default();
+        Self {
+            id,
+            len,
+            modified_ms,
+        }
+    }
+
+    /// A copy of `id` already changed outside Agaric: no file's stat matches
+    /// it, so [`Copies::remove_except`] keeps and lists it.
+    fn changed(id: String) -> Self {
+        Self {
+            id,
+            len: u64::MAX,
+            modified_ms: None,
+        }
+    }
+}
+
+/// Whether the files at `a` and `b` hold the same bytes; not when either
+/// cannot be read.
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    matches!((std::fs::read(a), std::fs::read(b)), (Ok(a), Ok(b)) if a == b)
+}
+
 fn stat(path: &Path) -> Option<(u64, Option<u128>)> {
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta
@@ -257,44 +286,66 @@ fn stat(path: &Path) -> Option<(u64, Option<u128>)> {
     Some((meta.len(), modified))
 }
 
-/// The copies the mirror wrote, by path below its folder: `mirror/copies.json`
-/// in the app's data, beside the pages' state files.
+/// The copies the mirror wrote in the folder it is bound to, by path below
+/// it: a record per folder, beside that folder's page states
+/// ([`StateDir::copies_file`]), so the copy another folder holds at the same
+/// path is never taken for this one's (#6963).
 pub struct Copies {
-    file: PathBuf,
+    /// The bound folder's record, `None` while bound to none.
+    file: Option<PathBuf>,
     app_data_dir: PathBuf,
     written: BTreeMap<String, Copy>,
 }
 
 impl Copies {
-    /// The copies as last saved; none when the file is missing, or does not
-    /// parse, whose copies are then written again and their first removal
-    /// left to the unchanged rule.
-    pub fn load(app_data_dir: &Path) -> Self {
-        let file = app_data_dir.join("mirror").join("copies.json");
-        let written = std::fs::read(&file)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+    /// Bound to no folder: it holds no copy and saves nothing.
+    pub fn new(app_data_dir: &Path) -> Self {
         Self {
-            file,
+            file: None,
             app_data_dir: app_data_dir.to_path_buf(),
-            written,
+            written: BTreeMap::new(),
         }
     }
 
+    /// Bind to `folder`'s copies as last saved, unless bound to it already;
+    /// none when the file is missing, or does not parse, whose copies are
+    /// then found again by [`Copies::ensure`]. A record of the earlier layout
+    /// is adopted first ([`StateDir::adopt_legacy_copies`]).
+    ///
+    /// # Errors
+    ///
+    /// The earlier record cannot be adopted; the copies then stay as bound.
+    pub fn bind(&mut self, states: &StateDir, folder: &str) -> std::io::Result<()> {
+        let file = states.copies_file(folder);
+        if self.file.as_ref() == Some(&file) {
+            return Ok(());
+        }
+        states.adopt_legacy_copies(folder)?;
+        self.written = std::fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        self.file = Some(file);
+        Ok(())
+    }
+
     fn save(&self) -> Result<(), AppError> {
-        if let Some(dir) = self.file.parent() {
+        let file = self
+            .file
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("the mirror's copies are bound to no folder"))?;
+        if let Some(dir) = file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        super::store::write_atomic(&self.file, &serde_json::to_vec(&self.written)?)?;
+        super::store::write_atomic(file, &serde_json::to_vec(&self.written)?)?;
         Ok(())
     }
 
     /// Copy each live attachment among `ids` into `space`'s folder below
-    /// `root`, unless its copy is there: one the user changed since is left
-    /// as they made it, and listed by [`Copies::remove_except`]. Returns each copy in
-    /// place, as its attachment and path, and the copies that could not be
-    /// written, and why.
+    /// `root`, unless a file is at its copy's path: one the user changed is
+    /// left as they made it, and listed by [`Copies::remove_except`]. Returns
+    /// each copy in place, as its attachment and path, and the copies that
+    /// could not be written, and why.
     ///
     /// # Errors
     ///
@@ -313,22 +364,24 @@ impl Copies {
         for (id, (filename, fs_path)) in found {
             let path = format!("{space}/{ASSETS_DIR}/{id}/{}", asset_name(&filename));
             let target = root.join(&path);
-            let there =
-                target.is_file() && self.written.get(&path).is_some_and(|copy| copy.id == id);
-            if !there {
-                if let Err(e) = copy_file(root, &path, &self.app_data_dir.join(&fs_path)) {
-                    failed.push((path, e.to_string()));
-                    continue;
-                }
-                let (len, modified_ms) = stat(&target).unwrap_or_default();
-                self.written.insert(
-                    path.clone(),
-                    Copy {
-                        id: id.clone(),
-                        len,
-                        modified_ms,
-                    },
-                );
+            let recorded = self.written.get(&path).is_some_and(|copy| copy.id == id);
+            if !(recorded && target.is_file()) {
+                let stored = self.app_data_dir.join(&fs_path);
+                // A file the record lacks, as in a folder mirrored before
+                // each kept its own record (#6963), is never written over:
+                // taken as the copy when it holds the attachment, kept as one
+                // changed outside Agaric otherwise.
+                let present = target.is_file();
+                let copy = if present && !same_bytes(&target, &stored) {
+                    Copy::changed(id.clone())
+                } else {
+                    if !present && let Err(e) = copy_file(root, &path, &stored) {
+                        failed.push((path, e.to_string()));
+                        continue;
+                    }
+                    Copy::written(id.clone(), &target)
+                };
+                self.written.insert(path.clone(), copy);
                 changed = true;
             }
             placed.push((id, path));

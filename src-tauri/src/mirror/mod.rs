@@ -627,7 +627,7 @@ pub struct Mirror {
     read_back: bool,
     /// Whether attachments are copied into the folder, as of this tick.
     copy_files: bool,
-    /// The copies written ([`assets::Copies`]).
+    /// The copies written in the folder mirrored ([`assets::Copies`]).
     copies: assets::Copies,
     /// The copies this pass's pages link, the ones a full pass keeps.
     linked_copies: HashSet<String>,
@@ -787,7 +787,7 @@ impl Mirror {
         state: MirrorState,
     ) -> Result<Self, AppError> {
         let store = StateDir::new(state.app_data_dir());
-        let copies = assets::Copies::load(state.app_data_dir());
+        let copies = assets::Copies::new(state.app_data_dir());
         let pages = store.load()?;
         let watermark = own_head(&pool, &device_id).await?;
         Ok(Self {
@@ -884,6 +884,27 @@ impl Mirror {
     async fn forget_lost_copies(&mut self) -> Result<(), AppError> {
         let live = assets::attachments(&self.pool, self.copies.ids()).await?;
         self.copies.forget_except(&live.into_keys().collect())
+    }
+
+    /// Bind the copies and the states to `folder`'s, the copies first: a
+    /// fresh start due there ([`MirrorState::start_fresh`]) forgets among
+    /// that folder's own.
+    async fn bind(&mut self, folder: &str) -> Result<(), AppError> {
+        self.copies.bind(&self.store, folder)?;
+        // Due until done: a tick failing part way would leave the states in
+        // memory, their head gone, for the next pass to roll the folder back.
+        let fresh = self.state.start_fresh_due();
+        if fresh {
+            self.store.forget(folder)?;
+            self.forget_lost_copies().await?;
+            self.state.started_fresh();
+        }
+        let reload = self.state.take_reload();
+        if self.store.bind(folder)? || fresh || reload {
+            self.forget_folder();
+            self.pages = self.store.load()?;
+        }
+        Ok(())
     }
 
     /// Start over in another folder, with its own states: nothing it lacks
@@ -1035,19 +1056,7 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         }
-        // Due until done: a tick failing part way would leave the states in
-        // memory, their head gone, for the next pass to roll the folder back.
-        let fresh = self.state.start_fresh_due();
-        if fresh {
-            self.store.forget(&folder)?;
-            self.forget_lost_copies().await?;
-            self.state.started_fresh();
-        }
-        let reload = self.state.take_reload();
-        if self.store.bind(&folder)? || fresh || reload {
-            self.forget_folder();
-            self.pages = self.store.load()?;
-        }
+        self.bind(&folder).await?;
         let root = PathBuf::from(folder);
         let mut paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
         if paused.is_none() && self.behind().await? {
