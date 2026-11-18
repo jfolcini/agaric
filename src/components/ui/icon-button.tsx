@@ -24,7 +24,10 @@
 import type * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 type IconSize = 'icon-xs' | 'icon-sm' | 'icon' | 'icon-lg'
 
@@ -55,6 +58,12 @@ export interface IconButtonProps extends Omit<
    */
   ariaLabel: string
   /**
+   * The keyboard shortcut, shown after the name in the tooltip on a device
+   * with a keyboard. A touch-only device's press-and-hold shows the name
+   * alone: a shortcut there is noise (#6895). Keep it out of `tooltip`.
+   */
+  shortcut?: string
+  /**
    * Restricted to the four `icon-*` Button sizes — this primitive only
    * makes sense for square icon-only chrome. Defaults to the standard 36 px
    * `icon` size.
@@ -62,19 +71,38 @@ export interface IconButtonProps extends Omit<
   size?: IconSize
 }
 
-const IconButton = ({ tooltip, ariaLabel, size = 'icon', children, ...rest }: IconButtonProps) => (
-  // #1735: opt into the press-and-hold tooltip fallback. Radix hover tooltips
-  // never open on a coarse-pointer tap, so this is the only way the visible
-  // label surfaces to a sighted touch user (the `aria-label` covers AT only).
-  <Tooltip openOnLongPress>
-    <TooltipTrigger asChild>
-      <Button size={size} aria-label={ariaLabel} data-slot="icon-button" {...rest}>
-        {children}
-      </Button>
-    </TooltipTrigger>
-    <TooltipContent>{tooltip}</TooltipContent>
-  </Tooltip>
-)
+const IconButton = ({
+  tooltip,
+  ariaLabel,
+  shortcut,
+  size = 'icon',
+  children,
+  ...rest
+}: IconButtonProps) => {
+  const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
+  const showShortcut = shortcut !== undefined && !(isTouch && isMobile)
+  return (
+    // #1735: opt into the press-and-hold tooltip fallback. Radix hover tooltips
+    // never open on a coarse-pointer tap, so this is the only way the visible
+    // label surfaces to a sighted touch user (the `aria-label` covers AT only).
+    <Tooltip openOnLongPress>
+      <TooltipTrigger asChild>
+        <Button size={size} aria-label={ariaLabel} data-slot="icon-button" {...rest}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {tooltip}
+        {showShortcut && (
+          <Kbd className="ml-1" aria-hidden="true">
+            {shortcut}
+          </Kbd>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 IconButton.displayName = 'IconButton'
 
 export { IconButton }
