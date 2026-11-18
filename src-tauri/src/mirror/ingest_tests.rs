@@ -239,6 +239,24 @@ async fn the_next_agaric_edit_rewrites_only_that_blocks_lines() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_renamed_in_agaric_takes_its_files_own_lines_to_the_new_path() {
+    let mut fx = Fx::new().await;
+    let (page, _) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    let own = "* one\n* two\n";
+    fx.write(own);
+    fx.settle_file().await;
+    assert_eq!(fx.read(), own, "a file reading as its page is kept");
+
+    fx.edit(&page, "Gamma").await;
+    fx.tick().await;
+
+    assert!(!fx.root.join(ALPHA).exists(), "the old file goes");
+    let moved = std::fs::read_to_string(fx.root.join("TestSpace/Gamma.md")).unwrap();
+    assert_eq!(moved, own);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_save_from_a_stale_editor_does_not_undo_what_agaric_wrote_since() {
     let mut fx = Fx::new().await;
     let (page, blocks) = fx.page("Alpha", &["a", "b", "c"]).await;
