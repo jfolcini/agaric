@@ -332,13 +332,18 @@ test.describe('Graph view @graph', () => {
         }
         return id
       }
-      for (const hub of ['North', 'South', 'East']) {
-        const hubId = await createPage(`${hub} hub`, [])
-        for (let i = 0; i < 20; i++) await createPage(`${hub} ${i}`, [hubId])
-      }
+      const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i)
+      // Concurrently where order does not matter: one at a time, each a round trip to the
+      // real backend, the seed alone took most of this test's budget under parallel workers.
+      await Promise.all(
+        ['North', 'South', 'East'].map(async (hub) => {
+          const hubId = await createPage(`${hub} hub`, [])
+          await Promise.all(range(20).map((i) => createPage(`${hub} ${i}`, [hubId])))
+        }),
+      )
       let previous: string[] = []
-      for (let i = 0; i < 10; i++) previous = [await createPage(`Chain ${i}`, previous)]
-      for (let i = 0; i < 15; i++) await createPage(`Loose ${i}`, [])
+      for (const i of range(10)) previous = [await createPage(`Chain ${i}`, previous)]
+      await Promise.all(range(15).map((i) => createPage(`Loose ${i}`, [])))
     }, SEED_IDS.SPACE_PERSONAL)
   }
 
