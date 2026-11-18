@@ -1,3 +1,4 @@
+mod change_feed;
 mod consumer;
 mod coordinator;
 mod dedup;
@@ -91,6 +92,9 @@ pub use dispatch::invalidations_for_op;
 #[cfg(any(test, feature = "test-util"))]
 pub use dispatch::SYNC_BLOCK_LINKS_PER_BLOCK_MAX;
 // #6488: the integrity check's Rebuild runs the whole set.
+pub use change_feed::{ChangeDomain, ChangeFeed, PendingChanges};
+#[cfg(any(test, feature = "test-util"))]
+pub use coordinator::INBOUND_REBUILD_DEBOUNCE;
 pub use dispatch::CommitOp;
 pub use dispatch::FULL_CACHE_REBUILD_TASKS;
 // #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the

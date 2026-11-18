@@ -43,7 +43,7 @@ pub(super) const OP_LOG_COUNT_CACHE_TTL_MS: u64 = 60_000;
 /// runs — an explicitly accepted tradeoff (#2291), since these caches are
 /// eventually-consistent by design. What it buys is turning ~8 O(vault)
 /// scans *per import* into 8 scans *per burst*.
-pub(super) const INBOUND_REBUILD_DEBOUNCE: Duration = Duration::from_millis(300);
+pub const INBOUND_REBUILD_DEBOUNCE: Duration = Duration::from_millis(300);
 /// #2291: hard cap, measured from the FIRST inbound import of a burst, on
 /// how long the fan-out can be deferred. A sustained stream of imports each
 /// arriving within [`INBOUND_REBUILD_DEBOUNCE`] of the previous one would
@@ -193,6 +193,8 @@ pub struct Materializer {
     pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
     /// See [`Self::on_local_commit`]. Empty in tests that wire none.
     local_commit_hook: Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>,
+    /// See [`Self::change_feed`].
+    pub(super) change_feed: Arc<super::ChangeFeed>,
     /// #2249 — per-space Loro engine state the apply path mutates.
     ///
     /// Production receives the ONE process-wide instance from
@@ -560,6 +562,7 @@ impl Materializer {
             force_shed_after: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
             app_data_dir: Arc::new(OnceLock::new()),
             local_commit_hook: Arc::new(OnceLock::new()),
+            change_feed: Arc::default(),
             loro,
             // #2291: shared trailing-debounce state for the inbound-sync
             // cache-rebuild fan-out; the driver task is spawned after `Self` is
@@ -669,6 +672,23 @@ impl Materializer {
         if let Some(hook) = self.local_commit_hook.get() {
             hook();
         }
+    }
+
+    /// What local commits changed since the app last emitted it (#6545).
+    pub fn change_feed(&self) -> &super::ChangeFeed {
+        &self.change_feed
+    }
+
+    /// Whether a local delete, restore or purge has its global rebuild still
+    /// waiting in the #2935 debounce. The change feed waits for that fire
+    /// instead of forcing it with a settle, which would rebuild once per
+    /// commit in a burst of deletes.
+    pub fn lifecycle_rebuild_armed(&self) -> bool {
+        self.lifecycle_rebuild_debounce
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .armed
     }
 
     /// The resolved app-data directory, if `set_app_data_dir` has run (always
