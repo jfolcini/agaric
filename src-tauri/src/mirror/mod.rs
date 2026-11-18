@@ -1219,15 +1219,9 @@ impl Mirror {
             }));
         }
         let mut paths = if adopted.is_some() {
-            // A file adopted in place stays there while its page keeps the
-            // title it had then.
             let pinned = pages
                 .iter()
-                .filter_map(|page| {
-                    let state = self.pages.get(&page.id)?;
-                    (state.adopted_title.as_ref() == Some(&page.title))
-                        .then(|| (page.id.clone(), state.path.clone()))
-                })
+                .filter_map(|page| Some((page.id.clone(), self.pages.get(&page.id)?.pin.clone()?)))
                 .collect();
             paths::adopted_layout(&pages, &pinned)
         } else {

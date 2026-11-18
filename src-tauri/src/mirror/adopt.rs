@@ -9,8 +9,9 @@
 //! is written for it ([`PageState::adopted_render`]); a page with no file of
 //! its own, such as one a link to a missing note created, gets no file until
 //! it changes. A file stays where it is while its page keeps the title it had
-//! ([`PageState::adopted_title`]); renamed, the page's file moves to the path
-//! the mirror names, `<title path>.md` below the folder. The `.md` files no
+//! ([`PageState::pin`]); renamed, the file is renamed in its own folder, and
+//! moves to the path the mirror names, `<title path>.md` below the folder,
+//! only when the title's namespace changes. The `.md` files no
 //! page took are left alone until they change.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -196,7 +197,20 @@ async fn plan(
     files_below(folder, folder, &mut on_disk)
         .map_err(|e| AppError::validation(format!("cannot read the folder: {e}")))?;
     let mapped = mapped(files, &pages, &on_disk)?;
-    let layout = paths::adopted_layout(&pages, &mapped);
+    let pins = mapped
+        .iter()
+        .filter_map(|(id, path)| {
+            let page = pages.iter().find(|page| page.id == *id)?;
+            Some((
+                id.clone(),
+                store::Pin {
+                    path: path.clone(),
+                    title: page.title.clone(),
+                },
+            ))
+        })
+        .collect();
+    let layout = paths::adopted_layout(&pages, &pins);
     let mut states = Vec::new();
     let mut changes = Vec::new();
     for page in &pages {
@@ -259,7 +273,10 @@ async fn page_state(
         before: text.clone(),
         after,
     });
-    state.adopted_title = Some(page.title.clone());
+    state.pin = Some(store::Pin {
+        path: path.to_owned(),
+        title: page.title.clone(),
+    });
     state.shadows.push(Shadow {
         text,
         line_ids,

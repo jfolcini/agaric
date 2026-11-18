@@ -207,28 +207,34 @@ async fn an_edit_in_agaric_rewrites_only_its_lines_of_an_adopted_file() {
 }
 
 #[tokio::test]
-async fn a_renamed_page_moves_its_adopted_file_to_the_path_the_mirror_names() {
+async fn a_renamed_page_renames_its_adopted_file_in_its_folder() {
     let fx = Fx::new(&[("Projects/Plan.md", PLAN)]).await;
     let files = fx.import(&["Projects/Plan.md"]).await;
     let page = files[0].page_id.clone();
     fx.adopt(files).await.unwrap();
     let mut mirror = fx.mirror().await;
     fx.ticks(&mut mirror, 2).await;
-    edit_block_inner(
-        &fx.pool,
-        DEV,
-        &fx.mat,
-        BlockId::from_trusted(&page),
-        "Roadmap 2027".into(),
-    )
-    .await
-    .unwrap();
+    let rename = |title: &'static str| {
+        edit_block_inner(
+            &fx.pool,
+            DEV,
+            &fx.mat,
+            BlockId::from_trusted(&page),
+            title.into(),
+        )
+    };
+    rename("Projects/Roadmap 2027").await.unwrap();
     fx.ticks(&mut mirror, 2).await;
-    // Out of its folder, as `<title>.md` directly below the adopted folder,
-    // with the user's own bytes.
+    // Renamed where it is, with the user's own bytes.
     let files = fx.files();
     assert_eq!(files.get("Projects/Plan.md"), None);
-    assert_eq!(files["Roadmap 2027.md"], PLAN);
+    assert_eq!(files["Projects/Roadmap 2027.md"], PLAN);
+    // Its namespace changed: it moves to the path the mirror names.
+    rename("Archive/Roadmap 2027").await.unwrap();
+    fx.ticks(&mut mirror, 2).await;
+    let files = fx.files();
+    assert_eq!(files.get("Projects/Roadmap 2027.md"), None);
+    assert_eq!(files["Archive/Roadmap 2027.md"], PLAN);
 }
 
 #[tokio::test]

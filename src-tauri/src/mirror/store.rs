@@ -301,15 +301,22 @@ pub struct Shadow {
 pub struct PageState {
     pub path: String,
     pub shadows: Vec<Shadow>,
-    /// The page's title when its file was adopted in place (#6540): the file
-    /// stays at `path` while the page keeps it, and moves to the path the
-    /// mirror names once the page is renamed.
+    /// Where the page's file was when it was adopted in place (#6540), and
+    /// the title it had then: the file's place from then on
+    /// ([`super::paths::adopted_layout`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adopted_title: Option<String>,
+    pub pin: Option<Pin>,
     /// The page's render when its file was adopted: nothing is written for
     /// the page while it still renders so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adopted_render: Option<String>,
+}
+
+/// An adopted file's path below the folder and its page's title then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pin {
+    pub path: String,
+    pub title: String,
 }
 
 impl PageState {
@@ -320,9 +327,6 @@ impl PageState {
     /// Record `shadow` as written at `path`, keeping the last
     /// `SHADOWS_KEPT` texts.
     pub fn record(&mut self, path: String, shadow: Shadow) {
-        if self.path != path {
-            self.adopted_title = None;
-        }
         self.adopted_render = None;
         self.path = path;
         if self.newest() != Some(&shadow) {

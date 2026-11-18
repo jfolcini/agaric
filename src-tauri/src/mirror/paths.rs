@@ -166,31 +166,51 @@ pub fn layout(spaces: &[(String, String)], pages: &[PageEntry]) -> HashMap<Strin
         .collect()
 }
 
-/// Each page's file below a folder adopted as one space's (#6540): a page in
-/// `pinned`, by id, keeps its path there, the path its file had when it was
-/// adopted; every other page is at `<title path>.md`, distinct under `fold`
-/// from the pinned paths and from each other.
+/// The part of `title` before its last `/`, its namespace.
+fn namespace(title: &str) -> &str {
+    title
+        .rsplit_once('/')
+        .map_or("", |(namespace, _)| namespace)
+}
+
+/// Each page's file below a folder adopted as one space's (#6540). A page
+/// pinned, by id, to the path its file had when adopted and its title then
+/// keeps that path while it keeps that title; renamed within the same
+/// namespace, its file is `<leaf>.md` in the pinned file's folder. Every other
+/// page, a pinned one whose namespace changed among them, is at
+/// `<title path>.md`. The renamed and the unpinned are distinct under `fold`
+/// from the pinned paths kept and from each other.
 pub fn adopted_layout(
     pages: &[PageEntry],
-    pinned: &HashMap<String, String>,
+    pinned: &HashMap<String, super::store::Pin>,
 ) -> HashMap<String, String> {
-    let taken = pinned
+    let mut kept = HashMap::new();
+    let mut free = Vec::new();
+    for page in pages {
+        match pinned.get(&page.id) {
+            Some(pin) if pin.title == page.title => {
+                kept.insert(page.id.clone(), pin.path.clone());
+            }
+            Some(pin) if namespace(&pin.title) == namespace(&page.title) => {
+                let leaf = page.title.rsplit('/').next().unwrap_or_default();
+                let folder = pin.path.rsplit_once('/').map(|(folder, _)| folder);
+                let path = match folder {
+                    Some(folder) => format!("{folder}/{}", sanitize_segment(leaf)),
+                    None => sanitize_segment(leaf),
+                };
+                free.push((page.id.as_str(), path));
+            }
+            _ => free.push((page.id.as_str(), title_path(&page.title))),
+        }
+    }
+    let taken = kept
         .values()
-        .map(|path| fold(path.strip_suffix(".md").unwrap_or(path)))
-        .collect();
-    let free = pages
-        .iter()
-        .filter(|page| !pinned.contains_key(&page.id))
-        .map(|page| (page.id.as_str(), title_path(&page.title)))
+        .map(|path: &String| fold(path.strip_suffix(".md").unwrap_or(path)))
         .collect();
     disambiguate_around(free, taken)
         .into_iter()
         .map(|(id, path)| (id, format!("{path}.md")))
-        .chain(
-            pages
-                .iter()
-                .filter_map(|page| Some((page.id.clone(), pinned.get(&page.id)?.clone()))),
-        )
+        .chain(kept)
         .collect()
 }
 

@@ -237,6 +237,13 @@ fn entry(id: &str, title: &str) -> PageEntry {
     }
 }
 
+fn pin(path: &str, title: &str) -> super::super::store::Pin {
+    super::super::store::Pin {
+        path: path.to_owned(),
+        title: title.to_owned(),
+    }
+}
+
 #[test]
 fn an_adopted_layout_keeps_pinned_paths_and_settles_the_rest_around_them() {
     let pages = [
@@ -245,8 +252,11 @@ fn an_adopted_layout_keeps_pinned_paths_and_settles_the_rest_around_them() {
         entry("01C", "Plan"),
     ];
     let pinned = HashMap::from([
-        ("01B".to_owned(), "journals/2026_11_18.md".to_owned()),
-        ("01C".to_owned(), "journal.md".to_owned()),
+        (
+            "01B".to_owned(),
+            pin("journals/2026_11_18.md", "2026-11-18"),
+        ),
+        ("01C".to_owned(), pin("journal.md", "Plan")),
     ]);
     let layout = adopted_layout(&pages, &pinned);
     assert_eq!(layout["01B"], "journals/2026_11_18.md");
@@ -254,4 +264,24 @@ fn an_adopted_layout_keeps_pinned_paths_and_settles_the_rest_around_them() {
     // `Journal.md` folds onto the pinned `journal.md`, so it takes the suffix.
     assert_eq!(layout["01A"], "Journal_01A.md");
     assert_eq!(layout.len(), 3);
+}
+
+#[test]
+fn a_renamed_adopted_page_keeps_its_folder_until_its_namespace_changes() {
+    let pages = [
+        entry("01A", "Bar"),
+        entry("01B", "Projects/Roadmap"),
+        entry("01C", "Archive/Baz"),
+    ];
+    let pinned = HashMap::from([
+        ("01A".to_owned(), pin("pages/Foo.md", "Foo")),
+        ("01B".to_owned(), pin("Projects/Plan.md", "Projects/Plan")),
+        ("01C".to_owned(), pin("pages/Baz.md", "Baz")),
+    ]);
+    let layout = adopted_layout(&pages, &pinned);
+    // Renamed in place, in the folder the file was adopted in.
+    assert_eq!(layout["01A"], "pages/Bar.md");
+    assert_eq!(layout["01B"], "Projects/Roadmap.md");
+    // Its namespace changed: at the path the mirror names.
+    assert_eq!(layout["01C"], "Archive/Baz.md");
 }
