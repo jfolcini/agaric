@@ -184,8 +184,8 @@ struct Inner {
     /// ([`MirrorState::hold_mass_change`]); none while nothing does.
     held: BTreeMap<String, String>,
     /// The files the user chose to read in, which hold nothing while they
-    /// stay changed.
-    confirmed: HashSet<String>,
+    /// stay changed as they were shown.
+    confirmed: HashSet<read_back::MirrorPending>,
     /// The folder's states were written outside the task, by an adoption:
     /// the next tick loads them.
     reload: bool,
@@ -276,20 +276,21 @@ impl MirrorState {
     }
 
     /// Whether reading back waits for the user this tick: `changed`, every
-    /// file, by its path below the folder, that the tick is about to read in,
-    /// move or trash for a change made outside Agaric, holds more files of
-    /// one space's folder than [`read_back::MASS_CHANGE`] that the user has
-    /// not chosen to read in ([`MirrorState::confirm_read_back`]). While it
+    /// file that the tick is about to read in, move or trash for a change
+    /// made outside Agaric, holds more files of one space's folder than
+    /// [`read_back::MASS_CHANGE`] that the user has not chosen to read in as
+    /// they changed ([`MirrorState::confirm_read_back`]). While it
     /// waits the status says reading back is off, lists the folder as failed
     /// with the reason and under `held`, and its `pending` names the files,
     /// as when reading back was turned off. Whatever is about to act on files
     /// changed outside Agaric asks here first, once a tick, with all of them;
     /// none while the user chose not to be asked.
-    pub fn hold_mass_change(&self, changed: &[String], adopted: bool) -> bool {
+    pub fn hold_mass_change(&self, changed: &[read_back::MirrorPending], adopted: bool) -> bool {
         let mut inner = self.lock();
-        let now: HashSet<&str> = changed.iter().map(String::as_str).collect();
-        // A choice lasts while its file stays changed.
-        inner.confirmed.retain(|path| now.contains(path.as_str()));
+        let now: HashSet<&read_back::MirrorPending> = changed.iter().collect();
+        // A choice lasts while its file stays changed as it was shown: one
+        // shown as edited and deleted since is asked about again.
+        inner.confirmed.retain(|file| now.contains(file));
         let held: BTreeMap<String, String> =
             read_back::mass_changed(changed, &inner.confirmed, adopted)
                 .into_iter()
@@ -310,9 +311,10 @@ impl MirrorState {
         !inner.held.is_empty()
     }
 
-    /// The user was shown `files` and chose to read them in, turned reading
-    /// back off, or chose not to be asked: nothing is held for them.
-    pub fn confirm_read_back(&self, files: &[String]) {
+    /// The user was shown `files`, each with what reading it in does, and
+    /// chose to read them in, turned reading back off, or chose not to be
+    /// asked: nothing is held for them.
+    pub fn confirm_read_back(&self, files: &[read_back::MirrorPending]) {
         let mut inner = self.lock();
         inner.held.clear();
         inner.confirmed = files.iter().cloned().collect();
@@ -959,7 +961,10 @@ impl Mirror {
     /// vanished file counts once it was missed), each file in a mirrored
     /// space's folder that is gone or not the text last written there, as
     /// [`read_back::pending`] tells them.
-    async fn outside_changes(&self, root: &Path) -> Result<Vec<String>, AppError> {
+    async fn outside_changes(
+        &self,
+        root: &Path,
+    ) -> Result<Vec<read_back::MirrorPending>, AppError> {
         let pages: HashSet<String> = self
             .seen
             .missing
@@ -967,14 +972,15 @@ impl Mirror {
             .cloned()
             .chain(self.state.retried())
             .collect();
-        let files: Vec<&String> = pages
+        let files: Vec<read_back::MirrorPending> = pages
             .iter()
             .filter_map(|id| {
                 let state = self.pages.get(id)?;
                 let written = state.newest()?.text.as_bytes();
-                let unchanged = store::read_optional(&root.join(&state.path))
-                    .is_ok_and(|bytes| bytes.as_deref() == Some(written));
-                (!unchanged).then_some(&state.path)
+                Some(read_back::MirrorPending {
+                    path: state.path.clone(),
+                    kind: read_back::change(&root.join(&state.path), written)?,
+                })
             })
             .collect();
         if files.is_empty() {
@@ -991,8 +997,7 @@ impl Mirror {
         };
         Ok(files
             .into_iter()
-            .filter(|path| mirrored(path))
-            .cloned()
+            .filter(|file| mirrored(&file.path))
             .collect())
     }
 

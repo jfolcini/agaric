@@ -16,7 +16,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { MirrorSection } from '@/components/settings/MirrorSection'
 import { MIRROR_HELD_EVENT, MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
-import type { AppError, MirrorPendingKind, MirrorStatus } from '@/lib/bindings'
+import type { AppError, MirrorPending, MirrorPendingKind, MirrorStatus } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -76,6 +76,10 @@ let statusRefused: AppError | null
 
 const HOLD_REASON = '6 of its files changed or vanished outside Agaric at once, more than 5'
 
+function pendingNow(): MirrorPending[] {
+  return pendingFiles.map((path) => ({ path, kind: pendingKinds[path] ?? 'edited' }))
+}
+
 function status(): MirrorStatus {
   // A hold reports reading back off, as the backend does, while it stays stored on.
   const reading = readBack && held.length === 0
@@ -87,9 +91,7 @@ function status(): MirrorStatus {
     failed: held.map((path) => ({ page_id: '', path, message: HOLD_REASON })),
     last_pass_ms: null,
     read_back: reading,
-    pending: reading
-      ? []
-      : pendingFiles.map((path) => ({ path, kind: pendingKinds[path] ?? 'edited' })),
+    pending: reading ? [] : pendingNow(),
     copy_files: copyFiles,
     ask_mass_change: askMassChange,
     held,
@@ -140,8 +142,11 @@ beforeEach(() => {
       return status()
     },
     set_mirror_read_back: (args) => {
-      const confirmed = args['confirmed'] as string[]
-      if (args['on'] === true && pendingFiles.some((path) => !confirmed.includes(path))) {
+      const confirmed = args['confirmed'] as MirrorPending[]
+      // As the backend: a pending file is confirmed only as it was shown.
+      const shown = (file: MirrorPending) =>
+        confirmed.some((seen) => seen.path === file.path && seen.kind === file.kind)
+      if (args['on'] === true && !pendingNow().every(shown)) {
         return Promise.reject(refusedTurnOn)
       }
       readBack = args['on'] as boolean
@@ -683,7 +688,7 @@ describe('MirrorSection', () => {
     // It confirmed what it showed, not whatever is pending by now.
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_read_back', {
       on: true,
-      confirmed: ['Personal/Projects.md'],
+      confirmed: [{ path: 'Personal/Projects.md', kind: 'edited' }],
     })
     expect((await storedStatus()).read_back).toBe(false)
     await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))

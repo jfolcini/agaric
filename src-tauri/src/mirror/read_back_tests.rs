@@ -3,6 +3,13 @@
 
 use super::*;
 
+fn edited(path: &str) -> MirrorPending {
+    MirrorPending {
+        path: path.to_owned(),
+        kind: MirrorPendingKind::Edited,
+    }
+}
+
 #[test]
 fn a_copy_folder_is_skipped_and_any_other_folder_read() {
     let root = tempfile::tempdir().unwrap();
@@ -30,24 +37,35 @@ fn a_missing_folder_holds_none_and_a_file_in_its_place_is_an_error() {
 
 #[test]
 fn only_a_folder_with_more_unconfirmed_files_than_the_limit_is_a_mass_change() {
-    let files = |folder: &'static str, count| (0..count).map(move |n| format!("{folder}/{n}.md"));
-    let changed: Vec<String> = files("A", MASS_CHANGE + 1)
+    let files =
+        |folder: &'static str, count| (0..count).map(move |n| edited(&format!("{folder}/{n}.md")));
+    let changed: Vec<MirrorPending> = files("A", MASS_CHANGE + 1)
         .chain(files("B", MASS_CHANGE))
         .collect();
     assert_eq!(
         mass_changed(&changed, &HashSet::new(), false),
         BTreeMap::from([("A", MASS_CHANGE + 1)])
     );
-    let confirmed = HashSet::from(["A/0.md".to_owned()]);
+    let confirmed = HashSet::from([edited("A/0.md")]);
     assert_eq!(mass_changed(&changed, &confirmed, false), BTreeMap::new());
+    // A choice names its file as it changed: one confirmed as edited and
+    // gone since still counts.
+    let gone = HashSet::from([MirrorPending {
+        kind: MirrorPendingKind::Gone,
+        ..edited("A/0.md")
+    }]);
+    assert_eq!(
+        mass_changed(&changed, &gone, false),
+        BTreeMap::from([("A", MASS_CHANGE + 1)])
+    );
 }
 
 #[test]
 fn in_an_adopted_folder_every_changed_file_counts_toward_the_folder_itself() {
     // Three notes at the top and three in a subfolder: no subfolder passes
     // the limit, but the adopted folder, one space's, does.
-    let changed: Vec<String> = ["a.md", "b.md", "c.md", "Sub/d.md", "Sub/e.md", "Sub/f.md"]
-        .map(str::to_owned)
+    let changed: Vec<MirrorPending> = ["a.md", "b.md", "c.md", "Sub/d.md", "Sub/e.md", "Sub/f.md"]
+        .map(edited)
         .into();
     assert_eq!(
         mass_changed(&changed, &HashSet::new(), true),

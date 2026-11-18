@@ -794,7 +794,7 @@ export const commands = {
 	setReminderSettings: (settings: ReminderSettings) => typedError<null, AppError>(__TAURI_INVOKE("set_reminder_settings", { settings })),
 	pickMirrorFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE("pick_mirror_folder")),
 	setMirrorFolder: (path: string | null, readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_folder", { path, readBack })),
-	setMirrorReadBack: (on: boolean, confirmed: string[]) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, confirmed })),
+	setMirrorReadBack: (on: boolean, confirmed: MirrorPending[]) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_read_back", { on, confirmed })),
 	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
 	setMirrorAskMassChange: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_ask_mass_change", { on })),
 	setMirrorSpace: (spaceId: string, mirrored: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_space", { spaceId, mirrored })),
@@ -3326,7 +3326,9 @@ export type MirrorFile = {
 
 /**
  *  A file reading back would act on ([`pending`]), by its path below the
- *  mirror's folder.
+ *  mirror's folder. The user's choice to read files in names each as it was
+ *  listed, so one that changed in another way since, as an edited file
+ *  deleted, is not among those chosen.
  */
 export type MirrorPending = {
 	path: string,

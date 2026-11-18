@@ -13,7 +13,7 @@ use tauri::State;
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
 use crate::mirror::adopt::{AdoptFile, AdoptionPreview, FolderFile};
-use crate::mirror::read_back::Scope;
+use crate::mirror::read_back::{MirrorPending, Scope};
 use crate::mirror::{self, MirrorState, MirrorStatus};
 use agaric_core::error::AppError;
 use agaric_sync::device::DeviceId;
@@ -260,9 +260,10 @@ pub async fn adopt_mirror_folder_inner(
 /// Read files changed outside Agaric back into it, or with `on: false` stop.
 /// Turning it on is refused while any file changed meanwhile
 /// ([`MirrorStatus::pending`], derived again here) is not among `confirmed`,
-/// the files the user was shown and chose to read in: a file that changed
-/// after the list was shown is never read in unseen. A plain turn-on
-/// confirms none. It is also how the user answers a mirror that stopped
+/// the files the user was shown, each with what reading it in does, and
+/// chose to read in: a file that changed after the list was shown, or in
+/// another way since, as one shown as edited and then deleted, is never read
+/// in unseen. A plain turn-on confirms none. It is also how the user answers a mirror that stopped
 /// reading back because many files changed at once
 /// ([`MirrorState::hold_mass_change`]): the files confirmed are then read in.
 ///
@@ -275,7 +276,7 @@ pub async fn set_mirror_read_back_inner(
     device_id: &str,
     mirror: &MirrorState,
     on: bool,
-    confirmed: &[String],
+    confirmed: &[MirrorPending],
 ) -> Result<MirrorStatus, AppError> {
     if on {
         let changed = match mirror::store::folder(pool).await? {
@@ -284,7 +285,7 @@ pub async fn set_mirror_read_back_inner(
         };
         let unseen = changed
             .iter()
-            .filter(|file| !confirmed.contains(&file.path))
+            .filter(|file| !confirmed.contains(file))
             .count();
         if unseen > 0 {
             return Err(AppError::validation(format!(
@@ -380,7 +381,7 @@ async fn pending(
     mirror: &MirrorState,
     root: &Path,
     fresh: bool,
-) -> Result<Vec<mirror::read_back::MirrorPending>, AppError> {
+) -> Result<Vec<MirrorPending>, AppError> {
     let spaces: Vec<(String, String)> = super::spaces::list_spaces_inner(pool)
         .await?
         .into_iter()
@@ -467,7 +468,7 @@ pub async fn set_mirror_read_back(
     device_id: State<'_, DeviceId>,
     mirror: State<'_, MirrorState>,
     on: bool,
-    confirmed: Vec<String>,
+    confirmed: Vec<MirrorPending>,
 ) -> Result<MirrorStatus, AppError> {
     set_mirror_read_back_inner(&pool.0, device_id.as_str(), &mirror, on, &confirmed)
         .await

@@ -1241,7 +1241,7 @@ async fn op_count(fx: &Fx) -> i64 {
         .unwrap()
 }
 
-/// The pending files' paths, as the dialog confirms them.
+/// The pending files' paths.
 fn paths(pending: &[read_back::MirrorPending]) -> Vec<String> {
     pending.iter().map(|file| file.path.clone()).collect()
 }
@@ -1250,7 +1250,7 @@ fn paths(pending: &[read_back::MirrorPending]) -> Vec<String> {
 /// lists as pending now, as the dialog does.
 async fn read_back(fx: &Fx, on: bool, read_pending: bool) -> Result<MirrorStatus, AppError> {
     let shown = if read_pending {
-        paths(&fx.status().await.pending)
+        fx.status().await.pending
     } else {
         Vec::new()
     };
@@ -1873,7 +1873,7 @@ async fn a_mirror_moved_away_and_back_finds_its_files_as_it_left_them() {
 }
 
 /// Turn reading back on, confirming the files `shown` were listed to the user.
-async fn confirm(fx: &Fx, shown: Vec<String>) -> Result<MirrorStatus, AppError> {
+async fn confirm(fx: &Fx, shown: Vec<read_back::MirrorPending>) -> Result<MirrorStatus, AppError> {
     set_mirror_read_back_inner(&fx.pool, DEV, &fx.state, true, &shown).await
 }
 
@@ -1883,7 +1883,7 @@ async fn confirm(fx: &Fx, shown: Vec<String>) -> Result<MirrorStatus, AppError> 
 async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm() {
     let mut fx = Fx::new().await;
     let (alpha, _, ops) = changed_while_off(&mut fx).await;
-    let shown = paths(&fx.status().await.pending);
+    let shown = fx.status().await.pending;
     write_at(&fx, "TestSpace/Epsilon.md", "unseen\n");
 
     let refused = confirm(&fx, shown).await;
@@ -1897,9 +1897,9 @@ async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm()
     assert_eq!(op_count(&fx).await, ops, "nothing read in");
     assert_eq!(fx.contents(&alpha).await, ["one"]);
 
-    let shown = paths(&fx.status().await.pending);
+    let shown = fx.status().await.pending;
     assert!(
-        shown.contains(&"TestSpace/Epsilon.md".to_owned()),
+        paths(&shown).contains(&"TestSpace/Epsilon.md".to_owned()),
         "{shown:?}"
     );
     confirm(&fx, shown).await.unwrap();
@@ -1911,6 +1911,46 @@ async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm()
         1,
         "read in once shown"
     );
+}
+
+/// The confirm names each file as the dialog listed it: one shown as edited
+/// and deleted since would trash its page on a delete the user never saw.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_shown_as_edited_and_deleted_since_is_not_trashed_by_its_confirm() {
+    use read_back::MirrorPendingKind::{Edited, Gone};
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    fx.write(fx.read().replace("one", "uno"));
+    let shown = fx.status().await.pending;
+    let kinds = |pending: &[read_back::MirrorPending]| -> Vec<_> {
+        pending
+            .iter()
+            .map(|file| (file.path.clone(), file.kind))
+            .collect()
+    };
+    assert_eq!(kinds(&shown), [(ALPHA.to_owned(), Edited)]);
+    std::fs::remove_file(fx.root.join(ALPHA)).unwrap();
+
+    let refused = confirm(&fx, shown).await;
+    assert!(
+        matches!(&refused, Err(e) if e.to_string().contains("have not been shown")),
+        "{refused:?}"
+    );
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+    assert!(!is_trashed(&fx, &alpha).await, "nothing read in");
+    let status = fx.status().await;
+    assert!(!status.read_back);
+
+    assert_eq!(kinds(&status.pending), [(ALPHA.to_owned(), Gone)]);
+    confirm(&fx, status.pending).await.unwrap();
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+    assert!(is_trashed(&fx, &alpha).await, "trashed once shown as gone");
 }
 
 /// A file renamed while reading back is off is read in as that rename once
@@ -2523,7 +2563,7 @@ async fn more_files_deleted_at_once_than_the_limit_trash_no_page_until_the_user_
         "{why}"
     );
 
-    let status = confirm(&fx, paths(&status.pending)).await.unwrap();
+    let status = confirm(&fx, status.pending).await.unwrap();
     assert!(status.read_back);
     assert_eq!(status.failed, []);
     for _ in 0..MISSING_TICKS + 2 {
@@ -2581,7 +2621,7 @@ async fn more_files_edited_at_once_than_the_limit_are_read_in_only_once_the_user
     assert!(!status.read_back, "reading back waits for the user");
     assert_eq!(paths(&status.pending), files);
 
-    confirm(&fx, paths(&status.pending)).await.unwrap();
+    confirm(&fx, status.pending).await.unwrap();
     for _ in 0..3 {
         fx.tick().await;
     }
@@ -2602,6 +2642,46 @@ async fn more_files_edited_at_once_than_the_limit_are_read_in_only_once_the_user
         assert_eq!(fx.contents(page).await, ["edited"], "{file}: asked again");
     }
     assert!(!fx.status().await.read_back);
+}
+
+/// The choice to read many files in is for each as it was shown: edited
+/// files confirmed and then deleted before they are read in are asked about
+/// again, not trashed unasked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_confirmed_as_edited_and_deleted_since_trash_no_page_until_the_user_says_so() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    for (_, file) in &made {
+        write_at(&fx, file, "changed outside\n");
+    }
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    let status = fx.status().await;
+    assert_eq!(status.held, ["TestSpace"], "the fixture: held");
+    confirm(&fx, status.pending).await.unwrap();
+
+    for (_, file) in &made {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    for _ in 0..MISSING_TICKS + 2 {
+        fx.tick().await;
+    }
+
+    for (page, file) in &made {
+        assert!(!is_trashed(&fx, page).await, "{file}: not trashed");
+    }
+    let status = fx.status().await;
+    assert_eq!(status.held, ["TestSpace"], "asked again");
+    assert!(
+        status
+            .pending
+            .iter()
+            .all(|file| file.kind == read_back::MirrorPendingKind::Gone),
+        "{:?}",
+        status.pending
+    );
+    assert_eq!(status.pending.len(), MASS_CHANGE + 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2646,7 +2726,7 @@ async fn a_hold_is_told_once_as_it_starts_and_once_as_it_ends() {
     assert_eq!(status.held, ["TestSpace"], "the fixture: held");
     assert_eq!(fx.told_held(), [vec!["TestSpace".to_owned()]]);
 
-    confirm(&fx, paths(&status.pending)).await.unwrap();
+    confirm(&fx, status.pending).await.unwrap();
     fx.tick().await;
     fx.tick().await;
 
