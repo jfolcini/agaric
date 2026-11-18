@@ -7,7 +7,7 @@
  * creating new definitions.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -18,6 +18,7 @@ import { SuggestedPropertyRows } from '@/components/properties/SuggestedProperty
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePropertySave } from '@/hooks/usePropertySave'
+import { useSpacePropertyDefList } from '@/hooks/useSpacePropertyDefs'
 import { useSuggestedProperties } from '@/hooks/useSuggestedProperties'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
@@ -25,12 +26,14 @@ import { commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { propertyDefsQueryKey } from '@/lib/property-caches'
 import {
   buildInitParams,
   opensDraftRow,
   APP_MANAGED_BUILTIN_KEYS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
+import { queryClient } from '@/lib/query-client'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { useSpaceStore } from '@/stores/space'
 
@@ -48,9 +51,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // The page is in the active space, whose definitions apply (#5841).
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const [expanded, setExpanded] = useState(false)
-  const [definitionsLoading, setDefinitionsLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
-  const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   // #2792 — keys of properties added but not yet persisted (`opensDraftRow`). Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such
@@ -64,12 +65,22 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // #6755 — keys the page's tags offer it, shown as empty rows.
   // Read once the table opens, not on every page open (#5445 pins that IPC).
   const suggestions = useSuggestedProperties(expanded ? pageId : null)
-  const loading = isPending || definitionsLoading
-
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- marks the per-page definitions IPC load below pending; `definitionsLoading` tracks that async round-trip, not a value derivable during render; see #4407
-    setDefinitionsLoading(true)
-  }, [pageId])
+  // The shared definitions query, so a definition edited elsewhere reaches this
+  // header's inputs through `invalidatePropertyCaches()` (#6946).
+  const { data: storedDefs, error: defsError, isPending: defsPending } = useSpacePropertyDefList()
+  // FE-H-17: a failed slice falls back to an empty array so the user still
+  // sees the half that loaded.
+  const definitions = useMemo(() => storedDefs ?? [], [storedDefs])
+  const loading = isPending || defsPending
+  const updateDefinitions = useCallback(
+    (update: (defs: PropertyDefinition[]) => PropertyDefinition[]) => {
+      queryClient.setQueryData<PropertyDefinition[]>(
+        propertyDefsQueryKey(spaceId),
+        (prev) => prev && update(prev),
+      )
+    },
+    [spaceId],
+  )
 
   // Adopted during render, not in an effect: a frame with the fetch settled but
   // `properties` still empty renders nothing and swallows a click on the header.
@@ -106,35 +117,13 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     setProperties([])
   }, [storedRowsError, pageId, t])
 
-  // `listPropertyDefs` is paginated; this surface is single-page-by-design —
-  // the seeded property vocabulary fits well under one page, so we
-  // destructure `.items` and ignore the cursor.
   useEffect(() => {
-    if (spaceId === null) return
-    // A page switch can land before this answer; the older page's load must
-    // not clear the new page's pending state.
-    let active = true
-    commands
-      .listPropertyDefs(spaceId, null, null)
-      .then(unwrap)
-      .then((defsPage) => {
-        if (active) setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
-      })
-      .catch((err: unknown) => {
-        if (!active) return
-        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', err, t, {
-          pageId,
-          fetch: 'listPropertyDefs',
-        })
-        setDefinitions([])
-      })
-      .finally(() => {
-        if (active) setDefinitionsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [pageId, spaceId, t])
+    if (!defsError) return
+    reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', defsError, t, {
+      pageId,
+      fetch: 'listPropertyDefs',
+    })
+  }, [defsError, pageId, t])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true
   const prevForceRef = useRef(false)
@@ -294,7 +283,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
             multiple ? true : null,
           ),
         )
-        setDefinitions((prev) => [...prev, newDef])
+        updateDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new def
         // `opensDraftRow` names has no valid empty initializer, so add a
         // draft row instead of init-persisting an empty value.
@@ -333,7 +322,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         })
       }
     },
-    [pageId, spaceId, t, addDraftRow],
+    [pageId, spaceId, t, addDraftRow, updateDefinitions],
   )
 
   // Definitions available for the add-property popover:
@@ -385,7 +374,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                   forceSaveOnBlur={draftKeys.has(prop.key)}
                   onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
                   onDefUpdated={(updatedDef) => {
-                    setDefinitions((prev) =>
+                    updateDefinitions((prev) =>
                       prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
                     )
                   }}

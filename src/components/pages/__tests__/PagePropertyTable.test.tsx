@@ -2056,6 +2056,40 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
     expect(screen.getByLabelText(valueLabel('context'))).toBeInTheDocument()
   })
 
+  // #6946 — Settings › Properties, a synced device or MCP edits the definition.
+  it("offers a select's options added to its definition elsewhere", async () => {
+    const SPACE = SEED_IDS.SPACE_PERSONAL
+    dispatch('create_property_def', {
+      spaceId: SPACE,
+      key: 'phase',
+      valueType: 'select',
+      options: '["alpha","beta"]',
+      multiple: null,
+    })
+    properties.set(PAGE_ID, new Map([['phase', makeProp('phase', { value_text: 'alpha' })]]))
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    const optionsOf = () =>
+      Array.from((screen.getByLabelText(valueLabel('phase')) as HTMLSelectElement).options).map(
+        (o) => o.value,
+      )
+    await waitFor(() => {
+      expect(optionsOf()).toContain('beta')
+    })
+
+    dispatch('update_property_def_options', {
+      spaceId: SPACE,
+      key: 'phase',
+      options: '["alpha","beta","gamma"]',
+    })
+    act(() => {
+      invalidatePropertyCaches()
+    })
+
+    await waitFor(() => {
+      expect(optionsOf()).toContain('gamma')
+    })
+  })
+
   it('drops an unsaved draft row when the page changes', async () => {
     const OTHER = SEED_IDS.PAGE_PROJECTS
     properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
