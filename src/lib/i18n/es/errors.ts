@@ -60,4 +60,17 @@ export const errors: Record<string, string> = {
   'error.pasteBlocksFailed': 'No se han podido pegar los bloques',
   'error.settingsSaveFailed':
     'No se han podido guardar tus cambios en este dispositivo — puede que el almacenamiento local esté lleno',
+  'error.internal': 'Algo ha salido mal (err: {{id}})',
+  'errorCode.invalidGlob': 'Ese patrón de nombre de página no es válido.',
+  'errorCode.invalidRegex': 'Esa expresión regular no es válida.',
+  'errorCode.invalidDateFilter':
+    'Ese filtro de fecha no es válido. Usa fechas YYYY-MM-DD, con el inicio de un intervalo antes de su final.',
+  'errorCode.requiresRefresh':
+    'Esto ha cambiado desde que se cargó. Vuelve a cargarlo e inténtalo de nuevo.',
+  'errorCode.invalidRepeatRule':
+    'Esa regla de repetición no es válida. Usa `daily`, `weekly`, `monthly`, `yearly`, o `+Nd` / `+Nw` / `+Nm` / `+Ny` con N de 1 o más, opcionalmente precedido de `.+` (contar desde que la completas) o `++` (ponerse al día hasta hoy).',
+  'errorCode.duplicateAgentName': 'Ya hay otro agente con este nombre.',
+  'errorCode.builtinPropertyLocked': 'Esta propiedad es predefinida, así que no se puede cambiar.',
+  'errorCode.unacknowledgedPropertyLoss':
+    'Los valores han cambiado desde la vista previa. Vuelve a verla antes de confirmar.',
 }

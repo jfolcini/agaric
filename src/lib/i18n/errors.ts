@@ -116,4 +116,25 @@ export const errors: Record<string, string> = {
   // single toast per burst, since the write path can't say which store
   // action triggered it.
   'error.settingsSaveFailed': 'Failed to save your changes locally — local storage may be full',
+
+  // Translators: Error toast or inline error when an action fails for a reason the app did not
+  // expect. {{id}} = a short code such as 7F3A2 that the user quotes when reporting the problem;
+  // keep "(err: {{id}})" exactly as written, it is a code.
+  'error.internal': 'Something went wrong (err: {{id}})',
+
+  // Translators: Error toasts and inline errors when the app refuses a search, a filter or an
+  // edit, each saying what was wrong with it. "Page name pattern" = a glob such as Journal* that
+  // matches page titles. YYYY-MM-DD is the date format to type. In the repeat rule, keep what is
+  // between backticks exactly as written: it is what the user types, N stands for a number.
+  'errorCode.invalidGlob': 'That page name pattern is not valid.',
+  'errorCode.invalidRegex': 'That regular expression is not valid.',
+  'errorCode.invalidDateFilter':
+    'That date filter is not valid. Use YYYY-MM-DD dates, with the start of a range before its end.',
+  'errorCode.requiresRefresh': 'This changed after it was loaded. Reload it and try again.',
+  'errorCode.invalidRepeatRule':
+    'That repeat rule is not valid. Use `daily`, `weekly`, `monthly`, `yearly`, or `+Nd` / `+Nw` / `+Nm` / `+Ny` with N of 1 or more, optionally prefixed with `.+` (count from when you complete it) or `++` (catch up to today).',
+  'errorCode.duplicateAgentName': 'Another agent already has this name.',
+  'errorCode.builtinPropertyLocked': 'This property is built in, so it cannot be changed.',
+  'errorCode.unacknowledgedPropertyLoss':
+    'The values changed since the preview. Preview again before you confirm.',
 }

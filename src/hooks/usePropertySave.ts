@@ -83,8 +83,8 @@ export function usePropertySave({
           )
         }
         // #3647 — a malformed `repeat` rule is now rejected by the backend at
-        // the point of entry, and the rejection says WHAT is wrong with the
-        // rule. Show that verbatim: collapsing it into the generic
+        // the point of entry, and the rejection says which rules are valid.
+        // Show that: collapsing it into the generic
         // "Failed to save property" toast would put the user back where they
         // started, which is the whole failure mode the validation removed.
         const repeatReason = invalidRepeatRuleMessage(err)

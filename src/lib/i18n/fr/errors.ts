@@ -55,4 +55,17 @@ export const errors: Record<string, string> = {
   'error.pasteBlocksFailed': 'Impossible de coller les blocs',
   'error.settingsSaveFailed':
     'Impossible d’enregistrer vos modifications localement — le stockage local est peut-être plein',
+  'error.internal': 'Un problème est survenu (err: {{id}})',
+  'errorCode.invalidGlob': 'Ce motif de nom de page n’est pas valide.',
+  'errorCode.invalidRegex': 'Cette expression régulière n’est pas valide.',
+  'errorCode.invalidDateFilter':
+    'Ce filtre de date n’est pas valide. Utilisez des dates au format YYYY-MM-DD, avec le début d’une plage avant sa fin.',
+  'errorCode.requiresRefresh': 'Ceci a changé depuis son chargement. Rechargez-le, puis réessayez.',
+  'errorCode.invalidRepeatRule':
+    'Cette règle de répétition n’est pas valide. Utilisez `daily`, `weekly`, `monthly`, `yearly`, ou `+Nd` / `+Nw` / `+Nm` / `+Ny` avec N égal à 1 ou plus, éventuellement précédé de `.+` (compter à partir du moment où vous la terminez) ou `++` (rattraper jusqu’à aujourd’hui).',
+  'errorCode.duplicateAgentName': 'Un autre agent porte déjà ce nom.',
+  'errorCode.builtinPropertyLocked':
+    'Cette propriété est intégrée, elle ne peut donc pas être modifiée.',
+  'errorCode.unacknowledgedPropertyLoss':
+    'Les valeurs ont changé depuis l’aperçu. Affichez de nouveau l’aperçu avant de confirmer.',
 }

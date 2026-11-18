@@ -1,25 +1,27 @@
 import type { TFunction } from 'i18next'
 
-import { isAppError, unwrap, validationCode } from '@/lib/app-error'
+import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 /**
- * #3647 — the backend's actionable reason for rejecting a `repeat` rule, or
+ * #3647 — the message for the backend's rejection of a `repeat` rule, or
  * `null` when this is not that error.
  *
  * The backend validates the recurrence grammar at `set_property` (see
- * `agaric_engine::recurrence::validate_repeat_rule`) and ships the reason as a
- * CODED validation error, whose `message` crosses IPC undecorated. Every
+ * `agaric_engine::recurrence::validate_repeat_rule`) and ships the rejection as
+ * a CODED validation error, which renders as the translated rule help. Every
  * property-save surface otherwise collapses failures into one generic toast
  * ("Failed to save property"), which would leave the user exactly as
  * uninformed as the silent misbehaviour the validation replaced. Callers show
- * this string verbatim when it is non-null.
+ * this string when it is non-null.
  */
 export function invalidRepeatRuleMessage(err: unknown): string | null {
-  if (validationCode(err) !== ValidationCode.InvalidRepeatRule) return null
-  return isAppError(err) ? err.message : null
+  return validationCode(err) === ValidationCode.InvalidRepeatRule
+    ? formatErrorForDisplay(err)
+    : null
 }
 
 /**

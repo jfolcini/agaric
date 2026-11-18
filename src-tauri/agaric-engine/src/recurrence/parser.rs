@@ -57,7 +57,7 @@ const MAX_ECHOED_RULE_CHARS: usize = 48;
 /// # Errors
 ///
 /// [`AppError::Validation`] coded [`ValidationCode::InvalidRepeatRule`], so
-/// the frontend can surface the reason verbatim instead of a generic
+/// the UI translates the message by its code instead of showing a generic
 /// "failed to save property" toast.
 pub fn validate_repeat_rule(rule: &str) -> Result<(), AppError> {
     validate_repeat_rule_shape(rule).map_err(|problem| {
@@ -531,8 +531,8 @@ mod repeat_rule_validation_tests_3647 {
             assert_eq!(
                 err.validation_code(),
                 Some(ValidationCode::InvalidRepeatRule),
-                "`{rule}` must carry the coded sub-kind so the frontend can \
-                 surface the message verbatim"
+                "`{rule}` must carry the coded sub-kind the UI translates \
+                 the message by"
             );
             let AppError::Validation { message, .. } = &err else {
                 panic!("expected a Validation error for `{rule}`, got {err:?}");

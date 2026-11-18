@@ -115,6 +115,16 @@ describe('reportIpcErrorWithReason (#4399)', () => {
     )
   })
 
+  it("shows a coded validation AppError's translated sentence, not its English message", () => {
+    const err = {
+      kind: 'validation',
+      message: "property 'due_date' is built in and cannot be changed",
+      code: 'BuiltinPropertyLocked',
+    }
+    reportIpcErrorWithReason('Mod', 'property.errorCreate', err, mockT)
+    expect(toast.error).toHaveBeenCalledWith('This property is built in, so it cannot be changed.')
+  })
+
   it('falls back to the localized key for a transport Error', () => {
     // `typedError` rethrows real `Error`s, so this is a transport failure,
     // not a backend refusal — its text was never written for a user. The
