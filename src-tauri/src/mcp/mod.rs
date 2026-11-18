@@ -382,13 +382,19 @@ pub fn bridge_path(app_exe: &Path) -> PathBuf {
 }
 
 /// The program and leading arguments an agent config runs to start the
-/// bridge: the bridge itself, or the AppImage file at `appimage` (its
+/// bridge: the AppImage's copy of it at `stable_copy`, which outlives the
+/// AppImage file (#6980); else the AppImage file at `appimage` (its
 /// `$APPIMAGE`) with [`BRIDGE_ARG`], since the path inside its mount does not
-/// outlive the run.
-pub fn bridge_invocation(app_exe: &Path, appimage: Option<&Path>) -> (PathBuf, Vec<String>) {
-    match appimage {
-        Some(appimage) => (appimage.to_path_buf(), vec![BRIDGE_ARG.to_owned()]),
-        None => (bridge_path(app_exe), Vec::new()),
+/// outlive the run; else the bridge beside the app.
+pub fn bridge_invocation(
+    app_exe: &Path,
+    appimage: Option<&Path>,
+    stable_copy: Option<&Path>,
+) -> (PathBuf, Vec<String>) {
+    match (stable_copy, appimage) {
+        (Some(copy), _) => (copy.to_path_buf(), Vec::new()),
+        (None, Some(appimage)) => (appimage.to_path_buf(), vec![BRIDGE_ARG.to_owned()]),
+        (None, None) => (bridge_path(app_exe), Vec::new()),
     }
 }
 
@@ -1177,12 +1183,13 @@ mod tests {
     #[test]
     fn bridge_is_beside_the_app_in_the_deb_and_the_mac_bundle_6736() {
         assert_eq!(
-            bridge_invocation(Path::new("/usr/bin/agaric"), None),
+            bridge_invocation(Path::new("/usr/bin/agaric"), None, None),
             (PathBuf::from("/usr/bin/agaric-mcp"), Vec::new()),
         );
         assert_eq!(
             bridge_invocation(
                 Path::new("/Applications/My Apps/Agaric.app/Contents/MacOS/agaric"),
+                None,
                 None,
             ),
             (
@@ -1198,10 +1205,28 @@ mod tests {
             bridge_invocation(
                 Path::new("/tmp/.mount_AgaricXYZ/usr/bin/agaric"),
                 Some(Path::new("/home/me/Apps/Agaric 0.24.AppImage")),
+                None,
             ),
             (
                 PathBuf::from("/home/me/Apps/Agaric 0.24.AppImage"),
                 vec!["agaric-mcp".to_owned()],
+            ),
+        );
+    }
+
+    #[test]
+    fn an_appimage_with_its_stable_copy_runs_that_copy_6980() {
+        assert_eq!(
+            bridge_invocation(
+                Path::new("/tmp/.mount_AgaricXYZ/usr/bin/agaric"),
+                Some(Path::new("/home/me/Apps/Agaric 0.24.AppImage")),
+                Some(Path::new(
+                    "/home/me/.local/share/com.agaric.app/bin/agaric-mcp"
+                )),
+            ),
+            (
+                PathBuf::from("/home/me/.local/share/com.agaric.app/bin/agaric-mcp"),
+                Vec::new(),
             ),
         );
     }

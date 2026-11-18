@@ -373,6 +373,7 @@ export const syncHandlers = {
     socket_path: '/mock/agaric/mcp.sock',
     bridge_command: '/mock/agaric/agaric-mcp',
     bridge_args: [],
+    foreign_path_bridge: null,
     active_connections: 0,
   }),
 

@@ -17,6 +17,13 @@
 //! Only its dir selection is unit-tested; the GSettings read and the GTK write
 //! need the host's compiled schemas and a display.
 //!
+//! The same start copies the bundled `agaric-mcp` bridge to a path that
+//! outlives the AppImage file ([`stable_bridge_path`]) and links
+//! `~/.local/bin/agaric-mcp` to it (`install_bridge`), so scripts and copied
+//! agent configs keep working, at the app's version, after an update or a
+//! move (#6980). Only the file logic is unit-tested over temp dirs; no CI lane
+//! runs a real AppImage.
+//!
 //! The desktop cache tools run with the session's environment rather than the
 //! bundle's (`host_env`); `scripts/appimage-xdg-open.sh` does the same for
 //! the links and folders the opener plugin opens.
@@ -30,12 +37,94 @@ use std::process::Command;
 ///
 /// No-op unless `$APPIMAGE` and `$APPDIR` are both set (i.e. running from an
 /// AppImage). Best-effort: every failure is logged, never fatal.
-pub fn integrate_appimage_if_running() {
-    run_integration(
-        std::env::var_os("APPIMAGE"),
-        std::env::var_os("APPDIR"),
-        xdg_data_home(),
-    );
+pub fn integrate_appimage_if_running(app_data_dir: &Path) {
+    let appdir = std::env::var_os("APPDIR");
+    if let (Some(appimage), Some(appdir), Some(local_bin)) =
+        (std::env::var_os("APPIMAGE"), &appdir, local_bin_dir())
+        && !appimage.is_empty()
+    {
+        install_bridge(
+            &Path::new(appdir)
+                .join("usr/bin")
+                .join(crate::mcp::BRIDGE_ARG),
+            &stable_bridge_path(app_data_dir),
+            &local_bin,
+        );
+    }
+    run_integration(std::env::var_os("APPIMAGE"), appdir, xdg_data_home());
+}
+
+/// Where an AppImage keeps its copy of the bridge, outside the AppImage file.
+pub fn stable_bridge_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("bin").join(crate::mcp::BRIDGE_ARG)
+}
+
+/// `~/.local/bin`, the user's own PATH directory.
+pub fn local_bin_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(|home| PathBuf::from(home).join(".local/bin"))
+}
+
+/// The `agaric-mcp` in `local_bin` when it is something other than our link
+/// to `stable`: a file left there by hand, which the shell finds before the
+/// app's own copy and which this app never replaces.
+pub fn foreign_path_bridge(local_bin: &Path, stable: &Path) -> Option<PathBuf> {
+    let link = local_bin.join(crate::mcp::BRIDGE_ARG);
+    std::fs::symlink_metadata(&link).ok()?;
+    (std::fs::read_link(&link).ok().as_deref() != Some(stable)).then_some(link)
+}
+
+/// Copy the bundled bridge at `bundled` to `stable` and link
+/// `local_bin/agaric-mcp` to it. Best-effort: every failure is logged.
+fn install_bridge(bundled: &Path, stable: &Path, local_bin: &Path) {
+    match copy_bridge(bundled, stable) {
+        Ok(true) => tracing::info!(path = %stable.display(), "AppImage: agaric-mcp updated"),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, path = %stable.display(), "AppImage: could not copy agaric-mcp");
+            return;
+        }
+    }
+    if let Some(foreign) = foreign_path_bridge(local_bin, stable) {
+        tracing::warn!(
+            path = %foreign.display(),
+            "AppImage: another agaric-mcp is on the PATH; leaving it alone"
+        );
+        return;
+    }
+    let link = local_bin.join(crate::mcp::BRIDGE_ARG);
+    // Not foreign, so anything there is already our link.
+    if std::fs::symlink_metadata(&link).is_ok() {
+        return;
+    }
+    let linked =
+        std::fs::create_dir_all(local_bin).and_then(|()| std::os::unix::fs::symlink(stable, &link));
+    if let Err(e) = linked {
+        tracing::warn!(error = %e, path = %link.display(), "AppImage: could not link agaric-mcp");
+    }
+}
+
+/// Copy `bundled` to `stable` when their bytes differ. The new file is written
+/// beside `stable` and renamed over it: a running bridge holds the old file
+/// open, and writing into it fails with "Text file busy". Returns whether it
+/// copied.
+fn copy_bridge(bundled: &Path, stable: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let bytes = std::fs::read(bundled)?;
+    if std::fs::read(stable).is_ok_and(|current| current == bytes) {
+        return Ok(false);
+    }
+    let dir = stable
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the bridge path has no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(".agaric-mcp.tmp");
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::rename(&tmp, stable)?;
+    Ok(true)
 }
 
 /// Dependency-injected core so tests can exercise the guard and the file
@@ -351,6 +440,111 @@ mod tests {
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("agaric.png"), format!("png-{size}")).unwrap();
         }
+    }
+
+    #[test]
+    fn copy_bridge_copies_when_absent_or_different_and_skips_when_same_6980() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new().unwrap();
+        let bundled = dir.path().join("bundled");
+        let stable = dir.path().join("data/bin/agaric-mcp");
+        fs::write(&bundled, b"v1").unwrap();
+
+        assert!(copy_bridge(&bundled, &stable).unwrap(), "absent: copied");
+        assert_eq!(fs::read(&stable).unwrap(), b"v1");
+        assert_eq!(
+            fs::metadata(&stable).unwrap().permissions().mode() & 0o777,
+            0o755,
+            "the copy is executable"
+        );
+        assert!(
+            !copy_bridge(&bundled, &stable).unwrap(),
+            "same bytes: skipped"
+        );
+
+        fs::write(&bundled, b"v2").unwrap();
+        assert!(copy_bridge(&bundled, &stable).unwrap(), "different: copied");
+        assert_eq!(fs::read(&stable).unwrap(), b"v2");
+    }
+
+    #[test]
+    fn copy_bridge_replaces_by_rename_so_an_open_bridge_keeps_its_file_6980() {
+        use std::io::Read as _;
+        let dir = TempDir::new().unwrap();
+        let bundled = dir.path().join("bundled");
+        let stable = dir.path().join("agaric-mcp");
+        fs::write(&bundled, b"old").unwrap();
+        copy_bridge(&bundled, &stable).unwrap();
+        let mut running = fs::File::open(&stable).unwrap();
+
+        fs::write(&bundled, b"new").unwrap();
+        copy_bridge(&bundled, &stable).unwrap();
+
+        let mut seen = String::new();
+        running.read_to_string(&mut seen).unwrap();
+        assert_eq!(
+            seen, "old",
+            "the open handle still reads the file it opened"
+        );
+        assert_eq!(fs::read(&stable).unwrap(), b"new");
+    }
+
+    #[test]
+    fn install_bridge_links_when_free_and_keeps_its_own_link_6980() {
+        let dir = TempDir::new().unwrap();
+        let bundled = dir.path().join("bundled");
+        let stable = dir.path().join("data/bin/agaric-mcp");
+        let local_bin = dir.path().join("home/.local/bin");
+        fs::write(&bundled, b"v1").unwrap();
+
+        install_bridge(&bundled, &stable, &local_bin);
+        let link = local_bin.join("agaric-mcp");
+        assert_eq!(fs::read_link(&link).unwrap(), stable, "linked when free");
+        assert_eq!(fs::read(&link).unwrap(), b"v1");
+
+        fs::write(&bundled, b"v2").unwrap();
+        install_bridge(&bundled, &stable, &local_bin);
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            stable,
+            "its own link is kept"
+        );
+        assert_eq!(
+            fs::read(&link).unwrap(),
+            b"v2",
+            "and now reaches the new copy"
+        );
+        assert_eq!(foreign_path_bridge(&local_bin, &stable), None);
+    }
+
+    #[test]
+    fn install_bridge_leaves_a_foreign_file_alone_and_reports_it_6980() {
+        let dir = TempDir::new().unwrap();
+        let bundled = dir.path().join("bundled");
+        let stable = dir.path().join("data/bin/agaric-mcp");
+        let local_bin = dir.path().join("bin");
+        fs::create_dir_all(&local_bin).unwrap();
+        fs::write(&bundled, b"v2").unwrap();
+        let file = local_bin.join("agaric-mcp");
+        fs::write(&file, b"hand-copied v1").unwrap();
+
+        install_bridge(&bundled, &stable, &local_bin);
+        assert_eq!(
+            fs::read(&file).unwrap(),
+            b"hand-copied v1",
+            "a file is left alone"
+        );
+        assert_eq!(foreign_path_bridge(&local_bin, &stable), Some(file.clone()));
+
+        fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(&bundled, &file).unwrap();
+        install_bridge(&bundled, &stable, &local_bin);
+        assert_eq!(
+            fs::read_link(&file).unwrap(),
+            bundled,
+            "another link is left alone"
+        );
+        assert_eq!(foreign_path_bridge(&local_bin, &stable), Some(file));
     }
 
     #[test]

@@ -195,6 +195,8 @@ export const settings: Record<string, string> = {
   'agentAccess.toggleOnSuccess': 'Accès des agents activé',
   'agentAccess.toggleOffSuccess': 'Accès des agents désactivé',
   'agentAccess.toggleFailed': 'Impossible de modifier l’accès des agents',
+  'agentAccess.foreignPathBridge':
+    'Un agaric-mcp plus ancien se trouve dans votre PATH, à {{path}} : les scripts et les agents risquent de l’exécuter à la place de celui de cette application. Supprimez-le et redémarrez Agaric pour y placer la version actuelle.',
   'agentAccess.socketPathLabel': 'Chemin du socket',
   'agentAccess.socketPathCopied': 'Chemin du socket copié',
   'agentAccess.copySocketPathLabel': 'Copier le chemin du socket',

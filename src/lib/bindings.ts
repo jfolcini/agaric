@@ -3229,6 +3229,12 @@ export type McpStatus = {
 	 *  `bridge_command` is the AppImage, else none.
 	 */
 	bridge_args: string[],
+	/**
+	 *  An `agaric-mcp` in `~/.local/bin` that the AppImage did not put there
+	 *  and leaves alone, so scripts may run it instead of the app's own
+	 *  (#6980). Always `None` outside an AppImage.
+	 */
+	foreign_path_bridge: string | null,
 	active_connections: number,
 };
 
