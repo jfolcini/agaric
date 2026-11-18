@@ -169,18 +169,8 @@ impl HeadlessApp {
             Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new()),
             lifecycle,
         );
-        // What boot manages beside its daemons, for the Settings panels'
-        // reads; `boot` starts the mirror's, and no other.
-        app.manage(Arc::new(crate::mcp::McpLifecycle::new()));
-        app.manage(crate::commands::McpToggleGate::new());
-        app.manage(crate::mcp::activity::McpActivityRing::new());
-        app.manage(crate::mirror::MirrorState::new(app_data_dir.to_path_buf()));
-        app.manage(agaric_sync::sync_events::MdnsStatusState(
-            std::sync::Mutex::default(),
-        ));
-        app.manage(agaric_sync::sync_events::BindExposureStatusState(
-            std::sync::Mutex::default(),
-        ));
+        // Its daemons don't run here, so the pieces they would share are dropped.
+        let _settings = crate::manage_settings_state(&app, app_data_dir);
         Self {
             app,
             webview,

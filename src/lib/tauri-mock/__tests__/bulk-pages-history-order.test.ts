@@ -1,5 +1,5 @@
 /**
- * `seedBulkPages` (`seed.ts`) writes its bulk pages' `op_log` rows in
+ * `addBulkPages` (`mock-store-helpers.ts`) writes its bulk pages' `op_log` rows in
  * DESCENDING `created_at` order — Bulk Page 001 (dated "now", the NEWEST)
  * pushed FIRST, Bulk Page 003 (dated "now - 2h", the OLDEST of the three)
  * pushed LAST — so `opLog`'s in-memory ARRAY order does not match
@@ -8,7 +8,7 @@
  * `list_page_history` and `undo_page_op` (`handlers/history.ts`) both used to
  * assume the array order WAS chronological — `[...opLog].toReversed()` and
  * `undoableOps.length - 1 - undoDepth` respectively — which is exactly
- * backwards once a caller pushes newest-first like `seedBulkPages` does. Both
+ * backwards once a caller pushes newest-first like `addBulkPages` does. Both
  * now go through `sortOpLogNewestFirst` (`handlers/shared.ts`), which sorts
  * explicitly on `(created_at DESC, seq DESC)` — the same ordering the real
  * backend's own `ORDER BY created_at DESC, seq DESC, device_id DESC` uses in
@@ -19,11 +19,6 @@
  * fixture in ascending order: any FUTURE non-chronological push (a different
  * fixture, a multi-device merge) would silently reopen the same bug in a
  * handler that trusted array order instead.
- *
- * Only reachable via the opt-in `__mockExtraPages` fixture (no assertion in
- * any other spec moved when the ordering bug was introduced), which is why
- * this file exists on its own rather than piggybacking on a spec that
- * exercises the fixture for an unrelated reason.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -32,13 +27,13 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, opLog, seedBlocks } from '@/lib/tauri-mock/seed'
 import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
+import { addBulkPages } from './mock-store-helpers'
+
 const SPACE = SEED_IDS.SPACE_PERSONAL
 
-/** Seed with `count` extra "Bulk Page NNN" fixtures, off `__mockFacetFixture`. */
 function seedWithBulkPages(count: number): void {
-  globalThis.localStorage.setItem('__mockExtraPages', String(count))
-  globalThis.localStorage.removeItem('__mockFacetFixture')
   seedBlocks()
+  addBulkPages(count)
 }
 
 /** Resolve a seeded page's id from its title (bulk pages get random ids). */
@@ -78,7 +73,7 @@ function listHistory(): HistoryItem[] {
   ).items
 }
 
-describe('seedBulkPages op_log ordering — list_page_history / undo_page_op read chronological order, not push order', () => {
+describe('addBulkPages op_log ordering — list_page_history / undo_page_op read chronological order, not push order', () => {
   beforeEach(() => {
     seedWithBulkPages(3)
   })
@@ -106,7 +101,7 @@ describe('seedBulkPages op_log ordering — list_page_history / undo_page_op rea
       reversed_op: { device_id: string; seq: number }
     }
 
-    // seedBulkPages pushes Bulk Page 003's (oldest, "now - 2h") stamp LAST,
+    // addBulkPages pushes Bulk Page 003's (oldest, "now - 2h") stamp LAST,
     // so a handler that trusted array/push order instead of `created_at`
     // would reverse Bulk Page 003's op here instead of Bulk Page 001's.
     expect(result.reversed_op.seq).toBe(expectedOp?.seq)

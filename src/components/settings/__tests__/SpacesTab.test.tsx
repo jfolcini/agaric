@@ -41,7 +41,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 const PERSONAL = SEED_IDS.SPACE_PERSONAL
-const workId = SEED_IDS.SPACE_WORK
+const WORK = SEED_IDS.SPACE_WORK
 const LAST_USED = '__last_used__'
 
 const nonEmptyPage = {
@@ -117,10 +117,10 @@ describe('SpacesTab', () => {
 
       await user.selectOptions(
         screen.getByRole('combobox', { name: t('settings.spaces.openOnLaunchLabel') }),
-        workId,
+        WORK,
       )
 
-      expect(readPreference(PREFERENCES.defaultSpace)).toBe(workId)
+      expect(readPreference(PREFERENCES.defaultSpace)).toBe(WORK)
       expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL)
       await settleProbes()
     })
@@ -130,7 +130,7 @@ describe('SpacesTab', () => {
       const { unmount } = render(<SpacesTab />)
       await user.selectOptions(
         screen.getByRole('combobox', { name: t('settings.spaces.openOnLaunchLabel') }),
-        workId,
+        WORK,
       )
       await settleProbes()
       unmount()
@@ -139,20 +139,20 @@ describe('SpacesTab', () => {
       useSpaceStore.setState({ currentSpaceId: PERSONAL, availableSpaces: [], isReady: false })
       await useSpaceStore.getState().refreshAvailableSpaces()
 
-      expect(useSpaceStore.getState().currentSpaceId).toBe(workId)
+      expect(useSpaceStore.getState().currentSpaceId).toBe(WORK)
       render(<SpacesTab />)
       expect(
         screen.getByRole('combobox', { name: t('settings.spaces.openOnLaunchLabel') }),
-      ).toHaveValue(workId)
+      ).toHaveValue(WORK)
       await settleProbes()
     })
 
     it('goes back to Last used when chosen', async () => {
       const user = userEvent.setup()
-      writePreference(PREFERENCES.defaultSpace, workId)
+      writePreference(PREFERENCES.defaultSpace, WORK)
       render(<SpacesTab />)
       const launch = screen.getByRole('combobox', { name: t('settings.spaces.openOnLaunchLabel') })
-      expect(launch).toHaveValue(workId)
+      expect(launch).toHaveValue(WORK)
 
       await user.selectOptions(launch, LAST_USED)
 
@@ -163,7 +163,7 @@ describe('SpacesTab', () => {
 
     it('goes back to Last used when its space is deleted', async () => {
       const user = userEvent.setup()
-      writePreference(PREFERENCES.defaultSpace, workId)
+      writePreference(PREFERENCES.defaultSpace, WORK)
       render(<SpacesTab />)
       await settleProbes()
 
@@ -272,7 +272,7 @@ describe('SpacesTab', () => {
     )
 
     await waitFor(() => {
-      expect(listedSpaces().find((s) => s.id === workId)?.accent_color).toBe('accent-violet')
+      expect(listedSpaces().find((s) => s.id === WORK)?.accent_color).toBe('accent-violet')
     })
     await settleProbes()
   })
@@ -294,7 +294,7 @@ describe('SpacesTab', () => {
 
     it('is disabled on the only space', async () => {
       useSpaceStore.setState({
-        availableSpaces: [{ id: workId, name: 'Work', accent_color: null }],
+        availableSpaces: [{ id: WORK, name: 'Work', accent_color: null }],
       })
       render(<SpacesTab />)
 
@@ -337,7 +337,7 @@ describe('SpacesTab', () => {
     const probed = mockedInvoke.mock.calls
       .filter(([cmd]) => cmd === 'list_blocks')
       .map(([, args]) => (args as { scope: { space_id: string } }).scope.space_id)
-    expect(probed.toSorted()).toEqual([PERSONAL, workId].toSorted())
+    expect(probed.toSorted()).toEqual([PERSONAL, WORK].toSorted())
   })
 
   it('re-reads emptiness on every visit (#5284)', async () => {

@@ -920,8 +920,8 @@ export function seedBlocks(): void {
 
   // Give every canonical seed page one real `op_log` edit, dated ≈90 days
   // ago. These are intentionally OLD so that (a) under the
-  // `recently-modified` sort the canonical pages rank LAST (the bulk pages
-  // seeded below are recent), and (b) the `last-edited:older` /
+  // `recently-modified` sort the canonical pages rank LAST behind a page a
+  // test or spec creates, and (b) the `last-edited:older` /
   // `last-edited:` rolling-window buckets can narrow the set — canonical
   // pages match `OlderThan`, bulk pages match `Rolling`.
   //
@@ -950,8 +950,6 @@ export function seedBlocks(): void {
     stampPageLastEdited(pageId, canonicalLastModified)
   }
 
-  seedBulkPages()
-  seedFacetFixturePage()
   seedWorkSpace()
 }
 
@@ -992,83 +990,6 @@ function seedWorkSpace(): void {
       ],
     ]),
   )
-}
-
-/**
- * Opt-in single fixture page exercising the *page-level* `Tag` and `Priority`
- * facets, which the canonical seed never sets on a page block (its tags and
- * priorities live on child blocks, and the `list_pages_with_metadata` filter
- * evaluates `Tag` / `Priority` against the PAGE id). Gated behind
- * `localStorage['__mockFacetFixture'] === 'true'` so the default seed stays at
- * exactly 6 pages (the `tauri-mock.test.ts` count assertion and every other
- * spec are unaffected). When enabled it adds ONE page:
- *
- *   "Facet Fixture" — tag `work` (`TAG_WORK`) + priority `1`, one child block
- *   (not a `Stub`), no links (so it is also an `Orphan`).
- *
- * Behavioural e2e can then assert `Tag(work)` and `Priority(1)` each narrow to
- * exactly this one page rather than to the (otherwise empty) page-level set.
- */
-function seedFacetFixturePage(): void {
-  let enabled = false
-  try {
-    enabled = globalThis.localStorage?.getItem('__mockFacetFixture') === 'true'
-  } catch {
-    enabled = false
-  }
-  if (!enabled) return
-  const pageId = fakeId()
-  const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
-  // The Priority facet offers the levels (`PRIORITY_LEVELS` = '1'/'2'/'3'),
-  // not the old 'A'/'B'/'C'. The
-  // canonical seed sets no page-level priority, so '1' here is unique and the
-  // facet narrows to exactly this page.
-  page['priority'] = '1'
-  blocks.set(pageId, { ...page, space_id: SEED_IDS.SPACE_PERSONAL })
-  // Same ≈90d-old real op-log edit the canonical pages get, so this opt-in
-  // fixture lands in the same `last-edited:` bucket they do.
-  stampPageLastEdited(pageId, offsetIso(-90))
-  // Page-level tag so the `Tag` facet (which reads `blockTags.get(pageId)`)
-  // matches this page directly.
-  blockTags.set(pageId, new Set([SEED_IDS.TAG_WORK]))
-  const childId = fakeId()
-  blocks.set(childId, makeBlock(childId, 'content', 'Facet Fixture body', pageId, 0))
-}
-
-/**
- * Opt-in bulk pages for pagination / virtualization e2e. Driven by
- * `localStorage['__mockExtraPages']` (default 0 → the canonical fixture and
- * every other spec are unaffected). Each page is space-stamped, carries one
- * child content block (so it is NOT a `Stub`), and has no `[[links]]` (so it
- * IS an `Orphan` / `HasNoInboundLinks`). Titles are zero-padded for stable
- * alphabetical ordering: "Bulk Page 001", "Bulk Page 002", …
- */
-function seedBulkPages(): void {
-  let count = 0
-  try {
-    count = Number(globalThis.localStorage?.getItem('__mockExtraPages') ?? '0') || 0
-  } catch {
-    count = 0
-  }
-  count = Math.min(Math.max(count, 0), 500)
-  for (let i = 1; i <= count; i++) {
-    const pageId = fakeId()
-    const title = `Bulk Page ${String(i).padStart(3, '0')}`
-    blocks.set(pageId, {
-      ...makeBlock(pageId, 'page', title, null, 100 + i),
-      space_id: SEED_IDS.SPACE_PERSONAL,
-    })
-    // Recent, monotonically-decreasing-by-index op-log edits: bulk pages are
-    // newer than the canonical seed pages (≈90 days old) so they sort FIRST
-    // under `recently-modified` and match the `last-edited:` rolling-window
-    // buckets (today / this-week). Index 1 is the newest (now), each
-    // subsequent page one hour older — all still within the last few days.
-    const bulkTs = new Date()
-    bulkTs.setHours(bulkTs.getHours() - (i - 1))
-    stampPageLastEdited(pageId, bulkTs.toISOString())
-    const childId = fakeId()
-    blocks.set(childId, makeBlock(childId, 'content', `${title} body`, pageId, 0))
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -16,11 +16,15 @@
 import {
   blockTags,
   blocks,
+  fakeId,
+  makeBlock,
   opLog,
   pageAliases,
   properties,
   propertyDefs,
+  SEED_IDS,
   seedBlocks,
+  stampPageLastEdited,
 } from '@/lib/tauri-mock/seed'
 
 /** A 26-character ULID-shaped id from a short readable label. */
@@ -57,4 +61,27 @@ export function setSpace(blockId: string, spaceId: string): void {
   const row = blocks.get(blockId)
   if (!row) throw new Error(`setSpace: no block '${blockId}'`)
   row['space_id'] = spaceId
+}
+
+/**
+ * Add `count` pages "Bulk Page 001"… to Personal, each with one child block and
+ * one op-log edit on the page: page i is edited `i - 1` hours ago, and the
+ * edits are pushed newest first, so `opLog`'s array order is not
+ * chronological. Written to the stores directly: the tests need those exact
+ * stamps, which commands answered within one tick would tie.
+ */
+export function addBulkPages(count: number): void {
+  for (let i = 1; i <= count; i++) {
+    const pageId = fakeId()
+    const title = `Bulk Page ${String(i).padStart(3, '0')}`
+    blocks.set(pageId, {
+      ...makeBlock(pageId, 'page', title, null, 100 + i),
+      space_id: SEED_IDS.SPACE_PERSONAL,
+    })
+    const editedAt = new Date()
+    editedAt.setHours(editedAt.getHours() - (i - 1))
+    stampPageLastEdited(pageId, editedAt.toISOString())
+    const childId = fakeId()
+    blocks.set(childId, makeBlock(childId, 'content', `${title} body`, pageId, 0))
+  }
 }

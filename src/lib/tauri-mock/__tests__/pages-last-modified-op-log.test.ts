@@ -69,6 +69,8 @@ import {
   todayDate,
 } from '@/lib/tauri-mock/seed'
 
+import { addBulkPages } from './mock-store-helpers'
+
 const SPACE = SEED_IDS.SPACE_PERSONAL
 
 /** The six canonical seed pages, in the order `seedBlocks` stamps them. */
@@ -168,13 +170,10 @@ function pageIdByTitle(title: string): string {
   throw new Error(`no seeded page titled ${title}`)
 }
 
-/** Seed with `count` extra "Bulk Page NNN" fixtures (0 = canonical only). */
+/** Seed with `count` extra "Bulk Page NNN" pages (0 = canonical only). */
 function seedWithBulkPages(count: number): void {
-  globalThis.localStorage.setItem('__mockExtraPages', String(count))
-  // The opt-in page-level facet fixture would add a 7th canonical-aged page
-  // and shift every count below; pin it off rather than inherit it.
-  globalThis.localStorage.removeItem('__mockFacetFixture')
   seedBlocks()
+  addBulkPages(count)
 }
 
 // ===========================================================================

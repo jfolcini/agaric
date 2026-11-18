@@ -1354,7 +1354,7 @@ fn date_predicate_sql(
     next_param: &mut usize,
     binds: &mut Vec<String>,
 ) -> String {
-    if let Some(day) = local_days(pf, bp_alias, key_param, sql_op, next_param, binds) {
+    if let Some(day) = local_day_predicate_sql(pf, bp_alias, key_param, sql_op, next_param, binds) {
         return day;
     }
     if let Some(v) = &pf.value_date {
@@ -1384,7 +1384,7 @@ fn date_predicate_sql(
 
 /// The predicate of `pf`'s `value_date` or `value_date_range` read as the
 /// device's local days (#6906), when it holds days.
-fn local_days(
+fn local_day_predicate_sql(
     pf: &PropertyFilter,
     bp_alias: &str,
     key_param: usize,

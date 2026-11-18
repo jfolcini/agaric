@@ -1947,13 +1947,12 @@ export function blockLastEditedAt(blockId: string): string | null {
  * as already chronological. `findUndoGroupSize` never did — it already sorts
  * this way — but `list_page_history` (`[...opLog].toReversed()`) and
  * `undo_page_op` (`undoableOps.length - 1 - undoDepth`) both used to, and
- * `seedBulkPages` (`seed.ts`) proved the
+ * `addBulkPages` (`__tests__/mock-store-helpers.ts`) proves the
  * assumption false: it writes its bulk pages' `op_log` rows in DESCENDING
  * `created_at` order (page 001 at `now` pushed FIRST, 005 at `now-4h` pushed
- * LAST, so the array itself is newest-to-oldest for that block of pushes),
- * so `opLog`'s array order stopped matching `created_at` order the moment
- * that seed shipped. Sorting explicitly — the way `findUndoGroupSize` and the
- * backend's own `ORDER BY` both already do — closes the whole class rather
+ * LAST, so the array itself is newest-to-oldest for that block of pushes).
+ * Sorting explicitly — the way `findUndoGroupSize` and the backend's own
+ * `ORDER BY` both already do — closes the whole class rather
  * than pinning it to today's particular seed shape; a future seed, a
  * multi-device merge, or a batch of `pushOpAt` calls in non-chronological
  * order would silently reopen the same bug in `list_page_history`/
