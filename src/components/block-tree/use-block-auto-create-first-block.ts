@@ -65,13 +65,13 @@ export function useBlockAutoCreateFirstBlock({
     if (spaceId == null) return
     autoCreatedForRef.current = rootParentId
 
-    commands
+    const seeding = commands
       .createBlock('content', '', rootParentId, null, requireActiveScope(spaceId), null)
       .then(unwrap)
-      .then((result) => {
+      .then((result): string | null => {
         const current = pageStore.getState()
         // Only apply if we're still on the same page
-        if (current.rootParentId !== rootParentId) return
+        if (current.rootParentId !== rootParentId) return null
         // #752 — the `setState` below is a WHOLESALE replace of `blocks`.
         // If any block appeared while the create IPC was in flight (the
         // user typed Enter on a freshly mounted editor, a sync reload
@@ -79,7 +79,7 @@ export function useBlockAutoCreateFirstBlock({
         // write instead — the created block is still in the database and
         // surfaces on the next load; an extra empty block on a no-longer-
         // empty page is harmless, a vanished user block is not.
-        if (current.blocks.length > 0) return
+        if (current.blocks.length > 0) return null
         // Defensive guard: a malformed result (missing id) must never reach the
         // store, because downstream renderers key by block.id and would emit
         // "Each child in a list should have a unique key" warnings for the
@@ -89,7 +89,7 @@ export function useBlockAutoCreateFirstBlock({
           logger.warn('BlockTree', 'auto-create returned result without id; skipping store write', {
             rootParentId: rootParentId ?? '',
           })
-          return
+          return null
         }
         pageStore.setState({
           blocks: [
@@ -100,8 +100,9 @@ export function useBlockAutoCreateFirstBlock({
           ],
         })
         useBlockStore.getState().setFocused(result.id)
+        return result.id
       })
-      .catch((err: unknown) => {
+      .catch((err: unknown): null => {
         logger.error(
           'BlockTree',
           'Failed to auto-create first block',
@@ -123,6 +124,11 @@ export function useBlockAutoCreateFirstBlock({
         if (autoCreatedForRef.current === rootParentId) {
           autoCreatedForRef.current = null
         }
+        return null
       })
+    pageStore.setState({ seeding })
+    void seeding.finally(() => {
+      if (pageStore.getState().seeding === seeding) pageStore.setState({ seeding: null })
+    })
   }, [enabled, loading, blocksLength, rootParentId, spaceId, t, pageStore])
 }

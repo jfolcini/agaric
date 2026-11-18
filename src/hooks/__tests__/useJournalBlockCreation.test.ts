@@ -585,6 +585,49 @@ describe('useJournalBlockCreation — blank last block', () => {
     expect(useBlockStore.getState().focusedBlockId).toBe('B1')
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
   })
+
+  // A new day's BlockTree is still creating its first block when "Add block" is
+  // pressed: typing began in that block, then the caret jumped to a second one.
+  it('takes the first block the day is still creating instead of adding a second', async () => {
+    stubInvoke({
+      create_block: () => createdBlock('PEXIST', 1),
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    })
+    mountDay([])
+    let seeded: (id: string | null) => void = () => undefined
+    const store = getPageStore('PEXIST')
+    act(() => store?.setState({ seeding: new Promise((resolve) => (seeded = resolve)) }))
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    let added: Promise<void> = Promise.resolve()
+    act(() => {
+      added = result.current.handleAddBlock('2025-06-15')
+    })
+    await act(async () => {
+      seeded('SEED')
+      await added
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('SEED')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(0)
+  })
+
+  it('adds a block when the first block the day was creating never arrived', async () => {
+    stubInvoke({
+      create_block: () => createdBlock('PEXIST', 1),
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    })
+    mountDay([])
+    act(() => getPageStore('PEXIST')?.setState({ seeding: Promise.resolve(null) }))
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
+  })
 })
 
 describe('useJournalBlockCreation — journal template page', () => {

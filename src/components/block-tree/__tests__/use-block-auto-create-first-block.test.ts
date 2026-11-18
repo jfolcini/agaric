@@ -61,6 +61,27 @@ beforeEach(() => {
 })
 
 describe('useBlockAutoCreateFirstBlock', () => {
+  // "Add block" pressed meanwhile takes this block instead of adding a second.
+  it('publishes the block it is creating as the page store’s seeding, until it is in', async () => {
+    const answer = deferred<CommandReturns['create_block']>()
+    stubInvoke(mockedInvoke, { create_block: () => answer.promise })
+    renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
+
+    const seeding = pageStore.getState().seeding
+    expect(seeding).not.toBeNull()
+    answer.resolve(created('NEW_1'))
+    await expect(seeding).resolves.toBe('NEW_1')
+    await waitFor(() => expect(pageStore.getState().seeding).toBeNull())
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['NEW_1'])
+  })
+
+  it('resolves its seeding to null when the create fails', async () => {
+    stubInvoke(mockedInvoke, { create_block: () => Promise.reject(new Error('boom')) })
+    renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
+
+    await expect(pageStore.getState().seeding).resolves.toBeNull()
+  })
+
   // #5415 — no active space: no seed is created; hydration is the trigger.
   it('creates nothing while there is no active space, then seeds once one hydrates', async () => {
     useSpaceStore.setState({ currentSpaceId: null })
