@@ -89,7 +89,7 @@
 //!     stays because it is the SPECIFICATION: change or drop that index and
 //!     it becomes the only thing keeping the property scan deterministic.
 
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection};
 use std::str::FromStr;
 
 use super::{alias_ops, attachment_ops, block_ops, property_ops, tag_ops};
@@ -213,7 +213,7 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 ///
 /// An empty input slice returns `Ok(Vec::new())`.
 pub async fn compute_reverse_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
 ) -> Result<Vec<Result<OpPayload, AppError>>, AppError> {
     if ops.is_empty() {
@@ -230,7 +230,7 @@ pub async fn compute_reverse_batch(
         parsed_types.push(t);
     }
 
-    let ctx = fetch_prior_context(pool, ops, &parsed_types).await?;
+    let ctx = fetch_prior_context(conn, ops, &parsed_types).await?;
     assemble_reverses(ops, &parsed_types, &ctx)
 }
 
@@ -253,7 +253,7 @@ struct PriorContext {
 /// Bucket the input positions by the prior-context query each op-type needs,
 /// then run one batched fetch per bucket.
 async fn fetch_prior_context(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     parsed_types: &[OpType],
 ) -> Result<PriorContext, AppError> {
@@ -300,23 +300,23 @@ async fn fetch_prior_context(
     // resolve — and #3650 made the pointer fetch run FIRST so the fallback
     // scan can be narrowed to the ops that actually need it.
     let edit_prev: Vec<Option<(String, String)>> =
-        fetch_prev_edit_rows_batch(pool, ops, &edit_idxs).await?;
+        fetch_prev_edit_rows_batch(conn, ops, &edit_idxs).await?;
     let edit_prior: Vec<Option<(String, String)>> =
-        fetch_prior_text_fallback_only(pool, ops, &edit_idxs, &edit_prev).await?;
+        fetch_prior_text_fallback_only(conn, ops, &edit_idxs, &edit_prev).await?;
     let move_prior: Vec<Option<(String, String)>> =
-        fetch_prior_position_batch(pool, ops, &move_idxs).await?;
+        fetch_prior_position_batch(conn, ops, &move_idxs).await?;
     let set_prior: Vec<Option<String>> =
-        fetch_prior_property_batch(pool, ops, &set_prop_idxs).await?;
+        fetch_prior_property_batch(conn, ops, &set_prop_idxs).await?;
     let del_prior: Vec<Option<String>> =
-        fetch_prior_property_batch(pool, ops, &del_prop_idxs).await?;
+        fetch_prior_property_batch(conn, ops, &del_prop_idxs).await?;
     let att_prior: Vec<Option<String>> =
-        fetch_prior_attachment_batch(pool, ops, &del_att_idxs).await?;
+        fetch_prior_attachment_batch(conn, ops, &del_att_idxs).await?;
     // #4259: the LIVE `attachments` row behind each `add_attachment`, so the
     // batch twin mints the same synthetic `delete_attachment` the single-op
     // kernel does. Both go through `attachment_ops::build_reverse_add_attachment`,
     // so there is one implementation to keep correct rather than two.
     let add_att_live: Vec<Option<attachment_ops::LiveAttachmentState>> =
-        fetch_live_attachment_state_batch(pool, ops, &add_att_idxs).await?;
+        fetch_live_attachment_state_batch(conn, ops, &add_att_idxs).await?;
     Ok(PriorContext {
         edit_prev,
         edit_prior,
@@ -437,7 +437,7 @@ fn assemble_reverses(
 /// most one row, so no per-op `ORDER BY … LIMIT 1` subquery wrapper is
 /// needed, and ops with no pointer are skipped entirely.
 async fn fetch_prev_edit_rows_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<(String, String)>>, AppError> {
@@ -476,7 +476,7 @@ async fn fetch_prev_edit_rows_batch(
             qb.push(" AND seq = ");
             qb.push_bind(*prev_seq);
         }
-        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (i, op_type, payload) in rows {
             out[i as usize] = Some((op_type, payload));
         }
@@ -513,7 +513,7 @@ async fn fetch_prev_edit_rows_batch(
 /// is. The positions that were not fetched stay `None` — the value
 /// `resolve_prior_text` would have discarded for them anyway.
 async fn fetch_prior_text_fallback_only(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
     prev_rows: &[Option<(String, String)>],
@@ -530,7 +530,7 @@ async fn fetch_prior_text_fallback_only(
         return Ok(out);
     }
     let fallback_idxs: Vec<usize> = fallback_at.iter().map(|&j| idxs[j]).collect();
-    let fetched = fetch_prior_text_batch(pool, ops, &fallback_idxs).await?;
+    let fetched = fetch_prior_text_batch(conn, ops, &fallback_idxs).await?;
     for (&j, row) in fallback_at.iter().zip(fetched) {
         out[j] = row;
     }
@@ -541,7 +541,7 @@ async fn fetch_prior_text_fallback_only(
 /// op, returning (op_type, payload) of the most-recent matching row
 /// strictly before `(created_at, seq)` for each block_id.
 async fn fetch_prior_text_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<(String, String)>>, AppError> {
@@ -602,7 +602,7 @@ async fn fetch_prior_text_batch(
             qb.push_bind(ops[op_idx].device_id.clone());
             qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
-        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (i, op_type, payload) in rows {
             out[i as usize] = Some((op_type, payload));
         }
@@ -614,7 +614,7 @@ async fn fetch_prior_text_batch(
 /// [`fetch_prior_text_batch`] but filters
 /// `op_type IN ('move_block','create_block')`.
 async fn fetch_prior_position_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<(String, String)>>, AppError> {
@@ -655,7 +655,7 @@ async fn fetch_prior_position_batch(
             qb.push_bind(ops[op_idx].device_id.clone());
             qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
-        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (i, op_type, payload) in rows {
             out[i as usize] = Some((op_type, payload));
         }
@@ -687,7 +687,7 @@ async fn fetch_prior_position_batch(
 /// type) or a `DeletePropertyPayload` (for `delete_property`); both
 /// carry a `block_id` + `key` shape.
 async fn fetch_prior_property_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<String>>, AppError> {
@@ -738,7 +738,7 @@ async fn fetch_prior_property_batch(
             qb.push_bind(record.device_id.clone());
             qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
-        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (i, op_type, payload) in rows {
             // #181: only a `set_property` carries a prior value; a
             // `delete_property` means the property was absent → None.
@@ -755,7 +755,7 @@ async fn fetch_prior_property_batch(
 /// `op_type = 'add_attachment'`, and uses the same
 /// strictly-before-(ts, seq) ordering as the rest.
 async fn fetch_prior_attachment_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<String>>, AppError> {
@@ -795,7 +795,7 @@ async fn fetch_prior_attachment_batch(
             qb.push_bind(record.device_id.clone());
             qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
-        let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (i, payload) in rows {
             out[i as usize] = Some(payload);
         }
@@ -840,7 +840,7 @@ async fn fetch_prior_attachment_batch(
 /// `SELECT ... WHERE id = ?` does not filter either. The two must observe the
 /// same row or the B-3 parity oracle is comparing different questions.
 async fn fetch_live_attachment_state_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     ops: &[OpRecord],
     idxs: &[usize],
 ) -> Result<Vec<Option<attachment_ops::LiveAttachmentState>>, AppError> {
@@ -868,7 +868,7 @@ async fn fetch_live_attachment_state_batch(
             separated.push_bind(id.clone());
         }
         qb.push(")");
-        let rows: Vec<(String, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<(String, String, String)> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (id, fs_path, filename) in rows {
             by_id.insert(id, (fs_path, filename));
         }
@@ -1085,7 +1085,7 @@ fn build_reverse_delete_attachment(
 /// one round-trip to fetch all op records, replacing the prior
 /// `for op in ops { get_op_by_seq(...) }` loop.
 pub async fn get_op_records_batch(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     refs: &[agaric_store::op::OpRef],
 ) -> Result<Vec<OpRecord>, AppError> {
     if refs.is_empty() {
@@ -1125,7 +1125,7 @@ pub async fn get_op_records_batch(
             qb.push(" AND seq = ");
             qb.push_bind(r.seq);
         }
-        let rows: Vec<Row> = qb.build_query_as().fetch_all(pool).await?;
+        let rows: Vec<Row> = qb.build_query_as().fetch_all(&mut *conn).await?;
         for (idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) in rows
         {
             out[idx as usize] = Some(OpRecord {
@@ -1168,7 +1168,7 @@ pub async fn get_op_records_batch(
 /// level per OR term, so the predicate stops parsing near 997 refs, long before
 /// SQLite's real 32766-bind limit would matter.
 pub async fn reject_replicated_targets(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     refs: &[agaric_store::op::OpRef],
 ) -> Result<(), AppError> {
     if refs.is_empty() {
@@ -1190,7 +1190,7 @@ pub async fn reject_replicated_targets(
             qb.push(")");
         }
         qb.push(") LIMIT 1");
-        let hit: Option<(String, i64)> = qb.build_query_as().fetch_optional(pool).await?;
+        let hit: Option<(String, i64)> = qb.build_query_as().fetch_optional(&mut *conn).await?;
         if let Some((device_id, seq)) = hit {
             return Err(AppError::validation(format!(
                 "cannot revert op ({device_id}, {seq}): it is a replicated audit op \

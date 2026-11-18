@@ -194,18 +194,33 @@ function setPageState(
 }
 
 /**
+ * Whether an undo or redo `result` is another page's op (#6971): the half of a
+ * tag and page rename (#6755) that renamed the other one, which `pageId`'s
+ * positional depth does not count.
+ */
+function isOtherPagesHalf(result: UndoResult, pageId: string): boolean {
+  return result.paired_rename_of != null && result.paired_rename_of !== pageId
+}
+
+/**
  * Fold a batch undo response into redo bookkeeping. Pushes each reverse op's
  * `new_op_ref` (never `reversed_op`: `redo_page_op` rejects forward ops, #659),
  * so the oldest op's reverse ends up on top, the order redo replays. Advances
- * `undoDepth` and records the group size, clamped to what the redo stack backs
- * so `sum(redoGroupSizes) <= redoStack.length` survives a mid-flight reset (#1561).
+ * `undoDepth` by the page's own ops and records the group size, clamped to what
+ * the redo stack backs so `sum(redoGroupSizes) <= redoStack.length` survives a
+ * mid-flight reset (#1561).
  */
-function applyUndoResults(current: PageUndoState, results: UndoResult[]): PageUndoState {
+function applyUndoResults(
+  current: PageUndoState,
+  results: UndoResult[],
+  pageId: string,
+): PageUndoState {
   let redoStack = current.redoStack
   for (const result of results) {
     redoStack = [result.new_op_ref, ...redoStack].slice(0, MAX_REDO_STACK)
   }
-  const undoDepth = current.undoDepth + results.length
+  const undoDepth =
+    current.undoDepth + results.filter((result) => !isOtherPagesHalf(result, pageId)).length
   const alreadyGrouped = current.redoGroupSizes.reduce((sum, n) => sum + n, 0)
   const backing = redoStack.length - alreadyGrouped
   const recordedSize = Math.min(results.length, Math.max(backing, 0))
@@ -319,6 +334,14 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
     try {
       const result = unwrap(await commands.redoPageOp(opRef.device_id, opRef.seq))
+      // Another page's half of a rename was never counted (#6971).
+      if (isOtherPagesHalf(result, pageId)) {
+        set((state) => ({
+          pages: setPageState(state.pages, pageId, (current) =>
+            current ? { ...current, undoDepth: current.undoDepth + 1 } : current,
+          ),
+        }))
+      }
 
       return { status: 'ok', result }
     } catch (err) {
@@ -400,6 +423,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         return applyUndoResults(
           { ...current, undoStack: withoutEntry(current.undoStack, entry) },
           results,
+          pageId,
         )
       }),
     }))
@@ -435,7 +459,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       pages: setPageState(state.pages, pageId, (current) => {
         if (!current) return current
         const undoStack = entry ? withoutEntry(current.undoStack, entry) : current.undoStack
-        return applyUndoResults({ ...current, undoStack }, results)
+        return applyUndoResults({ ...current, undoStack }, results, pageId)
       }),
     }))
 

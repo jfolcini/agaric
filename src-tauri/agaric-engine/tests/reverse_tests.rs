@@ -722,12 +722,15 @@ async fn reverse_delete_property_restores_its_recorded_prior_5918() {
         expected,
         "single-op kernel: the recorded value, not the logged 1.0"
     );
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&delete))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
+    let batched: Vec<OpPayload> = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(&delete),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Result::unwrap)
+    .collect();
     assert_eq!(
         batched,
         vec![expected],
@@ -759,12 +762,15 @@ async fn reverse_of_a_first_set_records_the_set_value_as_prior_5918() {
         expected,
         "single-op kernel"
     );
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
+    let batched: Vec<OpPayload> = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(&set),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Result::unwrap)
+    .collect();
     assert_eq!(batched, vec![expected], "batch kernel");
 }
 
@@ -797,12 +803,15 @@ async fn reverse_set_property_restores_its_recorded_prior_6014() {
         expected,
         "single-op kernel: the recorded value, not the logged 1.0"
     );
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
+    let batched: Vec<OpPayload> = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(&set),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Result::unwrap)
+    .collect();
     assert_eq!(
         batched,
         vec![expected],
@@ -843,12 +852,15 @@ async fn reverse_set_property_over_an_absent_key_deletes_it_6014() {
         expected,
         "single-op kernel: a delete, not the logged 1.0"
     );
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
+    let batched: Vec<OpPayload> = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(&set),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Result::unwrap)
+    .collect();
     assert_eq!(
         batched,
         vec![expected],
@@ -859,12 +871,15 @@ async fn reverse_set_property_over_an_absent_key_deletes_it_6014() {
 /// Both kernels' reverse of `rec`, which must agree.
 async fn both_kernels(pool: &SqlitePool, rec: &agaric_store::op_log::OpRecord) -> OpPayload {
     let single = compute_reverse(pool, TEST_DEVICE, rec.seq).await.unwrap();
-    let batched: Vec<OpPayload> = compute_reverse_batch(pool, std::slice::from_ref(rec))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
+    let batched: Vec<OpPayload> = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(rec),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Result::unwrap)
+    .collect();
     assert_eq!(batched, vec![single.clone()], "the kernels disagree");
     single
 }
@@ -1250,9 +1265,12 @@ async fn reverse_move_block_without_any_prior_is_non_reversible_6046() {
         matches!(&single, Err(AppError::NonReversible { op_type }) if op_type == "move_block"),
         "single-op kernel: got {single:?}"
     );
-    let batched = compute_reverse_batch(&pool, std::slice::from_ref(&rec))
-        .await
-        .expect("a move with no inverse is skippable, not fatal to the batch");
+    let batched = compute_reverse_batch(
+        &mut pool.acquire().await.unwrap(),
+        std::slice::from_ref(&rec),
+    )
+    .await
+    .expect("a move with no inverse is skippable, not fatal to the batch");
     assert!(
         matches!(batched.as_slice(), [Err(AppError::NonReversible { op_type })] if op_type == "move_block"),
         "batch kernel: got {batched:?}"
@@ -2263,7 +2281,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
 /// Seeds a 20-op mixed batch covering edit_block, move_block,
 /// set_property, and add_attachment plus the support history each
 /// reverse needs to find prior context. Then asserts:
-///   * `compute_reverse_batch(pool, &records).await == legacy`
+///   * `compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records).await == legacy`
 ///   * `legacy` is produced by the per-op `compute_reverse` loop.
 #[tokio::test]
 async fn compute_reverse_batch_matches_per_op_loop() {
@@ -2767,15 +2785,18 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     }
 
     // -- batched candidate ------------------------------------------
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
+        .await
+        .unwrap();
     // #2020: per-op `Result`s — every op in this batch is reversible, so
     // unwrap each inner result into the byte-for-byte payload comparison.
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| r.expect("all ops in this batch are reversible"))
-        .collect();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.expect("all ops in this batch are reversible"))
+            .collect();
 
     // -- assert byte-identical ---------------------------------------
     assert_eq!(
@@ -3027,14 +3048,17 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
     );
 
     // Batched candidate must match the oracle byte-for-byte.
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    // #2020: per-op `Result`s — this single reversible op unwraps cleanly.
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
         .await
-        .unwrap()
-        .into_iter()
-        .map(|r| r.expect("the final Set is reversible"))
-        .collect();
+        .unwrap();
+    // #2020: per-op `Result`s — this single reversible op unwraps cleanly.
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.expect("the final Set is reversible"))
+            .collect();
     assert_eq!(batched.len(), 1, "exactly one reverse for one op");
     assert_eq!(
         batched[0], legacy,
@@ -3109,16 +3133,19 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
 
     // The two batch helpers that fan out one bound subquery per op.
     // Either would have tripped "too many SQL variables" pre-chunking.
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
+        .await
+        .unwrap();
     assert_eq!(records.len(), N_EDITS, "all op records round-tripped");
 
     // #2020: per-op `Result`s — every edit is reversible, so unwrap each.
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
-        .await
-        .expect("C5: batched reverse of 501 edits must not overflow SQLite's limits")
-        .into_iter()
-        .map(|r| r.expect("every edit in this batch is reversible"))
-        .collect();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("C5: batched reverse of 501 edits must not overflow SQLite's limits")
+            .into_iter()
+            .map(|r| r.expect("every edit in this batch is reversible"))
+            .collect();
     assert_eq!(batched.len(), N_EDITS, "one reverse per input op, in order");
 
     // Output must stay aligned to input order across chunk boundaries:
@@ -3424,7 +3451,7 @@ async fn compute_reverse_restores_the_replicated_prior_space_5262() {
     );
 
     let records = get_op_records_batch(
-        &pool,
+        &mut pool.acquire().await.unwrap(),
         &[OpRef {
             device_id: moved.device_id.clone(),
             seq: moved.seq,
@@ -3432,7 +3459,7 @@ async fn compute_reverse_restores_the_replicated_prior_space_5262() {
     )
     .await
     .unwrap();
-    let batched = compute_reverse_batch(&pool, &records)
+    let batched = compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
         .await
         .unwrap()
         .pop()
@@ -3625,8 +3652,10 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
             seq: local_edit.seq,
         },
     ];
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let out = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
+        .await
+        .unwrap();
+    let out = compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
         .await
         .expect("#3280: an unreconstructable edit must NOT abort the whole batch");
 
@@ -3707,15 +3736,17 @@ async fn reverse_anchor_both_kernels(pool: &SqlitePool) -> OpPayload {
         device_id: TIE_ANCHOR.to_string(),
         seq: 1,
     }];
-    let records = agaric_engine::reverse::get_op_records_batch(pool, &refs)
-        .await
-        .unwrap();
-    let batched = agaric_engine::reverse::compute_reverse_batch(pool, &records)
-        .await
-        .expect("batch kernel must not fail at batch level")
-        .pop()
-        .expect("one op in, one result out")
-        .expect("batch kernel must reverse the anchor op");
+    let records =
+        agaric_engine::reverse::get_op_records_batch(&mut pool.acquire().await.unwrap(), &refs)
+            .await
+            .unwrap();
+    let batched =
+        agaric_engine::reverse::compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("batch kernel must not fail at batch level")
+            .pop()
+            .expect("one op in, one result out")
+            .expect("batch kernel must reverse the anchor op");
     assert_eq!(
         single, batched,
         "the two kernels must resolve the cross-device collision identically"
@@ -4083,13 +4114,16 @@ async fn compute_reverse_batch_move_group_stays_aligned_across_chunks_4656() {
         });
     }
 
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
         .await
-        .expect("every move in this batch has a prior placement")
-        .into_iter()
-        .map(|r| r.expect("every move in this batch is reversible"))
-        .collect();
+        .unwrap();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("every move in this batch has a prior placement")
+            .into_iter()
+            .map(|r| r.expect("every move in this batch is reversible"))
+            .collect();
     assert_eq!(batched.len(), N_MOVES, "one reverse per input op, in order");
 
     for (i, rev) in batched.iter().enumerate() {
@@ -4146,13 +4180,16 @@ async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656()
         });
     }
 
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
         .await
-        .expect("every set_property in this batch has a prior value")
-        .into_iter()
-        .map(|r| r.expect("every set_property in this batch is reversible"))
-        .collect();
+        .unwrap();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("every set_property in this batch has a prior value")
+            .into_iter()
+            .map(|r| r.expect("every set_property in this batch is reversible"))
+            .collect();
     assert_eq!(batched.len(), N_SETS, "one reverse per input op, in order");
 
     for (i, rev) in batched.iter().enumerate() {
@@ -4220,13 +4257,16 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
         });
     }
 
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
         .await
-        .expect("every delete_attachment in this batch has a paired add")
-        .into_iter()
-        .map(|r| r.expect("every delete_attachment in this batch is reversible"))
-        .collect();
+        .unwrap();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("every delete_attachment in this batch has a paired add")
+            .into_iter()
+            .map(|r| r.expect("every delete_attachment in this batch is reversible"))
+            .collect();
     assert_eq!(
         batched.len(),
         N_DELETES,
@@ -4316,13 +4356,16 @@ async fn compute_reverse_batch_prev_edit_group_resolves_its_own_prev_edit_pointe
         });
     }
 
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
         .await
-        .expect("every edit in this batch resolves its prev_edit pointer")
-        .into_iter()
-        .map(|r| r.expect("every edit in this batch is reversible"))
-        .collect();
+        .unwrap();
+    let batched: Vec<OpPayload> =
+        compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
+            .await
+            .expect("every edit in this batch resolves its prev_edit pointer")
+            .into_iter()
+            .map(|r| r.expect("every edit in this batch is reversible"))
+            .collect();
     assert_eq!(batched.len(), N_EDITS, "one reverse per input op, in order");
 
     for (k, rev) in batched.iter().enumerate() {
@@ -4404,8 +4447,10 @@ async fn compute_reverse_batch_aborts_on_a_fatal_non_skippable_error_4656() {
             seq: orphan_delete.seq,
         },
     ];
-    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
-    let err = compute_reverse_batch(&pool, &records)
+    let records = get_op_records_batch(&mut pool.acquire().await.unwrap(), &op_refs)
+        .await
+        .unwrap();
+    let err = compute_reverse_batch(&mut pool.acquire().await.unwrap(), &records)
         .await
         .expect_err("a delete_property with no prior set_property is FATAL, not skippable");
     assert!(
@@ -4447,7 +4492,7 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
             seq: rec.seq,
         });
     }
-    reject_replicated_targets(&pool, &local_refs)
+    reject_replicated_targets(&mut pool.acquire().await.unwrap(), &local_refs)
         .await
         .expect("two locally-authored targets must both be accepted");
 
@@ -4473,7 +4518,7 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
             seq: audit.seq,
         },
     ];
-    let err = reject_replicated_targets(&pool, &mixed)
+    let err = reject_replicated_targets(&mut pool.acquire().await.unwrap(), &mixed)
         .await
         .expect_err("a replicated audit op has no local forward effect to undo");
     assert!(
@@ -4534,7 +4579,7 @@ async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
         device_id: audit.device_id,
         seq: audit.seq,
     });
-    let err = reject_replicated_targets(&pool, &refs)
+    let err = reject_replicated_targets(&mut pool.acquire().await.unwrap(), &refs)
         .await
         .expect_err("a replicated target past the first chunk must still be rejected");
     assert!(

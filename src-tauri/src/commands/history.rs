@@ -1695,7 +1695,6 @@ pub async fn revert_ops_inner(
     let app_data_dir = materializer.app_data_dir();
     let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
-        pool,
         materializer.loro_state(),
         device_id,
         ops,
@@ -1740,7 +1739,6 @@ pub async fn revert_ops_inner(
 /// it on a path that rolls back.
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
-    pool: &SqlitePool,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     ops: Vec<OpRef>,
@@ -1763,11 +1761,11 @@ async fn revert_ops_in_tx(
     }
 
     // #6755 — a tag's rename and its page's are reverted together.
-    let ops = crate::commands::tag_pages::with_tag_path_partners(tx, ops).await?;
+    let (ops, paired) = crate::commands::tag_pages::with_tag_path_partners(tx, ops).await?;
 
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
     let (reverses, computed_skipped, moves_recorded_priors) =
-        compute_reverses_newest_first(pool, &ops, skip_non_reversible).await?;
+        compute_reverses_newest_first(tx, &ops, skip_non_reversible).await?;
     let plan = plan_reverse_apply_order(&reverses, moves_recorded_priors);
 
     // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
@@ -1791,7 +1789,16 @@ async fn revert_ops_in_tx(
             .then_with(|| b.1.reversed_op.seq.cmp(&a.1.reversed_op.seq))
             .then_with(|| b.1.reversed_op.device_id.cmp(&a.1.reversed_op.device_id))
     });
-    let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
+    let results: Vec<UndoResult> = results_tagged
+        .into_iter()
+        .map(|(_, mut r)| {
+            r.paired_rename_of = paired
+                .iter()
+                .find(|(op, _)| *op == r.reversed_op)
+                .map(|(_, block)| block.clone());
+            r
+        })
+        .collect();
 
     Ok((results, computed_skipped + applied_skipped, cohort_fanout))
 }
@@ -1812,20 +1819,15 @@ type PendingReverse = (OpRef, OpPayload, i64, String);
 ///      the batch (`compute_reverse_batch` — at most 5 queries for
 ///      the five context-bearing op-types).
 ///
-/// These reads target already-committed ops (the records being reverted),
-/// so they run against the bare pool — with ONE exception since #4259:
-/// `fetch_live_attachment_state_batch` reads `attachments`, which is
-/// mutable materialized state rather than the append-only log, while `tx`
-/// is already open. So the live row it adopts is the row as of
-/// reverse-COMPUTATION time, not as of the moment each reverse is applied.
-/// That gap is spelled out at `build_reverse_add_attachment`; noting it
-/// here too because this is the comment a reader reaches first, and on its
-/// own it now asserts a rationale that no longer covers every prefetch.
-/// The membership read that decides
-/// *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
-/// SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
+/// They read through the caller's transaction, never the pool: the
+/// transaction holds one of the pool's two writers, so a read on the pool
+/// waits for the other, which a busy writer holds past the acquire timeout
+/// (#6976). `fetch_live_attachment_state_batch` reads `attachments`, mutable
+/// materialized state, so the live row it adopts is the row as of
+/// reverse-COMPUTATION time, not as of the moment each reverse is applied
+/// (see `build_reverse_add_attachment`).
 async fn compute_reverses_newest_first(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     ops: &[OpRef],
     skip_non_reversible: bool,
 ) -> Result<(Vec<PendingReverse>, u64, bool), AppError> {
@@ -1838,8 +1840,8 @@ async fn compute_reverses_newest_first(
     // applied to local state, so applying their inverse would corrupt local
     // state by "undoing" a forward effect that never happened here. Reject
     // before any reverse is computed or applied.
-    reverse::reject_replicated_targets(pool, ops).await?;
-    let records = reverse::get_op_records_batch(pool, ops).await?;
+    reverse::reject_replicated_targets(&mut *conn, ops).await?;
+    let records = reverse::get_op_records_batch(&mut *conn, ops).await?;
     // #2020: `compute_reverse_batch` returns a per-op `Result`. A
     // non-reversible op surfaces as an inner `Err(NonReversible)` (e.g. a
     // `move_block` with no placement to restore, a `delete_attachment` whose paired
@@ -1847,7 +1849,7 @@ async fn compute_reverses_newest_first(
     // mechanism that subsumes the old static `[purge_block,
     // delete_attachment]` skip list. The non-reversible *contract* lives
     // in `reverse::is_skippable_non_reversible`.
-    let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
+    let reverse_payloads = reverse::compute_reverse_batch(&mut *conn, &records).await?;
     let mut reverses: Vec<PendingReverse> = Vec::with_capacity(ops.len());
     for ((op_ref, reverse_payload), record) in ops.iter().zip(reverse_payloads).zip(records.iter())
     {
@@ -2147,6 +2149,7 @@ async fn apply_reverses_in_order(
                 },
                 new_op_type,
                 is_redo: false,
+                paired_rename_of: None,
             },
         ));
 
@@ -2301,7 +2304,6 @@ pub async fn restore_page_to_op_inner(
         let app_data_dir = materializer.app_data_dir();
         let (results, skipped, cohort_fanout) = revert_ops_in_tx(
             &mut tx,
-            pool,
             materializer.loro_state(),
             device_id,
             candidate_ops,
@@ -2525,6 +2527,7 @@ pub async fn undo_page_op_inner(
         },
         new_op_type,
         is_redo: false,
+        paired_rename_of: None,
     })
 }
 
@@ -2836,6 +2839,8 @@ pub async fn redo_page_op_inner(
     };
     let reverse_payload =
         with_recorded_prior_in_tx(&mut tx, &reverse_payload, (undo_created_at, &undo_ref)).await?;
+    // #6971 — named as the undo named it.
+    let paired_rename_of = crate::commands::tag_pages::paired_rename_of(&mut tx, &undo_ref).await?;
     let op_ts = reverse_op_timestamp(&reverse_payload);
     let op_record = op_log::append_local_redo_op_in_tx(
         &mut tx,
@@ -2850,14 +2855,13 @@ pub async fn redo_page_op_inner(
     // into the row-restoring reverse arm that does NOT go through
     // `revert_ops_in_tx`'s preflight, so the guard inside
     // `apply_reverse_in_tx` is what covers it.
-    let app_data_dir = materializer.app_data_dir();
     let cohort_fanout = apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
         &reverse_payload,
         op_ts,
-        app_data_dir.as_deref(),
+        materializer.app_data_dir().as_deref(),
     )
     .await?;
 
@@ -2882,6 +2886,7 @@ pub async fn redo_page_op_inner(
         },
         new_op_type,
         is_redo: true,
+        paired_rename_of,
     })
 }
 
@@ -3178,7 +3183,6 @@ pub async fn undo_page_group_inner(
     let app_data_dir = materializer.app_data_dir();
     let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
-        pool,
         materializer.loro_state(),
         device_id,
         ops,
@@ -3388,7 +3392,6 @@ pub async fn undo_ops_inner(
     let app_data_dir = materializer.app_data_dir();
     let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
-        pool,
         materializer.loro_state(),
         device_id,
         ops,
@@ -3421,18 +3424,21 @@ pub async fn undo_op_inner(
     materializer: &Materializer,
     op_ref: OpRef,
 ) -> Result<UndoResult, AppError> {
-    let mut results = undo_ops_inner(pool, device_id, materializer, vec![op_ref]).await?;
+    let results = undo_ops_inner(pool, device_id, materializer, vec![op_ref.clone()]).await?;
     // One input ref + `skip_non_reversible = false` (errors abort via `?`
-    // above) ⇒ at least one result (two for half of a tag and page rename,
-    // #6755). The branch is unreachable; it exists so a future contract drift
-    // fails loudly instead of panicking.
-    results.pop().ok_or_else(|| {
-        AppError::Internal(
-            "undo_op produced no result for a single-ref batch (revert_ops_in_tx \
+    // above) ⇒ a result for it, beside its partner's for half of a tag and
+    // page rename (#6755). The branch is unreachable; it exists so a future
+    // contract drift fails loudly instead of panicking.
+    results
+        .into_iter()
+        .find(|r| r.reversed_op == op_ref)
+        .ok_or_else(|| {
+            AppError::Internal(
+                "undo_op produced no result for a single-ref batch (revert_ops_in_tx \
              contract drift)"
-                .into(),
-        )
-    })
+                    .into(),
+            )
+        })
 }
 
 /// #2468: verify — inside the caller's IMMEDIATE transaction — that every

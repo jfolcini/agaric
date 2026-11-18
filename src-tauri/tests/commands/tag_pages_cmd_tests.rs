@@ -6,6 +6,7 @@
 
 use super::prelude::*;
 use agaric_core::error::ValidationCode;
+use agaric_store::op::OpRef;
 use agaric_store::space::SpaceId;
 
 struct Fixture {
@@ -508,4 +509,111 @@ async fn the_positional_undo_of_a_tag_rename_moves_its_page_back() {
     assert_eq!(undone.len(), 2);
     assert_eq!(f.content(&tag).await, "book");
     assert_eq!(f.content(&page).await, "Tag/book");
+}
+
+/// A tag renamed with no page, beside a page-and-tag rename of another space
+/// right after it on the same device: reverting the first takes nothing of the
+/// second, whose names pair only by chance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_revert_takes_no_rename_of_another_space_along() {
+    let f = fixture().await;
+    let lone = f.tag("a").await;
+    let other = create_space_inner(&f.pool, DEV, &f.mat, "S2".into(), None)
+        .await
+        .unwrap()
+        .into_string();
+    let scope = SpaceScope::Active(SpaceId::from_trusted(&other));
+    let other_tag = create_block_inner_with_space(
+        &f.pool,
+        DEV,
+        &f.mat,
+        "tag".into(),
+        "c".into(),
+        None,
+        None,
+        &scope,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    settle(&f.mat).await;
+    let other_page = f.tag_page(&other_tag).await.id;
+
+    let lone_rename = f.rename(&lone, "b").await.unwrap().op_refs;
+    assert_eq!(lone_rename.len(), 1, "the tag has no page");
+    f.rename(&other_page, "Tag/b").await.unwrap();
+
+    let reverted = revert_ops_inner(&f.pool, DEV, &f.mat, lone_rename)
+        .await
+        .unwrap();
+    settle(&f.mat).await;
+
+    assert_eq!(reverted.len(), 1, "the other space's rename stays");
+    assert_eq!(f.content(&lone).await, "a");
+    assert_eq!(f.content(&other_page).await, "Tag/b");
+    assert_eq!(f.content(&other_tag).await, "b");
+}
+
+/// Undoing one half of a tag and page rename by its ref answers that half's
+/// reverse, though both are undone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undoing_one_half_by_ref_answers_that_half() {
+    let f = fixture().await;
+    let tag = f.tag("book").await;
+    let page = f.tag_page(&tag).await.id;
+
+    for half in [0, 1] {
+        let refs = f.rename(&tag, "Reading").await.unwrap().op_refs;
+        let undone = undo_op_inner(&f.pool, DEV, &f.mat, refs[half].clone())
+            .await
+            .unwrap();
+        settle(&f.mat).await;
+
+        assert_eq!(undone.reversed_op, refs[half], "half {half}");
+        assert_eq!(f.content(&tag).await, "book");
+        assert_eq!(f.content(&page).await, "Tag/book");
+    }
+}
+
+/// #6971 — each half's reverse names the tag or page it renamed, so a page's
+/// undo counts only its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_half_of_an_undone_rename_names_its_block() {
+    let f = fixture().await;
+    let tag = f.tag("book").await;
+    let page = f.tag_page(&tag).await.id;
+    let lone = f.tag("lone").await;
+
+    let refs = f.rename(&tag, "Reading").await.unwrap().op_refs;
+    let undone = undo_ops_inner(&f.pool, DEV, &f.mat, refs.clone())
+        .await
+        .unwrap();
+    settle(&f.mat).await;
+
+    let named = |r: &OpRef| {
+        undone
+            .iter()
+            .find(|u| u.reversed_op == *r)
+            .and_then(|u| u.paired_rename_of.clone())
+    };
+    assert_eq!(named(&refs[0]), Some(tag.clone()));
+    assert_eq!(named(&refs[1]), Some(page.clone()));
+    for u in &undone {
+        let redone = redo_page_op_inner(
+            &f.pool,
+            DEV,
+            &f.mat,
+            u.new_op_ref.device_id.clone(),
+            u.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+        assert_eq!(redone.paired_rename_of, u.paired_rename_of, "its redo too");
+    }
+    settle(&f.mat).await;
+
+    let alone = f.rename(&lone, "solo").await.unwrap().op_refs;
+    let undone = undo_ops_inner(&f.pool, DEV, &f.mat, alone).await.unwrap();
+    assert_eq!(undone[0].paired_rename_of, None, "a rename with no pair");
 }

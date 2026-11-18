@@ -6021,6 +6021,12 @@ export type UndoResult = {
 	new_op_type: string,
 	/**  Whether this was a redo (true) or undo (false). */
 	is_redo: boolean,
+	/**
+	 *  #6755 — on the reverse of one half of a tag and page rename, the tag
+	 *  or page that half renamed: a page's undo counts only its own half
+	 *  toward its positional depth (#6971). Null otherwise.
+	 */
+	paired_rename_of?: BlockId | null,
 };
 
 /**
