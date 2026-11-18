@@ -6,6 +6,7 @@ import {
   focusBlockById,
   ipc,
   openPage,
+  reopenPage,
   selectEditorRange,
   test,
   waitForBoot,
@@ -16,7 +17,7 @@ import {
  * like a text editor: the first block joins the block at the cursor, the rest
  * follow, and the text after the cursor ends the last one. The toast then
  * offers Paste as text, which takes the blocks back and puts the lines into
- * the block as they are. Every structural assertion reads the mock backend.
+ * the block as they are. Every structural assertion reads the backend.
  */
 
 const PAGE = 'Getting Started'
@@ -128,5 +129,41 @@ test.describe('Pasting text into a block splices blocks (#5160 D4) @editor', () 
     // One hard break per line break of the pasted text.
     await expect(reopened.locator('br')).toHaveCount(8)
     await expect(reopened.locator('h2')).toHaveCount(0)
+  })
+
+  // The editor's own draft flush runs after the paste, so what the backend
+  // keeps shows only once the page is left and reopened.
+  test('the toast Undo takes the paste back in one step, and a paste survives leaving the page', async ({
+    page,
+  }) => {
+    const editor = await caretMidBlock(page)
+    const before = await childrenOf(page, PAGE_ID)
+    await pasteText(editor, LLM_ANSWER)
+    await page
+      .locator('[data-sonner-toast]')
+      .filter({ hasText: 'Pasted 6 blocks' })
+      .getByRole('button', { name: 'Undo', exact: true })
+      .click()
+    await expect.poll(() => contentsOf(page, PAGE_ID)).toEqual(before.map((r) => r.content))
+    expect((await childrenOf(page, PAGE_ID)).map((r) => r.id)).toEqual(before.map((r) => r.id))
+
+    await focusBlockById(page, GS1)
+    await selectEditorRange(page, 'Hello '.length, 'Hello '.length)
+    await pasteText(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+      LLM_ANSWER,
+    )
+    await expect.poll(() => contentsOf(page, PAGE_ID)).toContain('## Plan')
+    await reopenPage(page, PAGE)
+
+    const top = await childrenOf(page, PAGE_ID)
+    expect(top.slice(0, 5).map((r) => r.content)).toEqual([
+      'Hello Here is a plan:',
+      '## Plan',
+      'First step',
+      'Second step',
+      'Good luck!world',
+    ])
+    expect(await contentsOf(page, (top[2] as Row).id)).toEqual(['detail'])
   })
 })

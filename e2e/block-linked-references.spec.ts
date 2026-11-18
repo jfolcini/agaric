@@ -80,8 +80,12 @@ test.describe('Linked references follow the zoom @editor @pages', () => {
     await expect(references).toContainText('Jot down quick thoughts')
     await expect(references).not.toContainText('These notes complement the')
 
-    // 4. Zoom back out — the page's own references return.
-    await page.getByRole('button', { name: 'Exit zoom' }).click()
+    // 4. Zoom back out — the page's own references return. Through the breadcrumb: until the
+    //    child the zoom seeds under the leaf lands, the empty zoom view shows an "Exit zoom" too.
+    await page
+      .getByRole('navigation', { name: /zoom breadcrumbs/i })
+      .getByRole('button', { name: 'Exit zoom' })
+      .click()
     await expect(references).toContainText('These notes complement the')
     await expect(references).not.toContainText('Jot down quick thoughts')
   })

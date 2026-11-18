@@ -6,6 +6,7 @@ import {
   focusBlockById,
   ipc,
   openPage,
+  readClipboard,
   reopenPage,
   selectEditorRange,
   test,
@@ -17,7 +18,7 @@ import {
  * block paste reads them: `[[Name]]`, `[[Name|label]]` and Logseq's
  * `[label]([[Name]])` link the page of that name, created when none exists,
  * and the line joins the block at the cursor. Inside a table cell the line
- * stays inline, so the table is not cut in two. Every assertion reads the mock
+ * stays inline, so the table is not cut in two. Every assertion reads the
  * backend after navigating away and back.
  */
 
@@ -69,6 +70,13 @@ async function caretAt(page: Page, content: string, offset: number): Promise<Loc
   return editor
 }
 
+/** Empty GS1 and open it in the editor. */
+async function emptyEditor(page: Page): Promise<Locator> {
+  await ipc(page, 'edit_block', { blockId: GS1, toText: '' })
+  await openPage(page, PAGE)
+  return focusBlockById(page, GS1)
+}
+
 test.describe('One pasted line reads its names as a block paste does (#6033) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -104,14 +112,17 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
     await pasteText(editor, '#freshtag ')
 
     await reopenPage(page, PAGE)
-    const tags = await ipc<Array<{ tag_id: string; name: string }>>(
-      page,
-      'list_all_tags_in_space',
-      { scope: SCOPE },
-    )
-    const tag = tags.find((t) => t.name === 'freshtag')
-    expect(tag).toBeDefined()
-    expect(await storedContent(page, GS1)).toBe(`Hello #[${tag?.tag_id}] world`)
+    // `tags_cache` lists a tag made by the paste once its rebuild has run.
+    const freshTagId = async () => {
+      const tags = await ipc<Array<{ tag_id: string; name: string }>>(
+        page,
+        'list_all_tags_in_space',
+        { scope: SCOPE },
+      )
+      return tags.find((t) => t.name === 'freshtag')?.tag_id
+    }
+    await expect.poll(freshTagId).toBeDefined()
+    expect(await storedContent(page, GS1)).toBe(`Hello #[${await freshTagId()}] world`)
   })
 
   // The splice would cut the table in two, so the line goes in at the caret,
@@ -129,5 +140,75 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
       '| A | B |\n| --- | --- |\n| one see \\[\\[Fresh page\\]\\] | two |',
     )
     expect(await pagesTitled(page, 'Fresh page')).toEqual([])
+  })
+
+  // #6033 S4, S5b: Logseq's highlight and Obsidian's embed, which the backend
+  // normalises as it stores them.
+  test('a pasted line holding ^^x^^ is stored as Agaric’s ==x== @real-only', async ({ page }) => {
+    const editor = await caretAt(page, 'Hello world', 'Hello '.length)
+
+    await pasteText(editor, 'x ^^y^^')
+
+    await expect(editor).toContainText('Hello x ')
+    await reopenPage(page, PAGE)
+    expect(await storedContent(page, GS1)).toBe('Hello x ==y==world')
+  })
+
+  test('a copy of text holding ^^ literally pastes back byte for byte', async ({ page }) => {
+    const escaped = 'a \\^\\^b\\^\\^ c'
+    const before = await childIds(page)
+    await emptyEditor(page)
+    await page.keyboard.type('a ^^b^^ c')
+    // Escape commits the block and leaves it selected (#5160 D17); the second
+    // clears that selection so the Ctrl+click below starts from none.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    // The editor stores the text escaped, so no paste reads it as a highlight.
+    await expect.poll(() => storedContent(page, GS1)).toBe(escaped)
+
+    await page
+      .locator(`[data-testid="block-static"][data-block-id="${GS1}"]`)
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
+    await page.keyboard.press('Control+c')
+    await expect.poll(() => readClipboard(page)).toContain('a ')
+    await page.keyboard.press('Control+v')
+    await expect.poll(async () => (await childIds(page)).length).toBe(before.length + 1)
+
+    await reopenPage(page, PAGE)
+    const copy = (await childIds(page)).filter((id) => !before.includes(id))
+    expect(copy).toHaveLength(1)
+    expect(await storedContent(page, GS1)).toBe(escaped)
+    expect(await storedContent(page, copy[0] as string)).toBe(escaped)
+  })
+
+  test('a pasted ![[Note]] is stored as an embed of the page @real-only', async ({ page }) => {
+    const note = await ipc<Row>(page, 'create_block', {
+      blockType: 'page',
+      content: 'Embedded note',
+      parentId: null,
+      index: null,
+      scope: SCOPE,
+      blockId: null,
+    })
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: 'the note body',
+      parentId: note.id,
+      index: null,
+      scope: SCOPE,
+      blockId: null,
+    })
+    const editor = await emptyEditor(page)
+
+    await pasteText(editor, '![[Embedded note]]')
+
+    const embed = `{{embed [[${note.id}]]}}`
+    await expect.poll(() => storedContent(page, GS1)).toBe(embed)
+    await reopenPage(page, PAGE)
+    await expect(
+      page.locator(`li[data-block-id="${GS1}"] [data-testid="embed-container"]`),
+    ).toContainText('the note body')
+    expect(await storedContent(page, GS1)).toBe(embed)
   })
 })

@@ -1,7 +1,16 @@
 import type { Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, focusBlock, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  activeSuggestionList,
+  expect,
+  focusBlock,
+  ipc,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * Leaving a block in block mode commits every kind of metadata typed into it,
@@ -59,6 +68,8 @@ test('a task marker, a property line and a tag typed in a block all commit on on
   await pasteText(page, '- [ ] call mom')
   await expect(editor.locator('p[data-todo-state="TODO"]')).toBeVisible()
   await page.keyboard.type(' #work', { delay: 30 })
+  // Escape closes the tag picker; pressed before the picker shows, it leaves the block.
+  await expect(activeSuggestionList(page)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(editor.locator('[data-testid="tag-ref-chip"]')).toHaveCount(0)
   await page.keyboard.press('Shift+Enter')
