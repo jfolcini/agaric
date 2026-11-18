@@ -46,8 +46,10 @@ test.describe('History scoped to one page (#6535) @pages', () => {
     await expect(page.getByTestId('header-label')).toHaveText('History')
     await expect(page.getByText('Changes to Getting Started')).toBeVisible()
     const rows = page.locator('[data-history-item]')
-    // A's two edits and the seed's dated title stamp on A's page block.
-    await expect(rows).toHaveCount(3)
+    // A's two edits. The rest is the seed's own history of A's page: one dated
+    // title stamp on the mock, every create and property write on the real
+    // backend, which wrote the seed through its commands.
+    await expect(rows.filter({ hasText: /Alpha (first|second)/ })).toHaveCount(2)
     await expect(rows.filter({ hasText: 'Alpha second' })).toHaveCount(1)
     await expect(rows.filter({ hasText: 'Bravo edit' })).toHaveCount(0)
 

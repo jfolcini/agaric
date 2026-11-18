@@ -133,10 +133,13 @@ test.describe('HistoryView — diff toggle @pages', () => {
 
     const diffRegion = firstItem.locator('section[aria-label="Diff content"]')
     await expect(diffRegion).toBeVisible()
-    await expect(diffRegion.locator('ins')).toContainText('Updated welcome message')
-    await expect(diffRegion.locator('del')).toContainText(
-      'Welcome to Agaric! This is your personal knowledge base.',
-    )
+    // The real backend diffs word by word, so a change spans several `<ins>` /
+    // `<del>` runs with unchanged spaces between them; the mock emits one run
+    // each. Compared without whitespace, both name the same characters.
+    const runs = (tag: 'ins' | 'del') => async (): Promise<string> =>
+      (await diffRegion.locator(tag).allTextContents()).join('').replaceAll(/\s/g, '')
+    await expect.poll(runs('ins')).toBe('Updatedwelcomemessage')
+    await expect.poll(runs('del')).toBe('WelcometoAgaric!Thisisyourpersonalknowledgebase.')
   })
 })
 
