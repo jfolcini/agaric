@@ -1,13 +1,13 @@
 /**
  * #4553 Phase 2 — the group-by picker offers `GroupKey::Property` and
- * `GroupKey::DateBucket`, and a grouped result renders for either.
+ * `GroupKey::DateBucket`.
  *
  * The mock's grouped path synthesises one bucket keyed by the `GroupKey`
  * type (`run_advanced_query` in `src/lib/tauri-mock/handlers/search.ts`),
  * while the real backend labels a bucket by its value (`(none)` for the seed,
  * which has no `status` and no due dates). So this spec asserts that a grouped
- * result renders for a property key and that the date-bucket controls work; real bucket labels are pinned by the engine tests
- * (`agaric-store/src/query/tests.rs`).
+ * result renders for a property key and that the date-bucket controls work;
+ * real bucket labels are pinned by the engine tests (`agaric-store/src/query/tests.rs`).
  */
 import { expect, navigateToView, test, waitForBoot } from './helpers'
 
