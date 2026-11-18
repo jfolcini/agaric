@@ -3265,6 +3265,33 @@ export type MirrorFile = {
 	path: string,
 };
 
+/**
+ *  A file reading back would act on ([`pending`]), by its path below the
+ *  mirror's folder.
+ */
+export type MirrorPending = {
+	path: string,
+	kind: MirrorPendingKind,
+};
+
+/**  What reading a [`MirrorPending`] file in does to Agaric. */
+export type MirrorPendingKind = 
+/**
+ *  A page's file that is not the text last written there, or cannot be
+ *  read: read into its page.
+ */
+"edited" | 
+/**
+ *  A file no page owns: read onto a new page, or the renamed file of a
+ *  page listed as [`MirrorPendingKind::Gone`].
+ */
+"new" | 
+/**
+ *  A page's file that is gone: its page moves to the Trash, unless the
+ *  file turns up renamed.
+ */
+"gone";
+
 /**  What the mirror is doing (#5363). */
 export type MirrorStatus = {
 	/**  `false` where the mirror does not run, on mobile. */
@@ -3284,10 +3311,11 @@ export type MirrorStatus = {
 	/**  Whether files changed outside Agaric are read back into it. */
 	read_back: boolean,
 	/**
-	 *  While reading back is off, the files turning it on would read in
-	 *  ([`read_back::pending`]); empty while it is on.
+	 *  While reading back is off, the files turning it on would read in,
+	 *  each with what reading it in does ([`read_back::pending`]); empty
+	 *  while it is on.
 	 */
-	pending: string[],
+	pending: MirrorPending[],
 	/**
 	 *  Whether the attachments pages link are copied into the folder
 	 *  ([`assets`]).

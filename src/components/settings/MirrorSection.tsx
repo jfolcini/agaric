@@ -8,10 +8,11 @@
  *
  * Reading changes back is a stored switch, kept while the mirror is off and
  * sent with the folder chosen next. While it is off, the backend lists the
- * files turning it on would read in under `pending`; turning it on with any
- * asks first, and the confirm sends the files the dialog listed, so the
- * backend refuses it when another file changed since: nothing is read in that
- * the user was not shown. A folder chosen again holding files changed while
+ * files turning it on would read in under `pending`, each with what reading
+ * it in does; turning it on with any asks first, listing them by that, and
+ * the confirm sends the paths the dialog listed, so the backend refuses it
+ * when another file changed since: nothing is read in that the user was not
+ * shown. A folder chosen again holding files changed while
  * the mirror was off or writing elsewhere, or chosen again to start fresh,
  * turns it on with reading back off, and the same question is asked at once
  * when reading back was on.
@@ -25,6 +26,10 @@
  * and `failed`. Turning reading back on then asks as above. Beside that line
  * and in the question a button moves focus to the switch, which sits in this
  * card, for a workflow such as renaming well-linked notes that wants it off.
+ *
+ * A tick that reads a file back emits `mirror:ingested`; the card reads its
+ * status again then. A tick that only writes, or holds reading back, emits
+ * nothing, so those show the next time the card mounts.
  *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
  * card says so and offers no folder picker, which would only fail there.
@@ -43,8 +48,10 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
+import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
-import { commands, type MirrorStatus } from '@/lib/bindings'
+import { commands, type MirrorPendingKind, type MirrorStatus } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -54,12 +61,20 @@ const MODULE = 'MirrorSection'
 
 type Action = 'choose' | 'off' | 'readBack' | 'copyFiles' | 'askMassChange' | 'space'
 
+/** The read-in question's groups, in order, each headed by what reading its files in does. */
+const PENDING_GROUPS = [
+  ['edited', 'data.mirrorPendingEdited'],
+  ['new', 'data.mirrorPendingNew'],
+  ['gone', 'data.mirrorPendingGone'],
+] as const satisfies ReadonlyArray<readonly [MirrorPendingKind, string]>
+
 export function MirrorSection(): React.ReactElement | null {
   const { t } = useTranslation()
   const divergedHeadingId = useId()
   const failedHeadingId = useId()
   const readBackId = useId()
   const spacesHeadingId = useId()
+  const pendingHeadingId = useId()
   const spaces = useSpaceStore((s) => s.availableSpaces)
   const copyFilesId = useId()
   const askMassChangeId = useId()
@@ -93,6 +108,14 @@ export function MirrorSection(): React.ReactElement | null {
         logger.warn(MODULE, 'failed to load the mirror status; hiding the card', undefined, err)
       })
   }, [])
+
+  useTauriEventListener(
+    MIRROR_INGESTED_EVENT,
+    () => {
+      void load()
+    },
+    { enabled: typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window },
+  )
 
   const run = useCallback(
     async (action: Action) => {
@@ -341,7 +364,12 @@ export function MirrorSection(): React.ReactElement | null {
           values={{ count: status.pending.length }}
           confirmKey="data.mirrorReadPendingConfirm"
           cancelKey="data.mirrorReadPendingCancel"
-          onConfirm={() => setReadBack(true, status.pending)}
+          onConfirm={() =>
+            setReadBack(
+              true,
+              status.pending.map((file) => file.path),
+            )
+          }
           returnFocusRef={focusAfterQuestion}
         >
           {held && (
@@ -353,13 +381,27 @@ export function MirrorSection(): React.ReactElement | null {
             </div>
           )}
           <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
-            <ul className="space-y-1 text-sm">
-              {status.pending.map((path) => (
-                <li key={path} className="font-mono break-all">
-                  {path}
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-3">
+              {PENDING_GROUPS.map(([kind, headingKey]) => {
+                const files = status.pending.filter((file) => file.kind === kind)
+                if (files.length === 0) return null
+                const headingId = `${pendingHeadingId}-${kind}`
+                return (
+                  <div key={kind} className="space-y-1 text-sm">
+                    <p id={headingId} className="font-medium">
+                      {t(headingKey)}
+                    </p>
+                    <ul aria-labelledby={headingId} className="space-y-1">
+                      {files.map((file) => (
+                        <li key={file.path} className="font-mono break-all">
+                          {file.path}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
           </ScrollArea>
         </ConfirmDialog>
 

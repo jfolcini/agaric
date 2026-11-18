@@ -1266,14 +1266,14 @@ async fn a_folder_chosen_again_for_a_restored_vault_reads_in_nothing_unasked() {
     .unwrap();
     assert_eq!(betas, 0, "Beta's file is read onto no page");
     assert!(
-        chosen.pending.contains(&BETA.to_owned()),
+        chosen.pending.iter().any(|file| file.path == BETA),
         "{:?}",
         chosen.pending
     );
     let status = fx.status().await;
     assert!(!status.read_back);
     assert!(
-        status.pending.contains(&BETA.to_owned()),
+        status.pending.iter().any(|file| file.path == BETA),
         "{:?}",
         status.pending
     );

@@ -10,12 +10,13 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { MirrorSection } from '@/components/settings/MirrorSection'
-import type { AppError, MirrorStatus } from '@/lib/bindings'
+import { MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
+import type { AppError, MirrorPendingKind, MirrorStatus } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -25,7 +26,27 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+const eventListeners = new Map<string, (event: unknown) => void>()
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(
+    async (eventName: string, handler: (event: unknown) => void): Promise<() => void> => {
+      eventListeners.set(eventName, handler)
+      return () => {
+        eventListeners.delete(eventName)
+      }
+    },
+  ),
+}))
+
 const PICKED = '/home/me/Notes mirror'
+
+// The card listens for read-backs only inside Tauri.
+const tauriWindow = window as { __TAURI_INTERNALS__?: unknown }
+const hadTauriInternals = '__TAURI_INTERNALS__' in window
+afterEach(() => {
+  if (!hadTauriInternals) delete tauriWindow.__TAURI_INTERNALS__
+})
 
 const SPACES = [
   { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
@@ -34,7 +55,7 @@ const SPACES = [
 
 const refusedTurnOn: AppError = {
   kind: 'validation',
-  message: '1 files changed outside Agaric while reading back was off',
+  message: '1 files changed outside Agaric have not been shown',
 }
 
 /** The device-local state the stubbed commands read and write. */
@@ -46,8 +67,12 @@ let askMassChange: boolean
 /** The space folders whose many changed files hold reading back. */
 let held: string[]
 let pendingFiles: string[]
+/** What reading each pending file in does; edited unless named here. */
+let pendingKinds: Record<string, MirrorPendingKind>
 let unmirrored: string[]
 let extra: Partial<MirrorStatus>
+/** Why `get_mirror_status` is refused, while it is. */
+let statusRefused: AppError | null
 
 const HOLD_REASON = '6 of its files changed or vanished outside Agaric at once, more than 5'
 
@@ -62,7 +87,9 @@ function status(): MirrorStatus {
     failed: held.map((path) => ({ page_id: '', path, message: HOLD_REASON })),
     last_pass_ms: null,
     read_back: reading,
-    pending: reading ? [] : pendingFiles,
+    pending: reading
+      ? []
+      : pendingFiles.map((path) => ({ path, kind: pendingKinds[path] ?? 'edited' })),
     copy_files: copyFiles,
     ask_mass_change: askMassChange,
     held,
@@ -86,11 +113,14 @@ beforeEach(() => {
   askMassChange = true
   held = []
   pendingFiles = []
+  pendingKinds = {}
   unmirrored = []
   extra = {}
+  statusRefused = null
+  tauriWindow.__TAURI_INTERNALS__ = {}
   useSpaceStore.setState({ availableSpaces: [] })
   stubInvoke(vi.mocked(invoke), {
-    get_mirror_status: () => status(),
+    get_mirror_status: () => (statusRefused === null ? status() : Promise.reject(statusRefused)),
     pick_mirror_folder: () => picked,
     set_mirror_folder: (args) => {
       const wasOn = folder !== null
@@ -747,5 +777,91 @@ describe('MirrorSection', () => {
     await waitFor(async () => {
       expect(await axe(on.container)).toHaveNoViolations()
     })
+  })
+
+  // #6887 F — the question groups the files by what reading them in does.
+  it('the read-in question lists the files edited, new and gone under their own headings', async () => {
+    folder = PICKED
+    readBack = false
+    pendingFiles = ['Personal/Edited.md', 'Personal/New.md', 'Personal/Gone.md']
+    pendingKinds = { 'Personal/New.md': 'new', 'Personal/Gone.md': 'gone' }
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    const dialog = await screen.findByRole('alertdialog')
+    const group = (key: string) =>
+      within(dialog)
+        .getByRole('list', { name: t(key) })
+        .querySelectorAll('li')
+    expect([...group('data.mirrorPendingEdited')].map((li) => li.textContent)).toEqual([
+      'Personal/Edited.md',
+    ])
+    expect([...group('data.mirrorPendingNew')].map((li) => li.textContent)).toEqual([
+      'Personal/New.md',
+    ])
+    expect([...group('data.mirrorPendingGone')].map((li) => li.textContent)).toEqual([
+      'Personal/Gone.md',
+    ])
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorReadPendingConfirm') }))
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(true)
+    })
+  })
+
+  it('the read-in question shows no heading for a kind no file has', async () => {
+    folder = PICKED
+    readBack = false
+    pendingFiles = ['Personal/Gone.md']
+    pendingKinds = { 'Personal/Gone.md': 'gone' }
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') }))
+    const dialog = await screen.findByRole('alertdialog')
+
+    expect(
+      within(dialog).getByRole('list', { name: t('data.mirrorPendingGone') }),
+    ).toHaveTextContent('Personal/Gone.md')
+    expect(within(dialog).queryByText(t('data.mirrorPendingEdited'))).toBeNull()
+    expect(within(dialog).queryByText(t('data.mirrorPendingNew'))).toBeNull()
+  })
+
+  // #6887 E — what a tick read back shows without reopening Settings.
+  it('reads its status again when a file is read back from the folder', async () => {
+    folder = PICKED
+    await renderLoaded()
+    expect(screen.getByText(t('data.mirrorDivergedNone'))).toBeInTheDocument()
+    extra = { failed: [{ page_id: '', path: 'Personal/New.md', message: 'not UTF-8' }] }
+
+    await waitFor(() => expect(eventListeners.has(MIRROR_INGESTED_EVENT)).toBe(true))
+    eventListeners.get(MIRROR_INGESTED_EVENT)?.({ payload: {} })
+
+    expect(
+      await screen.findByText(
+        t('data.mirrorFailedItem', { path: 'Personal/New.md', message: 'not UTF-8' }),
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('a status read again on a read-back that fails keeps the card and logs why', async () => {
+    folder = PICKED
+    await renderLoaded()
+    const refused: AppError = { kind: 'io', message: 'disk gone' }
+    statusRefused = refused
+
+    await waitFor(() => expect(eventListeners.has(MIRROR_INGESTED_EVENT)).toBe(true))
+    eventListeners.get(MIRROR_INGESTED_EVENT)?.({ payload: {} })
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'MirrorSection',
+        'failed to load the mirror status; hiding the card',
+        undefined,
+        refused,
+      )
+    })
+    expect(screen.getByTestId('mirror-folder')).toHaveTextContent(PICKED)
   })
 })

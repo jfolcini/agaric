@@ -1,6 +1,7 @@
 /**
  * Tests useMirrorIngestEvents: a mirror ingest's ops land on its page's undo
- * stack, and a save with warnings says so.
+ * stack, a save with warnings says so, and pages trashed, renamed or created
+ * from the folder are named or counted in one notice.
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
@@ -19,7 +20,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   ),
 }))
 
-vi.mock('@/lib/notify', () => ({ notify: { warning: vi.fn() } }))
+vi.mock('@/lib/notify', () => ({ notify: { warning: vi.fn(), info: vi.fn() } }))
 
 import {
   MIRROR_INGESTED_EVENT,
@@ -27,10 +28,14 @@ import {
   useMirrorIngestEvents,
 } from '@/hooks/useMirrorIngestEvents'
 import type { PageSourceReport } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { useNavigationStore } from '@/stores/navigation'
 import { useUndoStore } from '@/stores/undo'
 
 const PAGE = '01JPAGE0000000000000000000'
+const OTHER = '01JPAGE0000000000000000001'
+const THIRD = '01JPAGE0000000000000000002'
 const REF = { device_id: 'dev', seq: 7 }
 
 function report(warnings: string[] = []): PageSourceReport {
@@ -46,14 +51,20 @@ function report(warnings: string[] = []): PageSourceReport {
   }
 }
 
-async function fire(payload: MirrorIngested) {
+async function fire(payload: Omit<MirrorIngested, 'kind'> & Partial<Pick<MirrorIngested, 'kind'>>) {
   await waitFor(() => expect(eventListeners.has(MIRROR_INGESTED_EVENT)).toBe(true))
-  eventListeners.get(MIRROR_INGESTED_EVENT)?.({ payload })
+  eventListeners.get(MIRROR_INGESTED_EVENT)?.({ payload: { kind: 'edited', ...payload } })
+}
+
+/** A page `kind` from the folder: no save, so an empty report. */
+function fromFolder(kind: MirrorIngested['kind'], page_id: string, path: string) {
+  return fire({ kind, page_id, path, op_refs: [REF], report: { ...report(), edited: 0 } })
 }
 
 afterEach(() => {
   eventListeners.clear()
   useUndoStore.setState({ pages: new Map() })
+  useNavigationStore.setState({ currentView: 'journal' })
   vi.clearAllMocks()
 })
 
@@ -65,6 +76,7 @@ describe('useMirrorIngestEvents', () => {
     const page = useUndoStore.getState().pages.get(PAGE)
     expect(page?.undoStack[0]?.refs).toEqual([REF])
     expect(notify.warning).not.toHaveBeenCalled()
+    expect(notify.info).not.toHaveBeenCalled()
   })
 
   it('pushes nothing for an ingest that wrote nothing, and warns on warnings', async () => {
@@ -122,6 +134,99 @@ describe('useMirrorIngestEvents', () => {
 
     expect(vi.mocked(notify.warning).mock.lastCall?.[0]).toBe(
       'S/B.md was read in with a warning: bad date',
+    )
+  })
+
+  // #6887 E — a page trashed, renamed or created from the folder is said.
+  it('names a page trashed from the folder, and its notice opens the Trash', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await fromFolder('trashed', PAGE, 'S/A.md')
+
+    expect(vi.mocked(notify.warning).mock.calls).toEqual([
+      [
+        t('data.mirrorReadBackTrashed', { path: 'S/A.md' }),
+        {
+          id: 'mirror-read-back',
+          action: { label: t('palette.cmdGoTrash'), onClick: expect.any(Function) },
+          onDismiss: expect.any(Function),
+          onAutoClose: expect.any(Function),
+        },
+      ],
+    ])
+    const opts = vi.mocked(notify.warning).mock.lastCall?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+    opts.action.onClick()
+    expect(useNavigationStore.getState().currentView).toBe('trash')
+  })
+
+  it('names a page renamed or created from the folder, with no Trash to open', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await fromFolder('renamed', PAGE, 'S/B.md')
+    let opts = vi.mocked(notify.info).mock.lastCall?.[1] as { onAutoClose: () => void }
+    opts.onAutoClose()
+    await fromFolder('created', OTHER, 'S/C.md')
+
+    expect(vi.mocked(notify.info).mock.calls.map(([message]) => message)).toEqual([
+      t('data.mirrorReadBackRenamed', { path: 'S/B.md' }),
+      t('data.mirrorReadBackCreated', { path: 'S/C.md' }),
+    ])
+    opts = vi.mocked(notify.info).mock.lastCall?.[1] as { onAutoClose: () => void }
+    expect(opts).toEqual({
+      id: 'mirror-read-back',
+      onDismiss: expect.any(Function),
+      onAutoClose: expect.any(Function),
+    })
+    expect(notify.warning).not.toHaveBeenCalled()
+  })
+
+  it('counts the pages trashed, renamed and created while its notice is up, each page once', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await fromFolder('created', PAGE, 'S/A.md')
+    await fromFolder('renamed', OTHER, 'S/B.md')
+    // The same page renamed again counts once.
+    await fromFolder('renamed', OTHER, 'S/B2.md')
+    await fromFolder('trashed', THIRD, 'S/C.md')
+    // An edit read in is on its page's undo stack, not in this notice.
+    await fire({ page_id: THIRD, path: 'S/D.md', op_refs: [REF], report: report() })
+
+    const changes = new Intl.ListFormat('en', { type: 'conjunction' }).format([
+      t('data.mirrorReadBackTrashedCount', { count: 1 }),
+      t('data.mirrorReadBackRenamedCount', { count: 1 }),
+      t('data.mirrorReadBackCreatedCount', { count: 1 }),
+    ])
+    expect(vi.mocked(notify.info).mock.calls.map(([message]) => message)).toEqual([
+      t('data.mirrorReadBackCreated', { path: 'S/A.md' }),
+      t('data.mirrorReadBackSeveral', {
+        changes: new Intl.ListFormat('en', { type: 'conjunction' }).format([
+          t('data.mirrorReadBackRenamedCount', { count: 1 }),
+          t('data.mirrorReadBackCreatedCount', { count: 1 }),
+        ]),
+      }),
+      t('data.mirrorReadBackSeveral', {
+        changes: new Intl.ListFormat('en', { type: 'conjunction' }).format([
+          t('data.mirrorReadBackRenamedCount', { count: 1 }),
+          t('data.mirrorReadBackCreatedCount', { count: 1 }),
+        ]),
+      }),
+    ])
+    expect(vi.mocked(notify.warning).mock.calls.map(([message]) => message)).toEqual([
+      t('data.mirrorReadBackSeveral', { changes }),
+    ])
+    expect(changes).toBe('1 page moved to the Trash, 1 page renamed or moved, and 1 new page')
+  })
+
+  it('counts afresh once its notice closes, opening the Trash included', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await fromFolder('trashed', PAGE, 'S/A.md')
+    const opts = vi.mocked(notify.warning).mock.lastCall?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+    opts.action.onClick()
+    await fromFolder('trashed', OTHER, 'S/B.md')
+
+    expect(vi.mocked(notify.warning).mock.lastCall?.[0]).toBe(
+      t('data.mirrorReadBackTrashed', { path: 'S/B.md' }),
     )
   })
 })

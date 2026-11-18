@@ -438,7 +438,7 @@ export const common: Record<string, string> = {
   'data.snapshotRestoreFailed': 'No se ha restaurado la instantánea: {{reason}}',
   'data.mirrorTitle': 'Espejo Markdown',
   'data.mirrorDesc':
-    'Agaric escribe cada página como un archivo .md en la carpeta que elijas y lo mantiene actualizado. Un archivo que edites en otro lugar se vuelve a leer en su página, y un solo Deshacer lo revierte.',
+    'Agaric escribe cada página como un archivo .md en la carpeta que elijas y lo mantiene actualizado. Un archivo que edites en otro lugar se vuelve a leer en su página, y Deshacer en esa página lo revierte. Borrar un archivo pasa su página a la Papelera, que la borra definitivamente a los 90 días.',
   'data.mirrorFolderLabel': 'Carpeta del espejo',
   'data.mirrorUnsupported':
     'Aún no está disponible en este dispositivo: el espejo solo funciona en la aplicación de escritorio. Actívalo en tu equipo; las notas que escribas aquí llegan a su carpeta mediante la sincronización.',
@@ -455,9 +455,22 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarningsFiles_one': '{{count}} archivo se ha leído con advertencias',
   'data.mirrorIngestedWarningsFiles_other': '{{count}} archivos se han leído con advertencias',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
+  'data.mirrorReadBackTrashed':
+    '{{path}} se ha borrado de la carpeta del espejo, así que su página ha pasado a la Papelera',
+  'data.mirrorReadBackRenamed':
+    '{{path}} se ha renombrado o movido en la carpeta del espejo, y su página con él',
+  'data.mirrorReadBackCreated':
+    '{{path}} se ha añadido a la carpeta del espejo y ahora es una página',
+  'data.mirrorReadBackSeveral': 'Por cambios en la carpeta del espejo: {{changes}}',
+  'data.mirrorReadBackTrashedCount_one': '{{count}} página pasada a la Papelera',
+  'data.mirrorReadBackTrashedCount_other': '{{count}} páginas pasadas a la Papelera',
+  'data.mirrorReadBackRenamedCount_one': '{{count}} página renombrada o movida',
+  'data.mirrorReadBackRenamedCount_other': '{{count}} páginas renombradas o movidas',
+  'data.mirrorReadBackCreatedCount_one': '{{count}} página nueva',
+  'data.mirrorReadBackCreatedCount_other': '{{count}} páginas nuevas',
   'data.mirrorReadBackLabel': 'Leer los cambios externos',
   'data.mirrorReadBackDesc':
-    'Las ediciones, los archivos nuevos, los cambios de nombre y los movimientos que se hagan en los archivos fuera de Agaric se vuelven a leer en Agaric. Si está desactivado, Agaric sigue escribiendo los archivos y nunca sobrescribe uno que se haya cambiado en otro lugar.',
+    'Las ediciones, los archivos nuevos, los cambios de nombre y los movimientos que se hagan en los archivos fuera de Agaric se vuelven a leer en Agaric, y un archivo borrado pasa su página a la Papelera. Si está desactivado, Agaric sigue escribiendo los archivos y nunca sobrescribe uno que se haya cambiado en otro lugar.',
   'data.mirrorReadBackFailed': 'No se ha cambiado la lectura de cambios externos: {{reason}}',
   'data.mirrorSpacesHeading': 'Espacios reflejados',
   'data.mirrorSpaceFailed': 'No se han cambiado los espacios reflejados: {{reason}}',
@@ -477,9 +490,14 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeShowSetting': 'Mostrar la opción',
   'data.mirrorReadPendingTitle': '¿Leer lo que ha cambiado?',
   'data.mirrorReadPendingDesc_one':
-    'Este archivo ha cambiado fuera de Agaric mientras la lectura de cambios externos estaba desactivada. Al activarla, se lee.',
+    'Este archivo ha cambiado fuera de Agaric y aún no se ha leído. Al activar la lectura de cambios externos, se lee.',
   'data.mirrorReadPendingDesc_other':
-    'Estos {{count}} archivos han cambiado fuera de Agaric mientras la lectura de cambios externos estaba desactivada. Al activarla, se leen.',
+    'Estos {{count}} archivos han cambiado fuera de Agaric y aún no se han leído. Al activar la lectura de cambios externos, se leen.',
+  'data.mirrorPendingEdited': 'Editados: se leen en sus páginas',
+  'data.mirrorPendingNew':
+    'Nuevos: cada uno pasa a ser una página, o es el nuevo lugar de un archivo movido',
+  'data.mirrorPendingGone':
+    'Desaparecidos: sus páginas pasan a la Papelera, salvo que el archivo se haya movido',
   'data.mirrorReadPendingConfirm': 'Leerlos',
   'data.mirrorReadPendingCancel': 'Mantenerla desactivada',
   'data.exportAllSpacesNoSpaces': 'No hay espacios que exportar',

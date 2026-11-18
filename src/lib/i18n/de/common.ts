@@ -439,7 +439,7 @@ export const common: Record<string, string> = {
   'data.snapshotRestoreFailed': 'Der Schnappschuss wurde nicht wiederhergestellt: {{reason}}',
   'data.mirrorTitle': 'Markdown-Spiegel',
   'data.mirrorDesc':
-    'Agaric schreibt jede Seite als .md-Datei in einen Ordner deiner Wahl und hält ihn aktuell. Eine Datei, die du anderswo bearbeitest, wird in ihre Seite zurückgelesen, und ein einziges Rückgängig nimmt das zurück.',
+    'Agaric schreibt jede Seite als .md-Datei in einen Ordner deiner Wahl und hält ihn aktuell. Eine Datei, die du anderswo bearbeitest, wird in ihre Seite zurückgelesen, und Rückgängig auf dieser Seite nimmt das zurück. Wird eine Datei gelöscht, wandert ihre Seite in den Papierkorb, der sie nach 90 Tagen endgültig löscht.',
   'data.mirrorFolderLabel': 'Spiegelordner',
   'data.mirrorUnsupported':
     'Auf diesem Gerät noch nicht verfügbar: Der Spiegel läuft nur in der Desktop-App. Schalte ihn auf deinem Computer ein; hier geschriebene Notizen gelangen per Synchronisierung in seinen Ordner.',
@@ -457,9 +457,22 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarningsFiles_one': '{{count}} Datei wurde mit Warnungen eingelesen',
   'data.mirrorIngestedWarningsFiles_other': '{{count}} Dateien wurden mit Warnungen eingelesen',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
+  'data.mirrorReadBackTrashed':
+    '{{path}} wurde aus dem Spiegelordner gelöscht, daher ist die zugehörige Seite in den Papierkorb gewandert',
+  'data.mirrorReadBackRenamed':
+    '{{path}} wurde im Spiegelordner umbenannt oder verschoben, die zugehörige Seite ebenso',
+  'data.mirrorReadBackCreated':
+    '{{path}} wurde dem Spiegelordner hinzugefügt und ist jetzt eine Seite',
+  'data.mirrorReadBackSeveral': 'Aus Änderungen im Spiegelordner: {{changes}}',
+  'data.mirrorReadBackTrashedCount_one': '{{count}} Seite in den Papierkorb verschoben',
+  'data.mirrorReadBackTrashedCount_other': '{{count}} Seiten in den Papierkorb verschoben',
+  'data.mirrorReadBackRenamedCount_one': '{{count}} Seite umbenannt oder verschoben',
+  'data.mirrorReadBackRenamedCount_other': '{{count}} Seiten umbenannt oder verschoben',
+  'data.mirrorReadBackCreatedCount_one': '{{count}} neue Seite',
+  'data.mirrorReadBackCreatedCount_other': '{{count}} neue Seiten',
   'data.mirrorReadBackLabel': 'Änderungen zurücklesen',
   'data.mirrorReadBackDesc':
-    'Bearbeitungen, neue Dateien, Umbenennungen und Verschiebungen, die außerhalb von Agaric an den Dateien vorgenommen werden, werden in Agaric zurückgelesen. Ist die Option aus, schreibt Agaric die Dateien weiterhin und überschreibt nie eine Datei, die anderswo geändert wurde.',
+    'Bearbeitungen, neue Dateien, Umbenennungen und Verschiebungen, die außerhalb von Agaric an den Dateien vorgenommen werden, werden in Agaric zurückgelesen, und eine gelöschte Datei schickt ihre Seite in den Papierkorb. Ist die Option aus, schreibt Agaric die Dateien weiterhin und überschreibt nie eine Datei, die anderswo geändert wurde.',
   'data.mirrorReadBackFailed': 'Die Einstellung zum Zurücklesen wurde nicht geändert: {{reason}}',
   'data.mirrorSpacesHeading': 'Gespiegelte Bereiche',
   'data.mirrorSpaceFailed':
@@ -481,9 +494,14 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeShowSetting': 'Einstellung anzeigen',
   'data.mirrorReadPendingTitle': 'Geänderte Dateien einlesen?',
   'data.mirrorReadPendingDesc_one':
-    'Diese Datei wurde außerhalb von Agaric geändert, während das Zurücklesen aus war. Beim Einschalten wird sie eingelesen.',
+    'Diese Datei wurde außerhalb von Agaric geändert und noch nicht eingelesen. Wird das Zurücklesen eingeschaltet, wird sie eingelesen.',
   'data.mirrorReadPendingDesc_other':
-    'Diese {{count}} Dateien wurden außerhalb von Agaric geändert, während das Zurücklesen aus war. Beim Einschalten werden sie eingelesen.',
+    'Diese {{count}} Dateien wurden außerhalb von Agaric geändert und noch nicht eingelesen. Wird das Zurücklesen eingeschaltet, werden sie eingelesen.',
+  'data.mirrorPendingEdited': 'Bearbeitet: werden in ihre Seiten eingelesen',
+  'data.mirrorPendingNew':
+    'Neu: jede wird eine Seite oder ist der neue Ort einer verschobenen Datei',
+  'data.mirrorPendingGone':
+    'Verschwunden: ihre Seiten wandern in den Papierkorb, außer die Datei wurde verschoben',
   'data.mirrorReadPendingConfirm': 'Einlesen',
   'data.mirrorReadPendingCancel': 'Ausgeschaltet lassen',
   'data.exportAllSpacesNoSpaces': 'Keine Bereiche zum Exportieren',

@@ -106,9 +106,10 @@ pub struct MirrorStatus {
     pub last_pass_ms: Option<i64>,
     /// Whether files changed outside Agaric are read back into it.
     pub read_back: bool,
-    /// While reading back is off, the files turning it on would read in
-    /// ([`read_back::pending`]); empty while it is on.
-    pub pending: Vec<String>,
+    /// While reading back is off, the files turning it on would read in,
+    /// each with what reading it in does ([`read_back::pending`]); empty
+    /// while it is on.
+    pub pending: Vec<read_back::MirrorPending>,
     /// Whether the attachments pages link are copied into the folder
     /// ([`assets`]).
     pub copy_files: bool,
@@ -296,7 +297,11 @@ impl MirrorState {
     }
 
     /// The status, for `settings`, with `pending` from [`read_back::pending`].
-    pub fn status(&self, settings: store::Settings, pending: Vec<String>) -> MirrorStatus {
+    pub fn status(
+        &self,
+        settings: store::Settings,
+        pending: Vec<read_back::MirrorPending>,
+    ) -> MirrorStatus {
         let inner = self.lock();
         let store::Settings {
             folder,

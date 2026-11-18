@@ -35,7 +35,7 @@ import {
 interface MirrorStatus {
   last_pass_ms: number | null
   read_back: boolean
-  pending: string[]
+  pending: { path: string; kind: 'edited' | 'new' | 'gone' }[]
   diverged: { path: string }[]
 }
 
@@ -120,7 +120,7 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     const outside = `${MARKER} ${OUTSIDE}\n`
     writeFileSync(written, outside)
     await browser.waitUntil(
-      async () => (await status()).pending.some((p) => p.endsWith(`${TITLE}.md`)),
+      async () => (await status()).pending.some((p) => p.path.endsWith(`${TITLE}.md`)),
       { timeout: NAV_TIMEOUT, timeoutMsg: 'the edited file was never listed as pending' },
     )
     await twoLaterPasses('save')
@@ -182,7 +182,7 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
         return files.every(
           (file) =>
             now.diverged.some((d) => file.endsWith(d.path)) &&
-            now.pending.some((p) => file.endsWith(p)),
+            now.pending.some((p) => file.endsWith(p.path)),
         )
       },
       {
@@ -216,11 +216,11 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     writeFileSync(file as string, `${MARKER} ${AGAIN}\n`)
     const again = await invoke<MirrorStatus>('set_mirror_folder', { path: second, readBack: true })
     expect(again.read_back).toBe(false)
-    expect(again.pending.some((p) => p.endsWith(`${TITLE}.md`))).toBe(true)
+    expect(again.pending.some((p) => p.path.endsWith(`${TITLE}.md`))).toBe(true)
 
     await twoLaterPasses('again', second)
     expect(await blockContent(blockId)).toBe(before)
-    expect((await status()).pending.some((p) => p.endsWith(`${TITLE}.md`))).toBe(true)
+    expect((await status()).pending.some((p) => p.path.endsWith(`${TITLE}.md`))).toBe(true)
     // Away and back, so the card loads the status afresh.
     await navigateTo('Journal')
     await openDataTab()

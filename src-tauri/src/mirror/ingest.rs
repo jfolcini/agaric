@@ -38,10 +38,25 @@ use agaric_core::ulid::BlockId;
 /// what it wrote.
 pub const EVENT_MIRROR_INGESTED: &str = "mirror:ingested";
 
+/// What a change made outside Agaric did to its page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngestKind {
+    /// The file's edit was read into the page ([`ingest`]).
+    Edited,
+    /// A new file was read onto a new page ([`create`]).
+    Created,
+    /// The page followed its file's rename or move ([`rename`]).
+    Renamed,
+    /// The page moved to the Trash, its file deleted ([`trash`]).
+    Trashed,
+}
+
 /// Typed by hand in `useMirrorIngestEvents.ts`: the bindings carry commands,
 /// not event payloads.
 #[derive(Debug, Clone, Serialize)]
 pub struct MirrorIngested {
+    pub kind: IngestKind,
     pub page_id: String,
     pub path: String,
     pub op_refs: Vec<OpRef>,
@@ -173,6 +188,7 @@ pub async fn ingest(
         op_refs,
     } = saved;
     let event = MirrorIngested {
+        kind: IngestKind::Edited,
         page_id: page_id.to_owned(),
         path: path.to_owned(),
         op_refs,
@@ -265,6 +281,7 @@ pub async fn create(
     let mut op_refs = created.op_refs;
     op_refs.extend(saved.op_refs);
     let event = MirrorIngested {
+        kind: IngestKind::Created,
         page_id: page_id.clone(),
         path: path.to_owned(),
         op_refs,
@@ -346,6 +363,7 @@ pub async fn rename(
         }
     }
     Ok(MirrorIngested {
+        kind: IngestKind::Renamed,
         page_id: page_id.to_owned(),
         path: path.to_owned(),
         op_refs,
@@ -371,6 +389,7 @@ pub async fn trash(
     .await
     .map_err(|e| e.to_string())?;
     Ok(MirrorIngested {
+        kind: IngestKind::Trashed,
         page_id: page_id.to_owned(),
         path: path.to_owned(),
         op_refs: deleted.op_refs,
