@@ -226,7 +226,6 @@ export function TrashView(): React.ReactElement {
       if (!block.deleted_at) return
       try {
         unwrap(await commands.restoreBlock(block.id, block.deleted_at))
-        // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         // #5295 — the restore also brings back a trashed ancestor, which lists
@@ -292,7 +291,6 @@ export function TrashView(): React.ReactElement {
       restored = unwrap(
         await commands.restoreBlocksByIds(selectedBlocks.map((b) => b.id)),
       ).affected_count
-      // Now, not at the change feed: expires subtrees prefetched before this write.
       recordGraphStructureChange()
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
@@ -464,7 +462,6 @@ export function TrashView(): React.ReactElement {
       clearSelection()
       setConfirmRestoreAll(false)
       if (result.affected_count > 0) {
-        // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
         notify.success(t('trash.allRestored', { count: result.affected_count }))
@@ -480,7 +477,6 @@ export function TrashView(): React.ReactElement {
       // Each chunk commits on its own, so a rejection can still have put rows
       // back; the chips and the prefetched subtrees must hear about those even on failure.
       if (err instanceof PartialPurgeError && err.affectedCount > 0) {
-        // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
         reload()

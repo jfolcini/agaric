@@ -239,7 +239,6 @@ export function PageBrowserBatchToolbar({
           onMutated()
           // #5246 — the chips the trash struck through go live again.
           void useResolveStore.getState().refreshDeleted(spaceId)
-          // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
         })
