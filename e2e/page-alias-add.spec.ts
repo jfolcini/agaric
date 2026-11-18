@@ -1,7 +1,8 @@
 import type { Locator, Page } from '@playwright/test'
 import { devices } from '@playwright/test'
 
-import { expect, openPage, openPageMobile, test, waitForBoot } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { expect, ipc, openPage, openPageMobile, reopenPage, test, waitForBoot } from './helpers'
 
 /**
  * Page actions → Add alias leaves focus in the new-alias input, so the user
@@ -88,4 +89,40 @@ test.describe('Page actions → Add alias on a 390 px phone @pages @mobile', () 
 
     await typeAndAdd(page, 'Inbox')
   })
+})
+
+/**
+ * An alias edit is `add_page_alias` / `remove_page_alias` ops (#5387), so the page's Ctrl+Z
+ * reverses it through the op log. The kept alias is the positive signal that the header's alias
+ * list has loaded, so the undone one's absence is not read off a header that has not fetched yet.
+ */
+test('Ctrl+Z removes the alias just added, and the page keeps only the other one @pages @editor', async ({
+  page,
+}) => {
+  await waitForBoot(page)
+  await ipc(page, 'set_page_aliases', { pageId: SEED_IDS.PAGE_QUICK_NOTES, aliases: ['Kept'] })
+  // The page's undo takes every op within `UNDO_GROUP_WINDOW_MS` (src/stores/undo.ts) of the
+  // newest as one group, by backend time, so the kept alias's op must be older than that window
+  // when the undone one is written; a second clears it.
+  const keptAt = Date.now()
+  await openPage(page, PAGE)
+  const badge = (alias: string) => page.locator('[data-slot="badge"]').filter({ hasText: alias })
+  await expect(badge('Kept')).toBeVisible()
+  await expect.poll(() => Date.now() - keptAt).toBeGreaterThan(1_000)
+
+  await pageActions(page).click()
+  await addAliasItem(page).click()
+  await typeAndAdd(page, 'Undone')
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+  // Ctrl+Z reaches the page's undo only with no input and no block focused.
+  await expect(aliasInput(page)).toHaveCount(0)
+  await page.locator('body').press('Control+z')
+  await expect(page.locator('[data-sonner-toast]').getByText('Undid alias')).toBeVisible()
+  await expect(badge('Undone')).toHaveCount(0)
+  await expect(badge('Kept')).toBeVisible()
+
+  await reopenPage(page, PAGE)
+  await expect(badge('Kept')).toBeVisible()
+  await expect(badge('Undone')).toHaveCount(0)
 })

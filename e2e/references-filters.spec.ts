@@ -12,10 +12,12 @@
 
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   chooseSelectOption,
   expect,
+  ipc,
   openPage,
   seedSearchBlocks,
   test,
@@ -145,5 +147,79 @@ test.describe('References tag and property filters @pages @search', () => {
     await references.getByRole('button', { name: /^Remove filter has tag/ }).click()
     await expect(rows).toHaveText([/E on/, /G on/])
     await expect(showing).toHaveText('Showing 2 of 4 backlinks')
+  })
+})
+
+/**
+ * Status and Priority `none`, and a Contains term under three characters. `none` is
+ * `Not(Or(<every state or level>))`, which the backend compiles as `NOT COALESCE((inner), 0)` so a
+ * NULL column joins the complement; Contains reads the FTS index, which dropped a term under three
+ * characters until #6752. The Created date filter stays in `e2e-tauri/references-filters.e2e.ts`:
+ * the mock's ids carry no time, so only the real backend can run it.
+ */
+test.describe('References none and short Contains filters (#5736) @pages @search', () => {
+  // `+1` is a two-character term no other word here contains.
+  const SOURCES = {
+    todoHigh: { content: 'Ref todo-high +1', todo: 'TODO', priority: '1' },
+    todoMedium: { content: 'Ref todo-medium', todo: 'TODO', priority: '2' },
+    doneHigh: { content: 'Ref done-high', todo: 'DONE', priority: '1' },
+    // A state but no priority, so Status none and Priority none differ.
+    todoBare: { content: 'Ref todo-bare', todo: 'TODO' },
+    plain: { content: 'Ref plain +1' },
+  }
+  type Source = keyof typeof SOURCES
+
+  test('none and a two-character Contains list exactly the sources they select', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const target = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Ref target',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
+    await seedSearchBlocks(
+      page,
+      Object.values(SOURCES).map((s) =>
+        Object.assign({}, s, { content: `${s.content} [[${target}]]` }),
+      ),
+    )
+    await openPage(page, 'Ref target')
+    const references = page.getByTestId('linked-references')
+    const rows = references.locator('li[data-backlink-item] .linked-reference-item-text')
+    const showing = references.getByText(/^Showing \d+ of \d+ backlinks$/)
+    // Each filter is added only once Clear all has settled: an Add filter opened before that
+    // closes again under it.
+    const clearFilters = async () => {
+      await references.getByRole('button', { name: 'Clear all filters and sort' }).click()
+      await expect(showing).toHaveCount(0)
+      await expect(rows).toHaveCount(5)
+    }
+    const expectListed = async (sources: Source[], count: string) => {
+      await expect(showing).toHaveText(count)
+      await expect(rows).toHaveText(
+        sources.map((s) => new RegExp(SOURCES[s].content.replace('+', '\\+'))),
+      )
+    }
+    await expect(rows).toHaveCount(5)
+
+    await addFilter(page, references, 'Status', 'None')
+    await expectListed(['plain'], 'Showing 1 of 5 backlinks')
+    await clearFilters()
+    await addFilter(page, references, 'Priority', 'None')
+    await expectListed(['todoBare', 'plain'], 'Showing 2 of 5 backlinks')
+    await clearFilters()
+
+    const addContains = async (text: string) => {
+      await references.getByRole('button', { name: 'Add filter', exact: true }).click()
+      await chooseSelectOption(page, 'Filter category', 'Contains')
+      await references.getByLabel('Contains text').fill(text)
+      await references.getByRole('button', { name: 'Apply filter' }).click()
+    }
+    await addContains('+1')
+    await expectListed(['todoHigh', 'plain'], 'Showing 2 of 5 backlinks')
+    await clearFilters()
+    await addContains('+1 todo')
+    await expectListed(['todoHigh'], 'Showing 1 of 5 backlinks')
   })
 })

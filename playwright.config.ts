@@ -38,7 +38,9 @@ const REAL_BACKEND_SPECS = [
   'history-keyboard.spec.ts',
   'history-page-scope.spec.ts',
   'history-revert.spec.ts',
+  'in-page-replace.spec.ts',
   'navigation-history.spec.ts',
+  'page-alias-add.spec.ts',
   'pages-header-routes.spec.ts',
   'phone-views.spec.ts',
   'query-block-text.spec.ts',
@@ -47,6 +49,9 @@ const REAL_BACKEND_SPECS = [
   'query-table-cell-edit.spec.ts',
   'query-table-columns.spec.ts',
   'query-table-list-filter.spec.ts',
+  'references-filters.spec.ts',
+  'references-sort.spec.ts',
+  'rename-invalidation.spec.ts',
   'search-filter-chips.spec.ts',
   'search-filters.spec.ts',
   'search-happy-paths.spec.ts',
@@ -66,6 +71,12 @@ const REAL_BACKEND_SPECS = [
   'spaces-management.spec.ts',
   'tags-lifecycle.spec.ts',
   'tooltip-pointer-events.spec.ts',
+  'trash-badge.spec.ts',
+  'trash-bulk.spec.ts',
+  'trash-deleted-time.spec.ts',
+  'trash-page-cascade.spec.ts',
+  'trashed-page-recents.spec.ts',
+  'unlinked-references.spec.ts',
 ]
 
 export default defineConfig({

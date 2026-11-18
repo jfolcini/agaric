@@ -1,20 +1,12 @@
 // ---------------------------------------------------------------------------
-// Real-backend References panel: Status, Priority, their `none`, Created
-// Date (#5736), and Contains with a term under three characters (#6752).
+// Real-backend References panel: the Created date filter (#5736).
 //
-// A task's state and priority live in `blocks.todo_state` / `blocks.priority`,
-// so the panel's builder sends `TodoState` / `Priority`, and `none` as
-// `Not(Or(<every state or level>))` (AddFilterRow.tsx). The backend compiles
-// `Not` as `NOT COALESCE((inner), 0)` (backlink/filters.rs), so a block whose
-// column is NULL joins the complement instead of dropping out; the mock
-// evaluates `Not` in JS, so only this lane shows the SQL. Created date sends
-// `CreatedInRange`, which the backend compares against the time in each
-// block's ULID id, a bound being that day's UTC midnight, and which the mock
-// does not model at all. Contains reads the FTS index, which ignored a term
-// under three characters until #6752; the mock matched it by substring, so
-// only this lane showed the empty result. This spec imports sources linking
-// one page and reads the panel for each filter, some after leaving the page
-// and coming back.
+// Created date sends `CreatedInRange`, which the backend compares against the
+// time in each block's ULID id, a bound being that day's UTC midnight. The
+// mock's ids carry no time, so neither the mock lane nor the bridge's mock
+// twin can run it; it moves to the bridge with a `@real-only` tag (#6926 G2).
+// Status, Priority, their `none` and a short Contains term are in
+// `e2e/references-filters.spec.ts`, on the bridge.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -27,23 +19,18 @@ import {
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
-  typeInputVerified,
   waitForAppReady,
 } from './helpers'
 
 const MARKER = runScopedMarker('wdio-ref')
 const SOURCE = runScopedMarker('wdio-ref-source')
 const TARGET = runScopedMarker('wdio-ref-target')
-// `[#A]` / `[#B]` import as priority 1 / 2, the definition's first two levels,
-// from a page of a Logseq graph (#6277 decision 1).
-// `+1` is a two-character term no run id can contain: ids are base 36.
 const SOURCES = {
-  'todo-high': `TODO [#A] ${MARKER}-todo-high +1`,
+  'todo-high': `TODO [#A] ${MARKER}-todo-high`,
   'todo-medium': `TODO [#B] ${MARKER}-todo-medium`,
   'done-high': `DONE [#A] ${MARKER}-done-high`,
-  // A state but no priority, so `none` for Status and for Priority differ.
   'todo-bare': `TODO ${MARKER}-todo-bare`,
-  plain: `${MARKER}-plain +1`,
+  plain: `${MARKER}-plain`,
 } as const
 type Source = keyof typeof SOURCES
 const ALL = Object.keys(SOURCES) as Source[]
@@ -119,11 +106,6 @@ async function addFilterWith(category: string, fill: () => Promise<void>): Promi
   await apply.click()
 }
 
-/** Add a Status or Priority filter: the option whose text holds `value`. */
-async function addFilter(category: 'Status' | 'Priority', value: string): Promise<void> {
-  await addFilterWith(category, () => chooseSelectOption(`[aria-label="${category} value"]`, value))
-}
-
 /**
  * `YYYY-MM-DD` of the UTC day `days` from now. The backend reads a bound as
  * that day's UTC midnight, so two days either side of now brackets every block
@@ -168,36 +150,14 @@ async function clearFilters(): Promise<void> {
   await waitForListed(ALL, '', 'after Clear all')
 }
 
-describe('Agaric real-backend References Status / Priority / Created date / Contains filters (#5736) @pages @search', () => {
-  it('lists exactly the sources each Status, Priority and none filter selects', async () => {
+describe('Agaric real-backend References Created date filter (#5736) @pages @search', () => {
+  it('lists the sources created inside a Created date range and none outside it', async () => {
     await waitForAppReady()
     const markdown = Object.values(SOURCES)
       .map((source) => `- ${source} links [[${TARGET}]]`)
       .join('\n')
     expect(await importLogseqPage(SOURCE, `${markdown}\n`)).toContain(`${ALL.length} blocks`)
 
-    await openTarget()
-    await addFilter('Status', 'TODO')
-    await waitForListed(
-      ['todo-high', 'todo-medium', 'todo-bare'],
-      'Showing 3 of 5 backlinks',
-      'Status TODO',
-    )
-    await clearFilters()
-    await addFilter('Status', 'None')
-    await waitForListed(['plain'], 'Showing 1 of 5 backlinks', 'Status none')
-
-    // Away and back: the panel remounts with no filter and reads the backend again.
-    await openTarget()
-    await addFilter('Priority', 'High')
-    await waitForListed(['todo-high', 'done-high'], 'Showing 2 of 5 backlinks', 'Priority High')
-    await clearFilters()
-    await addFilter('Priority', 'None')
-    await waitForListed(['todo-bare', 'plain'], 'Showing 2 of 5 backlinks', 'Priority none')
-  })
-
-  // Reads the sources the first `it` imported, all created during this run.
-  it('lists the sources created inside a Created date range and none outside it', async () => {
     await openTarget()
     await addCreatedFilter({ after: utcDay(-2), before: utcDay(2) })
     await waitForListed(ALL, 'Showing 5 of 5 backlinks', 'Created from two days ago to two ahead')
@@ -207,19 +167,5 @@ describe('Agaric real-backend References Status / Priority / Created date / Cont
     await clearFilters()
     await addCreatedFilter({ after: utcDay(2) })
     await waitForListed([], 'Showing 0 of 5 backlinks', 'Created after two days ahead')
-  })
-
-  // Reads the sources the first `it` imported.
-  it('lists the sources holding a two-character Contains term, alone and beside a word', async () => {
-    const addContains = (text: string) =>
-      addFilterWith('Contains', () =>
-        typeInputVerified(`${PANEL} input[aria-label="Contains text"]`, text),
-      )
-    await openTarget()
-    await addContains('+1')
-    await waitForListed(['todo-high', 'plain'], 'Showing 2 of 5 backlinks', 'Contains +1')
-    await clearFilters()
-    await addContains('+1 todo')
-    await waitForListed(['todo-high'], 'Showing 1 of 5 backlinks', 'Contains +1 todo')
   })
 })
