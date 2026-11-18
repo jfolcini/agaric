@@ -22,6 +22,12 @@ export const errors: Record<string, string> = {
   'error.blockNotFound': 'No se ha encontrado ese bloque en la página',
   'error.sectionCrashed': '{{section}} ha encontrado un error',
   'error.unexpected': 'Se ha producido un error inesperado',
+  'storage.full':
+    'El disco está lleno, así que los cambios no se están guardando. Libera algo de espacio y vuelve a intentarlo.',
+  'storage.readOnly':
+    'Agaric no puede escribir en su carpeta de datos, así que los cambios no se están guardando. Comprueba que se puede escribir en la carpeta y en su disco.',
+  'storage.corrupt':
+    'La base de datos está dañada, así que algunas acciones fallan. Exporta tus notas (Configuración › Datos) antes de cambiar nada más.',
   'errorBoundary.dataSafe': 'Tus datos están a salvo — Reintentar vuelve a cargar este panel.',
   'errorBoundary.section.pageEditor': 'Editor de páginas',
   'errorBoundary.section.tabBar': 'Barra de pestañas',
@@ -35,6 +41,8 @@ export const errors: Record<string, string> = {
   'errorBoundary.section.bugReport': 'Informe de error',
   'errorBoundary.section.quickCaptureButton': 'Botón de captura rápida',
   'errorBoundary.section.quickCapture': 'Captura rápida',
+  'errorBoundary.section.newPage': 'Nueva página',
+  'errorBoundary.section.newMeeting': 'Nueva reunión',
   'errorBoundary.section.syncSetup': 'Configuración de sincronización',
   'errorBoundary.section.notifications': 'Notificaciones',
   'error.loadBlocksFailed': 'No se han podido cargar los bloques',

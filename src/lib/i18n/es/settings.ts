@@ -1,21 +1,304 @@
 /**
- * i18n namespace: settings — Spanish (`es`), partial.
+ * i18n namespace: settings — Spanish (`es`).
  *
- * Only the language control this PR adds. The other ~207 `settings.*` keys
- * are untranslated on purpose and fall back to English (`fallbackLng: 'en'`)
- * until the `settings` namespace gets its own translation PR — see
- * `src/lib/i18n/index.ts` for the contributor rule.
- *
- * `settings.languageEnglish` / `settings.languageSpanish` are absent
- * deliberately rather than by omission: a language picker names each
- * language in that language ("English", "Español"), so the English catalog's
- * values are already correct here and overriding them would be a
- * regression, not a translation.
+ * Mirrors `src/lib/i18n/settings.ts` key for key, in the same order.
  */
 
 export const settings: Record<string, string> = {
+  'settings.removeState': 'Quitar el estado {{state}}',
+  'settings.autostart.description': 'Abre Agaric automáticamente al iniciar sesión en tu equipo.',
+  'settings.autostart.label': 'Abrir al iniciar sesión',
+  'settings.autostart.toggleFailed': 'No se ha podido cambiar la opción de abrir al iniciar sesión',
+  'settings.debugMode.label': 'Modo de depuración',
+  'settings.debugMode.description':
+    'Muestra códigos de error técnicos en los mensajes de error de diálogos y paneles, como un emparejamiento fallido. Déjalo desactivado para el uso diario; actívalo para anotar el código al informar de un problema.',
+  'settings.showWelcomeTour.title': 'Volver a mostrar el recorrido de bienvenida',
+  'settings.showWelcomeTour.description':
+    'Vuelve a abrir la ventana de bienvenida del primer inicio, con la opción de crear las páginas de ejemplo.',
+  'settings.showWelcomeTour.button': 'Mostrar recorrido',
+  'settings.showWelcomeTour.success': 'Recorrido de bienvenida reabierto',
+  'settings.tabGeneral': 'General',
+  'settings.tabSpaces': 'Espacios',
+  'settings.spaces.description':
+    'Los espacios mantienen separados contextos distintos, como el trabajo y lo personal. Las páginas, los diarios, las etiquetas y los enlaces nunca pasan de un espacio a otro. Cambia de espacio desde la parte superior de la barra lateral.',
+  'settings.spaces.openOnLaunchLabel': 'Abrir al iniciar',
+  'settings.spaces.openOnLaunchHelp':
+    'El espacio en el que se abre este dispositivo al iniciar Agaric. Último usado mantiene el espacio en el que estabas.',
+  'settings.spaces.lastUsed': 'Último usado',
+  'settings.tabProperties': 'Propiedades',
+  'settings.tabAppearance': 'Apariencia',
+  'settings.tabEditor': 'Editor',
+  'settings.editor.editModeLabel': 'Editar páginas como',
+  'settings.editor.editModeHelp':
+    'Bloques edita un bloque cada vez; Página edita toda la página como un solo documento. La cabecera de una página cambia el modo de esa página en pantalla (Ctrl+E).',
+  'settings.editor.editModeBlocks': 'Bloques',
+  'settings.editor.editModePage': 'Página',
+  'settings.editor.emojiPickerLabel': 'Selector de emojis',
+  'settings.editor.emojiPickerHelp':
+    'Escribe : seguido de un código corto (p. ej., :joy) para insertar un emoji en el texto. Desactívalo para escribir dos puntos sin que aparezca la ventana emergente.',
+  'settings.editor.tabIndentLabel': 'Tab cambia la sangría de los bloques',
+  'settings.editor.tabIndentHelp':
+    'Tab y Shift+Tab aumentan y reducen la sangría de los bloques. Desactívalo para usar Tab para mover el foco y cambiar la sangría con Ctrl/Cmd+Shift+Arrow. Pulsa Escape para salir del editor.',
+  'settings.editor.revealMarkdownLabel': 'Mostrar la sintaxis Markdown alrededor del cursor',
+  'settings.editor.revealMarkdownHelp':
+    'Cuando el cursor está en texto con formato, un encabezado o un enlace, muestra su sintaxis Markdown; junto a una ficha de página, etiqueta o referencia a bloque, muestra sus corchetes solo para lectura. Borra un marcador para quitar el formato, bajar el nivel de un encabezado o quitar el enlace del texto.',
+  'settings.editor.externalImageLabel': 'Imágenes externas',
+  'settings.editor.externalImageHelp':
+    'Cargar una imagen de otro sitio web le indica a ese sitio que has abierto la página. Elegir Cargar en una imagen bloqueada recuerda su dominio para la próxima vez. Las imágenes locales, pegadas y adjuntas nunca se ven afectadas.',
+  'settings.editor.externalImageAlways': 'Cargar siempre',
+  'settings.editor.externalImageClick': 'Preguntar cada vez (recomendado)',
+  'settings.editor.externalImageNever': 'No cargar nunca',
+  'settings.editor.externalImageUpdated': 'Política de imágenes externas actualizada',
+  'settings.editor.externalImageAllowedHosts': 'Dominios de imágenes permitidos',
+  'settings.editor.externalImageRemoveHost': 'Quitar {{host}}',
+  'settings.editor.linkPreviewLabel': 'Obtener vistas previas de enlaces al pasar el cursor',
+  'settings.editor.linkPreviewHelp':
+    'Pasar el cursor sobre un enlace externo o enfocarlo obtiene su título e icono, lo que le indica a ese sitio que tienes el enlace. Si está desactivado, las vistas previas en caché se siguen mostrando y un enlace que pegues o insertes se sigue obteniendo una vez.',
+  'settings.tabSync': 'Sincronización y dispositivos',
+  'settings.tabData': 'Datos',
+  'settings.history.label': 'Explorar y revertir cambios',
+  'settings.history.description':
+    'Consulta los cambios anteriores en tus notas y deshaz los que quieras.',
+  'settings.history.openButton': 'Abrir el historial de ediciones',
+  'settings.tabStatus': 'Estado de la aplicación',
   'settings.languageLabel': 'Idioma',
-  'settings.languageHelp':
-    'Sistema usa el idioma de tu dispositivo. Lo que aún no esté traducido se muestra en inglés.',
+  'settings.languageHelp': 'Sistema usa el idioma de tu dispositivo.',
   'settings.languageSystem': 'Sistema',
+  'settings.themeLabel': 'Tema',
+  'settings.themeLight': 'Claro',
+  'settings.themeDark': 'Oscuro',
+  'settings.themeSystem': 'Sistema',
+  'settings.themeSolarizedLight': 'Solarized claro',
+  'settings.themeSolarizedDark': 'Solarized oscuro',
+  'settings.themeDracula': 'Dracula',
+  'settings.themeOneDarkPro': 'One Dark Pro',
+  'settings.fontSizeLabel': 'Tamaño del texto de las notas',
+  'settings.fontSizeHelp': 'Solo el texto de tus notas, no el resto de la aplicación.',
+  'settings.fontSizeSmall': 'Pequeño',
+  'settings.fontSizeMedium': 'Mediano',
+  'settings.fontSizeLarge': 'Grande',
+  'settings.customCssLabel': 'CSS personalizado',
+  'settings.customCssHelp':
+    'Tu propia hoja de estilos, aplicada después de la de la aplicación. Solo los tokens documentados se mantienen entre versiones; los selectores, los nombres de clase y la estructura de la página pueden cambiar. Si oculta la aplicación, abre agaric://settings/safe-mode para desactivarla.',
+  'settings.customCssTextLabel': 'Hoja de estilos CSS personalizada',
+  'settings.customCssDocs': 'Referencia de tokens',
+  'settings.zoomLabel': 'Zoom',
+  'settings.zoomHelp': 'Escala toda la interfaz: barra lateral, menús, diálogos y notas.',
+  'settings.motionLabel': 'Animaciones',
+  'settings.motionHelp':
+    'Un solo control para la velocidad de las animaciones. Sistema sigue el ajuste de movimiento reducido de tu sistema operativo, Rápidas hace que todo sea más ágil y Desactivadas desactiva las animaciones.',
+  'settings.motionSystem': 'Sistema',
+  'settings.motionFull': 'Completas',
+  'settings.motionFast': 'Rápidas',
+  'settings.motionOff': 'Desactivadas',
+  'settings.tooltipDelayLabel': 'Retraso de la ayuda emergente',
+  'settings.tooltipDelayHelp':
+    'Cuánto tiempo hay que mantener el cursor encima antes de que se abra una ayuda emergente. Instantáneo las muestra al momento; Rápido acorta la espera; Predeterminado es la espera estándar.',
+  'settings.tooltipDelayInstant': 'Instantáneo',
+  'settings.tooltipDelayFast': 'Rápido',
+  'settings.tooltipDelayDefault': 'Predeterminado',
+  'settings.tabKeyboard': 'Teclado',
+  'settings.quickCapture.label': 'Captura rápida (en todo el sistema)',
+  'settings.quickCapture.description':
+    'Pulsa esta combinación de teclas desde cualquier lugar para añadir una línea al diario de hoy.',
+  'settings.quickCapture.editButton': 'Editar atajo',
+  'settings.quickCapture.saveFailed':
+    'No se ha podido registrar el atajo. Puede que entre en conflicto con otra aplicación.',
+  'quickCapture.dialogTitle': 'Captura rápida',
+  'quickCapture.descriptionTouch': 'Apunta una línea; irá al diario de hoy.',
+  'quickCapture.captureInputLabel': 'Contenido de la captura rápida',
+  'quickCapture.placeholder': '¿Qué tienes en mente?',
+  'quickCapture.saveButton': 'Capturar',
+  'quickCapture.successToast': 'Capturado en el diario de hoy',
+  'quickCapture.failureToast': 'No se ha podido guardar la captura rápida',
+  'quickCapture.linkTooLong':
+    'El texto del enlace es más largo de lo que cabe en un bloque, así que la captura rápida no se ha abierto.',
+  'settings.tabHelp': 'Acerca de',
+  'settings.tabNotifications': 'Tareas y recordatorios',
+  'notifications.description':
+    'Recibe una notificación nativa del sistema operativo el día en que vence una tarea y envíate una de prueba para confirmar que te llegan.',
+  'notifications.enableLabel': 'Recordarme las tareas que vencen',
+  'notifications.enableDescription':
+    'Cada tarea abierta se avisa una vez en su fecha de vencimiento, a la hora de recordatorio indicada abajo, mientras Agaric está en ejecución o minimizado. Los recordatorios son por dispositivo.',
+  'notifications.reminderTimeLabel': 'Hora del recordatorio',
+  'notifications.reminderTimeDescription':
+    'Hora local a la que se avisa de una tarea que vence hoy. Si abres Agaric más tarde ese día, se avisa igualmente una vez.',
+  'notifications.settingsLoadFailed': 'No se ha podido cargar la configuración de recordatorios',
+  'notifications.settingsSaveFailed': 'No se ha podido guardar la configuración de recordatorios',
+  'notifications.permissionLabel': 'Permiso del sistema operativo',
+  'notifications.permissionDescription':
+    'En Android 13+ hay que conceder el permiso una sola vez. En el escritorio se concede automáticamente — usa la prueba de abajo para confirmarlo.',
+  'notifications.requestPermissionButton': 'Solicitar permiso',
+  'notifications.permissionGranted': 'Permiso de notificaciones concedido',
+  'notifications.permissionDenied': 'No se ha concedido el permiso de notificaciones',
+  'notifications.sendTestButton': 'Enviar notificación de prueba',
+  'notifications.testDisabledHint': 'Activa las notificaciones arriba para enviar una prueba.',
+  'notifications.testTitle': 'Notificación de prueba de Agaric',
+  'notifications.testBody': 'Si ves esto, las notificaciones funcionan.',
+  'notifications.testSent': 'Notificación de prueba enviada',
+  'notifications.testFailed': 'No se ha podido enviar la notificación de prueba',
+  'bugReport.title': 'Informar de un error',
+  'bugReport.description':
+    'Tu informe nunca se envía automáticamente. Revisa lo que se compartirá, adjunta registros si quieres y abre una incidencia de GitHub ya rellenada.',
+  'bugReport.fieldTitleLabel': 'Título breve',
+  'bugReport.fieldTitlePlaceholder': 'p. ej., El editor falla al pulsar Ctrl+Z',
+  'bugReport.fieldDescriptionLabel': '¿Qué ha fallado?',
+  'bugReport.fieldDescriptionPlaceholder':
+    '¿Qué estabas haciendo? ¿Qué esperabas? ¿Qué ha pasado en su lugar?',
+  'bugReport.includeLogsLabel': 'Incluir registros de diagnóstico',
+  'bugReport.includeLogsHint':
+    'Guarda un ZIP en tu carpeta de Descargas que puedes adjuntar a la incidencia de GitHub.',
+  'bugReport.redactLabel': 'Ocultar rutas de archivo e ID del dispositivo',
+  'bugReport.redactHint':
+    'Sustituye tu carpeta personal por ~ y borra el ID del dispositivo en cada línea del registro.',
+  'bugReport.previewError': 'No se ha podido leer el registro para la vista previa',
+  'bugReport.previewHint':
+    'Esto es exactamente lo que se pondrá en el cuerpo de la incidencia de GitHub.',
+  'bugReport.previewLabel': 'Vista previa de {{filename}}',
+  'bugReport.previewLoading': 'Cargando vista previa…',
+  'bugReport.previewTitle': 'Vista previa',
+  'bugReport.previewTruncated': 'Mostrando los primeros {{shown}} de {{total}} bytes…',
+  'bugReport.logsListTitle': 'Archivos de registro incluidos en el ZIP',
+  'bugReport.logsListEmpty': 'No hay archivos de registro que incluir.',
+  'bugReport.logsSize': '{{size}} bytes',
+  'bugReport.confirmCheckbox': 'He revisado lo que se compartirá',
+  'bugReport.viewFullLog': 'Ver el registro completo',
+  'bugReport.collapseLog': 'Mostrar menos',
+  'bugReport.cancel': 'Cancelar',
+  'bugReport.copy': 'Copiar informe',
+  'bugReport.copied': 'Informe copiado al portapapeles',
+  'bugReport.copyFailed': 'No se ha podido copiar el informe',
+  'bugReport.openIssue': 'Abrir en GitHub',
+  'bugReport.openGitHubIssue': 'Abrir incidencia de GitHub',
+  'bugReport.downloadZip': 'Descargar ZIP',
+  'bugReport.zipDownloadHint':
+    'Guarda {{fileName}} en tu carpeta de Descargas. Arrástralo a la incidencia de GitHub cuando se abra.',
+  'bugReport.zipDownloaded':
+    'Se ha guardado {{fileName}} en Descargas. Ahora abre la incidencia de GitHub y adjúntalo.',
+  'bugReport.submitted':
+    'Informe de error enviado. La incidencia de GitHub se está abriendo en una pestaña nueva.',
+  'bugReport.loadMetadataFailed': 'No se han podido recopilar los metadatos del informe de error',
+  'bugReport.readLogsFailed': 'No se han podido leer los registros',
+  'bugReport.buildZipFailed': 'No se ha podido crear el ZIP',
+  'bugReport.browserOpenFailed':
+    'No se ha podido abrir tu navegador. La URL de la incidencia se ha copiado al portapapeles — pégala en tu navegador para abrir la incidencia de GitHub.',
+  'bugReport.browserOpenFailedNoClipboard':
+    'No se ha podido abrir tu navegador ni copiar la URL al portapapeles. Usa el botón Copiar informe y abre GitHub manualmente.',
+  'bugReport.reportCrashTitle': 'Informar de este fallo',
+  'settings.tabAgentAccess': 'Acceso de agentes',
+  'agentAccess.description':
+    'Permite que los agentes de este equipo (Claude Desktop, Cursor, Continue, …) se conecten mediante un socket local. Desactivado de forma predeterminada.',
+  'agentAccess.descriptionMobile':
+    'Ninguna aplicación de este dispositivo puede acceder todavía al socket de agentes de Agaric, así que los agentes no pueden conectarse aquí. Configúralos en Agaric en tu equipo; lo que escriban llegará a este dispositivo mediante la sincronización.',
+  'agentAccess.loadFailed': 'No se ha podido cargar el estado de MCP',
+  'agentAccess.toggleLabel': 'Permitir que los agentes se conecten',
+  'agentAccess.toggleDescription':
+    'Cada agente se conecta con su propio token, de la lista Agentes, y solo obtiene el acceso y los espacios que le hayas dado. Se rechaza a cualquier cliente que no tenga uno.',
+  'agentAccess.toggleOnSuccess': 'Acceso de agentes activado',
+  'agentAccess.toggleOffSuccess': 'Acceso de agentes desactivado',
+  'agentAccess.toggleFailed': 'No se ha podido cambiar el acceso de agentes',
+  'agentAccess.socketPathLabel': 'Ruta del socket',
+  'agentAccess.socketPathCopied': 'Ruta del socket copiada',
+  'agentAccess.copySocketPathLabel': 'Copiar la ruta del socket',
+  'agentAccess.copyFailed': 'No se ha podido copiar al portapapeles',
+  'agentAccess.claudeConfigCopied': 'Configuración de Claude Desktop copiada',
+  'agentAccess.activityLabel': 'Actividad reciente',
+  'agentAccess.activityEmpty':
+    'Aún no hay actividad de agentes. Cuando un agente se conecte, sus llamadas a herramientas aparecerán aquí.',
+  'agentAccess.killSwitchLabel': 'Conexiones',
+  'agentAccess.killSwitchDescriptionNone': 'No hay conexiones activas.',
+  'agentAccess.killSwitchDescription_one': '1 conexión activa.',
+  'agentAccess.killSwitchDescription_other': '{{count}} conexiones activas.',
+  'agentAccess.killSwitchButton': 'Desconectar todas',
+  'agentAccess.disconnectSuccess': 'Se han desconectado todas las sesiones activas',
+  'agentAccess.disconnectFailed': 'No se han podido desconectar las sesiones',
+  'agentAccess.confirmDisconnectTitle': '¿Desconectar todas las sesiones?',
+  'agentAccess.confirmDisconnectDescription':
+    'Se desconectarán todos los agentes conectados ahora mismo. Pueden volver a conectarse justo después.',
+  'agentAccess.confirmDisconnectAction': 'Desconectar todas',
+  'agentAccess.undoAgentOp.ariaLabel': 'Deshacer esta acción del agente',
+  'agentAccess.undoAgentOp.tooltip': 'Deshacer esta acción del agente',
+  'agentAccess.undoAgentOp.buttonText': 'Deshacer',
+  'agentAccess.undoAgentOp.success': 'Acción del agente deshecha',
+  'agentAccess.undoAgentOp.failed': 'No se ha podido deshacer la acción del agente',
+  'agentAccess.undoAgentOp.nonReversible': 'Esta acción del agente no se puede deshacer',
+  'agentAccess.revertSession.button': 'Revertir sesión',
+  'agentAccess.revertSession.headerLabel_one': '{{count}} acción del agente',
+  'agentAccess.revertSession.headerLabel_other': '{{count}} acciones del agente',
+  'agentAccess.revertSession.buttonAriaLabel_one':
+    'Revertir esta sesión del agente ({{count}} acción)',
+  'agentAccess.revertSession.buttonAriaLabel_other':
+    'Revertir esta sesión del agente ({{count}} acciones)',
+  'agentAccess.revertSession.confirmTitle': '¿Revertir la sesión?',
+  'agentAccess.revertSession.confirmDescription_one':
+    'Se deshará {{count}} acción del agente en esta sesión. ¿Continuar?',
+  'agentAccess.revertSession.confirmDescription_other':
+    'Se desharán {{count}} acciones del agente en esta sesión. ¿Continuar?',
+  'agentAccess.revertSession.confirmAction': 'Revertir sesión',
+  'agentAccess.revertSession.success_one': 'Sesión revertida ({{count}} acción)',
+  'agentAccess.revertSession.success_other': 'Sesión revertida ({{count}} acciones)',
+  'agentAccess.revertSession.failed': 'No se ha podido revertir la sesión',
+  'agentAccess.revertSession.nonReversible':
+    'Una o más acciones de esta sesión no se pueden deshacer',
+  'agentAccess.agents.title': 'Agentes',
+  'agentAccess.agents.description':
+    'Cada agente tiene su propio token, acceso y espacios. Da a cada cliente su propio agente.',
+  'agentAccess.agents.loadFailed': 'No se han podido cargar los agentes',
+  'agentAccess.agents.add': 'Añadir agente',
+  'agentAccess.agents.empty': 'Aún no hay agentes',
+  'agentAccess.agents.emptyDescription':
+    'Añade un agente por cliente y sustituye las entradas agaric-ro y agaric-rw de ese cliente por la configuración del agente.',
+  'agentAccess.agents.modeReadOnly': 'Solo lectura',
+  'agentAccess.agents.modeReadWrite': 'Lectura y escritura',
+  'agentAccess.agents.allSpaces': 'Todos los espacios',
+  'agentAccess.agents.noSpacesLeft': 'No quedan espacios',
+  'agentAccess.agents.lastUsed': 'Usado por última vez {{when}}',
+  'agentAccess.agents.neverUsed': 'Nunca usado',
+  'agentAccess.agents.copyDesktopButton': 'Copiar configuración de Claude Desktop',
+  'agentAccess.agents.copyDesktopAria': 'Copiar la configuración de Claude Desktop para {{name}}',
+  'agentAccess.agents.copyCodeButton': 'Copiar comando de Claude Code',
+  'agentAccess.agents.copyCodeAria': 'Copiar el comando de Claude Code para {{name}}',
+  'agentAccess.agents.codeCommandCopied': 'Comando de Claude Code copiado',
+  'agentAccess.agents.revoke': 'Revocar',
+  'agentAccess.agents.revokeAria': 'Revocar {{name}}',
+  'agentAccess.agents.revokeTitle': '¿Revocar {{name}}?',
+  'agentAccess.agents.revokeDescription':
+    'El token de {{name}} dejará de funcionar. Para volver a dar acceso a un cliente, añade un agente nuevo y copia su configuración.',
+  'agentAccess.agents.revokeSuccess': 'Agente revocado',
+  'agentAccess.agents.revokeFailed': 'No se ha podido revocar el agente',
+  'agentAccess.agents.createTitle': 'Añadir agente',
+  'agentAccess.agents.createDescription':
+    'Elige qué puede hacer el agente y qué espacios puede usar. Podrás copiar su configuración una vez añadido.',
+  'agentAccess.agents.nameLabel': 'Nombre',
+  'agentAccess.agents.namePlaceholder': 'Claude Desktop',
+  'agentAccess.agents.modeLabel': 'Acceso',
+  'agentAccess.agents.readOnlyNote':
+    'Un agente de solo lectura no cambia nada, salvo que abrir un día del diario a menos de un año de hoy puede crear esa página.',
+  'agentAccess.agents.allSpacesCheckbox': 'Todos los espacios, incluidos los nuevos',
+  'agentAccess.agents.spacesLegend': 'Espacios',
+  'agentAccess.agents.cancel': 'Cancelar',
+  'agentAccess.agents.create': 'Añadir',
+  'agentAccess.agents.created': 'Agente añadido',
+  'agentAccess.agents.createFailed': 'No se ha podido añadir el agente',
+  'agentAccess.agents.duplicateName': 'Ya existe un agente llamado {{name}}',
+  'agentAccess.agents.invalidName':
+    'Usa un nombre de hasta 128 caracteres, sin caracteres de control',
+  'settings.groupWorkspace': 'Espacio de trabajo',
+  'settings.groupIntegrations': 'Integraciones',
+  'settings.groupData': 'Datos y sincronización',
+  'settings.groupHelp': 'Ayuda',
+  'settings.weekStartLabel': 'La semana empieza el',
+  'settings.weekStartMonday': 'Lunes',
+  'settings.weekStartSunday': 'Domingo',
+  'settings.weekStartUpdated': 'Primer día de la semana: {{day}}',
+  'settings.journalDateFormatLabel': 'Formato de fecha del diario',
+  'settings.journalDateFormatHelp':
+    'Cómo se muestran los títulos del diario. Las páginas siempre se guardan como YYYY-MM-DD, así que cambiar esto nunca afecta a los diarios existentes.',
+  'settings.journalDateFormatLocale': 'Localizado (p. ej., mié, 17 jun 2026)',
+  'settings.journalDateFormatIso': 'YYYY-MM-DD (p. ej., 2026-06-17)',
+  'settings.journalDateFormatLong': 'Mes D, YYYY (p. ej., junio 17, 2026)',
+  'settings.journalDateFormatSlash': 'DD/MM/YYYY (p. ej., 17/06/2026)',
+  'settings.journalDateFormatWeekday': 'Ddd, Mmm D (p. ej., mié, jun 17)',
+  'settings.journalDateFormatUpdated': 'Las fechas del diario se muestran ahora como {{example}}',
+  'settings.valueClamped': 'Valor ajustado al rango {{min}}–{{max}}',
 }

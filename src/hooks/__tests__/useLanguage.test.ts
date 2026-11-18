@@ -25,11 +25,9 @@ afterEach(async () => {
 })
 
 describe('useLanguage', () => {
-  it('defaults to English, NOT to the device', () => {
+  it('defaults to following the device', () => {
     const { result } = renderHook(() => useLanguage())
-    // See the `agaric-language` preference: flip this to `'system'` when a
-    // second catalog is substantially translated, in the same commit.
-    expect(result.current.language).toBe('en')
+    expect(result.current.language).toBe('system')
   })
 
   it('reads an explicit stored preference', () => {
@@ -39,9 +37,9 @@ describe('useLanguage', () => {
   })
 
   it('falls back to the default for an unsupported stored value', () => {
-    localStorage.setItem(KEY, 'fr')
+    localStorage.setItem(KEY, 'it')
     const { result } = renderHook(() => useLanguage())
-    expect(result.current.language).toBe('en')
+    expect(result.current.language).toBe('system')
   })
 
   it('persists the choice and switches i18next to it', async () => {

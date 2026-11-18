@@ -251,7 +251,7 @@ export const block: Record<string, string> = {
   // `movingSubtree` is pluralised on `count` (blocks being dragged); `moving`
   // covers the single-block case.
   'blockTree.dnd.moving': 'Moving to depth {{depth}}',
-  'blockTree.dnd.movingSubtree': 'Moving {{count}} block to depth {{depth}}',
+  'blockTree.dnd.movingSubtree_one': 'Moving {{count}} block to depth {{depth}}',
   'blockTree.dnd.movingSubtree_other': 'Moving {{count}} blocks to depth {{depth}}',
   'block.emptyPlaceholder': 'Type / for commands...',
   'block.attachHint': 'Drop files here, or paste — images, text, PDF, JSON, ZIP (max 50 MB)',

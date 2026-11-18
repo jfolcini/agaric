@@ -1,0 +1,27 @@
+# Session 4239 — complete Spanish, Portuguese, German and French catalogs, enforced at 100%
+
+The ask: finish Spanish, add Portuguese completely, and add a test that requires every string to be translated, so new copy cannot ship English-only. Regional variants (`pt-BR`, `pt-PT`) should be cheap to add later. German and French were added mid-session.
+
+## What shipped
+
+- **Catalogs.** `src/lib/i18n/{de,es,fr,pt}/` mirror every English namespace file plus `markdown-reference.ts`, key for key and in English order. Spanish keeps the house style `es/errors.ts` set (`tú`, perfect-tense errors, neutral vocabulary). Portuguese is written as Brazilian Portuguese (`você`, arquivo, tela, excluir) and registers the date-fns `ptBR` locale. German uses informal `du` and infinitive buttons. French uses `vous`, `’` and a no-break space before `:;?!`. Parallel subagents translated one namespace group per language from a shared brief and glossary (the German/French addendum carried the lessons of the first round), each checked by a parser-based validator for key parity, order, placeholders and inline tags. A consistency pass afterwards harmonized Portuguese "Status"/"Situação".
+- **`locale-catalogs.test.ts`** replaces `es-catalog.test.ts`. It iterates `SUPPORTED_LOCALES`, so a new locale is held to it on registration. A base locale must carry every English key, with plural forms computed from the locale's own CLDR categories (`Intl.PluralRules`). Spanish, French and Portuguese may skip `many` (exact millions), because i18next falls back to `_other` in the same language. Every key a locale carries must exist in English, keep the English placeholder and inline-tag multisets, be non-blank, and not be a copy of the English. Exempt from the copy check: values with no lowercase letter outside placeholders, `ENGLISH_IN_EVERY_LOCALE` (enforced to stay English: `aria-keyshortcuts` tokens, `parse-date.ts` examples, brand names), and per-locale `SAME_AS_ENGLISH` cognates.
+- **English plurals are always an explicit `_one`/`_other` pair.** The three bare-key-as-singular bases (`blockTree.dnd.movingSubtree`, `graph.local.depthOption`, `graph.filter.filtersApplied`) became `_one`, and `catalog-parity.test.ts` now rejects the shape. i18next looks up a missing form (Spanish `_many`) as the bare key before `_other`, so a mirrored bare singular would render "1000000 bloque".
+- **Regional variants.** `LOCALES` in `locales.ts` is the one registry (tag → endonym). A tag with a region is a variant whose catalog holds only overrides. `baseLocale()` derives its base from the primary subtag, `loadLocale` merges the base first, and i18next's default `load: 'all'` resolves `pt-PT` → `pt` → `en`. `lookupDateLocale` falls back to the base's date-fns locale. `resolveLocale('system')` now does RFC 4647 lookup on canonicalized device tags, skipping malformed ones.
+- **Settings.** The language select renders `LOCALES`, alphabetical by endonym, each option carrying `lang` so AT voices "Español" as Spanish. `settings.languageEnglish` and `settings.languageSpanish` left the catalog. The `agaric-language` default flips from `'en'` to `'system'`, as its docblock prescribed once coverage was real.
+
+## Traps
+
+- TypeScript 7 has no JS compiler API; the validator parses with `oxc-parser`.
+- `CompactionCard` splits translated strings on `:`. The brief told translators to keep the label colon, and they did.
+- `parse-date.ts` only understands English words, so the date placeholders stay English in every locale. Localized date input is a follow-up, not done here.
+- The slash-command menu labels in `src/lib/slash-commands.ts` are hardcoded English and also what a typed query matches, so the menu stays English in every locale. Localizing them changes matching and is left for its own change.
+- The Write tool turns a `\u00A0` escape into the raw character; the French files are normalized to the escape, uppercase per oxlint `unicorn/escape-case`.
+
+## What ran
+
+- `locale-catalogs.test.ts` falsified in one shell command per mutation (backup, trap restore, `cmp`): an English key with no translation, a dropped placeholder, a pasted English value, an extra key, a dropped `_one`, and a translated `ENGLISH_IN_EVERY_LOCALE` key each reddened the predicted assertion. `locale-variant-load.test.ts` reddened with the base load removed, and the `GeneralTab` options test with `lang` removed.
+- `PW_PORT=4391 npx playwright test e2e/language-preference.spec.ts`: 5 passed against a production build. Pointing the `fr` loader at the Spanish catalog reddened only the French test.
+- `npm run typecheck`: clean. `prek run --files` over the change: passed.
+- Full `npx vitest run`: before German and French, 1130 files and 27179 tests passed. With them, 27201 passed and one failed: `date-utils`' formatter cache-miss test used `fr` as the locale nothing else formats, and the per-shipped-locale test above it now formats French first. It moved to `it`; the file reruns green.
+- Not run: the real-backend `e2e-tauri/` lane (no `tauri-cli` here). The `'system'` default makes it follow the runner's webview locale, so a non-English CI locale would show there first.

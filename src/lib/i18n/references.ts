@@ -141,7 +141,7 @@ export const references: Record<string, string> = {
   'graph.local.seedHidden': '"{{page}}" is hidden by the active filters',
   'graph.local.seedIsTag': '"{{page}}" is a tag, and the graph shows only pages',
   'graph.local.depthLabel': 'Hops',
-  'graph.local.depthOption': '{{count}} hop',
+  'graph.local.depthOption_one': '{{count}} hop',
   'graph.local.depthOption_other': '{{count}} hops',
   'graph.local.depthGroupLabel': 'Neighborhood depth',
   'graph.filter.addFilter': 'Add filter',
@@ -152,7 +152,7 @@ export const references: Record<string, string> = {
   'graph.filter.apply': 'Apply',
   'graph.filter.cancel': 'Cancel',
   'graph.filter.selectDimension': 'Select a dimension',
-  'graph.filter.filtersApplied': '{{count}} filter applied',
+  'graph.filter.filtersApplied_one': '{{count}} filter applied',
   'graph.filter.filtersApplied_other': '{{count}} filters applied',
   'graph.filter.showingCount': 'Showing {{filtered}} of {{total}} pages',
   // #2298 count-then-cap — the backend edge cap fired; the graph renders
