@@ -198,13 +198,13 @@ export function assertValidDateFormat(s: string): void {
  */
 export function assertValidDateValue(spaceId: string | null, key: string, s: string): void {
   const valueType = propertyDefinition(spaceId, key)?.['value_type']
-  const datetime = isCanonicalDatetime(s)
-  if (valueType === 'datetime' || (valueType === undefined && datetime)) {
-    if (!datetime) {
+  if (valueType === 'datetime') {
+    if (!isCanonicalDatetime(s)) {
       throw validationRejection(`expected a YYYY-MM-DDTHH:MMZ datetime for '${key}', got '${s}'`)
     }
     return
   }
+  // The backend's `validate_property_value`: only a datetime key's slot holds a time.
   assertValidDateFormat(s)
 }
 
