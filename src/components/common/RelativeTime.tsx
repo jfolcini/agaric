@@ -14,6 +14,7 @@ import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { formatTimestamp } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
@@ -21,14 +22,14 @@ import { cn } from '@/lib/utils'
 export interface RelativeTimeProps {
   /** ISO 8601 string or epoch milliseconds. */
   value: string | number
-  /** From `useMinuteClock`, so the relative label ages. */
-  now?: number
   className?: string
 }
 
-export function RelativeTime({ value, now, className }: RelativeTimeProps): React.ReactElement {
+export function RelativeTime({ value, className }: RelativeTimeProps): React.ReactElement {
   const { t } = useTranslation()
   const [exact, setExact] = useState(false)
+  // Re-renders each minute, so "3m ago" ages while the list stays open.
+  const now = useMinuteClock()
   const date = new Date(value)
   return (
     <button

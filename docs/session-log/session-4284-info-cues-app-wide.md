@@ -41,3 +41,9 @@ Second PR of #6895, after #6900 (App health). The maintainer set the rules on #6
 - Playwright: 109 related specs, 684 passed and 3 failed. Two of the failures were the `data-slot` trap, fixed and re-run green with the review fixes (59 passed).
 - The third, `phone-header-bar` › Settings header, did not reproduce in 10 repeats. Nothing in this diff renders there.
 - An independent review found no blocking defect. Its five non-blocking findings are fixed: the Escape leak, the `EditModeSwitch` gap and remount, axe on the open chip, the duplicate space reason, and comment wraps.
+
+## Review notes folded in
+
+- **Page link focus.** Page mode's link in the Markdown buffer (`PageSourceEditor`, `PageModeLink`) had two trees, so a blocked reason arriving while it had focus remounted it and dropped the focus. It now keeps one shape: one `Tooltip`, shut while blocked, and the link and its ⓘ in one box. With that, `InfoPopover`'s `className` prop has no caller left and is removed.
+- **Relative time.** `RelativeTime` re-renders on `useMinuteClock`, so "3m ago" ages while History stays open. The unused `now` prop is removed.
+- **Merge with #6908.** The Due panel's count strings became whole messages; the catalogs keep those and add this PR's `duePanel.filterInfoLabel`.
