@@ -17,7 +17,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -102,7 +101,6 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         .then(unwrap)
         .then((saved) => {
           setAliases((current) => (current === next ? saved.aliases : current))
-          recordGraphStructureChange()
           if (saved.op_refs.length > 0) useUndoStore.getState().onNewAction(pageId, saved.op_refs)
           setAliasInput('')
           announce(t('announce.aliasAdded'))
@@ -135,7 +133,6 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         .setPageAliases(pageId, next)
         .then(unwrap)
         .then((saved) => {
-          recordGraphStructureChange()
           if (saved.op_refs.length > 0) useUndoStore.getState().onNewAction(pageId, saved.op_refs)
         })
         .catch((err: unknown) => {

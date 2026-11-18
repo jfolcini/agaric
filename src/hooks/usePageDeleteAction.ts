@@ -161,8 +161,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           // available here (`deletedTarget.title`, used two lines up) — it is
           // the latch, not a missing title, that rules an insert out.
           invalidateNameCaches()
-          // #4963 — the delete bumped via `notifyPagesRemoved`; the undo has no
-          // shared publisher.
+          // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))

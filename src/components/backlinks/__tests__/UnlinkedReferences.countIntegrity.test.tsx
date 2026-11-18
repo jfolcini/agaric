@@ -227,8 +227,7 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   // #3733 note 1.
   it('"Link it" under an active filter leaves "Showing N of M" agreeing with the rows', async () => {
     const user = userEvent.setup()
-    // "Link it" refetches once the graph-structure debounce settles, so the stub
-    // answers with each linked row gone, as the backend would.
+    // Any refetch answers with each linked row gone, as the backend would.
     mockedListUnlinked.mockImplementation(async (_pageId, filters) => {
       const linked = mockedEditBlock.mock.calls.length
       return filters
@@ -387,11 +386,7 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
       if (Number(limit) === 1) {
         collapsedFetches += 1
-        if (collapsedFetches === 1) return makeResponse({ ids: ['B1'], total: 40, filtered: 40 })
-        // The refetch the #4967 invalidation triggers (see below) never
-        // settles, so the header keeps rendering the cached entry — the frame
-        // the user sees, and the one a stale count would corrupt.
-        return new Promise<GroupedBacklinkResponse>(() => {})
+        return makeResponse({ ids: ['B1'], total: 40, filtered: 40 })
       }
       return makeResponse({ ids: ['B1', 'B2'], total: 40, filtered: 40 })
     })
@@ -415,16 +410,9 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     await waitFor(() => {
       expect(rowCount(container)).toBe(0)
     })
-    // Since #4967 "Link it" also bumps the graph-structure counter, and that
-    // invalidates this panel's whole key PREFIX — the collapsed entry included —
-    // once the 150 ms debounce settles. So the collapsed entry IS refetched
-    // here, and asserting it was fetched exactly once raced the debounce
-    // (reddened on a slow run). Wait for that second fetch instead of racing
-    // it: it is the one the mock above never settles, so what the header
-    // renders below is the cached entry either way.
-    await waitFor(() => {
-      expect(collapsedFetches).toBe(2)
-    })
+    // The header renders the cached entry: the change feed's refetch, which
+    // this test does not send, is the only other source of a count.
+    expect(collapsedFetches).toBe(1)
 
     expect(screen.getByRole('button', { name: new RegExp(thirtyNine, 'i') })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: new RegExp(forty, 'i') })).not.toBeInTheDocument()

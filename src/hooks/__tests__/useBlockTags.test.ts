@@ -25,7 +25,6 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { useBlockTags } from '@/hooks/useBlockTags'
-import { getGraphStructureKey } from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -1167,8 +1166,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
 
 // ---------------------------------------------------------------------------
 // #5244 — `useSyncEvents` announces a sync or MCP write as an `invalidated`
-// name change. #5250 — a header add/remove bumps the graph-structure counter
-// for the tag-filtered graph.
+// name change.
 // ---------------------------------------------------------------------------
 
 describe('useBlockTags out-of-band refresh', () => {
@@ -1206,24 +1204,6 @@ describe('useBlockTags out-of-band refresh', () => {
 
     await act(async () => pendingApplied?.(['TAG_1', 'TAG_2']))
     expect([...result.current.appliedTagIds]).toEqual(['TAG_1', 'TAG_2'])
-  })
-
-  it('bumps the counter after an add and after a remove (#5250)', async () => {
-    stubInvoke({
-      list_all_tags_in_space: () => [],
-      list_inherited_tags_for_block: () => [],
-      list_tags_for_block: () => [],
-      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
-      remove_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
-    })
-    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
-    await waitFor(() => expect(result.current.loading).toBe(false))
-
-    await act(async () => result.current.handleAddTag('TAG_1'))
-    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
-
-    await act(async () => result.current.handleRemoveTag('TAG_1'))
-    await waitFor(() => expect(getGraphStructureKey()).toBe(2))
   })
 })
 

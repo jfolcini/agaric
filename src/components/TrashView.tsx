@@ -228,9 +228,7 @@ export function TrashView(): React.ReactElement {
       if (!block.deleted_at) return
       try {
         unwrap(await commands.restoreBlock(block.id, block.deleted_at))
-        // #4963 — restored rows re-enter the page-link graph, content blocks
-        // included (their `[[links]]` are edges). A purge needs no bump: every
-        // consumer already filters `deleted_at IS NULL`.
+        // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         // #5295 — the restore also brings back a trashed ancestor, which lists
@@ -303,7 +301,8 @@ export function TrashView(): React.ReactElement {
       restored = unwrap(
         await commands.restoreBlocksByIds(selectedBlocks.map((b) => b.id)),
       ).affected_count
-      recordGraphStructureChange() // #4963
+      // Now, not at the change feed: expires subtrees prefetched before this write.
+      recordGraphStructureChange()
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           // #4239 — same gate as the single-row restore above.
@@ -481,7 +480,8 @@ export function TrashView(): React.ReactElement {
         // reports only a count, so the picker caches cannot be patched; drop
         // them and let the next picker read re-fetch.
         invalidateNameCaches()
-        recordGraphStructureChange() // #4963
+        // Now, not at the change feed: expires subtrees prefetched before this write.
+        recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
         invalidateCalendarPageDates() // #5247
         notify.success(t('trash.allRestored', { count: result.affected_count }))
@@ -498,6 +498,7 @@ export function TrashView(): React.ReactElement {
       // back; the pickers and the graph must hear about those even on failure.
       if (err instanceof PartialPurgeError && err.affectedCount > 0) {
         invalidateNameCaches()
+        // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
         invalidateCalendarPageDates()

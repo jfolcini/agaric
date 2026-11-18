@@ -44,7 +44,6 @@ import { unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { blobToBase64 } from '@/lib/file-utils'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -168,7 +167,6 @@ async function addAnnotationBlocks(
       useUndoStore.getState().onNewAction(pageId, op_refs, undefined, { merge: false })
       if (ownerStore !== pageStore) void ownerStore.getState().load()
     }
-    recordGraphStructureChange()
   } catch (err) {
     logger.warn('PdfViewerDialog', 'adding the annotation blocks failed', { ownerId }, err)
     notify.error(failed)

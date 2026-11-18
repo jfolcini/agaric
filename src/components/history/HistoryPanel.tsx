@@ -36,7 +36,6 @@ import { unwrap } from '@/lib/app-error'
 import type { HistoryEntry, OpRef, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
-import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { parsePayloadObject } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -278,7 +277,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     ) => {
       try {
         const resp = unwrap(await commands.editBlock(targetBlockId, previousContent, null))
-        recordGraphStructureChange()
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
         if (isPage) renamePage(targetBlockId, previousContent, spaceId)
         notify.success(t('history.restoreUndone'))
@@ -338,7 +336,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         }
 
         const resp = unwrap(await commands.editBlock(blockId, toText, null))
-        recordGraphStructureChange()
         applyRestoredContentToStore(blockId, toText, resp.op_refs)
         // #4056 — a restored PAGE block's `content` IS its title. `editBlock`
         // only ever writes the raw block row, so without this the picker's
