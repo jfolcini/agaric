@@ -144,13 +144,12 @@ export const sync: Record<string, string> = {
   'qrScanner.cameraNotFound': 'Auf diesem Gerät wurde keine Kamera gefunden.',
   'device.syncComplete': 'Synchronisierung abgeschlossen',
   'device.syncFailed': 'Synchronisierung fehlgeschlagen',
-  'sync.failedForDevice': 'Synchronisierung fehlgeschlagen für Gerät {{deviceId}}...',
-  'sync.changesApplied_one': '{{count}} Änderung vom Gerät synchronisiert',
-  'sync.changesApplied_other': '{{count}} Änderungen vom Gerät synchronisiert',
-  'sync.changesAppliedUnknownCount': 'Änderungen vom Gerät synchronisiert',
+  'sync.failedForDevice': 'Synchronisierung mit {{name}} fehlgeschlagen',
   'sync.failed': 'Synchronisierung fehlgeschlagen: {{message}}',
-  'sync.localTextKept':
+  'sync.localTextKept_one':
     'Ein anderes Gerät hat “{{title}}” gelöscht oder verschoben. Die Blöcke, die du hier darunter hinzugefügt hast und die noch nicht synchronisiert waren, liegen im Papierkorb.',
+  'sync.localTextKept_other':
+    'Ein anderes Gerät hat {{count}} Seiten gelöscht oder verschoben. Die Blöcke, die du hier darunter hinzugefügt hast und die noch nicht synchronisiert waren, liegen im Papierkorb.',
   'sync.versionMismatchUpdatePeer':
     '{{peer}} verwendet eine ältere Version von Agaric. Aktualisiere Agaric auf {{peer}} und synchronisiere dann erneut.',
   'sync.versionMismatchUpdatePeerUnnamed':
@@ -170,7 +169,6 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'Das andere Gerät enthält Änderungen, die dieses Gerät gemacht hat und nicht mehr besitzt, etwa nachdem hier ein älteres Backup wiederhergestellt wurde. Daher lassen sich die beiden nicht zusammenführen. Exportiere die Notizen von diesem Gerät, richte Agaric darauf neu ein, kopple es erneut und importiere sie dann.',
   'sync.retryAction': 'Synchronisierung wiederholen',
-  'sync.backOnline': 'Wieder online. Synchronisiere…',
   'sync.noPeersTitle': 'Keine Geräte gekoppelt',
   'sync.noPeersBody':
     'Für die Synchronisierung ist mindestens ein gekoppeltes Gerät nötig. Kopple jetzt eins, um mit der Synchronisierung zu beginnen.',

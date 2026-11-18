@@ -141,13 +141,12 @@ export const sync: Record<string, string> = {
   'qrScanner.cameraNotFound': 'Nenhuma câmera foi encontrada neste dispositivo.',
   'device.syncComplete': 'Sincronização concluída',
   'device.syncFailed': 'Falha na sincronização',
-  'sync.failedForDevice': 'Falha na sincronização com o dispositivo {{deviceId}}...',
-  'sync.changesApplied_one': '{{count}} alteração sincronizada do dispositivo',
-  'sync.changesApplied_other': '{{count}} alterações sincronizadas do dispositivo',
-  'sync.changesAppliedUnknownCount': 'Alterações sincronizadas do dispositivo',
+  'sync.failedForDevice': 'Falha na sincronização com {{name}}',
   'sync.failed': 'Falha na sincronização: {{message}}',
-  'sync.localTextKept':
+  'sync.localTextKept_one':
     'Outro dispositivo excluiu ou moveu “{{title}}”. Os blocos que você adicionou sob ele aqui e que ainda não tinham sido sincronizados estão na Lixeira.',
+  'sync.localTextKept_other':
+    'Outro dispositivo excluiu ou moveu {{count}} páginas. Os blocos que você adicionou sob elas aqui e que ainda não tinham sido sincronizados estão na Lixeira.',
   'sync.versionMismatchUpdatePeer':
     '{{peer}} usa uma versão mais antiga do Agaric. Atualize o Agaric em {{peer}} e sincronize novamente.',
   'sync.versionMismatchUpdatePeerUnnamed':
@@ -167,7 +166,6 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'O outro dispositivo contém alterações que este dispositivo fez e não tem mais, como após restaurar um backup mais antigo aqui, então os dois não podem ser mesclados. Exporte as notas deste dispositivo, configure o Agaric do zero nele, pareie-o novamente e depois importe as notas.',
   'sync.retryAction': 'Tentar sincronizar novamente',
-  'sync.backOnline': 'Online novamente. Sincronizando…',
   'sync.noPeersTitle': 'Nenhum dispositivo pareado',
   'sync.noPeersBody':
     'A sincronização precisa de pelo menos um dispositivo pareado. Pareie um agora para começar a sincronizar.',

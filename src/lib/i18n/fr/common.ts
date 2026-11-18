@@ -173,9 +173,6 @@ export const common: Record<string, string> = {
   'announce.syncStarted': 'Synchronisation démarrée',
   'announce.syncCompleted': 'Synchronisation terminée',
   'announce.syncFailed': 'Échec de la synchronisation',
-  'announce.syncChangesApplied_one': '{{count}} modification reçue par synchronisation',
-  'announce.syncChangesApplied_other': '{{count}} modifications reçues par synchronisation',
-  'announce.syncChangesAppliedUnknownCount': 'Modifications reçues par synchronisation',
   'announce.taskRescheduled': 'Tâche replanifiée au {{date}}',
   'announce.rescheduleFailed': 'Échec de la replanification',
   'announce.dateUpdated': 'Date définie sur {{date}}',
@@ -499,6 +496,10 @@ export const common: Record<string, string> = {
     '{{path}} a été réintégré avec un avertissement\u00A0: {{first}}',
   'data.mirrorIngestedWarnings_other':
     '{{path}} a été réintégré avec {{count}} avertissements\u00A0: {{first}}',
+  'data.mirrorIngestedWarningsFiles_one':
+    '{{count}} fichier a été réintégré avec des avertissements',
+  'data.mirrorIngestedWarningsFiles_other':
+    '{{count}} fichiers ont été réintégrés avec des avertissements',
   'data.mirrorFailedItem': '{{path}}\u00A0: {{message}}',
   'data.mirrorReadBackLabel': 'Réintégrer les modifications',
   'data.mirrorReadBackDesc':

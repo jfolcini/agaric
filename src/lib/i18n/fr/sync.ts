@@ -140,13 +140,12 @@ export const sync: Record<string, string> = {
   'qrScanner.cameraNotFound': 'Aucune caméra n’a été trouvée sur cet appareil.',
   'device.syncComplete': 'Synchronisation terminée',
   'device.syncFailed': 'Échec de la synchronisation',
-  'sync.failedForDevice': 'Échec de la synchronisation avec l’appareil {{deviceId}}...',
-  'sync.changesApplied_one': '{{count}} modification synchronisée depuis l’appareil',
-  'sync.changesApplied_other': '{{count}} modifications synchronisées depuis l’appareil',
-  'sync.changesAppliedUnknownCount': 'Modifications synchronisées depuis l’appareil',
+  'sync.failedForDevice': 'Échec de la synchronisation avec {{name}}',
   'sync.failed': 'Échec de la synchronisation\u00A0: {{message}}',
-  'sync.localTextKept':
+  'sync.localTextKept_one':
     'Un autre appareil a supprimé ou déplacé “{{title}}”. Les blocs que vous y aviez ajoutés sur cet appareil et qui n’étaient pas encore synchronisés se trouvent dans la corbeille.',
+  'sync.localTextKept_other':
+    'Un autre appareil a supprimé ou déplacé {{count}} pages. Les blocs que vous y aviez ajoutés sur cet appareil et qui n’étaient pas encore synchronisés se trouvent dans la corbeille.',
   'sync.versionMismatchUpdatePeer':
     '{{peer}} utilise une version plus ancienne d’Agaric. Mettez à jour Agaric sur {{peer}}, puis relancez la synchronisation.',
   'sync.versionMismatchUpdatePeerUnnamed':
@@ -166,7 +165,6 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'L’autre appareil contient des modifications que cet appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
   'sync.retryAction': 'Relancer la synchronisation',
-  'sync.backOnline': 'De nouveau en ligne. Synchronisation…',
   'sync.noPeersTitle': 'Aucun appareil associé',
   'sync.noPeersBody':
     'La synchronisation nécessite au moins un appareil associé. Associez-en un maintenant pour commencer à synchroniser.',

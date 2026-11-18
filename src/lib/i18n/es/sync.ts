@@ -143,13 +143,12 @@ export const sync: Record<string, string> = {
   'qrScanner.cameraNotFound': 'No se ha encontrado ninguna cámara en este dispositivo.',
   'device.syncComplete': 'Sincronización completada',
   'device.syncFailed': 'La sincronización ha fallado',
-  'sync.failedForDevice': 'La sincronización ha fallado con el dispositivo {{deviceId}}...',
-  'sync.changesApplied_one': 'Se ha sincronizado {{count}} cambio desde el dispositivo',
-  'sync.changesApplied_other': 'Se han sincronizado {{count}} cambios desde el dispositivo',
-  'sync.changesAppliedUnknownCount': 'Se han sincronizado cambios desde el dispositivo',
+  'sync.failedForDevice': 'La sincronización con {{name}} ha fallado',
   'sync.failed': 'La sincronización ha fallado: {{message}}',
-  'sync.localTextKept':
+  'sync.localTextKept_one':
     'Otro dispositivo ha eliminado o movido “{{title}}”. Los bloques que le añadiste en este dispositivo y que aún no se habían sincronizado están en la papelera.',
+  'sync.localTextKept_other':
+    'Otro dispositivo ha eliminado o movido {{count}} páginas. Los bloques que les añadiste en este dispositivo y que aún no se habían sincronizado están en la papelera.',
   'sync.versionMismatchUpdatePeer':
     '{{peer}} usa una versión anterior de Agaric. Actualiza Agaric en {{peer}} y vuelve a sincronizar.',
   'sync.versionMismatchUpdatePeerUnnamed':
@@ -169,7 +168,6 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'El otro dispositivo tiene cambios que hizo este dispositivo y que ya no tiene, como ocurre tras restaurar aquí una copia de seguridad antigua, así que no se pueden fusionar. Exporta las notas de este dispositivo, vuelve a configurar Agaric desde cero en él, emparéjalo de nuevo y luego impórtalas.',
   'sync.retryAction': 'Reintentar la sincronización',
-  'sync.backOnline': 'De nuevo en línea. Sincronizando…',
   'sync.noPeersTitle': 'No hay dispositivos emparejados',
   'sync.noPeersBody':
     'La sincronización necesita al menos un dispositivo emparejado. Empareja uno ahora para empezar a sincronizar.',
