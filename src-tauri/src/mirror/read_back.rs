@@ -110,19 +110,19 @@ pub fn pending(
             })
         })
         .collect();
+    let mut found = Vec::new();
     for folder in space_folders {
-        let mut found = Vec::new();
         markdown_below(root, &root.join(folder), &mut found).map_err(unreadable)?;
-        pending.extend(
-            found
-                .into_iter()
-                .filter(|path| !written.contains_key(path.as_str()))
-                .map(|path| MirrorPending {
-                    path,
-                    kind: MirrorPendingKind::New,
-                }),
-        );
     }
+    let owned = written.keys().copied().collect();
+    pending.extend(
+        super::paths::unowned(found, &owned, |path| root.join(path).is_file())
+            .into_iter()
+            .map(|path| MirrorPending {
+                path,
+                kind: MirrorPendingKind::New,
+            }),
+    );
     pending.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     Ok(pending)
 }

@@ -159,6 +159,43 @@ fn a_page_of_no_listed_space_gets_no_path() {
     assert!(paths.is_empty(), "{paths:?}");
 }
 
+/// The files of `found` no path of `owned` names, as [`unowned`] tells them
+/// on a disk that opens a file by any spelling `fold` takes as its listed
+/// one (`folds`, as APFS and NTFS do) or only by that one.
+fn unowned_on_disk(found: &[&str], owned: &[&str], folds: bool) -> Vec<String> {
+    let listed: Vec<String> = found.iter().map(|path| (*path).to_owned()).collect();
+    let is_file = |path: &str| {
+        listed
+            .iter()
+            .any(|file| file == path || (folds && fold(file) == fold(path)))
+    };
+    unowned(listed.clone(), &owned.iter().copied().collect(), is_file)
+}
+
+#[test]
+fn a_file_renamed_by_case_or_named_in_nfd_on_a_folding_disk_is_its_pages() {
+    let owned = ["Notes/Note.md", "Notes/Caf\u{e9}.md"];
+    let found = ["Notes/note.md", "Notes/Cafe\u{301}.md", "Notes/New.md"];
+    assert_eq!(unowned_on_disk(&found, &owned, true), ["Notes/New.md"]);
+}
+
+#[test]
+fn on_a_disk_telling_spellings_apart_a_case_rename_or_a_second_spelling_is_unowned() {
+    let owned = ["Notes/Note.md"];
+    assert_eq!(
+        unowned_on_disk(&["Notes/note.md"], &owned, false),
+        ["Notes/note.md"],
+        "the page's file was renamed: its old spelling opens nothing"
+    );
+    for folds in [false, true] {
+        assert_eq!(
+            unowned_on_disk(&["Notes/Note.md", "Notes/note.md"], &owned, folds),
+            ["Notes/note.md"],
+            "the page's own spelling is listed, so the other is another file"
+        );
+    }
+}
+
 /// A title of words that may differ only by case, by NFC or by a character
 /// the sanitizer replaces, in namespaces, or nothing at all.
 fn arb_title() -> impl Strategy<Value = String> {

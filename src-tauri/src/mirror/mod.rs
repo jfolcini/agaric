@@ -486,18 +486,24 @@ fn pause_reason(root: &Path, device_id: &str) -> Option<String> {
     match store::marker_device(root) {
         Ok(Some(owner)) if owner == device_id => None,
         Ok(Some(_)) => Some(format!(
-            "the folder's {} marker names another device",
+            "the folder's {} marker names another device: two devices cannot mirror to one \
+             folder, so choose an empty folder for this device",
             store::MARKER_NAME
         )),
-        Ok(None) => Some(format!("the folder has no {} marker", store::MARKER_NAME)),
+        Ok(None) => Some(format!(
+            "the folder has no {} marker, so it may no longer be this device's mirror: put the \
+             file back if it was deleted by mistake, or choose an empty folder",
+            store::MARKER_NAME
+        )),
         Err(e) => Some(format!("the folder's marker cannot be read: {e}")),
     }
 }
 
 /// Refuse `folder` as the mirror's unless it is an absolute path to an
 /// existing folder, apart from the app's data, and either this device's
-/// mirror already or empty: picking a vault or a home folder must not let the
-/// mirror write among files it did not write.
+/// mirror already or empty but for hidden entries ([`is_emptied`]), as a
+/// fresh `git init` or a `.DS_Store` leaves it: picking a vault or a home
+/// folder must not let the mirror write among files it did not write.
 ///
 /// # Errors
 ///
@@ -522,15 +528,22 @@ pub fn check_folder(folder: &Path, device_id: &str, app_data_dir: &Path) -> Resu
     }
     match store::marker_device(folder).map_err(unreadable)? {
         Some(owner) if owner == device_id => Ok(()),
-        Some(_) => refuse("that folder is another device's mirror"),
-        None if std::fs::read_dir(folder)
-            .map_err(unreadable)?
-            .next()
-            .is_none() =>
-        {
-            Ok(())
+        Some(_) => refuse(
+            "that folder is another device's mirror, and each device mirrors to a folder of its \
+             own: choose an empty folder",
+        ),
+        None => {
+            // An unreadable folder is refused, never taken for an empty one.
+            std::fs::read_dir(folder).map_err(unreadable)?;
+            if is_emptied(folder) {
+                Ok(())
+            } else {
+                refuse(
+                    "the mirror folder must be empty, or one this device already mirrors to: \
+                     choose an empty folder (hidden files such as .git or .DS_Store may stay)",
+                )
+            }
         }
-        None => refuse("the mirror folder must be empty, or one this device already mirrors to"),
     }
 }
 
@@ -1070,9 +1083,9 @@ impl Mirror {
     }
 
     /// Read each new `.md` file in a space's folder, one no page's file is
-    /// or is to be, onto a new page of that space titled by its path below
-    /// the space's folder (#5363 slice 3a), once two ticks read the same
-    /// bytes ([`ingest::create`]). A file outside every space's folder is
+    /// or is to be ([`paths::unowned`]), onto a new page of that space titled
+    /// by its path below the space's folder (#5363 slice 3a), once two ticks
+    /// read the same bytes ([`ingest::create`]). A file outside every space's folder is
     /// never read onto a page ([`Mirror::hold_outside_file`]); one refused
     /// stays listed as failed until it changes.
     async fn read_new_files(&mut self, root: &Path) -> Result<(), AppError> {
@@ -1086,10 +1099,7 @@ impl Mirror {
             .map(|state| state.path.as_str())
             .chain(self.seen.layout.values().map(|(path, _)| path.as_str()))
             .collect();
-        let new: Vec<String> = found
-            .into_iter()
-            .filter(|path| !owned.contains(path.as_str()))
-            .collect();
+        let new = paths::unowned(found, &owned, |path| root.join(path).is_file());
         self.seen.settling_new.retain(|path, _| new.contains(path));
         self.seen.refused_new.retain(|path, _| new.contains(path));
         self.state.new_files_are(&new);
@@ -1145,7 +1155,8 @@ impl Mirror {
     }
 
     /// [`Mirror::read_new_files`] for one file; `false` when the mirror
-    /// paused, which ends the tick.
+    /// paused, which ends the tick. One that cannot be read is listed as
+    /// failed, and the next is read.
     async fn read_new_file(
         &mut self,
         root: &Path,
@@ -1155,7 +1166,11 @@ impl Mirror {
         path: &str,
     ) -> Result<bool, AppError> {
         let target = root.join(path);
-        let Some(bytes) = store::read_optional(&target)? else {
+        let read = store::read_optional(&target).inspect_err(|e| {
+            self.state
+                .file_failed(path, &format!("the file cannot be read: {e}"));
+        });
+        let Ok(Some(bytes)) = read else {
             return Ok(true);
         };
         if !self.seen.new_file_settled(path, &bytes) {
