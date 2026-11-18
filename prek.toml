@@ -2001,7 +2001,7 @@ name = "tool pins agree (setup-hooks.sh, zizmor-hook.sh, workflow tool: lists)"
 entry = "node scripts/check-tool-pins.mjs"
 language = "system"
 pass_filenames = false
-files = "^(scripts/(setup-hooks\\.sh|zizmor-hook\\.sh|check-tool-pins\\.mjs)|\\.github/workflows/.*\\.ya?ml)$"
+files = "^(scripts/(setup-hooks\\.sh|zizmor-hook\\.sh|check-tool-pins\\.mjs)|\\.github/workflows/.*\\.ya?ml|\\.github/actions/install-sqruff/action\\.yml)$"
 stages = ["pre-commit"]
 
 # pairing-rejection-contract: the responder's rejection messages are declared

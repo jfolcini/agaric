@@ -391,7 +391,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -493,7 +492,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -802,7 +800,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1041,7 +1038,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1294,7 +1290,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1718,7 +1713,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download every shard's output
@@ -1970,7 +1965,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -2033,7 +2027,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download every group's reports
@@ -2170,7 +2164,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download cargo-mutants survivor list
@@ -2341,6 +2335,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.fuzz == 'true'
     runs-on: ubuntu-24.04
+    env:
+      # A dated nightly, bumped by hand: `nightly` alone is a different compiler
+      # every day.
+      FUZZ_TOOLCHAIN: nightly-2026-11-10
     # 155, not 60. The arithmetic, written out because review showed an earlier
     # figure had less headroom than its own comment implied — N is the derived
     # target count, currently 8:
@@ -2459,7 +2457,7 @@ jobs:
         # pinned in rust-toolchain.toml; only this lane uses nightly.
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: nightly
+          toolchain: ${{ env.FUZZ_TOOLCHAIN }}
 
       # No rust-cache: the nightly toolchain is part of rust-cache's key, so a
       # week-old entry can never match.
@@ -2467,7 +2465,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -2476,10 +2473,13 @@ jobs:
       - name: Prepare externalBin placeholder (FEAT-4f)
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Install cargo-fuzz via prebuilt binary
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-fuzz
+      - name: Install cargo-fuzz
+        # From crates.io at an exact version with its own lockfile: taiki-e has
+        # no checksummed manifest for cargo-fuzz and would fall back to an
+        # unverified prebuilt binary.
+        # `+$FUZZ_TOOLCHAIN`: a bare `cargo` here would pull the repo's pinned
+        # toolchain (see the target-list step).
+        run: cargo +"$FUZZ_TOOLCHAIN" install cargo-fuzz --version 0.13.2 --locked
 
       - name: Fuzz each parser target
         working-directory: src-tauri/fuzz
@@ -2526,7 +2526,7 @@ jobs:
           # this lane reported success. `--no-deps` reads the manifest only —
           # no dependency resolution, no network, no build — and adding a
           # [[bin]] is now the entire act of enrolling a target in this lane.
-          # `+nightly`, not a bare `cargo`: rustup searches upward from the
+          # `+$FUZZ_TOOLCHAIN`, not a bare `cargo`: rustup searches upward from the
           # working directory for a toolchain file and finds the repo root's
           # `rust-toolchain.toml`, which pins an exact release AND mandates the clippy and
           # rustfmt components. This job installs ONLY nightly, so a bare `cargo`
@@ -2545,12 +2545,12 @@ jobs:
           # has no targets" — so the annotation can name the one that happened
           # instead of always blaming Cargo.toml.
           derived_targets="$(mktemp)"
-          if ! cargo +nightly metadata --format-version 1 --no-deps \
+          if ! cargo +"$FUZZ_TOOLCHAIN" metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name == "agaric-fuzz")
                      | .targets[] | select(.kind | index("bin")) | .name' \
             | sort > "$derived_targets"; then
             rm -f "$derived_targets"
-            echo "::error::could not derive the fuzz target list: 'cargo +nightly metadata | jq | sort' failed. This is a TOOLING failure (nightly missing, jq missing, a path dependency's manifest unparseable), not a missing [[bin]] — the command's own stderr is immediately above this line."
+            echo "::error::could not derive the fuzz target list: 'cargo +$FUZZ_TOOLCHAIN metadata | jq | sort' failed. This is a TOOLING failure (nightly missing, jq missing, a path dependency's manifest unparseable), not a missing [[bin]] — the command's own stderr is immediately above this line."
             exit 1
           fi
           mapfile -t targets < "$derived_targets"
@@ -2670,7 +2670,7 @@ jobs:
             # host target builds against the installed std and keeps the
             # dynamic-libc that ASan requires.
             (
-              cargo +nightly fuzz run "$target" \
+              cargo +"$FUZZ_TOOLCHAIN" fuzz run "$target" \
                 --target x86_64-unknown-linux-gnu -- \
                 -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=4096
             ) > "$log" 2>&1 || rc=$?
@@ -2814,7 +2814,7 @@ jobs:
             # inherits libFuzzer's 2048 MB default, which is the most likely
             # way cmin starts failing as the corpus grows — i.e. exactly when
             # minimisation matters most.
-            cargo +nightly fuzz cmin "$target" \
+            cargo +"$FUZZ_TOOLCHAIN" fuzz cmin "$target" \
               --target x86_64-unknown-linux-gnu </dev/null \
               -- -rss_limit_mb=4096 >"$log" 2>&1 || rc=$?
             after=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
@@ -2939,7 +2939,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Download per-target fuzz status
@@ -3042,7 +3042,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -3178,7 +3177,10 @@ jobs:
           # `pinned_version_for` in scripts/setup-hooks.sh and the other
           # tool: lists in this repo. Verified by
           # scripts/check-tool-pins.mjs. shellcheck/shfmt pinned the same way (#6762).
-          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,shellcheck@0.11.0,shfmt@3.14.1
+
+      - name: Install sqruff (sha256-checked)
+        uses: ./.github/actions/install-sqruff
 
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
@@ -3191,7 +3193,7 @@ jobs:
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
         # list, so compile from source on every run (this lane has no cargo cache).
         run: |
-          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+          if ! cargo sqlx --version 2>/dev/null | grep -qx 'sqlx-cli-sqlx 0.9.0'; then cargo install --locked --force sqlx-cli --version 0.9.0 --no-default-features --features rustls,sqlite; fi
 
       # sqlx offline cache check of `src-tauri/.sqlx`, the one cache, with
       # `--workspace` on both sides as `just gen-sqlx` writes it. This is the
@@ -3499,7 +3501,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: File, update or close the single scheduled-failure tracking issue

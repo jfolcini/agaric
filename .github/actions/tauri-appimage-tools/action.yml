@@ -1,0 +1,35 @@
+name: Tauri AppImage tools
+description: >-
+  Seeds `~/.cache/tauri/` with sha256-checked copies of the three x86_64 tools
+  tauri-bundler would otherwise download unverified while building an AppImage
+  (`prepare_tools` in tauri-bundler's `linux/appimage/linuxdeploy.rs`). The
+  bundler skips any download whose file already exists. Run it after `npm ci`
+  and before the Tauri build.
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify the AppImage tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The linuxdeploy file name embeds the commit tauri-bundler pins. A
+        # Tauri CLI that pins another commit would download its own copy,
+        # unverified, so refuse to build until these pins are refreshed.
+        cli=node_modules/@tauri-apps/cli-linux-x64-gnu/cli.linux-x64-gnu.node
+        if ! grep -aq '07333c6' "$cli"; then
+          echo "::error file=.github/actions/tauri-appimage-tools/action.yml::$cli no longer pins linuxdeploy-07333c6. Take the new name and URLs from prepare_tools in tauri-bundler's linux/appimage/linuxdeploy.rs at the new CLI tag, then refresh the sha256 values here." >&2
+          exit 1
+        fi
+        cache="$HOME/.cache/tauri"
+        mkdir -p "$cache"
+        gh_dl=https://github.com
+        while read -r sha name url; do
+          curl -fsSL --retry 3 -o "$cache/$name" "$url"
+          echo "$sha  $cache/$name" | sha256sum -c --quiet -
+          chmod 770 "$cache/$name"
+        done <<EOF
+        f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f AppRun-x86_64 $gh_dl/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64
+        36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62 linuxdeploy-07333c6-x86_64.AppImage $gh_dl/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage
+        992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3 linuxdeploy-plugin-appimage.AppImage $gh_dl/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-x86_64.AppImage
+        EOF

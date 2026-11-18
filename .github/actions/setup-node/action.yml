@@ -8,9 +8,11 @@ description: >-
 
 inputs:
   node-version:
-    description: Passed to `actions/setup-node`.
+    description: >-
+      Passed to `actions/setup-node`. Empty, the default, takes the exact pin in
+      `.nvmrc`.
     required: false
-    default: '24'
+    default: ''
   cache:
     description: Passed to `actions/setup-node`; empty leaves the cache input unset.
     required: false
@@ -27,6 +29,7 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
+        node-version-file: .nvmrc
         cache: ${{ inputs.cache }}
         package-manager-cache: ${{ inputs.package-manager-cache }}
 

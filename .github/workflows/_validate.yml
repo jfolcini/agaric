@@ -627,7 +627,10 @@ jobs:
           # shellcheck/shfmt pinned (#6762): the shellcheck hook used to find
           # whatever copy the runner image carried, and actionlint runs that
           # same binary over `run:` blocks. Same pins as setup-hooks.sh.
-          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
+          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,shellcheck@0.11.0,shfmt@3.14.1
+
+      - name: Install sqruff (sha256-checked)
+        uses: ./.github/actions/install-sqruff
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
@@ -657,7 +660,7 @@ jobs:
         # Cached across runs via Swatinem/rust-cache's cache-bin: 'true';
         # only recompiles when Cargo.lock invalidates that cache.
         run: |
-          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+          if ! cargo sqlx --version 2>/dev/null | grep -qx 'sqlx-cli-sqlx 0.9.0'; then cargo install --locked --force sqlx-cli --version 0.9.0 --no-default-features --features rustls,sqlite; fi
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` pre-commit hook (prek.toml `[[repos.hooks]] id = "lychee"`)
@@ -677,8 +680,7 @@ jobs:
           # published release checksum (the sibling `${TARBALL}.sha256` asset),
           # independently reproducible with `sha256sum`. GitHub release assets
           # are mutable under a tag, so the version pin alone does not prevent
-          # asset replacement; this is the only unverified-binary gap in an
-          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # asset replacement; the sha256 does. MUST be updated in the same PR that
           # bumps VERSION or the `sha256sum -c` below fails the job.
           SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
@@ -1049,7 +1051,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1080,8 +1081,7 @@ jobs:
           # published release checksum (the sibling `${TARBALL}.sha256` asset),
           # independently reproducible with `sha256sum`. GitHub release assets
           # are mutable under a tag, so the version pin alone does not prevent
-          # asset replacement; this is the only unverified-binary gap in an
-          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # asset replacement; the sha256 does. MUST be updated in the same PR that
           # bumps VERSION or the `sha256sum -c` below fails the job.
           SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
@@ -1175,7 +1175,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1269,7 +1268,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1387,7 +1385,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1644,7 +1641,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1840,7 +1836,7 @@ jobs:
         if: hashFiles('coverage.lcov') != ''
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Coverage ratchet (#648, gated via --gate)
