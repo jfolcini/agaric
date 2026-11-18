@@ -39,6 +39,7 @@ const REAL_BACKEND_SPECS = [
   'history-revert.spec.ts',
   'navigation-history.spec.ts',
   'pages-header-routes.spec.ts',
+  'phone-views.spec.ts',
   'query-block-text.spec.ts',
   'query-blocks.spec.ts',
   'query-hint.spec.ts',

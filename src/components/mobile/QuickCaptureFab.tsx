@@ -51,7 +51,8 @@ function useScrolledUp(enabled: boolean): boolean {
   useEffect(() => {
     if (!enabled) return
     const last = new WeakMap<EventTarget, number>()
-    // Scroll restore sets the position of a just-remounted view with no input behind it.
+    // Scroll restore sets the position of a just-remounted view with no input behind
+    // it, in as many steps as the view's content takes to load.
     let userActed = false
     const onInput = () => {
       userActed = true
@@ -63,7 +64,7 @@ function useScrolledUp(enabled: boolean): boolean {
       if (!(el instanceof Element) || !el.closest('#main-content')) return
       const top = el.scrollTop
       const known = last.get(el)
-      if (known === undefined && !userActed) {
+      if (!userActed) {
         last.set(el, top)
         return
       }
