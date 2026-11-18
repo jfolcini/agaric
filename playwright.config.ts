@@ -29,12 +29,18 @@ const REAL_BACKEND_SPECS = [
   'query-block-text.spec.ts',
   'query-hint.spec.ts',
   'query-table-columns.spec.ts',
+  'search-filter-chips.spec.ts',
+  'search-filters.spec.ts',
+  'search-happy-paths.spec.ts',
   'search-help.spec.ts',
   'search-history.spec.ts',
   'search-nested-result.spec.ts',
   'search-recent-click.spec.ts',
+  'search-replace.spec.ts',
   'search-results.spec.ts',
   'search-sheet-mobile.spec.ts',
+  'search-shown-text-6277.spec.ts',
+  'search-toggles.spec.ts',
   'search-view-mobile.spec.ts',
 ]
 

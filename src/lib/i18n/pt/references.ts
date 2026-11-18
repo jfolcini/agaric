@@ -323,7 +323,7 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT não pode negar um filtro; use a forma not- dele',
   'searchQuery.emptyGroup': 'parênteses vazios',
   'search.filterSyntaxIntro':
-    'A sintaxe de filtros funciona enquanto você digita — digite tag:#name ou path:Journal/* no campo de pesquisa, ou use o botão Adicionar filtro. Pressione ? para ver a ajuda.',
+    'Filtre com tag:#name ou path:Journal/*, ou use Adicionar filtro. Pressione ? para ver a ajuda.',
   'search.searchTags': 'Pesquisar etiquetas...',
   'search.searchPages': 'Pesquisar páginas...',
   'search.noTagsFound': 'Nenhuma etiqueta encontrada',

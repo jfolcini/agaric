@@ -8,9 +8,11 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeSheet,
   expect,
+  ipc,
   openSearchView,
   searchResultIds,
   seedSearchBlocks,
@@ -51,6 +53,22 @@ test('clicking a result opens its page with the block in view and focused @searc
     ...Array.from({ length: 20 }, (_, i) => ({ content: `tail row ${i}` })),
   ])
   const target = ids[60] as string
+  // The real backend indexes the blocks in the background, so wait until the
+  // index holds the row before searching; the mock indexes at once.
+  await expect
+    .poll(
+      async () => {
+        const found = await ipc<{ items: Array<{ id: string }> }>(page, 'search_blocks', {
+          query: MARK,
+          cursor: null,
+          limit: 10,
+          filter: { scope: { kind: 'spaces', space_ids: [SEED_IDS.SPACE_PERSONAL] } },
+        })
+        return found.items.map((item) => item.id)
+      },
+      { timeout: 15_000 },
+    )
+    .toContain(target)
   await submitSearch(page, MARK)
   await page.getByRole('option', { name: `${MARK} far down` }).click()
 

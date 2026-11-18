@@ -63,8 +63,8 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
     const { id } = renameTarget
     renameSavedView(spaceId, id, name)
       .then((renamed) => {
-        if (renamed) notify.success(t('advancedQuery.savedViews.renamed', { name }))
-        else
+        // The row shows the new name; only a refusal needs saying.
+        if (!renamed)
           notify.error(
             t(
               isDateFormattedPage(name)

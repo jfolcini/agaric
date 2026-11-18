@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 
 import { isValidation } from '@/lib/app-error'
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -35,6 +36,7 @@ export function reportIpcError(
  * a human: it names the thing that is wrong and what to do about it, and
  * `sanitize_internal_error` passes it to the frontend verbatim (only
  * `database` / `io` / `internal` kinds are replaced with a correlation id).
+ * A coded one renders as its translated sentence (`formatErrorForDisplay`).
  * Every other kind is either not actionable by the user, already
  * correlation-id'd, or a storage failure `StorageFailureBanner` names once, so
  * those keep the localized generic toast.
@@ -66,6 +68,11 @@ export function reportIpcErrorWithReason(
   context?: Record<string, unknown>,
 ): void {
   logger.error(module, `${messageKey} (IPC error)`, context, err)
-  const reason = isValidation(err) && err.message.trim() !== '' ? err.message : null
+  const reason =
+    isValidation(err) && err.message.trim() !== ''
+      ? err.code == null
+        ? err.message
+        : formatErrorForDisplay(err)
+      : null
   notify.error(reason ?? t(messageKey))
 }

@@ -103,7 +103,8 @@ function seed(size, title) {
         const parentId = await invoke('create_page_in_space', {
           parentId: null,
           content: pageTitle,
-          spaceId: 'SPACE_PERSONAL',
+          // `SEED_IDS.SPACE_PERSONAL` (`src/lib/tauri-mock/seed.ts`), which this script cannot import.
+          spaceId: '00000000000000000AGAR1CPER',
         })
         const created = await invoke('create_blocks_batch', {
           specs: Array.from({ length: n }, (_, i) => ({

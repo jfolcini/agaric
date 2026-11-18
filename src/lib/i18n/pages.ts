@@ -611,7 +611,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Delete view {{name}}',
   'pageBrowser.savedViews.deleted': 'Deleted view "{{name}}"',
   'pageBrowser.savedViews.restored': 'Restored view "{{name}}"',
-  'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
 
   // Translators: Saved view errors (toasts). A view cannot be named like a date because dates
   // (YYYY-MM-DD) are journal page titles. {{name}} = the view name the user typed.

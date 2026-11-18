@@ -149,7 +149,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.rename': 'Renommer',
   'advancedQuery.savedViews.renameTitle': 'Renommer "{{name}}"',
   'advancedQuery.savedViews.renamePrompt': 'Nouveau nom de cette vue\u00A0:',
-  'advancedQuery.savedViews.renamed': 'Vue renommée en "{{name}}"',
   'advancedQuery.savedViews.delete': 'Supprimer',
   'advancedQuery.savedViews.deleteTitle': 'Supprimer "{{name}}"',
   'advancedQuery.savedViews.deleteConfirm':

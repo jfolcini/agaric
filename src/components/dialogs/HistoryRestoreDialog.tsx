@@ -1,7 +1,7 @@
 /**
  * HistoryRestoreDialog — confirmation dialog wrapping the
  * `restorePageToOp` IPC. Owns the in-flight `restoring` state plus
- * the announce / toast surface for the call. The parent supplies the
+ * the toast surface for the call. The parent supplies the
  * `restoreTarget` (the entry the user picked) and an `onSuccess`
  * callback that reloads the list.
  *
@@ -13,7 +13,6 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
-import { announce } from '@/lib/announcer'
 import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { HistoryEntry } from '@/lib/bindings'
@@ -52,7 +51,6 @@ export function HistoryRestoreDialog({
         await commands.restorePageToOp(pageId, restoreTarget.device_id, restoreTarget.seq),
       )
       notify.success(t('history.restoreSuccess', { count: result.ops_reverted }))
-      announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
       if (result.non_reversible_skipped > 0) {
         notify.warning(t('history.restoreSkipped', { count: result.non_reversible_skipped }))
       }
@@ -66,7 +64,6 @@ export function HistoryRestoreDialog({
         logger.warn('HistoryView', 'restore refused: a name is taken', context, err)
         notify.error(takenName)
       }
-      announce(t('announce.restoreToHereFailed'))
     }
     setRestoring(false)
     onOpenChange(false)

@@ -115,7 +115,7 @@ export async function commitInlineProperties(opts: {
   const strippedLines = new Set<number>()
   const opRefs: OpRef[] = []
   const keptAsText: string[] = []
-  // The backend's reason for a malformed `repeat::` rule, preferred over the
+  // The repeat-rule help for a malformed `repeat::` rule, preferred over the
   // generic toast because it says what to fix in the line left on screen (#3647).
   let repeatReason: string | null = null
   // The block is on a page of the active space, whose definitions apply.

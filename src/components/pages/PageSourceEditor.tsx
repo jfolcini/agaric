@@ -41,7 +41,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useIsTouch } from '@/hooks/useIsTouch'
-import { unwrap, validationCode } from '@/lib/app-error'
+import { isAppError, unwrap, validationCode } from '@/lib/app-error'
 import { commands, type PageBuffer } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
@@ -314,7 +314,8 @@ export function PageSourceEditor({
         logger.warn('PageSourceEditor', 'Failed to save page source', { pageId }, err)
         const message = formatErrorForDisplay(err, { fallback: t('pageSource.saveFailed') })
         setSaveError(message)
-        const line = refusedLine(message)
+        // A translated sentence drops the `line N: ` the backend's own words carry.
+        const line = refusedLine(message) ?? (isAppError(err) ? refusedLine(err.message) : null)
         if (line !== null) {
           // From Preview or Changes, the buffer the line is in is hidden.
           flushSync(() => setMode('edit'))

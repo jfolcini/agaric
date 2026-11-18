@@ -16,7 +16,6 @@ export const settings: Record<string, string> = {
   'settings.showWelcomeTour.description':
     'Vuelve a abrir la ventana de bienvenida del primer inicio, con la opción de crear las páginas de ejemplo.',
   'settings.showWelcomeTour.button': 'Mostrar recorrido',
-  'settings.showWelcomeTour.success': 'Recorrido de bienvenida reabierto',
   'settings.tabGeneral': 'General',
   'settings.tabSpaces': 'Espacios',
   'settings.spaces.description':
@@ -48,7 +47,6 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageAlways': 'Cargar siempre',
   'settings.editor.externalImageClick': 'Preguntar cada vez (recomendado)',
   'settings.editor.externalImageNever': 'No cargar nunca',
-  'settings.editor.externalImageUpdated': 'Política de imágenes externas actualizada',
   'settings.editor.externalImageAllowedHosts': 'Dominios de imágenes permitidos',
   'settings.editor.externalImageRemoveHost': 'Quitar {{host}}',
   'settings.editor.linkPreviewLabel': 'Obtener vistas previas de enlaces al pasar el cursor',
@@ -290,7 +288,6 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'La semana empieza el',
   'settings.weekStartMonday': 'Lunes',
   'settings.weekStartSunday': 'Domingo',
-  'settings.weekStartUpdated': 'Primer día de la semana: {{day}}',
   'settings.journalDateFormatLabel': 'Formato de fecha del diario',
   'settings.journalDateFormatHelp':
     'Cómo se muestran los títulos del diario. Las páginas siempre se guardan como YYYY-MM-DD, así que cambiar esto nunca afecta a los diarios existentes.',
@@ -299,6 +296,5 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Mes D, YYYY (p. ej., junio 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/YYYY (p. ej., 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (p. ej., mié, jun 17)',
-  'settings.journalDateFormatUpdated': 'Las fechas del diario se muestran ahora como {{example}}',
   'settings.valueClamped': 'Valor ajustado al rango {{min}}–{{max}}',
 }

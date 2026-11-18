@@ -236,10 +236,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         setSortOption(view.sort)
         handleClearAllFilters()
         for (const filter of viewFilters) handleAddFilter(filter)
-        notify.success(t('pageBrowser.savedViews.applied', { name: view.name }))
       })
     },
-    [currentSpaceId, setSortOption, handleClearAllFilters, handleAddFilter, t],
+    [currentSpaceId, setSortOption, handleClearAllFilters, handleAddFilter],
   )
 
   const handleSaveCurrentView = useCallback(

@@ -566,7 +566,7 @@ describe('journal view undo/redo', () => {
       [NO_DAY_YET, { duration: 2500 }],
       [NO_DAY_YET, { duration: 2500 }],
     ])
-    expect(mockedAnnounce).toHaveBeenCalledWith('No day to undo in yet')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
@@ -634,7 +634,7 @@ describe('journal view undo/redo', () => {
       expect(handled).toBe(false)
       expect(mockUndo).not.toHaveBeenCalled()
       expect(mockedToast).toHaveBeenCalledWith(NO_DAY_YET, { duration: 2500 })
-      expect(mockedAnnounce).toHaveBeenCalledWith('No day to undo in yet')
+      expect(mockedAnnounce).not.toHaveBeenCalled()
     })
   })
 })
@@ -1091,8 +1091,10 @@ describe('refresh after undo/redo', () => {
   })
 })
 
-describe('screen reader announcements', () => {
-  it('announces "Undone" after successful undo', async () => {
+// The Toaster is a polite live region, so the toast is what a screen reader
+// hears; a second `announce()` of the same event would say it twice.
+describe('screen reader feedback is the toast alone', () => {
+  it('toasts a successful undo without a second "Undone" announcement', async () => {
     mockUndo.mockResolvedValueOnce({ reversed_op_type: 'edit_block' })
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -1100,13 +1102,14 @@ describe('screen reader announcements', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Undone')
+      expect(mockedToast).toHaveBeenCalledWith('Undid edit', { duration: 1500 })
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
 
-  it('announces "Redone" after successful redo', async () => {
+  it('toasts a successful redo without a second "Redone" announcement', async () => {
     mockRedo.mockResolvedValueOnce({ reversed_op_type: 'edit_block' })
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -1114,13 +1117,14 @@ describe('screen reader announcements', () => {
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Redone')
+      expect(mockedToast).toHaveBeenCalledWith('Redid edit', { duration: 1500 })
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
 
-  it('announces "Undo failed" when undo rejects', async () => {
+  it('toasts a rejected undo without a second "Undo failed" announcement', async () => {
     mockUndo.mockRejectedValueOnce(new Error('undo failed'))
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -1128,13 +1132,14 @@ describe('screen reader announcements', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Undo failed')
+      expect(mockedToastError).toHaveBeenCalledWith('Undo failed')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()
   })
 
-  it('announces "Redo failed" when redo rejects', async () => {
+  it('toasts a rejected redo without a second "Redo failed" announcement', async () => {
     mockRedo.mockRejectedValueOnce(new Error('redo failed'))
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -1142,23 +1147,8 @@ describe('screen reader announcements', () => {
     fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Redo failed')
+      expect(mockedToastError).toHaveBeenCalledWith('Redo failed')
     })
-
-    unmount()
-  })
-
-  it('does NOT announce when undo returns null (nothing to undo)', async () => {
-    mockUndo.mockResolvedValueOnce(null)
-
-    const { unmount } = renderHook(() => useUndoShortcuts())
-
-    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
-
-    // Drain microtasks: the .then() callback + the async function it wraps
-    await Promise.resolve()
-    await Promise.resolve()
-
     expect(mockedAnnounce).not.toHaveBeenCalled()
 
     unmount()

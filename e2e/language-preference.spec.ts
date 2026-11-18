@@ -99,9 +99,9 @@ test.describe('Language preference @settings', () => {
     await expect(page.getByRole('combobox', { name: LABELS.es.weekStart })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
 
-    // A toast.
+    // A translated option, shown in its trigger once picked.
     await pickLanguage(page, LABELS.es.weekStart, 'Domingo')
-    await expect(page.getByText('Primer día de la semana: Domingo')).toBeVisible()
+    await expect(page.getByRole('combobox', { name: LABELS.es.weekStart })).toHaveText('Domingo')
 
     // The sidebar (navigating by its Spanish label), the journal header and
     // the formatting toolbar of a focused block.

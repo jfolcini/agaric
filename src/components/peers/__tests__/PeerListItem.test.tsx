@@ -327,7 +327,7 @@ describe('PeerListItem', () => {
   })
 
   describe('setPeerAddress via popover', () => {
-    it('shows error toast when setPeerAddress rejects', async () => {
+    it('shows a refused save inline in the open popover until the next edit', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
       const onAddressUpdated = vi.fn()
@@ -341,24 +341,29 @@ describe('PeerListItem', () => {
       const editBtn = screen.getByRole('button', { name: /Edit address for Work Laptop/i })
       await user.click(editBtn)
 
-      // Popover is now open — type a syntactically valid address that
-      // The server rejects (client validation now blocks
-      // malformed input before it reaches the IPC; this exercises
-      // the defense-in-depth toast path for server-side rejections).
+      // A syntactically valid address the backend refuses: client validation
+      // blocks malformed input before it reaches the IPC.
       const input = screen.getByLabelText('Address (host:port)')
       await user.clear(input)
       await user.type(input, '192.168.1.1:5000')
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
-      await waitFor(() => {
-        // Toast now embeds the format example so the user
-        // doesn't have to reopen the popover hint to recover.
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-          'Invalid address format. Expected host:port (e.g., 192.168.1.100:5000).',
-        )
-      })
+      const refused = t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' })
+      expect(await screen.findByRole('alert')).toHaveTextContent(refused)
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(input).toHaveAccessibleDescription(refused)
+      expect(screen.getByRole('dialog', { name: 'Edit peer address' })).toBeInTheDocument()
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
       expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
       expect(onAddressUpdated).not.toHaveBeenCalled()
+      expect(
+        await axe(screen.getByRole('dialog', { name: 'Edit peer address' })),
+      ).toHaveNoViolations()
+
+      await user.type(input, '1')
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(input).not.toHaveAttribute('aria-invalid', 'true')
     })
 
     it('shows success toast and calls onAddressUpdated when address is saved', async () => {

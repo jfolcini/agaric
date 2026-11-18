@@ -332,7 +332,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Eliminar la vista {{name}}',
   'pageBrowser.savedViews.deleted': 'Vista "{{name}}" eliminada',
   'pageBrowser.savedViews.restored': 'Vista "{{name}}" restaurada',
-  'pageBrowser.savedViews.applied': 'Vista "{{name}}" aplicada',
   'pageBrowser.savedViews.nameTaken':
     'Ya existe una página o vista llamada "{{name}}" en este espacio',
   'pageBrowser.savedViews.nameIsDate': 'Una vista no puede llamarse como una fecha: "{{name}}"',

@@ -2017,7 +2017,7 @@ describe('useUndoStore', () => {
       expect(mockedUndoOp).toHaveBeenCalledExactlyOnceWith(LOCAL_DELETE)
     })
 
-    it('on success: resets redo/positional bookkeeping via onNewAction, notifies + announces, and refreshes the page store', async () => {
+    it('on success: resets redo/positional bookkeeping via onNewAction, notifies, and refreshes the page store', async () => {
       mockedListPageHistory.mockResolvedValue(
         ok(historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)])),
       )
@@ -2049,8 +2049,8 @@ describe('useUndoStore', () => {
       expect(pageState?.undoDepth).toBe(0)
       expect(pageState?.redoGroupSizes).toEqual([])
 
-      expect(mockedToastDefault).toHaveBeenCalledTimes(1)
-      expect(mockedAnnounce).toHaveBeenCalledTimes(1)
+      expect(mockedToastDefault).toHaveBeenCalledExactlyOnceWith('Undid delete', { duration: 1500 })
+      expect(mockedAnnounce).not.toHaveBeenCalled()
       expect(mockedToastError).not.toHaveBeenCalled()
       expect(mockLoad).toHaveBeenCalledTimes(1)
     })

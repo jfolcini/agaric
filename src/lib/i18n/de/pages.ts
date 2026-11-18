@@ -332,7 +332,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Ansicht {{name}} löschen',
   'pageBrowser.savedViews.deleted': 'Ansicht "{{name}}" gelöscht',
   'pageBrowser.savedViews.restored': 'Ansicht "{{name}}" wiederhergestellt',
-  'pageBrowser.savedViews.applied': 'Ansicht "{{name}}" angewendet',
   'pageBrowser.savedViews.nameTaken':
     'In diesem Bereich gibt es bereits eine Seite oder Ansicht namens "{{name}}"',
   'pageBrowser.savedViews.nameIsDate': 'Eine Ansicht darf nicht wie ein Datum heißen: "{{name}}"',

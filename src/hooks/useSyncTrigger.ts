@@ -287,7 +287,6 @@ export function useSyncTrigger() {
         if (userInitiated && !hadFailure) {
           setState('idle')
           notify.success(i18n.t('device.syncComplete'))
-          announce(i18n.t('announce.syncCompleted'))
         } else if (userInitiated && useSyncStore.getState().state === 'syncing') {
           // A session that never reported (timed out) leaves the press's own `syncing`.
           setState('idle')
@@ -303,7 +302,6 @@ export function useSyncTrigger() {
             // are `syncOnePeerWithToast`'s.
             if (userInitiated) {
               notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
-              announce(i18n.t('announce.syncFailed'))
             }
           }
         }

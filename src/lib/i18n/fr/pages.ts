@@ -331,7 +331,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Supprimer la vue {{name}}',
   'pageBrowser.savedViews.deleted': 'Vue "{{name}}" supprimée',
   'pageBrowser.savedViews.restored': 'Vue "{{name}}" restaurée',
-  'pageBrowser.savedViews.applied': 'Vue "{{name}}" appliquée',
   'pageBrowser.savedViews.nameTaken':
     'Une page ou une vue nommée "{{name}}" existe déjà dans cet espace',
   'pageBrowser.savedViews.nameIsDate':

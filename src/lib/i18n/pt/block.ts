@@ -108,22 +108,22 @@ export const block: Record<string, string> = {
   'status.importDesc':
     'Importe arquivos do Logseq ou Markdown. As páginas são criadas a partir dos nomes dos arquivos e os blocos a partir de itens de lista recuados.',
   'status.importButton': 'Selecionar arquivos .md',
-  'status.foregroundQueueTooltip':
+  'status.foregroundQueueInfo':
     'Operações aguardando para serem aplicadas ao banco de dados. Deve ficar perto de zero.',
-  'status.backgroundQueueTooltip':
+  'status.backgroundQueueInfo':
     'Tarefas de reconstrução de cache e indexação FTS. Processamento não crítico, por melhor esforço.',
-  'status.opsDispatchedTooltip': 'Total de operações processadas desde o início do aplicativo.',
-  'status.backgroundDispatchedTooltip':
+  'status.opsDispatchedInfo': 'Total de operações processadas desde o início do aplicativo.',
+  'status.backgroundDispatchedInfo':
     'Total de tarefas de cache em segundo plano concluídas desde o início do aplicativo.',
-  'status.sqlOnlyFallbackTooltip':
+  'status.sqlOnlyFallbackInfo':
     'Alterações salvas no banco de dados, mas não no mecanismo de sincronização, desde o início do aplicativo, por isso não chegam aos seus outros dispositivos. Deve ficar em zero; caso contrário, execute a verificação de integridade.',
-  'status.fanoutDroppedTooltip':
+  'status.fanoutDroppedInfo':
     'Exclusões ou restaurações de blocos aninhados que o mecanismo de sincronização não acompanhou desde o início do aplicativo. Deve ficar em zero; caso contrário, execute a verificação de integridade.',
-  'status.peerCountTooltip': 'Número de dispositivos pareados',
-  'status.lastSyncedTooltip': 'Tempo desde a última sincronização bem-sucedida',
-  'status.opsReceivedTooltip':
+  'status.peerCountInfo': 'Número de dispositivos pareados',
+  'status.lastSyncedInfo': 'Tempo desde a última sincronização bem-sucedida',
+  'status.opsReceivedInfo':
     'Total de mensagens de sincronização recebidas dos pares, uma por espaço sincronizado (zera ao reiniciar o aplicativo)',
-  'status.opsSentTooltip':
+  'status.opsSentInfo':
     'Total de mensagens de sincronização enviadas aos pares, uma por espaço sincronizado (zera ao reiniciar o aplicativo)',
   'status.importedMessage': '{{totalBlocks}} blocos importados de {{fileCount}} arquivo(s)',
   'status.materializerStatusTitle': 'Status do materializador',
