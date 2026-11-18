@@ -322,3 +322,50 @@ fn a_reset_stays_within_its_budget() {
         "a reset's median was {median:?}, over the {RESET_BUDGET:?} budget (all: {took:?})"
     );
 }
+
+/// Every file under `dir`, recursively, with its text.
+fn files_under(dir: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .flat_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                files_under(&path)
+            } else {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                vec![(path, text)]
+            }
+        })
+        .collect()
+}
+
+/// The mirror specs choose a folder and read the files the app writes there.
+#[test]
+fn the_mirror_writes_a_page_into_the_chosen_folder() {
+    let root = tempfile::TempDir::new().unwrap();
+    let folder = tempfile::TempDir::new().unwrap();
+    let mut bridge = Bridge::start(root.path()).expect("start the bridge");
+    create_page(&mut bridge, "mirrored page");
+    invoke(
+        &mut bridge,
+        "set_mirror_folder",
+        json!({ "path": folder.path().to_str(), "readBack": false }),
+    )
+    .expect("set_mirror_folder");
+
+    let started = Instant::now();
+    while !files_under(folder.path())
+        .iter()
+        .any(|(path, _)| path.to_string_lossy().ends_with("mirrored page.md"))
+    {
+        assert!(
+            started.elapsed() < WAIT,
+            "no file for the page within {WAIT:?}: {:?}",
+            files_under(folder.path())
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
