@@ -1537,7 +1537,7 @@ impl SyncOrchestrator {
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_pull").await?;
         self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
         let written = complete_sync_in_tx(&mut tx, peer_id, last_hash, "").await;
-        if self.still_paired(peer_id, written)? {
+        if still_paired(self.peer_paired_at_start, peer_id, written)? {
             tx.commit().await?;
         }
         Ok(())
@@ -1580,7 +1580,7 @@ impl SyncOrchestrator {
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_stream").await?;
         self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
         let written = peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await;
-        if self.still_paired(peer_id, written)? {
+        if still_paired(self.peer_paired_at_start, peer_id, written)? {
             tx.commit().await?;
         }
         Ok(())
@@ -1597,22 +1597,6 @@ impl SyncOrchestrator {
             peer_refs::upsert_peer_ref_in_tx(tx, peer_id).await?;
         }
         Ok(())
-    }
-
-    /// `Ok(false)` when a bookkeeping `UPDATE` found no row for a paired peer:
-    /// the user unpaired it while this session ran, and the caller drops the
-    /// transaction so the unpair stands.
-    fn still_paired(&self, peer_id: &str, written: Result<(), AppError>) -> Result<bool, AppError> {
-        match written {
-            Err(AppError::NotFound(_)) if self.peer_paired_at_start => {
-                tracing::info!(
-                    peer_id,
-                    "the peer was unpaired during this session; recording nothing for it"
-                );
-                Ok(false)
-            }
-            other => other.map(|()| true),
-        }
     }
 
     /// #2502: persist the peer's advertised per-space Loro VVs to
@@ -1640,7 +1624,7 @@ impl SyncOrchestrator {
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_persist_peer_vvs").await?;
         self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
         let written = peer_refs::update_loro_vv_bytes_in_tx(&mut tx, peer_id, &bytes).await;
-        if self.still_paired(peer_id, written)? {
+        if still_paired(self.peer_paired_at_start, peer_id, written)? {
             tx.commit().await?;
         }
         Ok(())
@@ -2280,6 +2264,26 @@ impl SyncOrchestrator {
         &mut self,
     ) -> Option<agaric_engine::loro::registry::InboundSync> {
         self.inbound.take()
+    }
+}
+
+/// `Ok(false)` when a bookkeeping `UPDATE` found no row for a `paired` peer: the
+/// user unpaired it while the session ran, and the caller drops the transaction so
+/// the unpair stands.
+pub(crate) fn still_paired(
+    paired: bool,
+    peer_id: &str,
+    written: Result<(), AppError>,
+) -> Result<bool, AppError> {
+    match written {
+        Err(AppError::NotFound(_)) if paired => {
+            tracing::info!(
+                peer_id,
+                "the peer was unpaired during this session; recording nothing for it"
+            );
+            Ok(false)
+        }
+        other => other.map(|()| true),
     }
 }
 

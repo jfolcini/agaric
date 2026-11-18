@@ -44,6 +44,7 @@ mod protocol_proptest;
 
 pub use operations::*;
 pub use session_state_machine::SyncOrchestrator;
+pub(crate) use session_state_machine::still_paired;
 pub use types::*;
 
 // #3120: repatriated from the app crate.

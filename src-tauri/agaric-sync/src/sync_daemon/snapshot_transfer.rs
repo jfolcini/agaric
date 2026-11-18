@@ -679,20 +679,11 @@ async fn record_catchup_pull(
         if !paired_peer {
             peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         }
-        match peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await {
-            Err(AppError::NotFound(_)) if paired_peer => {
-                tracing::info!(
-                    peer_id,
-                    "the peer was unpaired during this session; recording nothing for it"
-                );
-                Ok(())
-            }
-            written => {
-                written?;
-                tx.commit().await?;
-                Ok::<(), AppError>(())
-            }
+        let written = peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await;
+        if crate::sync_protocol::still_paired(paired_peer, peer_id, written)? {
+            tx.commit().await?;
         }
+        Ok::<(), AppError>(())
     };
     if let Err(e) = stamp.await {
         tracing::warn!(
