@@ -358,8 +358,9 @@ export function useBlockActionOrchestration({
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
   const deleteInProgress = useRef(false)
 
-  // The latest Enter in flight, settling to the block it left focused (null if
-  // it failed). A restructure chord waits for it (`afterEnterSettles`).
+  // The latest Enter in flight, settling to the block it left focused: the new
+  // one, or the one it came from after a failed create (null if the user moved
+  // on). A restructure chord waits for it (`afterEnterSettles`).
   const enterInFlight = useRef<Promise<string | null> | null>(null)
 
   // Re-entrancy guard for merges, in flight until `merge_blocks` answers.
@@ -1009,6 +1010,7 @@ export function useBlockActionOrchestration({
         rovingEditorRef.current.unmount()
         flushSync(() => setFocused(focusedBlockId))
         rovingEditorRef.current.mount(focusedBlockId, savedContent)
+        focusedOnSettle = focusedBlockId
       }
 
       // #909 — split the block at the caret. When there is text AFTER the
