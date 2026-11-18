@@ -398,6 +398,77 @@ test.describe('Journal template button @editor @pages', () => {
   })
 })
 
+/**
+ * The backend copies the journal template under a day as it creates it, and expands the
+ * template's variables against that day, not the clock (`expand_journal_template_variables`).
+ * A day other than today is what tells "the day" from "now".
+ */
+test.describe('Journal template variables (#5735) @editor @journal', () => {
+  test('a past day expands the template variables for that day, not for today', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+    const template = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Variables template',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: 'jvar <% weekday %> <% date+1 %> <% today:EEEE, MMMM d, yyyy %>',
+      parentId: template,
+      index: null,
+      scope,
+      blockId: null,
+    })
+    await ipc(page, 'set_property', {
+      blockId: template,
+      key: 'journal-template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    // Yesterday by the real clock, which the backend reads too; the names in the app's English.
+    const { iso, nextIso, weekday, long } = await page.evaluate(() => {
+      const isoOf = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const day = new Date()
+      day.setDate(day.getDate() - 1)
+      const next = new Date(day)
+      next.setDate(next.getDate() + 1)
+      return {
+        iso: isoOf(day),
+        nextIso: isoOf(next),
+        weekday: day.toLocaleDateString('en-US', { weekday: 'long' }),
+        long: `${day.toLocaleDateString('en-US', { weekday: 'long' })}, ${day.toLocaleDateString('en-US', { month: 'long' })} ${day.getDate()}, ${day.getFullYear()}`,
+      }
+    })
+    const expected = `jvar ${weekday} ${nextIso} ${long}`
+
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: 'Previous day' }).click()
+    await page.getByRole('button', { name: 'Add your first block' }).click()
+    await expect(page.locator('[data-testid="block-editor"]')).toContainText(expected)
+
+    const dayPage = await ipc<{ id: string } | null>(page, 'get_journal_page_by_date', {
+      date: iso,
+      scope,
+    })
+    expect(dayPage).not.toBeNull()
+    const { blocks } = await ipc<{ blocks: Array<{ content: string | null }> }>(
+      page,
+      'load_page_subtree',
+      { rootBlockId: dayPage?.id, scope },
+    )
+    expect(blocks.map((b) => b.content)).toContain(expected)
+  })
+})
+
 test.describe('The recording placeholder @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)

@@ -49,7 +49,11 @@ async function insertEmbedOfWelcomeBlock(page: Page): Promise<void> {
   const targets = activeSuggestionList(page)
   await expect(targets).toBeVisible()
   await page.keyboard.type('Welcome')
-  await expect(targets.locator('[data-testid="suggestion-item"]').first()).toBeVisible()
+  // Enter picks the first item once the query's results are in: until then the list still holds
+  // the picker's opening items (today's page first), which the real backend leaves up longer.
+  await expect(targets.locator('[data-testid="suggestion-item"]').first()).toContainText(
+    'Welcome to Agaric!',
+  )
   await page.keyboard.press('Enter')
 }
 
