@@ -45,6 +45,7 @@ What a spec can rely on there differs from the mock:
 - **The vault holds the mock's seed**, written into its Personal space through the real commands once per worker (`seedCommands`, `src/lib/tauri-mock/seed-commands.ts`). `SEED_IDS` name the seeded rows, the two spaces included: `SEED_IDS.SPACE_PERSONAL` and `SEED_IDS.SPACE_WORK` are the backend's own space ids, on the mock too, so name a space by them, never by a literal. Inside a `page.evaluate` or `addInitScript` callback, pass the id in as its argument; the closure does not reach the browser. The seed's backdated op-log rows and its opt-in `localStorage` fixtures are not reproduced. A spec that makes its own pages runs.
 - **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event.
 - **`plugin:*` commands stay in the browser**, on the mock's handlers.
+- **A slow materializer on request**: `test.use({ slowMaterializerMs: 1000 })` at a spec's top level gives it a worker whose bridge starts every background batch that much later, for a view that must not re-read before a cache rebuild has run.
 - **Not carried**: a `Channel` argument's messages (an import's progress).
 - **No daemon runs**: MCP, the mirror and sync keep their state, so their Settings panels read it, but no server, mirror pass or peer runs behind them.
 

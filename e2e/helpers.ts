@@ -112,18 +112,21 @@ function runsOnRealBackend(testInfo: TestInfo): boolean {
 // opens itself (`page.context().newPage()`) is gated too.
 export const test = baseTest.extend<
   { consoleErrorGate: void; realBackend: void; screenshotEvidence: void },
-  { bridge: Bridge | null }
+  { bridge: Bridge | null; slowMaterializerMs: number }
 >({
+  // A spec whose view must not re-read before a background cache rebuild has
+  // run sets `test.use({ slowMaterializerMs: 1000 })`, and gets a worker whose
+  // bridge starts every background batch that much later. No effect on the mock.
+  slowMaterializerMs: [0, { scope: 'worker', option: true }],
   // #6529 — one bridge to the real backend per worker, when a run names its
   // binary (`e2e/bridge.ts`). `null` on the mock.
   bridge: [
-    // oxlint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this destructuring
-    async ({}, use) => {
+    async ({ slowMaterializerMs }, use) => {
       if (BRIDGE_BINARY === undefined) {
         await use(null)
         return
       }
-      const bridge = await startBridge(BRIDGE_BINARY)
+      const bridge = await startBridge(BRIDGE_BINARY, slowMaterializerMs)
       await use(bridge)
       await bridge.stop()
     },
