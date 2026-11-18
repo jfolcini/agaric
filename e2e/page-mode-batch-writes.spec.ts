@@ -167,4 +167,25 @@ test.describe('page mode sends a structural edit as one batch (#6559) @editor @p
     await expect(page.getByText('row 22', { exact: true })).toHaveCount(0)
     expect(await backendTexts(page, pageId)).toEqual(expected)
   })
+
+  test('one Ctrl+Z takes back a 300-line paste, and the page keeps its one block', async ({
+    page,
+  }) => {
+    // The undo's save deletes the paste's blocks as one batch, under the ids the paste's batch
+    // created them with: one minted elsewhere, or placed a slot off, leaves a block behind.
+    const pageId = await seedPage(page, 'Paste undo', ['first'])
+    await openInPageMode(page, 'Paste undo', 1)
+    const lines = Array.from({ length: 300 }, (_, i) => `line ${i}`)
+    await selectBlocks(page, 0, 0)
+    await pasteFromOutside(page, lines.join('\n'))
+    await expect.poll(() => backendTexts(page, pageId)).toEqual(lines)
+
+    await page.keyboard.press('Control+z')
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(1)
+    await expect.poll(() => backendTexts(page, pageId)).toEqual(['first'])
+
+    await leaveAndReturn(page, 'Paste undo')
+    await expect(page.getByText('first', { exact: true })).toBeVisible()
+    expect(await backendTexts(page, pageId)).toEqual(['first'])
+  })
 })
