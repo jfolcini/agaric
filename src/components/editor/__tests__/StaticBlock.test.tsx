@@ -1120,6 +1120,25 @@ describe('StaticBlock', () => {
       expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
     })
 
+    it('keeps the attachments it has while the batch refetches them', () => {
+      const pdf = makeAttachment({
+        id: 'att-2',
+        filename: 'document.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 2048,
+        fs_path: '/path/to/document.pdf',
+      })
+      mockBatchAttachments([pdf])
+      const { rerender } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      const chip = screen.getByText('document.pdf')
+
+      // Any attachment write anywhere refetches the whole batch.
+      mockBatchAttachments([pdf], { loading: true })
+      rerender(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      expect(screen.getByText('document.pdf')).toBe(chip)
+    })
+
     it('handles multiple attachments (mix of images and files)', async () => {
       mockBatchAttachments([
         makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
