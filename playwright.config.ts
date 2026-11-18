@@ -16,6 +16,8 @@ const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CL
 // #6529 — with `AGARIC_E2E_BRIDGE` naming the `bridge` binary, the run is the
 // `real-backend` project: these specs on the real commands (`e2e/bridge.ts`),
 // minus every test tagged `@mock-only`, which drives a hook only the mock has.
+// A test tagged `@real-only` asserts what only the real backend does (BM25
+// ranking, a second page of results) and runs there alone.
 // A spec joins the list once it passes there; the nightly `full-suite` lane of
 // `scheduled-deep-checks.yml` runs it. Unset, the run is the mock's, and a
 // listed test not tagged `@mock-only` runs on a mock that withholds its
@@ -168,7 +170,7 @@ export default defineConfig({
       name: REAL_BACKEND ? 'real-backend' : 'chromium',
       ...(REAL_BACKEND
         ? { testMatch: REAL_BACKEND_SPECS.map((spec) => `**/${spec}`), grepInvert: /@mock-only/ }
-        : {}),
+        : { grepInvert: /@real-only/ }),
       metadata: { realBackendSpecs: REAL_BACKEND_SPECS },
       use: {
         ...devices['Desktop Chrome'],

@@ -11,8 +11,8 @@
  * talk to the OS (clipboard, window title, opener), and the bridge's app has
  * no window system.
  *
- * Not carried: a `Channel` argument's messages (an import's progress) and a
- * raw-byte response (`read_attachment`).
+ * Not carried: a `Channel` argument's messages (an import's progress). A
+ * raw-byte response (`read_attachment`) arrives as an array of numbers.
  */
 
 import { emit } from '@tauri-apps/api/event'

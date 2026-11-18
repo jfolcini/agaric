@@ -310,4 +310,23 @@ mod tests {
             "a headless app's data dir is the one it was built over"
         );
     }
+
+    /// The Settings panels read these at mount; an unmanaged state is a
+    /// refusal on the bridge, and the panel shows an error instead.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_settings_status_reads_answer_on_a_headless_app() {
+        let (pool, dir) = test_pool().await;
+        let mat = test_materializer(&pool);
+        let ipc = IpcTransport::new(&pool, &mat, dir.path());
+        for cmd in [
+            "get_mcp_status",
+            "get_mcp_recent_activity",
+            "get_mirror_status",
+            "get_mdns_status",
+            "get_bind_exposure_status",
+        ] {
+            let outcome = ipc.app.invoke(cmd, json!({})).await;
+            assert!(outcome.is_ok(), "{cmd} answered {outcome:?}");
+        }
+    }
 }
