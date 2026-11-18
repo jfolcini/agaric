@@ -40,15 +40,15 @@ const CHIP = '[data-testid="tag-ref-chip"]'
 const tagItem = (name: string) => `[data-testid="tag-item-${name}"]`
 
 /**
- * The usage count each listed tag shows (the span after the name inside its
- * badge), by tag name, read once.
+ * The usage count each listed tag shows (the last span inside its
+ * badge, after the name), by tag name, read once.
  */
 function listedCounts(): Promise<Record<string, string>> {
   return browser.execute(() =>
     Object.fromEntries(
       [...document.querySelectorAll('[data-testid^="tag-item-"]')].map((item) => [
         item.getAttribute('data-testid')?.slice('tag-item-'.length) ?? '',
-        item.querySelector('[data-slot="badge"] > span')?.textContent ?? '',
+        item.querySelector('[data-slot="badge"] > span:last-child')?.textContent ?? '',
       ]),
     ),
   )
