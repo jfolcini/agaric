@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -29,8 +37,16 @@ function run(hostLaunchers) {
   const appdir = join(root, 'mount_AgaricX')
   const bundleBin = join(appdir, 'usr', 'bin')
   const hostBin = join(root, 'host-bin')
+  // Only the tools the wrapper and stand-ins call: a system dir on PATH would
+  // bring the runner's own xdg-open, which runs before any stand-in gio.
+  const tools = join(root, 'tools')
   mkdirSync(bundleBin, { recursive: true })
   mkdirSync(hostBin)
+  mkdirSync(tools)
+  for (const tool of ['env', 'sed']) {
+    const found = spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' })
+    symlinkSync(found.stdout.trim(), join(tools, tool))
+  }
   copyFileSync(WRAPPER, join(bundleBin, 'xdg-open'))
   const record = join(root, 'record')
   for (const name of hostLaunchers) standIn(hostBin, name, record)
@@ -39,7 +55,7 @@ function run(hostLaunchers) {
     env: {
       APPDIR: appdir,
       LD_LIBRARY_PATH: `${appdir}/usr/lib/:${appdir}/usr/lib/x86_64-linux-gnu/:`,
-      PATH: `${appdir}/usr/bin/:${appdir}/usr/sbin/:${hostBin}:/usr/bin:/bin`,
+      PATH: `${appdir}/usr/bin/:${appdir}/usr/sbin/:${hostBin}:${tools}`,
       XDG_DATA_DIRS: `${appdir}/usr/share/:${appdir}Y/share:${appdir}/usr/share:/usr/share`,
       GIO_MODULE_DIR: `${appdir}//usr/lib/gio/modules`,
       SIBLING: `${appdir}Y/usr/lib`,
@@ -59,20 +75,20 @@ function run(hostLaunchers) {
         .slice(1)
         .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
     )
-    return { appdir, hostBin, argv, env }
+    return { appdir, hostBin, tools, argv, env }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 }
 
 void test('the host xdg-open gets the target and no entry under APPDIR', () => {
-  const { appdir, hostBin, argv, env } = run(['xdg-open'])
+  const { appdir, hostBin, tools, argv, env } = run(['xdg-open'])
 
   assert.equal(argv, 'argv=1|https://example.com/a b', 'the target arrives as one argument')
   assert.equal(env['LD_LIBRARY_PATH'], undefined, 'a variable left empty is removed')
   assert.equal(env['GIO_MODULE_DIR'], undefined)
   assert.equal(env['APPDIR'], undefined)
-  assert.equal(env['PATH'], `${hostBin}:/usr/bin:/bin`, 'host entries keep their order')
+  assert.equal(env['PATH'], `${hostBin}:${tools}`, 'host entries keep their order')
   assert.equal(
     env['XDG_DATA_DIRS'],
     `${appdir}Y/share:/usr/share`,
