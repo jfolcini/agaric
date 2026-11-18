@@ -346,6 +346,12 @@ export const settings: Record<string, string> = {
   'agentAccess.toggleOffSuccess': 'Agent access disabled',
   'agentAccess.toggleFailed': 'Failed to toggle agent access',
 
+  // Translators: Agent access: notice when an older copy of the agaric-mcp program, which the app
+  // did not put there, shadows the app's own; agaric-mcp is a program name, keep it. {{path}} is a
+  // file path.
+  'agentAccess.foreignPathBridge':
+    'An older agaric-mcp is on your PATH at {{path}}, so scripts and agents may run it instead of this app’s. Remove it and restart Agaric to put the current one there.',
+
   // Translators: Agent access: field showing the socket file path, its copy button (tooltip and
   // screen-reader label), and toasts after copying; "Claude Desktop" is a product name.
   'agentAccess.socketPathLabel': 'Socket path',

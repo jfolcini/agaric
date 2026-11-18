@@ -4,7 +4,8 @@
  *
  * Everything below the switch renders only while it is on: a socket path
  * and a connection count describe a server that is not running when it is
- * off. Which agent may do what is the agents card's business (#5667).
+ * off. The notice about an older `agaric-mcp` on the PATH renders either way,
+ * since scripts run it whether or not agents may connect (#6980). Which agent may do what is the agents card's business (#5667).
  *
  * Toggling and disconnect IPC calls are owned by the parent — this
  * component just calls back into `onToggle` / `onDisconnect` so the
@@ -61,6 +62,12 @@ export function McpStatusSection({
           disabled={status === null}
         />
       </div>
+
+      {status?.foreign_path_bridge && (
+        <p className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-xs text-alert-warning-foreground break-all">
+          {t('agentAccess.foreignPathBridge', { path: status.foreign_path_bridge })}
+        </p>
+      )}
 
       {enabled && (
         <>

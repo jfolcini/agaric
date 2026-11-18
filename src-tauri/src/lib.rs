@@ -3153,7 +3153,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
     // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
     #[cfg(target_os = "linux")]
-    appimage_integration::integrate_appimage_if_running();
+    appimage_integration::integrate_appimage_if_running(&app_data_dir);
     #[cfg(target_os = "linux")]
     appimage_integration::apply_host_decoration_layout_if_running();
 

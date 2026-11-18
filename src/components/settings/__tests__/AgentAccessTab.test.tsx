@@ -94,6 +94,7 @@ const mockedLoggerWarn = vi.mocked(logger.warn)
 interface McpStatus {
   enabled: boolean
   socket_path: string
+  foreign_path_bridge?: string | null
   active_connections: number
 }
 
@@ -229,6 +230,34 @@ describe('AgentAccessTab — rendering', () => {
       },
       { timeout: 5000 },
     )
+  })
+})
+
+// #6980 — an AppImage leaves a hand-copied agaric-mcp on the PATH alone, and says so.
+describe('AgentAccessTab — older agaric-mcp on the PATH', () => {
+  const FOREIGN = '/home/test/.local/bin/agaric-mcp'
+
+  it('names the foreign bridge whether or not agents may connect, without axe violations', async () => {
+    setupInvoke(makeStatus({ enabled: false, foreign_path_bridge: FOREIGN }))
+    const { container } = render(<AgentAccessTab />)
+
+    const notice = await screen.findByText(/An older agaric-mcp is on your PATH at/)
+    expect(notice).toHaveTextContent(FOREIGN)
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  it('shows no notice when the PATH holds no foreign bridge', async () => {
+    setupInvoke(makeStatus({ enabled: true, foreign_path_bridge: null }))
+    render(<AgentAccessTab />)
+
+    await screen.findByRole('switch', { name: TOGGLE })
+    expect(screen.queryByText(/An older agaric-mcp/)).not.toBeInTheDocument()
   })
 })
 

@@ -198,6 +198,8 @@ export const settings: Record<string, string> = {
   'agentAccess.toggleOnSuccess': 'Agentenzugriff aktiviert',
   'agentAccess.toggleOffSuccess': 'Agentenzugriff deaktiviert',
   'agentAccess.toggleFailed': 'Agentenzugriff konnte nicht umgeschaltet werden',
+  'agentAccess.foreignPathBridge':
+    'Ein älteres agaric-mcp liegt in deinem PATH unter {{path}}, daher führen Skripte und Agenten womöglich dieses statt des Programms dieser App aus. Entferne es und starte Agaric neu, damit das aktuelle dort liegt.',
   'agentAccess.socketPathLabel': 'Socket-Pfad',
   'agentAccess.socketPathCopied': 'Socket-Pfad kopiert',
   'agentAccess.copySocketPathLabel': 'Socket-Pfad kopieren',

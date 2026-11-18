@@ -5,8 +5,9 @@
 //! `get_mcp_recent_activity`, which reads the shared activity ring:
 //!
 //! - `get_mcp_status` — returns `{ enabled, socket_path, bridge_command,
-//!   bridge_args, active_connections }` for the switch, the copied agent
-//!   configs and the connection count. Reads the `mcp-enabled` marker file
+//!   bridge_args, foreign_path_bridge, active_connections }` for the switch,
+//!   the copied agent configs, the stale-bridge notice and the connection
+//!   count. Reads the `mcp-enabled` marker file
 //!   and the shared [`McpLifecycle`] counter. Never touches the socket
 //!   itself.
 //! - `mcp_set_enabled(enabled)` — creates or deletes the marker file, then
@@ -55,7 +56,22 @@ pub struct McpStatus {
     /// Arguments before the bridge's own: `["agaric-mcp"]` when
     /// `bridge_command` is the AppImage, else none.
     pub bridge_args: Vec<String>,
+    /// An `agaric-mcp` in `~/.local/bin` that the AppImage did not put there
+    /// and leaves alone, so scripts may run it instead of the app's own
+    /// (#6980). Always `None` outside an AppImage.
+    pub foreign_path_bridge: Option<String>,
     pub active_connections: u32,
+}
+
+/// What the status reads from a running AppImage.
+#[derive(Debug, Clone, Copy)]
+pub struct AppImageBridge<'a> {
+    /// `$APPIMAGE`.
+    pub file: &'a Path,
+    /// The bridge copy outside the AppImage, when this start installed one.
+    pub stable_copy: Option<&'a Path>,
+    /// [`McpStatus::foreign_path_bridge`].
+    pub foreign_path_bridge: Option<&'a Path>,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,11 +96,15 @@ pub fn get_mcp_status_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
     app_exe: &Path,
-    appimage: Option<&Path>,
+    appimage: Option<AppImageBridge<'_>>,
 ) -> McpStatus {
     let enabled = mcp_enabled(app_data_dir);
     let socket_path = get_mcp_socket_path_inner(app_data_dir);
-    let (bridge_command, bridge_args) = mcp::bridge_invocation(app_exe, appimage);
+    let (bridge_command, bridge_args) = mcp::bridge_invocation(
+        app_exe,
+        appimage.map(|a| a.file),
+        appimage.and_then(|a| a.stable_copy),
+    );
     // `connection_count` is a usize; cap at u32::MAX for the wire (the
     // serialized frontend type uses `number`, which is a safe IEEE-754
     // double — anything under 2^53 round-trips cleanly).
@@ -94,6 +114,9 @@ pub fn get_mcp_status_inner(
         socket_path,
         bridge_command: bridge_command.to_string_lossy().into_owned(),
         bridge_args,
+        foreign_path_bridge: appimage
+            .and_then(|a| a.foreign_path_bridge)
+            .map(|path| path.to_string_lossy().into_owned()),
         active_connections,
     }
 }
@@ -282,14 +305,33 @@ pub async fn get_mcp_status<R: tauri::Runtime>(
         .map_err(AppError::Io)
         .map_err(sanitize_internal_error)?;
     // Only Linux runs AppImages, and only Linux hands over to the bridge.
-    let appimage = std::env::var_os("APPIMAGE")
-        .filter(|_| cfg!(target_os = "linux"))
-        .map(PathBuf::from);
+    #[cfg(target_os = "linux")]
+    {
+        use crate::appimage_integration::{foreign_path_bridge, local_bin_dir, stable_bridge_path};
+        if let Some(file) = std::env::var_os("APPIMAGE")
+            .filter(|f| !f.is_empty())
+            .map(PathBuf::from)
+        {
+            let stable = stable_bridge_path(&app_data_dir);
+            let foreign = local_bin_dir().and_then(|bin| foreign_path_bridge(&bin, &stable));
+            let appimage = AppImageBridge {
+                file: &file,
+                stable_copy: stable.is_file().then_some(stable.as_path()),
+                foreign_path_bridge: foreign.as_deref(),
+            };
+            return Ok(get_mcp_status_inner(
+                &app_data_dir,
+                lifecycle.inner(),
+                &app_exe,
+                Some(appimage),
+            ));
+        }
+    }
     Ok(get_mcp_status_inner(
         &app_data_dir,
         lifecycle.inner(),
         &app_exe,
-        appimage.as_deref(),
+        None,
     ))
 }
 
@@ -487,10 +529,53 @@ mod tests {
             dir.path(),
             &make_lifecycle(),
             Path::new("/tmp/.mount_Agaric/usr/bin/agaric"),
-            Some(Path::new("/home/me/Agaric.AppImage")),
+            Some(AppImageBridge {
+                file: Path::new("/home/me/Agaric.AppImage"),
+                stable_copy: None,
+                foreign_path_bridge: None,
+            }),
         );
         assert_eq!(status.bridge_command, "/home/me/Agaric.AppImage");
         assert_eq!(status.bridge_args, ["agaric-mcp"]);
+    }
+
+    #[test]
+    fn status_names_the_stable_copy_and_a_foreign_path_bridge_6980() {
+        let dir = TempDir::new().unwrap();
+        let status = get_mcp_status_inner(
+            dir.path(),
+            &make_lifecycle(),
+            Path::new("/tmp/.mount_Agaric/usr/bin/agaric"),
+            Some(AppImageBridge {
+                file: Path::new("/home/me/Agaric.AppImage"),
+                stable_copy: Some(Path::new(
+                    "/home/me/.local/share/com.agaric.app/bin/agaric-mcp",
+                )),
+                foreign_path_bridge: Some(Path::new("/home/me/.local/bin/agaric-mcp")),
+            }),
+        );
+        assert_eq!(
+            status.bridge_command,
+            "/home/me/.local/share/com.agaric.app/bin/agaric-mcp"
+        );
+        assert_eq!(status.bridge_args, Vec::<String>::new());
+        assert_eq!(
+            status.foreign_path_bridge.as_deref(),
+            Some("/home/me/.local/bin/agaric-mcp")
+        );
+    }
+
+    #[test]
+    fn status_outside_an_appimage_reports_no_foreign_path_bridge_6980() {
+        let dir = TempDir::new().unwrap();
+        let status = get_mcp_status_inner(
+            dir.path(),
+            &make_lifecycle(),
+            Path::new("/usr/bin/agaric"),
+            None,
+        );
+        assert_eq!(status.bridge_command, "/usr/bin/agaric-mcp");
+        assert_eq!(status.foreign_path_bridge, None);
     }
 
     // ── mcp_set_enabled_inner ────────────────────────────────────────────
