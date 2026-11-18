@@ -1,4 +1,4 @@
-# Session 4239 — complete Spanish, Portuguese, German and French catalogs, enforced at 100%
+# Session 4244 — complete Spanish, Portuguese, German and French catalogs, enforced at 100%
 
 The ask: finish Spanish, add Portuguese completely, and add a test that requires every string to be translated, so new copy cannot ship English-only. Regional variants (`pt-BR`, `pt-PT`) should be cheap to add later. German and French were added mid-session. A second round gave every message translator context, double-checked every translation against it, and closed out #6750.
 
