@@ -25,11 +25,11 @@ use super::splice::splice;
 use super::store::{PageState, Shadow};
 use crate::commands::pages::{
     PageFile, PageSourceReport, SourceSaveFlags, anchor_free_kept, apply_page_source_inner,
-    get_page_buffer_inner, get_page_file_inner, pair_unanchored_lines,
+    create_page_from_source_inner, get_page_file_inner, pair_unanchored_lines,
 };
 use crate::commands::{
-    WithOps, capture_op_refs, create_page_in_space_inner, delete_block_inner, edit_block_inner,
-    move_blocks_to_space_inner, undo_ops_inner,
+    WithOps, capture_op_refs, delete_block_inner, edit_block_inner, move_blocks_to_space_inner,
+    undo_ops_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::ulid::BlockId;
@@ -214,14 +214,14 @@ pub async fn ingest(
 }
 
 /// Read `bytes`, a new file at `path` that no page owns, onto a new page of
-/// `space_id` titled `title` (#5363 slice 3a): the page is created, then its
-/// blocks saved through [`apply_page_source_inner`] over its empty buffer, as
-/// Edit as Markdown saves a buffer, so the file is read in the dialect the
-/// mirror writes and every line is a new block, an anchor naming no block of
-/// the page as any other. Returns the page and the file to write back, the
-/// event carrying both commands' ops, so one undo removes the page. A title
-/// the space already holds is refused, and so is a save the op cap or the
-/// grammar refuses, which deletes the page it created, to the Trash. A link
+/// `space_id` titled `title` (#5363 slice 3a): the page is created and its
+/// blocks saved over its empty buffer in one transaction
+/// ([`create_page_from_source_inner`]), as Edit as Markdown saves a buffer,
+/// so the file is read in the dialect the mirror writes and every line is a
+/// new block, an anchor naming no block of the page as any other. Returns
+/// the page and the file to write back, the event carrying the ops, so one
+/// undo removes the page. A title the space already holds is refused, and so
+/// is a save the op cap or the grammar refuses, which leaves no page. A link
 /// to a copy is saved as its attachment's, and the file written back links
 /// attachments as `links` does.
 #[allow(clippy::too_many_arguments)]
@@ -242,58 +242,29 @@ pub async fn create(
     let source = assets::delocalize(read_pool, &edited)
         .await
         .map_err(refused)?;
-    let created = capture_op_refs(Box::pin(create_page_in_space_inner(
+    let created = capture_op_refs(Box::pin(create_page_from_source_inner(
         &ingest.pool,
         device_id,
         &ingest.materializer,
-        None,
-        title.to_owned(),
-        space_id.to_owned(),
+        space_id,
+        title,
+        source,
+        line_ids.clone(),
     )))
     .await
     .map_err(refused)?;
-    let page_id = created.inner.into_string();
-    if created.op_refs.is_empty() {
+    let Some((page, report)) = created.inner else {
         return Err(NotIngested::Refused(format!(
             "the space already has a page titled \"{title}\""
         )));
-    }
-    let empty = get_page_buffer_inner(&ingest.pool, &page_id)
-        .await
-        .map_err(refused)?;
-    let saved = capture_op_refs(Box::pin(apply_page_source_inner(
-        &ingest.pool,
-        device_id,
-        &ingest.materializer,
-        &page_id,
-        source,
-        empty.source,
-        SourceSaveFlags {
-            merge: false,
-            line_ids: line_ids.clone(),
-        },
-    )))
-    .await;
-    let saved = match saved {
-        Ok(saved) => saved,
-        Err(e) => {
-            let page = BlockId::from_trusted(&page_id);
-            if let Err(gone) =
-                delete_block_inner(&ingest.pool, device_id, &ingest.materializer, page).await
-            {
-                tracing::warn!(page_id, error = %gone, "cannot delete a page whose file was refused");
-            }
-            return Err(refused(e));
-        }
     };
-    let mut op_refs = created.op_refs;
-    op_refs.extend(saved.op_refs);
+    let page_id = page.into_string();
     let event = MirrorIngested {
         kind: IngestKind::Created,
         page_id: page_id.clone(),
         path: path.to_owned(),
-        op_refs,
-        report: saved.inner,
+        op_refs: created.op_refs,
+        report,
     };
     let shadow = rendered_back(
         read_pool,
