@@ -7,7 +7,7 @@
  * `undefined`, and no value is marked.
  */
 
-import { skipToken, useQuery } from '@tanstack/react-query'
+import { queryOptions, skipToken, useQuery } from '@tanstack/react-query'
 
 import type { PropertyDefinition } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -29,15 +29,21 @@ function byKey(defs: PropertyDefinition[]): ReadonlyMap<string, PropertyDefiniti
   return new Map(defs.map((def) => [def.key, def]))
 }
 
+function defsQuery(spaceId: string | null) {
+  return queryOptions({
+    queryKey: propertyDefsQueryKey(spaceId),
+    queryFn: spaceId === null ? skipToken : () => loadDefs(spaceId),
+  })
+}
+
+/** The active space's definitions as a list, for a surface that also edits them. */
+export function useSpacePropertyDefList() {
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
+  return useQuery(defsQuery(spaceId), queryClient)
+}
+
 export function useSpacePropertyDefs(): ReadonlyMap<string, PropertyDefinition> | undefined {
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
-  const { data } = useQuery(
-    {
-      queryKey: propertyDefsQueryKey(spaceId),
-      queryFn: spaceId === null ? skipToken : () => loadDefs(spaceId),
-      select: byKey,
-    },
-    queryClient,
-  )
+  const { data } = useQuery({ ...defsQuery(spaceId), select: byKey }, queryClient)
   return data
 }
