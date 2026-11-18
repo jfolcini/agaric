@@ -2,7 +2,8 @@
 //! the folder naming the device that writes it, and in the app data dir,
 //! outside the folder, a state file per page holding the path and the texts
 //! last written there, and beside them the vault's [`Head`] as of the last
-//! pass. Every file goes through [`write_atomic`].
+//! pass and the folder's record of copies ([`super::assets::Copies`]). Every
+//! file goes through [`write_atomic`].
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -179,7 +180,7 @@ pub async fn clear_restored(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 /// Drop everything the mirror keeps in the app's data: every folder's page
-/// states and the record of copies. It then writes each page as new, leaves
+/// states and its record of copies. It then writes each page as new, leaves
 /// a file that differs from its page as it is, and removes nothing.
 pub fn forget_everything(app_data_dir: &Path) -> std::io::Result<()> {
     remove_dir_if_any(&app_data_dir.join("mirror"))
@@ -424,6 +425,10 @@ pub struct Head {
 /// `.json`, which [`StateDir::load`] reads as a page's.
 const HEAD_NAME: &str = "head";
 
+/// The file holding a folder's record of copies ([`super::assets::Copies`]),
+/// beside its pages' states: not a `.json` either.
+const COPIES_NAME: &str = "copies";
+
 /// The per-page state files of the folder the mirror writes:
 /// `mirror/folders/<key>/<PAGE_ID>.json` in the app data dir, one directory
 /// per folder, so a page whose file another folder held is never read as one
@@ -543,9 +548,40 @@ impl StateDir {
 
     /// Drop `folder`'s states and its head: the mirror then writes every
     /// page there as new, which the guard keeps from overwriting a file that
-    /// differs, and removes no file there.
+    /// differs, and removes no file there. Its record of copies stays: they
+    /// are still the copies the mirror wrote there.
     pub fn forget(&self, folder: &str) -> std::io::Result<()> {
-        remove_dir_if_any(&self.dir_for(folder))
+        let entries = match std::fs::read_dir(self.dir_for(folder)) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name() != COPIES_NAME {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Where `folder`'s record of copies is kept.
+    pub fn copies_file(&self, folder: &str) -> PathBuf {
+        self.dir_for(folder).join(COPIES_NAME)
+    }
+
+    /// The record written before each folder kept its own,
+    /// `mirror/copies.json`, becomes `folder`'s: the folder the mirror writes
+    /// when it is found. One rename, so a crash leaves it adopted or still to
+    /// adopt. The mirror's task alone calls this, never the status, which
+    /// binds a folder before the mirror writes there.
+    pub fn adopt_legacy_copies(&self, folder: &str) -> std::io::Result<()> {
+        let legacy = self.base.join("copies.json");
+        if !legacy.exists() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(self.dir_for(folder))?;
+        std::fs::rename(legacy, self.copies_file(folder))
     }
 
     /// States written before each folder kept its own directory, in

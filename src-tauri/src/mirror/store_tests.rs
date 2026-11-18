@@ -85,6 +85,26 @@ fn legacy_states_that_cannot_be_adopted_are_left_and_reported() {
 }
 
 #[test]
+fn a_record_of_copies_that_cannot_be_adopted_is_left_and_reported() {
+    let data = TempDir::new().unwrap();
+    let legacy = data.path().join("mirror/copies.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, b"{}").unwrap();
+    let states = StateDir::new(data.path());
+    states.adopt_legacy_copies("/elsewhere").unwrap();
+    assert!(states.copies_file("/elsewhere").is_file(), "adopted");
+
+    // The folder's directory is a file.
+    std::fs::write(&legacy, b"{}").unwrap();
+    std::fs::write(states.dir_for("/notes"), b"").unwrap();
+    assert_eq!(
+        states.adopt_legacy_copies("/notes").unwrap_err().kind(),
+        ErrorKind::AlreadyExists
+    );
+    assert!(legacy.is_file(), "the record is not moved");
+}
+
+#[test]
 fn an_owner_record_that_cannot_be_removed_is_reported() {
     let data = TempDir::new().unwrap();
     std::fs::create_dir_all(data.path().join("mirror/folder")).unwrap();

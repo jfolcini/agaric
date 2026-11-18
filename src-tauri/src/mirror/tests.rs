@@ -128,17 +128,19 @@ impl Fx {
             .unwrap()
     }
 
-    /// Where `page`'s state is saved, by the key `StateDir` derives.
-    fn state_file(&self, page: &str) -> PathBuf {
+    /// Where the folder's states and its record of copies are saved, by the
+    /// key `StateDir` derives.
+    fn state_dir(&self) -> PathBuf {
         let key: String = blake3::hash(path_string(&self.root).as_bytes())
             .to_hex()
             .chars()
             .take(32)
             .collect();
-        self.data
-            .join("mirror/folders")
-            .join(key)
-            .join(format!("{page}.json"))
+        self.data.join("mirror/folders").join(key)
+    }
+
+    fn state_file(&self, page: &str) -> PathBuf {
+        self.state_dir().join(format!("{page}.json"))
     }
 
     fn saved_state(&self, page: &str) -> Option<PageState> {
@@ -890,6 +892,30 @@ fn each_folder_keeps_its_own_states() {
     assert_eq!(again.load().unwrap().get("PAGE"), Some(&one_state("b\n")));
 }
 
+/// A fresh start drops a folder's states and head and keeps its record of
+/// copies: they are still the copies the mirror wrote there.
+#[test]
+fn forgetting_a_folder_keeps_its_record_of_copies_alone() {
+    let data = TempDir::new().unwrap();
+    let mut states = StateDir::new(data.path());
+    states.bind("/folder/a").unwrap();
+    states.save("PAGE", &one_state("a\n")).unwrap();
+    let head = Head {
+        seq: 1,
+        hash: None,
+        older: false,
+    };
+    states.save_head(&head).unwrap();
+    let copies = states.copies_file("/folder/a");
+    std::fs::write(&copies, b"{}").unwrap();
+
+    states.forget("/folder/a").unwrap();
+
+    assert!(states.load().unwrap().is_empty());
+    assert_eq!(states.head().unwrap(), None);
+    assert!(copies.exists(), "the record of copies stays");
+}
+
 /// States from before each folder kept its own directory are the folder
 /// `mirror/folder` names, or the one bound when it names none, and an
 /// adoption cut short is finished by the next bind.
@@ -1033,6 +1059,45 @@ async fn a_copy_that_cannot_be_written_is_listed_while_copying_is_on() {
         .map(|f| f.path)
         .collect();
     assert_eq!(failed, [copy]);
+}
+
+/// A record of copies written when one was kept for every folder,
+/// `mirror/copies.json` (#6963), is the record of the folder mirrored when it
+/// is found: a copy changed there is still left as the user made it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_record_of_copies_kept_for_every_folder_becomes_the_mirrored_folder_s_6963() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["one"]).await;
+    let copy = fx.image_in(&blocks[0]).await;
+    let attachment = copy.split('/').nth(2).unwrap();
+    // As that version left them: the copy, drawn over since, and its record.
+    let file = fx.root.join(&copy);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"drawn over").unwrap();
+    let legacy = fx.data.join("mirror/copies.json");
+    let record = serde_json::json!({
+        copy.as_str(): { "id": attachment, "len": PNG.len(), "modified_ms": 1 },
+    });
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, record.to_string()).unwrap();
+    fx.reopen().await;
+
+    fx.tick().await;
+    fx.tick().await;
+
+    assert_eq!(std::fs::read(&file).unwrap(), b"drawn over");
+    let listed: Vec<String> = fx
+        .status()
+        .await
+        .diverged
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(listed, [copy], "recorded, it is listed as changed");
+    assert!(
+        !legacy.exists(),
+        "the record is the folder's own from now on"
+    );
 }
 
 // ── A vault older than its folder (#6887) ───────────────────────────────
@@ -1254,7 +1319,7 @@ async fn a_fresh_start_that_fails_part_way_is_made_again() {
         .await
         .unwrap();
     // The record of copies cannot be saved, for one tick.
-    let copies = fx.data.join("mirror/copies.json");
+    let copies = fx.state_dir().join("copies");
     assert!(!copies.exists(), "the fixture: no copy is recorded");
     std::fs::create_dir(&copies).unwrap();
     settle(&fx.mat).await;
@@ -1441,7 +1506,7 @@ impl Fx {
         assert!(newer.edited.contains("edited since"), "{}", newer.edited);
         assert!(fx.root.join(&newer.copy).exists());
         assert!(fx.saved_state(&alpha_page).is_some());
-        assert!(fx.data.join("mirror/copies.json").exists());
+        assert!(fx.state_dir().join("copies").exists());
         assert_eq!(
             saved_heads(&fx.data),
             1,

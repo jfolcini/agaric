@@ -287,6 +287,14 @@ impl Fx {
             .unwrap();
     }
 
+    /// Mirror to `folder` from now on.
+    async fn choose(&self, folder: &Path) {
+        let folder = Some(folder.to_str().unwrap().to_owned());
+        set_mirror_folder_inner(&self.pool, DEV, &self.state, folder, true)
+            .await
+            .unwrap();
+    }
+
     async fn status(&self) -> MirrorStatus {
         get_mirror_status_inner(&self.pool, DEV, &self.state)
             .await
@@ -439,6 +447,109 @@ async fn turning_copying_off_removes_unchanged_copies_and_lists_a_changed_one() 
         "the page links its attachment again: {}",
         fx.text("TestSpace/Alpha.md")
     );
+}
+
+/// Each folder has its own record of copies (#6963): what another folder's
+/// copy at the same path came to says nothing of this one's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_changed_in_a_folder_is_kept_when_that_folder_is_chosen_again_6963() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
+    fx.tick().await;
+    let copy = copy_of(&attachment, "cat.png");
+    std::fs::write(fx.root.join(&copy), b"annotated").unwrap();
+
+    // Another folder, where the copy is written, then removed with copying off.
+    let other = TempDir::new().unwrap();
+    fx.choose(other.path()).await;
+    fx.tick().await;
+    assert!(other.path().join(&copy).exists(), "the fixture: copied");
+    fx.copy_files(false).await;
+    fx.tick().await;
+    assert!(!other.path().join(&copy).exists(), "the fixture: removed");
+
+    fx.choose(&fx.root).await;
+    fx.copy_files(true).await;
+    fx.ticks(2).await;
+
+    assert_eq!(
+        fx.read(&copy).as_deref(),
+        Some(&b"annotated"[..]),
+        "the user's edit stays"
+    );
+    let paths: Vec<String> = fx
+        .status()
+        .await
+        .diverged
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(paths, [copy], "listed as no longer its attachment");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_finds_its_unchanged_copies_unchanged_6963() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, _, attachment) = fx.page_with_image("Alpha", "cat.png", PNG).await;
+    fx.tick().await;
+    let copy = copy_of(&attachment, "cat.png");
+
+    // Another folder's copy at the same path, written at another time.
+    let other = TempDir::new().unwrap();
+    fx.choose(other.path()).await;
+    fx.tick().await;
+    assert!(other.path().join(&copy).exists(), "the fixture: copied");
+
+    fx.choose(&fx.root).await;
+    fx.ticks(2).await;
+    let status = fx.status().await;
+    assert!(status.diverged.is_empty(), "none is listed: {status:?}");
+
+    fx.copy_files(false).await;
+    fx.tick().await;
+    assert!(
+        !fx.root.join(&copy).exists(),
+        "unchanged, the copy goes once copying is off"
+    );
+}
+
+/// A copy the folder's record lacks, as in a folder last mirrored before
+/// each kept its own record and whose record went to another (#6963), is
+/// never written over: one holding its attachment is taken as written, any
+/// other is kept as changed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_the_folder_s_record_lacks_is_never_written_over_6963() {
+    let mut fx = Fx::new(Some(true)).await;
+    let (_, _, cat) = fx.page_with_image("Alpha", "cat.png", PNG).await;
+    let (_, _, dog) = fx.page_with_image("Beta", "dog.png", PNG).await;
+    fx.tick().await;
+    let (edited, unchanged) = (copy_of(&cat, "cat.png"), copy_of(&dog, "dog.png"));
+    std::fs::write(fx.root.join(&edited), b"annotated").unwrap();
+    let other = TempDir::new().unwrap();
+    fx.choose(other.path()).await;
+    fx.tick().await;
+    let record = StateDir::new(&fx.data).copies_file(fx.root.to_str().unwrap());
+    std::fs::remove_file(record).unwrap();
+
+    fx.choose(&fx.root).await;
+    fx.ticks(2).await;
+
+    assert_eq!(fx.read(&edited).as_deref(), Some(&b"annotated"[..]));
+    let listed: Vec<String> = (fx.status().await.diverged.into_iter())
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(
+        listed,
+        std::slice::from_ref(&edited),
+        "the changed one is listed"
+    );
+    fx.copy_files(false).await;
+    fx.tick().await;
+    assert!(
+        !fx.root.join(&unchanged).exists(),
+        "the other is a copy again"
+    );
+    assert_eq!(fx.read(&edited).as_deref(), Some(&b"annotated"[..]));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -632,9 +743,15 @@ fn a_destination_with_whitespace_alone_goes_in_angle_brackets() {
 }
 
 #[test]
-fn saved_copies_load_again() {
+fn each_folder_s_saved_copies_load_again() {
     let dir = TempDir::new().unwrap();
-    let mut copies = Copies::load(dir.path());
+    let states = StateDir::new(dir.path());
+    let mut copies = Copies::new(dir.path());
+    assert!(
+        copies.forget_except(&HashSet::new()).is_err(),
+        "bound to no folder, it saves nothing"
+    );
+    copies.bind(&states, "/folder/a").unwrap();
     copies.written.insert(
         "Space/assets/X/cat.png".to_owned(),
         Copy {
@@ -644,5 +761,10 @@ fn saved_copies_load_again() {
         },
     );
     copies.save().unwrap();
-    assert_eq!(Copies::load(dir.path()).ids(), ["X"]);
+    copies.bind(&states, "/folder/b").unwrap();
+    assert!(copies.ids().is_empty(), "b has none of a's");
+
+    let mut again = Copies::new(dir.path());
+    again.bind(&states, "/folder/a").unwrap();
+    assert_eq!(again.ids(), ["X"]);
 }
