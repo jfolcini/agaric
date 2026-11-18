@@ -63,7 +63,8 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 /// `read_back`, so the first tick already follows it, and the next tick
 /// writes every page. Off, the setting goes and the files and the marker
 /// stay. The folder chosen again while it holds nothing but its marker
-/// starts fresh ([`MirrorState::start_fresh`]).
+/// starts fresh ([`MirrorState::start_fresh`]). Either way a pause a restore
+/// left ([`mirror::store::RESTORED_KEY`]) ends.
 ///
 /// # Errors
 ///
@@ -95,6 +96,7 @@ pub async fn set_mirror_folder_inner(
     }
     let chosen_again = path.is_some() && mirror::store::folder(pool).await? == path;
     mirror::store::set_folder(pool, path.as_deref()).await?;
+    mirror::store::clear_restored(pool).await?;
     match path.as_deref().map(Path::new) {
         // The way out of the pause on an emptied folder: the user says this
         // is the folder, so every page is written there.

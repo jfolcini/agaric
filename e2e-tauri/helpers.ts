@@ -1002,6 +1002,11 @@ export function appVaultDir(): string {
   return dir
 }
 
+/** The daily snapshots (`notes.db.daily-<date>`) in the vault folder `dir`. */
+export function dailySnapshots(dir: string): string[] {
+  return readdirSync(dir).filter((name) => /^notes\.db\.daily-\d{4}-\d{2}-\d{2}$/.test(name))
+}
+
 /**
  * End the app and open it again on the same vault: the app process ends and a
  * new one opens it, so nothing the webview held survives.

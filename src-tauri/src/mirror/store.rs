@@ -18,7 +18,7 @@ const FOLDER_KEY: &str = "mirror.folder";
 
 /// `app_settings` key: `"false"` when files changed outside Agaric are not
 /// read back. Absent, they are.
-const READ_BACK_KEY: &str = "mirror.read_back";
+pub const READ_BACK_KEY: &str = "mirror.read_back";
 
 /// `app_settings` key: `"true"` when the attachments pages link are copied
 /// into the folder ([`super::assets`]). Absent, they are not.
@@ -26,6 +26,12 @@ const COPY_FILES_KEY: &str = "mirror.copy_files";
 /// `app_settings` key: the ids of the spaces not mirrored, as a JSON array.
 /// Absent, every space is, a new one included.
 const UNMIRRORED_KEY: &str = "mirror.unmirrored_spaces";
+
+/// `app_settings` key a restore from a daily snapshot writes
+/// (`db::snapshot_restore`, #6744): the folder's files may be newer than the
+/// vault now. While it is set the mirror is paused; choosing the folder again
+/// clears it.
+pub const RESTORED_KEY: &str = "mirror.restored";
 
 /// The file in the mirror's folder that names the device writing it, so a
 /// second device refuses the folder.
@@ -77,15 +83,19 @@ pub struct Settings {
     pub copy_files: bool,
     /// The spaces neither written nor read, every other one being both.
     pub unmirrored: Vec<String>,
+    /// Whether the vault was restored from a snapshot since the folder was
+    /// last chosen ([`RESTORED_KEY`]).
+    pub restored: bool,
 }
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
         COPY_FILES_KEY,
         UNMIRRORED_KEY,
+        RESTORED_KEY,
     )
     .fetch_all(pool)
     .await?;
@@ -108,7 +118,23 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
         copy_files: value(COPY_FILES_KEY).as_deref() == Some("true"),
         unmirrored,
+        restored: value(RESTORED_KEY).is_some(),
     })
+}
+
+/// The folder was chosen: the mirror resumes after a restore.
+pub async fn clear_restored(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query!("DELETE FROM app_settings WHERE key = ?", RESTORED_KEY)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Drop everything the mirror keeps in the app's data: every folder's page
+/// states and the record of copies. It then writes each page as new, leaves
+/// a file that differs from its page as it is, and removes nothing.
+pub fn forget_everything(app_data_dir: &Path) -> std::io::Result<()> {
+    remove_dir_if_any(&app_data_dir.join("mirror"))
 }
 
 pub async fn set_unmirrored(pool: &SqlitePool, spaces: &[String]) -> Result<(), AppError> {

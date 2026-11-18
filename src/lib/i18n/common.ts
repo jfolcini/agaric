@@ -556,12 +556,21 @@ export const common: Record<string, string> = {
   // taken, and on desktop the folder that holds the copies.
   'data.snapshotLabel': 'Daily snapshot',
   'data.snapshotDesc':
-    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. They are a safety net, not a restore button.',
+    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. Restore puts one back in place of your notes.',
   'data.snapshotLast': 'Last snapshot: {{time}}',
   'data.snapshotNone': 'No snapshot yet. The first is taken shortly after Agaric starts.',
   'data.snapshotUnreadable': 'The time of the last snapshot could not be read.',
   'data.snapshotOpenFolder': 'Open folder',
   'data.snapshotOpenFolderFailed': 'Could not open the data folder',
+  // #6744 — restoring a daily snapshot: the swap runs when Agaric starts again.
+  'data.snapshotRestoreButton': 'Restore…',
+  'data.snapshotRestoreTitle': 'Restore a daily snapshot?',
+  'data.snapshotRestoreDesc':
+    'Agaric restarts with your notes as they were when the snapshot was taken. Edits and attachments made since then come back only from a paired device that has them, at its next sync. The notes you have now and the files attached since the snapshot are kept beside the database for 30 days, then deleted.',
+  'data.snapshotRestoreSelectLabel': 'Snapshot',
+  'data.snapshotRestoreConfirm': 'Restore and restart',
+  'data.snapshotRestoreListFailed': 'Could not list the snapshots',
+  'data.snapshotRestoreFailed': 'The snapshot was not restored: {{reason}}',
   // #5363 — the Markdown mirror: one `.md` file per page in a folder this
   // device writes to. A file edited elsewhere is read back into its page.
   'data.mirrorTitle': 'Markdown mirror',

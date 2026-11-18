@@ -304,7 +304,10 @@ The backups: before each update that changes the database, Agaric copies it to
 day it also copies it to `notes.db.daily-<date>`, keeping the newest few
 ([Daily snapshot](features/import-export.md#daily-snapshot-settings--data)).
 Each of either kind is a complete database file; its modified time is when it
-was taken. To open one:
+was taken. A restore from Settings keeps the notes it replaced the same way, as
+`notes.db.pre-restore-<time>`, for 30 days. While Agaric still starts, restore a daily snapshot from Settings ›
+Data › *Restore…* instead of by hand: it is the restore that keeps a paired
+device syncing. When it does not start, to open one:
 
 1. Move `notes.db`, `notes.db-wal` and `notes.db-shm` out of the data folder. A
    `-wal` left behind belongs to the file you moved, not to the backup.
@@ -329,8 +332,9 @@ What was written after the backup was taken is not in it. Then, by cause:
 
 **Do not keep using a restored backup on a device that has synced since the
 backup was taken.** Its other devices hold later history for it than the backup
-has, and once the restored copy records a change, every sync with them fails for
-good (the restored-copy pitfall in [Sync](features/sync.md#pitfalls-to-know)).
+has, and once the restored copy records a change, sync with them fails for good,
+or completes with no error while the edits made since the backup are lost (the
+restored-copy pitfall in [Sync](features/sync.md#pitfalls-to-know)).
 Use it only to export what the other devices lack (Settings › Data › *Export all
 spaces*), then set the device up fresh as above and import that export. Import
 only what is missing: a page whose title the space already holds is updated in

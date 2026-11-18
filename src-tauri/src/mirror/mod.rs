@@ -16,7 +16,9 @@
 //! adopted when it already holds the render, as after a crash between the file
 //! and its state). A page's file is moved when its path changes and removed
 //! when the page is gone, each only while it is unchanged. While the folder or
-//! its marker is missing, the mirror writes nothing and creates nothing.
+//! its marker is missing, the mirror writes nothing and creates nothing. After
+//! a restore from a daily snapshot it is paused until the folder is chosen
+//! again ([`store::RESTORED_KEY`]).
 
 pub mod assets;
 pub mod ingest;
@@ -50,6 +52,12 @@ const BACKSTOP: Duration = Duration::from_secs(3600);
 /// The ticks a page's file may be missing before it counts as gone: a file
 /// renamed outside Agaric is found at its new path within them.
 const MISSING_TICKS: u8 = 2;
+
+/// Why the mirror writes and reads nothing after a restore from a daily
+/// snapshot ([`store::RESTORED_KEY`]).
+const RESTORED_PAUSE: &str = "a daily snapshot was restored, and files in the folder may be newer \
+     than the notes; sync with your paired devices, then choose the folder again to resume. \
+     Reading changes back was turned off";
 
 /// A page's file, by its path below the mirror's folder, `/`-separated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -197,6 +205,7 @@ impl MirrorState {
             read_back,
             copy_files,
             unmirrored,
+            restored: _,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -732,6 +741,11 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         };
+        if settings.restored {
+            self.state.set_paused(Some(RESTORED_PAUSE.to_owned()));
+            self.full_due = true;
+            return Ok(());
+        }
         let fresh = self.state.take_start_fresh();
         if fresh {
             self.store.forget(&folder)?;

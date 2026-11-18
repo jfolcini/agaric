@@ -285,6 +285,8 @@ macro_rules! agaric_commands {
             // The daily snapshot row (#6554)
             $crate::commands::daily_snapshot::get_last_snapshot_ms::<tauri::Wry>,
             $crate::commands::daily_snapshot::open_data_folder::<tauri::Wry>,
+            $crate::commands::daily_snapshot::list_daily_snapshots::<tauri::Wry>,
+            $crate::commands::daily_snapshot::request_snapshot_restore::<tauri::Wry>,
             // Read aloud (#5745)
             $crate::commands::speech::get_speech_status,
             $crate::commands::speech::get_speech_engine_available,
@@ -1132,8 +1134,9 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     );
 }
 
-/// Boot-phase 3 — open the read/write SQLite pools and resolve the persistent
-/// device UUID + sync TLS certificate.
+/// Boot-phase 3 — swap in a daily snapshot whose restore is pending (#6744),
+/// open the read/write SQLite pools and resolve the persistent device UUID +
+/// sync TLS certificate.
 ///
 /// Returns the owned `(pools, device_id, endpoint_secret)` triple; the caller
 /// threads these (by reference, via cheap `Arc` clones) through the rest of
@@ -1143,6 +1146,10 @@ fn init_persistence(
     db_path: &std::path::Path,
     app_data_dir: &std::path::Path,
 ) -> Result<(db::DbPools, String, agaric_sync::transport::SecretKey), Box<dyn std::error::Error>> {
+    // Before anything opens the vault: the pools, the engines and the
+    // materializer then only ever see the restored one.
+    tauri::async_runtime::block_on(db::snapshot_restore::restore_pending(db_path))?;
+
     // Initialize separated read/write pools
     let pools = tauri::async_runtime::block_on(db::init_pools(db_path))?;
 
@@ -1272,7 +1279,8 @@ fn recover_and_bootstrap(
     let loro_state = materializer.loro_state();
     // #792: install the persisted peer-id epoch BEFORE any engine is
     // constructed (rehydrate below + every lazy `for_space`). A vault
-    // that went through a snapshot RESET carries a bumped epoch in
+    // that went through a snapshot RESET or a restore from a daily
+    // snapshot (#6744) carries its own epoch in
     // `app_settings`; deriving the Loro PeerID from it keeps this
     // device off its retired pre-reset peer id, whose (peer, counter)
     // ranges peers still hold. Absent row == epoch 0 == the legacy
@@ -1296,7 +1304,8 @@ fn recover_and_bootstrap(
             tracing::info!(
                 peer_epoch,
                 "loro: peer-id epoch loaded (#792); engine PeerIDs are \
-                 epoch-salted (this vault went through a snapshot RESET)",
+                 epoch-salted (this vault went through a snapshot RESET or a \
+                 restore)",
             );
         }
     }
