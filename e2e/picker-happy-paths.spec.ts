@@ -84,7 +84,7 @@ test.describe('slash reference commands open their picker @editor', () => {
 
   test('/link inserts the picked page link, which persists', async ({ page }) => {
     await runSlashCommand(page, 'link', 'LINK — Insert page link')
-    const picker = await pickerNamed(page, 'Block links')
+    const picker = await pickerNamed(page, 'Page links')
     await picker.getByRole('option', { name: 'Projects', exact: true }).click()
     await saveBlock(page, 'Escape')
 

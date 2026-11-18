@@ -12,14 +12,19 @@
  * verbatim into a single `en.translation` resource here. English is
  * statically bundled because it is `fallbackLng`, and a fallback that has
  * to be loaded is a fallback that can fail. Every other locale lives under
- * `src/lib/i18n/<locale>/` and arrives via `loadLocale()` below.
+ * `src/lib/i18n/<locale>/` and arrives via `loadLocale()` in `set-locale.ts`.
  *
  * To add a new key: pick the namespace file that matches the key's first
- * segment and add the entry there. English is the source of truth for
- * wording; a locale with no translation for that key yet needs no entry at
- * all — `fallbackLng: 'en'` renders the English string. Do NOT hand-roll a
- * locale resource outside the registry in `locales.ts`, and do NOT build a
- * parallel resource tree next to the namespace files.
+ * segment, add the entry there under a `// Translators:` note saying where it
+ * appears (`translator-context.test.ts`), and add its translation to the same file in
+ * every base-locale directory (`de/`, `es/`, `fr/`, …) in the same change —
+ * `locale-catalogs.test.ts` fails on a key any of them lacks. English is the
+ * source of truth for wording. A plural is always an explicit `_one` /
+ * `_other` pair: i18next falls back from a form a locale lacks (Spanish
+ * `_many`) to the bare key before `_other`, so a bare key doubling as the
+ * singular would render "1000000 bloque". Do NOT hand-roll a locale resource
+ * outside the registry in `locales.ts`, and do NOT build a parallel resource
+ * tree next to the namespace files.
  */
 
 import i18n from 'i18next'

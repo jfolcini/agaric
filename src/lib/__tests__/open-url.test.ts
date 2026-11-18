@@ -2,13 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('openUrl', () => {
   const mockOpen = vi.fn()
+  const warn = vi.fn()
 
   beforeEach(() => {
     vi.resetModules()
+    warn.mockReset()
+    vi.doMock('@/lib/logger', () => ({ logger: { warn, error: vi.fn() } }))
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.doUnmock('@/lib/platform')
   })
 
   it('calls openUrl() from @tauri-apps/plugin-opener when available and resolves true', async () => {
@@ -19,6 +24,7 @@ describe('openUrl', () => {
     const result = await openUrl('https://example.com')
 
     expect(mockOpen).toHaveBeenCalledWith('https://example.com')
+    expect(warn).not.toHaveBeenCalled()
     expect(result).toBe(true)
   })
 
@@ -40,8 +46,11 @@ describe('openUrl', () => {
     expect(result).toBe(true)
   })
 
-  it('falls back to window.open when the Tauri opener rejects (handle non-null → true)', async () => {
-    mockOpen.mockRejectedValueOnce(new Error('opener refused'))
+  // #6871 — a refusal was dropped on desktop, so a link that did not open left
+  // nothing in the log.
+  it('logs the refusal and falls back to window.open when the Tauri opener rejects (handle non-null → true)', async () => {
+    const refusal = new Error('opener refused')
+    mockOpen.mockRejectedValueOnce(refusal)
     vi.doMock('@tauri-apps/plugin-opener', () => ({ openUrl: mockOpen }))
     const fakeWindow = {} as Window
     const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => fakeWindow)
@@ -50,6 +59,12 @@ describe('openUrl', () => {
     const result = await openUrl('https://opener-fail.com')
 
     expect(mockOpen).toHaveBeenCalledWith('https://opener-fail.com')
+    expect(warn).toHaveBeenCalledWith(
+      'open-url',
+      'the opener refused the link',
+      { url: 'https://opener-fail.com' },
+      refusal,
+    )
     expect(windowOpenSpy).toHaveBeenCalledWith(
       'https://opener-fail.com',
       '_blank',
@@ -120,9 +135,8 @@ describe('openUrl', () => {
     const result = await openUrl('https://example.com')
 
     expect(result).toBe(false)
+    expect(warn).toHaveBeenCalledTimes(1)
     expect(windowOpenSpy).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
-    vi.doUnmock('@/lib/platform')
   })
 
   it('never rejects across all three branches', async () => {

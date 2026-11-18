@@ -31,8 +31,8 @@ import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 
 /**
  * Catalog key convention: `namespace.name`, optionally suffixed with one
- * CLDR plural category. The `es` catalog is held to the same convention by
- * `src/lib/i18n/__tests__/es-catalog.test.ts`.
+ * CLDR plural category. Every other locale may carry only keys English has
+ * (`src/lib/i18n/__tests__/locale-catalogs.test.ts`), so this binds them too.
  */
 const KEY_CONVENTION_RE = /^[a-zA-Z]+(\.[a-zA-Z0-9]+)+(_zero|_one|_two|_few|_many|_other)?$/
 

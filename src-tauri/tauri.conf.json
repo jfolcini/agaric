@@ -56,7 +56,10 @@
     },
     "linux": {
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/bin/xdg-open": "scripts/appimage-xdg-open.sh"
+        }
       }
     }
   }

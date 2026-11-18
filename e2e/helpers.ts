@@ -874,7 +874,11 @@ export async function openSettingsTab(page: Page, name: string) {
     return
   }
   await select.click()
-  await page.getByRole('option', { name, exact: true }).click()
+  // The open list scrolls to line the chosen item up with the trigger, and a
+  // tap aimed while it moves can miss under load, leaving the list open on the
+  // old tab. The keyboard needs no aim.
+  await page.getByRole('option', { name, exact: true }).press('Enter')
+  await expect(select).toHaveText(name)
 }
 
 /** Navigate to the page editor for a given page title. */
