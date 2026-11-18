@@ -53,6 +53,10 @@ const REAL_BACKEND_SPECS = [
   'search-shown-text-6277.spec.ts',
   'search-toggles.spec.ts',
   'search-view-mobile.spec.ts',
+  'space-move-property-loss.spec.ts',
+  'spaces-coverage.spec.ts',
+  'spaces-happy-paths.spec.ts',
+  'tooltip-pointer-events.spec.ts',
 ]
 
 export default defineConfig({
