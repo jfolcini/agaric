@@ -1405,8 +1405,9 @@ const PAGE_OPEN_IPC = [
   'record_page_open',
 ]
 /**
- * The open set plus the chip's target lookup, minus the tag list: the header
- * stays mounted and loads that once per space.
+ * The open set plus the chip's target lookup, minus the tag list and the
+ * property definitions: the header stays mounted and loads the tags once per
+ * space, and the definitions are the space's shared query, already cached.
  */
 const LINK_CLICK_IPC = [
   'batch_resolve',
@@ -1422,7 +1423,6 @@ const LINK_CLICK_IPC = [
   'list_backlinks_grouped',
   'list_inherited_tags_for_block',
   'list_pages_with_metadata',
-  'list_property_defs',
   'list_tags_for_block',
   'load_page_subtree',
   'plugin:window|set_title',
