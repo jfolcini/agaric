@@ -1,4 +1,4 @@
-# Session 4317 — icon labels on touch, shortcuts with a keyboard, no native titles
+# Session 4327 — icon labels on touch, shortcuts with a keyboard, no native titles
 
 Last PR of #6895, after #6900 (App health) and #6910 (explanations behind an ⓘ). It covers the rest of the issue: icon names on touch, one hover delay, the native `title`, and the editor's broken link chip.
 
