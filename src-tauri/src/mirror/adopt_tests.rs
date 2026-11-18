@@ -541,3 +541,32 @@ async fn an_edit_in_agaric_keeps_the_lines_agaric_reads_otherwise_in_an_adopted_
     fx.ticks(&mut mirror, 2).await;
     assert_eq!(fx.files()["Messy.md"], own.replace("- Second", "- SECOND"));
 }
+
+/// A folder refused while another is adopted leaves the adoption as it was:
+/// the adopted folder is given back only once the new one is taken.
+#[tokio::test]
+async fn a_refused_folder_leaves_the_adopted_one_adopted() {
+    let fx = Fx::new(&[("Inbox.md", "A loose thought\n")]).await;
+    let files = fx.import(&["Inbox.md"]).await;
+    fx.adopt(files).await.unwrap();
+    let busy = TempDir::new().unwrap();
+    std::fs::write(busy.path().join("someone else's.txt"), "x").unwrap();
+    let refused = set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(busy.path().to_str().unwrap().to_owned()),
+        true,
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { .. })),
+        "{refused:?}"
+    );
+    let status = get_mirror_status_inner(&fx.pool, DEV, &fx.state)
+        .await
+        .unwrap();
+    assert_eq!(status.adopted_space.as_deref(), Some(TEST_SPACE_ID));
+    assert_eq!(status.folder, Some(fx.folder()));
+    assert!(fx.vault.join(store::MARKER_NAME).exists());
+}

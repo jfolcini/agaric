@@ -209,6 +209,7 @@ async fn plan(
     let mut on_disk = Vec::new();
     files_below(folder, folder, &mut on_disk)
         .map_err(|e| AppError::validation(format!("cannot read the folder: {e}")))?;
+    on_disk.sort_unstable();
     let mapped = mapped(files, &pages, &on_disk)?;
     let pins = mapped
         .iter()
@@ -373,7 +374,6 @@ fn files_below(root: &Path, dir: &Path, found: &mut Vec<String>) -> std::io::Res
             found.push(parts.join("/"));
         }
     }
-    found.sort_unstable();
     Ok(())
 }
 
