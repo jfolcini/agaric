@@ -16,9 +16,15 @@
 //! GTK the host's title-bar button layout instead of the AppImage's bundled one.
 //! Only its dir selection is unit-tested; the GSettings read and the GTK write
 //! need the host's compiled schemas and a display.
+//!
+//! The desktop cache tools run with the session's environment rather than the
+//! bundle's (`host_env`); `scripts/appimage-xdg-open.sh` does the same for
+//! the links and folders the opener plugin opens.
 
 use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Self-integrate the running AppImage into the host's XDG desktop dirs.
 ///
@@ -164,16 +170,85 @@ fn files_equal(a: &Path, b: &Path) -> bool {
 }
 
 /// Best-effort cache refresh so the new launcher/icon appear without a
-/// re-login. Missing tools (minimal desktops) are ignored.
+/// re-login. A missing tool (minimal desktops) is logged and skipped.
 fn refresh_caches(data_home: &Path) {
-    let _ = std::process::Command::new("update-desktop-database")
-        .arg(data_home.join("applications"))
-        .status();
-    let _ = std::process::Command::new("gtk-update-icon-cache")
+    let host_env = host_env();
+    let mut desktop_database = Command::new("update-desktop-database");
+    desktop_database.arg(data_home.join("applications"));
+    run_cache_tool(&mut desktop_database, &host_env);
+    let mut icon_cache = Command::new("gtk-update-icon-cache");
+    icon_cache
         .arg("-f")
         .arg("-t")
-        .arg(data_home.join("icons/hicolor"))
-        .status();
+        .arg(data_home.join("icons/hicolor"));
+    run_cache_tool(&mut icon_cache, &host_env);
+}
+
+fn run_cache_tool(tool: &mut Command, host_env: &[(OsString, Option<OsString>)]) {
+    apply_env(tool, host_env);
+    let name = tool.get_program().to_string_lossy().into_owned();
+    match tool.status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            tracing::warn!(tool = %name, %status, "AppImage: a desktop cache refresh failed");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!(tool = %name, "AppImage: desktop cache tool not installed; skipping");
+        }
+        Err(e) => {
+            tracing::warn!(tool = %name, error = %e, "AppImage: could not run a desktop cache refresh");
+        }
+    }
+}
+
+/// The environment changes that give a host program the app starts the
+/// session's environment rather than the AppImage's: each variable with an
+/// entry under `$APPDIR`, minus those entries, or `None` to remove it when
+/// nothing else is left. Empty outside an AppImage.
+///
+/// The AppImage's launchers point `LD_LIBRARY_PATH`, `PATH`, `GIO_MODULE_DIR`
+/// and more into the bundle, and a child inherits them: a host program linked
+/// to GLib then loads the bundle's older copy and can exit on a missing symbol
+/// (#6871). The app keeps them for itself, because its WebKit helper processes
+/// load the bundle's libraries.
+fn host_env() -> Vec<(OsString, Option<OsString>)> {
+    match std::env::var_os("APPDIR") {
+        Some(appdir) if !appdir.is_empty() => {
+            host_env_from(std::env::vars_os(), Path::new(&appdir))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Sets or removes each variable [`host_env`] lists on `command`.
+fn apply_env(command: &mut Command, host_env: &[(OsString, Option<OsString>)]) {
+    for (name, value) in host_env {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+}
+
+fn host_env_from(
+    vars: impl IntoIterator<Item = (OsString, OsString)>,
+    appdir: &Path,
+) -> Vec<(OsString, Option<OsString>)> {
+    let in_bundle = |entry: &[u8]| Path::new(OsStr::from_bytes(entry)).starts_with(appdir);
+    vars.into_iter()
+        .filter_map(|(name, value)| {
+            let entries: Vec<&[u8]> = value.as_bytes().split(|&b| b == b':').collect();
+            if !entries.iter().any(|entry| in_bundle(entry)) {
+                return None;
+            }
+            let kept: Vec<&[u8]> = entries
+                .into_iter()
+                .filter(|entry| !entry.is_empty() && !in_bundle(entry))
+                .collect();
+            let value = (!kept.is_empty()).then(|| OsString::from_vec(kept.join(&b':')));
+            Some((name, value))
+        })
+        .collect()
 }
 
 const WM_PREFERENCES_SCHEMA: &str = "org.gnome.desktop.wm.preferences";
@@ -433,5 +508,145 @@ mod tests {
             Vec::<PathBuf>::new(),
             "only separators"
         );
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        pairs
+            .iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+            .collect()
+    }
+
+    /// The input is the environment the 0.24.0 AppImage's `AppRun` hands the
+    /// app, trimmed to one variable of each shape.
+    #[test]
+    fn host_env_strips_bundle_entries_and_leaves_the_rest_6871() {
+        let a = "/tmp/.mount_AgaricX";
+        let env = vars(&[
+            (
+                "LD_LIBRARY_PATH",
+                &format!("{a}/usr/lib/:{a}/usr/lib/x86_64-linux-gnu/:"),
+            ),
+            (
+                "PATH",
+                &format!("{a}/usr/bin/:{a}/usr/sbin/:/usr/local/bin:/usr/bin"),
+            ),
+            (
+                "XDG_DATA_DIRS",
+                &format!("{a}/usr/share/:{a}/usr/share:/usr/share:/var/lib/flatpak/exports/share"),
+            ),
+            ("GIO_MODULE_DIR", &format!("{a}//usr/lib/gio/modules")),
+            ("APPDIR", a),
+            ("APPIMAGE", "/home/u/Downloads/Agaric.AppImage"),
+            ("DISPLAY", ":0"),
+            ("GTK_THEME", "Adwaita:dark"),
+            ("SIBLING", "/tmp/.mount_AgaricXY/usr/lib"),
+        ]);
+
+        let mut changes = host_env_from(env, Path::new(a));
+        changes.sort();
+
+        let set = |name: &str, value: &str| (OsString::from(name), Some(OsString::from(value)));
+        let removed = |name: &str| (OsString::from(name), None);
+        assert_eq!(
+            changes,
+            vec![
+                removed("APPDIR"),
+                removed("GIO_MODULE_DIR"),
+                removed("LD_LIBRARY_PATH"),
+                set("PATH", "/usr/local/bin:/usr/bin"),
+                set("XDG_DATA_DIRS", "/usr/share:/var/lib/flatpak/exports/share"),
+            ],
+            "a variable pointing into the bundle loses those entries; any other variable, \
+             a sibling dir sharing the mount's name prefix included, is left alone"
+        );
+    }
+
+    #[test]
+    fn host_env_from_changes_nothing_without_bundle_entries() {
+        let env = vars(&[("PATH", "/usr/bin"), ("LD_LIBRARY_PATH", "/opt/lib")]);
+        assert_eq!(
+            host_env_from(env, Path::new("/tmp/.mount_AgaricX")),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn apply_env_sets_and_removes_on_the_command() {
+        let mut command = Command::new("true");
+        command.env("LD_LIBRARY_PATH", "/tmp/.mount_AgaricX/usr/lib");
+        apply_env(
+            &mut command,
+            &[
+                (OsString::from("LD_LIBRARY_PATH"), None),
+                (OsString::from("PATH"), Some(OsString::from("/usr/bin"))),
+            ],
+        );
+        let mut envs: Vec<_> = command.get_envs().collect();
+        envs.sort();
+        assert_eq!(
+            envs,
+            vec![
+                (OsStr::new("LD_LIBRARY_PATH"), None),
+                (OsStr::new("PATH"), Some(OsStr::new("/usr/bin"))),
+            ]
+        );
+    }
+
+    /// Captures what this thread logs at `info` and above.
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    fn logged_while(run: impl FnOnce()) -> String {
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let buf = LogBuf::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("info"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        tracing::subscriber::with_default(subscriber, run);
+        String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+    }
+
+    #[test]
+    fn run_cache_tool_logs_a_failed_or_missing_tool_6871() {
+        let failed = logged_while(|| {
+            run_cache_tool(Command::new("sh").args(["-c", "exit 3"]), &[]);
+        });
+        assert!(
+            failed.contains("WARN") && failed.contains("exit status: 3"),
+            "a tool that ran and failed is a warning with its status: {failed}"
+        );
+
+        let missing = logged_while(|| {
+            run_cache_tool(
+                &mut Command::new("/nonexistent/update-desktop-database"),
+                &[],
+            );
+        });
+        assert!(
+            missing.contains("INFO") && missing.contains("not installed"),
+            "a tool that is not installed is noted, not a warning: {missing}"
+        );
+
+        let ok = logged_while(|| run_cache_tool(Command::new("sh").args(["-c", "exit 0"]), &[]));
+        assert_eq!(ok, "", "a tool that succeeds logs nothing");
     }
 }
