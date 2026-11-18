@@ -166,9 +166,12 @@ test.describe('Slash structural inserts @editor', () => {
       .poll(() => getInvokeCalls(page, 'set_property'))
       .toMatchObject([{ key: 'listStyle', value: { value_text: 'ordered' } }])
 
-    // The focused block gains no list node and no marker text of its own.
+    // The focused block gains no list node and no marker text of its own: the
+    // `1.` is the roving editor's widget (#3000), painted once the property
+    // lands, so wait for it before reading the text beside it.
     await expect(editor.locator('ol, ul, li')).toHaveCount(0)
-    await expect(editor).toHaveText('first item')
+    await expect(editor.locator('.list-marker')).toHaveText('1.')
+    await expect(editor).toHaveText('1.first item')
 
     // Enter (not Escape): nothing in the block is a list node to escape from
     // any more. The Escape route is its own test below (#4577), where the
@@ -213,7 +216,9 @@ test.describe('Slash structural inserts @editor', () => {
     const item = list.locator('[data-testid="suggestion-item"]', { hasText: 'NUMBERED' }).first()
     await expect(item).toBeVisible()
     await item.click()
-    await expect(editor).toHaveText('escaped item')
+    // With or without the `1.` widget, which paints once the property lands:
+    // waiting for it would give the pending edit time to commit on its own.
+    await expect(editor).toHaveText(/^(1\.)?escaped item\s*$/)
 
     // Escape, not Enter: the gesture that used to throw the text away.
     await saveBlock(page, 'Escape')
