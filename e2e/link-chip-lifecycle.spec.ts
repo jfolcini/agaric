@@ -87,18 +87,6 @@ async function openFromPageList(page: Page, title: string): Promise<void> {
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
 }
 
-/** A second space, named `name`, to move pages into. */
-async function createSpace(page: Page, name: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  await page.mouse.move(0, 0)
-  await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-  const spaces = page.getByTestId('settings-panel-spaces')
-  await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
-  await spaces.getByPlaceholder('New space name').fill(name)
-  await spaces.getByRole('button', { name: 'Create', exact: true }).click()
-  await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
-}
-
 /** From Quick Notes: follow QN_1's chip to Getting Started and move it to `space`; the tab pops back. */
 async function moveGettingStartedTo(page: Page, space: string): Promise<void> {
   await chipIn(page, BLOCK_QN_1, 'block-link-chip').click()
@@ -259,8 +247,6 @@ test.describe('link chips follow their target @editor @pages', () => {
   test('a page moved to another space leaves the origin’s [[ picker and its chips break (#5248)', async ({
     page,
   }) => {
-    await createSpace(page, 'Work')
-
     // Warm the origin's `[[` picker, then put the text back. The tree (and the
     // picker cache it owns) stays mounted across in-editor link navigation.
     await openPage(page, 'Quick Notes')
@@ -291,7 +277,6 @@ test.describe('link chips follow their target @editor @pages', () => {
 test.describe('a broken chip removes itself when clicked (#5736) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
-    await createSpace(page, 'Work')
     await openPage(page, 'Quick Notes')
     await moveGettingStartedTo(page, 'Work')
   })
