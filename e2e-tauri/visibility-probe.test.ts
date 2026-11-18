@@ -118,8 +118,8 @@ describe('probeVisibilityInPage', () => {
   })
 
   it('counts EVERY document-wide match, which is the whole scope exposure', () => {
-    // The shape of reserved-property-roundtrip.e2e.ts:63: the row the
-    // assertion scoped to has no marker, two other blocks on the page do.
+    // A row-scoped task-marker wait: the row the assertion scoped to has no
+    // marker, two other blocks on the page do.
     document.body.innerHTML = `
       <li data-block-id="wanted"></li>
       <li data-block-id="other-1"><span data-testid="task-marker"></span></li>

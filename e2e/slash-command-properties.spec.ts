@@ -1,4 +1,16 @@
-import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
+import type { Page } from '@playwright/test'
+
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import {
+  expect,
+  focusBlock,
+  focusBlockById,
+  ipc,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E for the slash-command PROPERTY pickers (#1169 — remaining e2e category).
@@ -176,6 +188,109 @@ test.describe('Slash-command property pickers (#1169) @editor', () => {
     await expect(
       page.locator('[data-testid="sortable-block"]').first().locator('.repeat-indicator'),
     ).toBeVisible()
+  })
+})
+
+const GETTING_STARTED = '00000000000000000000PAGE01'
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+
+interface TaskRow {
+  id: string
+  content: string | null
+  todo_state: string | null
+}
+
+/** The occurrences of `content` on Getting Started, as the backend holds them. */
+async function occurrences(page: Page, content: string): Promise<TaskRow[]> {
+  const { items } = await ipc<{ items: TaskRow[] }>(page, 'list_blocks', {
+    request: { parentId: GETTING_STARTED, limit: 100 },
+    scope: SCOPE,
+  })
+  // The slash command leaves the space typed before its `/`.
+  return items.filter((row) => row.content?.trim() === content)
+}
+
+/** The rule keys block `blockId` holds: the rule, its limit and the count of occurrences. */
+async function ruleKeys(page: Page, blockId: string): Promise<string[]> {
+  const rows = await ipc<Array<{ key: string }>>(page, 'get_properties', { blockId })
+  const rule = new Set(['repeat', 'repeat-count', 'repeat-seq'])
+  return rows
+    .map((row) => row.key)
+    .filter((key) => rule.has(key))
+    .toSorted()
+}
+
+/** A TODO on Getting Started repeating under `rule`, each key's `set_property` value. */
+async function seedRepeatingTask(page: Page, content: string, rule: Record<string, object>) {
+  const { id } = await ipc<{ id: string }>(page, 'create_block', {
+    blockType: 'content',
+    content,
+    parentId: GETTING_STARTED,
+    index: null,
+    scope: SCOPE,
+    blockId: null,
+  })
+  await ipc(page, 'set_todo_state', { blockId: id, state: 'TODO' })
+  for (const [key, value] of Object.entries(rule)) {
+    await ipc(page, 'set_property', { blockId: id, key, value })
+  }
+  return id
+}
+
+async function pickRepeat(page: Page, blockId: string, item: string): Promise<void> {
+  await focusBlockById(page, blockId)
+  const list = await openSlashList(page, 'repeat')
+  await list.locator('[data-testid="suggestion-item"]', { hasText: item }).click()
+}
+
+// The mock accepted the delete the backend refused as a system key, and the backend removed only
+// `repeat`, leaving the limit and the count, so a rule set again was born spent.
+test.describe('/repeat remove (#5160) @editor', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('removes a task’s repeat, so completing it makes no next occurrence', async ({ page }) => {
+    const id = await seedRepeatingTask(page, 'Water plants', {
+      repeat: { value_text: 'daily' },
+    })
+    await openPage(page, 'Getting Started')
+    const indicator = page.locator(`[data-block-id="${id}"] .repeat-indicator`)
+    await expect(indicator).toBeVisible()
+
+    await pickRepeat(page, id, 'REPEAT REMOVE — Clear recurrence')
+    await expect(page.getByText('Repeat removed')).toBeVisible()
+    await expect.poll(() => ruleKeys(page, id)).toEqual([])
+    await reopenPage(page, 'Getting Started')
+    await expect(page.getByText('Water plants')).toBeVisible()
+    await expect(indicator).toHaveCount(0)
+
+    await ipc(page, 'set_todo_state', { blockId: id, state: 'DONE' })
+    expect((await occurrences(page, 'Water plants')).map((r) => r.todo_state)).toEqual(['DONE'])
+  })
+
+  test('a rule set again after /repeat remove makes the next occurrence', async ({ page }) => {
+    // A daily task limited to one occurrence: its completion makes the next, at the limit.
+    const first = await seedRepeatingTask(page, 'Feed cat', {
+      repeat: { value_text: 'daily' },
+      'repeat-count': { value_num: 1 },
+    })
+    await ipc(page, 'set_todo_state', { blockId: first, state: 'DONE' })
+    await expect.poll(async () => (await occurrences(page, 'Feed cat')).length).toBe(2)
+    const next =
+      (await occurrences(page, 'Feed cat')).find((r) => r.todo_state === 'TODO')?.id ?? ''
+
+    await openPage(page, 'Getting Started')
+    await pickRepeat(page, next, 'REPEAT REMOVE — Clear recurrence')
+    await expect(page.getByText('Repeat removed')).toBeVisible()
+    await expect.poll(() => ruleKeys(page, next)).toEqual([])
+    await reopenPage(page, 'Getting Started')
+    await pickRepeat(page, next, 'REPEAT DAILY — Every day')
+    await expect(page.getByText(/^Set repeat to/)).toBeVisible()
+    await expect.poll(() => ruleKeys(page, next)).toEqual(['repeat'])
+
+    await ipc(page, 'set_todo_state', { blockId: next, state: 'DONE' })
+    await expect.poll(async () => (await occurrences(page, 'Feed cat')).length).toBe(3)
   })
 })
 

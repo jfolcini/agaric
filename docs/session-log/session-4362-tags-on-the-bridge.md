@@ -66,3 +66,28 @@ Both call sites now go through `formatErrorForDisplay`, as `useSpaceMove` does. 
 Two breaks did not redden the number test. With `type_change_writes` writing nothing, the conversion still landed through `reproject_key_values`; skipping the reprojection alone, the value writes made it. Each path covers the other, which is why the coercion they share is the break that shows. Writing nothing did redden the list test.
 
 **Ran:** the seven files on the bridge, three times after the fix: 41 passed each time; on the mock, two repeats: 82 passed.
+
+## Slice 5: properties, part 2
+
+**Promoted:** `property-change-refresh`, `property-datetime`, `property-list-drawer`, `property-picker`, `property-ref-boolean-chips`, `property-types-happy-paths`, `slash-command-properties`, `backend-error-language`. All 25 tests passed on the bridge three times before any port.
+
+**Ported, then deleted:**
+- `property-list-copies` → `property-list-drawer.spec.ts`: a block holding a text list, one item with a comma, and a ref list keeps both through Duplicate and through `/template`, the ref item by block id. The ref target is a seeded page: the mock's minted ids are not ULIDs, and it refuses them as ref items.
+- `slash-repeat-remove` → `slash-command-properties.spec.ts`: `/repeat remove` takes the rule off, so a completion makes no next occurrence. On a task limited to one occurrence, removing the rule takes the limit and the count with it, so a rule set again makes the next occurrence. Completions go through `set_todo_state`, which makes the next occurrence itself.
+- `reserved-property-roundtrip` → `property-ref-boolean-chips.spec.ts`: a TODO set from the block menu is stored and still a task after navigating away and back. Its ref-property case was already *a ref chip shows its page renamed after navigating away and back*.
+- `escape-property-line` → `properties-table-and-refusals.spec.ts`: its control (Escape on a blank block an Enter made drops it) now sits beside its two twins there and in `property-picker`.
+
+**Ported, kept in `e2e-tauri/`:** `ref-property-title-follows-rename`'s bug class (#6427): an open ref property's label follows a title that reaches the resolve cache after mount. On the bridge the title resolves after the property table mounts, so *an open ref property shows its target's title once it resolves* covers it. An IPC rename from the test sends the frontend no change event, so the agent's rename needs MCP. The WDIO file stays until the smoke lane's MCP spec takes it.
+
+**Shown red on the bridge**, each by one break:
+- `repeat` refused as a system-managed key: no "Repeat removed", in both tests.
+- The rule's bounds kept: the second test's next occurrence still held `repeat-count` and `repeat-seq`.
+- A quoted list item read without its quotes: the copy held `"review` and `final"`.
+- `/template` dropping `value_list`: the insert itself failed (no "Template inserted"), not the lists check.
+- `set_todo_state` storing null: `get_block` read no state.
+- The empty-block cleanup skipping content blocks: the blank block was not deleted.
+- `RefEditor` reading the title without subscribing (#6427 reverted): the label showed the raw `[[id]]`.
+
+The first Duplicate break, no `note_list` write-back, did not redden: that path carries lists of keys nobody declared, and this test's keys are declared.
+
+**Ran:** the eight files plus `properties-table-and-refusals` on the bridge, three times: 40 passed each time; on the mock, two repeats: 80 passed after the ref-target fix; `npm run typecheck`.
