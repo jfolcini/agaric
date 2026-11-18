@@ -103,18 +103,24 @@ export function SetOnTaggedBlocks({
     }
   }
 
-  const preview = async (): Promise<void> => {
+  /** Count the write; `true` when there is something to confirm. */
+  const preview = async (): Promise<boolean> => {
     const write = request()
     if (write === null) {
       notify.error(t('tagProperties.valueNeeded'))
-      return
+      return false
     }
     try {
       const next = unwrap(await commands.previewSetPropertyOnTaggedBlocks(write))
-      if (next.added + next.changed === 0) notify.success(t('tagProperties.nothingToSet', { key }))
-      else setCounts(next)
+      if (next.added + next.changed === 0) {
+        notify.success(t('tagProperties.nothingToSet', { key }))
+        return false
+      }
+      setCounts(next)
+      return true
     } catch (err) {
       reportIpcErrorWithReason('SetOnTaggedBlocks', 'tagProperties.setFailed', err, t, { tagId })
+      return false
     }
   }
 
@@ -137,7 +143,8 @@ export function SetOnTaggedBlocks({
     } catch (err) {
       if (validationCode(err) === ValidationCode.UnacknowledgedPropertyLoss) {
         notify.error(t('tagProperties.countsChanged'))
-        await preview()
+        // Thrown into `ConfirmDialog` so it stays open on the new counts.
+        if (await preview()) throw err
         return
       }
       reportIpcErrorWithReason('SetOnTaggedBlocks', 'tagProperties.setFailed', err, t, { tagId })
