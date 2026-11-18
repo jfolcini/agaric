@@ -30,6 +30,8 @@ struct Fx {
     mirror: Mirror,
     root: PathBuf,
     events: Arc<Mutex<Vec<MirrorIngested>>>,
+    /// Each list of held space folders the mirror told, in order.
+    told_held: Arc<Mutex<Vec<Vec<String>>>>,
     /// Run when an ingest's event is sent, before the file is written back.
     on_event: Hook,
     _dirs: [TempDir; 3],
@@ -61,6 +63,8 @@ impl Fx {
         let seen = Arc::clone(&events);
         let on_event: Hook = Arc::default();
         let hook = Arc::clone(&on_event);
+        let told_held = Arc::new(Mutex::new(Vec::new()));
+        let told = Arc::clone(&told_held);
         let ingest = Ingest {
             pool: pool.clone(),
             materializer: mat.clone(),
@@ -70,6 +74,7 @@ impl Fx {
                     hook();
                 }
             }),
+            notify_held: Arc::new(move |folders| told.lock().unwrap().push(folders)),
         };
         let mirror = Mirror::open(pool.clone(), DEV.to_owned(), state.clone())
             .await
@@ -82,6 +87,7 @@ impl Fx {
             mirror,
             root,
             events,
+            told_held,
             on_event,
             _dirs: [db, data, folder],
         }
@@ -177,6 +183,10 @@ impl Fx {
 
     fn events(&self) -> Vec<MirrorIngested> {
         self.events.lock().unwrap().clone()
+    }
+
+    fn told_held(&self) -> Vec<Vec<String>> {
+        self.told_held.lock().unwrap().clone()
     }
 }
 
@@ -2593,6 +2603,59 @@ async fn files_put_back_as_they_were_turn_reading_back_on_again() {
     }
 }
 
+/// A hold is told as it starts, naming its space's folder, and not again each
+/// tick it lasts; its end is told too, here the user reading the files in,
+/// so no notice of it outlives it (#6964).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hold_is_told_once_as_it_starts_and_once_as_it_ends() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    for (_, file) in &made {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+    for _ in 0..MISSING_TICKS + 4 {
+        fx.tick().await;
+    }
+    let status = fx.status().await;
+    assert_eq!(status.held, ["TestSpace"], "the fixture: held");
+    assert_eq!(fx.told_held(), [vec!["TestSpace".to_owned()]]);
+
+    confirm(&fx, paths(&status.pending)).await.unwrap();
+    fx.tick().await;
+    fx.tick().await;
+
+    assert_eq!(
+        fx.told_held(),
+        [vec!["TestSpace".to_owned()], Vec::<String>::new()]
+    );
+}
+
+/// A hold the user ended is told ended even when the next tick holds the
+/// same folder again, as edited files read in and deleted since do: the
+/// notice and the card then show the new hold instead of none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hold_ended_by_the_user_and_held_again_by_the_next_tick_is_told_again() {
+    let mut fx = Fx::new().await;
+    let (_, made) = alpha_and_pages(&mut fx, MASS_CHANGE + 1).await;
+    for (_, file) in &made {
+        write_at(&fx, file, "changed outside\n");
+    }
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+    let status = fx.status().await;
+    assert_eq!(status.held, ["TestSpace"], "the fixture: held");
+    confirm(&fx, status.pending).await.unwrap();
+    for (_, file) in &made {
+        std::fs::remove_file(fx.root.join(file)).unwrap();
+    }
+
+    fx.tick().await;
+
+    let held = vec!["TestSpace".to_owned()];
+    assert_eq!(fx.told_held(), [held.clone(), Vec::new(), held]);
+}
+
 /// The hold is kept in memory only: files deleted while Agaric was closed, or
 /// before a restart, are asked about by the mirror that starts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2609,6 +2672,7 @@ async fn files_deleted_before_a_restart_trash_no_page_until_the_user_says_so() {
         pool: fx.pool.clone(),
         materializer: fx.mat.clone(),
         notify: Arc::new(|_| {}),
+        notify_held: Arc::new(|_| {}),
     };
     fx.mirror = Mirror::open(fx.pool.clone(), DEV.to_owned(), fx.state.clone())
         .await

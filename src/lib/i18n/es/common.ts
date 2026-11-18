@@ -514,6 +514,8 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeTurnOff':
     'Si cambias muchos archivos a la vez a propósito, como al cambiar el nombre de una nota a la que enlazan muchas otras, puedes hacer que Agaric deje de preguntar.',
   'data.mirrorMassChangeShowSetting': 'Mostrar la opción',
+  'data.mirrorHeld':
+    'Muchos archivos de {{spaces}} han cambiado o desaparecido a la vez fuera de Agaric, así que no se lee nada hasta que los revises',
   'data.mirrorReadPendingTitle': '¿Leer lo que ha cambiado?',
   'data.mirrorReadPendingDesc_one':
     'Este archivo ha cambiado fuera de Agaric y aún no se ha leído. Al activar la lectura de cambios externos, se lee.',

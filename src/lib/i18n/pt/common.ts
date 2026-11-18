@@ -513,6 +513,8 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeTurnOff':
     'Se você altera muitos arquivos de uma vez de propósito, como ao renomear uma nota para a qual muitas outras apontam, pode fazer o Agaric parar de perguntar.',
   'data.mirrorMassChangeShowSetting': 'Mostrar a configuração',
+  'data.mirrorHeld':
+    'Muitos arquivos de {{spaces}} mudaram ou sumiram de uma vez fora do Agaric, por isso nada é lido até que você os revise',
   'data.mirrorReadPendingTitle': 'Ler o que mudou?',
   'data.mirrorReadPendingDesc_one':
     'Este arquivo mudou fora do Agaric e ainda não foi lido. Ativar a leitura de volta faz a leitura dele.',
