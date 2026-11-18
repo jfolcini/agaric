@@ -5,12 +5,11 @@
  */
 
 import type React from 'react'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
-import { notify } from '@/lib/notify'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 
 const DEADLINE_WARNING_MIN = 0
@@ -22,37 +21,28 @@ export function DeadlineWarningSection(): React.ReactElement {
   // so this stays in lock-step with useDuePanelData's read of the same key —
   // previously the two independently duplicated the parse logic.
   const [days, setDays] = usePreference(PREFERENCES.deadlineWarningDays)
+  // Silent clamping (typing 100 and getting 90 with no feedback) confuses
+  // users. Set on change, not on blur: the controlled field shows the clamped
+  // value as soon as the change lands, so a blur never sees what was typed.
+  const [clamped, setClamped] = useState(false)
 
   const handleChange = useCallback(
     (value: number) => {
       // Treat a blank/invalid entry (e.g. mid-edit field clear → NaN) as
       // "no change" rather than silently coercing to 0, which would disable
       // the warning and discard the user's setting without feedback.
-      if (!Number.isFinite(value)) return
-      const clamped = Math.max(DEADLINE_WARNING_MIN, Math.min(DEADLINE_WARNING_MAX, value))
-      setDays(clamped)
+      if (!Number.isFinite(value)) {
+        setClamped(false)
+        return
+      }
+      const next = Math.max(DEADLINE_WARNING_MIN, Math.min(DEADLINE_WARNING_MAX, value))
+      setClamped(next !== value)
+      setDays(next)
     },
     [setDays],
   )
 
-  // Notify the user when their typed value was clamped — silent clamping
-  // (e.g. typing 100 and getting 90 with no feedback) is a documented
-  // anti-pattern and confuses users.
-  const handleBlur = useCallback(
-    (e: React.FocusEvent<HTMLInputElement>) => {
-      const raw = Number.parseInt(e.target.value, 10)
-      if (!Number.isFinite(raw)) return
-      if (raw < DEADLINE_WARNING_MIN || raw > DEADLINE_WARNING_MAX) {
-        notify.info(
-          t('settings.valueClamped', {
-            min: DEADLINE_WARNING_MIN,
-            max: DEADLINE_WARNING_MAX,
-          }),
-        )
-      }
-    },
-    [t],
-  )
+  const descriptionId = settingDescriptionId('deadline-warning-days')
 
   return (
     <SettingRow
@@ -68,12 +58,21 @@ export function DeadlineWarningSection(): React.ReactElement {
           min={DEADLINE_WARNING_MIN}
           max={DEADLINE_WARNING_MAX}
           value={days}
-          aria-describedby={settingDescriptionId('deadline-warning-days')}
+          aria-describedby={
+            clamped ? `${descriptionId} deadline-warning-days-clamped` : descriptionId
+          }
           onChange={(e) => handleChange(Number.parseInt(e.target.value, 10))}
-          onBlur={handleBlur}
         />
         <span className="text-xs text-muted-foreground">{t('block.daysUnit')}</span>
       </div>
+      {clamped ? (
+        <output
+          id="deadline-warning-days-clamped"
+          className="mt-1 block text-xs text-muted-foreground"
+        >
+          {t('settings.valueClamped', { min: DEADLINE_WARNING_MIN, max: DEADLINE_WARNING_MAX })}
+        </output>
+      ) : null}
     </SettingRow>
   )
 }

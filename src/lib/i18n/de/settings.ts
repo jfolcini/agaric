@@ -18,7 +18,6 @@ export const settings: Record<string, string> = {
   'settings.showWelcomeTour.description':
     'Öffnet das Willkommensfenster des ersten Starts erneut, einschließlich der Option, die Beispielseiten zu erstellen.',
   'settings.showWelcomeTour.button': 'Tour anzeigen',
-  'settings.showWelcomeTour.success': 'Willkommenstour erneut geöffnet',
   'settings.tabGeneral': 'Allgemein',
   'settings.tabSpaces': 'Bereiche',
   'settings.spaces.description':
@@ -50,7 +49,6 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageAlways': 'Immer laden',
   'settings.editor.externalImageClick': 'Jedes Mal fragen (empfohlen)',
   'settings.editor.externalImageNever': 'Nie laden',
-  'settings.editor.externalImageUpdated': 'Richtlinie für externe Bilder aktualisiert',
   'settings.editor.externalImageAllowedHosts': 'Erlaubte Bild-Domains',
   'settings.editor.externalImageRemoveHost': '{{host}} entfernen',
   'settings.editor.linkPreviewLabel': 'Linkvorschauen beim Überfahren laden',
@@ -294,7 +292,6 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'Woche beginnt am',
   'settings.weekStartMonday': 'Montag',
   'settings.weekStartSunday': 'Sonntag',
-  'settings.weekStartUpdated': 'Die Woche beginnt jetzt am {{day}}',
   'settings.journalDateFormatLabel': 'Datumsformat des Journals',
   'settings.journalDateFormatHelp':
     'Wie Journaltitel angezeigt werden. Seiten werden immer als YYYY-MM-DD gespeichert, daher wirkt sich eine Änderung nie auf bestehende Journale aus.',
@@ -303,6 +300,5 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Monat D, YYYY (z. B. Juni 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/YYYY (z. B. 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (z. B. Mi., Juni 17)',
-  'settings.journalDateFormatUpdated': 'Das Journaldatum wird jetzt als {{example}} angezeigt',
   'settings.valueClamped': 'Wert auf {{min}}–{{max}} begrenzt',
 }

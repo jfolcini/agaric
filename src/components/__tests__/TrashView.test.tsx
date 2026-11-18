@@ -2044,14 +2044,9 @@ describe('TrashView', () => {
     expect(purgeCalls).toBe(2)
   })
 
-  // #3860 — the issue's actual complaint: at N=1 the toast and the
-  // screen-reader announcement must AGREE within the SAME user action, not
-  // merely each independently say "1" somewhere. Before the fix, the toast
-  // rendered the "_other"-shaped "Removed 1 items…" while `announce()` (which
-  // already had `_one`/`_other`) correctly said "…1 item…" — the two channels
-  // disagreed for one purge. Asserts both mocks together so a regression in
-  // either alone reddens this test.
-  it('toast and screen-reader announcement agree on singular wording for a 1-item partial purge', async () => {
+  // #3860 — the toast is the one channel a screen reader hears (sonner's live
+  // region), so a 1-item partial purge says it once, in the singular.
+  it('a 1-item partial purge is voiced once, by the singular toast', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2078,12 +2073,8 @@ describe('TrashView', () => {
         'Removed 1 item before an error interrupted emptying trash',
       )
     })
-    expect(mockedAnnounce).toHaveBeenCalledWith(
-      'Trash partially emptied — 1 item permanently deleted before an error interrupted it',
-    )
-    // Neither channel fell back to the "_other"-shaped plural wording.
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
-    expect(mockedAnnounce).not.toHaveBeenCalledWith(expect.stringContaining('1 items permanently'))
   })
 
   it('opens confirmation dialog when Restore All header is clicked', async () => {
@@ -2367,9 +2358,7 @@ describe('TrashView', () => {
           `Restored ${MAX_BATCH_BLOCK_IDS} items before an error interrupted restoring all`,
         )
       })
-      expect(mockedAnnounce).toHaveBeenCalledWith(
-        `Restore all partially completed — ${MAX_BATCH_BLOCK_IDS} items restored before an error interrupted it`,
-      )
+      expect(mockedAnnounce).not.toHaveBeenCalled()
       expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
       expect(restoreCalls).toBe(2)
       // The two invalidations the failure path used to skip.
@@ -2547,8 +2536,10 @@ describe('TrashView', () => {
   })
 })
 
-describe('TrashView screen reader announcements', () => {
-  it('announces batch restore count after Restore selected', async () => {
+// The Toaster is a polite live region, so a toast is already announced; a
+// second `announce()` of the same event makes a screen reader say it twice.
+describe('TrashView screen reader feedback is the toast alone', () => {
+  it('toasts the batch restore count after Restore selected, without a second announcement', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2572,11 +2563,12 @@ describe('TrashView screen reader announcements', () => {
     await user.click(screen.getByRole('button', { name: /Restore selected/i }))
 
     await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('2 blocks restored from trash')
+      expect(toast.success).toHaveBeenCalledWith('2 blocks restored')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
-  it('announces batch purge count after confirmation', async () => {
+  it('toasts the batch purge count after confirmation, without a second announcement', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2601,14 +2593,15 @@ describe('TrashView screen reader announcements', () => {
     await user.click(screen.getByRole('button', { name: /Yes/i }))
 
     await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('2 blocks permanently deleted')
+      expect(toast.success).toHaveBeenCalledWith('2 blocks permanently deleted')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
-  // #1888 — batch restore failure must surface the error (toast + live-region
-  // announce, mirroring the single-item path) AND keep the selection so the
-  // user can retry, rather than silently clearing it.
-  it('batch restore failure shows error toast, announces, and keeps the selection', async () => {
+  // #1888 — batch restore failure must surface the error (a toast, mirroring
+  // the single-item path) AND keep the selection so the user can retry,
+  // rather than silently clearing it.
+  it('batch restore failure shows error toast and keeps the selection', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const mockedToastError = vi.mocked(toast.error)
@@ -2636,7 +2629,7 @@ describe('TrashView screen reader announcements', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to restore selected blocks')
     })
-    expect(mockedAnnounce).toHaveBeenCalledWith('Batch restore failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
 
     // Selection preserved (toolbar still shows 2 selected, both rows checked).
@@ -2659,9 +2652,9 @@ describe('TrashView screen reader announcements', () => {
     })
   })
 
-  // #1888 — batch purge failure: same contract (error toast + announce, dialog
-  // closes, selection preserved).
-  it('batch purge failure shows error toast, announces, and keeps the selection', async () => {
+  // #1888 — batch purge failure: same contract (error toast, dialog closes,
+  // selection preserved).
+  it('batch purge failure shows error toast and keeps the selection', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const mockedToastError = vi.mocked(toast.error)
@@ -2690,7 +2683,7 @@ describe('TrashView screen reader announcements', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to purge selected blocks')
     })
-    expect(mockedAnnounce).toHaveBeenCalledWith('Batch purge failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
 
     // Confirmation dialog closed, but selection preserved for retry.
@@ -2749,9 +2742,7 @@ describe('TrashView screen reader announcements', () => {
         'The trash listing was out of date and has been refreshed',
       )
     })
-    expect(mockedAnnounce).toHaveBeenCalledWith(
-      'Trash listing was out of date and has been refreshed',
-    )
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     // NOT the generic failure copy — a retry-worded toast would be
     // misleading here since the same selection would fail identically.
     expect(mockedToastError).not.toHaveBeenCalledWith('Failed to purge selected blocks')
@@ -2765,7 +2756,7 @@ describe('TrashView screen reader announcements', () => {
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
   })
 
-  it('announces trash emptied count on Empty Trash success', async () => {
+  it('toasts the trash emptied count on Empty Trash success, without a second announcement', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2787,11 +2778,12 @@ describe('TrashView screen reader announcements', () => {
     await user.click(screen.getByRole('button', { name: /Yes/i }))
 
     await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Trash emptied — 5 items permanently deleted')
+      expect(toast.success).toHaveBeenCalledWith('Trash emptied (5 items permanently deleted)')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
-  it('announces failure when empty trash backend rejects', async () => {
+  it('toasts the failure when empty trash backend rejects, without a second announcement', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2815,8 +2807,9 @@ describe('TrashView screen reader announcements', () => {
     await user.click(screen.getByRole('button', { name: /Yes/i }))
 
     await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Empty trash failed')
+      expect(toast.error).toHaveBeenCalledWith('Failed to empty trash')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 })
 

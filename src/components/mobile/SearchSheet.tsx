@@ -36,7 +36,6 @@ import { useLongPress } from '@/hooks/useLongPress'
 import { usePullToDismiss } from '@/hooks/usePullToDismiss'
 import { useSearchSheetBridge } from '@/hooks/useSearchSheetBridge'
 import { haptic } from '@/lib/haptics'
-import { notify } from '@/lib/notify'
 import {
   clearPinnedSearchScope,
   getPinnedSearchScope,
@@ -88,14 +87,10 @@ export function SearchSheet(): React.ReactElement | null {
     if (pinnedScope === scope) {
       clearPinnedSearchScope()
       setPinnedScope(null)
-      notify.success(t('searchSheet.scopeUnpinned'))
       return
     }
     setPinnedSearchScope(scope)
     setPinnedScope(scope)
-    const label =
-      scope === 'in-page' ? t('searchSheet.segmentInPage') : t('searchSheet.segmentAllPages')
-    notify.success(t('searchSheet.scopePinned', { scope: label }))
   }
 
   const inPagePinHandlers = useLongPress({ onLongPress: () => pinScope('in-page') })

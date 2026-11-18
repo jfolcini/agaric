@@ -268,27 +268,13 @@ export const common: Record<string, string> = {
   'announce.pairingCountdownMinute': 'Pairing session expires in 1 minute',
   'announce.pairingExpired': 'Pairing session expired',
 
-  // Translators: Announcer (spoken) in the PairingDialog as pairing goes on, succeeds or fails; the
+  // Translators: Announcer (spoken) in the PairingDialog as pairing goes on or fails; the
   // passphrase is the words the user enters on both devices to confirm.
   // #3469 — waiting-state transitions, announced once per transition (not
   // per tick) so screen-reader users learn the outcome without being spammed.
   'announce.pairingWaiting': 'Waiting for the other device to confirm pairing',
-  'announce.pairingSucceeded': 'Device paired successfully',
   'announce.pairingProofRejected': 'Pairing passphrase did not match',
   'announce.pairingWaitTimedOut': 'Pairing timed out waiting for the other device',
-
-  // Translators: Announcer (spoken) after Undo / Redo succeeds or fails.
-  'announce.undone': 'Undone',
-  'announce.undoFailed': 'Undo failed',
-  'announce.redone': 'Redone',
-  'announce.redoFailed': 'Redo failed',
-  // Translators: spoken when Undo is pressed in the Journal before any day was edited.
-  'announce.journalNoDay': 'No day to undo in yet',
-
-  // Translators: Announcer (spoken) in the Trash view after restoring or permanently deleting one
-  // block.
-  'announce.blockRestored': 'Block restored from trash',
-  'announce.blockPurged': 'Block permanently deleted',
 
   // Translators: Announcer (spoken) when blocks are selected in the editor; {{count}} = number of
   // selected blocks.
@@ -296,61 +282,16 @@ export const common: Record<string, string> = {
   'announce.blocksSelected_other': '{{count}} blocks selected',
   'announce.selectionCleared': 'Selection cleared',
 
-  // Translators: Announcer (spoken) in the Trash view after an action on several items (restore or
-  // delete the selection, "Empty trash", "Restore all") or its failure; {{count}} = number of
-  // blocks.
-  'announce.batchRestored_one': '{{count}} block restored from trash',
-  'announce.batchRestored_other': '{{count}} blocks restored from trash',
-  'announce.batchPurged_one': '{{count}} block permanently deleted',
-  'announce.batchPurged_other': '{{count}} blocks permanently deleted',
-  'announce.trashEmptied_one': 'Trash emptied — {{count}} item permanently deleted',
-  'announce.trashEmptied_other': 'Trash emptied — {{count}} items permanently deleted',
-  'announce.allRestored_one': 'All items restored — {{count}} block',
-  'announce.allRestored_other': 'All items restored — {{count}} blocks',
-  'announce.emptyTrashFailed': 'Empty trash failed',
-
-  // Translators: Announcer (spoken) in the Trash view when an action failed, possibly after part of
-  // the items were done; {{count}} = items done before the error. "Purge" = permanently delete.
-  // #3835 — `purgeAllDeletedInSpace` failing part-way through still
-  // committed the chunks before the failure; distinct from
-  // `emptyTrashFailed` (which implies nothing happened).
-  'announce.emptyTrashPartial_one':
-    'Trash partially emptied — {{count}} item permanently deleted before an error interrupted it',
-  'announce.emptyTrashPartial_other':
-    'Trash partially emptied — {{count}} items permanently deleted before an error interrupted it',
-  'announce.restoreAllFailed': 'Restore all failed',
-  'announce.restoreAllPartial_one':
-    'Restore all partially completed — {{count}} item restored before an error interrupted it',
-  'announce.restoreAllPartial_other':
-    'Restore all partially completed — {{count}} items restored before an error interrupted it',
-  'announce.restoreFailed': 'Restore failed',
-  'announce.purgeFailed': 'Purge failed',
-  'announce.batchRestoreFailed': 'Batch restore failed',
-  'announce.batchPurgeFailed': 'Batch purge failed',
-
-  // Translators: Announcer (spoken) in the Trash view when the list had changed and was reloaded.
-  // #3835 — `purge_blocks_by_ids` rejected the batch because the trash
-  // listing this selection came from is stale (a restore landed elsewhere).
-  'announce.batchPurgeStale': 'Trash listing was out of date and has been refreshed',
-
   // Translators: Announcer (spoken) in the History view (log of every edit) after undoing selected
   // changes or restoring to an earlier point; {{count}} = number of changes ("operations").
   'announce.opsReverted_one': '{{count}} operation reverted',
   'announce.opsReverted_other': '{{count}} operations reverted',
-  'announce.revertFailed': 'Revert failed',
-  'announce.restoreToHereSucceeded_one': 'Restored {{count}} operation',
-  'announce.restoreToHereSucceeded_other': 'Restored {{count}} operations',
-  'announce.restoreToHereFailed': 'Restore failed',
 
-  // Translators: Announcer (spoken) when a sync with the user's other devices starts, ends or
-  // fails.
+  // Translators: Announcer (spoken) when a sync with the user's other devices starts.
   'announce.syncStarted': 'Sync started',
-  'announce.syncCompleted': 'Sync completed',
-  'announce.syncFailed': 'Sync failed',
 
-  // Translators: Announcer (spoken) after a task is moved to another day (dragged onto it or picked
-  // in its date picker); {{date}} = a date written 2026-06-17.
-  'announce.taskRescheduled': 'Task rescheduled to {{date}}',
+  // Translators: Announcer (spoken) when moving a task to another day (dragged onto it or picked in
+  // its date picker) fails.
   'announce.rescheduleFailed': 'Reschedule failed',
 
   // Translators: Announcer (spoken) after a task's date is changed or removed; {{date}} = a date
@@ -358,28 +299,15 @@ export const common: Record<string, string> = {
   'announce.dateUpdated': 'Date updated to {{date}}',
   'announce.dateCleared': 'Date cleared',
 
-  // Translators: Announcer (spoken) after renaming, deleting or moving a page from its PageHeader.
-  'announce.pageRenamed': 'Page renamed',
-  'announce.pageRenameFailed': 'Page rename failed',
-  'announce.pageDeleted': 'Page deleted',
-  'announce.pageDeleteFailed': 'Page delete failed',
-  'announce.pageMoved': 'Page moved',
-  'announce.pageMoveFailed': 'Page move failed',
-
   // Translators: Announcer (spoken) after adding or removing a page alias (another name the page
   // can be linked by) in the PageHeader.
   'announce.aliasAdded': 'Alias added',
   'announce.aliasRemoved': 'Alias removed',
-  'announce.aliasFailed': 'Alias update failed',
 
-  // Translators: Announcer (spoken) after the page was copied as Markdown to the clipboard
-  // (PageHeader menu, command palette), or when that failed.
-  'announce.exported': 'Page exported to clipboard',
   // Translators: spoken when "Read aloud" (the device reading the page out loud) is stopped or
   // reaches the end.
   'announce.readAloudStopped': 'Stopped reading aloud',
   'announce.readAloudFinished': 'Finished reading aloud',
-  'announce.exportFailed': 'Export failed',
 
   // Translators: block context menu (opened by right-click or long-press on a block). With several
   // blocks selected these items act on all of them; {{count}} = number of selected blocks,
@@ -1292,8 +1220,6 @@ export const common: Record<string, string> = {
   // toasts ({{scope}} = "This page" or "All pages"), and the pin icon's screen-reader label.
   // #135 — long-press a scope to pin it as the default; aria hint + toasts.
   'searchSheet.scopePinHint': 'Long-press a scope to pin it as your default',
-  'searchSheet.scopePinned': 'Pinned “{{scope}}” as your default search scope',
-  'searchSheet.scopeUnpinned': 'Unpinned default search scope',
   'searchSheet.scopePinnedBadge': 'Pinned default',
 
   // Translators: phone search sheet, list of recent search terms: heading, a Clear button that

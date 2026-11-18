@@ -34,7 +34,6 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
-import { announce } from '@/lib/announcer'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
@@ -81,13 +80,11 @@ export function RescheduleDropZone({
       try {
         await reschedule(blockId, dateStr)
         notify.success(t('journal.rescheduled', { date: dateStr }))
-        announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('RescheduleDropZone', 'journal.rescheduleFailed', err, t, {
           blockId,
           dateStr,
         })
-        announce(t('announce.rescheduleFailed'))
       }
     },
     [dateStr, reschedule, t],

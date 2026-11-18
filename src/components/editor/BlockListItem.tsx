@@ -39,7 +39,6 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
-import { announce } from '@/lib/announcer'
 import {
   displayPageTitle,
   dueDateColor,
@@ -454,13 +453,11 @@ function BlockListItemInner({
       try {
         await reschedule(blockId, dateStr)
         notify.success(t('journal.rescheduled', { date: dateStr }))
-        announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('BlockListItem', 'journal.rescheduleFailed', err, t, {
           blockId,
           dateStr,
         })
-        announce(t('announce.rescheduleFailed'))
       }
     },
     [blockId, onReschedule, reschedule, t],

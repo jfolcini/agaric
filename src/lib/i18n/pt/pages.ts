@@ -330,7 +330,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Excluir visualização {{name}}',
   'pageBrowser.savedViews.deleted': 'Visualização "{{name}}" excluída',
   'pageBrowser.savedViews.restored': 'Visualização "{{name}}" restaurada',
-  'pageBrowser.savedViews.applied': 'Visualização "{{name}}" aplicada',
   'pageBrowser.savedViews.nameTaken':
     'Já existe uma página ou visualização chamada "{{name}}" neste espaço',
   'pageBrowser.savedViews.nameIsDate': 'Uma visualização não pode ter nome de data: "{{name}}"',

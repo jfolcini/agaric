@@ -23,13 +23,12 @@ export const settings: Record<string, string> = {
     'Show technical error codes in the error messages of dialogs and panels, such as a failed pairing. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
 
   // Translators: Settings › About: row that reopens the first-run welcome window (title,
-  // description, button), and the toast shown once it has reopened.
+  // description, button).
   // #3308 — re-entry into the first-run welcome tour.
   'settings.showWelcomeTour.title': 'Show the welcome tour again',
   'settings.showWelcomeTour.description':
     'Re-open the first-run welcome window, including the option to create the sample pages.',
   'settings.showWelcomeTour.button': 'Show tour',
-  'settings.showWelcomeTour.success': 'Welcome tour reopened',
 
   // Translators: Settings tab names, listed in the Settings side rail (a dropdown on phones);
   // keep them short. Spaces = separate workspaces such as Work and Personal.
@@ -74,10 +73,10 @@ export const settings: Record<string, string> = {
     'When the cursor is in formatted text, a heading or a link, show its Markdown syntax; beside a page, tag or block-reference chip, show its brackets for reading only. Delete a marker to remove the formatting, lower a heading or unlink the text.',
 
   // Translators: Settings › Editor: "External images" dropdown (images loaded from other
-  // websites): label, description, its three options, the toast after a change, the heading
-  // over remembered domains, and the screen-reader label of each domain chip's remove button
-  // ({{host}} = a domain like "example.com"). "Load" in the description is the button shown on
-  // a blocked image; use the same word.
+  // websites): label, description, its three options, the heading over remembered domains, and
+  // the screen-reader label of each domain chip's remove button ({{host}} = a domain like
+  // "example.com"). "Load" in the description is the button shown on a blocked image; use the
+  // same word.
   // #1492 — external-image load policy (privacy-first default: Click).
   'settings.editor.externalImageLabel': 'External images',
   'settings.editor.externalImageHelp':
@@ -85,7 +84,6 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageAlways': 'Always load',
   'settings.editor.externalImageClick': 'Ask each time (recommended)',
   'settings.editor.externalImageNever': 'Never load',
-  'settings.editor.externalImageUpdated': 'External image policy updated',
   'settings.editor.externalImageAllowedHosts': 'Allowed image domains',
   'settings.editor.externalImageRemoveHost': 'Remove {{host}}',
 
@@ -476,16 +474,14 @@ export const settings: Record<string, string> = {
   'settings.groupData': 'Data & sync',
   'settings.groupHelp': 'Help',
 
-  // Translators: Settings › General: "Week starts on" dropdown, its two options, and the toast
-  // after a change; {{day}} = "Monday" or "Sunday" from the two keys above.
+  // Translators: Settings › General: "Week starts on" dropdown and its two options.
   'settings.weekStartLabel': 'Week starts on',
   'settings.weekStartMonday': 'Monday',
   'settings.weekStartSunday': 'Sunday',
-  'settings.weekStartUpdated': 'Week now starts on {{day}}',
 
   // Translators: Settings › General: "Journal date format" dropdown. Each option shows a pattern
   // and an example; the order of the parts is fixed (only month and weekday names follow the
-  // app language), so keep that order. {{example}} = the example date in the chosen format.
+  // app language), so keep that order.
   'settings.journalDateFormatLabel': 'Journal date format',
   'settings.journalDateFormatHelp':
     'How journal titles are shown. Pages are always stored as YYYY-MM-DD, so changing this never affects existing journals.',
@@ -494,9 +490,8 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Month D, YYYY (e.g. June 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/YYYY (e.g. 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (e.g. Wed, Jun 17)',
-  'settings.journalDateFormatUpdated': 'Journal dates now display as {{example}}',
 
-  // Translators: Info toast in Settings › Tasks & reminders when the "Deadline warning" number is
-  // out of range; {{min}} and {{max}} are numbers (e.g. 0 and 90).
+  // Translators: Note under the "Deadline warning" number in Settings › Tasks & reminders when the
+  // value typed was out of range and was clamped; {{min}} and {{max}} are numbers (e.g. 0 and 90).
   'settings.valueClamped': 'Value clamped to {{min}}–{{max}}',
 }

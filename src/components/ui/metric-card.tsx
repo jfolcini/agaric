@@ -12,7 +12,7 @@
  *    and label children, so callers can mount it inside a `<dl>` and
  *    keep description-list semantics.
  *  - `labelSlot` lets callers swap the default label for a richer node
- *    (e.g. a tooltip-wrapped `<dt>`).
+ *    (e.g. a `<dt>` whose label opens an explanation).
  *  - `tone` colourises the border + value: `'warning'` and `'success'`
  *    map to status tokens.
  */
@@ -40,9 +40,8 @@ export interface MetricCardProps {
   /** Visual variant; defaults to `default`. */
   tone?: MetricCardTone
   /**
-   * Replace the default `<dt>`-styled label node entirely. Used by
-   * `StatusPanel` so the existing tooltip-bound `MetricLabel` keeps
-   * working without re-implementing the tooltip wiring here.
+   * Replace the default `<dt>`-styled label node entirely. `StatusPanel`
+   * passes a `MetricLabel` whose label opens an explanation.
    */
   labelSlot?: React.ReactNode
   /**

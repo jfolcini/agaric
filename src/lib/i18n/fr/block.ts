@@ -110,23 +110,23 @@ export const block: Record<string, string> = {
   'status.importDesc':
     'Importez des fichiers Logseq ou Markdown. Les pages sont créées à partir des noms de fichiers, les blocs à partir des éléments de liste en retrait.',
   'status.importButton': 'Sélectionner des fichiers .md',
-  'status.foregroundQueueTooltip':
+  'status.foregroundQueueInfo':
     'Opérations en attente d’application à la base de données. Ce nombre devrait rester proche de zéro.',
-  'status.backgroundQueueTooltip':
+  'status.backgroundQueueInfo':
     'Tâches de reconstruction du cache et d’indexation FTS. Traitement non critique, effectué au mieux.',
-  'status.opsDispatchedTooltip':
+  'status.opsDispatchedInfo':
     'Nombre total d’opérations traitées depuis le démarrage de l’application.',
-  'status.backgroundDispatchedTooltip':
+  'status.backgroundDispatchedInfo':
     'Nombre total de tâches de cache en arrière-plan terminées depuis le démarrage de l’application.',
-  'status.sqlOnlyFallbackTooltip':
+  'status.sqlOnlyFallbackInfo':
     'Modifications enregistrées dans la base de données, mais pas dans le moteur de synchronisation, depuis le démarrage de l’application\u00A0: elles n’atteignent donc pas vos autres appareils. Ce nombre devrait rester à zéro\u00A0; sinon, lancez la vérification d’intégrité.',
-  'status.fanoutDroppedTooltip':
+  'status.fanoutDroppedInfo':
     'Suppressions ou restaurations de blocs imbriqués que le moteur de synchronisation n’a pas suivies depuis le démarrage de l’application. Ce nombre devrait rester à zéro\u00A0; sinon, lancez la vérification d’intégrité.',
-  'status.peerCountTooltip': 'Nombre d’appareils associés',
-  'status.lastSyncedTooltip': 'Temps écoulé depuis la dernière synchronisation réussie',
-  'status.opsReceivedTooltip':
+  'status.peerCountInfo': 'Nombre d’appareils associés',
+  'status.lastSyncedInfo': 'Temps écoulé depuis la dernière synchronisation réussie',
+  'status.opsReceivedInfo':
     'Nombre total de messages de synchronisation reçus des pairs, un par espace synchronisé (remis à zéro au redémarrage de l’application)',
-  'status.opsSentTooltip':
+  'status.opsSentInfo':
     'Nombre total de messages de synchronisation envoyés aux pairs, un par espace synchronisé (remis à zéro au redémarrage de l’application)',
   'status.importedMessage': '{{totalBlocks}} blocs importés depuis {{fileCount}} fichier(s)',
   'status.materializerStatusTitle': 'État du matérialiseur',

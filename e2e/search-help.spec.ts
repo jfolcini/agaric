@@ -26,6 +26,13 @@ test.describe('Search help dialog (E2E-7) @search', () => {
     await expect(dialog.getByRole('heading', { name: 'Toggles' })).toBeVisible()
   })
 
+  // The filter syntax is named under the field for good, not in a one-time toast (#6870).
+  test('the search field names the filter syntax under it', async ({ page }) => {
+    const hint = 'Filter with tag:#name or path:Journal/*, or use Add filter. Press ? for help.'
+    await expect(page.getByText(hint, { exact: true })).toBeVisible()
+    await expect(page.getByPlaceholder('Search blocks...')).toHaveAccessibleDescription(hint)
+  })
+
   test('opens via the `?` keyboard shortcut on an empty input', async ({ page }) => {
     const input = page.getByPlaceholder('Search blocks...')
     await input.click()

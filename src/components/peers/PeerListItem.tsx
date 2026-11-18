@@ -67,6 +67,8 @@ export function PeerListItem({
   const now = useMinuteClock()
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
+  // The backend refused the last save; cleared by the next edit.
+  const [addrSaveFailed, setAddrSaveFailed] = useState(false)
   // #5739 — a session with this peer is running (its dial, op sync or file
   // exchange), so the row offers to cancel it.
   const sessionRunning = useSyncStore((s) => s.peerProgress[peer.peer_id] != null)
@@ -101,6 +103,14 @@ export function PeerListItem({
     return null
   }, [addrInput])
 
+  // A save the backend refused reads where the format check's message does.
+  const addressErrorMessage =
+    addressError != null
+      ? t(addressError === 'port' ? 'device.addressPortInvalid' : 'device.addressFormatInvalid')
+      : addrSaveFailed
+        ? t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' })
+        : null
+
   const handleSaveAddress = useCallback(() => {
     const addr = addrInput.trim()
     if (!addr) return
@@ -114,9 +124,7 @@ export function PeerListItem({
       })
       .catch((err) => {
         logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
-        // Include the expected format in the toast so the user
-        // doesn't have to reopen the popover hint to recover.
-        notify.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
+        setAddrSaveFailed(true)
       })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
 
@@ -263,7 +271,10 @@ export function PeerListItem({
             open={addrOpen}
             onOpenChange={(open) => {
               setAddrOpen(open)
-              if (open) setAddrInput(peer.last_address ?? '')
+              if (open) {
+                setAddrInput(peer.last_address ?? '')
+                setAddrSaveFailed(false)
+              }
             }}
           >
             <PopoverTrigger asChild>
@@ -287,7 +298,10 @@ export function PeerListItem({
                 className="h-7 text-xs"
                 placeholder="192.168.1.100:5000"
                 value={addrInput}
-                onChange={(e) => setAddrInput(e.target.value)}
+                onChange={(e) => {
+                  setAddrInput(e.target.value)
+                  setAddrSaveFailed(false)
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -295,19 +309,15 @@ export function PeerListItem({
                   }
                 }}
                 aria-label={t('device.addressInputLabel')}
-                aria-invalid={addressError != null}
-                aria-describedby={addressError != null ? 'peer-address-error' : undefined}
+                aria-invalid={addressErrorMessage != null}
+                aria-describedby={addressErrorMessage != null ? 'peer-address-error' : undefined}
               />
               {/* inline format validation. Disables Save and
                     surfaces the format / port error before the user
-                    has to round-trip through the toast path. */}
-              {addressError && (
+                    has to round-trip through the backend. */}
+              {addressErrorMessage != null && (
                 <p id="peer-address-error" className="text-xs text-destructive" role="alert">
-                  {t(
-                    addressError === 'port'
-                      ? 'device.addressPortInvalid'
-                      : 'device.addressFormatInvalid',
-                  )}
+                  {addressErrorMessage}
                 </p>
               )}
               {/* bumped from text-xs to text-xs (12px) so

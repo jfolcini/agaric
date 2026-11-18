@@ -117,12 +117,10 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
           // Another page holds the alias, in any space or the Trash (#5280).
           if (validationCode(err) === ValidationCode.DuplicatePageAlias) {
             notify.error(t('pageHeader.aliasTaken'))
-            announce(t('pageHeader.aliasTaken'))
             return
           }
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
           notify.error(t('pageHeader.aliasUpdateFailed'))
-          announce(t('announce.aliasFailed'))
         })
     }
   }, [aliasInput, aliases, pageId, t])
@@ -143,7 +141,6 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
           notify.error(t('pageHeader.aliasUpdateFailed'))
-          announce(t('announce.aliasFailed'))
           // See the matching comment in handleAddAlias: only roll back if
           // this call's optimistic update is still the current state.
           setAliases((current) => (current === next ? previous : current))

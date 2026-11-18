@@ -187,7 +187,8 @@ export const block: Record<string, string> = {
   'callout.expand': 'Expand {{name}} callout',
 
   // Translators: Settings › Sync & devices, the network address of a paired device: label, empty
-  // value, Edit button, toasts after saving, and the hint about pairing on the same network.
+  // value, Edit button, the toast after saving, the error under the field when a save is refused,
+  // and the hint about pairing on the same network.
   // "host:port" is a fixed format, keep it; {{format}} = an example address, e.g.
   // "192.168.1.100:5000".
   'status.peerAddress': 'Address',
@@ -207,25 +208,25 @@ export const block: Record<string, string> = {
     'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',
   'status.importButton': 'Select .md files',
 
-  // Translators: Settings › App health, StatusPanel: tooltips of its counters. The materializer
-  // is the background work that keeps search, the agenda and counts up to date. "FTS" = the
+  // Translators: Settings › App health, StatusPanel: what each counter means, shown when its
+  // label is tapped. The materializer is the background work that keeps search, the agenda and counts up to date. "FTS" = the
   // full-text search index; "operations"/"sync messages" = recorded changes; "peers" = your other
   // paired devices; "sync engine" = the part that sends changes to them.
-  'status.foregroundQueueTooltip':
+  'status.foregroundQueueInfo':
     'Operations waiting to be applied to the database. Should stay near zero.',
-  'status.backgroundQueueTooltip':
+  'status.backgroundQueueInfo':
     'Cache rebuild and FTS indexing tasks. Non-critical, best-effort processing.',
-  'status.opsDispatchedTooltip': 'Total operations processed since app start.',
-  'status.backgroundDispatchedTooltip': 'Total background cache tasks completed since app start.',
-  'status.sqlOnlyFallbackTooltip':
+  'status.opsDispatchedInfo': 'Total operations processed since app start.',
+  'status.backgroundDispatchedInfo': 'Total background cache tasks completed since app start.',
+  'status.sqlOnlyFallbackInfo':
     'Changes saved to the database but not to the sync engine since app start, so they do not reach your other devices. Should stay at zero; if not, run the integrity check.',
-  'status.fanoutDroppedTooltip':
+  'status.fanoutDroppedInfo':
     'Deletes or restores of nested blocks the sync engine did not follow since app start. Should stay at zero; if not, run the integrity check.',
-  'status.peerCountTooltip': 'Number of paired devices',
-  'status.lastSyncedTooltip': 'Time since last successful sync',
-  'status.opsReceivedTooltip':
+  'status.peerCountInfo': 'Number of paired devices',
+  'status.lastSyncedInfo': 'Time since last successful sync',
+  'status.opsReceivedInfo':
     'Total sync messages received from peers, one per synced space (resets on app restart)',
-  'status.opsSentTooltip':
+  'status.opsSentInfo':
     'Total sync messages sent to peers, one per synced space (resets on app restart)',
 
   // Translators: Toast after an import; {{totalBlocks}} = blocks imported, {{fileCount}} = files.

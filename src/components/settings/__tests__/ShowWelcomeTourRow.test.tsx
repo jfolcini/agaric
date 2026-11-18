@@ -76,7 +76,7 @@ describe('ShowWelcomeTourRow', () => {
     expect(screen.getByTestId('show-welcome-tour-btn')).toBeInTheDocument()
   })
 
-  it('clicking it clears the onboarding flag and confirms with a toast', async () => {
+  it('clicking it clears the onboarding flag without a toast', async () => {
     const user = userEvent.setup()
     markOnboardingDone()
 
@@ -84,7 +84,7 @@ describe('ShowWelcomeTourRow', () => {
     await user.click(screen.getByTestId('show-welcome-tour-btn'))
 
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Welcome tour reopened')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations', async () => {

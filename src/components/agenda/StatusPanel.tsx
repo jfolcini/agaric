@@ -27,8 +27,8 @@ import { useTranslation } from 'react-i18next'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { MetricCard } from '@/components/ui/metric-card'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
 import { unwrap } from '@/lib/app-error'
@@ -64,21 +64,10 @@ function errorSummaryText(counts: { fgErrors: number; bgErrors: number }, t: TFu
     .join(', ')
 }
 
-function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): React.ReactElement {
+function MetricLabel({ label, info }: { label: string; info: string }): React.ReactElement {
   return (
     <dt className="status-metric-label text-sm text-muted-foreground">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            tabIndex={0}
-            className="cursor-help border-b border-dotted border-current bg-transparent p-0 font-inherit text-inherit focus-ring-visible"
-          >
-            {label}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{tooltip}</TooltipContent>
-      </Tooltip>
+      <InfoPopover content={info}>{label}</InfoPopover>
     </dt>
   )
 }
@@ -281,7 +270,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.foregroundQueueLabel')}
-                    tooltip={t('status.foregroundQueueTooltip')}
+                    info={t('status.foregroundQueueInfo')}
                   />
                 }
                 footer={
@@ -297,7 +286,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.backgroundQueueLabel')}
-                    tooltip={t('status.backgroundQueueTooltip')}
+                    info={t('status.backgroundQueueInfo')}
                   />
                 }
                 footer={
@@ -319,7 +308,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.opsDispatchedLabel')}
-                    tooltip={t('status.opsDispatchedTooltip')}
+                    info={t('status.opsDispatchedInfo')}
                   />
                 }
               />
@@ -332,7 +321,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.backgroundDispatchedLabel')}
-                    tooltip={t('status.backgroundDispatchedTooltip')}
+                    info={t('status.backgroundDispatchedInfo')}
                   />
                 }
               />
@@ -345,7 +334,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.sqlOnlyFallbackLabel')}
-                    tooltip={t('status.sqlOnlyFallbackTooltip')}
+                    info={t('status.sqlOnlyFallbackInfo')}
                   />
                 }
               />
@@ -358,7 +347,7 @@ export function StatusPanel(): React.ReactElement {
                 labelSlot={
                   <MetricLabel
                     label={t('status.fanoutDroppedLabel')}
-                    tooltip={t('status.fanoutDroppedTooltip')}
+                    info={t('status.fanoutDroppedInfo')}
                   />
                 }
               />
@@ -441,7 +430,7 @@ export function SyncStatusCard(): React.ReactElement | null {
               labelSlot={
                 <MetricLabel
                   label={t('status.peerLabel', { count: syncPeers.length })}
-                  tooltip={t('status.peerCountTooltip')}
+                  info={t('status.peerCountInfo')}
                 />
               }
             />
@@ -455,7 +444,7 @@ export function SyncStatusCard(): React.ReactElement | null {
               labelSlot={
                 <MetricLabel
                   label={t('status.lastSyncedLabel')}
-                  tooltip={t('status.lastSyncedTooltip')}
+                  info={t('status.lastSyncedInfo')}
                 />
               }
             />
@@ -465,7 +454,7 @@ export function SyncStatusCard(): React.ReactElement | null {
               labelSlot={
                 <MetricLabel
                   label={t('status.opsReceivedLabel')}
-                  tooltip={t('status.opsReceivedTooltip')}
+                  info={t('status.opsReceivedInfo')}
                 />
               }
             />
@@ -473,10 +462,7 @@ export function SyncStatusCard(): React.ReactElement | null {
             <MetricCard
               value={<span className="sync-ops-sent">{syncOpsSent}</span>}
               labelSlot={
-                <MetricLabel
-                  label={t('status.opsSentLabel')}
-                  tooltip={t('status.opsSentTooltip')}
-                />
+                <MetricLabel label={t('status.opsSentLabel')} info={t('status.opsSentInfo')} />
               }
             />
           </dl>

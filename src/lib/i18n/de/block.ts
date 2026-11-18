@@ -108,22 +108,22 @@ export const block: Record<string, string> = {
   'status.importDesc':
     'Logseq- oder Markdown-Dateien importieren. Seiten werden aus Dateinamen erstellt, Blöcke aus eingerückten Listeneinträgen.',
   'status.importButton': '.md-Dateien auswählen',
-  'status.foregroundQueueTooltip':
+  'status.foregroundQueueInfo':
     'Operationen, die darauf warten, in die Datenbank übernommen zu werden. Sollte nahe null bleiben.',
-  'status.backgroundQueueTooltip':
+  'status.backgroundQueueInfo':
     'Aufgaben für Cache-Neuaufbau und FTS-Indizierung. Unkritisch, wird nach Möglichkeit verarbeitet.',
-  'status.opsDispatchedTooltip': 'Insgesamt verarbeitete Operationen seit dem App-Start.',
-  'status.backgroundDispatchedTooltip':
+  'status.opsDispatchedInfo': 'Insgesamt verarbeitete Operationen seit dem App-Start.',
+  'status.backgroundDispatchedInfo':
     'Insgesamt abgeschlossene Cache-Hintergrundaufgaben seit dem App-Start.',
-  'status.sqlOnlyFallbackTooltip':
+  'status.sqlOnlyFallbackInfo':
     'Änderungen seit dem App-Start, die in der Datenbank, aber nicht in der Sync-Engine gespeichert wurden und deshalb deine anderen Geräte nicht erreichen. Sollte bei null bleiben; falls nicht, führe die Integritätsprüfung aus.',
-  'status.fanoutDroppedTooltip':
+  'status.fanoutDroppedInfo':
     'Löschungen oder Wiederherstellungen verschachtelter Blöcke seit dem App-Start, denen die Sync-Engine nicht gefolgt ist. Sollte bei null bleiben; falls nicht, führe die Integritätsprüfung aus.',
-  'status.peerCountTooltip': 'Anzahl gekoppelter Geräte',
-  'status.lastSyncedTooltip': 'Zeit seit der letzten erfolgreichen Synchronisierung',
-  'status.opsReceivedTooltip':
+  'status.peerCountInfo': 'Anzahl gekoppelter Geräte',
+  'status.lastSyncedInfo': 'Zeit seit der letzten erfolgreichen Synchronisierung',
+  'status.opsReceivedInfo':
     'Insgesamt von Gegenstellen empfangene Sync-Nachrichten, eine pro synchronisiertem Bereich (wird beim Neustart der App zurückgesetzt)',
-  'status.opsSentTooltip':
+  'status.opsSentInfo':
     'Insgesamt an Gegenstellen gesendete Sync-Nachrichten, eine pro synchronisiertem Bereich (wird beim Neustart der App zurückgesetzt)',
   'status.importedMessage': '{{totalBlocks}} Blöcke aus {{fileCount}} Datei(en) importiert',
   'status.materializerStatusTitle': 'Materializer-Status',
