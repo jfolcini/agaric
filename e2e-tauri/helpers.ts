@@ -949,16 +949,18 @@ export function pageEntryTitled(title: string) {
   return $(`span[data-page-title="${title}"]`)
 }
 
-/** The page header's badge of `alias`. */
 /**
  * The full title a page-link chip names: its native `title` when the chip shows
  * a namespaced leaf or a label, else its text, which is then the full title
- * (`RichContentRenderer/marks/blockLink.tsx`, #6895).
+ * (`RichContentRenderer/marks/blockLink.tsx`, #6895). `textContent`, not
+ * `getText()`: WebDriver returns only rendered text, so a chip scrolled out of
+ * view reads as empty.
  */
 export async function linkChipTarget(chip: ReturnType<typeof $>): Promise<string> {
-  return (await chip.getAttribute('title')) ?? (await chip.getText())
+  return (await chip.getAttribute('title')) ?? String(await chip.getProperty('textContent'))
 }
 
+/** The page header's badge of `alias`. */
 export function aliasBadge(alias: string): string {
   return `//*[@data-slot="badge"][normalize-space(.)="${alias}"]`
 }
