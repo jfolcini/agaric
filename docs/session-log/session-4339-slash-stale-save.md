@@ -6,7 +6,8 @@ Fix for #6935, found while moving `page-mode.spec.ts` onto the bridge (#6926 sli
 
 **Fix:** `applyContentEdit` flushes the pending commit before its write, through `flushActiveDraft`, as the list-style path already does (#4577). Page mode's own `blockText` path is unchanged.
 
-**Test:** `useSlashCommandStructural.test.ts`'s *writes the pending in-editor content before the heading, never after it (#6935)* registers a pending commit and runs `/h2`. It expects the pending text written first and the heading last. Without the fix it reads `['## hello', 'call mom ']`, the pending commit landing after the heading, which is the order the bridge showed. The parity test passed 20 of 20 on the bridge with the fix, against 3 to 5 failures in 10 before.
+**Test:** `useSlashCommandStructural.test.ts`'s *writes the pending in-editor content before the heading, never after it (#6935)* registers a pending commit and runs `/h2`. It expects the pending text written first and the heading last. Without the fix it reads `['## hello', 'call mom ']`, the pending commit landing after the heading, which is the order the bridge showed.
+**The bridge test:** *a slash command leaves the backend as block mode's does* moves back into `page-mode.spec.ts`, which `REAL_BACKEND_SPECS` already lists, and `e2e/page-mode-slash-parity.spec.ts` goes with its copied helpers (#6947's review). On the bridge it failed 4 runs in 10 with the flush taken out, and passed 20 of 20 with it.
 
 **Also:** `read()`'s docstring in `PageModeEditor.tsx` no longer reads as a ban on subscribing, which it now does while it waits (#6942's review).
 
