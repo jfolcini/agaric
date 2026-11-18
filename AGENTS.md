@@ -113,10 +113,14 @@ Everything that enters the build from outside the repo is pinned by digest, so a
 
 - **Packages:** the lockfiles (`package-lock.json` integrity, `Cargo.lock` checksums); CI installs with `npm ci`, and `verify-lockfiles` fails on drift.
 - **GitHub Actions:** a 40-char commit SHA.
-- **Anything a workflow or script downloads itself:** a sha256 recorded beside the URL and checked before the file is used. `just pin-sha256 <url>…` prints it when bumping.
+- **Every other tool and download:** `pins.txt`, the one place versions and sha256s live. Workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh` (`fetch` checks the sha256 before the file is used). Never write a version or a digest anywhere else; `pins.test.mjs` fails on one.
 - **Gradle dependencies (Android):** `src-tauri/gen/android/gradle/verification-metadata.xml`. When a Tauri or plugin bump fails verification, CI regenerates it and commits it to the PR for review; by hand, `just update-gradle-verification` ([docs/BUILD.md](docs/BUILD.md#android)).
 
-Where the installer takes no hash, pin the exact version, never a range, tag, `latest` or bare major: `setup-node` (`.nvmrc`), `setup-java`, rustup (`rust-toolchain.toml`, a dated nightly), sdkmanager packages and the emulator build, `cargo install --version --locked`, `cargo binstall`, `uv tool`. Runner images, apt and brew packages are the accepted floating exceptions. A pin Dependabot cannot bump is bumped by hand.
+Where the installer takes no hash, `pins.txt` pins the exact version, never a range, tag, `latest` or bare major (`setup-java`, sdkmanager packages and the emulator build, a dated nightly, `cargo install`, `cargo binstall`, `uv tool`); `.nvmrc` and `rust-toolchain.toml` do the same for Node and Rust. Runner images, apt and brew packages are the accepted floating exceptions.
+
+Dependabot cannot see these pins. `just pin-bump <name> <version>` moves one and recomputes its sha256s from the new downloads (review that diff: the hashes are trusted on first use), and the weekly `stale-pins` lane of `scheduled-deep-checks.yml` (`just pins-stale`) goes red when one falls behind its upstream past the 7-day cooldown.
+
+Each release artifact ships SBOMs and an OpenVEX document generated together (`.github/actions/syft-sbom`; SECURITY.md § Mitigations). A waiver added to `deny.toml` or `.nsprc` becomes a VEX statement with its `reason` as the impact statement, so write the reason for a reader outside the repo.
 
 ## Database
 
