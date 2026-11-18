@@ -1,14 +1,14 @@
-name: apt install (mirror-tolerant)
+name: apt install (mirror-tolerant, cached)
 description: >-
   Install apt packages on a GitHub-hosted runner without letting an unhealthy
-  Ubuntu mirror red the PR as a code failure. `apt-get update` is attempted
-  twice under a bound; an update that does not finish is a WARNING and the
-  install runs anyway against the image's existing package lists. Only the
-  INSTALL decides the step's exit status, and an install that fails after a
-  never-completed update exits 75 (not 1) so "this job could not run" is
-  distinguishable from "this job failed". The install is bounded too and gets
-  one retry; an install that runs out its bound both times, or cannot download
-  its packages from the mirror both times, also exits 75.
+  Ubuntu mirror red the PR as a code failure. With `cache: 'true'` the .debs
+  come from an `actions/cache` entry keyed on exactly the files the runner
+  image's own package lists resolve to, and on a hit the install runs with no
+  `apt-get update` and no network. The first attempt never refreshes the
+  index; only a failed attempt runs a bounded `apt-get update` before the
+  retry, and an update that does not finish is a WARNING. An install that runs
+  out its bound twice, or cannot download its packages twice, exits 75 (not 1)
+  so "this job could not run" is distinguishable from "this job failed".
 inputs:
   packages:
     description: >-
@@ -16,12 +16,24 @@ inputs:
       anything that is not `[A-Za-z0-9][A-Za-z0-9.+_-]*` is rejected rather
       than passed to apt as a flag.
     required: true
+  cache:
+    description: >-
+      'true' restores the .debs from the Actions cache, and saves them on a
+      miss from `main` or a `workflow_dispatch` (a PR's save is readable by
+      nothing else, #5853). Off by default: a job that signs or publishes
+      restores no cache (#3542).
+    required: false
+    default: 'false'
+  warm-only:
+    description: >-
+      'true' stops at the cache probe on a hit, for a job whose only purpose is
+      keeping the entry warm (`ci.yml`'s `e2e-tauri-apt-cache`).
+    required: false
+    default: 'false'
   update-timeout:
     description: >-
       Seconds to bound each `apt-get update` attempt. Default 300 is the
-      repo-wide value #4115 established; pass 120 in short-budget jobs, as
-      _validate.yml's cargo-coverage and release.yml's generate-latest-json
-      already did before this action existed. NOT a new number either way.
+      repo-wide value #4115 established; pass 120 in short-budget jobs.
     required: false
     default: '300'
   install-timeout:
@@ -30,14 +42,53 @@ inputs:
       trickle .debs to one runner for most of its job budget while sibling shards
       install in seconds, and Acquire::http::Timeout does not fire on a slow
       connection, only a silent one. The retry opens new connections and
-      reuses every .deb the first attempt finished. Defaults to the
-      update's bound.
+      reuses every .deb the first attempt finished.
     required: false
     default: '300'
 runs:
   using: composite
   steps:
-    - name: apt-get update (bounded, advisory) then install
+    - name: Key the .deb cache on what this image's package lists resolve to
+      id: plan
+      if: inputs.cache == 'true'
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -uo pipefail
+        # A fixed key froze its .debs at the versions of its first save: an
+        # exact hit is never re-saved, so once -updates moved, every "hit" still
+        # pulled most of the closure from the mirror and stalled there (run
+        # 44240707721, job 134587774849). Hashing the files apt would fetch
+        # gives one key per closure: same key, same files, so a hit is complete.
+        # `--print-uris` reads only the local lists; the empty archive dir makes
+        # it list every file, cached or not. URIs are dropped because the mirror
+        # host differs per runner region; name, size and checksum identify a .deb.
+        sudo install -d -m 0777 /var/cache/apt/archives/partial
+        sudo chmod 0777 /var/cache/apt/archives
+        empty="$(mktemp -d)"
+        mkdir -p "${empty}/partial"
+        set -f
+        # shellcheck disable=SC2086 # word-split the package list
+        if uris="$(apt-get install --print-uris -qq -o Dir::Cache::Archives="${empty}" ${APT_PACKAGES})" \
+           && [ -n "${uris}" ]; then
+          echo "key=apt-debs-${RUNNER_OS}-$(awk '{print $2, $3, $4}' <<<"${uris}" | sort | sha256sum | cut -c1-32)" >>"${GITHUB_OUTPUT}"
+        else
+          echo "No .debs to fetch, or the image's lists cannot resolve the packages: no cache."
+        fi
+
+    - name: Restore the .debs
+      id: restore
+      if: steps.plan.outputs.key != ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: ${{ steps.plan.outputs.key }}
+        lookup-only: ${{ inputs.warm-only }}
+
+    - name: apt-get install (update only on a failed attempt)
+      id: install
+      if: inputs.warm-only != 'true' || steps.restore.outputs.cache-hit != 'true'
       shell: bash
       # `inputs.*` reaches the script through `env:`, never through `${{ }}`
       # interpolated into the script text (zizmor template-injection).
@@ -48,39 +99,14 @@ runs:
       run: |
         set -uo pipefail
 
-        # ── Why an update that does not finish is NOT fatal (#4163) ──────────
-        #
-        # Measured, run 32223573172 (2026-08-19), jobs 95978698511
-        # (`validate / cargo-tests (1)`) and 95981259083
-        # (`validate / cargo-coverage`) — both red with
-        # `Process completed with exit code 124` on a diff containing zero
-        # Rust. Their logs do NOT show a hung mirror. They show apt WORKING:
-        #
-        #   06:29:46  Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist
-        #   06:30:16  Ign: http://azure.archive.ubuntu.com …  (T+30s)
-        #   …          5 retries, backoff 1,2,4,8,16s
-        #   06:30:48  Hit: https://archive.ubuntu.com noble InRelease  (T+62s)
-        #   06:30:49  Get: …-updates / -backports / -security InRelease
-        #   06:34:46  ##[error]Process completed with exit code 124   (T+300s)
-        #
-        # i.e. the runner image points apt at a MIRRORLIST
-        # (`deb mirror+file:/etc/apt/apt-mirrors.txt`), the primary
-        # (azure.archive.ubuntu.com) was the sick host, apt failed over to
-        # archive.ubuntu.com on its own at T+62s, and was still pulling the
-        # Packages indices from that slower public mirror when OUR 300s cap
-        # killed it. Attempt 2 repeated the identical trace and was killed at
-        # its own T+300. So the cap, not the mirror, is what produced the red
-        # check — the same failure mode #4164's review rejected a flat cap for.
-        #
-        # Raising the cap would mean inventing a bound from one degraded day.
-        # This action does not raise it. It stops treating "the index refresh
-        # did not finish" as fatal: the runner image ships a populated
-        # /var/lib/apt/lists (the `Hit:` above is apt saying its local copy was
-        # already current), several of these jobs additionally restore the
-        # .debs themselves from `actions/cache`, and so `apt-get install` very
-        # often succeeds with no fresh index at all. If it does, the job CAN
-        # run and belongs green. If it does not, the install's own error is the
-        # honest one to report.
+        # The first attempt installs against the package lists the runner image
+        # ships, with no `apt-get update`: those lists are what the cache key above
+        # was computed from, so on a hit every .deb is already local and apt opens
+        # no connection at all. Only a failed attempt refreshes the index before
+        # the retry: the image's lists can name a .deb the archive has since
+        # dropped (it keeps one superseded version), or a package the image's
+        # lists predate. An update that does not finish is not fatal (#4163: the
+        # 300s cap, not the mirror, produced those reds); the retry decides.
 
         set -f  # no globbing while the package list is word-split
         # shellcheck disable=SC2206
@@ -98,22 +124,20 @@ runs:
           esac
         done
 
-        # apt's stdout (`Get:` / `Ign:` index lines, then dpkg's unpack and
-        # `Setting up` lines for every package) goes to this file and is
-        # printed only when the update or the install fails: that is the
-        # evidence a mirror stall needs (#4163). Its stderr (`W:` / `E:`)
-        # always prints: the update's directly, the install's after each
-        # attempt, from `apt-install.err` below.
+        # apt's stdout (`Get:` lines naming the mirror, then dpkg's unpack and
+        # `Setting up` lines) goes to this file and is printed only when an attempt
+        # fails: that is the evidence a mirror stall needs (#4163). Its stderr
+        # (`W:` / `E:`) always prints.
         apt_log="${RUNNER_TEMP}/apt-install.log"
+        apt_err="${RUNNER_TEMP}/apt-install.err"
         print_apt_log() {
           cat "${apt_log}"
           cat "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
         }
 
-        # `sudo timeout` makes apt-get timeout's DIRECT child, so the signal
-        # does reach it — unlike the `timeout … npx … sudo apt-get` shape
-        # prepare-apt warns about. The kills are belt and braces for a KILLed
-        # apt-get's orphaned acquire methods and dpkg.
+        # `sudo timeout` makes apt-get timeout's DIRECT child, so the signal does
+        # reach it. The kills are for a KILLed apt-get's orphaned acquire methods
+        # and dpkg.
         reap_apt() {
           sudo pkill -TERM -x apt-get 2>/dev/null || true
           sleep 5
@@ -121,9 +145,8 @@ runs:
           sudo pkill -KILL -x dpkg 2>/dev/null || true
         }
 
-        # Same three locks and the same ≤180s budget prepare-apt polls: an
-        # apt-get killed by name does not reap a dpkg child, and dpkg holds
-        # /var/lib/dpkg/lock, which a lock-frontend-only poll cannot see.
+        # Same three locks and ≤180s budget as prepare-apt: an apt-get killed by
+        # name does not reap a dpkg child, and dpkg holds /var/lib/dpkg/lock.
         wait_for_apt_locks() {
           for _ in $(seq 1 60); do
             sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
@@ -133,137 +156,117 @@ runs:
           sudo dpkg --configure -a || true
         }
 
-        update_status=0
-        for attempt in 1 2; do
-          update_status=0
-          : >"${apt_log}"
-          # -k is load-bearing, and was verified rather than assumed: with a
-          # child that does not die on SIGTERM, plain `timeout N` SIGTERMs and
-          # then waits on it forever (measured: an outer `timeout -k 1 8`
-          # around `timeout 2` returned 124, i.e. the inner one never came
-          # back). So `timeout` without -k is not a bound at all.
-          # shellcheck disable=SC2024 # the log is the runner's own file; sudo only elevates apt
-          sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${apt_log}" || update_status=$?
-
-          if [ "${update_status}" -eq 0 ]; then
-            break
-          fi
-
-          print_apt_log
-
-          # 124 AND 137. `timeout -k` exits 124 when the child honours the
-          # SIGTERM, but 137 when the SIGKILL is what ends it — measured on
-          # coreutils 9.4, `timeout -k 1 2` against a TERM-ignoring child:
-          # exit 137, elapsed 3s. Testing only for 124 (as the sibling
-          # playwright step in _validate.yml still does) misses exactly the
-          # case -k was added for.
-          case "${update_status}" in
-            124|137)
-              echo "::warning::apt-get update attempt ${attempt} exceeded ${APT_UPDATE_TIMEOUT}s (exit ${update_status}); the Ubuntu mirror is slow or down, this is not the diff"
-              reap_apt
-              ;;
-            *)
-              echo "::warning::apt-get update attempt ${attempt} failed (exit ${update_status})"
-              ;;
-          esac
-          wait_for_apt_locks
-        done
-
-        if [ "${update_status}" -ne 0 ]; then
-          echo "::warning::#4163: apt-get update did not complete in 2 attempts; installing from the package lists already on the image. The install below, not the refresh, decides this step."
-        fi
-
-        # apt exits 100 both for a mirror it could not reach and for a package
-        # that does not exist; only its `E:` lines tell the two apart, so the
-        # install's stderr is kept and printed after each attempt.
-        apt_err="${RUNNER_TEMP}/apt-install.err"
+        # apt exits 100 both for a mirror it could not reach and for a package that
+        # does not exist; only its `E:` lines tell the two apart.
         fetch_failed() {
           grep -qE 'Temporary failure resolving|Could not resolve|Failed to fetch|Unable to fetch some archives' "${apt_err}"
         }
 
+        # Bounded, advisory: a warning when it does not finish, never the verdict.
+        apt_update() {
+          local attempt
+          update_status=0
+          for attempt in 1 2; do
+            update_status=0
+            : >"${apt_log}"
+            # -k: plain `timeout N` waits forever on a child that ignores SIGTERM.
+            # shellcheck disable=SC2024 # the log is the runner's own file; sudo only elevates apt
+            sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${apt_log}" || update_status=$?
+            [ "${update_status}" -eq 0 ] && return
+            print_apt_log
+            # 124 when apt-get honours the SIGTERM, 137 when the SIGKILL ends it.
+            case "${update_status}" in
+              124|137)
+                echo "::warning::apt-get update attempt ${attempt} exceeded ${APT_UPDATE_TIMEOUT}s (exit ${update_status}); the Ubuntu mirror is slow or down, this is not the diff"
+                reap_apt
+                ;;
+              *)
+                echo "::warning::apt-get update attempt ${attempt} failed (exit ${update_status})"
+                ;;
+            esac
+            wait_for_apt_locks
+          done
+          echo "::warning::#4163: apt-get update did not complete in 2 attempts; retrying the install against the lists already on the image."
+        }
+
+        update_status=0
         install_status=0
         for attempt in 1 2; do
+          if [ "${attempt}" -eq 2 ]; then
+            apt_update
+          fi
           install_status=0
           : >"${apt_log}"
           : >"${apt_err}"
+          # Keep-Downloaded-Packages so the cache save below finds the .debs.
           # shellcheck disable=SC2024 # as above
           sudo timeout -k 30 "${APT_INSTALL_TIMEOUT}" \
-            apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" 2>>"${apt_err}" || install_status=$?
+            apt-get install -y -q -o APT::Keep-Downloaded-Packages=true "${pkgs[@]}" \
+            >>"${apt_log}" 2>>"${apt_err}" || install_status=$?
           cat "${apt_err}" >&2
 
           if [ "${install_status}" -eq 0 ]; then
-            break
+            # Only a first attempt installed exactly the files the key names.
+            if [ "${attempt}" -eq 1 ]; then
+              echo "cacheable=true" >>"${GITHUB_OUTPUT}"
+            fi
+            exit 0
           fi
+          print_apt_log
           case "${install_status}" in
             124|137)
-              # The log's `Get:` lines name the mirror that was trickling.
-              print_apt_log
               echo "::warning::apt-get install attempt ${attempt} exceeded ${APT_INSTALL_TIMEOUT}s (exit ${install_status}); the Ubuntu mirror is slow, this is not the diff"
               reap_apt
               wait_for_apt_locks
               ;;
             *)
-              fetch_failed || break
-              print_apt_log
-              echo "::warning::apt-get install attempt ${attempt} could not download its packages (exit ${install_status}); the Ubuntu mirror is unreachable, this is not the diff"
-              # A DNS or mirror outage often clears within a minute; the retry
-              # reuses every .deb this attempt finished.
-              if [ "${attempt}" -eq 1 ]; then
-                sleep 60
+              if fetch_failed; then
+                echo "::warning::apt-get install attempt ${attempt} could not download its packages (exit ${install_status}); the Ubuntu mirror is unreachable or the image's lists are stale"
+                # A DNS outage often clears within a minute.
+                if [ "${attempt}" -eq 1 ] && grep -qE 'Temporary failure resolving|Could not resolve' "${apt_err}"; then
+                  sleep 60
+                fi
+              else
+                echo "::warning::apt-get install attempt ${attempt} failed (exit ${install_status})"
               fi
               ;;
           esac
         done
 
-        # A stalled update already raised a `::warning::` above; the install
-        # succeeding needs no further line.
-        if [ "${install_status}" -eq 0 ]; then
-          exit 0
-        fi
+        infra() {
+          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: $1 Ubuntu mirror problem, not this diff."
+          {
+            echo "### apt could not run (infra, not this diff)"
+            echo
+            echo "$1"
+            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 75
+        }
 
         case "${install_status}" in
-          124|137)
-            echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get install exceeded ${APT_INSTALL_TIMEOUT}s twice. Ubuntu mirror problem — rerun the job."
-            {
-              echo "### apt could not run (infra, not this diff)"
-              echo
-              echo '`apt-get install` timed out twice at'" \`${APT_INSTALL_TIMEOUT}s\`."
-              echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
-            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-            exit 75
-            ;;
+          124|137) infra "apt-get install exceeded ${APT_INSTALL_TIMEOUT}s on its last attempt." ;;
         esac
-
-        # The loop already printed the log of a failed download.
         if fetch_failed; then
-          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get install could not download its packages twice (exit ${install_status}). Ubuntu mirror problem — rerun the job."
-          {
-            echo "### apt could not run (infra, not this diff)"
-            echo
-            echo '`apt-get install` could not download its packages in 2 attempts (exit `'"${install_status}"'`).'
-            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
-          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          exit 75
+          infra "apt-get install could not download its packages in 2 attempts (exit ${install_status})."
         fi
-
-        print_apt_log
-
         if [ "${update_status}" -ne 0 ]; then
-          # Distinct code, distinct marker — the #4163 ask, and the same
-          # reasoning scripts/pr-merge-result-check.sh applies when it refuses
-          # to render "could not run" as "failed". 75 is sysexits.h
-          # EX_TEMPFAIL and is not 1, so `Process completed with exit code 75`
-          # in the job log is itself the diagnosis.
-          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get update never completed and apt-get install then failed (exit ${install_status}). Ubuntu mirror problem — rerun the job. (#4163)"
-          {
-            echo "### apt could not run (infra, not this diff)"
-            echo
-            echo '`apt-get update` timed out twice at'" \`${APT_UPDATE_TIMEOUT}s\` and the install then failed with exit \`${install_status}\`."
-            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
-          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          exit 75
+          infra "apt-get update never completed and apt-get install then failed (exit ${install_status})."
         fi
 
-        # The index refreshed fine and the install still failed: an ordinary
-        # failure, reported with apt's own status and nothing invented.
+        # The index refreshed and the install still failed: an ordinary failure,
+        # reported with apt's own status.
         exit "${install_status}"
+
+    - name: Save the .debs
+      # Main saves for every PR to read; a branch dispatch saves too, readable
+      # by that branch's next dispatch.
+      if: >-
+        steps.install.outputs.cacheable == 'true'
+        && steps.plan.outputs.key != ''
+        && steps.restore.outputs.cache-hit != 'true'
+        && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: ${{ steps.plan.outputs.key }}
