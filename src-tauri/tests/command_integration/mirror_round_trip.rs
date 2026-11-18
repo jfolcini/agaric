@@ -195,8 +195,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
     }
     let held = get_mirror_status_inner(&pool, DEV, &state).await.unwrap();
     prop_assert!(!held.read_back, "the mirror asks first");
-    let shown: Vec<String> = held.pending.into_iter().map(|file| file.path).collect();
-    set_mirror_read_back_inner(&pool, DEV, &state, true, &shown)
+    set_mirror_read_back_inner(&pool, DEV, &state, true, &held.pending)
         .await
         .unwrap();
     for _ in 0..2 {

@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use agaric_core::error::AppError;
@@ -27,7 +27,7 @@ pub enum Scope<'a> {
 }
 
 /// What reading a [`MirrorPending`] file in does to Agaric.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum MirrorPendingKind {
     /// A page's file that is not the text last written there, or cannot be
@@ -42,8 +42,10 @@ pub enum MirrorPendingKind {
 }
 
 /// A file reading back would act on ([`pending`]), by its path below the
-/// mirror's folder.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+/// mirror's folder. The user's choice to read files in names each as it was
+/// listed, so one that changed in another way since, as an edited file
+/// deleted, is not among those chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 pub struct MirrorPending {
     pub path: String,
     pub kind: MirrorPendingKind,
@@ -54,21 +56,21 @@ pub struct MirrorPending {
 /// ([`mass_changed`]).
 pub const MASS_CHANGE: usize = 5;
 
-/// The space folders holding more than [`MASS_CHANGE`] of `changed`, files by
-/// their paths below the mirror's folder, that are not among `confirmed`,
-/// each with how many. In a folder `adopted` as one space's (#6540), every
-/// file is that space's: the folder itself, `.`, holds them all.
+/// The space folders holding more than [`MASS_CHANGE`] of `changed`, files
+/// that are not among `confirmed` as they changed, each with how many. In a
+/// folder `adopted` as one space's (#6540), every file is that space's: the
+/// folder itself, `.`, holds them all.
 pub fn mass_changed<'a>(
-    changed: &'a [String],
-    confirmed: &HashSet<String>,
+    changed: &'a [MirrorPending],
+    confirmed: &HashSet<MirrorPending>,
     adopted: bool,
 ) -> BTreeMap<&'a str, usize> {
     let mut counts = BTreeMap::new();
-    for path in changed.iter().filter(|path| !confirmed.contains(*path)) {
+    for file in changed.iter().filter(|file| !confirmed.contains(*file)) {
         let folder = if adopted {
             Some(".")
         } else {
-            path.split_once('/').map(|(folder, _)| folder)
+            file.path.split_once('/').map(|(folder, _)| folder)
         };
         if let Some(folder) = folder {
             *counts.entry(folder).or_default() += 1;
@@ -76,6 +78,16 @@ pub fn mass_changed<'a>(
     }
     counts.retain(|_, count| *count > MASS_CHANGE);
     counts
+}
+
+/// What reading a page's `file` in does, `None` while it holds `written`, the
+/// text last written there. A file that cannot be read counts as edited.
+pub fn change(file: &Path, written: &[u8]) -> Option<MirrorPendingKind> {
+    match store::read_optional(file) {
+        Ok(Some(bytes)) if bytes == written => None,
+        Ok(None) => Some(MirrorPendingKind::Gone),
+        Ok(Some(_)) | Err(_) => Some(MirrorPendingKind::Edited),
+    }
 }
 
 /// The files, as paths below `root`, that reading back would act on now, in
@@ -116,14 +128,9 @@ pub fn pending(
     let mut pending: Vec<MirrorPending> = written
         .iter()
         .filter_map(|(path, text)| {
-            let kind = match store::read_optional(&root.join(path)) {
-                Ok(Some(bytes)) if bytes == *text => return None,
-                Ok(None) => MirrorPendingKind::Gone,
-                Ok(Some(_)) | Err(_) => MirrorPendingKind::Edited,
-            };
             Some(MirrorPending {
                 path: (*path).to_owned(),
-                kind,
+                kind: change(&root.join(path), text)?,
             })
         })
         .collect();

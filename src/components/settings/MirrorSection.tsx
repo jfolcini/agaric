@@ -10,9 +10,10 @@
  * sent with the folder chosen next. While it is off, the backend lists the
  * files turning it on would read in under `pending`, each with what reading
  * it in does; turning it on with any asks first, listing them by that, and
- * the confirm sends the paths the dialog listed, so the backend refuses it
- * when another file changed since: nothing is read in that the user was not
- * shown. A folder chosen again holding files changed while
+ * the confirm sends the files the dialog listed, each with what it said
+ * reading it in does, so the backend refuses it when another file changed
+ * since, or one changed in another way: nothing is read in that the user was
+ * not shown. A folder chosen again holding files changed while
  * the mirror was off or writing elsewhere, or chosen again to start fresh,
  * turns it on with reading back off, and the same question is asked at once
  * when reading back was on.
@@ -55,7 +56,12 @@ import { Switch } from '@/components/ui/switch'
 import { MIRROR_HELD_EVENT, MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
-import { commands, type MirrorPendingKind, type MirrorStatus } from '@/lib/bindings'
+import {
+  commands,
+  type MirrorPending,
+  type MirrorPendingKind,
+  type MirrorStatus,
+} from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -144,7 +150,7 @@ export function MirrorSection(): React.ReactElement | null {
   )
 
   const setReadBack = useCallback(
-    async (on: boolean, confirmed: string[]) => {
+    async (on: boolean, confirmed: MirrorPending[]) => {
       setPending('readBack')
       try {
         setStatus(unwrap(await commands.setMirrorReadBack(on, confirmed)))
@@ -370,12 +376,7 @@ export function MirrorSection(): React.ReactElement | null {
           values={{ count: status.pending.length }}
           confirmKey="data.mirrorReadPendingConfirm"
           cancelKey="data.mirrorReadPendingCancel"
-          onConfirm={() =>
-            setReadBack(
-              true,
-              status.pending.map((file) => file.path),
-            )
-          }
+          onConfirm={() => setReadBack(true, status.pending)}
           returnFocusRef={focusAfterQuestion}
         >
           {held && (
