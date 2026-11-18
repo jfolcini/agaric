@@ -70,7 +70,6 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     await ipc(page, 'edit_block', {
       blockId: SEED_IDS.BLOCK_GS_1,
       toText: 'Edited for the History layout',
-      baseText: null,
     })
     await navigateToView(page, 'History')
     const pill = page.getByTestId('history-touch-nav')
