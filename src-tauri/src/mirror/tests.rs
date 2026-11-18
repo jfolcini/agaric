@@ -290,7 +290,13 @@ async fn a_missing_marker_pauses_the_mirror_until_it_is_back() {
 
     fx.tick().await;
     assert!(!fx.root.join("TestSpace").exists(), "no folder is created");
-    assert!(fx.status().await.paused.is_some(), "the status says why");
+    let paused = fx.status().await.paused;
+    assert!(
+        paused.as_ref().is_some_and(
+            |why| why.contains("no .agaric-mirror marker") && why.contains("put the file back")
+        ),
+        "the status says why, and the way out: {paused:?}"
+    );
 
     store::write_marker(&fx.root, DEV).unwrap();
     fx.tick().await;
@@ -349,6 +355,15 @@ async fn set_mirror_folder_refuses_a_folder_it_must_not_write_in() {
             other => panic!("{folder:?} must be refused, got {other:?}"),
         }
     }
+    for folder in [foreign.path(), full.path()] {
+        let Err(AppError::Validation { message, .. }) = refusal(folder).await else {
+            panic!("{folder:?} must be refused");
+        };
+        assert!(
+            message.contains("choose an empty folder"),
+            "the way out: {message}"
+        );
+    }
     assert_eq!(
         store::folder(&fx.pool).await.unwrap(),
         Some(path_string(&fx.root)),
@@ -363,6 +378,29 @@ async fn set_mirror_folder_refuses_a_folder_it_must_not_write_in() {
     assert!(
         refusal(&fx.root).await.is_ok(),
         "its own folder is taken back, files and all"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_mirror_folder_takes_a_folder_holding_only_hidden_entries() {
+    let fx = Fx::new().await;
+    let fresh = TempDir::new().unwrap();
+    std::fs::create_dir(fresh.path().join(".git")).unwrap();
+    std::fs::write(fresh.path().join(".DS_Store"), "").unwrap();
+
+    set_mirror_folder_inner(
+        &fx.pool,
+        DEV,
+        &fx.state,
+        Some(path_string(fresh.path())),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        store::marker_device(fresh.path()).unwrap().as_deref(),
+        Some(DEV)
     );
 }
 
@@ -673,10 +711,9 @@ async fn a_marker_naming_another_device_pauses_the_mirror() {
     assert_eq!(fx.read(BETA), None, "nor created");
     let status = fx.status().await;
     assert!(
-        status
-            .paused
-            .as_ref()
-            .is_some_and(|why| why.contains("another device")),
+        status.paused.as_ref().is_some_and(
+            |why| why.contains("another device") && why.contains("choose an empty folder")
+        ),
         "{status:?}"
     );
 }

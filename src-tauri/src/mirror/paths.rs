@@ -91,6 +91,41 @@ fn fold(path: &str) -> String {
     agaric_core::tag_norm::normalize_tag_name(path)
 }
 
+/// The files of `found`, paths below the mirror's folder as a scan lists
+/// them, that no path of `owned` names: neither one of them nor another
+/// spelling of one under `fold` that `is_file` opens though the scan did not
+/// list it. That is a file on a case-insensitive or normalization-insensitive
+/// file system (APFS, NTFS) renamed by case alone, or named in NFD by another
+/// app, which the scan lists in its own spelling while the owned one still
+/// opens it. On a file system that tells the two apart, the owned spelling
+/// either does not open, as after a rename, or is listed, so a second file
+/// that differs only so stays unowned. The page is not renamed: its path is
+/// the one the layout gives it, which `fold` takes as the file's name.
+///
+/// The tests run on a case-sensitive disk, so they cover this comparison
+/// against a stand-in `is_file`, not the callers' stat.
+pub fn unowned(
+    found: Vec<String>,
+    owned: &HashSet<&str>,
+    is_file: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let respelled: HashSet<String> = {
+        let listed: HashSet<&str> = found.iter().map(String::as_str).collect();
+        owned
+            .iter()
+            .filter(|path| !listed.contains(**path) && is_file(path))
+            .map(|path| fold(path))
+            .collect()
+    };
+    found
+        .into_iter()
+        .filter(|path| {
+            !owned.contains(path.as_str())
+                && (respelled.is_empty() || !respelled.contains(&fold(path)))
+        })
+        .collect()
+}
+
 /// Each `(id, name)` owner's name, made distinct under `fold`. In id order,
 /// a name already taken gets `_` and its owner's first 8 id characters, and a
 /// counter after that while it is still taken, so the lowest id of a colliding

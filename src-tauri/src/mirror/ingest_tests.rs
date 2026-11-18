@@ -969,6 +969,24 @@ async fn a_new_file_that_cannot_be_read_stops_no_write() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_that_cannot_be_read_is_listed_and_stops_no_other_new_file() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    // Below the unreadable file's folder, so the scan lists it after that file.
+    write_at(&fx, "TestSpace/Sub/Gamma.md", "gamma\n");
+    let unreadable = fx.root.join("TestSpace/Loop.md");
+    std::os::unix::fs::symlink(&unreadable, &unreadable).unwrap();
+
+    fx.settle_file().await;
+
+    assert_eq!(pages_titled(&fx, "Sub/Gamma").await.len(), 1);
+    let failed = failed_files(&fx).await;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].0, "TestSpace/Loop.md");
+    assert!(failed[0].1.contains("cannot be read"), "{failed:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_file_renamed_and_edited_is_matched_by_its_anchors() {
     let mut fx = Fx::new().await;
     let (page, ids) = fx.page("Alpha", &["one", "two"]).await;
