@@ -224,6 +224,7 @@ async fn an_empty_catchup_leaves_what_its_session_deferred_5712() {
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
                 inbound: Some(claim),
+                paired_peer: false,
             }),
         ),
     );
@@ -242,6 +243,53 @@ async fn an_empty_catchup_leaves_what_its_session_deferred_5712() {
         (left, init_registry.inbound_syncs_in_flight()),
         ((1, 1), 0),
         "the empty catch-up kept the block and its deferral, and its claim left"
+    );
+    materializer.shutdown();
+}
+
+/// A catch-up for a peer the user unpaired while its session ran records
+/// nothing, rather than creating the row again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catchup_for_an_unpaired_peer_leaves_it_unpaired() {
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let materializer = Materializer::new(init_pool.clone());
+    let init_registry = LoroEngineRegistry::new();
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let nothing_to_offer = SyncMessage::SyncComplete {
+        last_hash: String::new(),
+    };
+    let (sent, recv_res) = tokio::join!(
+        send_sync_message(&mut server.send, &nothing_to_offer),
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &init_sink,
+            REMOTE_DEV,
+            None,
+            Some(EngineReloadCtx {
+                registry: &init_registry,
+                device_id: LOCAL_DEV,
+                inbound: None,
+                paired_peer: true,
+            }),
+        ),
+    );
+    sent.expect("the responder ends the catch-up");
+    recv_res.expect("an empty catch-up is not a sync failure");
+
+    assert_eq!(
+        peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap()
+            .map(|r| r.peer_id),
+        None,
+        "the catch-up re-created the row of the peer the user unpaired"
     );
     materializer.shutdown();
 }
@@ -354,6 +402,7 @@ async fn run_catchup_with_ids(
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
                 inbound: None,
+                paired_peer: false,
             }),
         ),
         try_offer_loro_snapshot_catchup(
@@ -788,6 +837,7 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
                 inbound: None,
+                paired_peer: false,
             }),
         ),
     );
@@ -967,6 +1017,7 @@ async fn catchup_that_drops_a_block(
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
                 inbound,
+                paired_peer: false,
             }),
         ),
     );
@@ -1212,6 +1263,7 @@ async fn a_pull_ending_during_a_catchup_leaves_what_the_catchup_deferred_5712() 
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
                 inbound: None,
+                paired_peer: false,
             }),
         ),
     );

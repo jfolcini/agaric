@@ -2049,9 +2049,12 @@ async fn connect_to_peer(
 ///
 /// The orchestrator comes back beside the outcome because the caller reads it
 /// either way: its session counters on success, its rejection on failure.
+/// A peer missing from the round's `peer_refs` is being paired, and only its
+/// session may create the peer's row.
 async fn run_initiator_session(
     ctx: &SyncSessionContext<'_>,
     peer_id: &str,
+    peer_refs: &[PeerRef],
     send: &mut SendStream,
     recv: &mut RecvStream,
     conn: &Connection,
@@ -2065,6 +2068,9 @@ async fn run_initiator_session(
     )
     .with_event_sink(event_sink_box)
     .with_expected_remote_id(peer_id.to_owned());
+    if peer_refs.iter().any(|p| p.peer_id == peer_id) {
+        orch = orch.with_paired_peer();
+    }
 
     let outcome = run_sync_session(
         &mut orch,
@@ -2548,7 +2554,8 @@ pub async fn try_sync_with_peer(
     };
 
     // 7. Run sync protocol through the orchestrator
-    let (orch, outcome) = run_initiator_session(ctx, peer_id, &mut send, &mut recv, &conn).await;
+    let (orch, outcome) =
+        run_initiator_session(ctx, peer_id, peer_refs, &mut send, &mut recv, &conn).await;
     match outcome {
         Ok(()) => {
             record_session_success(ctx, peer, &orch, pinned.as_deref(), &announced_key).await;
@@ -2654,6 +2661,7 @@ async fn run_snapshot_catchup(
         registry: &loro_state.registry,
         device_id: &local_device_id,
         inbound: orch.take_inbound_sync(),
+        paired_peer: orch.peer_paired_at_start(),
     });
     match snapshot_transfer::try_receive_snapshot_catchup(
         send,

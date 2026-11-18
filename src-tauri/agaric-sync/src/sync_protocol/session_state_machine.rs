@@ -193,6 +193,8 @@ pub struct SyncOrchestrator {
     /// IGNORE`) has already created the row — so "does this row exist now"
     /// answers yes for a row this session manufactured a moment earlier.
     preexisting_peer_ids: std::collections::BTreeSet<String>,
+    /// See [`Self::with_paired_peer`].
+    peer_paired_at_start: bool,
     /// #610: `true` once we have streamed our own state to the peer this
     /// session (set in [`Self::head_exchange_outgoing_loro`], the
     /// responder-only path). Gates the post-session `synced_at`
@@ -294,6 +296,7 @@ impl SyncOrchestrator {
             expected_remote_id: None,
             unverified_claim_endpoint_id: None,
             preexisting_peer_ids: std::collections::BTreeSet::new(),
+            peer_paired_at_start: false,
             streamed_to_peer: false,
             peer_advertised_loro_vvs: Vec::new(),
             peer_holds_news: false,
@@ -386,6 +389,16 @@ impl SyncOrchestrator {
         self.session.remote_device_id = peer_id.clone();
         self.remote_device_id = Some(peer_id.clone());
         self.expected_remote_id = Some(peer_id);
+        self
+    }
+
+    /// Mark this session's peer as already paired: its post-session bookkeeping
+    /// updates the peer's `peer_refs` row and never creates one. A user who
+    /// unpairs the peer while the session runs deletes that row, and the
+    /// session then drops its bookkeeping instead of pairing the peer again.
+    /// Only a pairing session, which starts with no row, may create it.
+    pub fn with_paired_peer(mut self) -> Self {
+        self.peer_paired_at_start = true;
         self
     }
 
@@ -1522,9 +1535,11 @@ impl SyncOrchestrator {
         // literal for the same reason.
         let mut tx =
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_pull").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
-        complete_sync_in_tx(&mut tx, peer_id, last_hash, "").await?;
-        tx.commit().await?;
+        self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
+        let written = complete_sync_in_tx(&mut tx, peer_id, last_hash, "").await;
+        if self.still_paired(peer_id, written)? {
+            tx.commit().await?;
+        }
         Ok(())
     }
 
@@ -1563,10 +1578,41 @@ impl SyncOrchestrator {
         }
         let mut tx =
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_record_stream").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
-        peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await?;
-        tx.commit().await?;
+        self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
+        let written = peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await;
+        if self.still_paired(peer_id, written)? {
+            tx.commit().await?;
+        }
         Ok(())
+    }
+
+    /// Create the peer's row for the bookkeeping that follows, unless the peer
+    /// was paired when the session started ([`Self::with_paired_peer`]).
+    async fn ensure_peer_row_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        peer_id: &str,
+    ) -> Result<(), AppError> {
+        if !self.peer_paired_at_start {
+            peer_refs::upsert_peer_ref_in_tx(tx, peer_id).await?;
+        }
+        Ok(())
+    }
+
+    /// `Ok(false)` when a bookkeeping `UPDATE` found no row for a paired peer:
+    /// the user unpaired it while this session ran, and the caller drops the
+    /// transaction so the unpair stands.
+    fn still_paired(&self, peer_id: &str, written: Result<(), AppError>) -> Result<bool, AppError> {
+        match written {
+            Err(AppError::NotFound(_)) if self.peer_paired_at_start => {
+                tracing::info!(
+                    peer_id,
+                    "the peer was unpaired during this session; recording nothing for it"
+                );
+                Ok(false)
+            }
+            other => other.map(|()| true),
+        }
     }
 
     /// #2502: persist the peer's advertised per-space Loro VVs to
@@ -1592,9 +1638,11 @@ impl SyncOrchestrator {
             crate::sync_protocol::types::encode_persisted_loro_vvs(&self.peer_advertised_loro_vvs);
         let mut tx =
             agaric_store::db::begin_immediate_logged(&self.pool, "sync_persist_peer_vvs").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
-        peer_refs::update_loro_vv_bytes_in_tx(&mut tx, peer_id, &bytes).await?;
-        tx.commit().await?;
+        self.ensure_peer_row_in_tx(&mut tx, peer_id).await?;
+        let written = peer_refs::update_loro_vv_bytes_in_tx(&mut tx, peer_id, &bytes).await;
+        if self.still_paired(peer_id, written)? {
+            tx.commit().await?;
+        }
         Ok(())
     }
 
@@ -2217,6 +2265,11 @@ impl SyncOrchestrator {
     /// harness without `with_expected_remote_id`).
     pub fn expected_remote_id(&self) -> Option<&str> {
         self.expected_remote_id.as_deref()
+    }
+
+    /// Whether this session was marked [`Self::with_paired_peer`].
+    pub fn peer_paired_at_start(&self) -> bool {
+        self.peer_paired_at_start
     }
 
     /// #5712: hand this session's claim on the in-flight inbound syncs to the

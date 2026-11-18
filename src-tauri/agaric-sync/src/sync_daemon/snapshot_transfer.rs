@@ -214,6 +214,10 @@ pub struct EngineReloadCtx<'a> {
     /// merging catch-up's sweep ends (an empty one drops it). `None` when it
     /// imported nothing, and the catch-up claims for itself.
     pub inbound: Option<InboundSync>,
+    /// The session's peer was paired when it started
+    /// ([`SyncOrchestrator::with_paired_peer`](crate::sync_protocol::SyncOrchestrator::with_paired_peer)),
+    /// so the catch-up's bookkeeping updates its row and never creates one.
+    pub paired_peer: bool,
 }
 
 /// Resolve the peer identity a catch-up should be attributed to, preferring
@@ -368,7 +372,8 @@ pub async fn try_receive_snapshot_catchup(
                 // with. Nothing was merged here, so missing either costs a
                 // stamp and a log line, not the session.
                 Some(ctx) if !remote_device_id.is_empty() => {
-                    record_catchup_pull(pool, remote_device_id, ctx.device_id).await;
+                    record_catchup_pull(pool, remote_device_id, ctx.device_id, ctx.paired_peer)
+                        .await;
                 }
                 _ => tracing::warn!(
                     peer_id = %remote_device_id,
@@ -623,7 +628,7 @@ async fn receive_loro_snapshot_catchup(
     }
     let resolved_peer_id: &str = remote_device_id;
 
-    record_catchup_pull(pool, resolved_peer_id, engine.device_id).await;
+    record_catchup_pull(pool, resolved_peer_id, engine.device_id, engine.paired_peer).await;
 
     tracing::info!(
         peer_id = %resolved_peer_id,
@@ -654,8 +659,14 @@ async fn receive_loro_snapshot_catchup(
 /// `reset_count` is NOT bumped.
 ///
 /// Best-effort: the merge it follows has already committed (or there was none),
-/// so a failed stamp is logged and the session still succeeds.
-async fn record_catchup_pull(pool: &SqlitePool, peer_id: &str, local_device_id: &str) {
+/// so a failed stamp is logged and the session still succeeds. A paired peer
+/// whose row is gone was unpaired during the session, and is left unpaired.
+async fn record_catchup_pull(
+    pool: &SqlitePool,
+    peer_id: &str,
+    local_device_id: &str,
+    paired_peer: bool,
+) {
     let stamp = async {
         let last_hash = crate::sync_protocol::get_local_heads(pool)
             .await?
@@ -665,10 +676,23 @@ async fn record_catchup_pull(pool: &SqlitePool, peer_id: &str, local_device_id: 
             .unwrap_or_default();
         let mut tx =
             agaric_store::db::begin_immediate_logged(pool, "snapshot_catchup_record_pull").await?;
-        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
-        peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await?;
-        tx.commit().await?;
-        Ok::<(), AppError>(())
+        if !paired_peer {
+            peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
+        }
+        match peer_refs::update_on_sync_in_tx(&mut tx, peer_id, &last_hash, "").await {
+            Err(AppError::NotFound(_)) if paired_peer => {
+                tracing::info!(
+                    peer_id,
+                    "the peer was unpaired during this session; recording nothing for it"
+                );
+                Ok(())
+            }
+            written => {
+                written?;
+                tx.commit().await?;
+                Ok::<(), AppError>(())
+            }
+        }
     };
     if let Err(e) = stamp.await {
         tracing::warn!(

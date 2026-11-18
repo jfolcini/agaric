@@ -2759,6 +2759,143 @@ async fn a_busy_refusal_caches_the_address_that_answered_6353() {
     init_mat.shutdown();
 }
 
+/// Unpairs `peer_id` from `pool` at the first event its device's session emits,
+/// which comes after the session's gates have admitted the peer and before its
+/// bookkeeping.
+struct UnpairOnFirstEvent {
+    pool: SqlitePool,
+    peer_id: &'static str,
+    unpaired: AtomicBool,
+}
+
+impl SyncEventSink for UnpairOnFirstEvent {
+    fn on_sync_event(&self, _event: SyncEvent) {
+        if self.unpaired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(peer_refs::delete_peer_ref(&self.pool, self.peer_id))
+                .expect("the peer is paired when its session starts");
+        });
+    }
+}
+
+/// A device the user unpairs while a session with it runs stays unpaired on both
+/// sides: the session's bookkeeping and the responder's bind do not create its
+/// row again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unpairing_during_a_session_keeps_the_peer_unpaired() {
+    const INIT_DEV: &str = "INITUNPAIR";
+    const RESP_DEV: &str = "RESPUNPAIR";
+    let harness = ServiceHarness::new().await;
+
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    bind_client_as(&resp_pool, INIT_DEV, &harness).await;
+    // Something to stream, so the responder's first event comes before its
+    // bookkeeping rather than after it, as an empty vault's short-circuit does.
+    make_local_edit_602(
+        &resp_pool,
+        &resp_mat,
+        resp_mat.loro_state(),
+        RESP_DEV,
+        &agaric_store::space::SpaceId::from_trusted("01HZ6956SPACEXXXXXXXXXXXXX"),
+        "01HZ6956BLKXXXXXXXXXXXXXXX",
+        "an edit to stream",
+        1_736_942_400_000,
+    )
+    .await;
+    let resp_sink = Arc::new(UnpairOnFirstEvent {
+        pool: resp_pool.clone(),
+        peer_id: INIT_DEV,
+        unpaired: AtomicBool::new(false),
+    });
+    let resp_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
+        Arc::new(SyncScheduler::new()),
+        resp_sink.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+    peer_refs::bind_endpoint_id(
+        &init_pool,
+        RESP_DEV,
+        &harness.service.endpoint_id().to_string(),
+    )
+    .await
+    .unwrap();
+    let init_sink = Arc::new(UnpairOnFirstEvent {
+        pool: init_pool.clone(),
+        peer_id: RESP_DEV,
+        unpaired: AtomicBool::new(false),
+    });
+    let event_sink: Arc<dyn SyncEventSink> = init_sink.clone();
+    let scheduler = SyncScheduler::new();
+    let cancel = AtomicBool::new(false);
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(init_mat.clone());
+    let ctx = SyncSessionContext {
+        pool: &init_pool,
+        device_id: INIT_DEV,
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let peer = discovered_service_peer(RESP_DEV, &harness);
+    let refs = peer_refs::list_peer_refs(&init_pool).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
+    )
+    .await
+    .expect("try_sync_with_peer timed out");
+    tokio::time::timeout(std::time::Duration::from_secs(20), resp_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked")
+        .expect("the responder session completes");
+
+    assert_eq!(
+        scheduler.failure_count(RESP_DEV),
+        0,
+        "precondition: the session completed"
+    );
+    assert!(
+        init_sink.unpaired.load(Ordering::SeqCst) && resp_sink.unpaired.load(Ordering::SeqCst),
+        "precondition: both sides unpaired during the session"
+    );
+    assert_eq!(
+        peer_refs::get_peer_ref(&init_pool, RESP_DEV)
+            .await
+            .unwrap()
+            .map(|r| r.peer_id),
+        None,
+        "the initiator's session re-created the row of the peer it unpaired"
+    );
+    assert_eq!(
+        peer_refs::get_peer_ref(&resp_pool, INIT_DEV)
+            .await
+            .unwrap()
+            .map(|r| r.peer_id),
+        None,
+        "the responder's session re-created the row of the peer it unpaired"
+    );
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
 /// A harness whose dialling key sorts below (or above) the service's, so a test
 /// of the glare tie-break can pin each side of it.
 async fn harness_where_client_sorts_lower(lower: bool) -> ServiceHarness {
@@ -5979,6 +6116,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             registry: &init_state.registry,
             device_id: "FEAT6_INIT",
             inbound: None,
+            paired_peer: false,
         }),
     )
     .await
@@ -6173,6 +6311,7 @@ async fn empty_responder_reset_is_progress_and_stamps_synced_at_4960() {
             registry: &init_state.registry,
             device_id: INIT_DEV,
             inbound: None,
+            paired_peer: false,
         }),
     )
     .await

@@ -768,7 +768,7 @@ async fn run_file_transfer_phase(
     true
 }
 
-/// Bind the key to the peer (TOFU), now that the session has named it.
+/// Bind the key to the peer (TOFU), now that a pairing session has named it.
 ///
 /// Deliberately after the session rather than before it. The peer's device id is not
 /// knowable up front for an unpaired device with an empty op log — the frontier it
@@ -791,7 +791,6 @@ async fn run_file_transfer_phase(
 async fn bind_peer_to_key(
     ctx: &ResponderCtx<'_>,
     settled_remote_id: &str,
-    pairing_pending: bool,
     heads_ambiguous: bool,
 ) -> bool {
     // #800's surviving guarantee; see `peer_is_bound_to_another_key` for what it holds
@@ -816,7 +815,7 @@ async fn bind_peer_to_key(
         );
         return false;
     }
-    if pairing_pending && heads_ambiguous {
+    if heads_ambiguous {
         // #4380: the peer did not state an id and its heads name more than one
         // candidate, so `settled_remote_id` is whichever sorted lowest. Refuse.
         //
@@ -861,13 +860,11 @@ async fn bind_peer_to_key(
         return false;
     }
     if settled_remote_id.is_empty() || settled_remote_id == ctx.device_id {
-        if pairing_pending {
-            tracing::info!(
-                endpoint_id = %ctx.endpoint_id,
-                "pairing peer did not identify itself in this session; leaving it unbound \
-                 for its own initiator pass to bind"
-            );
-        }
+        tracing::info!(
+            endpoint_id = %ctx.endpoint_id,
+            "pairing peer did not identify itself in this session; leaving it unbound \
+             for its own initiator pass to bind"
+        );
         return false;
     }
     match peer_refs::bind_endpoint_id(ctx.pool, settled_remote_id, &ctx.endpoint_id_str).await {
@@ -877,7 +874,7 @@ async fn bind_peer_to_key(
             // daemon stops advertising "accepting pairing" and a later unpaired
             // device cannot ride the same open window. Best-effort: a failure only
             // leaves the marker to expire on its TTL.
-            if pairing_pending && let Err(e) = peer_refs::clear_pending_pairing(ctx.pool).await {
+            if let Err(e) = peer_refs::clear_pending_pairing(ctx.pool).await {
                 tracing::warn!(
                     peer_id = %settled_remote_id,
                     error = %e,
@@ -1102,7 +1099,9 @@ async fn build_orchestrator(
     let orch = SyncOrchestrator::new(pool, ctx.device_id.to_owned(), Arc::clone(materializer))
         .with_event_sink(event_sink_box);
     if !pairing_pending && !remote_id.is_empty() {
-        return orch.with_expected_remote_id(remote_id.to_owned());
+        return orch
+            .with_expected_remote_id(remote_id.to_owned())
+            .with_paired_peer();
     }
     if pairing_pending {
         // #4230: and because `expected_remote_id` is deliberately unset here, the id
@@ -1251,8 +1250,10 @@ async fn record_settled_peer(
     heads_ambiguous: bool,
     offered_device_name: Option<&str>,
 ) {
+    // Outside a pairing the row already carries this key, and binding again would
+    // re-create the row of a peer the user unpaired while this session ran.
     let bound_to_this_key =
-        bind_peer_to_key(ctx, settled_remote_id, pairing_pending, heads_ambiguous).await;
+        pairing_pending && bind_peer_to_key(ctx, settled_remote_id, heads_ambiguous).await;
     // The two outcomes where the id and the handshake key belong together; see
     // `record_advertised_name`.
     let authenticated = !pairing_pending || bound_to_this_key;
