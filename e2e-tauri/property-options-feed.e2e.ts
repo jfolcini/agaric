@@ -8,7 +8,8 @@
 // chip reads the space's definitions (`useSpacePropertyDefs`), which nothing
 // in the frontend refetches after the header's write; only the backend's
 // change feed does, `blocks:changed` with `local_command` and the
-// `property_defs` domain, mapped to `invalidatePropertyCaches`. The header's
+// `properties` and `property_defs` domains, both mapped to
+// `invalidatePropertyCaches` (so a red drops it from both arms). The header's
 // own row takes the new definition from the write's answer, so the assertion
 // is on the block's chip.
 //

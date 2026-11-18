@@ -62,9 +62,10 @@ export function __resetCalendarPageDatesForTests(): void {
 const invalidationListeners = new Set<() => void>()
 
 /**
- * Drop every cached range and re-fetch the ones on screen (#3626, #5258). Call
- * after a mutation that can add or remove a journal page — the shared
- * page-delete/restore flow, an applied sync or MCP write, an import. In-flight
+ * Drop every cached range and re-fetch the ones on screen (#3626, #5258), after
+ * a mutation that can add or remove a journal page: a local command through
+ * the change feed (`src/hooks/derived-caches.ts`), and an applied sync or MCP
+ * write or an import through `invalidateDerivedCaches`. In-flight
  * fetches are abandoned rather than awaited: `cacheEpoch` makes their results
  * non-cacheable, so the invalidation cannot be overwritten by a response that
  * predates it.
