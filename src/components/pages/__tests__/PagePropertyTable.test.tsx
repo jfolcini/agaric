@@ -195,6 +195,27 @@ describe('PagePropertyTable rendering', () => {
     expect(screen.queryByLabelText(/value$/i)).not.toBeInTheDocument()
   })
 
+  // #6755 — the tags' suggested keys are read when the table opens, not on
+  // every page open (the #5445 perf spec pins a page open's IPC).
+  it("reads the tags' suggested keys once the table opens, and shows them", async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      get_properties: () => [makeProp('status', { value_text: 'active' })],
+      list_property_defs: () => defsPage([makeDef('status', 'text'), makeDef('author', 'text')]),
+      list_suggested_properties: () => [{ key: 'author', tag_id: 'TAG_1', tag_name: 'book' }],
+    })
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    const toggle = await screen.findByRole('button', { name: /Properties/ })
+    const suggestionReads = () =>
+      mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_suggested_properties').length
+    expect(suggestionReads()).toBe(0)
+
+    await user.click(toggle)
+
+    expect(await screen.findByText(t('property.suggestedFrom', { tag: 'book' }))).toBeVisible()
+    expect(suggestionReads()).toBe(1)
+  })
+
   it('expands to show property rows after clicking toggle', async () => {
     const user = userEvent.setup()
     setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
