@@ -233,6 +233,16 @@ pin-sha256 +urls:
       echo "${sum%% *}  $url"
     done
 
+# Move a pin in pins.txt to <version> and recompute its sha256s from the new downloads (`node` bumps .nvmrc). Review the diff.
+[group('pins')]
+pin-bump name version:
+    node scripts/pins.mjs bump {{ name }} {{ version }}
+
+# List pins behind their upstream (the weekly scheduled-deep-checks lane runs the same).
+[group('pins')]
+pins-stale:
+    node scripts/pins.mjs stale
+
 # Regenerate src-tauri/gen/android/gradle/verification-metadata.xml after a Tauri, plugin or Android toolchain bump.
 [group('pins')]
 update-gradle-verification:

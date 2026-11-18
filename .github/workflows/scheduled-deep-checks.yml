@@ -1048,10 +1048,15 @@ jobs:
         # invocation, including nextest below.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest@0.9.151
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
 
       - name: Run the #[ignore]d perf gates (#639)
         working-directory: src-tauri
@@ -1298,13 +1303,18 @@ jobs:
       - name: Prepare externalBin placeholder (FEAT-4f)
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
         # PINNED (#3393): the shard counts above are derived from per-mutant
         # costs measured under 27.1.0, and shards must agree on how the mutant
         # list is divided — a floating version can change either.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.151
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-mutants@${{ steps.pins.outputs.cargo_mutants }},cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
 
       - name: Mutation-scope guard (#3386) — config is readable and every glob is live
         # Runs BEFORE the expensive step, because every failure mode it checks
@@ -2335,10 +2345,6 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.fuzz == 'true'
     runs-on: ubuntu-24.04
-    env:
-      # A dated nightly, bumped by hand: `nightly` alone is a different compiler
-      # every day.
-      FUZZ_TOOLCHAIN: nightly-2026-11-10
     # 155, not 60. The arithmetic, written out because review showed an earlier
     # figure had less headroom than its own comment implied — N is the derived
     # target count, currently 8:
@@ -2451,6 +2457,10 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read the fuzz nightly from pins.txt
+        # A dated nightly: `nightly` alone is a different compiler every day.
+        run: echo "FUZZ_TOOLCHAIN=nightly-$(bash scripts/pins.sh version rust-nightly)" >> "$GITHUB_ENV"
+
       - name: Install nightly Rust toolchain
         # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
         # instrumentation (`-Z sanitizer`). The production toolchain stays
@@ -2479,7 +2489,7 @@ jobs:
         # unverified prebuilt binary.
         # `+$FUZZ_TOOLCHAIN`: a bare `cargo` here would pull the repo's pinned
         # toolchain (see the target-list step).
-        run: cargo +"$FUZZ_TOOLCHAIN" install cargo-fuzz --version 0.13.2 --locked
+        run: cargo +"$FUZZ_TOOLCHAIN" install cargo-fuzz --version "$(bash scripts/pins.sh version cargo-fuzz)" --locked
 
       - name: Fuzz each parser target
         working-directory: src-tauri/fuzz
@@ -3164,20 +3174,17 @@ jobs:
         # invocation (clippy hook, sqlx prepare, cargo doc).
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the
         # whole suite; zizmor/taplo/typos/sqruff/shellcheck/shfmt are invoked by prek hooks.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          # sqruff pinned so its `rust-version` stays within the rustc pin
-          # (see the lint job in _validate.yml). Bump in lockstep.
-          # zizmor pinned (#3476) to `ZIZMOR_PINNED_VERSION` in
-          # scripts/zizmor-hook.sh; the wrapper fails the run on a mismatch.
-          # prek/taplo-cli/typos-cli pinned (#3742) — must match
-          # `pinned_version_for` in scripts/setup-hooks.sh and the other
-          # tool: lists in this repo. Verified by
-          # scripts/check-tool-pins.mjs. shellcheck/shfmt pinned the same way (#6762).
-          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,shellcheck@0.11.0,shfmt@3.14.1
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: prek@${{ steps.pins.outputs.prek }},zizmor@${{ steps.pins.outputs.zizmor }},taplo-cli@${{ steps.pins.outputs.taplo_cli }},typos-cli@${{ steps.pins.outputs.typos_cli }},shellcheck@${{ steps.pins.outputs.shellcheck }},shfmt@${{ steps.pins.outputs.shfmt }}
 
       - name: Install sqruff (sha256-checked)
         uses: ./.github/actions/install-sqruff
@@ -3187,13 +3194,15 @@ jobs:
         # No cargo-nextest: no prek hook runs it.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny@0.20.2,cargo-machete@0.9.2,cargo-audit@0.22.2
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-deny@${{ steps.pins.outputs.cargo_deny }},cargo-machete@${{ steps.pins.outputs.cargo_machete }},cargo-audit@${{ steps.pins.outputs.cargo_audit }}
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
         # list, so compile from source on every run (this lane has no cargo cache).
         run: |
-          if ! cargo sqlx --version 2>/dev/null | grep -qx 'sqlx-cli-sqlx 0.9.0'; then cargo install --locked --force sqlx-cli --version 0.9.0 --no-default-features --features rustls,sqlite; fi
+          v="$(bash scripts/pins.sh version sqlx-cli)"
+          if ! cargo sqlx --version 2>/dev/null | grep -qx "sqlx-cli-sqlx $v"; then cargo install --locked --force sqlx-cli --version "$v" --no-default-features --features rustls,sqlite; fi
 
       # sqlx offline cache check of `src-tauri/.sqlx`, the one cache, with
       # `--workspace` on both sides as `just gen-sqlx` writes it. This is the
@@ -3214,16 +3223,10 @@ jobs:
         # install it the same pinned+checksummed way the lint job does.
         run: |
           set -euo pipefail
-          VERSION=lychee-v0.24.2
-          DIR=lychee-x86_64-unknown-linux-gnu
-          TARBALL="${DIR}.tar.gz"
-          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
-          curl -fsSL -o /tmp/lychee.tar.gz \
-            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
-          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
+          bash scripts/pins.sh fetch lychee linux-x86_64 /tmp/lychee.tar.gz
           mkdir -p "${HOME}/.local/bin"
-          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
-          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp lychee-x86_64-unknown-linux-gnu/lychee
+          install -m 0755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           "${HOME}/.local/bin/lychee" --version
 
@@ -3387,10 +3390,15 @@ jobs:
         # invocation (nextest, doc-tests).
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest@0.9.151
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
 
       - name: Cargo nextest (full suite, shard ${{ matrix.shard }}/2)
         working-directory: src-tauri

@@ -1,26 +1,19 @@
 name: Install sqruff
 description: >-
-  sqruff from its upstream release, checked against a sha256 recorded here.
-  taiki-e/install-action has no checksummed manifest for sqruff and would fall
-  back to an unverified cargo-binstall download. Linux x86_64 only.
+  sqruff from its upstream release, checked against pins.txt. taiki-e/install-action
+  has no checksummed manifest for sqruff and would fall back to an unverified
+  cargo-binstall download. Linux x86_64 only.
 
 runs:
   using: composite
   steps:
     - name: Download and verify sqruff
       shell: bash
-      env:
-        # Must match `pinned_version_for` in scripts/setup-hooks.sh; checked by
-        # scripts/check-tool-pins.mjs.
-        SQRUFF_VERSION: 0.44.0
-        SQRUFF_SHA256: 3d0dd223770e99fb17199c16327bdf15bf238261a001815aa172f140817d7e9a
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/sqruff"
         mkdir -p "$dir"
-        curl -fsSL --retry 3 -o "$dir/sqruff.tgz" \
-          "https://github.com/quarylabs/sqruff/releases/download/v$SQRUFF_VERSION/sqruff-linux-x86_64-musl.tar.gz"
-        echo "$SQRUFF_SHA256  $dir/sqruff.tgz" | sha256sum -c --quiet -
+        bash scripts/pins.sh fetch sqruff linux-x86_64 "$dir/sqruff.tgz"
         tar -xzf "$dir/sqruff.tgz" -C "$dir" sqruff
         # ~/.cargo/bin is already on PATH in every job that runs prek.
         install -m 0755 "$dir/sqruff" "$HOME/.cargo/bin/sqruff"
