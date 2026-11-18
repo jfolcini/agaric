@@ -71,7 +71,7 @@ fuzz_target!(|data: &[u8]| {
             *slot = id;
         }
     }
-    let (spliced, spliced_ids) = splice(&text, &ids, written, &written_ids);
+    let (spliced, spliced_ids) = splice(&text, &ids, None, written, &written_ids);
     assert_eq!(
         spliced.split('\n').count(),
         spliced_ids.len(),

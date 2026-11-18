@@ -19,7 +19,49 @@ fn text(lines: &[(&str, Option<usize>)]) -> (String, Vec<Option<String>>) {
 fn spliced(old: &[(&str, Option<usize>)], new: &[(&str, Option<usize>)]) -> String {
     let (old, old_ids) = text(old);
     let (new, new_ids) = text(new);
-    splice(&old, &old_ids, &new, &new_ids).0
+    splice(&old, &old_ids, None, &new, &new_ids).0
+}
+
+fn spliced_over(
+    old: &[(&str, Option<usize>)],
+    base: &[(&str, Option<usize>)],
+    new: &[(&str, Option<usize>)],
+) -> String {
+    let (old, old_ids) = text(old);
+    let (base, base_ids) = text(base);
+    let (new, new_ids) = text(new);
+    splice(&old, &old_ids, Some((&base, &base_ids)), &new, &new_ids).0
+}
+
+#[test]
+fn a_block_that_reads_otherwise_keeps_its_bytes_while_its_render_is_unchanged() {
+    // `==mark==` reads as other text than Agaric writes for it; only the
+    // block changed in Agaric since the last write takes the render's lines.
+    let old = [("* ==mark== one", Some(1)), ("* two", Some(2))];
+    let base = [("- mark one", Some(1)), ("- two", Some(2))];
+    let new = [("- mark one", Some(1)), ("- TWO", Some(2))];
+    assert_eq!(spliced_over(&old, &base, &new), "* ==mark== one\n- TWO");
+    let edited = [("- mark ONE", Some(1)), ("- two", Some(2))];
+    assert_eq!(spliced_over(&old, &base, &edited), "- mark ONE\n* two");
+    // With no base, such a block is written as the render.
+    assert_eq!(spliced(&old, &new), "- mark one\n- TWO");
+}
+
+#[test]
+fn front_matter_that_reads_otherwise_keeps_its_bytes_while_its_render_is_unchanged() {
+    // Agaric writes no front matter for the page; the file keeps its own.
+    let old = [
+        ("---", None),
+        ("source: Own", None),
+        ("---", None),
+        ("* one", Some(1)),
+    ];
+    let base = [("- one", Some(1))];
+    let new = [("- ONE", Some(1))];
+    assert_eq!(
+        spliced_over(&old, &base, &new),
+        "---\nsource: Own\n---\n- ONE"
+    );
 }
 
 #[test]
@@ -143,7 +185,7 @@ fn front_matter_in_another_key_order_keeps_its_bytes() {
 #[test]
 fn ids_that_are_not_one_per_line_write_the_render() {
     let (new, new_ids) = text(&[("- one", Some(1))]);
-    let out = splice("* one\n", &[Some(id(1))], &new, &new_ids);
+    let out = splice("* one\n", &[Some(id(1))], None, &new, &new_ids);
     assert_eq!(out, (new, new_ids));
 }
 
@@ -169,11 +211,11 @@ proptest! {
         };
         let (old_text, old_ids) = as_refs(&old);
         let (new_text, new_ids) = as_refs(&new);
-        let (out, out_ids) = splice(&old_text, &old_ids, &new_text, &new_ids);
+        let (out, out_ids) = splice(&old_text, &old_ids, None, &new_text, &new_ids);
         prop_assert_eq!(&out, &expected.join("\n"));
         let written = Laid::of(&out, &out_ids).expect("one id per line");
         let render = Laid::of(&new_text, &new_ids).expect("one id per line");
-        prop_assert!(written.reads_as(&render));
+        prop_assert!(written.reads_as(&render, false, &|_| false));
     }
 }
 

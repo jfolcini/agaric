@@ -1673,6 +1673,7 @@ impl Mirror {
             text,
             line_ids,
             buffer: Some(file.buffer.clone()),
+            render: Some(store::Render::of(&file)),
         };
         let found = store::read_optional(&target)?;
         #[cfg(test)]
@@ -1726,7 +1727,13 @@ impl Mirror {
     /// wherever that text was: a page whose file moves keeps its own lines.
     fn spliced(&self, page_id: &str, file: &PageFile) -> (String, Vec<Option<String>>) {
         match self.pages.get(page_id).and_then(PageState::newest) {
-            Some(last) => splice::splice(&last.text, &last.line_ids, &file.text, &file.line_ids),
+            Some(last) => splice::splice(
+                &last.text,
+                &last.line_ids,
+                last.base(),
+                &file.text,
+                &file.line_ids,
+            ),
             None => (file.text.clone(), file.line_ids.clone()),
         }
     }
@@ -1877,6 +1884,7 @@ impl Mirror {
                 text: render.text.clone(),
                 line_ids: render.line_ids.clone(),
                 buffer: Some(render.buffer.clone()),
+                render: Some(store::Render::of(render)),
             };
             return self.write_and_record(root, page_id, path, shadow);
         }

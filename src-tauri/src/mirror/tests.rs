@@ -570,6 +570,7 @@ fn a_state_keeps_the_last_three_texts_written_once_each() {
         text: format!("v{n}"),
         line_ids: vec![None],
         buffer: None,
+        render: None,
     };
     let mut state = PageState {
         path: ALPHA.to_owned(),
@@ -821,6 +822,7 @@ fn one_state(text: &str) -> PageState {
             text: text.into(),
             line_ids: vec![None],
             buffer: None,
+            render: None,
         }],
     }
 }
@@ -1501,4 +1503,37 @@ fn saved_heads(data: &Path) -> usize {
             .filter(|folder| folder.as_ref().unwrap().path().join("head").exists())
             .count()
     })
+}
+
+/// A file holding a block that reads as other text than its render, as one
+/// adopted from another editor (#6540): an edit to another block in Agaric
+/// keeps its lines, since its render is still the one the file was written
+/// from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_block_that_reads_otherwise_keeps_its_lines_while_its_render_is_unchanged() {
+    let mut fx = Fx::new().await;
+    let (page, blocks) = fx.page("Alpha", &["one", "two"]).await;
+    fx.tick().await;
+    let state = fx.mirror.pages.get(&page).unwrap().clone();
+    let written = state.newest().unwrap().clone();
+    let own = written.text.replace("one", "one ==as written elsewhere==");
+    assert_ne!(own, written.text);
+    let shadow = Shadow {
+        text: own.clone(),
+        ..written
+    };
+    let mut state = state;
+    state.shadows = vec![shadow];
+    fx.mirror.store.save(&page, &state).unwrap();
+    fx.mirror.pages.insert(page.clone(), state);
+    std::fs::write(fx.root.join(ALPHA), &own).unwrap();
+    fx.mirror
+        .seen
+        .stats
+        .insert(page.clone(), file_stat(&fx.root.join(ALPHA)));
+
+    fx.edit(&blocks[1], "TWO").await;
+    fx.tick().await;
+
+    assert_eq!(fx.read(ALPHA), Some(own.replace("two", "TWO")));
 }
