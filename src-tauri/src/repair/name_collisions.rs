@@ -46,7 +46,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 
 use crate::commands::blocks::crud::{
-    delete_block_in_tx, edit_block_in_tx, remove_deleted_fts, space_tag_names,
+    delete_block_in_tx, edit_block_in_tx, edit_block_off_tag_path_in_tx, remove_deleted_fts,
+    space_tag_names,
 };
 use crate::commands::spaces::{SpacePageNames, list_spaces_inner};
 use crate::commands::tags::{apply_tag_to_block_in_tx, remove_tag_in_tx};
@@ -247,13 +248,12 @@ async fn rename_later_pages(
     for (page_id, from) in due {
         // Read again after each rename: the next page must not take its name.
         let to = first_free_title(&SpacePageNames::read(&mut tx, space_id).await?, &from);
-        as_housekeeping(edit_block_in_tx(
+        as_housekeeping(edit_block_off_tag_path_in_tx(
             &mut tx,
             state,
             device_id,
             page_id.clone(),
             to.clone(),
-            None,
         ))
         .await?;
         tracing::info!(%page_id, %from, %to, "renamed the later page of a name tie (#6278)");

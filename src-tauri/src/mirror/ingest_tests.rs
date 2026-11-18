@@ -765,6 +765,20 @@ async fn a_new_file_titled_as_a_page_of_the_space_is_refused_and_left_alone() {
     );
 }
 
+/// #6755 — a page under `Tag/` is made through its tag, a file included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_under_the_tag_path_is_refused_and_left_alone() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    write_at(&fx, "TestSpace/Tag/book.md", "one\n");
+    fx.settle_file().await;
+
+    assert_eq!(pages_titled(&fx, "Tag/book").await, Vec::<String>::new());
+    let failed = fx.status().await.failed;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].path, "TestSpace/Tag/book.md");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_file_outside_every_space_folder_or_hidden_is_left_alone() {
     let mut fx = Fx::new().await;

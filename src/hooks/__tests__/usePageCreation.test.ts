@@ -102,6 +102,20 @@ describe('usePageCreation', () => {
     expect(result.current.createError).toBe(t('pageBrowser.duplicateName'))
   })
 
+  // #6755 — a page under `Tag/` is its tag's to make.
+  it('maps a title under a tag path to the create-the-tag message', async () => {
+    mockedCreate.mockRejectedValue({
+      kind: 'validation',
+      code: 'ReservedTagPageTitle',
+      message: "the page 'Tag/foo' is under 'Tag/'",
+    })
+
+    const { result, created } = await create('Tag/foo')
+
+    expect(created).toBeNull()
+    expect(result.current.createError).toBe(t('tags.pageTitleReserved'))
+  })
+
   // #4338 — the bus is the dialog's only route to a warm `[[` picker cache.
   it("publishes an 'added' event so the picker cache learns the new page", async () => {
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000009')

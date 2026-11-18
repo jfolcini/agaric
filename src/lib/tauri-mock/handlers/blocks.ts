@@ -11,10 +11,10 @@
 
 import { readPastedText } from '@/editor/source-buffer-document'
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
-import type { PasteInput, PasteSplice } from '@/lib/bindings'
+import type { AppError, PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import { nameKey } from '@/lib/name-tokens'
+import { nameKey, tagOfPageTitle, tagPageTitle } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import type { TodoState } from '@/lib/task-states'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
@@ -43,6 +43,7 @@ import {
   rejectCrossSpaceTokens,
   rejectNonSpaceHolder,
   relinkRestored,
+  reservedTagPageTitle,
   renumberSiblings,
   restoreCohort,
   spaceRootGroup,
@@ -59,6 +60,7 @@ import {
 } from '@/lib/tauri-mock/page-names'
 import { listField } from '@/lib/tauri-mock/property-keys'
 import {
+  type MockOpLogEntry,
   allOrNothing,
   attachmentBytes,
   attachments,
@@ -846,6 +848,80 @@ function rejectSpacedTagName(name: string): void {
 }
 
 /**
+ * #6755 — what renaming the page or tag `block` from `from` to `toText` takes
+ * along. Mock twin of `tag_path_rename` (`src-tauri/src/commands/tag_pages.rs`):
+ * a tag and its page are renamed together, so this answers the other one and
+ * the name it moves to. A page is refused a title under `Tag/` unless it is a
+ * live tag's page, and a live tag's page a title off the path.
+ */
+function tagPathRename(
+  block: Record<string, unknown>,
+  from: string,
+  toText: string,
+): { partner: Record<string, unknown>; name: string } | null {
+  if (block['block_type'] === 'page' && nameKey(from) !== nameKey(toText)) {
+    const fromTag = tagOfPageTitle(from)
+    const spaceId = ownerSpaceOf(block)
+    const tag =
+      fromTag === null || spaceId === null
+        ? undefined
+        : [...blocks.values()].find(
+            (b) =>
+              b['block_type'] === 'tag' &&
+              !b['deleted_at'] &&
+              b['space_id'] === spaceId &&
+              b['content'] != null &&
+              nameKey(b['content'] as string) === nameKey(fromTag),
+          )
+    const name = tagOfPageTitle(toText)
+    if (tag !== undefined && name !== null && name !== '') return { partner: tag, name }
+    if (tag !== undefined) throw reservedTagPageTitle(from)
+    if (name !== null) throw reservedTagPageTitle(toText)
+    return null
+  }
+  if (block['block_type'] !== 'tag' || from === toText) return null
+  const spaceId = (block['space_id'] as string | null | undefined) ?? null
+  const holder = spaceId === null ? null : pageNameHolder(tagPageTitle(from), spaceId)
+  const page = holder?.by === 'title' ? blocks.get(holder.id) : undefined
+  return page === undefined ? null : { partner: page, name: tagPageTitle(toText) }
+}
+
+/** Mock twin of `taken_by_another`: a clash of the partner's name is coded as one. */
+function takenByAnother(err: unknown): unknown {
+  const e = err as Partial<AppError> | null
+  if (e?.kind !== 'validation' || e.code !== 'DuplicatePageTitle') return err
+  return appErrorRejection({
+    kind: 'validation',
+    code: 'TagPageTitleTaken',
+    message: e.message ?? '',
+  })
+}
+
+/**
+ * Write `toText` to the live block `b`: the name rules, the text, its links
+ * and the `edit_block` op. Mock twin of `write_edit_in_tx`
+ * (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function writeEdit(b: Record<string, unknown>, toText: string): MockOpLogEntry {
+  const blockId = b['id'] as string
+  const oldContent = b['content'] as string | null
+  if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, toText)
+  if (b['block_type'] === 'tag') {
+    rejectSpacedTagName(toText)
+    rejectDuplicateTagName(blockId, toText)
+  }
+  rejectCrossSpaceTokens(definitionSpaceOf(blockId), toText, blockId)
+  const linked = linkedTargets(b)
+  b['content'] = toText
+  indexLinks(b, linked)
+  return pushOp('edit_block', {
+    block_id: blockId,
+    to_text: toText,
+    from_text: oldContent,
+  })
+}
+
+/**
  * #4723 — refuse titling `page` `title` when another live page of its space
  * holds that name, as its title or an alias (#6278). Mock twin of
  * `reject_duplicate_page_title` (`src-tauri/src/commands/blocks/crud.rs`); the
@@ -1062,6 +1138,8 @@ function existingNamedBlock(
   if (blockType === 'page' && typeof content === 'string') {
     const holder = pageNameHolder(content, spaceId)
     if (holder?.by === 'alias') throw pageNameRefusal(holder, content)
+    // #6755 — a new page under `Tag/` is its tag's to make (`create_tag_page`).
+    if (holder === null && tagOfPageTitle(content) !== null) throw reservedTagPageTitle(content)
     return holder ? blocks.get(holder.id) : undefined
   }
   return undefined
@@ -1584,7 +1662,7 @@ export const blocksHandlers = {
   // Spaces — Phase 1 / Phase 2
   // ---------------------------------------------------------------------------
 
-  edit_block: (args) => {
+  edit_block: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const b = blocks.get(blockId)
@@ -1598,23 +1676,22 @@ export const blocksHandlers = {
       a['baseText'] as string | null | undefined,
       a['toText'] as string,
     )
-    if (b['block_type'] === 'page') rejectDuplicatePageTitle(b, toText)
-    if (b['block_type'] === 'tag') {
-      rejectSpacedTagName(toText)
-      rejectDuplicateTagName(blockId, toText)
+    // #6755 — `tag_path_rename`, then the block's own write, then its partner's.
+    const partner = tagPathRename(b, oldContent ?? '', toText)
+    const op = writeEdit(b, toText)
+    const opRefs = [{ device_id: op.device_id, seq: op.seq }]
+    if (partner !== null) {
+      let partnerOp: MockOpLogEntry
+      try {
+        partnerOp = writeEdit(partner.partner, partner.name)
+      } catch (err) {
+        throw takenByAnother(err)
+      }
+      opRefs.push({ device_id: partnerOp.device_id, seq: partnerOp.seq })
     }
-    rejectCrossSpaceTokens(definitionSpaceOf(blockId), toText, blockId)
-    const linked = linkedTargets(b)
-    b['content'] = toText
-    indexLinks(b, linked)
-    const op = pushOp('edit_block', {
-      block_id: a['blockId'],
-      to_text: toText,
-      from_text: oldContent,
-    })
     // #2468 — `WithOps<BlockRow>` (spread copy — see create_block).
-    return { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] }
-  },
+    return { ...b, op_refs: opRefs }
+  }),
 
   // #1775 — single-op soft-delete cascade, mirroring the backend's
   // `project_delete_block_to_sql` / `descendants_cte_active`. Tombstone the

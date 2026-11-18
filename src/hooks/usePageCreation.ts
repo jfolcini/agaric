@@ -81,10 +81,14 @@ export function usePageCreation(): UsePageCreationResult {
         // #6278 — another page's alias refuses the create.
         const duplicate =
           isConflict(error) || validationCode(error) === ValidationCode.DuplicatePageTitle
+        // #6755 — a page under `Tag/` is its tag's to make.
+        const reserved = validationCode(error) === ValidationCode.ReservedTagPageTitle
         setCreateError(
           duplicate
             ? t('pageBrowser.duplicateName')
-            : t('pageBrowser.createFailed', { error: String(error) }),
+            : reserved
+              ? t('tags.pageTitleReserved')
+              : t('pageBrowser.createFailed', { error: String(error) }),
         )
         return null
       } finally {

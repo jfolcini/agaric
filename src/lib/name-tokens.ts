@@ -87,6 +87,29 @@ const trimWhiteSpace = (s: string): string => s.replace(/^\p{White_Space}+|\p{Wh
 export const nameKey = (name: string): string => trimWhiteSpace(name).toLowerCase().normalize('NFC')
 
 /**
+ * The path a tag's page lives under (#6755): tag `x` of a space is paired with
+ * the page titled `Tag/x` of that space, found under {@link nameKey}. Twin of
+ * `agaric_core::tag_norm::TAG_PAGE_PREFIX`.
+ */
+const TAG_PAGE_PREFIX = 'Tag/'
+
+/** The title of the page paired with the tag named `tagName`. */
+export const tagPageTitle = (tagName: string): string =>
+  `${TAG_PAGE_PREFIX}${trimWhiteSpace(tagName)}`
+
+/**
+ * The tag name a page titled `title` is paired with: what follows `Tag/` in
+ * any letter case. `null` for a title outside the path, `Tag` alone included.
+ */
+export function tagOfPageTitle(title: string): string | null {
+  const trimmed = trimWhiteSpace(title)
+  const prefix = trimmed.slice(0, TAG_PAGE_PREFIX.length)
+  // ASCII letters only, as Rust's `eq_ignore_ascii_case` folds.
+  if (prefix.replace(/[A-Z]/g, (c) => c.toLowerCase()) !== 'tag/') return null
+  return trimmed.slice(TAG_PAGE_PREFIX.length)
+}
+
+/**
  * The name a new tag takes for `name` (#6278 I4): the ends trimmed and each
  * whitespace run a `-`, since a tag name holds no whitespace. Rust's
  * `inbound_tag_spelling` (`markdown.rs`) spells a new tag the same way.

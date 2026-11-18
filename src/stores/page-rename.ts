@@ -6,7 +6,12 @@
  * This is the one entry point; each store's action is a no-op when current.
  */
 
-import { notifyPageRenamed } from '@/lib/name-change-bus'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
+import { notifyPageRenamed, notifyTagRenamed } from '@/lib/name-change-bus'
+import { nameKey, tagOfPageTitle, tagPageTitle } from '@/lib/name-tokens'
+import { requireActiveScope } from '@/lib/space-scope'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
@@ -29,6 +34,41 @@ export function renamePage(pageId: string, title: string, spaceId: string | null
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
   if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
+}
+
+/**
+ * #6755 — a tag and its page `Tag/<tag>` are renamed together, so after a
+ * rename that moved both (its `edit_block` answered two op refs) the other
+ * one's copies follow: a renamed tag's page, found by its new title, or a
+ * renamed page's tag, found by either name, as the tag list may not have
+ * caught up with the rename yet. Never rejects: the rename went through.
+ */
+export async function renameTagPagePartner(
+  blockType: string,
+  from: string,
+  to: string,
+  spaceId: string | null,
+): Promise<void> {
+  if (spaceId == null) return
+  try {
+    const scope = requireActiveScope(spaceId)
+    if (blockType === 'tag') {
+      const page = unwrap(await commands.resolvePageTitle(tagPageTitle(to), scope))
+      if (page.page_id !== null) renamePage(page.page_id, page.title, spaceId)
+      return
+    }
+    const was = tagOfPageTitle(from)
+    const name = tagOfPageTitle(to)
+    if (was === null || name === null) return
+    const keys = new Set([nameKey(was), nameKey(name)])
+    const tags = unwrap(await commands.listAllTagsInSpace(scope))
+    const tag = tags.find((row) => keys.has(nameKey(row.name)))
+    if (tag === undefined) return
+    renamePage(tag.tag_id, name, spaceId)
+    notifyTagRenamed(tag.tag_id, name, spaceId)
+  } catch (err) {
+    logger.warn('pageRename', 'Failed to carry a rename to its tag or page', { from, to }, err)
+  }
 }
 
 /**

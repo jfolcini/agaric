@@ -213,6 +213,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #5281 — the renamed row; a rename onto a name its space already holds is
   // refused, which only the command sees.
   edit_block: { idKey: 'id', attrs: ['content'], lists: [] },
+  // #6755 — the tag's page: the one under its path already, or a new one.
+  create_tag_page: { idKey: 'id', attrs: ['block_type', 'content'], lists: [] },
   edit_blocks_batch: { idKey: HEADED_ID_KEY, attrs: [], lists: ['skipped'] },
   // #6054 — the four the differential fuzz drives as commands, so it compares
   // what each returns or refuses, not only the state it leaves.

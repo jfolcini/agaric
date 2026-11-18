@@ -593,6 +593,11 @@ export const commands = {
 	 *  carries the op ref.
 	 */
 	moveUnfitPropertyValues: (spaceId: SpaceId, key: string, intoKey: string, acknowledged: UnfitMoveCounts) => typedError<WithOps<UnfitMoveCounts>, AppError>(__TAURI_INVOKE("move_unfit_property_values", { spaceId, key, intoKey, acknowledged })),
+	/**
+	 *  Tauri command: the page a tag's notes are written on, created when the
+	 *  tag has none. Delegates to [`create_tag_page_inner`].
+	 */
+	createTagPage: (tagId: BlockId) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_tag_page", { tagId })),
 	/**  Tauri command: [`list_suggested_properties_inner`]. */
 	listSuggestedProperties: (blockId: BlockId) => typedError<SuggestedProperty[], AppError>(__TAURI_INVOKE("list_suggested_properties", { blockId })),
 	/**  Tauri command: [`preview_set_property_on_tagged_blocks_inner`]. */
@@ -6121,7 +6126,18 @@ export type ValidationCode =
  *  which Obsidian's `#tag` cannot spell. Coded so the tag surfaces can
  *  suggest `-`.
  */
-"TagNameWhitespace";
+"TagNameWhitespace" | 
+/**
+ *  Creating a page under `Tag/`, or renaming a page into or out of its
+ *  tag's path, other than through the tag (#6755). Coded so the page
+ *  surfaces can point at the tag.
+ */
+"ReservedTagPageTitle" | 
+/**
+ *  Renaming a tag whose page would move onto a title another page of the
+ *  space holds (#6755).
+ */
+"TagPageTitleTaken";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

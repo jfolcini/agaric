@@ -186,6 +186,16 @@ export const references: Record<string, string> = {
   'taggedItems.moreChildren_one': '{{count}} weiterer Block — öffne den Block, um ihn zu sehen',
   'taggedItems.moreChildren_other': '{{count}} weitere Blöcke — öffne den Block, um sie zu sehen',
   'taggedItems.searchUnder': 'Alles unter #{{name}} durchsuchen',
+  'tagNotes.title': 'Notizen',
+  'tagNotes.empty': 'Zu diesem Tag ist noch nichts geschrieben.',
+  'tagNotes.add': 'Notizen hinzufügen',
+  'tagNotes.createFailed': 'Die Notizen dieses Tags konnten nicht angelegt werden',
+  'tagNotes.loadFailed': 'Die Notizen dieses Tags konnten nicht geladen werden',
+  'tagNotes.openTag': 'Notizen zum Tag #{{name}}',
+  'tags.pageTitleReserved':
+    'Seiten unter "Tag/" gehören zu ihren Tags. Erstelle den Tag oder benenne ihn um.',
+  'tags.pageTitleTaken':
+    'Ein Tag und seine Notizseite werden gemeinsam umbenannt, und eine andere Seite oder ein anderer Tag trägt diesen Namen bereits. Benenne diese zuerst um oder lösche sie.',
   'backlink.searchTextRequired': 'Suchtext ist erforderlich',
   'backlink.propertyKeyRequired': 'Eigenschaftsschlüssel ist erforderlich',
   'backlink.propertyNotFound': 'Kein Block hat die Eigenschaft "{{key}}"',

@@ -678,6 +678,34 @@ describe('TagList', () => {
     })
   })
 
+  // #6755 — a rename whose page would land on another page's title is refused
+  // coded; the toast names that page as what to resolve.
+  it("shows the page-in-the-way toast when the tag's page cannot follow the rename", async () => {
+    const user = userEvent.setup()
+    stubTags([makeTag('T1', 'first-tag')], {
+      edit_block: () =>
+        Promise.reject({
+          kind: 'validation',
+          code: 'TagPageTitleTaken',
+          message: "the page 'Tag/second' already exists",
+        }),
+    })
+
+    render(<TagList />)
+
+    const tag = await screen.findByText('first-tag')
+    await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+    const input = await screen.findByDisplayValue('first-tag')
+    await user.clear(input)
+    await user.type(input, 'second')
+    await user.click(screen.getByRole('button', { name: /Save/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('tags.pageTitleTaken'))
+    })
+    expect(mockedToastError).toHaveBeenCalledTimes(1)
+  })
+
   // #6278 I4 — a tag name holding whitespace is refused coded; the toast says
   // to use `-`, not the generic failure.
   describe('a name holding whitespace', () => {

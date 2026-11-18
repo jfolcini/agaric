@@ -431,6 +431,30 @@ async fn a_taken_title_is_refused_5364() {
     assert_eq!(f.live_pages_titled("Sync 2031-03-14").await, 1);
 }
 
+/// #6755 — a meeting's page is no way under a tag's path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_meeting_titled_under_the_tag_path_is_refused_6755() {
+    let f = fixture().await;
+    let notes = f.page("Notes").await;
+    let source = f.block(&notes, "x").await;
+
+    let err = f
+        .add(request(new_meeting(
+            "Tag/sync",
+            None,
+            MeetingLink::Block(source),
+        )))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::ReservedTagPageTitle),
+        "got {err:?}"
+    );
+    assert_eq!(f.live_pages_titled("Tag/sync 2031-03-14").await, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn files_join_an_existing_meeting_by_block_or_by_page_5364() {
     let f = fixture().await;

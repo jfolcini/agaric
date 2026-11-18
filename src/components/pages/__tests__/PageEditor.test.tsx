@@ -164,6 +164,18 @@ vi.mock('@/components/pages/TagPropertiesSection', () => ({
   TagPropertiesSection: () => <div data-testid="tag-properties" />,
 }))
 
+vi.mock('@/components/pages/TagNotesSection', () => ({
+  TagNotesSection: (props: { tagId: string; tagName: string }) => (
+    <div data-testid="tag-notes" data-tag-id={props.tagId} data-tag-name={props.tagName} />
+  ),
+}))
+
+vi.mock('@/components/pages/TagPageLink', () => ({
+  TagPageLink: (props: { pageTitle: string }) => (
+    <div data-testid="tag-page-link" data-page-title={props.pageTitle} />
+  ),
+}))
+
 vi.mock('@/components/pages/TaggedItemsSection', () => ({
   TaggedItemsSection: (props: { tagId: string }) => (
     <div data-testid="tagged-items" data-tag-id={props.tagId} />
@@ -826,7 +838,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
   })
 })
 
-describe('PageEditor tag page is read-only (#4725)', () => {
+describe('PageEditor tag page (#4725, #6755)', () => {
   /** `get_block` answering "this page is a tag block". */
   function stubTagPage(): void {
     stubInvoke({
@@ -835,7 +847,7 @@ describe('PageEditor tag page is read-only (#4725)', () => {
     })
   }
 
-  it('renders no block tree and no add-block button', async () => {
+  it("renders no block tree and no add-block button of the tag's own", async () => {
     stubTagPage()
 
     render(<PageEditor pageId="TAG_1" title="urgent" />)
@@ -852,6 +864,34 @@ describe('PageEditor tag page is read-only (#4725)', () => {
     render(<PageEditor pageId="TAG_1" title="urgent" />)
 
     expect(await screen.findByTestId('tagged-items')).toHaveAttribute('data-tag-id', 'TAG_1')
+  })
+
+  it("mounts the tag's notes above what it is on", async () => {
+    stubTagPage()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    const notes = await screen.findByTestId('tag-notes')
+    expect(notes).toHaveAttribute('data-tag-id', 'TAG_1')
+    expect(notes).toHaveAttribute('data-tag-name', 'urgent')
+    expect(
+      notes.compareDocumentPosition(screen.getByTestId('tag-properties')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.queryByTestId('tag-page-link')).not.toBeInTheDocument()
+  })
+
+  it('links a page under a tag path to its tag, and no other page', async () => {
+    const { rerender } = render(<PageEditor pageId="PAGE_1" title="Tag/urgent" />)
+
+    expect(await screen.findByTestId('tag-page-link')).toHaveAttribute(
+      'data-page-title',
+      'Tag/urgent',
+    )
+    expect(screen.queryByTestId('tag-notes')).not.toBeInTheDocument()
+
+    rerender(<PageEditor pageId="PAGE_1" title="Tag" />)
+    expect(screen.queryByTestId('tag-page-link')).not.toBeInTheDocument()
   })
 
   it('lists nothing tagged on a plain page', async () => {

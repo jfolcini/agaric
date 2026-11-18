@@ -14,9 +14,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { logger } from '@/lib/logger'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { renamePage } from '@/stores/page-rename'
+import { renamePage, renameTagPagePartner } from '@/stores/page-rename'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -160,6 +161,73 @@ describe('renamePage fan-out', () => {
       expect(seen).toEqual([
         { kind: 'renamed', entity: 'page', id: PAGE, name: 'New', spaceId: SPACE },
       ])
+    })
+  })
+
+  // #6755 — a tag and its page `Tag/<tag>` are renamed together.
+  describe('renameTagPagePartner', () => {
+    const TAG = 'TAG_BOOK'
+
+    it("carries a tag's rename to its page's copies", async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          record_page_open: () => null,
+          resolve_page_title: () => ({ title: 'Tag/novel', page_id: PAGE }),
+        }),
+      )
+      useTabsStore.getState().navigateToPage(PAGE, 'Tag/book')
+
+      await renameTagPagePartner('tag', 'book', 'novel', SPACE)
+
+      expect(selectPageStack(useTabsStore.getState()).at(-1)).toEqual({
+        pageId: PAGE,
+        title: 'Tag/novel',
+      })
+      expect(useResolveStore.getState().resolveTitle(PAGE)).toBe('Tag/novel')
+    })
+
+    it("carries a page's rename to its tag while the tag list holds the old name", async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_all_tags_in_space: () => [
+            { tag_id: TAG, name: 'book', usage_count: 0, updated_at: '' },
+          ],
+        }),
+      )
+      const seen: NameChange[] = []
+      const stop = subscribeToNameChanges((c) => {
+        seen.push(c)
+      })
+
+      await renameTagPagePartner('page', 'Tag/book', 'tag/Novel', SPACE)
+      stop()
+
+      expect(useResolveStore.getState().resolveTitle(TAG)).toBe('Novel')
+      expect(seen).toContainEqual({
+        kind: 'renamed',
+        entity: 'tag',
+        id: TAG,
+        name: 'Novel',
+        spaceId: SPACE,
+      })
+    })
+
+    it('logs, and keeps the copies, when the lookup fails', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          record_page_open: () => null,
+          resolve_page_title: () => {
+            throw new Error('boom')
+          },
+        }),
+      )
+      useTabsStore.getState().navigateToPage(PAGE, 'Tag/book')
+
+      await expect(renameTagPagePartner('tag', 'book', 'novel', SPACE)).resolves.toBeUndefined()
+
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(selectPageStack(useTabsStore.getState()).at(-1)?.title).toBe('Tag/book')
     })
   })
 })

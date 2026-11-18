@@ -1,0 +1,767 @@
+{
+  "description": "#6755 — a tag's page is the page titled `Tag/<tag>` of its space, paired by that title under `name_key`. `create_tag_page` makes it or answers the one already there (a seeded `tag/Legacy` is adopted as spelled); every other create under `Tag/` and every rename of an ordinary page into the path is refused (`ReservedTagPageTitle`), `Tag` alone is ordinary, and a live tag's page does not leave the path. A tag and its page are renamed together, either from the tag or from the page, as two `edit_block`s in one transaction, undone together and reverted together from either half; onto a name another page or tag holds the rename is refused whole (`TagPageTitleTaken`). A deleted tag leaves its page, which may then leave the path. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "tag/Legacy",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "book",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "tag/Book",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "reading",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Reading notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "legacy",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "comic",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 33,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_book_tag",
+      "returns": ["B3#block_type=tag#content=book#parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tag_makes_its_page",
+      "returns": ["B4#block_type=page#content=Tag/book"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_ask_answers_the_same_page",
+      "returns": ["B4#block_type=page#content=Tag/book"]
+    },
+    {
+      "code": "ReservedTagPageTitle",
+      "error": "validation",
+      "name": "a_page_under_the_path_is_refused",
+      "returns": []
+    },
+    {
+      "code": "ReservedTagPageTitle",
+      "error": "validation",
+      "name": "a_create_block_under_the_path_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_title_under_the_path_that_exists_resolves",
+      "returns": ["create_page_in_space#page_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_bare_word_is_an_ordinary_title",
+      "returns": ["create_page_in_space#page_id=B5"]
+    },
+    {
+      "code": "ReservedTagPageTitle",
+      "error": "validation",
+      "name": "a_rename_into_the_path_is_refused",
+      "returns": []
+    },
+    {
+      "code": "ReservedTagPageTitle",
+      "error": "validation",
+      "name": "a_tags_page_is_not_renamed_off_its_path",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tags_page_respells_its_title",
+      "returns": ["B4#content=tag/Book"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_reading_tag",
+      "returns": ["B6#block_type=tag#content=reading#parent_id=null#position=5"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "reading_makes_its_page",
+      "returns": ["B7#block_type=page#content=Tag/reading"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "reading_is_deleted",
+      "returns": ["B6#deleted_at=DELETED#descendants_affected=1"]
+    },
+    {
+      "code": "TagPageTitleTaken",
+      "error": "validation",
+      "name": "a_tag_rename_onto_another_page_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_whose_tag_is_gone_leaves_the_path",
+      "returns": ["B7#content=Reading notes"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tag_rename_moves_its_page",
+      "returns": ["B3#content=Reading"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "one_undo_moves_both_back",
+      "returns": [
+        "undo_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false",
+        "undo_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_under_the_path_joins_the_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_legacy_tag",
+      "returns": ["B8#block_type=tag#content=legacy#parent_id=null#position=8"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_already_under_the_path_is_adopted",
+      "returns": ["B1#block_type=page#content=tag/Legacy"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_page_is_no_tag",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_trashed_tag_makes_no_page",
+      "returns": []
+    },
+    {
+      "code": "ReservedTagPageTitle",
+      "error": "validation",
+      "name": "a_meeting_under_the_path_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_comic_tag",
+      "returns": ["B9#block_type=tag#content=comic#parent_id=null#position=9"]
+    },
+    {
+      "code": "TagPageTitleTaken",
+      "error": "validation",
+      "name": "a_tags_page_is_not_renamed_onto_another_tags_name",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_tags_page_rename_renames_its_tag",
+      "returns": ["B4#content=Tag/novel"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "reverting_one_half_reverts_both",
+      "returns": [
+        "revert_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false",
+        "revert_ops#reversed_op_type=edit_block#new_op_type=edit_block#is_redo=false"
+      ]
+    }
+  ],
+  "name": "tag_page",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "O1–O7 — C1, the space every tag and page below lives in, with its default property definitions.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "tag",
+        "content": "book",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "O8, O9 — C2.",
+      "name": "the_book_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C2"
+      },
+      "command": "create_tag_page",
+      "comment": "O10, O11 — C3, the page `Tag/book` in the tag's space.",
+      "name": "a_tag_makes_its_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C2"
+      },
+      "command": "create_tag_page",
+      "comment": "C3 again: nothing created, no op.",
+      "name": "a_second_ask_answers_the_same_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Tag/other",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "A page under `Tag/` is its tag's to make.",
+      "expect_code": "ReservedTagPageTitle",
+      "expect_error": "validation",
+      "name": "a_page_under_the_path_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "page",
+        "content": " tAG/other",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The `create_block` IPC makes a page by the same path; the prefix is read in any case, trimmed.",
+      "expect_code": "ReservedTagPageTitle",
+      "expect_error": "validation",
+      "name": "a_create_block_under_the_path_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "tag/BOOK",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "`[[Tag/book]]` resolves through the create: C3, nothing created.",
+      "name": "a_title_under_the_path_that_exists_resolves",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Tag",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "O12, O13 — C4: `Tag` alone is outside the path.",
+      "name": "the_bare_word_is_an_ordinary_title",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C4",
+        "toText": "Tag/plain"
+      },
+      "command": "edit_block",
+      "comment": "C4 keeps `Tag`.",
+      "expect_code": "ReservedTagPageTitle",
+      "expect_error": "validation",
+      "name": "a_rename_into_the_path_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "Books"
+      },
+      "command": "edit_block",
+      "comment": "`book` is live, so its page moves only with it.",
+      "expect_code": "ReservedTagPageTitle",
+      "expect_error": "validation",
+      "name": "a_tags_page_is_not_renamed_off_its_path",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "tag/Book"
+      },
+      "command": "edit_block",
+      "comment": "O14 — the same name under the key, so still the tag's page.",
+      "name": "a_tags_page_respells_its_title",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "tag",
+        "content": "reading",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "O15, O16 — C5.",
+      "name": "the_reading_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C5"
+      },
+      "command": "create_tag_page",
+      "comment": "O17, O18 — C6, `Tag/reading`.",
+      "name": "reading_makes_its_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C5"
+      },
+      "command": "delete_block",
+      "comment": "O19 — the tag goes to the Trash; its page stays, an ordinary page under the path.",
+      "name": "reading_is_deleted",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "toText": "Reading"
+      },
+      "command": "edit_block",
+      "comment": "C3 would move onto C6's title: the tag keeps `book`.",
+      "expect_code": "TagPageTitleTaken",
+      "expect_error": "validation",
+      "name": "a_tag_rename_onto_another_page_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C6",
+        "toText": "Reading notes"
+      },
+      "command": "edit_block",
+      "comment": "O20 — no live tag `reading`, so the page is free to go.",
+      "name": "a_page_whose_tag_is_gone_leaves_the_path",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "toText": "Reading"
+      },
+      "command": "edit_block",
+      "comment": "O21 the tag, O22 its page: C3 is `Tag/Reading`.",
+      "name": "a_tag_rename_moves_its_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O22", "O21"]
+      },
+      "command": "undo_ops",
+      "comment": "O23, O24 — the tag is `book` and C3 `tag/Book` again.",
+      "name": "one_undo_moves_both_back",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The seeded page `tag/Legacy` joins the space: a page under the path from before the rule. A move runs no path rule.",
+      "name": "a_page_under_the_path_joins_the_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "tag",
+        "content": "legacy",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "C7, named as the seeded page S1 `tag/Legacy` is.",
+      "name": "the_legacy_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C7"
+      },
+      "command": "create_tag_page",
+      "comment": "S1, as it is spelled: nothing created, no op.",
+      "name": "a_page_already_under_the_path_is_adopted",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C4"
+      },
+      "command": "create_tag_page",
+      "comment": "Only a live tag has a page.",
+      "expect_error": "not_found",
+      "name": "a_page_is_no_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "tagId": "C5"
+      },
+      "command": "create_tag_page",
+      "comment": "C5 is in the Trash.",
+      "expect_error": "not_found",
+      "name": "a_trashed_tag_makes_no_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "input": {
+          "date": "2031-03-14",
+          "space_id": "C1",
+          "title": "Tag/sync"
+        }
+      },
+      "command": "add_meeting",
+      "comment": "A meeting's page is titled from what the user typed.",
+      "expect_code": "ReservedTagPageTitle",
+      "expect_error": "validation",
+      "name": "a_meeting_under_the_path_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": null,
+        "blockType": "tag",
+        "content": "comic",
+        "index": null,
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "O28, O29 — C8, a tag with no page.",
+      "name": "the_comic_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "Tag/Comic"
+      },
+      "command": "edit_block",
+      "comment": "C3 would rename its tag `book` onto `comic`: both keep their names.",
+      "expect_code": "TagPageTitleTaken",
+      "expect_error": "validation",
+      "name": "a_tags_page_is_not_renamed_onto_another_tags_name",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "Tag/novel"
+      },
+      "command": "edit_block",
+      "comment": "O30 the page, O31 its tag: C2 is `novel`.",
+      "name": "a_tags_page_rename_renames_its_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O31"]
+      },
+      "command": "revert_ops",
+      "comment": "O32, O33 — the History view reverts the tag's half; the page's goes with it: C2 `book`, C3 `tag/Book`.",
+      "name": "reverting_one_half_reverts_both",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "tag/Legacy",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
