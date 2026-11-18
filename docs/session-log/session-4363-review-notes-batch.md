@@ -8,6 +8,7 @@ Recheck every review note, blocking and non-blocking, on the 67 PRs merged betwe
 - `bulk-pages-history-order.test.ts`: the `undo_page_op` case could not fail. `undo_page_op` reads one page's ops and each bulk page has one, so push order never reached it (noted in #6956's body). Bulk Page 001 now gets a second, older stamp pushed after its newer one. Shown red with the handler trusting push order: it reversed the older op (`expected 10 to be 7`).
 - `e2e/toolbar-controls.spec.ts`: one comment line rewrapped at 100 columns (#6933).
 - #6962's four notes, which merged after the audit: the search specs' `byCode` comparator was the default string order and is gone; `search-shown-text-6277`'s `expectFound` and `search-results`' `expectListed` are one `expectSearchListed` in `e2e/helpers.ts`; the #6741 group-by test no longer boots twice; and `spec-durations.json` drops the seven WDIO specs #6962 deleted.
+- A test gap found on the way: `search-results.spec.ts` held an empty `test.skip` for the `<mark>` highlight, and no real-backend spec checked it. It is now a `@real-only` test: a search on the bridge marks the matched word in its row. Shown red with `SnippetHighlight` rendering its marked runs as `<span>`.
 
 **Let go, not obvious:** #6939's `files_under` reads file text it only prints on failure. It is test-only with no failure, and fixing it would put a `.rs` file in this batch, which runs the cargo lanes in CI for nothing.
 
