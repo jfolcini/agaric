@@ -20,6 +20,8 @@ import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
+import { i18n } from '@/lib/i18n'
+import { loadLocale } from '@/lib/i18n/set-locale'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -220,6 +222,21 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
       blockIds: ['BLOCK_1', 'BLOCK_2'],
       state: null,
     })
+  })
+
+  it('names a cleared state in the UI language, not in English', async () => {
+    await loadLocale('es')
+    const es = i18n.getFixedT('es')
+    const params = { ...makeDefaultParams(), t: es }
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetTodo(null)
+    })
+
+    const message = vi.mocked(toast.success).mock.calls[0]?.[0]
+    expect(message).toContain(es('task.noneState'))
+    expect(message).not.toMatch(/\bnone\b/)
   })
 })
 

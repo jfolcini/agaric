@@ -109,7 +109,9 @@ export async function setTodoStateOnBlocks(
     notify.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
     return false
   }
-  notify.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
+  notify.success(
+    t('blockTree.setStateMessage', { successCount, state: state ?? t('task.noneState') }),
+  )
   if (madeTasks.length > 0) refs = [...refs, ...(await clearLists(madeTasks))]
   if (rootParentId) useUndoStore.getState().onNewAction(rootParentId, refs)
   return true

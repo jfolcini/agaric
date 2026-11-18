@@ -52,7 +52,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it |
 | Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client. An agent can also edit the files directly. No first-party MCP server was found | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
 | Importers | An official importer for Notion, Evernote, OneNote, Apple Notes, Google Keep, Bear, Roam, Logseq and more | Markdown, Obsidian vaults, Logseq graphs, Org, Notion, Evernote, Joplin, bibliographies |
-| Languages | Many interface translations; right-to-left layout | English, with Spanish for error messages and a few settings. Right-to-left paragraphs in notes, not a right-to-left interface |
+| Languages | Many interface translations; right-to-left layout | English, German, Spanish, French and Portuguese, each complete, and a documented path to add more ([docs/TRANSLATING.md](docs/TRANSLATING.md)). Right-to-left paragraphs in notes, not a right-to-left interface |
 | Encryption at rest | None for the local vault | None for the local database |
 | Telemetry | None | None |
 
@@ -65,7 +65,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 - **You think visually**: Canvas, and drawing through plugins.
 - **You clip the web, publish a site, or share a vault.**
 - **You want Vim keys, multiple cursors, split or pop-out windows.**
-- **You need the interface in your language.**
+- **You need the interface in a language Agaric does not ship yet**, or laid out right to left.
 - **You want a company, security audits and store builds behind the tool.**
 
 ## Where Agaric is the better tool

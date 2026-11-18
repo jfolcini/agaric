@@ -23,7 +23,7 @@ import { logger } from '@/lib/logger'
 export interface PickerPluginConfig {
   /** Component name passed to `logger.warn` (e.g. 'BlockLinkPicker'). */
   loggerComponent: string
-  /** Display name shown in the suggestion popup header (e.g. 'Block links'). */
+  /** Display name shown in the suggestion popup header (e.g. 'Page links'). */
   displayName: string
   /** Plugin key used by both Suggestion and the renderer. */
   pluginKey: PluginKey

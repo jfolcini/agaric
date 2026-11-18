@@ -26,8 +26,8 @@
 - **After every `main` push, `ci.yml`'s `cache-prune` job keeps the newest `refs/heads/main` entry of each `v0-rust-<shared-key>-` family and deletes the rest, PR copies included;** `mutants-merge` deletes `rust-mutants` once the shards finish. It reads keys as `<family>-Linux-x64-<env>-<lock>` and fails on any other shape, so a rust-cache bump that changes the key format reds `main` until the pattern is updated.
 - **Data read only weekly does not belong in the Actions cache:** past the quota the least-recently-used entries go first, so a weekly reader finds nothing. The fuzz corpus is a 90-day `fuzz-corpus` artifact, and the fuzz job restores the newest one `main` uploaded.
 - **`Swatinem/rust-cache` hashes every `CARGO*` / `RUST*` variable and `.cargo/config.toml` into its key,** so a lane restoring another job's key copies that job's environment and toolchain setup order (mold before the cache step), or it never matches. A `--config` flag or profile change it does not hash needs a renamed `shared-key` in the same PR (`rust-cov-deps-o2`): the full match restores a tree built the old way, rust-cache saves nothing, and every run rebuilds.
-- **The real-backend lane's build restores `rust-mcp` with `save-if: false`:** `main` runs that lane only weekly, so a key of its own never hit (#5853). Its shards restore `apt-e2e-tauri-runtime-*`, which `ci.yml`'s `e2e-tauri-apt-cache` job saves on every main push for the same reason.
-- A lane with its own package set takes its own `apt-*` key, and bumps its `-vN` suffix whenever the list changes. The `apt-tauri-*-v1` key is shared.
+- **The real-backend lane's build restores `rust-mcp` with `save-if: false`:** `main` runs that lane only weekly, so a key of its own never hit (#5853). Its shards' runtime `.debs` are kept warm by `ci.yml`'s `e2e-tauri-apt-cache` job on every main push for the same reason.
+- `actions/apt-install` with `cache: 'true'` caches the `.debs` with the package lists they were resolved from, keyed on what the runner image's own lists resolve to, so a lane's package set or an image update picks its key with no suffix to bump; on a hit it installs with no `apt-get update` and no network.
 - A cache-poisoning suppression is an inline `# zizmor: ignore[cache-poisoning]` on its step, never an entry in `zizmor.yml`. Only a job that never signs or publishes may restore a cache; `release.yml`'s own jobs restore none (#3542); the workflows it calls restore caches but ship nothing.
 
 ## Pins
@@ -37,7 +37,7 @@
 - Tool versions and download digests live in `pins.txt`, which Dependabot cannot track: workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh`. Never write a version or sha256 into a workflow; bump with `just pin-bump`. actionlint is pinned by SHA in `prek.toml`.
 - Every checkout sets `persist-credentials: false`. Each workflow's top-level `permissions` are read-only, and a job widens only what it needs.
 - A job that runs `npm ci` uses the `./.github/actions/setup-node` composite, which installs the npm `package.json` pins (`engine-strict` refuses an older one); a job that only runs `node scripts/…` keeps the upstream `actions/setup-node` with `package-manager-cache: false`.
-- apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed: rerun the job.
+- apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed after a retry and an index refresh; it is infra, not the diff: rerun the job.
 - `workflow-watchdog.yml` watches every workflow with a cron, plus `ci.yml`'s post-merge run on `main`. `WATCHED` in `scripts/check-workflow-liveness.mjs` lists them keyed by filename, so adding a cron or renaming a workflow means updating it.
 
 ## Console output
