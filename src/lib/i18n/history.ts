@@ -101,8 +101,6 @@ export const history: Record<string, string> = {
   // change-type dropdown, and the dropdown's first item, which shows every type.
   'history.filterLabel': 'Filter:',
   'history.allTypesOption': 'All types',
-  // Translators: Chip on a selected history entry; lowercase, very short.
-  'history.selectedBadge': 'selected',
 
   // Translators: Toolbar shown in the History view while entries are ticked: the revert button and
   // its text while working ("Revert" = undo the selected changes), a button that unticks

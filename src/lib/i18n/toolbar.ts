@@ -83,16 +83,12 @@ export const toolbar: Record<string, string> = {
   'toolbar.strikethroughTip': 'Strikethrough',
   'toolbar.highlightTip': 'Highlight',
   'toolbar.underlineTip': 'Underline (Ctrl+U)',
-  'toolbar.linkTip': 'External link (Ctrl+K)',
   'toolbar.pageLinkTip': 'Page link ([[)',
   'toolbar.blockRefTip': 'Block reference (())',
   'toolbar.queryTip': 'Embed a query ({{)',
   'toolbar.tagTip': 'Tag (@)',
   'toolbar.emojiTip': 'Insert emoji (:shortcode:)',
-  'toolbar.codeBlockTip': 'Code block (Ctrl+Shift+C)',
   'toolbar.blockquote': 'Blockquote',
-  'toolbar.blockquoteTip': 'Blockquote (Ctrl+Shift+B)',
-  'toolbar.headingTip': 'Heading (Ctrl+1-6)',
   'toolbar.priority1Tip': 'Priority 1 — high (Ctrl+Shift+1)',
   'toolbar.priority2Tip': 'Priority 2 — medium (Ctrl+Shift+2)',
   'toolbar.priority3Tip': 'Priority 3 — low (Ctrl+Shift+3)',
@@ -115,16 +111,13 @@ export const toolbar: Record<string, string> = {
   // tooltips that show the Markdown you can type instead; keep that part as written).
   // "Divider" = a horizontal line; "Callout" = a coloured box with an icon (Info, Warning …).
   'toolbar.orderedList': 'Ordered list',
-  'toolbar.orderedListTip': 'Ordered list (1. prefix)',
   'toolbar.divider': 'Divider',
   'toolbar.dividerTip': 'Divider (---)',
   'toolbar.callout': 'Callout',
-  'toolbar.calloutTip': 'Callout (> [!INFO])',
 
   // Translators: Language picker of a code block (in the "Turn into" menu and on the code block
   // itself): its label, the "no syntax colouring" choice, and the row shown when the typed name
   // matches no known language; {{language}} = what the user typed, e.g. "elixir".
-  'toolbar.codeBlockLanguageTip': 'Code block language',
   'toolbar.codeBlockLanguage': 'Code block language',
   'toolbar.plainText': 'Plain text',
   'toolbar.noLanguageMatch': 'No languages match',

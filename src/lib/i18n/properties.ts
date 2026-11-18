@@ -382,21 +382,13 @@ export const properties: Record<string, string> = {
   'property.createDefFailed': 'Failed to create property definition',
 
   // Translators: Display names of built-in block properties (field labels). "Due" / "Scheduled" =
-  // task dates; "Effort" = estimated work time; "Todo State" = task state (TODO, DONE…). "Repeat…"
-  // = recurring-task settings: Seq = occurrences so far, Origin = the original date.
+  // task dates; "Effort" = estimated work time; "Repeat" = the recurring-task setting.
   'property.dueDate': 'Due',
   'property.scheduledDate': 'Scheduled',
-  'property.createdAt': 'Created at',
-  'property.completedAt': 'Completed at',
   'property.effort': 'Effort',
   'property.assignee': 'Assignee',
   'property.location': 'Location',
   'property.repeat': 'Repeat',
-  'property.repeatUntil': 'Repeat until',
-  'property.repeatCount': 'Repeat count',
-  'property.repeatSeq': 'Repeat seq',
-  'property.repeatOrigin': 'Repeat origin',
-  'property.todoState': 'Todo state',
   'property.priority': 'Priority',
 
   // Translators: BlockPropertyDrawer fields and inline property chips: screen-reader labels of the

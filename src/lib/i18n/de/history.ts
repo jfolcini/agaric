@@ -68,7 +68,6 @@ export const history: Record<string, string> = {
   'diff.regionLabel': 'Vergleichsinhalt',
   'history.filterLabel': 'Filter:',
   'history.allTypesOption': 'Alle Typen',
-  'history.selectedBadge': 'ausgewählt',
   'history.revertingButton': 'Wird zurückgesetzt...',
   'history.revertSelectedButton': 'Ausgewählte zurücksetzen',
   'history.clearSelectionButton': 'Auswahl aufheben',
