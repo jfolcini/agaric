@@ -39,9 +39,8 @@ export function useBatchCounts(entries: DayEntry[]) {
   // A `[[link]]` typed, pasted or synced changes the badge counts without any
   // property event; the graph-structure counter is what notices it.
   const { structureKey } = useGraphStructureEvents()
-  // A date write staled `agenda_cache`; the backend sends the property event
-  // again once the cache is rebuilt, which the read after the write may have
-  // preceded (#6567).
+  // A date write stales `agenda_cache`; the change feed's `properties` domain
+  // bumps this counter once the cache is rebuilt (#6567).
   const { invalidationKey } = useBlockPropertyEvents()
 
   useEffect(() => {

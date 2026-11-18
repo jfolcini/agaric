@@ -148,7 +148,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           setResolveDeletedStatus(deletedTarget, false)
           // #5246 — and the cascade the delete struck through with it.
           void useResolveStore.getState().refreshDeleted(deletedTarget.originSpaceId)
-          // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))

@@ -157,8 +157,8 @@ describe('useBatchCounts', () => {
     expect(mockedCountBacklinksBatch).toHaveBeenCalledTimes(2)
   })
 
-  // The backend sends `block:properties-changed` again once the agenda cache a
-  // date write staled is rebuilt (#6567); only this counter hears it.
+  // The change feed's `properties` domain bumps this counter once the agenda
+  // cache a date write staled is rebuilt (#6567).
   it('refetches the counts when a property event fires', async () => {
     const entries: DayEntry[] = [{ dateStr: '2025-01-06', pageId: null } as DayEntry]
     mockedCountAgendaBatchBySource.mockResolvedValue(ok({ '2025-01-06': {} }))

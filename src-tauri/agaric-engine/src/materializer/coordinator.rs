@@ -1327,9 +1327,9 @@ impl Materializer {
     ///
     /// A shed task has not run: it waits in `materializer_retry_queue` for the
     /// sweeper, so the flush alone returns with the task's rows still missing.
-    /// The integrity check and the `after_rebuild` event promise a settled
-    /// vault and call this. Quit, boot, the snapshot pass and the end of a pull
-    /// flush too, and must not wait on a backlog, so the flush stays a barrier.
+    /// The integrity check and the change feed promise a settled vault and
+    /// call this. Quit, boot, the snapshot pass and the end of a pull flush
+    /// too, and must not wait on a backlog, so the flush stays a barrier.
     ///
     /// The shed tasks go back as one [`MaterializeTask::CommitFanOut`] on a
     /// send that waits for its slot: it cannot be shed again, and it cannot

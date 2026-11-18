@@ -44,19 +44,8 @@ import { useUndoStore } from '@/stores/undo'
  * user may have changed in between. Callers capture it in the tick the
  * user's undo/redo gesture is handled. See `@/stores/page-rename`.
  *
- * #4534 — this is also where an undo/redo pays back the picker's name caches.
- * Every EVICTING publisher on the bus owes a RESTORE signal to whatever can
- * reverse it, and the reverse of a delete is not a rename: it puts rows BACK.
- * The two other delete surfaces' undos (`PageBrowserBatchToolbar.handleUndoTrash`
- * and `usePageDeleteAction.handleUndo`) pay it back through their restore's
- * change-feed event, whose `names` domain drops the caches; and #4524 added a
- * third evicting publisher
- * (`useBlockMultiSelect.handleBatchDelete`) whose only advertised escape
- * hatch is the Ctrl+Z that lands HERE. Without this call the block tree's
- * batch delete leaves the page restored in the DB and back in the tree, yet
- * permanently missing from `[[` for the rest of the session — a page the user
- * cannot link to but can see, which is the worse polarity of the same
- * stale-cache class #4007 exists to close.
+ * #4534 — undoing a delete puts its pages back, so the `[[` picker's name
+ * caches, which the delete evicted, are dropped here.
  *
  * Why a blanket invalidation and not a targeted re-add: the undo store is
  * ref-addressed and reports only `reversed_op_type` — it cannot say WHICH
