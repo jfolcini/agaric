@@ -12,7 +12,6 @@
  *  - a11y compliance for both states
  */
 
-import { invoke } from '@tauri-apps/api/core'
 import { render as rtlRender, act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/react'
@@ -20,7 +19,6 @@ import type { DragEventHandler, MouseEventHandler, ReactElement, ReactNode } fro
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { EditableBlock } from '@/components/editor/EditableBlock'
 import {
   EditorSurfaceContext,
@@ -28,8 +26,6 @@ import {
 } from '@/components/editor/editor-surface-context'
 import { setActiveEditor } from '@/editor/active-editor'
 import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
-import { BatchAttachmentsProvider, useBatchAttachments } from '@/hooks/useBatchAttachments'
-import type { AttachmentRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { PAGE_DRAG_TYPE } from '@/lib/page-drag'
 
@@ -2270,51 +2266,6 @@ describe('EditableBlock', () => {
       // The upload itself runs past this point; the refusal shows in the file never being read.
       expect(fileRead).not.toHaveBeenCalled()
       fileRead.mockRestore()
-    })
-
-    it('a dropped file shows on the block without a remount (#5282)', async () => {
-      const row: AttachmentRow = {
-        id: 'ATT_1',
-        block_id: 'BLK_1',
-        filename: 'notes.pdf',
-        mime_type: 'application/pdf',
-        size_bytes: 7,
-        fs_path: 'attachments/ATT_1',
-        created_at: 1_735_689_600_000,
-      }
-      let stored: AttachmentRow[] = []
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({ list_attachments_batch: () => ({ BLK_1: stored }) }),
-      )
-      mockAddAttachmentWithBytes.mockImplementationOnce(async () => {
-        stored = [row]
-        return { status: 'ok', data: row }
-      })
-      function AttachmentCount(): ReactElement {
-        const rows = useBatchAttachments()?.get('BLK_1')
-        return <span data-testid="attachment-count">{rows?.length ?? 'unfetched'}</span>
-      }
-      render(
-        <BatchAttachmentsProvider blockIds={['BLK_1']}>
-          <EditableBlock
-            blockId="BLK_1"
-            content="hello"
-            isFocused
-            rovingEditor={makeRovingEditor() as never}
-          />
-          <AttachmentCount />
-        </BatchAttachmentsProvider>,
-      )
-      const count = screen.getByTestId('attachment-count')
-      await waitFor(() => expect(count).toHaveTextContent('0'))
-
-      await act(async () => {
-        fireEvent.drop(getBlockEditorWrapper(), {
-          dataTransfer: { files: [makeFile('notes.pdf', 'application/pdf')], types: ['Files'] },
-        })
-      })
-
-      await waitFor(() => expect(count).toHaveTextContent('1'))
     })
 
     it('shows error toast on addAttachmentWithBytes failure', async () => {

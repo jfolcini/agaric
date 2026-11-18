@@ -34,7 +34,6 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { unwrap } from '@/lib/app-error'
 import type {
   AddMeetingInput,
@@ -131,7 +130,6 @@ export function MeetingDialog({
   const undo = async (created: WithOps<MeetingResult>) => {
     try {
       unwrap(await commands.revertOps(created.op_refs))
-      invalidateDerivedCaches()
       onCreated(created)
     } catch (err) {
       reportIpcError('MeetingDialog', 'meeting.undoFailed', err, t)
@@ -154,9 +152,6 @@ export function MeetingDialog({
         summary_file: summaryMode === 'file' ? await fileInput(summaryFile) : null,
       }
       const created = unwrap(await commands.addMeeting(input))
-      // The meeting's page, tag and files reached the backend past every page
-      // store, so the name lists and attachment caches drop what they hold.
-      invalidateDerivedCaches()
       onCreated(created)
       writePreference(PREFERENCES.meetingTemplate, templateId, spaceId)
       notify.success(

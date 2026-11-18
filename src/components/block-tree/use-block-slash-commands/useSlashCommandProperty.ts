@@ -23,7 +23,6 @@ import type {
 } from '@/components/block-tree/use-block-slash-commands/types'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
-import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
 import { blobToBase64, guessMimeType, isAttachmentAllowed } from '@/lib/file-utils'
 import { clearListStyles } from '@/lib/list-style'
@@ -285,7 +284,6 @@ function handleAttach(ctx: SlashCommandContext): void {
               await blobToBase64(file),
             ),
           )
-          recordAttachmentInvalidation()
           if (progressToastId !== undefined) notify.dismiss(progressToastId)
           notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
         } catch {

@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import { axe } from '@/__tests__/helpers/axe'
 import { MeetingDialog } from '@/components/attachments/MeetingDialog'
-import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -757,24 +756,6 @@ describe('MeetingDialog — mutation triage (#6435)', () => {
     )
     expect(children.map((b) => b['content'])).toContain('Written.')
     expect(children.flatMap((b) => attachedNames(b['id'] as string))).toEqual([])
-  })
-
-  it('has every attachment list re-read after the meeting is made and after its Undo', async () => {
-    const user = userEvent.setup()
-    const onClose = vi.fn()
-    const onCreated = vi.fn()
-    render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} onCreated={onCreated} />)
-    await waitFor(async () => expect((await dateInput()).value).toBe('2031-03-14'))
-    const before = getAttachmentInvalidationKey()
-
-    await user.click(screen.getByRole('button', { name: t('meeting.create') }))
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
-    expect(getAttachmentInvalidationKey()).toBe(before + 1)
-
-    const [, options] = vi.mocked(toast.success).mock.calls[0] ?? []
-    ;(options as { action?: { onClick: () => void } } | undefined)?.action?.onClick()
-    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(2))
-    expect(getAttachmentInvalidationKey()).toBe(before + 2)
   })
 
   it('logs a refused meeting with the block it was for', async () => {

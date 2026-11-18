@@ -28,6 +28,7 @@ import {
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
+import { invalidateDomains } from '@/hooks/derived-caches'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
@@ -3122,6 +3123,8 @@ describe('PageModeEditor attachments (#5743)', () => {
     await waitFor(() => {
       expect(backendFiles(fresh)).toEqual(['clip.txt'])
     })
+    // The mock sends no change feed: the `attachments` event the write's feed carries.
+    act(() => invalidateDomains(['attachments']))
     await waitFor(() => {
       expect(previews(container, fresh)).toEqual(['pasted text'])
     })
