@@ -344,9 +344,41 @@ jobs:
         run: bash scripts/patch-android-build.sh
 
       - name: Build Android APK (x86_64 debug)
-        run: npm run tauri -- android build --target x86_64 --debug
+        id: android-debug
+        run: |
+          set -o pipefail
+          npm run tauri -- android build --target x86_64 --debug 2>&1 | tee "$RUNNER_TEMP/android-debug.log"
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Regenerate Gradle verification metadata (verification failed)
+        # A Tauri, plugin or Android toolchain bump changes the Gradle
+        # dependencies, and Gradle refuses every artifact
+        # gradle/verification-metadata.xml does not list. Regenerate it here,
+        # under this job's read-only token, and upload it; the
+        # gradle-verification-commit workflow commits it to the PR branch
+        # without running PR code. This job stays red: the new hashes are
+        # trusted on first use, so a person reviews that diff first.
+        id: regen
+        if: failure() && github.event_name == 'pull_request' && steps.android-debug.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          if ! grep -q 'Dependency verification failed' "$RUNNER_TEMP/android-debug.log"; then
+            echo "The Android build failed for another reason; nothing to regenerate."
+            exit 0
+          fi
+          bash scripts/update-gradle-verification.sh
+          echo "regenerated=true" >> "$GITHUB_OUTPUT"
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Upload regenerated Gradle verification metadata
+        if: failure() && steps.regen.outputs.regenerated == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gradle-verification-metadata
+          path: src-tauri/gen/android/gradle/verification-metadata.xml
+          retention-days: 7
 
       # #4425 — the 0.9.9 release APK shipped with 4 KB-aligned ELF LOAD
       # segments, so the app cannot start on a device booted with a 16 KB page
