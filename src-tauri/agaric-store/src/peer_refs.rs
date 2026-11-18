@@ -341,6 +341,47 @@ pub async fn bind_endpoint_id(
     peer_id: &str,
     endpoint_id: &str,
 ) -> Result<(), AppError> {
+    check_bindable(pool, peer_id, endpoint_id).await?;
+    sqlx::query!(
+        "INSERT INTO peer_refs (peer_id, endpoint_id)
+         VALUES (?, ?)
+         ON CONFLICT(peer_id) DO UPDATE SET endpoint_id = excluded.endpoint_id",
+        peer_id,
+        endpoint_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// [`bind_endpoint_id`] for a peer that is already paired: binds its row and never
+/// creates one. `Ok(false)` when the row is gone, because the user unpaired the peer
+/// while the session that is binding it ran.
+///
+/// # Errors
+/// As [`bind_endpoint_id`].
+pub async fn bind_endpoint_id_if_paired(
+    pool: &SqlitePool,
+    peer_id: &str,
+    endpoint_id: &str,
+) -> Result<bool, AppError> {
+    check_bindable(pool, peer_id, endpoint_id).await?;
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+        endpoint_id,
+        peer_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// The refusals [`bind_endpoint_id`] documents, shared by both of its forms.
+async fn check_bindable(
+    pool: &SqlitePool,
+    peer_id: &str,
+    endpoint_id: &str,
+) -> Result<(), AppError> {
     validate_endpoint_id(endpoint_id)?;
     if peer_id.is_empty() {
         return Err(AppError::validation(
@@ -358,16 +399,6 @@ pub async fn bind_endpoint_id(
             existing.peer_id, peer_id
         )));
     }
-
-    sqlx::query!(
-        "INSERT INTO peer_refs (peer_id, endpoint_id)
-         VALUES (?, ?)
-         ON CONFLICT(peer_id) DO UPDATE SET endpoint_id = excluded.endpoint_id",
-        peer_id,
-        endpoint_id,
-    )
-    .execute(pool)
-    .await?;
     Ok(())
 }
 
@@ -1947,6 +1978,54 @@ mod tests {
         assert!(
             peer.synced_at.is_some(),
             "binding a key must not clear synced_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_a_paired_peer_binds_its_row_and_never_creates_one() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-A").await.unwrap();
+
+        assert!(
+            bind_endpoint_id_if_paired(&pool, "peer-A", KEY_A)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !bind_endpoint_id_if_paired(&pool, "peer-gone", KEY_B)
+                .await
+                .unwrap()
+        );
+
+        assert_eq!(
+            get_peer_ref(&pool, "peer-A")
+                .await
+                .unwrap()
+                .and_then(|p| p.endpoint_id),
+            Some(KEY_A.to_owned()),
+        );
+        assert!(
+            get_peer_ref(&pool, "peer-gone").await.unwrap().is_none(),
+            "binding a peer with no row must not create one"
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_a_paired_peer_refuses_what_bind_endpoint_id_refuses() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-A").await.unwrap();
+        upsert_peer_ref(&pool, "peer-B").await.unwrap();
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+
+        bind_endpoint_id_if_paired(&pool, "peer-B", KEY_A)
+            .await
+            .expect_err("a key bound to peer-A must not be re-pointed at peer-B");
+        assert_eq!(
+            get_peer_ref(&pool, "peer-B")
+                .await
+                .unwrap()
+                .and_then(|p| p.endpoint_id),
+            None,
         );
     }
 

@@ -2138,14 +2138,27 @@ async fn record_session_success(
     // `bind_endpoint_id` touches only its own column, so re-binding preserves
     // this peer's version vectors and sync state — a device that merely
     // re-paired must not be reset.
+    // A peer paired before the session only has its row bound, never created, so
+    // one the user unpaired while the session ran stays unpaired.
     if pinned.is_none() {
-        match peer_refs::bind_endpoint_id(ctx.pool, peer_id, announced_key).await {
+        let bound = if orch.peer_paired_at_start() {
+            peer_refs::bind_endpoint_id_if_paired(ctx.pool, peer_id, announced_key).await
+        } else {
+            peer_refs::bind_endpoint_id(ctx.pool, peer_id, announced_key)
+                .await
+                .map(|()| true)
+        };
+        match bound {
+            Ok(false) => tracing::info!(
+                peer_id,
+                "the peer was unpaired during this session; not binding its key"
+            ),
             // The bind consumes the pairing window, as the responder's does
             // (#1519). Left armed until its TTL, the window keeps this device
             // dialling and admitting unknown peers, so a peer unpaired here is
             // re-paired on its next announcement. Clearing with no pairing
             // pending is a no-op; a failed clear leaves the marker to its TTL.
-            Ok(()) => {
+            Ok(true) => {
                 if let Err(e) = peer_refs::clear_pending_pairing(ctx.pool).await {
                     tracing::warn!(
                         peer_id,
