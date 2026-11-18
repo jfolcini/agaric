@@ -1818,6 +1818,17 @@ export async function chooseSelectOption(
   await expect(trigger).toHaveText(option)
 }
 
+/** Dispatch a native paste of `text` as `text/plain` onto `editor`. */
+export async function pasteText(editor: Locator, text: string): Promise<void> {
+  await editor.evaluate((el, value) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', value)
+    el.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+  }, text)
+}
+
 /** Call a mock backend command directly, the way the frontend's IPC does; resolves to its result. */
 export function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
   return page.evaluate(

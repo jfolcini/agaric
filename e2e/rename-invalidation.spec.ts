@@ -138,8 +138,9 @@ test.describe('Rename and create invalidation @pages', () => {
   test('the Pages filter and the [[ picker find a renamed page by its new title only (#5365)', async ({
     page,
   }) => {
-    // Both read a copy the materializer keeps (the pages list, FTS past two characters), not the
-    // block, so only the bridge shows a copy the rename missed. No word is shared between titles.
+    // The Pages filter globs the page block's own title; the picker reads FTS past two characters,
+    // a copy the materializer keeps, so only the bridge shows a rename it missed. No word is
+    // shared between the titles.
     await openPage(page, 'Meetings')
     await renameOpenPage(page, 'Velvet lantern')
 
@@ -155,6 +156,7 @@ test.describe('Rename and create invalidation @pages', () => {
     await expect(titles).toHaveText(['Velvet lantern'])
     await filter.fill('Meetings')
     await expect(titles).toHaveCount(0)
+    // `openPage` clicks the title in the Pages list, which the filter would still narrow.
     await filter.fill('')
 
     await openPage(page, 'Getting Started')

@@ -2,8 +2,8 @@
  * #5160 D9 — a typed `[[Page|label]]` becomes a link chip showing the label,
  * and the label survives the block's save and a navigation round trip through
  * the mock (which resets on reload, so the durable-read hop is leaving the page
- * and coming back — `e2e-tauri/link-label-source-roundtrip.e2e.ts` covers the
- * real backend).
+ * and coming back). Edit as Markdown's `[[Page|label]]` round trip is in
+ * `page-source-edit.spec.ts`, on the bridge only.
  */
 
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
