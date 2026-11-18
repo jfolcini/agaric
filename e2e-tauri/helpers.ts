@@ -952,12 +952,16 @@ export function pageEntryTitled(title: string) {
 /**
  * The full title a page-link chip names: its native `title` when the chip shows
  * a namespaced leaf or a label, else its text, which is then the full title
- * (`RichContentRenderer/marks/blockLink.tsx`, #6895). `textContent`, not
- * `getText()`: WebDriver returns only rendered text, so a chip scrolled out of
- * view reads as empty.
+ * (`RichContentRenderer/marks/blockLink.tsx`, #6895). Read in the page: the
+ * driver's `getText()` returns only rendered text, so a chip scrolled out of view
+ * reads as empty, and its `getAttribute` is not relied on to tell a missing
+ * attribute from an empty one.
  */
 export async function linkChipTarget(chip: ReturnType<typeof $>): Promise<string> {
-  return (await chip.getAttribute('title')) ?? String(await chip.getProperty('textContent'))
+  return browser.execute(
+    (el: HTMLElement) => el.getAttribute('title') ?? el.textContent ?? '',
+    await chip.getElement(),
+  )
 }
 
 /** The page header's badge of `alias`. */
