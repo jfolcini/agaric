@@ -6,7 +6,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { InfoPopover } from '@/components/ui/info-popover'
@@ -66,6 +66,21 @@ describe('InfoPopover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('keeps presses on the trigger and inside the popover out of a clickable row', async () => {
+    const user = userEvent.setup()
+    const onRowClick = vi.fn()
+    render(
+      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- stands in for a selectable History row
+      <div onClick={onRowClick}>
+        <InfoPopover content="Should stay at zero.">Missed writes</InfoPopover>
+      </div>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Missed writes' }))
+    await user.click(await screen.findByText('Should stay at zero.'))
+    expect(onRowClick).not.toHaveBeenCalled()
+  })
+
   it('has no a11y violations closed or open', async () => {
     const user = userEvent.setup()
     const { container } = renderInfo()
@@ -74,5 +89,49 @@ describe('InfoPopover', () => {
     await user.click(screen.getByRole('button', { name: 'Missed writes' }))
     await screen.findByRole('dialog')
     expect(await axe(document.body)).toHaveNoViolations()
+  })
+})
+
+describe('InfoPopover icon variant', () => {
+  function renderIcon() {
+    return render(
+      <div>
+        <button type="button" disabled>
+          Delete
+        </button>
+        <InfoPopover variant="icon" ariaLabel="Why delete is off" content="A space holds pages." />
+      </div>,
+    )
+  }
+
+  it('renders an ⓘ button named by its aria-label, enabled beside a disabled control', () => {
+    renderIcon()
+
+    const trigger = screen.getByRole('button', { name: 'Why delete is off' })
+    expect(trigger).toBeEnabled()
+    expect(trigger).toHaveClass('touch-hit-area')
+    expect(trigger.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('opens on click, named by its aria-label, and closes with Escape', async () => {
+    const user = userEvent.setup()
+    renderIcon()
+
+    await user.click(screen.getByRole('button', { name: 'Why delete is off' }))
+    expect(await screen.findByRole('dialog', { name: 'Why delete is off' })).toHaveTextContent(
+      'A space holds pages.',
+    )
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('has no a11y violations closed or open', async () => {
+    const user = userEvent.setup()
+    const { container } = renderIcon()
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(screen.getByRole('button', { name: 'Why delete is off' }))
+    expect(await axe(await screen.findByRole('dialog'))).toHaveNoViolations()
   })
 })
