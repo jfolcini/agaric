@@ -166,17 +166,23 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   /** How many holds have been taken; a load that saw it move read too early. */
   let holdsTaken = 0
 
+  /** A new hold, counted in `holdsTaken`, and the function that releases it. */
+  function takeHold(): { held: Promise<void>; answered: () => void } {
+    let answered: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      answered = resolve
+    })
+    holdsTaken++
+    return { held, answered }
+  }
+
   /**
    * Hold later writes and loads for `ids` until the returned function is
    * called, once the command in flight has answered. It runs before the
    * caller's reconcile or rollback: either may load(), which waits on this.
    */
   function hold(ids: readonly string[]): () => void {
-    let answered: () => void = () => undefined
-    const held = new Promise<void>((resolve) => {
-      answered = resolve
-    })
-    holdsTaken++
+    const { held, answered } = takeHold()
     for (const id of ids) heldBlocks.set(id, held)
     return () => {
       // A later command may hold the same block by now.
@@ -235,11 +241,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     getBlockById: (id: string) => get().blocksById.get(id),
 
     holdLoads: () => {
-      let answered: () => void = () => undefined
-      const held = new Promise<void>((resolve) => {
-        answered = resolve
-      })
-      holdsTaken++
+      const { held, answered } = takeHold()
       heldLoads.add(held)
       return () => {
         heldLoads.delete(held)
