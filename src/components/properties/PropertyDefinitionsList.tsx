@@ -45,6 +45,7 @@ import {
 import { isValidation, unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyUsage } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { formatErrorForDisplay } from '@/lib/error-display'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -200,7 +201,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
             { key },
             error,
           )
-          notify.error(t('propertiesView.deleteRefusedInUse', { reason: error.message }))
+          notify.error(
+            t('propertiesView.deleteRefusedInUse', { reason: formatErrorForDisplay(error) }),
+          )
         } else {
           reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorDelete', error, t, {
             key,
