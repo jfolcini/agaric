@@ -97,6 +97,13 @@ describe('dispatch — modeled plugin:* commands resolve (#760)', () => {
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
   })
 
+  it('plugin:window|title answers the title set_title last gave the window', () => {
+    dispatch('plugin:window|set_title', { label: 'main', value: 'Notes · Work · Agaric' })
+    expect(dispatch('plugin:window|title', { label: 'main' })).toBe('Notes · Work · Agaric')
+    dispatch('plugin:window|set_title', { label: 'main', value: 'Pages · Work · Agaric' })
+    expect(dispatch('plugin:window|title', { label: 'main' })).toBe('Pages · Work · Agaric')
+  })
+
   it('every PLUGIN_HANDLERS key is plugin:-prefixed (app commands belong in HANDLERS)', () => {
     for (const key of Object.keys(PLUGIN_HANDLERS)) {
       expect(key.startsWith('plugin:')).toBe(true)

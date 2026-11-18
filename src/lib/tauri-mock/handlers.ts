@@ -140,6 +140,9 @@ export const HANDLERS: Record<string, Handler> = { ...HANDLERS_TYPED, ...RAW_RES
 //   - `plugin:process|*` — `relaunchApp` degrades to
 //     `window.location.reload()`, the correct browser-mode analog.
 
+/** The title `plugin:window|set_title` last gave the window. */
+let windowTitle = ''
+
 /** Monotonic id for `plugin:event|listen` — the real handler returns an event id. */
 let nextEventListenerId = 1
 
@@ -168,8 +171,12 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   'plugin:app|register_listener': returnNull,
   'plugin:app|remove_listener': returnNull,
   // Core window plugin — `setWindowTitle` re-stamps the OS title on every
-  // space switch.
-  'plugin:window|set_title': returnNull,
+  // space switch; a spec reads it back with `title`.
+  'plugin:window|set_title': (args) => {
+    windowTitle = (args as { value: string }).value
+    return null
+  },
+  'plugin:window|title': () => windowTitle,
   // Core webview plugin, desktop only — the interface zoom (#5646). The
   // browser has no webview to zoom, so success is the whole model.
   'plugin:webview|set_webview_zoom': returnNull,

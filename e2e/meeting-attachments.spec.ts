@@ -49,15 +49,17 @@ async function openMeetingDialog(page: Page) {
 /** What the meeting page holds, read back from the backend. */
 async function meetingPage(page: Page, title: string) {
   const pages = await ipc<{ items: Array<{ id: string; content: string }> }>(page, 'list_blocks', {
-    blockType: 'page',
-    parentId: null,
-    tagId: null,
-    showDeleted: null,
-    agendaDate: null,
-    agendaDateRange: null,
-    agendaSource: null,
-    cursor: null,
-    limit: 100,
+    request: {
+      blockType: 'page',
+      parentId: null,
+      tagId: null,
+      date: null,
+      dateRange: null,
+      source: null,
+      excludeTodoStates: null,
+      cursor: null,
+      limit: 100,
+    },
     scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   const row = pages.items.find((p) => p.content === title)

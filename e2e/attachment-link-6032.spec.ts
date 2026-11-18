@@ -6,7 +6,9 @@
  * after a navigation round-trip, and a click downloads the stored file under
  * its name.
  */
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  attachFile,
   expect,
   focusBlock,
   navigateToView,
@@ -16,28 +18,24 @@ import {
   waitForBoot,
 } from './helpers'
 
-interface InvokeWindow extends Window {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
-}
-
 test.describe('attachment link (#6032) @attachments @editor', () => {
   test('`[label](attachment:<id>)` shows as a file link that downloads the file', async ({
     page,
   }) => {
     await waitForBoot(page)
+    // Before the page shows the block, so its attachment row is drawn before the click into it.
+    const { id: attachmentId } = await attachFile(
+      page,
+      SEED_IDS.BLOCK_GS_1,
+      'paper.pdf',
+      'application/pdf',
+      '%PDF',
+    )
     await openPage(page, 'Getting Started')
-    await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
-
-    const attachmentId = await page.evaluate(async () => {
-      const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
-      const row = (await invoke('add_attachment_with_bytes', {
-        blockId: '0000000000000000000B10CK01',
-        filename: 'paper.pdf',
-        mimeType: 'application/pdf',
-        bytes: btoa('%PDF'),
-      })) as { id: string }
-      return row.id
-    })
+    // The badge comes with its own read; the click into the block aims at its finished layout.
+    await expect(
+      page.locator('[data-testid="sortable-block"]').first().getByTestId('attachment-badge'),
+    ).toBeVisible()
 
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')

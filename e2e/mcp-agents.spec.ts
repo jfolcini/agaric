@@ -5,6 +5,7 @@ import {
   activeDialog,
   axeViolations,
   expect,
+  ipc,
   readClipboard,
   test,
 } from './helpers'
@@ -65,24 +66,23 @@ test.describe('Agents card @mcp', () => {
     await dialog.getByLabel('Name').fill('Planner')
     await dialog.getByLabel('Name').press('Enter')
     await expect(page.getByTestId('mcp-agent-row')).toContainText('Planner')
-    const { token, tail } = await page.evaluate(async () => {
-      const internals = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string) => Promise<{ id: string; token: string }[]>
-          }
-        }
-      ).__TAURI_INTERNALS__
-      const [agent] = await internals.invoke('list_mcp_agents')
-      // The tail of the id the config's server name ends with, lowercased.
-      return { token: agent?.token ?? '', tail: (agent?.id ?? '').slice(-6).toLowerCase() }
-    })
+    const [agent] = await ipc<Array<{ id: string; token: string }>>(page, 'list_mcp_agents', {})
+    const token = agent?.token ?? ''
+    // The tail of the id the config's server name ends with, lowercased.
+    const tail = (agent?.id ?? '').slice(-6).toLowerCase()
+    // Where the bridge binary and the socket are: the mock's fixed paths, or the bridge vault's.
+    const status = await ipc<{
+      bridge_command: string
+      bridge_args: string[]
+      socket_path: string
+    }>(page, 'get_mcp_status', {})
+    expect(status.bridge_args).toEqual([])
     expect(token).toMatch(/^agt_[0-9a-f]{32}$/)
 
     await page.getByRole('button', { name: 'Copy Claude Code command for Planner' }).click()
     await expect(page.getByText('Claude Code command copied')).toBeVisible()
     expect(await readClipboard(page)).toBe(
-      `claude mcp add -s user agaric-planner-${tail} -- "/mock/agaric/agaric-mcp" --socket "/mock/agaric/mcp.sock" --token ${token}`,
+      `claude mcp add -s user agaric-planner-${tail} -- "${status.bridge_command}" --socket "${status.socket_path}" --token ${token}`,
     )
 
     await page.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }).click()
@@ -92,8 +92,8 @@ test.describe('Agents card @mcp', () => {
     }
     expect(Object.values(config.mcpServers)).toEqual([
       {
-        command: '/mock/agaric/agaric-mcp',
-        args: ['--socket', '/mock/agaric/mcp.sock', '--token', token],
+        command: status.bridge_command,
+        args: ['--socket', status.socket_path, '--token', token],
       },
     ])
   })

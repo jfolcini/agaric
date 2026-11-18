@@ -1,15 +1,8 @@
 // ---------------------------------------------------------------------------
-// Real-backend Settings › App health and the bug report it feeds (#5741 items
-// 11 and 12, #5740 item 11).
-//
-// The mock answers `get_status` with fixed numbers and the integrity check with
-// "Everything matches" whatever the vault holds, and a download goes nowhere.
-// Here the materializer counts real work, the reconciliation oracle rebuilds
-// every derived table of a real vault, and the bug report's ZIP is bytes on
-// disk, and an attached file's row is compared with the engine entry its op
-// wrote. The three tests share one vault; each reads its own baseline, and the
-// integrity result lives in SettingsView, so each leaves Settings before it
-// runs a check.
+// Real-backend bug report (#5741 item 12, #5740 item 11): its integrity section,
+// the body copied verbatim, and the ZIP with the logs, which is bytes on disk.
+// The App health counters and the integrity check's rebuild of a seeded vault
+// are `e2e/app-health.spec.ts`, on the bridge.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -20,15 +13,9 @@ import JSZip from 'jszip'
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
-  addBlockWithMarker,
   clipboardText,
-  importMarkdownPage,
   navigateTo,
-  openNewPage,
-  pasteFileIntoFocusedBlock,
-  runScopedMarker,
   takeDownload,
-  typeMarkerVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
@@ -44,49 +31,6 @@ async function openAppHealth(): Promise<void> {
   await tab.click()
   await $('[data-testid="settings-panel-status"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
-
-/** The Materializer status cards, label to number, once all six have loaded. */
-async function readMetrics(): Promise<Record<string, number>> {
-  let metrics: Record<string, number> = {}
-  await browser.waitUntil(
-    async () => {
-      metrics = await browser.execute(() =>
-        Object.fromEntries(
-          [...document.querySelectorAll('.status-metric')].map((card) => [
-            card.querySelector('.status-metric-label')?.textContent?.trim() ?? '',
-            Number(card.querySelector('.status-metric-value')?.textContent),
-          ]),
-        ),
-      )
-      return Object.keys(metrics).length === 6
-    },
-    { timeout: NAV_TIMEOUT, timeoutMsg: 'the Materializer status cards never loaded' },
-  )
-  return metrics
-}
-
-/** Wait until the polled metrics satisfy `ok`; the panel polls every 5 s. */
-async function waitForMetrics(
-  ok: (metrics: Record<string, number>) => boolean,
-  what: string,
-): Promise<Record<string, number>> {
-  let metrics: Record<string, number> = {}
-  await browser
-    .waitUntil(
-      async () => {
-        metrics = await readMetrics()
-        return ok(metrics)
-      },
-      { timeout: NAV_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(`${what}; the panel shows ${JSON.stringify(metrics)}`)
-    })
-  return metrics
-}
-
-const idle = (m: Record<string, number>) =>
-  m['Foreground queue'] === 0 && m['Background queue'] === 0
 
 /**
  * Press Run check on a freshly mounted App health tab and wait for the clean
@@ -117,32 +61,9 @@ async function runIntegrityCheck(): Promise<{ blocks: number; date: string }> {
   return { blocks: Number(match[1]), date: match[2] ?? '' }
 }
 
-describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @settings', () => {
-  it('counts the ops an edit burst dispatched, and the queues drain to 0', async () => {
-    await waitForAppReady()
-    await openAppHealth()
-    const before = await waitForMetrics(idle, 'the materializer never went idle after boot')
-
-    await navigateTo('Journal')
-    const words = ['one', 'two', 'six']
-    for (const word of words) await addBlockWithMarker(runScopedMarker(`wdio-health-${word}`))
-
-    // A floor, not a bare rise: the maintenance tick can land in this wait and
-    // dispatch on its own. Each typed block's edit queues a link and a tag-ref
-    // reindex of its own; the consumer coalesces the rest by timing.
-    const rose = (m: Record<string, number>, card: string) =>
-      (m[card] ?? 0) - (before[card] ?? 0) >= 2 * words.length
-    await openAppHealth()
-    const after = await waitForMetrics(
-      (m) => idle(m) && rose(m, 'Ops processed') && rose(m, 'Background dispatched'),
-      `the op counts never rose enough from ${JSON.stringify(before)} with both queues back at 0`,
-    )
-    // A boot and ordinary edits take the sync engine's path for every write (#6047).
-    expect(after['Writes the sync engine missed']).toBe(0)
-    expect(after['Cascades the sync engine missed']).toBe(0)
-  })
-
+describe('Agaric real-backend bug report (#5741, #5740) @boot @settings', () => {
   it('puts the integrity section in the bug report, copies the body verbatim, and saves the ZIP with the logs', async () => {
+    await waitForAppReady()
     await navigateTo('Journal')
     await openAppHealth()
     const check = await runIntegrityCheck()
@@ -214,47 +135,5 @@ describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @se
 
     await browser.keys(['Escape'])
     await $(PREVIEW).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
-  })
-
-  // Last: a regression leaves a diverged row in the shared vault, and every
-  // later check would report it.
-  it('rebuilds every derived table of a vault with a task, a tag, links that create pages, properties and an attachment, and finds no difference', async () => {
-    const marker = runScopedMarker('wdio-integrity')
-    await navigateTo('Journal')
-    await openAppHealth()
-    const empty = await runIntegrityCheck()
-
-    await importMarkdownPage(
-      marker,
-      [
-        `- [ ] ${marker}-task #${marker}-tag [[${marker}-target]]`,
-        '  repeat:: weekly',
-        `  assignee:: ${marker}-carol`,
-        `- ${marker}-parent`,
-        `  - ${marker}-child`,
-        '',
-      ].join('\n'),
-    )
-    await openNewPage(`${marker}-linker`)
-    await typeMarkerVerified(`[[${marker}-typed`)
-    // WebKit coalesces two identical keys sent together (`typeVerified`); the
-    // closing `]]` creates the page.
-    await browser.keys([']'])
-    await browser.pause(40)
-    await browser.keys([']'])
-    await $('[data-testid="block-editor"]')
-      .$(`[data-testid="block-link-chip"]=${marker}-typed`)
-      .waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    // A text file stays a block attachment and adds no block.
-    await pasteFileIntoFocusedBlock('YWdhcmlj', 'wdio-health.txt', 'text/plain')
-    await waitForToast('Attached "wdio-health.txt"')
-    await navigateTo('Journal')
-    await openAppHealth()
-    const seeded = await runIntegrityCheck()
-
-    // The imported page, its three blocks, the new tag and the page its link
-    // created; the new page, its first block and the page the typed link
-    // created: the check folded exactly what the import and the editor wrote.
-    expect(seeded.blocks - empty.blocks).toBe(9)
   })
 })

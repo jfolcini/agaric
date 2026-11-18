@@ -47,7 +47,7 @@
 - Tasks are seeded through IPC, then the backend is settled, so the projection is current before a view mounts. The WebdriverIO original remounted the view until the projection's cache caught up; nothing here waits on a timer.
 - The four projection tests (repeat-count and repeat-until bounds, weekly, Agenda mode, the phone row's chip touch area) are `@real-only`, since the mock's `list_projected_agenda` is a stub. The `/repeat` modes and the drawer tests run on both.
 - The next occurrence's due date and the row counts are read back through `list_blocks`.
-- A checkbox clicked while a completed repeating task's page reload is in flight is drawn back to its old state (#6972, filed). The spec waits for each completion's next occurrence before the next click.
+- A checkbox clicked while a completed repeating task's page reload is in flight was drawn back to its old state (#6972, filed, fixed by #6979). The spec clicks through each task with no wait between tasks.
 
 **Shown red, on the bridge:**
 - Ignoring `repeat-count` in `project_block_dates` reddens the bounds test (day +4 still projects "count three") and the Agenda test (six dates, not three).
@@ -58,3 +58,31 @@
 - The projected row's text clipped with `truncate` reddens the chips test: the points above and below each chip hit the row.
 
 **`settle` and the main thread:** a comment beside `emitted()` now says why the event has reached the bridge before `settle` answers (its app never runs, so the main-thread emit ran inline; its socket sends events before replies). The reviewer asked twice.
+
+## Slice 18: attachments, agent access, mirror and the rest
+
+**Promoted** to `REAL_BACKEND_SPECS`: `attachments`, `meeting-attachments`, `attachment-link-6032`, `inline-image-1434`, `pdf-annotation-1452`, `pdf-highlight-blocks-6629` (its "moved to another space" test no longer reloads and reseeds), `agent-access`, `mcp-agents`, `mirror-settings`, `smoke`, `deep-link` and `sync-refresh`. `spaces-management` was already listed.
+
+What each needed, none of it a backend divergence:
+- `agent-access` and `mcp-agents` read the socket and bridge paths `get_mcp_status` reports, not the mock's `/mock/...`. The injected toggle failure is `@mock-only`.
+- `mirror-settings`: the folder comes from `pick_mirror_folder`'s OS dialog, which nothing headless answers, so the four tests that choose one are `@mock-only`. The other two run on the bridge.
+- `meeting-attachments` called `list_blocks` with flat arguments. The mock took them; the real command wants its `request` object.
+- `inline-image-1434` attaches before the page opens. Attached mid-view, the refreshed block's attachment row lay under the corner the click aims at.
+
+**Ported from WebdriverIO**, each test shown red once on the bridge:
+- `attachment-only-block-survives-blur`: red when the cleanup ignores attachments (the blank block goes) and, for the control, when it never deletes.
+- `attachment-paste-roundtrip`: red when the paste cuts three bytes (length) and when it stores no image (no toast). `read_attachment` reaches the page as numbers through the bridge, read as `readAttachment` reads it.
+- `space-move-property-loss`: the header move that drops a differently defined property and the one undo that brings it back join the existing Playwright twin. Red when the undo group's window is 0.
+- `app-health` tests 1 and 3 become `e2e/app-health.spec.ts`, both `@real-only`. Red when the Background dispatched card is frozen and when the integrity result's count is fixed. The bug-report ZIP test stays in WebdriverIO.
+- `enter-during-pull`: the pull is the peer's edit written as a command plus the `sync:complete` a pull ends in, and the page's read is answered late through a wrapped `invoke`. Red without #6814's re-read in `load()`: the typed line is lost.
+- `spaces` tests 2 and 3 become `e2e/spaces-move-and-title.spec.ts`. The mock's window plugin now keeps the title `set_title` sets and answers `plugin:window|title`, so the title is read back from the window on both lanes. Red when search always scopes to Work and when the title names the first space.
+- The mirror specs `mirror-inbound`, `mirror-new-file`, `mirror-read-back`, `mirror-spaces` and `mirror-structure`, all `@real-only`. Each test seeds its own vault and folder; WebdriverIO's tests shared one. `mirror-spaces` turns off the seeded Work space. The shared steps are `startMirror`, `mirrorFile`, `mirrorText` and `mirrorPassAfter` in `e2e/helpers.ts`.
+
+**The mirror ports, shown red on the bridge** with a mutant in `src-tauri/src/mirror/mod.rs` each:
+- `ingest()` ignoring `read_back`: all three read-back tests (the page takes the edit made while off, and the checkout's).
+- `ingest()` answering nothing: inbound, the new file, and the renamed, moved and deleted files.
+- Unmirrored spaces kept in the layout: `mirror-spaces` (the Work file stays).
+- No hold for a file outside every space folder: the strayed file is never listed.
+- Never paused: the unmounted folder never pauses.
+
+**Back-to-back checkbox clicks:** two, three and four clicks with nothing between them on a task that does not repeat end where they should, on screen and in the backend (bridge, 36 of 36). The lost clicks seen earlier were all #6972.

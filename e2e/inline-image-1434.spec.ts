@@ -19,37 +19,36 @@
  * A tiny 1x1 transparent GIF is used as the bytes so `<img>` actually decodes
  * and stays mounted (no broken-image fallback swap).
  */
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { attachFile, expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
-// 1x1 transparent GIF, as the base64 add_attachment_with_bytes expects.
-const GIF_1X1 = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=='
-
-interface InvokeWindow extends Window {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
-}
+// 1x1 transparent GIF.
+const GIF_1X1 = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+  'base64',
+)
 
 test.describe('inline image attachment-ref (#1434) @attachments @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
-    await openPage(page, 'Getting Started')
-    await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
   })
 
   test('`![alt](attachment:<id>)` resolves the stored bytes to a blob <img>', async ({ page }) => {
-    // Seed the attachment with bytes via the SAME IPC the paste handler uses,
-    // and read back the backend-minted id to build the ref.
-    const attachmentId = await page.evaluate(async (bytes) => {
-      const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
-      const row = (await invoke('add_attachment_with_bytes', {
-        blockId: '0000000000000000000B10CK01',
-        filename: 'pasted.gif',
-        mimeType: 'image/gif',
-        bytes,
-      })) as { id: string }
-      return row.id
-    }, GIF_1X1)
-
+    // Seed the attachment through the IPC the paste handler uses, before the page shows the
+    // block, and build the ref from the backend-minted id.
+    const { id: attachmentId } = await attachFile(
+      page,
+      SEED_IDS.BLOCK_GS_1,
+      'pasted.gif',
+      'image/gif',
+      GIF_1X1,
+    )
     expect(attachmentId).toMatch(/^[0-9A-Za-z]+$/)
+    await openPage(page, 'Getting Started')
+    // The badge comes with its own read; the click into the block aims at its finished layout.
+    await expect(
+      page.locator('[data-testid="sortable-block"]').first().getByTestId('attachment-badge'),
+    ).toBeVisible()
 
     // Author the inline image markdown the paste handler would have inserted.
     const editor = await focusBlock(page)
