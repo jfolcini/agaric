@@ -99,8 +99,6 @@ pub async fn set_mirror_folder_inner(
         if path.as_deref() == Some(adopted) {
             return get_mirror_status_inner(pool, device_id, mirror).await;
         }
-        give_back(mirror, Path::new(adopted))?;
-        mirror::store::set_adoption(pool, None).await?;
     }
     if let Some(folder) = path.as_deref().map(Path::new) {
         mirror::check_folder(folder, device_id, mirror.app_data_dir())?;
@@ -110,6 +108,16 @@ pub async fn set_mirror_folder_inner(
                 folder.display()
             ))
         })?;
+    }
+    // Given back only once the new folder is taken: a folder refused above
+    // leaves the adopted one as it was.
+    if let Some(adopted) = settings
+        .folder
+        .as_deref()
+        .filter(|_| settings.adopted.is_some())
+    {
+        give_back(mirror, Path::new(adopted))?;
+        mirror::store::set_adoption(pool, None).await?;
     }
     let stored = settings.folder.clone();
     let chosen_again = path.is_some() && stored == path;
