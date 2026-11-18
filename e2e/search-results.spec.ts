@@ -3,12 +3,9 @@
  * (E2E-8) and the alias-match card (E2E-9).
  *
  * The mock `search_blocks` handler returns raw seed blocks with NO
- * `snippet` / `match_offsets` fields, so `SearchResultBlockRow` always falls
- * back to plain content — the `<mark>` highlight path is unreachable on this
- * harness (it needs the real FTS `snippet()` output). That sub-item of E2E-8
- * is therefore covered by the unit layer (`SnippetHighlight.test.tsx`) and
- * skipped here with a note; the grouping / click-through / keyboard-nav flows
- * are fully exercised below.
+ * `snippet` / `match_offsets` fields, so `SearchResultBlockRow` falls back to
+ * plain content there; the `<mark>` highlight is the `@real-only` test in the
+ * backend's-index group below.
  */
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
@@ -132,13 +129,6 @@ test.describe('Search results — grouping + interaction (E2E-8) @search', () =>
     // The mock answers in one page (`has_more: false`), so `LoadMoreButton`
     // returns null and no "Load more" button is mounted.
     await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0)
-  })
-
-  // `<mark>` highlight needs the FTS `snippet()` output the mock never
-  // produces; covered at the unit layer (SnippetHighlight.test.tsx).
-  test.skip('result snippets render <mark> highlight runs', () => {
-    // Unreachable on web+mock: the mock returns blocks without a `snippet`
-    // field, so `SearchResultBlockRow` renders plain content (no <mark>).
   })
 })
 
@@ -277,6 +267,15 @@ test.describe('Search alias-match card (E2E-9) @search', () => {
 test.describe('Search on the backend’s index (#6926) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
+  })
+
+  // `@real-only`: the mock returns neither a snippet nor match offsets, so its rows mark nothing.
+  test('a result row marks the matched word (#828)', { tag: '@real-only' }, async ({ page }) => {
+    const [id] = await seedSearchBlocks(page, [{ content: 'ink vermilion pod' }])
+    await expectSearchListed(page, 'vermilion', [id as string])
+    await expect(page.getByTestId(`search-result-row-${id}`).locator('mark')).toHaveText([
+      'vermilion',
+    ])
   })
 
   test('a two-character term is found alone and beside a longer word (#6752)', async ({ page }) => {
