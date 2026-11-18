@@ -340,6 +340,8 @@ export function useSyncEvents(): void {
     EVENT_BLOCKS_CHANGED,
     (event) => {
       try {
+        // #6545: the change feed's event for local commits; S2a maps its domains to invalidations.
+        if (event.payload.local_command === true) return
         const { changed_page_ids, local_ops_appended } = event.payload
         reloadChangedPageStores(changed_page_ids, { reanchorUndo: local_ops_appended !== false })
       } catch (err: unknown) {

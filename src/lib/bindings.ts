@@ -2016,6 +2016,16 @@ export type BlocksChangedEvent = {
 	 *  absent field as `true`.
 	 */
 	local_ops_appended: boolean,
+	/**
+	 *  The cache groups the write can have staled. `None` or absent means all
+	 *  of them, which is what every producer but the change feed sends.
+	 */
+	domains?: ChangeDomain[] | null,
+	/**
+	 *  Whether this is the change feed's event for local commits (#6545),
+	 *  sent once their background rebuilds have settled. Absent means false.
+	 */
+	local_command?: boolean,
 };
 
 /**  Metadata returned by [`collect_bug_report_metadata`]. */
@@ -2098,6 +2108,22 @@ export type BugReport_Serialize = {
 export type BulkTrashResponse = {
 	affected_count: number,
 };
+
+/**
+ *  The frontend's cache groups (`src/hooks/derived-caches.ts`) a local write
+ *  can stale.
+ */
+export type ChangeDomain = 
+/**  Links, the graph, the Pages list, the block tree. */
+"structure" | 
+/**  Task state, dates, property values. */
+"properties" | 
+/**  Property definitions. */
+"property_defs" | 
+/**  Page and tag names and aliases. */
+"names" | 
+/**  Attachment lists and badges. */
+"attachments";
 
 /**
  *  Result of an op log compaction, returned by [`compact_op_log_cmd`].
