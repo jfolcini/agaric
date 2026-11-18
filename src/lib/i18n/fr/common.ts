@@ -475,6 +475,16 @@ export const common: Record<string, string> = {
     'Les images et les fichiers liés par vos pages sont copiés dans un dossier assets à côté d’elles, et les pages pointent vers les copies. Une copie que vous y modifiez est conservée et listée ci-dessous.',
   'data.mirrorCopyFilesFailed':
     'Le réglage de copie des pièces jointes n’a pas été changé\u00A0: {{reason}}',
+  'data.mirrorAskMassChangeLabel': 'Demander avant de réintégrer de nombreuses modifications',
+  'data.mirrorAskMassChangeDesc':
+    'Quand de nombreux fichiers d’un espace changent ou disparaissent d’un coup, par exemple quand un dossier est supprimé, rien n’est réintégré tant que vous ne les avez pas vus listés et choisi de les réintégrer. Désactivez cette option si vous modifiez souvent de nombreux fichiers volontairement, par exemple en renommant une note vers laquelle beaucoup d’autres pointent.',
+  'data.mirrorAskMassChangeFailed':
+    'Le réglage de demande avant de réintégrer de nombreuses modifications n’a pas été changé\u00A0: {{reason}}',
+  'data.mirrorReadMassChangeDesc':
+    'De nombreux fichiers d’un espace ont changé ou disparu d’un coup hors d’Agaric\u00A0: Agaric demande donc avant de les réintégrer. Les réintégrer applique chaque modification listée, et une page dont le fichier a été supprimé part à la Corbeille.',
+  'data.mirrorMassChangeTurnOff':
+    'Si vous modifiez volontairement de nombreux fichiers d’un coup, par exemple en renommant une note vers laquelle beaucoup d’autres pointent, vous pouvez empêcher Agaric de demander.',
+  'data.mirrorMassChangeShowSetting': 'Afficher le réglage',
   'data.mirrorReadPendingTitle': 'Réintégrer ce qui a changé\u00A0?',
   'data.mirrorReadPendingDesc_one':
     'Ce fichier a été modifié hors d’Agaric pendant que la réintégration était désactivée. L’activer le réintègre.',

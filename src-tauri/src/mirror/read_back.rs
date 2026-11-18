@@ -2,14 +2,39 @@
 //! setting 1): off, the mirror still writes every page and still never
 //! overwrites a changed file, but no outside edit, new file, rename, move or
 //! delete reaches Agaric. Turning it on again reads in what changed meanwhile
-//! only once the user has seen the list [`pending`] gives and said so.
+//! only once the user has seen the list [`pending`] gives and said so. The
+//! mirror asks the same way, reading nothing back meanwhile, when more files
+//! of one space than [`MASS_CHANGE`] changed or were deleted at once
+//! ([`mass_changed`]), unless the user chose not to be asked.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use agaric_core::error::AppError;
 
 use super::store::{self, StateDir};
+
+/// More files of one space than this, changed or deleted outside Agaric at
+/// once, are read in only once the user has seen them listed and said so
+/// ([`mass_changed`]).
+pub const MASS_CHANGE: usize = 5;
+
+/// The space folders holding more than [`MASS_CHANGE`] of `changed`, files by
+/// their paths below the mirror's folder, that are not among `confirmed`,
+/// each with how many.
+pub fn mass_changed<'a>(
+    changed: &'a [String],
+    confirmed: &HashSet<String>,
+) -> BTreeMap<&'a str, usize> {
+    let mut counts = BTreeMap::new();
+    for path in changed.iter().filter(|path| !confirmed.contains(*path)) {
+        if let Some((folder, _)) = path.split_once('/') {
+            *counts.entry(folder).or_default() += 1;
+        }
+    }
+    counts.retain(|_, count| *count > MASS_CHANGE);
+    counts
+}
 
 /// The files, as paths below `root`, that reading back would act on now, in
 /// `space_folders`, the mirrored spaces' folders: each page's file that is

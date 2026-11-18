@@ -281,6 +281,7 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::set_mirror_folder,
             $crate::commands::mirror::set_mirror_read_back,
             $crate::commands::mirror::set_mirror_copy_files,
+            $crate::commands::mirror::set_mirror_ask_mass_change,
             $crate::commands::mirror::set_mirror_space,
             $crate::commands::mirror::get_mirror_status,
             // The daily snapshot row (#6554)

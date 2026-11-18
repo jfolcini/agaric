@@ -919,6 +919,25 @@ export const common: Record<string, string> = {
     'Images and files your pages link are copied into an assets folder beside them, and the pages link the copies. A copy you change there is kept and listed below.',
   'data.mirrorCopyFilesFailed': 'Copying attachments was not changed: {{reason}}',
 
+  // Translators: Markdown mirror: switch row that makes Agaric ask before reading in many files of
+  // a space changed or deleted outside Agaric at once (label, description), and its error toast;
+  // {{reason}} = the error message.
+  'data.mirrorAskMassChangeLabel': 'Ask before reading in many changes',
+  'data.mirrorAskMassChangeDesc':
+    'When many files of a space change or vanish at once, as when a folder is deleted, nothing is read back until you have seen them listed and chosen to read them in. Turn it off if you often change many files on purpose, such as renaming a note that many others link to.',
+  'data.mirrorAskMassChangeFailed':
+    'Asking before reading in many changes was not changed: {{reason}}',
+
+  // Translators: Markdown mirror: shown when Agaric stopped reading back because many files of a
+  // space changed or vanished at once: the read-in question's text in that case, a sentence saying
+  // asking can be turned off, and a button that moves to the "Ask before reading in many changes"
+  // switch.
+  'data.mirrorReadMassChangeDesc':
+    'Many files of a space changed or vanished outside Agaric at once, so Agaric asks before reading them in. Reading them in applies every change listed, and a page whose file was deleted moves to the Trash.',
+  'data.mirrorMassChangeTurnOff':
+    'If you change many files at once on purpose, such as renaming a note that many others link to, you can stop Agaric asking.',
+  'data.mirrorMassChangeShowSetting': 'Show the setting',
+
   // Translators: ConfirmDialog when "Read changes back" is turned on while files changed outside
   // Agaric; {{count}} = number of files; its two buttons.
   'data.mirrorReadPendingTitle': 'Read in what changed?',

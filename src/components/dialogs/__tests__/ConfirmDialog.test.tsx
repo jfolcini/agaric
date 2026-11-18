@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -983,6 +983,46 @@ describe('ConfirmDialog focus return', () => {
     await user.click(await screen.findByRole('button', { name: /Cancel/ }))
 
     await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  it('a returnFocusRef holding an element takes focus on close instead of the opener', async () => {
+    function Elsewhere() {
+      const [open, setOpen] = useState(false)
+      const target = useRef<HTMLInputElement>(null)
+      const returnTo = useRef<HTMLElement | null>(null)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <input ref={target} aria-label="Target" />
+          <ConfirmDialog
+            open={open}
+            onOpenChange={setOpen}
+            titleKey={TITLE_KEY}
+            descriptionKey={DESC_KEY}
+            returnFocusRef={returnTo}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                returnTo.current = target.current
+                setOpen(false)
+              }}
+            >
+              Go there
+            </button>
+          </ConfirmDialog>
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Elsewhere />)
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await user.click(await screen.findByRole('button', { name: 'Go there' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Target' })).toHaveFocus())
   })
 
   it('Escape on a destructive dialog returns focus to the opener', async () => {

@@ -19,6 +19,8 @@ const MIRROR_FOLDER_KEY = 'mirror.folder'
 const MIRROR_READ_BACK_KEY = 'mirror.read_back'
 /** The `app_settings` key holding `'true'` while attachments are copied into the folder. */
 const MIRROR_COPY_FILES_KEY = 'mirror.copy_files'
+/** The `app_settings` key holding `'false'` while many changed files are read in unasked. */
+const MIRROR_ASK_MASS_CHANGE_KEY = 'mirror.ask_mass_change'
 /** The `app_settings` key holding the unmirrored spaces' ids, as a JSON array. */
 const MIRROR_UNMIRRORED_KEY = 'mirror.unmirrored_spaces'
 
@@ -43,6 +45,8 @@ function mirrorStatus(): MirrorStatus {
     read_back: appSettings.get(MIRROR_READ_BACK_KEY) !== 'false',
     pending: [],
     copy_files: appSettings.get(MIRROR_COPY_FILES_KEY) === 'true',
+    ask_mass_change: appSettings.get(MIRROR_ASK_MASS_CHANGE_KEY) !== 'false',
+    held: [],
     unmirrored_spaces: unmirroredSpaces(),
   }
 }
@@ -205,6 +209,10 @@ export const systemHandlers = {
     appSettings.set(MIRROR_COPY_FILES_KEY, String((args as { on?: unknown }).on === true))
     return mirrorStatus()
   },
+  set_mirror_ask_mass_change: (args) => {
+    appSettings.set(MIRROR_ASK_MASS_CHANGE_KEY, String((args as { on?: unknown }).on === true))
+    return mirrorStatus()
+  },
   get_mirror_status: mirrorStatus,
 
   // #6554 — the daily snapshot row. The mock has no disk, so the last
@@ -240,6 +248,7 @@ export const systemHandlers = {
   | 'set_mirror_folder'
   | 'set_mirror_read_back'
   | 'set_mirror_copy_files'
+  | 'set_mirror_ask_mass_change'
   | 'set_mirror_space'
   | 'get_mirror_status'
   | 'get_last_snapshot_ms'

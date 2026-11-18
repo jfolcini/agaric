@@ -102,6 +102,14 @@ export interface ConfirmDialogProps {
    */
   loading?: boolean
 
+  /**
+   * Where focus goes when the dialog closes, while it holds an element, as
+   * when a button in the body moves the user to another control: it shows
+   * its focus ring after a click too, or the move would not show. Otherwise
+   * focus returns to what had it when the dialog opened.
+   */
+  returnFocusRef?: React.RefObject<HTMLElement | null>
+
   children?: React.ReactNode
   className?: string | undefined
   /** Optional data-testid for the AlertDialogContent / SheetContent root. */
@@ -124,6 +132,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   loading = false,
+  returnFocusRef,
   children,
   className,
   contentTestId,
@@ -239,7 +248,9 @@ export function ConfirmDialog({
         data-testid={contentTestId}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
-          openedFrom?.focus()
+          const moved = returnFocusRef?.current
+          if (moved) moved.focus({ focusVisible: true })
+          else openedFrom?.focus()
         }}
       >
         <Header>

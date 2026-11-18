@@ -70,6 +70,69 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
   })
 })
 
+test.describe('Settings › Data: asking before many changes @settings @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('is on by default, and turned off stays off', async ({ page }) => {
+    await openMirrorCard(page)
+    await page.getByRole('button', { name: 'Choose folder…' }).click()
+    await expect(page.getByTestId('mirror-folder')).toHaveText(MOCK_FOLDER)
+    const ask = page.getByRole('switch', { name: 'Ask before reading in many changes' })
+    await expect(ask).toBeChecked()
+
+    await ask.click()
+    await expect(ask).not.toBeChecked()
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(ask).not.toBeChecked()
+
+    await ask.click()
+    await navigateToView(page, 'Journal')
+    await openMirrorCard(page)
+    await expect(ask).toBeChecked()
+  })
+
+  test('Show the setting, clicked, shows the ask switch focused', async ({ page }) => {
+    // The mock reads no folder, so the hold a real one reports is answered here.
+    await page.evaluate((folder) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = async (c, a) => {
+        const answer = await invoke(c, a)
+        if (c !== 'get_mirror_status') return answer
+        return {
+          ...(answer as object),
+          folder,
+          read_back: false,
+          held: ['Personal'],
+          failed: [{ page_id: '', path: 'Personal', message: '6 of its files changed' }],
+          pending: ['Personal/A.md'],
+        }
+      }
+    }, MOCK_FOLDER)
+    await openMirrorCard(page)
+    const ask = page.getByRole('switch', { name: 'Ask before reading in many changes' })
+    const focusShown = () => ask.evaluate((el) => el.matches(':focus-visible'))
+
+    await page.getByRole('button', { name: 'Show the setting' }).click()
+    await expect(ask).toBeFocused()
+    expect(await focusShown()).toBe(true)
+
+    await page.getByRole('switch', { name: 'Read changes back' }).click()
+    const question = page.getByRole('alertdialog')
+    await question.getByRole('button', { name: 'Show the setting' }).click()
+    await expect(question).toHaveCount(0)
+    await expect(ask).toBeFocused()
+    expect(await focusShown()).toBe(true)
+  })
+})
+
 test.describe('Settings › Data: which spaces are mirrored @settings @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)

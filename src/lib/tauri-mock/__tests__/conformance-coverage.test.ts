@@ -275,6 +275,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_mirror_copy_files:
     'device-local file I/O: its effect is the copies the mirror writes into a folder on disk, ' +
     'and the one command reading the setting back, get_mirror_status, is environment dependent',
+  set_mirror_ask_mass_change:
+    'device-local setting whose effect is whether the mirror holds reading back over files ' +
+    'changed on disk, and the one command reading it back, get_mirror_status, is environment ' +
+    'dependent',
   set_mirror_space:
     'device-local setting whose effect is the mirror folder on disk (files removed, kept or ' +
     'left alone), which a fixture seed cannot express',
@@ -670,6 +674,10 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // only read of the setting, `get_mirror_status`, is waived as environment
   // dependent: nothing a fixture can observe.
   'set_mirror_copy_files',
+  // Its effect is whether the mirror holds reading back over files changed in
+  // that folder (#6887), and its only read is `get_mirror_status`, waived as
+  // environment dependent: nothing a fixture can observe.
+  'set_mirror_ask_mass_change',
   // Its effect is the folder on disk (#5363): same input problem.
   'set_mirror_space',
   // The input is a snapshot file beside the database, and its effect a marker

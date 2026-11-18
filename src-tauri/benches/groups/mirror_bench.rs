@@ -209,6 +209,7 @@ async fn mirrored(pages: usize, blocks_per_page: usize) -> (Vault, Mirror) {
         folder: Some(String::new()),
         read_back: true,
         copy_files: false,
+        ask_mass_change: true,
         unmirrored: Vec::new(),
         restored: false,
     };

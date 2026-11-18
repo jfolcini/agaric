@@ -139,6 +139,8 @@ beforeEach(() => {
       read_back: true,
       pending: [],
       copy_files: false,
+      ask_mass_change: true,
+      held: [],
       unmirrored_spaces: [],
     }),
   })
@@ -1835,6 +1837,8 @@ describe('DataTab', () => {
             read_back: true,
             pending: [],
             copy_files: false,
+            ask_mass_change: true,
+            held: [],
             unmirrored_spaces: [],
           }),
         })

@@ -19,13 +19,20 @@
  * Copying attachments into the folder is a stored switch of its own, off by
  * default; a copy changed in the folder is kept, and listed under `diverged`.
  *
+ * Asking before reading in many changes is a stored switch too, on by
+ * default: while many files of a space changed at once, the backend reads
+ * nothing back, reports reading back off, and names the space under `held`
+ * and `failed`. Turning reading back on then asks as above. Beside that line
+ * and in the question a button moves focus to the switch, which sits in this
+ * card, for a workflow such as renaming well-linked notes that wants it off.
+ *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
  * card says so and offers no folder picker, which would only fail there.
  */
 
 import { FileCheck, FolderOpen, FolderX } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -45,7 +52,7 @@ import { useSpaceStore } from '@/stores/space'
 
 const MODULE = 'MirrorSection'
 
-type Action = 'choose' | 'off' | 'readBack' | 'copyFiles' | 'space'
+type Action = 'choose' | 'off' | 'readBack' | 'copyFiles' | 'askMassChange' | 'space'
 
 export function MirrorSection(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -55,9 +62,19 @@ export function MirrorSection(): React.ReactElement | null {
   const spacesHeadingId = useId()
   const spaces = useSpaceStore((s) => s.availableSpaces)
   const copyFilesId = useId()
+  const askMassChangeId = useId()
+  const askMassChangeSwitch = useRef<HTMLButtonElement>(null)
+  // Where focus goes when the read-in question closes: the ask switch once
+  // its button moved there, else back to what opened the question.
+  const focusAfterQuestion = useRef<HTMLElement | null>(null)
   const [status, setStatus] = useState<MirrorStatus | null>(null)
   const [pending, setPending] = useState<Action | null>(null)
   const [askToReadPending, setAskToReadPending] = useState(false)
+
+  const askToReadIn = useCallback(() => {
+    focusAfterQuestion.current = null
+    setAskToReadPending(true)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -88,7 +105,7 @@ export function MirrorSection(): React.ReactElement | null {
         const next = unwrap(await commands.setMirrorFolder(path, readBack))
         setStatus(next)
         // Held off for files changed in the folder: asked about now.
-        if (readBack && !next.read_back && next.pending.length > 0) setAskToReadPending(true)
+        if (readBack && !next.read_back && next.pending.length > 0) askToReadIn()
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))
@@ -96,7 +113,7 @@ export function MirrorSection(): React.ReactElement | null {
         setPending(null)
       }
     },
-    [t, status],
+    [t, status, askToReadIn],
   )
 
   const setReadBack = useCallback(
@@ -145,9 +162,34 @@ export function MirrorSection(): React.ReactElement | null {
     [t],
   )
 
+  const setAskMassChange = useCallback(
+    async (on: boolean) => {
+      setPending('askMassChange')
+      try {
+        setStatus(unwrap(await commands.setMirrorAskMassChange(on)))
+      } catch (err) {
+        logger.error(MODULE, 'failed to change asking before many changes', undefined, err)
+        notify.error(t('data.mirrorAskMassChangeFailed', { reason: formatErrorForDisplay(err) }))
+      } finally {
+        setPending(null)
+      }
+    },
+    [t],
+  )
+
+  const showAskSetting = (): void => {
+    // After a click, focus moved by script shows no ring unless asked to.
+    askMassChangeSwitch.current?.focus({ focusVisible: true })
+  }
+
+  const showAskSettingFromQuestion = (): void => {
+    focusAfterQuestion.current = askMassChangeSwitch.current
+    setAskToReadPending(false)
+  }
+
   const onReadBackChange = (on: boolean): void => {
     if (on && status !== null && status.pending.length > 0) {
-      setAskToReadPending(true)
+      askToReadIn()
     } else {
       void setReadBack(on, [])
     }
@@ -174,6 +216,7 @@ export function MirrorSection(): React.ReactElement | null {
   }
 
   const on = status.folder !== null
+  const held = status.held.length > 0
 
   return (
     <Card>
@@ -234,6 +277,23 @@ export function MirrorSection(): React.ReactElement | null {
         </SettingRow>
 
         <SettingRow
+          label={t('data.mirrorAskMassChangeLabel')}
+          description={t('data.mirrorAskMassChangeDesc')}
+          controlId={askMassChangeId}
+        >
+          <Switch
+            ref={askMassChangeSwitch}
+            id={askMassChangeId}
+            aria-describedby={settingDescriptionId(askMassChangeId)}
+            checked={status.ask_mass_change}
+            disabled={pending !== null}
+            onCheckedChange={(checked) => {
+              void setAskMassChange(checked)
+            }}
+          />
+        </SettingRow>
+
+        <SettingRow
           label={t('data.mirrorCopyFilesLabel')}
           description={t('data.mirrorCopyFilesDesc')}
           controlId={copyFilesId}
@@ -277,12 +337,21 @@ export function MirrorSection(): React.ReactElement | null {
           open={askToReadPending}
           onOpenChange={setAskToReadPending}
           titleKey="data.mirrorReadPendingTitle"
-          descriptionKey="data.mirrorReadPendingDesc"
+          descriptionKey={held ? 'data.mirrorReadMassChangeDesc' : 'data.mirrorReadPendingDesc'}
           values={{ count: status.pending.length }}
           confirmKey="data.mirrorReadPendingConfirm"
           cancelKey="data.mirrorReadPendingCancel"
           onConfirm={() => setReadBack(true, status.pending)}
+          returnFocusRef={focusAfterQuestion}
         >
+          {held && (
+            <div className="mb-3 space-y-2 text-sm">
+              <p>{t('data.mirrorMassChangeTurnOff')}</p>
+              <Button variant="outline" size="sm" onClick={showAskSettingFromQuestion}>
+                {t('data.mirrorMassChangeShowSetting')}
+              </Button>
+            </div>
+          )}
           <ScrollArea className="max-h-56 rounded-md border" viewportClassName="p-3">
             <ul className="space-y-1 text-sm">
               {status.pending.map((path) => (
@@ -336,6 +405,16 @@ export function MirrorSection(): React.ReactElement | null {
                 {status.failed.map((failure) => (
                   <li key={failure.path} className="break-all">
                     {t('data.mirrorFailedItem', { path: failure.path, message: failure.message })}
+                    {status.held.includes(failure.path) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-2 align-baseline"
+                        onClick={showAskSetting}
+                      >
+                        {t('data.mirrorMassChangeShowSetting')}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>

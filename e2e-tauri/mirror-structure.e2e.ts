@@ -5,8 +5,10 @@
 // The mirror's task (src-tauri/src/mirror/mod.rs) holds a page whose file
 // vanished for two ticks, and takes a new file that holds the bytes it last
 // wrote as that file renamed: the page takes the title the new path names, or
-// moves to the space whose folder holds it. The mock has no such task, so only
-// this lane can show it. Files are renamed from Node, as a file manager would.
+// moves to the space whose folder holds it. A file moved out of every space's
+// folder is no page's place: its page is held as it was, never trashed
+// (#6887). The mock has no such task, so only this lane can show it. Files are
+// renamed from Node, as a file manager would.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ const MOVED_BLOCK = runScopedMarker('wdio-structure-moved-block')
 const OTHER_SPACE = runScopedMarker('wdio-structure-space')
 const DELETED = runScopedMarker('wdio-structure-deleted')
 const DELETED_BLOCK = runScopedMarker('wdio-structure-deleted-block')
+const STRAYED = runScopedMarker('wdio-structure-strayed')
+const STRAYED_BLOCK = runScopedMarker('wdio-structure-strayed-block')
 const KEPT = runScopedMarker('wdio-structure-kept')
 const KEPT_BLOCK = runScopedMarker('wdio-structure-kept-block')
 
@@ -181,6 +185,41 @@ describe('Agaric real-backend Markdown mirror, renamed and moved files (#5363) @
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the restored page was never written again',
     })
+  })
+
+  it('holds the page of a file moved out of every space folder, trashing nothing', async () => {
+    const before = await mirroredPage(STRAYED, STRAYED_BLOCK)
+    const outside = `${STRAYED}.md`
+    renameSync(before, path.join(folder, outside))
+
+    const status = () => invoke<MirrorStatus>('get_mirror_status')
+    await browser.waitUntil(
+      async () =>
+        (await status()).failed.some(
+          (file) => file.path === outside && file.message.includes('outside the space folders'),
+        ),
+      { timeout: NAV_TIMEOUT, timeoutMsg: `${outside} was never listed as moved outside` },
+    )
+    // Past the passes a vanished file is held for before its page is trashed:
+    // one runs every two seconds while a page's file is missing.
+    const listedAt = (await status()).last_pass_ms ?? 0
+    await browser.waitUntil(async () => ((await status()).last_pass_ms ?? 0) >= listedAt + 10_000, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the mirror stopped passing over the held page, as if it were gone',
+    })
+
+    await openTrash()
+    expect(await $$(trashRow(STRAYED)).length).toBe(0)
+    await reopenPageHolding(STRAYED, STRAYED_BLOCK)
+    expect(existsSync(before)).toBe(false)
+
+    // Moved back, the file is the page's again and nothing stays listed.
+    renameSync(path.join(folder, outside), before)
+    await browser.waitUntil(async () => (await status()).failed.length === 0, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: `${outside} stayed listed after it was moved back`,
+    })
+    expect(await pagesTitled(STRAYED)).toBe(1)
   })
 
   it('pauses, trashing nothing, while the folder is unmounted', async () => {
