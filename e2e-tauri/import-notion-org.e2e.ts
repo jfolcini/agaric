@@ -171,7 +171,9 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await openPageTitled('links')
     // A reference chip shows its target's text; an unresolved one reads otherwise.
     const ref = (await rowOf(`${marker}-ref`)).$('[data-testid="block-ref-chip"]')
-    await browser.waitUntil(async () => (await ref.getText()) === `${marker}-target`, {
+    const refText = () =>
+      ref.execute((el) => el.querySelector('.block-ref-chip-label')?.textContent ?? '')
+    await browser.waitUntil(async () => (await refText()) === `${marker}-target`, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the id: link never resolved to the headline it names',
     })
