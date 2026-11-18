@@ -118,9 +118,21 @@ export function setupMock(): void {
     })
   })
 
-  // Expose error injection to E2E tests via window globals, unless a
-  // Playwright fixture asked for the bridge's surface, which has none of them.
   const w = window as unknown as Record<string, unknown>
+
+  // #2683 — expose a way for E2E tests to fire a backend event. Goes
+  // through the REAL `@tauri-apps/api/event` `emit()`, so it exercises the
+  // exact `plugin:event|emit` invoke path production code's `listen()`
+  // callbacks are registered against (see the `shouldMockEvents` mockIPC
+  // option above) rather than reaching into mock internals. Any listener
+  // registered via `listen(event, handler)` — `useSyncEvents`,
+  // `useDeepLinkRouter`, `useBlockPropertyEvents`, `useMcpActivityFeed`,
+  // etc. — receives `{ event, payload }`, matching what a real Tauri
+  // backend event delivers. The bridge defines it too.
+  w['__emitMockEvent'] = (event: string, payload?: unknown): Promise<void> => emit(event, payload)
+
+  // The rest are the mock's alone: a Playwright fixture that asked for the
+  // bridge's surface gets none of them, as the bridge has none.
   if (w['__AGARIC_NO_MOCK_HOOKS__'] === true) return
   w['__injectMockError'] = injectMockError
   w['__clearMockErrors'] = clearMockErrors
@@ -137,15 +149,4 @@ export function setupMock(): void {
 
   // #6057 — seed a quarantined sync delta; no command creates one.
   w['__addMockQuarantinedSlot'] = addMockQuarantinedSlot
-
-  // #2683 — expose a way for E2E tests to fire a backend event. Goes
-  // through the REAL `@tauri-apps/api/event` `emit()`, so it exercises the
-  // exact `plugin:event|emit` invoke path production code's `listen()`
-  // callbacks are registered against (see the `shouldMockEvents` mockIPC
-  // option above) rather than reaching into mock internals. Any listener
-  // registered via `listen(event, handler)` — `useSyncEvents`,
-  // `useDeepLinkRouter`, `useBlockPropertyEvents`, `useMcpActivityFeed`,
-  // etc. — receives `{ event, payload }`, matching what a real Tauri
-  // backend event delivers.
-  w['__emitMockEvent'] = (event: string, payload?: unknown): Promise<void> => emit(event, payload)
 }

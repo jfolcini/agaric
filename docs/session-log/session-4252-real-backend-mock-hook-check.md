@@ -7,3 +7,5 @@ The check costs no CI minutes: those tests already run in the per-PR mock lane. 
 Shown red: with the `@mock-only` tag removed from the `search-sheet-mobile.spec.ts` latency test, the mock run fails with the nightly's `TypeError: window.__setMockLatency is not a function`; with the mock's new early return also removed, the same test passes. The 13 listed spec files pass on the mock (48 passed, 1 skipped). `npm run typecheck`, oxlint and the `src/lib/tauri-mock` vitest files pass.
 
 Not done: `e2e/AGENTS.md` § "The real backend, through the bridge" does not mention the per-PR check (an `AGENTS.md` edit wants the maintainer).
+
+Second round: the bridge defines `__emitMockEvent` too (`src/lib/tauri-mock/bridge.ts`), so the first version withheld one hook too many. `setupMock` now installs it before the early return. Shown red: a listed test that fires `emitMockEvent` fails with `__emitMockEvent is not a function` on the first version and passes on this one.
