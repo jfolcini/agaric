@@ -171,14 +171,14 @@ function AddItemControl(props: AddItemControlProps): React.ReactElement {
       return <AddSelectItem def={def} items={items} ariaLabel={ariaLabel} onAdd={onAdd} />
     }
     case 'date': {
-      return <AddDateItem ariaLabel={ariaLabel} disabled={disabled} onAdd={onAdd} />
+      return <AddDateItem ariaLabel={ariaLabel} busy={disabled} onAdd={onAdd} />
     }
     default: {
       return (
         <AddTypedItem
           number={def.value_type === 'number'}
           ariaLabel={ariaLabel}
-          disabled={disabled}
+          busy={disabled}
           onAdd={onAdd}
         />
       )
@@ -189,12 +189,12 @@ function AddItemControl(props: AddItemControlProps): React.ReactElement {
 function AddTypedItem({
   number,
   ariaLabel,
-  disabled,
+  busy,
   onAdd,
 }: {
   number: boolean
   ariaLabel: string
-  disabled: boolean
+  busy: boolean
   onAdd: (item: string | number) => Promise<boolean>
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -215,7 +215,9 @@ function AddTypedItem({
       type={number ? 'number' : 'text'}
       value={draft}
       placeholder={t('property.addListItemPlaceholder')}
-      disabled={disabled}
+      // Read-only, not disabled: a disabled field drops the focus, and the next
+      // item could not follow (#6912).
+      readOnly={busy}
       onChange={(e) => setDraft(e.target.value)}
       onKeyDown={(e) => {
         if (e.key !== 'Enter') return
@@ -229,11 +231,11 @@ function AddTypedItem({
 
 function AddDateItem({
   ariaLabel,
-  disabled,
+  busy,
   onAdd,
 }: {
   ariaLabel: string
-  disabled: boolean
+  busy: boolean
   onAdd: (item: string) => Promise<boolean>
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -252,7 +254,7 @@ function AddDateItem({
         type="text"
         value={dateInput}
         placeholder={t('property.datePlaceholder')}
-        disabled={disabled}
+        readOnly={busy}
         onChange={handleChange}
         onKeyDown={(e) => {
           if (e.key !== 'Enter') return
