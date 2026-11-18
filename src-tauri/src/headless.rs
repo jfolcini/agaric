@@ -11,10 +11,9 @@
 //! [`HeadlessApp::new`] holds the state [`crate::register_managed_state`]
 //! registers and no more; [`HeadlessApp::boot`] adds the recovery status and
 //! the change feed (`crate::change_feed`), whose `blocks:changed` the bridge
-//! forwards. Nothing here starts a server or a daemon, and a command
-//! that reads state [`crate::boot`] registers elsewhere (the mirror, the mDNS
-//! and bind status, MCP) is refused by tauri as unmanaged. Register a state
-//! here when a spec's commands first read it.
+//! forwards. Both also hold the state [`crate::boot`] manages beside its
+//! daemons (MCP, the mirror, the mDNS and bind status), so their commands
+//! answer, but nothing here starts a server or a daemon.
 //!
 //! Compiled under `test-util` only, so nothing here ships.
 
@@ -154,6 +153,18 @@ impl HeadlessApp {
             Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new()),
             lifecycle,
         );
+        // What boot manages beside its daemons, for the Settings panels'
+        // reads; the daemons themselves stay off.
+        app.manage(Arc::new(crate::mcp::McpLifecycle::new()));
+        app.manage(crate::commands::McpToggleGate::new());
+        app.manage(crate::mcp::activity::McpActivityRing::new());
+        app.manage(crate::mirror::MirrorState::new(app_data_dir.to_path_buf()));
+        app.manage(agaric_sync::sync_events::MdnsStatusState(
+            std::sync::Mutex::default(),
+        ));
+        app.manage(agaric_sync::sync_events::BindExposureStatusState(
+            std::sync::Mutex::default(),
+        ));
         Self {
             app,
             webview,
@@ -164,9 +175,8 @@ impl HeadlessApp {
     /// Send one IPC request and hand its outcome to `respond`, on whichever
     /// thread the command finished on. `Ok` is the command's JSON response,
     /// `Err` the serialized error: `{ kind, message, code? }` for an
-    /// `AppError`, a bare string when the request never reached its command
-    /// or the command answered raw bytes (`read_attachment`), which this
-    /// transport does not carry.
+    /// `AppError`, a bare string when the request never reached its command.
+    /// Raw bytes (`read_attachment`) arrive as a JSON array of numbers.
     pub fn invoke_with(
         &self,
         cmd: &str,
