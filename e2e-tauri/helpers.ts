@@ -1002,6 +1002,21 @@ export function appVaultDir(): string {
   return dir
 }
 
+/** The running app's environment, read from `/proc/<pid>/environ`. */
+export function appEnvironment(): Map<string, string> {
+  const [pid] = appPids()
+  if (pid === undefined) throw new Error('no app is running, so there is no environment to read')
+  return new Map(
+    readFileSync(`/proc/${pid}/environ`, 'latin1')
+      .split('\0')
+      .filter((entry) => entry.includes('='))
+      .map((entry) => {
+        const eq = entry.indexOf('=')
+        return [entry.slice(0, eq), entry.slice(eq + 1)] as const
+      }),
+  )
+}
+
 /**
  * End the app and open it again on the same vault: the app process ends and a
  * new one opens it, so nothing the webview held survives.
