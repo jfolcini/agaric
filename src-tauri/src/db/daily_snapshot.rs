@@ -8,7 +8,7 @@
 //! transaction, the ones still in the `-wal` included, taken under a read
 //! transaction, so it never holds the write lock. The pre-migration backups
 //! beside it (`<db>.pre-migration-<ts>`) are a different set, pruned on their
-//! own.
+//! own. [`super::snapshot_restore`] puts one back.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -24,10 +24,25 @@ const MAX_KEPT_DAILY_SNAPSHOTS: usize = if cfg!(target_os = "android") { 3 } els
 
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
+/// A daily snapshot, as Settings › Data lists it for a restore.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct DailySnapshot {
+    /// The day it was taken, `YYYY-MM-DD`: what names it in a restore.
+    pub day: String,
+    /// When it was written, in Unix milliseconds.
+    pub taken_ms: i64,
+}
+
 /// `<db file name>.daily-`, the prefix of every daily snapshot's file name.
 fn name_prefix(db_path: &Path) -> String {
     let db_name = db_path.file_name().unwrap_or_default().to_string_lossy();
     format!("{db_name}.daily-")
+}
+
+/// Where `day`'s snapshot of the vault at `db_path` is, taken or not.
+pub(super) fn snapshot_file(db_path: &Path, day: NaiveDate) -> PathBuf {
+    let name = format!("{}{}", name_prefix(db_path), day.format(DATE_FORMAT));
+    db_path.with_file_name(name)
 }
 
 /// The daily snapshots beside `db_path`, oldest first. A sibling whose name
@@ -70,8 +85,7 @@ async fn snapshot_given_free_space(
     day: NaiveDate,
     free_bytes: u64,
 ) -> Result<bool, AppError> {
-    let name = format!("{}{}", name_prefix(db_path), day.format(DATE_FORMAT));
-    let snapshot = db_path.with_file_name(name);
+    let snapshot = snapshot_file(db_path, day);
     if snapshot.try_exists()? {
         return Ok(false);
     }
@@ -122,18 +136,34 @@ async fn snapshot_given_free_space(
 /// The maintenance job's body: today's snapshot, if the day has none yet,
 /// tried once per local day per run of the app (`last_attempt_day`, a
 /// `num_days_from_ce`). A copy that fails is not tried again every tick; the
-/// failure is logged and the next day or the next launch tries again.
+/// failure is logged and the next day or the next launch tries again. The
+/// vaults a restore replaced are pruned by the same attempt
+/// ([`super::snapshot_restore::prune_replaced_vaults`]).
 pub async fn daily_snapshot_tick(db_path: &Path, last_attempt_day: &AtomicI32) {
-    let today = chrono::Local::now().date_naive();
+    let now = chrono::Local::now();
+    let today = now.date_naive();
     let day_number = today.num_days_from_ce();
     if last_attempt_day.swap(day_number, Ordering::Relaxed) == day_number {
         return;
+    }
+    let now_secs = u64::try_from(now.timestamp()).unwrap_or(0);
+    if let Err(e) = super::snapshot_restore::prune_replaced_vaults(db_path, now_secs) {
+        tracing::warn!(error = %e, "could not delete a vault a restore replaced");
     }
     match take_daily_snapshot(db_path, today).await {
         Ok(true) => tracing::info!(day = %today, "daily vault snapshot taken"),
         Ok(false) => {}
         Err(e) => tracing::error!(error = %e, "daily vault snapshot failed"),
     }
+}
+
+/// When the file at `path` was written, in Unix milliseconds.
+fn written_ms(path: &Path) -> std::io::Result<i64> {
+    let written = std::fs::metadata(path)?
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    Ok(i64::try_from(written.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// When the newest daily snapshot beside `db_path` was written, in Unix
@@ -146,11 +176,25 @@ pub fn last_daily_snapshot_ms(db_path: &Path) -> Result<Option<i64>, AppError> {
     let Some((_, newest)) = daily_snapshots(db_path)?.pop() else {
         return Ok(None);
     };
-    let written = std::fs::metadata(newest)?
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(Some(i64::try_from(written.as_millis()).unwrap_or(i64::MAX)))
+    Ok(Some(written_ms(&newest)?))
+}
+
+/// The daily snapshots beside `db_path`, newest first.
+///
+/// # Errors
+///
+/// The vault's folder or a snapshot's metadata could not be read.
+pub fn list_daily_snapshots(db_path: &Path) -> Result<Vec<DailySnapshot>, AppError> {
+    daily_snapshots(db_path)?
+        .into_iter()
+        .rev()
+        .map(|(day, file)| {
+            Ok(DailySnapshot {
+                day: day.to_string(),
+                taken_ms: written_ms(&file)?,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -350,6 +394,21 @@ mod tests {
         let next_launch = AtomicI32::new(0);
         daily_snapshot_tick(&db_path, &next_launch).await;
         assert!(last_daily_snapshot_ms(&db_path).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn the_tick_deletes_a_vault_a_restore_replaced_once_it_was_kept_long_enough() {
+        let (dir, db_path) = vault().await;
+        let long_ago = dir.path().join("notes.db.pre-restore-1000");
+        let now = chrono::Local::now().timestamp();
+        let just_now = dir.path().join(format!("notes.db.pre-restore-{now}"));
+        std::fs::write(&long_ago, b"kept").unwrap();
+        std::fs::write(&just_now, b"kept").unwrap();
+
+        daily_snapshot_tick(&db_path, &AtomicI32::new(0)).await;
+
+        assert!(!long_ago.exists());
+        assert!(just_now.exists());
     }
 
     #[tokio::test]

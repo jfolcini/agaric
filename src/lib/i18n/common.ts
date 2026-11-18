@@ -846,12 +846,23 @@ export const common: Record<string, string> = {
   // taken, and on desktop the folder that holds the copies.
   'data.snapshotLabel': 'Daily snapshot',
   'data.snapshotDesc':
-    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. They are a safety net, not a restore button.',
+    'Once a day Agaric saves a copy of its database beside it and keeps the most recent ones. Restore puts one back in place of your notes.',
   'data.snapshotLast': 'Last snapshot: {{time}}',
   'data.snapshotNone': 'No snapshot yet. The first is taken shortly after Agaric starts.',
   'data.snapshotUnreadable': 'The time of the last snapshot could not be read.',
   'data.snapshotOpenFolder': 'Open folder',
   'data.snapshotOpenFolderFailed': 'Could not open the data folder',
+  // Translators: Settings › Data, the daily snapshot row's Restore dialog: the button, the dialog
+  // title and text, the snapshot picker's label, the confirm button, and two error toasts
+  // ({{reason}} = the error message). The restore runs when Agaric starts again.
+  'data.snapshotRestoreButton': 'Restore…',
+  'data.snapshotRestoreTitle': 'Restore a daily snapshot?',
+  'data.snapshotRestoreDesc':
+    'Agaric restarts with your notes as they were when the snapshot was taken. Edits and attachments made since then come back only from a paired device that has them, at its next sync. The notes you have now and the files attached since the snapshot are kept beside the database for 30 days, then deleted.',
+  'data.snapshotRestoreSelectLabel': 'Snapshot',
+  'data.snapshotRestoreConfirm': 'Restore and restart',
+  'data.snapshotRestoreListFailed': 'Could not list the snapshots',
+  'data.snapshotRestoreFailed': 'The snapshot was not restored: {{reason}}',
 
   // Translators: Settings › Data, "Markdown mirror" card (Agaric keeps a .md file of every page in
   // a folder the user picks): title, description, the folder row and its buttons. The "Not on this

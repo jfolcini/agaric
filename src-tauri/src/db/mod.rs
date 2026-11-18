@@ -2,6 +2,7 @@ mod command_tx;
 pub mod daily_snapshot;
 mod pool;
 mod recovery;
+pub mod snapshot_restore;
 
 pub use command_tx::*;
 // #2621 wave S3b-i: the pure, sqlx-free pool primitives (`DbPools`,

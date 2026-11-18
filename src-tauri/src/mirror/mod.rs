@@ -18,6 +18,8 @@
 //! when the page is gone, each only while it is unchanged. While the folder or
 //! its marker is missing, or the vault is older than the folder
 //! ([`MirrorState::is_behind`]), the mirror writes nothing and creates nothing.
+//! After a restore from a daily snapshot it is paused until the folder is
+//! chosen again ([`store::RESTORED_KEY`]).
 
 pub mod assets;
 pub mod ingest;
@@ -52,6 +54,12 @@ const BACKSTOP: Duration = Duration::from_secs(3600);
 /// The ticks a page's file may be missing before it counts as gone: a file
 /// renamed outside Agaric is found at its new path within them.
 const MISSING_TICKS: u8 = 2;
+
+/// Why the mirror writes and reads nothing after a restore from a daily
+/// snapshot ([`store::RESTORED_KEY`]).
+const RESTORED_PAUSE: &str = "a daily snapshot was restored, and files in the folder may be newer \
+     than the notes; sync with your paired devices, then choose the folder again to resume. \
+     Reading changes back was turned off";
 
 /// Why the mirror writes nothing while [`Mirror::behind`].
 const BEHIND: &str = "the vault is older than the folder, as after a restore from a backup or a \
@@ -219,6 +227,7 @@ impl MirrorState {
             read_back,
             copy_files,
             unmirrored,
+            restored: _,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -803,6 +812,11 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         };
+        if settings.restored {
+            self.state.set_paused(Some(RESTORED_PAUSE.to_owned()));
+            self.full_due = true;
+            return Ok(());
+        }
         // Due until done: a tick failing part way would leave the states in
         // memory, their head gone, for the next pass to roll the folder back.
         let fresh = self.state.start_fresh_due();

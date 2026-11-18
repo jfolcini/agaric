@@ -421,13 +421,21 @@ export const common: Record<string, string> = {
   'data.savedToDownloads': '{{fileName}} salvo em Downloads',
   'data.snapshotLabel': 'Instantâneo diário',
   'data.snapshotDesc':
-    'Uma vez por dia, o Agaric salva uma cópia do banco de dados ao lado dele e mantém as mais recentes. Elas são uma rede de segurança, não um botão de restauração.',
+    'Uma vez por dia, o Agaric salva uma cópia do banco de dados ao lado dele e mantém as mais recentes. Restaurar coloca uma no lugar das suas notas.',
   'data.snapshotLast': 'Último instantâneo: {{time}}',
   'data.snapshotNone':
     'Nenhum instantâneo ainda. O primeiro é feito pouco depois de o Agaric iniciar.',
   'data.snapshotUnreadable': 'Não foi possível ler o horário do último instantâneo.',
   'data.snapshotOpenFolder': 'Abrir pasta',
   'data.snapshotOpenFolderFailed': 'Não foi possível abrir a pasta de dados',
+  'data.snapshotRestoreButton': 'Restaurar…',
+  'data.snapshotRestoreTitle': 'Restaurar um instantâneo diário?',
+  'data.snapshotRestoreDesc':
+    'O Agaric reinicia com as suas notas como estavam quando o instantâneo foi feito. Edições e anexos feitos depois disso só voltam de um dispositivo pareado que os tenha, na próxima sincronização dele. As notas que você tem agora e os arquivos anexados desde o instantâneo ficam guardados ao lado do banco de dados por 30 dias e depois são excluídos.',
+  'data.snapshotRestoreSelectLabel': 'Instantâneo',
+  'data.snapshotRestoreConfirm': 'Restaurar e reiniciar',
+  'data.snapshotRestoreListFailed': 'Não foi possível listar os instantâneos',
+  'data.snapshotRestoreFailed': 'O instantâneo não foi restaurado: {{reason}}',
   'data.mirrorTitle': 'Espelho Markdown',
   'data.mirrorDesc':
     'O Agaric grava cada página como um arquivo .md em uma pasta que você escolhe e a mantém atualizada. Um arquivo que você edita em outro lugar é lido de volta para a página dele, e um Desfazer reverte isso.',

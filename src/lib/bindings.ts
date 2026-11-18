@@ -790,6 +790,16 @@ export const commands = {
 	 *  Delegates to [`open_data_folder_inner`].
 	 */
 	openDataFolder: () => typedError<null, AppError>(__TAURI_INVOKE("open_data_folder")),
+	/**
+	 *  Tauri command: the daily snapshots, newest first. Delegates to
+	 *  [`list_daily_snapshots_inner`].
+	 */
+	listDailySnapshots: () => typedError<DailySnapshot[], AppError>(__TAURI_INVOKE("list_daily_snapshots")),
+	/**
+	 *  Tauri command: restore the snapshot taken on `day` at the next launch.
+	 *  Delegates to [`request_snapshot_restore_inner`].
+	 */
+	requestSnapshotRestore: (day: string) => typedError<null, AppError>(__TAURI_INVOKE("request_snapshot_restore", { day })),
 	getSpeechStatus: () => typedError<SpeechStatus, AppError>(__TAURI_INVOKE("get_speech_status")),
 	/**  Whether the backend engine can speak now (see [`SpeechEngine::available`]). */
 	getSpeechEngineAvailable: () => typedError<boolean, AppError>(__TAURI_INVOKE("get_speech_engine_available")),
@@ -2219,6 +2229,14 @@ export type CreatedBlocks = {
 	 *  then its descendants depth-first.
 	 */
 	blocks: BlockRow[],
+};
+
+/**  A daily snapshot, as Settings › Data lists it for a restore. */
+export type DailySnapshot = {
+	/**  The day it was taken, `YYYY-MM-DD`: what names it in a restore. */
+	day: string,
+	/**  When it was written, in Unix milliseconds. */
+	taken_ms: number,
 };
 
 /**  The calendar granularity of a [`GroupKey::DateBucket`]. */

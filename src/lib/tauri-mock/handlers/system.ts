@@ -208,9 +208,12 @@ export const systemHandlers = {
   get_mirror_status: mirrorStatus,
 
   // #6554 — the daily snapshot row. The mock has no disk, so the last
-  // snapshot is a fixed time and the folder opens nowhere.
+  // snapshot is a fixed time, the folder opens nowhere, and a restore
+  // (#6744), which the backend runs at its next launch, changes nothing.
   get_last_snapshot_ms: () => MOCK_LAST_SNAPSHOT_MS,
   open_data_folder: () => null,
+  list_daily_snapshots: () => [{ day: '2026-03-14', taken_ms: MOCK_LAST_SNAPSHOT_MS }],
+  request_snapshot_restore: () => null,
 
   // ---------------------------------------------------------------------------
   // Op log compaction commands
@@ -241,4 +244,6 @@ export const systemHandlers = {
   | 'get_mirror_status'
   | 'get_last_snapshot_ms'
   | 'open_data_folder'
+  | 'list_daily_snapshots'
+  | 'request_snapshot_restore'
 >

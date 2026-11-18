@@ -421,7 +421,7 @@ export const common: Record<string, string> = {
   'data.savedToDownloads': '{{fileName}} in Downloads gespeichert',
   'data.snapshotLabel': 'Täglicher Schnappschuss',
   'data.snapshotDesc':
-    'Einmal am Tag speichert Agaric eine Kopie seiner Datenbank direkt daneben und behält die neuesten. Sie sind ein Sicherheitsnetz, keine Schaltfläche zum Wiederherstellen.',
+    'Einmal am Tag speichert Agaric eine Kopie seiner Datenbank direkt daneben und behält die neuesten. Wiederherstellen setzt eine davon anstelle deiner Notizen ein.',
   'data.snapshotLast': 'Letzter Schnappschuss: {{time}}',
   'data.snapshotNone':
     'Noch kein Schnappschuss. Der erste wird kurz nach dem Start von Agaric erstellt.',
@@ -429,6 +429,14 @@ export const common: Record<string, string> = {
     'Der Zeitpunkt des letzten Schnappschusses konnte nicht gelesen werden.',
   'data.snapshotOpenFolder': 'Ordner öffnen',
   'data.snapshotOpenFolderFailed': 'Der Datenordner konnte nicht geöffnet werden',
+  'data.snapshotRestoreButton': 'Wiederherstellen…',
+  'data.snapshotRestoreTitle': 'Einen täglichen Schnappschuss wiederherstellen?',
+  'data.snapshotRestoreDesc':
+    'Agaric startet neu, mit deinen Notizen in dem Stand, in dem der Schnappschuss aufgenommen wurde. Änderungen und Anhänge seitdem kommen nur von einem gekoppelten Gerät zurück, das sie hat, bei dessen nächster Synchronisierung. Deine jetzigen Notizen und die seit dem Schnappschuss angehängten Dateien bleiben 30 Tage neben der Datenbank erhalten und werden dann gelöscht.',
+  'data.snapshotRestoreSelectLabel': 'Schnappschuss',
+  'data.snapshotRestoreConfirm': 'Wiederherstellen und neu starten',
+  'data.snapshotRestoreListFailed': 'Die Schnappschüsse konnten nicht aufgelistet werden',
+  'data.snapshotRestoreFailed': 'Der Schnappschuss wurde nicht wiederhergestellt: {{reason}}',
   'data.mirrorTitle': 'Markdown-Spiegel',
   'data.mirrorDesc':
     'Agaric schreibt jede Seite als .md-Datei in einen Ordner deiner Wahl und hält ihn aktuell. Eine Datei, die du anderswo bearbeitest, wird in ihre Seite zurückgelesen, und ein einziges Rückgängig nimmt das zurück.',

@@ -424,13 +424,21 @@ export const common: Record<string, string> = {
   'data.savedToDownloads': '{{fileName}} enregistré dans Téléchargements',
   'data.snapshotLabel': 'Instantané quotidien',
   'data.snapshotDesc':
-    'Une fois par jour, Agaric enregistre une copie de sa base de données à côté de celle-ci et conserve les plus récentes. C’est un filet de sécurité, pas un bouton de restauration.',
+    'Une fois par jour, Agaric enregistre une copie de sa base de données à côté de celle-ci et conserve les plus récentes. Restaurer en remet une à la place de vos notes.',
   'data.snapshotLast': 'Dernier instantané\u00A0: {{time}}',
   'data.snapshotNone':
     'Aucun instantané pour l’instant. Le premier est pris peu après le démarrage d’Agaric.',
   'data.snapshotUnreadable': 'L’heure du dernier instantané n’a pas pu être lue.',
   'data.snapshotOpenFolder': 'Ouvrir le dossier',
   'data.snapshotOpenFolderFailed': 'Impossible d’ouvrir le dossier des données',
+  'data.snapshotRestoreButton': 'Restaurer…',
+  'data.snapshotRestoreTitle': 'Restaurer un instantané quotidien\u00A0?',
+  'data.snapshotRestoreDesc':
+    'Agaric redémarre avec vos notes telles qu’elles étaient lors de l’instantané. Les modifications et pièces jointes faites depuis ne reviennent que d’un appareil associé qui les a, à sa prochaine synchronisation. Vos notes actuelles et les fichiers joints depuis l’instantané sont conservés à côté de la base de données pendant 30\u00A0jours, puis supprimés.',
+  'data.snapshotRestoreSelectLabel': 'Instantané',
+  'data.snapshotRestoreConfirm': 'Restaurer et redémarrer',
+  'data.snapshotRestoreListFailed': 'Impossible de lister les instantanés',
+  'data.snapshotRestoreFailed': 'L’instantané n’a pas été restauré\u00A0: {{reason}}',
   'data.mirrorTitle': 'Miroir Markdown',
   'data.mirrorDesc':
     'Agaric écrit chaque page sous forme de fichier .md dans un dossier de votre choix et le tient à jour. Un fichier que vous modifiez ailleurs est réintégré dans sa page, et une seule annulation suffit à revenir en arrière.',

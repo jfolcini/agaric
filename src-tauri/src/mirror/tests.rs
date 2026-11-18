@@ -33,18 +33,18 @@ struct Fx {
     mirror: Mirror,
     root: PathBuf,
     data: PathBuf,
-    _dirs: [TempDir; 3],
+    _dirs: Vec<TempDir>,
 }
 
 impl Fx {
-    /// A vault with the test space, and the mirror on in an empty folder.
+    /// A vault with the test space, its database in the data folder as the
+    /// app's is, and the mirror on in an empty folder.
     async fn new() -> Self {
-        let db = TempDir::new().unwrap();
-        let pool = init_pool(&db.path().join("test.db")).await.unwrap();
+        let data = TempDir::new().unwrap();
+        let pool = init_pool(&data.path().join("test.db")).await.unwrap();
         let mat = Materializer::new(pool.clone());
         ensure_test_space(&pool).await;
         mark_block_as_space(&pool, TEST_SPACE_ID).await;
-        let data = TempDir::new().unwrap();
         let folder = TempDir::new().unwrap();
         let state = MirrorState::new(data.path().to_path_buf());
         let root = folder.path().to_path_buf();
@@ -61,7 +61,7 @@ impl Fx {
             mirror,
             root,
             data: data.path().to_path_buf(),
-            _dirs: [db, data, folder],
+            _dirs: vec![data, folder],
         }
     }
 
@@ -1028,7 +1028,7 @@ impl Fx {
         agaric_engine::loro::snapshot::rehydrate_registry(&self.pool, registry, DEV)
             .await
             .unwrap();
-        self._dirs[0] = db;
+        self._dirs.push(db);
         self.reopen().await;
     }
 
@@ -1331,4 +1331,157 @@ async fn a_restored_vault_whose_op_log_was_compacted_stays_paused() {
 
     assert_eq!(fx.files(), folder.files);
     assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+}
+
+// ── A restore from a daily snapshot (#6744) ─────────────────────────────
+
+/// What a restore leaves newer in the folder than in the notes: paths below
+/// the folder, and the text of each page's file.
+struct NewerThanTheNotes {
+    /// The file of a page edited since the snapshot.
+    edited: String,
+    /// The file of a page made since.
+    made: String,
+    /// The copy of an attachment added since, copying turned on since too.
+    copy: String,
+}
+
+impl NewerThanTheNotes {
+    fn assert_kept(&self, fx: &Fx, when: &str) {
+        assert_eq!(fx.read(BETA).as_ref(), Some(&self.made), "{when}");
+        assert_eq!(fx.read(ALPHA).as_ref(), Some(&self.edited), "{when}");
+        assert!(fx.root.join(&self.copy).exists(), "{when}");
+    }
+}
+
+impl Fx {
+    /// #6744: mirror a vault, snapshot it, change it and its folder, then
+    /// restore the snapshot and open the vault as the next launch does, the
+    /// mirror's task not yet opened. To the states kept from before, the
+    /// file of each page made since is one to remove, each file edited since
+    /// one to write the older text over, and each copy one to remove.
+    async fn restored_under_newer_files() -> (Self, NewerThanTheNotes) {
+        use crate::db::daily_snapshot::take_daily_snapshot;
+        use crate::db::snapshot_restore::{request_restore, restore_pending};
+        use agaric_engine::loro::peer_epoch::load_peer_epoch;
+        use agaric_engine::loro::snapshot::rehydrate_registry;
+
+        let mut fx = Fx::new().await;
+        let (alpha_page, alpha) = fx.page("Alpha", &["as the snapshot has it"]).await;
+        fx.tick().await;
+        let db_path = fx.data.join("test.db");
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        assert!(take_daily_snapshot(&db_path, day).await.unwrap());
+        fx.edit(&alpha[0], "edited since").await;
+        let (_, beta) = fx.page("Beta", &["made since"]).await;
+        let copy = fx.image_in(&beta[0]).await;
+        fx.tick().await;
+        let newer = NewerThanTheNotes {
+            edited: fx.read(ALPHA).unwrap(),
+            made: fx.read(BETA).unwrap(),
+            copy,
+        };
+        assert!(newer.edited.contains("edited since"), "{}", newer.edited);
+        assert!(fx.root.join(&newer.copy).exists());
+        assert!(fx.saved_state(&alpha_page).is_some());
+        assert!(fx.data.join("mirror/copies.json").exists());
+        assert_eq!(
+            saved_heads(&fx.data),
+            1,
+            "the pass saved the folder's head (#6887)"
+        );
+
+        settle(&fx.mat).await;
+        fx.pool.close().await;
+        request_restore(&db_path, day).unwrap();
+        restore_pending(&db_path).await.unwrap();
+        fx.pool = init_pool(&db_path).await.unwrap();
+        fx.mat = Materializer::new(fx.pool.clone());
+        let registry = &fx.mat.loro_state().registry;
+        registry.set_peer_epoch(load_peer_epoch(&fx.pool).await.unwrap());
+        rehydrate_registry(&fx.pool, registry, DEV).await.unwrap();
+        fx.state = MirrorState::new(fx.data.clone());
+        (fx, newer)
+    }
+
+    /// Open the mirror's task as [`spawn`] does: reading files back, unless
+    /// the setting is off.
+    async fn open_mirror(&mut self) {
+        let ingest = Ingest {
+            pool: self.pool.clone(),
+            materializer: self.mat.clone(),
+            notify: std::sync::Arc::new(|_| {}),
+        };
+        self.mirror = Mirror::open(self.pool.clone(), DEV.to_owned(), self.state.clone())
+            .await
+            .unwrap()
+            .with_ingest(ingest);
+    }
+
+    async fn pages_titled(&self, title: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ?")
+            .bind(title)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    /// Enough ticks for a file that vanished to count as gone, and for a new
+    /// one to be read in.
+    async fn ticks(&mut self) {
+        for _ in 0..=MISSING_TICKS {
+            self.tick().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_from_a_snapshot_pauses_the_mirror_and_costs_the_folder_no_file_6744() {
+    let (mut fx, newer) = Fx::restored_under_newer_files().await;
+    fx.open_mirror().await;
+
+    fx.ticks().await;
+    newer.assert_kept(&fx, "paused, the mirror removes and writes nothing");
+    assert_eq!(fx.status().await.paused.as_deref(), Some(RESTORED_PAUSE));
+
+    // The folder chosen again.
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    fx.ticks().await;
+    assert_eq!(
+        fx.pages_titled("Beta").await,
+        0,
+        "the file of a page made since the snapshot is not read in as a new page: \
+         a paired device gives that page back"
+    );
+    newer.assert_kept(&fx, "resumed, it removes and overwrites nothing");
+    let status = fx.status().await;
+    assert_eq!(status.paused, None);
+    assert!(
+        !status.read_back,
+        "reading back stays off until it is asked for"
+    );
+    let diverged: Vec<String> = status.diverged.into_iter().map(|f| f.path).collect();
+    assert_eq!(diverged, [ALPHA]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_drops_the_mirrors_states_and_its_record_of_copies_6744() {
+    let (fx, _) = Fx::restored_under_newer_files().await;
+    assert_eq!(
+        saved_heads(&fx.data),
+        0,
+        "the folder's head goes with its states"
+    );
+    assert!(!fx.data.join("mirror").exists());
+}
+
+/// The `head` files saved under each mirrored folder's states in `data`.
+fn saved_heads(data: &Path) -> usize {
+    std::fs::read_dir(data.join("mirror/folders")).map_or(0, |folders| {
+        folders
+            .filter(|folder| folder.as_ref().unwrap().path().join("head").exists())
+            .count()
+    })
 }

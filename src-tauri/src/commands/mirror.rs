@@ -69,7 +69,8 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 /// stay. The folder chosen again while it holds nothing but its marker
 /// starts fresh ([`MirrorState::start_fresh`]), and so does one chosen again
 /// while the vault is older than it ([`MirrorState::is_behind`]), which
-/// turns reading back off when it holds any file, each then no page's.
+/// turns reading back off when it holds any file, each then no page's. Either way a pause a restore left
+/// ([`mirror::store::RESTORED_KEY`]) ends.
 ///
 /// # Errors
 ///
@@ -122,6 +123,7 @@ pub async fn set_mirror_folder_inner(
         mirror::store::set_read_back(pool, read_back).await?;
     }
     mirror::store::set_folder(pool, path.as_deref()).await?;
+    mirror::store::clear_restored(pool).await?;
     if fresh {
         mirror.start_fresh();
     } else {

@@ -1002,6 +1002,11 @@ export function appVaultDir(): string {
   return dir
 }
 
+/** The daily snapshots (`notes.db.daily-<date>`) in the vault folder `dir`. */
+export function dailySnapshots(dir: string): string[] {
+  return readdirSync(dir).filter((name) => /^notes\.db\.daily-\d{4}-\d{2}-\d{2}$/.test(name))
+}
+
 /** The running app's environment, read from `/proc/<pid>/environ`. */
 export function appEnvironment(): Map<string, string> {
   const [pid] = appPids()

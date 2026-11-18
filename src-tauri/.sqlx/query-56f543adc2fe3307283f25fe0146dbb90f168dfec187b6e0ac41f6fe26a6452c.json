@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id AS \"device_id!: String\", MAX(seq) AS \"seq!: i64\"\n             FROM op_log GROUP BY device_id\n           UNION ALL\n           SELECT substr(key, length(?1) + 1), CAST(value AS INTEGER)\n             FROM app_settings WHERE substr(key, 1, length(?1)) = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "56f543adc2fe3307283f25fe0146dbb90f168dfec187b6e0ac41f6fe26a6452c"
+}

@@ -279,6 +279,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'device-local setting whose effect is the mirror folder on disk (files removed, kept or ' +
     'left alone), which a fixture seed cannot express',
   open_data_folder: 'no persistent state — opens the OS file manager on the data folder (#6554)',
+  request_snapshot_restore:
+    'device-local file I/O: validates a snapshot file beside the database and writes a marker ' +
+    'the next launch acts on (#6744), which a fixture seed cannot express',
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +463,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_last_snapshot_ms:
     'environment dependent: the modified time of a snapshot file beside the database (#6554), ' +
     'which no fixture seed can spell',
+  list_daily_snapshots:
+    'environment dependent: the snapshot files beside the database and their modified times ' +
+    '(#6744), which no fixture seed can spell',
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +612,8 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   'get_mirror_status',
   // Reads a snapshot file's modified time (#6554), likewise.
   'get_last_snapshot_ms',
+  // Lists the snapshot files (#6744), likewise.
+  'list_daily_snapshots',
 ])
 
 /**
@@ -664,6 +672,9 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   'set_mirror_copy_files',
   // Its effect is the folder on disk (#5363): same input problem.
   'set_mirror_space',
+  // The input is a snapshot file beside the database, and its effect a marker
+  // file the next launch acts on (#6744): neither is in a fixture's reach.
+  'request_snapshot_restore',
 ])
 
 /**

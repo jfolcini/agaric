@@ -10,16 +10,20 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { NAV_TIMEOUT, appVaultDir, invoke, openDataTab, waitForAppReady } from './helpers'
-
-const SNAPSHOT_NAME = /^notes\.db\.daily-\d{4}-\d{2}-\d{2}$/
+import {
+  NAV_TIMEOUT,
+  appVaultDir,
+  dailySnapshots,
+  invoke,
+  openDataTab,
+  waitForAppReady,
+} from './helpers'
 
 function snapshots(): string[] {
-  return readdirSync(appVaultDir()).filter((name) => SNAPSHOT_NAME.test(name))
+  return dailySnapshots(appVaultDir())
 }
 
 /** How many of `ids` the database file at `file` holds as blocks. */

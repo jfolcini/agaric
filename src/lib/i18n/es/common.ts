@@ -421,13 +421,21 @@ export const common: Record<string, string> = {
   'data.savedToDownloads': '{{fileName}} se ha guardado en Descargas',
   'data.snapshotLabel': 'Instantánea diaria',
   'data.snapshotDesc':
-    'Una vez al día, Agaric guarda una copia de su base de datos junto a ella y conserva las más recientes. Son una red de seguridad, no un botón de restaurar.',
+    'Una vez al día, Agaric guarda una copia de su base de datos junto a ella y conserva las más recientes. Restaurar pone una en lugar de tus notas.',
   'data.snapshotLast': 'Última instantánea: {{time}}',
   'data.snapshotNone':
     'Aún no hay ninguna instantánea. La primera se toma poco después de que se inicie Agaric.',
   'data.snapshotUnreadable': 'No se ha podido leer la hora de la última instantánea.',
   'data.snapshotOpenFolder': 'Abrir carpeta',
   'data.snapshotOpenFolderFailed': 'No se ha podido abrir la carpeta de datos',
+  'data.snapshotRestoreButton': 'Restaurar…',
+  'data.snapshotRestoreTitle': '¿Restaurar una instantánea diaria?',
+  'data.snapshotRestoreDesc':
+    'Agaric se reinicia con tus notas tal como estaban cuando se tomó la instantánea. Los cambios y adjuntos posteriores solo vuelven desde un dispositivo vinculado que los tenga, en su próxima sincronización. Las notas que tienes ahora y los archivos adjuntados desde la instantánea se conservan junto a la base de datos durante 30 días y después se eliminan.',
+  'data.snapshotRestoreSelectLabel': 'Instantánea',
+  'data.snapshotRestoreConfirm': 'Restaurar y reiniciar',
+  'data.snapshotRestoreListFailed': 'No se han podido listar las instantáneas',
+  'data.snapshotRestoreFailed': 'No se ha restaurado la instantánea: {{reason}}',
   'data.mirrorTitle': 'Espejo Markdown',
   'data.mirrorDesc':
     'Agaric escribe cada página como un archivo .md en la carpeta que elijas y lo mantiene actualizado. Un archivo que edites en otro lugar se vuelve a leer en su página, y un solo Deshacer lo revierte.',

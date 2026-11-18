@@ -15,17 +15,23 @@
 //! forked doc corrupts loro-internal's causal state (debug-assert
 //! panic → SIGABRT in dev builds; silent corruption in release).
 //!
-//! The fix is a monotone **peer-id epoch** persisted in `app_settings`
-//! (a table the RESET does NOT wipe):
+//! The fix is a **peer-id epoch** persisted in `app_settings` (a table
+//! the RESET does NOT wipe). It only salts
+//! [`crate::loro::engine::peer_id_for_epoch`], so what matters is that a
+//! new one differs from every epoch this device has used; nothing orders
+//! them.
 //!
 //! * Epoch `0` — the implicit value for every existing vault (the row
 //!   is absent) — keeps the legacy `peer_id_from_device_id` mapping
 //!   byte-for-byte, so upgrading never re-keys a healthy device.
 //! * The RESET bumped the epoch inside its own transaction, atomically
-//!   with the wipe, so post-reset engines derived a fresh `PeerID` via
-//!   [`crate::loro::engine::peer_id_for_epoch`]. Nothing bumps it any more
-//!   (#4699), but a vault that went through a RESET before then carries
-//!   epoch ≥ 1, which is why the read path stays.
+//!   with the wipe, so post-reset engines derived a fresh `PeerID`. It is
+//!   gone (#4699), but a vault that went through one carries epoch ≥ 1.
+//! * A restore from a daily snapshot (#6744) writes a random non-zero
+//!   epoch into the restored database before any engine loads: the
+//!   snapshot's engines are behind what paired devices hold of this
+//!   device, and under a new `PeerID` the old one is one more peer, whose
+//!   later ops the paired device gives back.
 //!
 //! The in-memory holder is `LoroEngineRegistry::peer_epoch`, loaded at
 //! boot in `crate::run`.

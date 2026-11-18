@@ -259,7 +259,10 @@ fn first_report_for(device_id: &str) -> bool {
 /// the upsert's `DO UPDATE`), so the mark is monotone: a later wipe of a
 /// SHORTER surviving history can never lower the floor a previous wipe
 /// established.
-async fn record_high_water(
+///
+/// # Errors
+/// Returns [`AppError`] if the upsert fails.
+pub async fn record_high_water(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     seq: i64,

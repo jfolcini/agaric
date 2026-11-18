@@ -44,7 +44,7 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 | Contexts | Separate graphs | Spaces inside one database, each with its own journal, pages, tags, property definitions and tabs |
 | Plain files | File version: the files are the notes. DB version: Markdown export, and an announced read-only Markdown projection with two-way sync in development | Export to Markdown; on desktop an opt-in mirror folder that is written and read back. The database stays the source of truth |
 | Import and export | File version exports EDN, JSON, Markdown, OPML, Roam JSON and HTML. DB version imports file graphs, SQLite and EDN, and its EDN export captures the whole graph | Imports Markdown, Logseq graphs, Obsidian vaults, Org, Notion, Evernote, Joplin and bibliographies. Exports Markdown with attachments and property definitions, which a folder import restores without history. No structured dump |
-| Backups | DB version: automatic backups on desktop and in the browser | A daily copy of the database beside it, which nothing in the app restores; the export ZIP is the restore path |
+| Backups | DB version: automatic backups on desktop and in the browser | A daily copy of the database beside it, which Settings › Data restores; the export ZIP is the other restore path |
 | PDF | PDF annotation, on desktop in the file version; the DB version keeps annotations as tagged nodes under the PDF's block | Highlights and pinned comments become blocks under the PDF's block on save |
 | Flashcards | Yes; the DB version uses FSRS | None |
 | Whiteboards | File version only; removed from the DB version | None |
