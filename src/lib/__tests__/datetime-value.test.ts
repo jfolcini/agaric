@@ -65,6 +65,13 @@ describe('parseDatetimeInput', () => {
     })
   })
 
+  it('reads an offset written without its colon, as the backend does', () => {
+    expect(parseDatetimeInput('2026-11-14T09:30-0530')).toBe('2026-11-14T15:00Z')
+    expect(parseDatetimeInput('2026-11-14 09:30+0100')).toBe('2026-11-14T08:30Z')
+    expect(parseDatetimeInput('2026-11-14T09:30+01')).toBeNull()
+    expect(parseDatetimeInput('2026-11-14T09:30+01:3')).toBeNull()
+  })
+
   it('drops seconds', () => {
     expect(parseDatetimeInput('2026-11-14T08:30:59Z')).toBe('2026-11-14T08:30Z')
   })

@@ -18,7 +18,7 @@ import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinit
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { rowOf } from '@/lib/tauri-mock/property-keys'
-import { properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -432,6 +432,39 @@ describe('ConvertUnfitValues', () => {
       })
       expect(dateOf(PROJ_1, 'when')).toBe('2026-11-14T08:30Z')
       expect(textOf(MTG_2, 'when')).toBe('later')
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'convert_unfit_property_values'),
+      ).toHaveLength(1)
+    })
+
+    it('covers the day values past the first page in the same write', async () => {
+      if (!inBerlin()) return
+      const user = userEvent.setup()
+      await declare('when', 'datetime')
+      // 51 distinct days: one more than a page of distinct values.
+      const ids = Array.from({ length: 51 }, (_, i) => {
+        const id = `0000000000000000000DAYS${String(i).padStart(3, '0')}`
+        blocks.set(id, { ...blocks.get(MTG_1), id })
+        holds(id, 'when', { value_text: `2026-01-${String((i % 31) + 1).padStart(2, '0')}` })
+        return id
+      })
+      for (const [i, id] of ids.slice(31).entries()) {
+        holds(id, 'when', { value_text: `2026-02-${String(i + 1).padStart(2, '0')}` })
+      }
+      render(<PropertyDefinitionsList />)
+      const dialog = await openConvert('when')
+
+      await user.click(
+        await within(dialog).findByRole('button', {
+          name: t('propertiesView.convertAllDaysConfirm', { count: 51 }),
+        }),
+      )
+      await user.click(convertButton(dialog, 51))
+
+      await waitFor(() => {
+        expect(dateOf(ids[50] as string, 'when')).toBe('2026-02-19T23:00Z')
+      })
+      expect(dateOf(ids[0] as string, 'when')).toBe('2025-12-31T23:00Z')
       expect(
         mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'convert_unfit_property_values'),
       ).toHaveLength(1)

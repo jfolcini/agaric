@@ -19,7 +19,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { SearchCheck } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -120,7 +120,12 @@ export function ConvertUnfitValues({
   const draftOf = (value: string): string => drafts[value] ?? (startsFromValue ? value : '')
   const mapped = groups.filter((group) => draftOf(group.value) !== '')
   const blocks = mapped.reduce((sum, group) => sum + group.unfit + group.unfit_in_trash, 0)
-  const days = type === 'datetime' && !several ? groups.filter((g) => isIsoDate(g.value)) : []
+  const setsAllDays = type === 'datetime' && !several
+  // "Set all N" covers every day value in one write, so every page is read first.
+  useEffect(() => {
+    if (setsAllDays && hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [setsAllDays, hasNextPage, isFetchingNextPage, fetchNextPage])
+  const days = setsAllDays && !hasNextPage ? groups.filter((g) => isIsoDate(g.value)) : []
   const [skipped, setSkipped] = useState<string[]>([])
   const setAllDays = (time: string): void => {
     const filled: Record<string, string> = {}

@@ -66,15 +66,7 @@ pub fn datetime_predicate<Tz: chrono::TimeZone>(
 /// Read the operand of every `HasProperty` leaf of `expr` on one of `keys`.
 pub fn read_operands<Tz: chrono::TimeZone>(expr: &mut FilterExpr, keys: &HashSet<String>, tz: &Tz) {
     match expr {
-        FilterExpr::Leaf { primitive } => match primitive {
-            FilterPrimitive::HasProperty { key, predicate } if keys.contains(key.as_str()) => {
-                if let Some(read) = datetime_predicate(predicate, tz) {
-                    *predicate = read;
-                }
-            }
-            FilterPrimitive::HasParentMatching { matcher } => read_operands(matcher, keys, tz),
-            _ => {}
-        },
+        FilterExpr::Leaf { primitive } => read_primitive(primitive, keys, tz),
         FilterExpr::And { children } | FilterExpr::Or { children } => {
             for child in children {
                 read_operands(child, keys, tz);
@@ -84,20 +76,40 @@ pub fn read_operands<Tz: chrono::TimeZone>(expr: &mut FilterExpr, keys: &HashSet
     }
 }
 
+fn read_primitive<Tz: chrono::TimeZone>(
+    primitive: &mut FilterPrimitive,
+    keys: &HashSet<String>,
+    tz: &Tz,
+) {
+    match primitive {
+        FilterPrimitive::HasProperty { key, predicate } if keys.contains(key.as_str()) => {
+            if let Some(read) = datetime_predicate(predicate, tz) {
+                *predicate = read;
+            }
+        }
+        FilterPrimitive::HasParentMatching { matcher } => read_operands(matcher, keys, tz),
+        _ => {}
+    }
+}
+
 /// The keys `expr`'s `HasProperty` leaves name, added to `keys`.
 pub fn property_keys(expr: &FilterExpr, keys: &mut Vec<String>) {
     match expr {
-        FilterExpr::Leaf { primitive } => match primitive {
-            FilterPrimitive::HasProperty { key, .. } => keys.push(key.clone()),
-            FilterPrimitive::HasParentMatching { matcher } => property_keys(matcher, keys),
-            _ => {}
-        },
+        FilterExpr::Leaf { primitive } => primitive_keys(primitive, keys),
         FilterExpr::And { children } | FilterExpr::Or { children } => {
             for child in children {
                 property_keys(child, keys);
             }
         }
         FilterExpr::Not { child } => property_keys(child, keys),
+    }
+}
+
+fn primitive_keys(primitive: &FilterPrimitive, keys: &mut Vec<String>) {
+    match primitive {
+        FilterPrimitive::HasProperty { key, .. } => keys.push(key.clone()),
+        FilterPrimitive::HasParentMatching { matcher } => property_keys(matcher, keys),
+        _ => {}
     }
 }
 
@@ -139,6 +151,24 @@ pub async fn read_datetime_operands(
     let keys = datetime_keys(pool, spaces, &named).await?;
     if !keys.is_empty() {
         read_operands(expr, &keys, &chrono::Local);
+    }
+    Ok(())
+}
+
+/// [`read_datetime_operands`] of the primitives a surface AND-joins, as the
+/// Pages view does.
+pub async fn read_datetime_operands_of(
+    pool: &SqlitePool,
+    spaces: Option<&[String]>,
+    primitives: &mut [FilterPrimitive],
+) -> Result<(), AppError> {
+    let mut named = Vec::new();
+    for primitive in primitives.iter() {
+        primitive_keys(primitive, &mut named);
+    }
+    let keys = datetime_keys(pool, spaces, &named).await?;
+    for primitive in primitives {
+        read_primitive(primitive, &keys, &chrono::Local);
     }
     Ok(())
 }

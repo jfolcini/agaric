@@ -9,7 +9,7 @@
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 
 const CANONICAL = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})Z$/
-const INPUT = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})?$/
+const INPUT = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:?\d{2})?$/
 const TIME = /^\d{2}:\d{2}$/
 
 const pad = (n: number, width = 2): string => String(n).padStart(width, '0')
@@ -49,8 +49,8 @@ export function isCanonicalDatetime(s: string): boolean {
 
 /**
  * The canonical value a typed datetime names, or null. Takes `YYYY-MM-DD`,
- * `T` or one space, `HH:MM`, optional `:SS` (dropped), optional `Z` or
- * `±HH:MM`; without a zone the time is the device's. A day alone is no
+ * `T` or one space, `HH:MM`, optional `:SS` (dropped), optional `Z`,
+ * `±HH:MM` or `±HHMM`; without a zone the time is the device's. A day alone is no
  * datetime, and a local time the clocks skipped names no instant.
  */
 export function parseDatetimeInput(text: string): string | null {
@@ -77,7 +77,7 @@ export function parseDatetimeInput(text: string): string | null {
   let offset = 0
   if (zone !== 'Z') {
     const oh = Number(zone.slice(1, 3))
-    const om = Number(zone.slice(4, 6))
+    const om = Number(zone.slice(-2))
     if (oh > 23 || om > 59) return null
     offset = (zone.startsWith('-') ? -1 : 1) * (oh * 60 + om)
   }

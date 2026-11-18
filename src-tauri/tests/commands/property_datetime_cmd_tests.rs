@@ -526,3 +526,59 @@ async fn search_reads_a_datetime_keys_operand_6758() {
     assert_eq!(f.found("2026-11-14", true).await, train);
     assert_eq!(f.found("2026-11-16", false).await, Vec::<String>::new());
 }
+
+/// The Pages view's filter on a declared datetime key compares the stored
+/// instants as search does: a day is the device's day, an operand with an
+/// offset the instant it names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_pages_view_reads_a_datetime_keys_operand_6758() {
+    use agaric_lib::commands::pages::{
+        ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
+    };
+    use agaric_store::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+    let f = fixture().await;
+    let later = dup_page(&f.pool, &f.mat, "Return").await;
+    f.set(&f.page, "starts", None, Some("2026-11-14T12:00Z"))
+        .await
+        .unwrap();
+    f.set(&later, "starts", None, Some("2026-11-20T12:00Z"))
+        .await
+        .unwrap();
+    let listed = |predicate: PropertyPredicate| {
+        let filter = ListPagesWithMetadataFilter {
+            sort: PageSort::default(),
+            space_id: TEST_SPACE_ID.into(),
+            filters: vec![FilterPrimitive::HasProperty {
+                key: "starts".into(),
+                predicate,
+            }],
+        };
+        let pool = f.pool.clone();
+        async move {
+            let page = list_pages_with_metadata_inner(&pool, filter, None, None)
+                .await
+                .unwrap();
+            page.items.into_iter().map(|row| row.id).collect::<Vec<_>>()
+        }
+    };
+    let day = || PropertyValue::Date {
+        value: "2026-11-14".into(),
+    };
+
+    // Noon UTC is the 14th in every zone a host runs in.
+    assert_eq!(
+        listed(PropertyPredicate::Eq { value: day() }).await,
+        std::slice::from_ref(&f.page)
+    );
+    assert_eq!(
+        listed(PropertyPredicate::Gt { value: day() }).await,
+        std::slice::from_ref(&later)
+    );
+    let instant = PropertyValue::Text {
+        value: "2026-11-14T13:00+01:00".into(),
+    };
+    assert_eq!(
+        listed(PropertyPredicate::Eq { value: instant }).await,
+        std::slice::from_ref(&f.page)
+    );
+}
