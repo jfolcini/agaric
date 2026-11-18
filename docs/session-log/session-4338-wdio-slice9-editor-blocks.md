@@ -19,7 +19,7 @@ Slice 9 of #6926. Seven editor-block Playwright specs join `REAL_BACKEND_SPECS`,
     - #6952: a paste into an empty block, then Escape before `paste_blocks` answers, loses the first item.
     - #6953: a typed `#name` shows as text after a quick reopen, before the tag rewrite lands.
 
-    The specs wait past both, with "Temporary, until #6952" and "until #6953" comments. The session fixing them removes the waits.
+    Both fixes (#6955, #6958) merged while this PR was open, so the specs no longer wait past them. They leave at once, and pass 20 of 20 on the bridge at 6 workers.
 - **Coverage judged and kept:**
   - `block-duplicate-repeat`'s Edit-as-Markdown text check: the repeat rule is pinned on the bridge, in Rust's duplicate test and in the markdown source tests.
   - Desktop Shift+Enter typing: the keymap is tested in vitest, and the toolbar's New line runs on the bridge through the same `setHardBreak`.

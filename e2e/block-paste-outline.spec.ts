@@ -391,9 +391,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
     const live = await focusBlockById(page, empty.id)
 
     await pasteText(live, '- a\n- b')
-    // Temporary, until #6952: an Escape before the paste lands deletes the empty
-    // anchor and loses the first item. Drop this wait once that is fixed.
-    await expect(page.getByText('Pasted 2 blocks')).toBeVisible()
+    // Leave at once, before the paste answers: the block it lands in must survive (#6952).
     await blurEditors(page)
 
     // The empty block takes the first item, its style included; the second lands after it.

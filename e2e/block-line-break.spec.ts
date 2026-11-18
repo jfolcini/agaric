@@ -325,12 +325,7 @@ test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
 
     // One leave, then away and back: what the rows show is what the backend stored.
     await page.keyboard.press('Escape')
-    // Temporary, until #6953: a reopen before the tag rewrite lands shows the
-    // `#name` as text. Drop this wait once that is fixed. `blockState`: the id
-    // is provisional, as in `splitOffStatusLine`.
-    await expect
-      .poll(() => blockState(page, splitId), { timeout: 30_000 })
-      .toMatch(/#\[[0-9A-Z]{26}\]/)
+    // Away and back at once, before the tag rewrite lands: the row still shows the tag (#6953).
     await reopenPage(page, 'Getting Started')
     const row = page.locator(`[data-testid="sortable-block"][data-block-id="${splitId}"]`)
     await expect(rows.filter({ hasText: TASK })).toHaveCount(1)
