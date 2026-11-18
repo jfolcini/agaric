@@ -126,7 +126,10 @@ test.describe('Number property @editor', () => {
     await expect(notes).toHaveText([/twelve/, /nine/])
 
     await references.getByRole('combobox', { name: 'Sort by' }).click()
-    await page.getByRole('option', { name: 'estimate', exact: true }).click()
+    // The open list scrolls itself into line and grows as it scrolls, so under
+    // load a click aimed at an option can release on its neighbour, which picks
+    // nothing. The keyboard needs no aim.
+    await page.getByRole('option', { name: 'estimate', exact: true }).press('Enter')
     await expect(notes).toHaveText([/nine/, /twelve/])
   })
 })
