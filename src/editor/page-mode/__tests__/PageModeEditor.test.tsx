@@ -624,7 +624,7 @@ describe('PageModeEditor', () => {
     expect(useUndoStore.getState().pages.get(pageId)?.undoStack).toHaveLength(1)
   })
 
-  it('a reread a newer load overtakes brings nothing in until that load lands, so no saved text goes back', async () => {
+  it('a reread a newer load overtakes waits for that load, brings in what it lands, and is no failure', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, handle, store } = renderPageMode(pageId)
     const editor = await editorIn(container)
@@ -633,8 +633,9 @@ describe('PageModeEditor', () => {
       await handle.current?.flush()
     })
     expect(store.getState().blocks.map((block) => block.content)).toEqual(['first', 'second'])
+    const error = vi.spyOn(logger, 'error')
     // A refused edit makes the save read the page again; a sync's reload starts during that read
-    // and lands only once released.
+    // and lands only once released, as block mode's load does when page mode closes (#6937).
     let refuse = true
     let loads = 0
     let release: () => void = () => {}
@@ -656,21 +657,28 @@ describe('PageModeEditor', () => {
     })
 
     typeAt(editor, 1, 6, '!')
-    await act(async () => {
-      await handle.current?.flush()
+    let saved = false
+    let flushed: Promise<void> = Promise.resolve()
+    act(() => {
+      flushed = (handle.current?.flush() ?? Promise.resolve()).then(() => {
+        saved = true
+      })
     })
-
-    expect(loads).toBe(2)
+    await vi.waitFor(() => {
+      expect(loads).toBe(2)
+    })
+    // Nothing comes in, and the save does not end, until the newer load lands.
+    expect(saved).toBe(false)
     expect(docTexts(editor)).toEqual(['first saved', 'second!'])
 
     await act(async () => {
       release()
-      await vi.waitFor(() => {
-        expect(store.getState().loading).toBe(false)
-      })
-      await handle.current?.flush()
+      await flushed
     })
 
+    expect(saved).toBe(true)
+    expect(error).not.toHaveBeenCalled()
+    expect(store.getState().loading).toBe(false)
     expect(docTexts(editor)).toEqual(['first saved', 'second!'])
     expect(backendPage(pageId)).toEqual([
       [ids[0], 'first saved'],

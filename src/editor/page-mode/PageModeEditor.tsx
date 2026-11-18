@@ -697,15 +697,24 @@ function PageModeDocument({
     /**
      * The page as a load started by this read, or after it, left the store; throws when none
      * landed. A load that lands sets the rows as a new array, and only the newest one started
-     * lands: so rows unchanged mean this load failed, or a newer one overtook it and is still
-     * going (the subscription brings that one in), and the store holds rows older than the
-     * writes. Read from the store, not a subscription: the closing save reads too.
+     * lands: so rows unchanged with the store still loading mean a newer load overtook this one
+     * (block mode's, as page mode closes, #6937), and its rows are waited for; unchanged and done
+     * mean the load failed. Read from the store, not a subscription: the closing save reads too.
      */
     const read = async (): Promise<FlatBlock[]> => {
       const was = pageStore.getState().blocks
       reading = true
       try {
         await pageStore.getState().load()
+        if (pageStore.getState().blocks === was && pageStore.getState().loading) {
+          await new Promise<void>((landed) => {
+            const unsubscribe = pageStore.subscribe((state) => {
+              if (state.loading) return
+              unsubscribe()
+              landed()
+            })
+          })
+        }
       } finally {
         reading = false
       }
