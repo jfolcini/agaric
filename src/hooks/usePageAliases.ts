@@ -47,8 +47,9 @@ export interface UsePageAliasesReturn {
  * `pageId` and reuses the same persistence helpers as the previous
  * inline implementation, including the same toast/announcer wiring.
  *
- * A committed write bumps the graph-structure counter (#5249): aliases are
- * unlinked-reference search terms, and that panel refreshes on the counter.
+ * A committed write's change-feed event bumps the graph-structure counter
+ * (#5249): aliases are unlinked-reference search terms, and that panel
+ * refreshes on the counter.
  *
  * A write is ops (#5387), so it lands on the page's undo stack, and the list
  * reloads on an `invalidated` name change — the one an Undo, a sync or an
