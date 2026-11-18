@@ -936,7 +936,7 @@ stages = ["manual"]
 #       realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 # (`fs.realpathSync` equally accepted). NOT `import.meta.main`: its old
 # version-floor rationale is now moot (engines.node is the derived
-# `^22.22.2 || ^24.15.0 || >=26.0.0`, and both line floors are above its
+# `^22.23.4 || ^24.22.1 || >=26.12.1`, and both line floors are above its
 # "Added in: v24.2.0, v22.18.0"), but it remains banned because it compares
 # the specifier AS SPELLED and so misjudges a script reached through a
 # symlink (#3373). The guard scans scripts/ INCLUDING ITSELF, with no
