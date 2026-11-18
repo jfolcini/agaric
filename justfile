@@ -113,7 +113,7 @@ test-doc:
 test-be-release:
     cd src-tauri && cargo nextest run --workspace --cargo-profile release-test
 
-# Build the embedded debug binary, then run one real-backend spec under Xvfb, e.g. `just e2e-real e2e-tauri/draft-blur-persist.e2e.ts`; deps in e2e-tauri/AGENTS.md § Running.
+# Build the embedded debug binary, then run one real-backend spec under Xvfb, e.g. `just e2e-real e2e-tauri/editor-durability.e2e.ts`; deps in e2e-tauri/AGENTS.md § Running.
 [group('test')]
 [positional-arguments]
 e2e-real SPEC: _require-npm

@@ -245,6 +245,33 @@ test.describe('Editor lifecycle @editor @mobile', () => {
     await expect(page.getByText('Persistent block')).toBeVisible()
   })
 
+  // A day's block survives the Journal unmounting, whether Enter committed it
+  // or the sidebar click left it mid-typing (the blur saves it, then drops the draft).
+  test('a journal day keeps a committed block and one left mid-typing across a view teardown', async ({
+    page,
+  }) => {
+    const committed = 'committed on the day'
+    const typed = 'typed and left by the sidebar'
+    const day = page.locator('[data-testid="block-static"]')
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await page.getByRole('button', { name: 'Add block', exact: true }).click()
+    await expect(editor).toBeFocused()
+    await page.keyboard.insertText(committed)
+    await page.keyboard.press('Enter')
+    await expect(day.filter({ hasText: committed })).toBeVisible()
+    await expect(editor).toHaveText('')
+    await page.keyboard.insertText(typed)
+    await expect(editor).toHaveText(typed)
+
+    // No Enter, no Escape: the sidebar click is the only exit. Settings shares
+    // no tree with the Journal, which re-reads the day on its return.
+    await navigateToView(page, 'Settings')
+    await expect(page.getByTestId('header-label')).toHaveText('Settings')
+    await navigateToView(page, 'Journal')
+    await expect(day.filter({ hasText: committed })).toHaveCount(1)
+    await expect(day.filter({ hasText: typed })).toHaveCount(1)
+  })
+
   test('handles special characters in block content', async ({ page }) => {
     await openGettingStarted(page)
 
@@ -253,7 +280,8 @@ test.describe('Editor lifecycle @editor @mobile', () => {
     await expect(page.getByText('Special: & "quotes" \'apos\'')).toBeVisible()
   })
 
-  test('mock resets on page reload (test isolation)', async ({ page }) => {
+  // A reload reseeds the mock; the bridge's vault keeps the block.
+  test('mock resets on page reload (test isolation) @mock-only', async ({ page }) => {
     await openGettingStarted(page)
 
     await addBlock(page, 'Session block')
@@ -271,10 +299,9 @@ test.describe('Editor lifecycle @editor @mobile', () => {
     // Navigate back to Getting Started
     await openGettingStarted(page)
 
-    // The session block should be gone (mock reset)
-    await expect(page.getByText('Session block')).not.toBeVisible()
-    // But seed blocks should be back
+    // The seed blocks are back, and the session block is gone (mock reset).
     await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
+    await expect(page.getByText('Session block')).not.toBeVisible()
   })
 })
 

@@ -20,8 +20,7 @@
 //
 // Each task lives on a page of its own: the journal's Due panel leaves out
 // the day's own blocks (`excludePageId`). Checkboxes, dates and rules are
-// seeded in one Edit as Markdown save, the way `block-duplicate-repeat` sets
-// its rule. The tests share one vault, so each writes its own titled page.
+// seeded in one Edit as Markdown save. The tests share one vault, so each writes its own titled page.
 //
 // The bounds test runs before the weekly one: the Due panel keeps a day's
 // projection for `PROJECTED_CACHE_TTL_MS`, so stepping over days 1 to 7 first

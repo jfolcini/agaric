@@ -4,8 +4,7 @@
 // Bug class (#3082): durable state must not vanish when the user switches
 // primary views. This spec creates a block in the Journal, switches to the
 // Pages view and back, and asserts the block is still present — a view-switch
-// durable read against the REAL backend (distinct from
-// `block-persist-reload`, which routes through Settings as a heavier teardown).
+// durable read against the REAL backend.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
