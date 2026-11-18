@@ -107,6 +107,16 @@ Single user, multiple devices they own, no cloud. There is no malicious actor.
 - **Do not add hardening that assumes adversarial peers.** No DoS protection, rate limiting, or traversal guards against sync peers.
 - Spend defensive effort on data integrity: no accidental corruption, hash-chain consistency, transaction atomicity.
 
+## Supply-chain pinning
+
+Everything that enters the build from outside the repo is pinned by digest, so a replaced or compromised upstream cannot change what CI runs or what ships:
+
+- **Packages:** the lockfiles (`package-lock.json` integrity, `Cargo.lock` checksums); CI installs with `npm ci`, and `verify-lockfiles` fails on drift.
+- **GitHub Actions:** a 40-char commit SHA.
+- **Anything a workflow or script downloads itself:** a sha256 recorded beside the URL and checked before the file is used.
+
+Where the installer takes no hash, pin the exact version, never a range, tag, `latest` or bare major: `setup-node` (`.nvmrc`), `setup-java`, rustup (`rust-toolchain.toml`, a dated nightly), sdkmanager packages and the emulator build, `cargo install --version --locked`, `cargo binstall`, `uv tool`. Runner images, apt and brew packages are the accepted floating exceptions. A pin Dependabot cannot bump is bumped by hand.
+
 ## Database
 
 - `notes.db` under the app data dir; WAL mode; foreign keys on; pool of 2 writers + 4 readers.

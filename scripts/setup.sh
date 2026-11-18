@@ -162,7 +162,15 @@ ensure_node() {
     echo "nvm not found — fetching nvm.sh over HTTPS…"
     mkdir -p "$NVM_DIR"
     # Retry: the proxied network may not be ready at provisioning time.
-    retry curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/nvm.sh -o "$NVM_DIR/nvm.sh"
+    retry curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/nvm.sh -o "$NVM_DIR/nvm.sh.download"
+    # Checked before it is sourced: it runs in this shell.
+    if [ "$(sha256sum "$NVM_DIR/nvm.sh.download" 2>/dev/null || shasum -a 256 "$NVM_DIR/nvm.sh.download")" \
+      != "a42d1695e0ca1861e41083937129e6eb9402404f817ac1e352b74287c44449c1  $NVM_DIR/nvm.sh.download" ]; then
+      rm -f "$NVM_DIR/nvm.sh.download"
+      echo "error: nvm.sh v0.39.7 failed its sha256 check (scripts/setup.sh) — not sourcing it." >&2
+      exit 1
+    fi
+    mv "$NVM_DIR/nvm.sh.download" "$NVM_DIR/nvm.sh"
   fi
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
