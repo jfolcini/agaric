@@ -428,7 +428,7 @@ test.describe('Folder import of Notion, Org and text files @markdown', () => {
 })
 
 // #6554 — a folder pick of an unzipped Export all spaces ZIP restores each
-// space; e2e-tauri/vault-restore.e2e.ts runs it against the backend.
+// space; e2e/import-formats.spec.ts runs a real export of it against the backend.
 test.describe('Restore of a whole-vault export @markdown @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
