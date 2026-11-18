@@ -7,8 +7,10 @@
 // wrote as that file renamed: the page takes the title the new path names, or
 // moves to the space whose folder holds it. A file moved out of every space's
 // folder is no page's place: its page is held as it was, never trashed
-// (#6887). The mock has no such task, so only this lane can show it. Files are
-// renamed from Node, as a file manager would.
+// (#6887). A page renamed or trashed from the folder is said in a toast, whose
+// button opens the Trash for a trashed one (#6887 E). The mock has no such
+// task, so only this lane can show it. Files are renamed from Node, as a file
+// manager would.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  dismissToasts,
   invoke,
   navigateTo,
   openNewPage,
@@ -40,6 +43,7 @@ import {
   trashRow,
   typeMarkerVerified,
   waitForAppReady,
+  waitForToast,
 } from './helpers'
 
 interface MirrorStatus {
@@ -109,7 +113,10 @@ describe('Agaric real-backend Markdown mirror, renamed and moved files (#5363) @
   it('renames the page of a file renamed outside Agaric, keeping one page', async () => {
     const before = await mirroredPage(RENAMED_FROM, RENAMED_BLOCK)
     const after = path.join(path.dirname(before), `${RENAMED_TO}.md`)
+    // A toast still up would count this page with its own instead of naming it.
+    await dismissToasts()
     renameSync(before, after)
+    await waitForToast(`${RENAMED_TO}.md was renamed or moved in the mirror folder`)
 
     // Each look navigates to the Pages list afresh, so it re-queries.
     const titled = (title: string) =>
@@ -166,18 +173,21 @@ describe('Agaric real-backend Markdown mirror, renamed and moved files (#5363) @
     expect((await invoke<MirrorStatus>('get_mirror_status')).failed).toEqual([])
   })
 
-  it('trashes the page of a file deleted outside Agaric, and Restore brings both back', async () => {
+  it('trashes the page of a file deleted outside Agaric, says so, and Restore brings both back', async () => {
     const file = await mirroredPage(DELETED, DELETED_BLOCK)
+    await dismissToasts()
     unlinkSync(file)
 
-    // Each look opens Trash afresh, so it re-queries.
-    await browser.waitUntil(
-      async () => {
-        await openTrash()
-        return (await $$(trashRow(DELETED)).length) === 1
-      },
-      { timeout: NAV_TIMEOUT, interval: 2000, timeoutMsg: `${DELETED} never reached the Trash` },
-    )
+    // The toast names the file, and its button opens the Trash holding the page.
+    await waitForToast(`${DELETED}.md was deleted from the mirror folder`)
+    const open = $('[data-sonner-toast]').$('button=Open Trash')
+    await open.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await open.click()
+    await $(trashRow(DELETED)).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    // Away and back, the Trash still lists it.
+    await navigateTo('Journal')
+    await openTrash()
+    expect(await $$(trashRow(DELETED)).length).toBe(1)
     await restoreFromTrash(DELETED)
 
     await reopenPageHolding(DELETED, DELETED_BLOCK)

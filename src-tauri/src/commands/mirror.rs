@@ -159,12 +159,12 @@ pub async fn set_mirror_read_back_inner(
         };
         let unseen = changed
             .iter()
-            .filter(|path| !confirmed.contains(path))
+            .filter(|file| !confirmed.contains(&file.path))
             .count();
         if unseen > 0 {
             return Err(AppError::validation(format!(
-                "{unseen} files changed outside Agaric while reading back was off \
-                 and have not been shown; choose to read them in to turn it on"
+                "{unseen} files changed outside Agaric have not been shown; choose to read \
+                 them in to turn reading back on"
             )));
         }
     }
@@ -255,7 +255,7 @@ async fn pending(
     mirror: &MirrorState,
     root: &Path,
     fresh: bool,
-) -> Result<Vec<String>, AppError> {
+) -> Result<Vec<mirror::read_back::MirrorPending>, AppError> {
     let spaces: Vec<(String, String)> = super::spaces::list_spaces_inner(pool)
         .await?
         .into_iter()

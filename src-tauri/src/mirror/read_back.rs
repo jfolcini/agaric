@@ -10,9 +10,35 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+use serde::Serialize;
+use specta::Type;
+
 use agaric_core::error::AppError;
 
 use super::store::{self, StateDir};
+
+/// What reading a [`MirrorPending`] file in does to Agaric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MirrorPendingKind {
+    /// A page's file that is not the text last written there, or cannot be
+    /// read: read into its page.
+    Edited,
+    /// A file no page owns: read onto a new page, or the renamed file of a
+    /// page listed as [`MirrorPendingKind::Gone`].
+    New,
+    /// A page's file that is gone: its page moves to the Trash, unless the
+    /// file turns up renamed.
+    Gone,
+}
+
+/// A file reading back would act on ([`pending`]), by its path below the
+/// mirror's folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct MirrorPending {
+    pub path: String,
+    pub kind: MirrorPendingKind,
+}
 
 /// More files of one space than this, changed or deleted outside Agaric at
 /// once, are read in only once the user has seen them listed and said so
@@ -37,9 +63,10 @@ pub fn mass_changed<'a>(
 }
 
 /// The files, as paths below `root`, that reading back would act on now, in
-/// `space_folders`, the mirrored spaces' folders: each page's file that is
-/// not the text last written there or is gone, and each `.md` file no page
-/// owns. A file that cannot be read is listed too.
+/// `space_folders`, the mirrored spaces' folders, by path, each with what
+/// reading it in does: each page's file that is not the text last written
+/// there or is gone, and each `.md` file no page owns. A file that cannot be
+/// read is listed too, as edited.
 ///
 /// # Errors
 ///
@@ -50,7 +77,7 @@ pub fn pending(
     device_id: &str,
     states: &StateDir,
     space_folders: &HashSet<String>,
-) -> Result<Vec<String>, AppError> {
+) -> Result<Vec<MirrorPending>, AppError> {
     if let Some(why) = super::pause_reason(root, device_id) {
         return Err(AppError::validation(format!(
             "cannot tell which files changed: {why}"
@@ -69,13 +96,19 @@ pub fn pending(
         .filter(|state| mirrored(&state.path))
         .filter_map(|state| Some((state.path.as_str(), state.newest()?.text.as_bytes())))
         .collect();
-    let mut pending: Vec<String> = written
+    let mut pending: Vec<MirrorPending> = written
         .iter()
-        .filter(|(path, text)| {
-            store::read_optional(&root.join(path))
-                .map_or(true, |bytes| bytes.as_deref() != Some(**text))
+        .filter_map(|(path, text)| {
+            let kind = match store::read_optional(&root.join(path)) {
+                Ok(Some(bytes)) if bytes == *text => return None,
+                Ok(None) => MirrorPendingKind::Gone,
+                Ok(Some(_)) | Err(_) => MirrorPendingKind::Edited,
+            };
+            Some(MirrorPending {
+                path: (*path).to_owned(),
+                kind,
+            })
         })
-        .map(|(path, _)| (*path).to_owned())
         .collect();
     for folder in space_folders {
         let mut found = Vec::new();
@@ -83,10 +116,14 @@ pub fn pending(
         pending.extend(
             found
                 .into_iter()
-                .filter(|path| !written.contains_key(path.as_str())),
+                .filter(|path| !written.contains_key(path.as_str()))
+                .map(|path| MirrorPending {
+                    path,
+                    kind: MirrorPendingKind::New,
+                }),
         );
     }
-    pending.sort_unstable();
+    pending.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     Ok(pending)
 }
 

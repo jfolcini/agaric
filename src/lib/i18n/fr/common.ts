@@ -441,7 +441,7 @@ export const common: Record<string, string> = {
   'data.snapshotRestoreFailed': 'L’instantané n’a pas été restauré\u00A0: {{reason}}',
   'data.mirrorTitle': 'Miroir Markdown',
   'data.mirrorDesc':
-    'Agaric écrit chaque page sous forme de fichier .md dans un dossier de votre choix et le tient à jour. Un fichier que vous modifiez ailleurs est réintégré dans sa page, et une seule annulation suffit à revenir en arrière.',
+    'Agaric écrit chaque page sous forme de fichier .md dans un dossier de votre choix et le tient à jour. Un fichier que vous modifiez ailleurs est réintégré dans sa page, et Annuler sur cette page revient en arrière. Supprimer un fichier envoie sa page à la Corbeille, qui la supprime définitivement au bout de 90\u00A0jours.',
   'data.mirrorFolderLabel': 'Dossier miroir',
   'data.mirrorUnsupported':
     'Pas encore disponible sur cet appareil\u00A0: le miroir ne fonctionne que dans l’application de bureau. Activez-le sur votre ordinateur\u00A0; les notes écrites ici rejoignent son dossier par synchronisation.',
@@ -462,9 +462,21 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarningsFiles_other':
     '{{count}} fichiers ont été réintégrés avec des avertissements',
   'data.mirrorFailedItem': '{{path}}\u00A0: {{message}}',
+  'data.mirrorReadBackTrashed':
+    '{{path}} a été supprimé du dossier miroir, sa page est donc partie à la Corbeille',
+  'data.mirrorReadBackRenamed':
+    '{{path}} a été renommé ou déplacé dans le dossier miroir, et sa page avec lui',
+  'data.mirrorReadBackCreated': '{{path}} a été ajouté au dossier miroir et est désormais une page',
+  'data.mirrorReadBackSeveral': 'Suite à des changements dans le dossier miroir\u00A0: {{changes}}',
+  'data.mirrorReadBackTrashedCount_one': '{{count}}\u00A0page partie à la Corbeille',
+  'data.mirrorReadBackTrashedCount_other': '{{count}}\u00A0pages parties à la Corbeille',
+  'data.mirrorReadBackRenamedCount_one': '{{count}}\u00A0page renommée ou déplacée',
+  'data.mirrorReadBackRenamedCount_other': '{{count}}\u00A0pages renommées ou déplacées',
+  'data.mirrorReadBackCreatedCount_one': '{{count}}\u00A0nouvelle page',
+  'data.mirrorReadBackCreatedCount_other': '{{count}}\u00A0nouvelles pages',
   'data.mirrorReadBackLabel': 'Réintégrer les modifications',
   'data.mirrorReadBackDesc':
-    'Les modifications, nouveaux fichiers, renommages et déplacements effectués sur les fichiers hors d’Agaric sont réintégrés dans Agaric. Si l’option est désactivée, Agaric écrit toujours les fichiers et n’écrase jamais un fichier modifié ailleurs.',
+    'Les modifications, nouveaux fichiers, renommages et déplacements effectués sur les fichiers hors d’Agaric sont réintégrés dans Agaric, et un fichier supprimé envoie sa page à la Corbeille. Si l’option est désactivée, Agaric écrit toujours les fichiers et n’écrase jamais un fichier modifié ailleurs.',
   'data.mirrorReadBackFailed':
     'Le réglage de réintégration des modifications n’a pas été changé\u00A0: {{reason}}',
   'data.mirrorSpacesHeading': 'Espaces mis en miroir',
@@ -486,9 +498,14 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeShowSetting': 'Afficher le réglage',
   'data.mirrorReadPendingTitle': 'Réintégrer ce qui a changé\u00A0?',
   'data.mirrorReadPendingDesc_one':
-    'Ce fichier a été modifié hors d’Agaric pendant que la réintégration était désactivée. L’activer le réintègre.',
+    'Ce fichier a été modifié hors d’Agaric et n’a pas encore été réintégré. Activer la réintégration le réintègre.',
   'data.mirrorReadPendingDesc_other':
-    'Ces {{count}} fichiers ont été modifiés hors d’Agaric pendant que la réintégration était désactivée. L’activer les réintègre.',
+    'Ces {{count}} fichiers ont été modifiés hors d’Agaric et n’ont pas encore été réintégrés. Activer la réintégration les réintègre.',
+  'data.mirrorPendingEdited': 'Modifiés\u00A0: réintégrés dans leurs pages',
+  'data.mirrorPendingNew':
+    'Nouveaux\u00A0: chacun devient une page, ou est le nouvel emplacement d’un fichier déplacé',
+  'data.mirrorPendingGone':
+    'Disparus\u00A0: leurs pages partent à la Corbeille, sauf si le fichier a été déplacé',
   'data.mirrorReadPendingConfirm': 'Les réintégrer',
   'data.mirrorReadPendingCancel': 'Laisser désactivé',
   'data.exportAllSpacesNoSpaces': 'Aucun espace à exporter',

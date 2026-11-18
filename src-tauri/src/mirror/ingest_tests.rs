@@ -202,6 +202,7 @@ async fn an_edit_outside_agaric_is_read_into_the_page_and_one_undo_reverts_it() 
     assert!(fx.status().await.diverged.is_empty());
     let events = fx.events();
     assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, IngestKind::Edited);
     assert_eq!(events[0].page_id, page);
     assert_eq!(events[0].report.edited, 1);
     assert_eq!(
@@ -715,6 +716,7 @@ async fn a_new_file_in_a_space_folder_becomes_a_page_one_undo_removes() {
     assert_eq!(pages_titled(&fx, "Gamma").await, pages, "no twin");
 
     let event = fx.events().pop().unwrap();
+    assert_eq!(event.kind, IngestKind::Created);
     assert_eq!(event.page_id, pages[0]);
     undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
         .await
@@ -1044,6 +1046,7 @@ async fn a_file_moved_into_another_space_folder_moves_its_page_one_undo_moves_it
     );
 
     let event = fx.events().pop().unwrap();
+    assert_eq!(event.kind, IngestKind::Renamed);
     assert_eq!(event.page_id, page);
     undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
         .await
@@ -1130,7 +1133,7 @@ async fn with_reading_back_off_a_vanished_file_stays_gone_and_is_listed_as_pendi
 
     assert!(!fx.root.join(ALPHA).exists(), "not written again");
     assert!(!is_trashed(&fx, &page).await, "nor read in");
-    assert_eq!(fx.status().await.pending, [ALPHA]);
+    assert_eq!(paths(&fx.status().await.pending), [ALPHA]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1170,11 +1173,16 @@ async fn op_count(fx: &Fx) -> i64 {
         .unwrap()
 }
 
+/// The pending files' paths, as the dialog confirms them.
+fn paths(pending: &[read_back::MirrorPending]) -> Vec<String> {
+    pending.iter().map(|file| file.path.clone()).collect()
+}
+
 /// Turn reading back on or off; `read_pending` confirms what the status
 /// lists as pending now, as the dialog does.
 async fn read_back(fx: &Fx, on: bool, read_pending: bool) -> Result<MirrorStatus, AppError> {
     let shown = if read_pending {
-        fx.status().await.pending
+        paths(&fx.status().await.pending)
     } else {
         Vec::new()
     };
@@ -1219,13 +1227,18 @@ async fn with_reading_back_off_no_outside_change_reaches_agaric() {
     let status = fx.status().await;
     assert!(!status.read_back);
     assert_eq!(status.diverged.len(), 1, "{:?}", status.diverged);
+    let kinds: Vec<(&str, read_back::MirrorPendingKind)> = status
+        .pending
+        .iter()
+        .map(|file| (file.path.as_str(), file.kind))
+        .collect();
     assert_eq!(
-        status.pending,
+        kinds,
         [
-            "TestSpace/Alpha.md",
-            "TestSpace/Beta.md",
-            "TestSpace/Delta.md",
-            "TestSpace/Gamma.md"
+            ("TestSpace/Alpha.md", read_back::MirrorPendingKind::Edited),
+            ("TestSpace/Beta.md", read_back::MirrorPendingKind::Gone),
+            ("TestSpace/Delta.md", read_back::MirrorPendingKind::New),
+            ("TestSpace/Gamma.md", read_back::MirrorPendingKind::New),
         ]
     );
 }
@@ -1302,7 +1315,7 @@ async fn a_folder_chosen_with_reading_back_off_reads_nothing_from_the_first_tick
         fx.tick().await;
     }
     assert_eq!(fx.contents(&page).await, ["one"]);
-    assert_eq!(fx.status().await.pending, [ALPHA]);
+    assert_eq!(paths(&fx.status().await.pending), [ALPHA]);
 }
 
 /// The folder chosen again after Turn off, with reading back asked for:
@@ -1325,7 +1338,7 @@ async fn a_folder_changed_while_off_and_chosen_again_turns_reading_back_off() {
         .await
         .unwrap();
     assert!(!status.read_back);
-    assert_eq!(status.pending, [ALPHA, "TestSpace/Beta.md"]);
+    assert_eq!(paths(&status.pending), [ALPHA, "TestSpace/Beta.md"]);
 
     for _ in 0..5 {
         fx.tick().await;
@@ -1371,7 +1384,7 @@ async fn a_folder_changed_while_another_was_mirrored_turns_reading_back_off() {
         .await
         .unwrap();
     assert!(!status.read_back);
-    assert_eq!(status.pending, [ALPHA]);
+    assert_eq!(paths(&status.pending), [ALPHA]);
 
     for _ in 0..5 {
         fx.tick().await;
@@ -1621,6 +1634,7 @@ async fn a_file_deleted_outside_agaric_trashes_its_page_and_one_undo_restores_it
     assert!(!is_trashed(&fx, &beta).await);
     assert!(!fx.root.join(ALPHA).exists(), "not written again");
     let event = fx.events().pop().unwrap();
+    assert_eq!(event.kind, IngestKind::Trashed);
     assert_eq!(event.page_id, alpha);
     undo_ops_inner(&fx.pool, DEV, &fx.mat, event.op_refs)
         .await
@@ -1801,7 +1815,7 @@ async fn confirm(fx: &Fx, shown: Vec<String>) -> Result<MirrorStatus, AppError> 
 async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm() {
     let mut fx = Fx::new().await;
     let (alpha, _, ops) = changed_while_off(&mut fx).await;
-    let shown = fx.status().await.pending;
+    let shown = paths(&fx.status().await.pending);
     write_at(&fx, "TestSpace/Epsilon.md", "unseen\n");
 
     let refused = confirm(&fx, shown).await;
@@ -1815,7 +1829,7 @@ async fn a_file_changed_after_the_list_was_shown_is_not_read_in_by_its_confirm()
     assert_eq!(op_count(&fx).await, ops, "nothing read in");
     assert_eq!(fx.contents(&alpha).await, ["one"]);
 
-    let shown = fx.status().await.pending;
+    let shown = paths(&fx.status().await.pending);
     assert!(
         shown.contains(&"TestSpace/Epsilon.md".to_owned()),
         "{shown:?}"
@@ -2067,7 +2081,7 @@ async fn a_change_in_an_unmirrored_space_is_not_pending_for_reading_back() {
     mirror_space(&fx, TEST_SPACE_ID, false).await;
     fx.tick().await;
 
-    assert_eq!(fx.status().await.pending, Vec::<String>::new());
+    assert_eq!(paths(&fx.status().await.pending), Vec::<String>::new());
     assert!(read_back(&fx, true, false).await.unwrap().read_back);
 }
 
@@ -2431,7 +2445,7 @@ async fn more_files_deleted_at_once_than_the_limit_trash_no_page_until_the_user_
     );
     let status = fx.status().await;
     assert!(!status.read_back, "reading back waits for the user");
-    assert_eq!(status.pending, files);
+    assert_eq!(paths(&status.pending), files);
     let failed = failed_files(&fx).await;
     assert_eq!(failed.len(), 1, "{failed:?}");
     let (folder, why) = &failed[0];
@@ -2441,7 +2455,7 @@ async fn more_files_deleted_at_once_than_the_limit_trash_no_page_until_the_user_
         "{why}"
     );
 
-    let status = confirm(&fx, status.pending).await.unwrap();
+    let status = confirm(&fx, paths(&status.pending)).await.unwrap();
     assert!(status.read_back);
     assert_eq!(status.failed, []);
     for _ in 0..MISSING_TICKS + 2 {
@@ -2497,9 +2511,9 @@ async fn more_files_edited_at_once_than_the_limit_are_read_in_only_once_the_user
     }
     let status = fx.status().await;
     assert!(!status.read_back, "reading back waits for the user");
-    assert_eq!(status.pending, files);
+    assert_eq!(paths(&status.pending), files);
 
-    confirm(&fx, status.pending).await.unwrap();
+    confirm(&fx, paths(&status.pending)).await.unwrap();
     for _ in 0..3 {
         fx.tick().await;
     }
@@ -2577,7 +2591,7 @@ async fn files_deleted_before_a_restart_trash_no_page_until_the_user_says_so() {
     }
     let status = fx.status().await;
     assert!(!status.read_back);
-    assert_eq!(status.pending, files);
+    assert_eq!(paths(&status.pending), files);
 }
 
 /// `read_back::pending` lists no file of an unmirrored space, so one held

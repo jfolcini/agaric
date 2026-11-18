@@ -438,7 +438,7 @@ export const common: Record<string, string> = {
   'data.snapshotRestoreFailed': 'O instantâneo não foi restaurado: {{reason}}',
   'data.mirrorTitle': 'Espelho Markdown',
   'data.mirrorDesc':
-    'O Agaric grava cada página como um arquivo .md em uma pasta que você escolhe e a mantém atualizada. Um arquivo que você edita em outro lugar é lido de volta para a página dele, e um Desfazer reverte isso.',
+    'O Agaric grava cada página como um arquivo .md em uma pasta que você escolhe e a mantém atualizada. Um arquivo que você edita em outro lugar é lido de volta para a página dele, e Desfazer nessa página reverte isso. Excluir um arquivo manda a página dele para a Lixeira, que a exclui de vez após 90 dias.',
   'data.mirrorFolderLabel': 'Pasta do espelho',
   'data.mirrorUnsupported':
     'Ainda não disponível neste dispositivo: o espelho só funciona no aplicativo para desktop. Ative-o no seu computador; as notas escritas aqui chegam à pasta dele pela sincronização.',
@@ -455,9 +455,21 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarningsFiles_one': '{{count}} arquivo foi lido com avisos',
   'data.mirrorIngestedWarningsFiles_other': '{{count}} arquivos foram lidos com avisos',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
+  'data.mirrorReadBackTrashed':
+    '{{path}} foi excluído da pasta do espelho, então a página dele foi para a Lixeira',
+  'data.mirrorReadBackRenamed':
+    '{{path}} foi renomeado ou movido na pasta do espelho, e a página dele junto',
+  'data.mirrorReadBackCreated': '{{path}} foi adicionado à pasta do espelho e agora é uma página',
+  'data.mirrorReadBackSeveral': 'Por alterações na pasta do espelho: {{changes}}',
+  'data.mirrorReadBackTrashedCount_one': '{{count}} página foi para a Lixeira',
+  'data.mirrorReadBackTrashedCount_other': '{{count}} páginas foram para a Lixeira',
+  'data.mirrorReadBackRenamedCount_one': '{{count}} página renomeada ou movida',
+  'data.mirrorReadBackRenamedCount_other': '{{count}} páginas renomeadas ou movidas',
+  'data.mirrorReadBackCreatedCount_one': '{{count}} página nova',
+  'data.mirrorReadBackCreatedCount_other': '{{count}} páginas novas',
   'data.mirrorReadBackLabel': 'Ler alterações de volta',
   'data.mirrorReadBackDesc':
-    'Edições, novos arquivos, renomeações e movimentações feitas nos arquivos fora do Agaric são lidas de volta para o Agaric. Com esta opção desativada, o Agaric continua gravando os arquivos e nunca sobrescreve um que foi alterado em outro lugar.',
+    'Edições, novos arquivos, renomeações e movimentações feitas nos arquivos fora do Agaric são lidas de volta para o Agaric, e um arquivo excluído manda a página dele para a Lixeira. Com esta opção desativada, o Agaric continua gravando os arquivos e nunca sobrescreve um que foi alterado em outro lugar.',
   'data.mirrorReadBackFailed':
     'A configuração de leitura de alterações não foi modificada: {{reason}}',
   'data.mirrorSpacesHeading': 'Espaços espelhados',
@@ -478,9 +490,13 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeShowSetting': 'Mostrar a configuração',
   'data.mirrorReadPendingTitle': 'Ler o que mudou?',
   'data.mirrorReadPendingDesc_one':
-    'Este arquivo mudou fora do Agaric enquanto a leitura de volta estava desativada. Ativá-la faz a leitura dele.',
+    'Este arquivo mudou fora do Agaric e ainda não foi lido. Ativar a leitura de volta faz a leitura dele.',
   'data.mirrorReadPendingDesc_other':
-    'Estes {{count}} arquivos mudaram fora do Agaric enquanto a leitura de volta estava desativada. Ativá-la faz a leitura deles.',
+    'Estes {{count}} arquivos mudaram fora do Agaric e ainda não foram lidos. Ativar a leitura de volta faz a leitura deles.',
+  'data.mirrorPendingEdited': 'Editados: lidos para as páginas deles',
+  'data.mirrorPendingNew': 'Novos: cada um vira uma página, ou é o novo lugar de um arquivo movido',
+  'data.mirrorPendingGone':
+    'Sumidos: as páginas deles vão para a Lixeira, a menos que o arquivo tenha sido movido',
   'data.mirrorReadPendingConfirm': 'Ler agora',
   'data.mirrorReadPendingCancel': 'Manter desativado',
   'data.exportAllSpacesNoSpaces': 'Nenhum espaço para exportar',

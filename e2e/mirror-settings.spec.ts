@@ -112,7 +112,7 @@ test.describe('Settings › Data: asking before many changes @settings @markdown
           read_back: false,
           held: ['Personal'],
           failed: [{ page_id: '', path: 'Personal', message: '6 of its files changed' }],
-          pending: ['Personal/A.md'],
+          pending: [{ path: 'Personal/A.md', kind: 'edited' }],
         }
       }
     }, MOCK_FOLDER)
@@ -130,6 +130,51 @@ test.describe('Settings › Data: asking before many changes @settings @markdown
     await expect(question).toHaveCount(0)
     await expect(ask).toBeFocused()
     expect(await focusShown()).toBe(true)
+  })
+})
+
+test.describe('Settings › Data: the read-in question @settings @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('lists the files changed by what reading them in does', async ({ page }) => {
+    // The mock reads no folder, so the files a real one lists are answered here.
+    await page.evaluate((folder) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = async (c, a) => {
+        const answer = await invoke(c, a)
+        if (c !== 'get_mirror_status') return answer
+        return {
+          ...(answer as object),
+          folder,
+          read_back: false,
+          pending: [
+            { path: 'Personal/Edited.md', kind: 'edited' },
+            { path: 'Personal/Gone.md', kind: 'gone' },
+            { path: 'Personal/New.md', kind: 'new' },
+          ],
+        }
+      }
+    }, MOCK_FOLDER)
+    await openMirrorCard(page)
+
+    await page.getByRole('switch', { name: 'Read changes back' }).click()
+    const question = page.getByRole('alertdialog')
+    await expect(question.getByRole('list', { name: 'Edited: read into their pages' })).toHaveText(
+      'Personal/Edited.md',
+    )
+    await expect(question.getByRole('list', { name: /^New: each becomes a page/ })).toHaveText(
+      'Personal/New.md',
+    )
+    await expect(
+      question.getByRole('list', { name: /^Gone: their pages move to the Trash/ }),
+    ).toHaveText('Personal/Gone.md')
   })
 })
 

@@ -867,12 +867,13 @@ export const common: Record<string, string> = {
 
   // Translators: Settings › Data, "Markdown mirror" card (Agaric keeps a .md file of every page in
   // a folder the user picks): title, description, the folder row and its buttons. The "Not on this
-  // device yet" text replaces the card on phones.
+  // device yet" text replaces the card on phones. "Undo on that page" is the page's own Undo (its
+  // menu or Ctrl+Z there). The 90 days are TOMBSTONE_RETENTION_DAYS in src-tauri/src/maintenance.rs.
   // #5363 — the Markdown mirror: one `.md` file per page in a folder this
   // device writes to. A file edited elsewhere is read back into its page.
   'data.mirrorTitle': 'Markdown mirror',
   'data.mirrorDesc':
-    'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is read back into its page, and one Undo reverts that.',
+    'Agaric writes every page as a .md file into a folder you choose and keeps it up to date. A file you edit elsewhere is read back into its page, and Undo on that page reverts it. Deleting a file moves its page to the Trash, which deletes it for good after 90 days.',
   'data.mirrorFolderLabel': 'Mirror folder',
   'data.mirrorUnsupported':
     'Not on this device yet: the mirror runs in the desktop app only. Turn it on on your computer; notes written here reach its folder by sync.',
@@ -899,11 +900,29 @@ export const common: Record<string, string> = {
   'data.mirrorIngestedWarningsFiles_other': '{{count}} files were read in with warnings',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
 
+  // Translators: Markdown mirror: toast after pages changed because their files were deleted,
+  // renamed or moved, or added in the mirror folder outside Agaric. One page is named ({{path}} =
+  // its file's path in the folder); several are counted: {{changes}} = the counts below joined as
+  // a list ("1 page moved to the Trash, 2 new pages"), {{count}} = number of pages. Its button
+  // opens the Trash.
+  'data.mirrorReadBackTrashed':
+    '{{path}} was deleted from the mirror folder, so its page moved to the Trash',
+  'data.mirrorReadBackRenamed':
+    '{{path}} was renamed or moved in the mirror folder, and its page with it',
+  'data.mirrorReadBackCreated': '{{path}} was added to the mirror folder and is now a page',
+  'data.mirrorReadBackSeveral': 'From changes in the mirror folder: {{changes}}',
+  'data.mirrorReadBackTrashedCount_one': '{{count}} page moved to the Trash',
+  'data.mirrorReadBackTrashedCount_other': '{{count}} pages moved to the Trash',
+  'data.mirrorReadBackRenamedCount_one': '{{count}} page renamed or moved',
+  'data.mirrorReadBackRenamedCount_other': '{{count}} pages renamed or moved',
+  'data.mirrorReadBackCreatedCount_one': '{{count}} new page',
+  'data.mirrorReadBackCreatedCount_other': '{{count}} new pages',
+
   // Translators: Markdown mirror: switch row that reads outside edits of the files back into Agaric
   // (label, description), and its error toast; {{reason}} = the error message.
   'data.mirrorReadBackLabel': 'Read changes back',
   'data.mirrorReadBackDesc':
-    'Edits, new files, renames and moves made to the files outside Agaric are read back into Agaric. Off, Agaric still writes the files and never overwrites one changed elsewhere.',
+    'Edits, new files, renames and moves made to the files outside Agaric are read back into Agaric, and a deleted file moves its page to the Trash. Off, Agaric still writes the files and never overwrites one changed elsewhere.',
   'data.mirrorReadBackFailed': 'Reading changes back was not changed: {{reason}}',
 
   // Translators: Markdown mirror: heading of the list of spaces to mirror (checkboxes), and its
@@ -937,13 +956,18 @@ export const common: Record<string, string> = {
     'If you change many files at once on purpose, such as renaming a note that many others link to, you can stop Agaric asking.',
   'data.mirrorMassChangeShowSetting': 'Show the setting',
 
-  // Translators: ConfirmDialog when "Read changes back" is turned on while files changed outside
-  // Agaric; {{count}} = number of files; its two buttons.
+  // Translators: ConfirmDialog when "Read changes back" is turned on, or a folder is chosen, while
+  // files there changed outside Agaric; {{count}} = number of files; its two buttons. The files are
+  // listed under three headings by what reading them in does: edited files, files that are new
+  // (or a page's file moved), and files that are gone (deleted, or a page's file moved).
   'data.mirrorReadPendingTitle': 'Read in what changed?',
   'data.mirrorReadPendingDesc_one':
-    'This file changed outside Agaric while reading back was off. Turning it on reads it in.',
+    'This file changed outside Agaric and has not been read in. Turning reading back on reads it in.',
   'data.mirrorReadPendingDesc_other':
-    'These {{count}} files changed outside Agaric while reading back was off. Turning it on reads them in.',
+    'These {{count}} files changed outside Agaric and have not been read in. Turning reading back on reads them in.',
+  'data.mirrorPendingEdited': 'Edited: read into their pages',
+  'data.mirrorPendingNew': 'New: each becomes a page, or is the new place of a moved file',
+  'data.mirrorPendingGone': 'Gone: their pages move to the Trash, unless the file was moved',
   'data.mirrorReadPendingConfirm': 'Read them in',
   'data.mirrorReadPendingCancel': 'Keep it off',
 
