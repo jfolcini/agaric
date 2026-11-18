@@ -30,7 +30,6 @@ import { unwrap, validationCode } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyMergeCounts } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 
@@ -72,11 +71,6 @@ export function MergePropertyDefinition({
   )
   if (targets.length === 0) return null
 
-  const changed = (): void => {
-    onChanged()
-    invalidatePropertyCaches()
-  }
-
   const preview = async (target: string): Promise<void> => {
     const seq = ++previewSeq.current
     setCounts(null)
@@ -110,9 +104,9 @@ export function MergePropertyDefinition({
       notifyDefinitionWrite(
         t('propertiesView.merged', { from: key, into }),
         merged.op_refs,
-        changed,
+        onChanged,
       )
-      changed()
+      onChanged()
     } catch (error) {
       if (validationCode(error) === ValidationCode.UnacknowledgedPropertyLoss) {
         setAskedAgain(true)

@@ -45,7 +45,6 @@ import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
@@ -102,11 +101,6 @@ export function UnfitPropertyValues({
   // count that drops to zero while it is read again.
   if (live === 0 && !open) return null
 
-  const changed = (): void => {
-    onChanged()
-    invalidatePropertyCaches()
-  }
-
   const onOpenChange = (next: boolean): void => {
     setOpen(next)
     if (next) return
@@ -123,9 +117,9 @@ export function UnfitPropertyValues({
       notifyDefinitionWrite(
         t('propertiesView.unfitRemoved', { count, key }),
         result.op_refs,
-        changed,
+        onChanged,
       )
-      changed()
+      onChanged()
     } catch (error) {
       if (validationCode(error) === ValidationCode.UnacknowledgedPropertyLoss) {
         setAskedAgain(true)
@@ -148,8 +142,12 @@ export function UnfitPropertyValues({
   const converted = (result: WithOps<PropertyUnfitCounts>): void => {
     onOpenChange(false)
     const count = result.unfit + result.unfit_in_trash
-    notifyDefinitionWrite(t('propertiesView.convertDone', { count, key }), result.op_refs, changed)
-    changed()
+    notifyDefinitionWrite(
+      t('propertiesView.convertDone', { count, key }),
+      result.op_refs,
+      onChanged,
+    )
+    onChanged()
   }
 
   const moved = (result: WithOps<UnfitMoveCounts>, into: string): void => {
@@ -157,9 +155,9 @@ export function UnfitPropertyValues({
     notifyDefinitionWrite(
       t('propertiesView.moveDone', { count: result.moved, key, into }),
       result.op_refs,
-      changed,
+      onChanged,
     )
-    changed()
+    onChanged()
   }
 
   const addToOptions = async (): Promise<void> => {
@@ -175,9 +173,9 @@ export function UnfitPropertyValues({
       notifyDefinitionWrite(
         t('propertiesView.unfitAddedToOptions', { key }),
         result.op_refs,
-        changed,
+        onChanged,
       )
-      changed()
+      onChanged()
     } catch (error) {
       reportIpcErrorWithReason('UnfitPropertyValues', 'propertiesView.unfitAddFailed', error, t, {
         key,

@@ -67,9 +67,7 @@ import { toast } from 'sonner'
 
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { t } from '@/lib/i18n'
-import { propertyDefsQueryKey } from '@/lib/property-caches'
 import { formatPropertyName } from '@/lib/property-utils'
-import { queryClient } from '@/lib/query-client'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -679,37 +677,6 @@ describe('PropertyRowEditor select options editing', () => {
         key: 'stage',
         options: '["TODO","DONE"]',
       })
-    })
-  })
-
-  it("marks the space's definitions stale once the options are saved (#6206)", async () => {
-    const user = userEvent.setup()
-    stubInvoke({
-      update_property_def_options: () => withOps(makeDef('stage', 'select', '["TODO"]')),
-    })
-    queryClient.setQueryData(propertyDefsQueryKey('SPACE_TEST'), [])
-
-    render(
-      <PropertyRowEditor
-        blockId="BLOCK_1"
-        prop={makeProp('stage', { value_text: 'TODO' })}
-        def={makeDef('stage', 'select', '["TODO","DOING"]')}
-        onSave={vi.fn()}
-        onDelete={vi.fn()}
-        onDefUpdated={vi.fn()}
-      />,
-    )
-
-    await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
-    await user.click(
-      await screen.findByLabelText(t('pageProperty.removeOptionLabel', { option: 'DOING' })),
-    )
-    await user.click(screen.getByRole('button', { name: /save options/i }))
-
-    await waitFor(() => {
-      expect(queryClient.getQueryState(propertyDefsQueryKey('SPACE_TEST'))?.isInvalidated).toBe(
-        true,
-      )
     })
   })
 

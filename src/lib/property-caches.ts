@@ -25,8 +25,9 @@ export function invalidatePageProperties(): void {
 /**
  * Mark the property key and value lists, the open page's own properties and
  * the space's definitions stale after a write that can change
- * `block_properties` without a `block:properties-changed` event (sync, MCP,
- * import, page source, undo and History revert, #5296) or a definition (#6206).
+ * `block_properties` without a `block:properties-changed` event (#5296) or a
+ * definition (#6206): the change feed's `properties` and `property_defs`
+ * domains, and every out-of-band write (`invalidateDerivedCaches`).
  */
 export function invalidatePropertyCaches(): void {
   invalidatePropertyKeysCache()
