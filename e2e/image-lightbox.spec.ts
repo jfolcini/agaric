@@ -9,14 +9,9 @@
  * open, zoom in/out (buttons AND wheel), pan while zoomed, prev/next across
  * multiple images, and close via Escape / the backdrop.
  *
- * Mock plumbing: the tauri-mock exposes `window.__addMockAttachmentWithBytes`
- * (`src/lib/tauri-mock/seed.ts`) specifically so E2E can seed a REAL byte
- * attachment (unlike `__addMockAttachment`, which stores metadata only) — the
- * same helper `toolbar-controls.spec.ts`'s image-resize suite uses to make the
- * `image-resize-wrapper` mount. `read_attachment` resolves those bytes to a
- * `blob:` URL (`AttachmentRenderer.tsx`'s `AttachmentImage`), so the seeded
- * PNG round-trips through a real `<img>` decode — no data-URI workaround
- * needed.
+ * The PNG is attached with its bytes through the real command (`attachFile`).
+ * `read_attachment` resolves them to a `blob:` URL (`AttachmentRenderer.tsx`'s
+ * `AttachmentImage`), so it round-trips through a real `<img>` decode.
  *
  * A tiny 120×120 solid-color PNG (hand-encoded, deflate-compressed IDAT) is
  * used so the lightbox `<img>` has a real intrinsic size to zoom/pan against
@@ -24,7 +19,7 @@
  * `inline-image-1434.spec.ts`) would clamp pan to ~0px and make the drag
  * assertion meaningless.
  */
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { attachFile, expect, openPage, test, waitForBoot } from './helpers'
 
 const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
@@ -47,15 +42,6 @@ const PNG_120: number[] = [
   124, 55, 150, 43, 181, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ]
 
-interface MockWindow extends Window {
-  __addMockAttachmentWithBytes?: (
-    blockId: string,
-    filename: string,
-    mimeType: string,
-    bytes: number[],
-  ) => { id: string }
-}
-
 /** Parse `translate(Xpx, Ypx) scale(Z)` off the lightbox `<img>`'s inline style. */
 function parseTransform(transform: string): { x: number; y: number; scale: number } {
   const translateMatch = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(transform)
@@ -72,17 +58,7 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
     page,
   }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        ;(window as MockWindow).__addMockAttachmentWithBytes?.(
-          blockId,
-          'photo.png',
-          'image/png',
-          bytes,
-        )
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
 
     const wrapper = page.getByTestId('image-resize-wrapper').first()
@@ -106,17 +82,7 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('zoom-in/out buttons change the rendered scale, and reset clears it', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        ;(window as MockWindow).__addMockAttachmentWithBytes?.(
-          blockId,
-          'photo.png',
-          'image/png',
-          bytes,
-        )
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,
@@ -155,17 +121,7 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('wheel-zoom in over the image changes the rendered scale', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        ;(window as MockWindow).__addMockAttachmentWithBytes?.(
-          blockId,
-          'photo.png',
-          'image/png',
-          bytes,
-        )
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,
@@ -183,17 +139,7 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('dragging while zoomed pans the image, clamped to the overflow', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        ;(window as MockWindow).__addMockAttachmentWithBytes?.(
-          blockId,
-          'photo.png',
-          'image/png',
-          bytes,
-        )
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,
@@ -233,14 +179,8 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('prev/next navigate between multiple images in the same block', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        const w = window as MockWindow
-        w.__addMockAttachmentWithBytes?.(blockId, 'photo-a.png', 'image/png', bytes)
-        w.__addMockAttachmentWithBytes?.(blockId, 'photo-b.png', 'image/png', bytes)
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo-a.png', 'image/png', PNG_120)
+    await attachFile(page, BLOCK_GS_1, 'photo-b.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,
@@ -266,14 +206,8 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('ArrowLeft/ArrowRight keys navigate between multiple images', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        const w = window as MockWindow
-        w.__addMockAttachmentWithBytes?.(blockId, 'photo-a.png', 'image/png', bytes)
-        w.__addMockAttachmentWithBytes?.(blockId, 'photo-b.png', 'image/png', bytes)
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo-a.png', 'image/png', PNG_120)
+    await attachFile(page, BLOCK_GS_1, 'photo-b.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,
@@ -299,17 +233,7 @@ test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
 
   test('Escape and a backdrop click both dismiss the lightbox', async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate(
-      ({ blockId, bytes }) => {
-        ;(window as MockWindow).__addMockAttachmentWithBytes?.(
-          blockId,
-          'photo.png',
-          'image/png',
-          bytes,
-        )
-      },
-      { blockId: BLOCK_GS_1, bytes: PNG_120 },
-    )
+    await attachFile(page, BLOCK_GS_1, 'photo.png', 'image/png', PNG_120)
     await openPage(page, 'Getting Started')
     await expect(page.getByTestId('image-resize-wrapper').first()).toBeVisible({
       timeout: 10_000,

@@ -28,13 +28,7 @@ import {
   injectMockError,
   setMockLatency,
 } from '@/lib/tauri-mock/injection'
-import {
-  addMockAgendaItems,
-  addMockAttachment,
-  addMockAttachmentWithBytes,
-  addMockQuarantinedSlot,
-  seedBlocks,
-} from '@/lib/tauri-mock/seed'
+import { addMockAgendaItems, addMockQuarantinedSlot, seedBlocks } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Public re-exports
@@ -141,12 +135,6 @@ export function setupMock(): void {
   w['__injectMockError'] = injectMockError
   w['__clearMockErrors'] = clearMockErrors
   w['__setMockLatency'] = setMockLatency
-
-  // Expose attachment seeding to E2E tests
-  w['__addMockAttachment'] = addMockAttachment
-  // #1452 — seed a PDF attachment WITH real bytes so the annotation viewer
-  // can parse it with pdf.js.
-  w['__addMockAttachmentWithBytes'] = addMockAttachmentWithBytes
 
   // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
   w['__addMockAgendaItems'] = addMockAgendaItems

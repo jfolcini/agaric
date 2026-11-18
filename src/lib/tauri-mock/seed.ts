@@ -1072,9 +1072,8 @@ function seedBulkPages(): void {
 }
 
 // ---------------------------------------------------------------------------
-// E2E attachment seeding helper. Exposed on `window.__addMockAttachment` by
-// setupMock() so Playwright specs can pre-seed attachments before interacting
-// with the UI.
+// An attachment row with no op behind it, for unit tests of what the mock
+// does with one. Specs attach through the real command (`attachFile`).
 // ---------------------------------------------------------------------------
 
 export function addMockAttachment(
@@ -1131,36 +1130,6 @@ export function addMockQuarantinedSlot(fields: Partial<QuarantinedSlot> = {}): Q
   }
   syncQuarantine.set(row.id, row)
   return { ...row }
-}
-
-// ---------------------------------------------------------------------------
-// E2E attachment seeding WITH real bytes (#1452). The PDF annotation viewer
-// reads the attachment over IPC and parses it with pdf.js, so the seeded
-// attachment must carry actual bytes (the by-metadata `addMockAttachment`
-// stores none and `read_attachment` would return []). Exposed on
-// `window.__addMockAttachmentWithBytes`.
-// ---------------------------------------------------------------------------
-
-export function addMockAttachmentWithBytes(
-  blockId: string,
-  filename: string,
-  mimeType: string,
-  bytes: number[],
-): Record<string, unknown> {
-  const id = fakeId()
-  const row = {
-    id,
-    block_id: blockId,
-    filename,
-    mime_type: mimeType,
-    size_bytes: bytes.length,
-    fs_path: `attachments/${id}`,
-    created_at: Date.now(),
-    content_hash: null,
-  }
-  attachments.set(id, row)
-  attachmentBytes.set(id, bytes)
-  return row
 }
 
 /**

@@ -34,6 +34,7 @@ import type { Page } from '@playwright/test'
 
 import {
   activeSheet,
+  attachFile,
   expect,
   focusBlock,
   focusBlockById,
@@ -373,18 +374,7 @@ test.describe('Inline controls — gutter (#1170) @editor', () => {
   test('attachment badge click opens the attachment list', async ({ page }) => {
     // Seed an image attachment on GS_1 before navigating (the mock store
     // persists across IPC calls within the session).
-    await page.evaluate((blockId) => {
-      ;(
-        window as unknown as {
-          __addMockAttachment?: (
-            id: string,
-            f: string,
-            m: string,
-            s: number,
-          ) => Record<string, unknown>
-        }
-      ).__addMockAttachment?.(blockId, 'screenshot.png', 'image/png', 54321)
-    }, BLOCK_GS_1)
+    await attachFile(page, BLOCK_GS_1, 'screenshot.png', 'image/png', new Uint8Array(54321))
 
     await openPage(page, 'Getting Started')
     const badge = page.getByTestId('attachment-badge').first()
@@ -402,11 +392,9 @@ test.describe('Inline controls — gutter (#1170) @editor', () => {
 //
 // Reachability: the toolbar mounts inside `AttachmentRenderer` once a block has
 // an image attachment whose bytes have been read into an object URL, and only
-// while the image wrapper is hovered/focused. The mock's `__addMockAttachment`
-// registers the attachment row but NOT its bytes, so `read_attachment` returns
-// an empty byte array — `URL.createObjectURL(new Blob([]))` still yields a
-// valid URL, so the `image-resize-wrapper` mounts (the <img> simply won't
-// decode). A width/alignment preset updates StaticBlock state, which re-renders
+// while the image wrapper is hovered/focused. The attachment's bytes are zeros,
+// not a PNG, but `URL.createObjectURL` still yields a valid URL, so the
+// `image-resize-wrapper` mounts (the <img> simply won't decode). A width/alignment preset updates StaticBlock state, which re-renders
 // the toolbar with `aria-pressed=true` on the chosen button — the assertion we
 // use here (it does not depend on the image decoding). The byte read is also
 // gated by an IntersectionObserver, and GS_1 is the first block (in view), so
@@ -416,18 +404,7 @@ test.describe('Inline controls — gutter (#1170) @editor', () => {
 test.describe('Image resize / align toolbar (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
-    await page.evaluate((blockId) => {
-      ;(
-        window as unknown as {
-          __addMockAttachment?: (
-            id: string,
-            f: string,
-            m: string,
-            s: number,
-          ) => Record<string, unknown>
-        }
-      ).__addMockAttachment?.(blockId, 'diagram.png', 'image/png', 12345)
-    }, BLOCK_GS_1)
+    await attachFile(page, BLOCK_GS_1, 'diagram.png', 'image/png', new Uint8Array(12345))
     await openPage(page, 'Getting Started')
   })
 
