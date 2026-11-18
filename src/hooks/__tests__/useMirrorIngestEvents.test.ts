@@ -109,7 +109,7 @@ describe('useMirrorIngestEvents', () => {
     await fire({ page_id: PAGE, path, op_refs: [], report: report([warning]) })
 
     expect(vi.mocked(notify.warning).mock.lastCall?.[0]).toBe(
-      `${path.slice(0, 59)}… was read in with a warning: ${warning.slice(0, 79)}…`,
+      `…${path.slice(-59)} was read in with a warning: ${warning.slice(0, 79)}…`,
     )
   })
 

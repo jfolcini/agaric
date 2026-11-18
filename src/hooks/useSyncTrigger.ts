@@ -92,10 +92,9 @@ type SessionEnd = 'complete' | 'failed' | 'reported'
  * Syncs a single peer with a timeout guard. Returns `true` on success, `false`
  * on failure.
  *
- * #6870: only a pressed sync answers with a toast. While it runs the peer is in
- * `pressedSyncPeers`, so a failure the backend reports on `sync:error` is
- * toasted there; one it does not report is toasted here. A scheduled tick says
- * nothing: the Sync button's dot, icon and description carry its outcome.
+ * #6870: while a pressed sync runs its peer is in `pressedSyncPeers`, so a
+ * failure the backend reports on `sync:error` is toasted there; one it does not
+ * report is toasted here.
  *
  * #6551: `start_sync` resolves once the daemon is woken, before any session
  * ran, and resolves just the same with the peer switched off. With
@@ -235,10 +234,8 @@ export function useSyncTrigger() {
   const syncGenerationRef = useRef(0)
   const setState = useSyncStore((s) => s.setState)
 
-  // #4305, #6870 — `syncAll` is BOTH the 60 s scheduled tick and the user
-  // pressing Sync. Only the press is a question that deserves an answer, so only
-  // it raises a toast, success or failure. The tick's outcome is the Sync
-  // button's dot, icon and "last synced" line.
+  // #4305 — `syncAll` is BOTH the 60 s scheduled tick and the user pressing
+  // Sync; only the press is answered (`pressedSyncPeers`).
   const syncAll = useCallback(
     async (options?: { userInitiated?: boolean }) => {
       const userInitiated = options?.userInitiated === true
@@ -303,7 +300,7 @@ export function useSyncTrigger() {
           if (shouldToast()) {
             setState('error', 'Sync failed')
             // The run-level throw (`listPeerRefs` failed); per-peer failures
-            // are `syncOnePeerWithToast`'s. Only a press is answered.
+            // are `syncOnePeerWithToast`'s.
             if (userInitiated) {
               notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
               announce(i18n.t('announce.syncFailed'))

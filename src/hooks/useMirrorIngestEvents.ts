@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import type { OpRef, PageSourceReport } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { clampText } from '@/lib/text-utils'
+import { clampText, clampTextEnd } from '@/lib/text-utils'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 
 /** Emitted by `mirror::ingest` once an ingest's save has committed. */
@@ -42,7 +42,7 @@ export function useMirrorIngestEvents(): void {
       notify.warning(
         shownPaths.current.size === 1
           ? t('data.mirrorIngestedWarnings', {
-              path: clampText(path, 60),
+              path: clampTextEnd(path, 60),
               first: clampText(first, 80),
               count: report.warnings.length,
             })

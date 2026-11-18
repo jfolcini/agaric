@@ -19,11 +19,10 @@
  *
  * A toast answers what the user just did, or says what they must know
  * now; ongoing state (syncing, offline, last synced) is the status
- * indicators' to show (#6870). A toast the user did not ask for (a file
- * read back, a report from another device) passes a fixed `id` per source,
- * so a burst updates one toast in place, and names one item or counts
- * several, never lists them. A toast that answers the user's own action
- * passes no `id`.
+ * indicators' to show (#6870). A toast that can recur (a file read back,
+ * a report from another device) passes a fixed `id` per source, so a burst
+ * updates one toast in place, and names one item or counts several, never
+ * lists them.
  *
  * Future cross-cutting concerns (i18n fallback, provider swap, durations)
  * land here in one place. A prek hook bans `from 'sonner'`

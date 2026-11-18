@@ -20,6 +20,7 @@ import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { clampText } from '@/lib/text-utils'
 import { useNavigationStore } from '@/stores/navigation'
 
 /** Must mirror `EVENT_PAGES_RENAMED` in `src-tauri/src/repair/name_collisions.rs`. */
@@ -45,8 +46,8 @@ export function showPagesRenamedToast(renamed: PageRenamed[]): void {
   if (first === undefined) return
   const message = i18n.t('pages.nameTieRenamed', {
     count: renamed.length,
-    from: first.from,
-    to: first.to,
+    from: clampText(first.from, 40),
+    to: clampText(first.to, 40),
   })
   notify.info(message, {
     id: PAGES_RENAMED_TOAST_ID,

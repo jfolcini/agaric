@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 import { finishSyncSession } from './domain'
 import {
@@ -226,6 +226,55 @@ test('a failure answers the press it ended; a background one shows on the button
   await expect(button).toHaveAccessibleDescription('Sync failed: Timed out Never synced')
   await page.clock.runFor(100)
   await expect(toasts).toHaveCount(0)
+})
+
+// #6870 — on a phone the Sync button sits in the closed drawer, so the button
+// that opens the drawer carries its status dot once a device is paired.
+test.describe('a phone shows the sync dot on its drawer button (#6870) @sync @mobile', () => {
+  const iPhone13 = devices['iPhone 13']
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test('the drawer button shows the sync state once a device is paired', async ({ page }) => {
+    await page.clock.install()
+    await waitForBoot(page)
+    const menu = page.getByTestId('mobile-sidebar-trigger')
+    const dot = menu.getByTestId('mobile-sync-status-dot')
+    await expect(menu).toBeVisible()
+    await expect(dot).toHaveCount(0)
+
+    await pairOnePeer(page)
+    // The next scheduled sync, a minute after the last, loads the peer into
+    // the store the dot reads.
+    await page.clock.fastForward('01:05')
+    await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+    await expect(dot).toContainClass('bg-sync-idle')
+
+    await emitMockEvent(page, 'sync:error', {
+      type: 'error',
+      remote_device_id: 'device-b',
+      message: 'Connection refused',
+    })
+    await expect(dot).toHaveAttribute('data-sync-state', 'error')
+    await expect(dot).toContainClass('bg-destructive')
+    await expect(menu).toHaveAccessibleDescription('Sync failed: Connection refused')
+    await page.screenshot({ path: test.info().outputPath('drawer-button-sync-failed.png') })
+
+    await emitMockEvent(page, 'sync:complete', {
+      type: 'complete',
+      remote_device_id: 'device-b',
+      ops_received: 1,
+      ops_sent: 1,
+      changed_blocks: 0,
+    })
+    await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+    await expect(menu).toHaveAccessibleDescription('')
+  })
 })
 
 function relayEnabled(page: Page): Promise<boolean> {

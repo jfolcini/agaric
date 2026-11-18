@@ -90,6 +90,19 @@ describe('usePageRenameNotices', () => {
     expect(vi.mocked(toast.info).mock.calls[0]?.[0]).not.toContain('Foo')
   })
 
+  it('shortens long titles so the toast keeps its size', () => {
+    renderHook(() => usePageRenameNotices())
+    const from = 'A page title that goes on far longer than any toast line can hold'
+    emitRenamed([{ page_id: 'PAGE_LONG', from, to: `${from} (2)` }])
+    expect(vi.mocked(toast.info).mock.calls[0]?.[0]).toBe(
+      t('pages.nameTieRenamed', {
+        count: 1,
+        from: 'A page title that goes on far longer th…',
+        to: 'A page title that goes on far longer th…',
+      }),
+    )
+  })
+
   it('opens History from the toast', () => {
     useNavigationStore.getState().setView('journal')
     renderHook(() => usePageRenameNotices())

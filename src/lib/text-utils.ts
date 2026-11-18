@@ -25,3 +25,9 @@ export function clampText(text: string, max: number): string {
   const chars = Array.from(text)
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
 }
+
+/** [`clampText`] keeping the end, for a path whose file name is at its end. */
+export function clampTextEnd(text: string, max: number): string {
+  const chars = Array.from(text)
+  return chars.length > max ? `…${chars.slice(chars.length - max + 1).join('')}` : text
+}

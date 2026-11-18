@@ -6,10 +6,6 @@
  * - sync:error — sets error state; a user cancel resets to idle, and an away
  *   peer sets the neutral waiting state
  *
- * #6870: background sync says nothing. The Sync button's dot, icon and
- * description carry its state, and only a sync the user pressed is answered
- * with a toast (`pressedSyncPeers`).
- *
  * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
  * By Phase 2 — `useSyncTrigger` now consumes the Channel<T>
  * `onProgress` callback set up by `startSync` for that. The two event
@@ -55,8 +51,9 @@ type SyncError = Extract<SyncEvent_Serialize, { type: 'error' }>
 
 /**
  * Peers whose sync the user pressed and is waiting on: `useSyncTrigger` holds a
- * peer here for the length of its pressed session. Only their failures are
- * toasted (#6870).
+ * peer here for the length of its pressed session. Only a press is answered
+ * with a toast; background sync's outcome is the Sync button's dot, icon and
+ * description (#6870).
  */
 export const pressedSyncPeers = new Set<string>()
 

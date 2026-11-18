@@ -1,10 +1,10 @@
 /**
- * Tests for src/lib/text-utils.ts — truncateContent, clampText.
+ * Tests for src/lib/text-utils.ts — truncateContent, clampText, clampTextEnd.
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { clampText, truncateContent } from '@/lib/text-utils'
+import { clampText, clampTextEnd, truncateContent } from '@/lib/text-utils'
 
 describe('truncateContent', () => {
   it('returns emptyFallback for null input', () => {
@@ -82,5 +82,19 @@ describe('clampText', () => {
 
   it('counts an emoji as one character and never splits it', () => {
     expect(clampText('🍄🍄🍄 mushrooms', 4)).toBe('🍄🍄🍄…')
+  })
+})
+
+describe('clampTextEnd', () => {
+  it('keeps text at or under the limit as it is', () => {
+    expect(clampTextEnd('S/Note.md', 9)).toBe('S/Note.md')
+  })
+
+  it('keeps the end of longer text, so a path keeps its file name', () => {
+    expect(clampTextEnd('Space/deep/deeper/Note.md', 10)).toBe('…r/Note.md')
+  })
+
+  it('counts an emoji as one character and never splits it', () => {
+    expect(clampTextEnd('mushrooms 🍄🍄🍄', 4)).toBe('…🍄🍄🍄')
   })
 })
