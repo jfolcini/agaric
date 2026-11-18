@@ -382,6 +382,42 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
   })
 
+  // #6935 — a content-writing command (`/h2`) commits the editor's pending text before its own
+  // write. Left pending, that commit fired while the command's `edit_block` was in flight, and
+  // carried the text from before the command with its old base, which the backend merged into
+  // the heading (a doubled trailing space on the real backend).
+  it('writes the pending in-editor content before the heading, never after it (#6935)', async () => {
+    const written: string[] = []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'edit_block') {
+        written.push((args as { toText: string }).toText)
+        return {
+          id: 'BLOCK_1',
+          content: (args as { toText: string }).toText,
+          op_refs: [{ device_id: 'dev1', seq: written.length }],
+        }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    // One pending commit: a flush with nothing pending writes nothing, as the real one.
+    let pending = true
+    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
+      if (!pending) return
+      pending = false
+      await pageStore.getState().edit('BLOCK_1', 'call mom ')
+    })
+    try {
+      await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
+    } finally {
+      unregister()
+    }
+
+    expect(written).toEqual(['call mom ', '## hello'])
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('## hello')
+  })
+
   it('divider replaces content with `---`', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()

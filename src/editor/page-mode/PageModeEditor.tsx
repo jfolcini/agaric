@@ -699,7 +699,8 @@ function PageModeDocument({
      * landed. A load that lands sets the rows as a new array, and only the newest one started
      * lands: so rows unchanged with the store still loading mean a newer load overtook this one
      * (block mode's, as page mode closes, #6937), and its rows are waited for; unchanged and done
-     * mean the load failed. Read from the store, not a subscription: the closing save reads too.
+     * mean the load failed. It reads the store itself, not through the editor's own store
+     * subscription, which the closing save outlives.
      */
     const read = async (): Promise<FlatBlock[]> => {
       const was = pageStore.getState().blocks
