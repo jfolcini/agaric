@@ -1,13 +1,15 @@
 /**
- * `invalidateDerivedCaches` drops every derived cache (#6049). Each cache is
- * read back here; the callers' own tests assert they go through this function,
- * so a cache added to it reaches sync, MCP, import and undo at once.
+ * `invalidateDerivedCaches` drops every derived cache (#6049), and
+ * `invalidateDomains` the ones a change domain names (#6545). Each cache is
+ * read back here; the callers' own tests assert they go through these
+ * functions, so a cache added to them reaches sync, MCP, import and undo at once.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { invalidateDerivedCaches } from '@/hooks/derived-caches'
+import { invalidateDerivedCaches, invalidateDomains } from '@/hooks/derived-caches'
 import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
+import type { ChangeDomain } from '@/lib/bindings'
 import {
   DEBOUNCE_MS as PROPERTY_DEBOUNCE_MS,
   getBlockPropertyInvalidationKey,
@@ -74,5 +76,40 @@ describe('invalidateDerivedCaches', () => {
     vi.advanceTimersByTime(PROPERTY_DEBOUNCE_MS + 1)
 
     expect(dropped()).toBe(true)
+  })
+})
+
+const PROPERTY_CACHES = [
+  'the property key list',
+  'the property value list',
+  "the open page's properties",
+] as const
+
+const DOMAINS: Array<[ChangeDomain, readonly string[]]> = [
+  ['structure', ['the graph-structure counter', 'the Pages list', "the journal's day-to-page map"]],
+  ['properties', ['the block-property counter', ...PROPERTY_CACHES, 'the Pages list']],
+  ['property_defs', PROPERTY_CACHES],
+  ['names', ['the page and tag name caches', 'the Pages list', "the journal's day-to-page map"]],
+  ['attachments', ['the attachment lists', 'the Pages list']],
+]
+
+describe('invalidateDomains', () => {
+  it.each(DOMAINS)('%s drops exactly its caches', (domain, expected) => {
+    const probes = CACHES.map(([name, probe]) => [name, probe()] as const)
+
+    invalidateDomains([domain])
+    vi.advanceTimersByTime(PROPERTY_DEBOUNCE_MS + 1)
+
+    const dropped = probes.filter(([, check]) => check()).map(([name]) => name)
+    expect(dropped.toSorted()).toEqual([...expected].toSorted())
+  })
+
+  it('drops every cache for an absent domain list', () => {
+    const probes = CACHES.map(([name, probe]) => [name, probe()] as const)
+
+    invalidateDomains(null)
+    vi.advanceTimersByTime(PROPERTY_DEBOUNCE_MS + 1)
+
+    expect(probes.filter(([, check]) => !check()).map(([name]) => name)).toEqual([])
   })
 })

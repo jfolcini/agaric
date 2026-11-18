@@ -24,6 +24,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
 import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import type { ArtefactDivergences, BugReport, ReconciliationReport } from '@/lib/bindings'
@@ -33,6 +34,11 @@ import { t } from '@/lib/i18n'
 vi.mock('@/lib/clipboard', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }))
+// #6545 — a spy that still drops the caches; which caches is `derived-caches.test.ts`.
+vi.mock('@/hooks/derived-caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/derived-caches')>()
+  return { ...actual, invalidateDerivedCaches: vi.fn(actual.invalidateDerivedCaches) }
+})
 const mockedWriteText = vi.mocked(writeText)
 
 const mockedInvoke = vi.mocked(invoke)
@@ -395,6 +401,8 @@ describe('IntegrityCheckSection in plain words (#6488)', () => {
 
     expect(await screen.findByText(t('integrity.cleanTitle'))).toBeInTheDocument()
     expect(rebuild).toHaveBeenCalledTimes(1)
+    // It appends no op, so no change-feed event drops the views' caches.
+    expect(vi.mocked(invalidateDerivedCaches)).toHaveBeenCalledTimes(1)
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('integrity.rebuilt'))
     expect(screen.queryByTestId('integrity-rebuild-button')).not.toBeInTheDocument()
   })
@@ -425,6 +433,7 @@ describe('IntegrityCheckSection in plain words (#6488)', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('integrity.rebuildFailed'))
     })
+    expect(vi.mocked(invalidateDerivedCaches)).not.toHaveBeenCalled()
     expect(screen.getByTestId('integrity-group-rebuildable')).toBeInTheDocument()
     expect(screen.getByTestId('integrity-rebuild-button')).toBeEnabled()
   })

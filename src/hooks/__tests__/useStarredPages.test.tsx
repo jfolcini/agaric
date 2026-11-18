@@ -227,6 +227,32 @@ describe('useStarredPages', () => {
     await waitFor(() => expect(result.current.isStarred(QN)).toBe(true))
   })
 
+  it('a re-read that lands before the write commits does not undo the toggle', async () => {
+    const { result } = renderHook(() => useStarredPages())
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    let commit = (): void => {}
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: InvokeArgs) =>
+      cmd === 'set_property'
+        ? new Promise((resolve) => {
+            commit = () => resolve(dispatch(cmd, args))
+          })
+        : Promise.resolve(dispatch(cmd, args)),
+    )
+
+    act(() => result.current.toggle(QN))
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(true))
+    // Another write's names event, read before this one has committed.
+    act(() => invalidateNameCaches())
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(false))
+    await waitFor(() =>
+      expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'set_property')).toBe(true),
+    )
+
+    act(() => commit())
+
+    await waitFor(() => expect(result.current.isStarred(QN)).toBe(true))
+  })
+
   it('a failed write puts back what the backend holds', async () => {
     const { result } = renderHook(() => useStarredPages())
     await waitFor(() => expect(result.current.loaded).toBe(true))

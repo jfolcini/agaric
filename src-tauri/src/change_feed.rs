@@ -10,11 +10,23 @@
 //! [`ChangeFeed::take_if_quiet`](crate::materializer::ChangeFeed::take_if_quiet).
 
 use agaric_core::ulid::BlockId;
-use agaric_sync::sync_events::BlocksChangedEvent;
+use agaric_sync::sync_events::{BlocksChangedEvent, EVENT_BLOCKS_CHANGED};
 use agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids;
 use sqlx::SqlitePool;
 
 use crate::materializer::{Materializer, PendingChanges};
+
+/// [`run`] on the app's runtime, emitting each event to `app`'s listeners.
+pub fn spawn<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    pool: SqlitePool,
+    materializer: Materializer,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let app = app.clone();
+    tauri::async_runtime::spawn(run(pool, materializer, move |event| {
+        crate::main_thread::emit(&app, EVENT_BLOCKS_CHANGED, event);
+    }))
+}
 
 /// Hand `emit` one event per burst of local commits, for the life of the app.
 pub async fn run(

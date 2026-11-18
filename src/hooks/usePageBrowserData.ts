@@ -87,10 +87,11 @@ function isInvalidFilterError(err: unknown): err is TypedAppError {
 const PAGE_BROWSER_QUERY_ROOT = 'pageBrowserData'
 
 /**
- * Mark the Pages list stale: after any local write (`watchLocalWrites`, #5446)
- * or an out-of-band one (a synced peer or an MCP agent, #5258). A mounted list
- * refetches now, an unmounted one on its next mount; TanStack refetches every
- * loaded page in order from page 1, recomputing each cursor from the fresh rows.
+ * Mark the Pages list stale: after any local write (the change feed's
+ * `blocks:changed`, #6545) or an out-of-band one (a synced peer or an MCP
+ * agent, #5258). A mounted list refetches now, an unmounted one on its next
+ * mount; TanStack refetches every loaded page in order from page 1,
+ * recomputing each cursor from the fresh rows.
  */
 export function invalidatePageBrowserData(): void {
   void queryClient.invalidateQueries({ queryKey: [PAGE_BROWSER_QUERY_ROOT] })

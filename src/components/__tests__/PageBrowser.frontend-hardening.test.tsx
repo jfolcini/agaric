@@ -205,9 +205,9 @@ describe('PageBrowser', () => {
     // ── D10 — a created page reaches the list only through the server ───
     //
     // #5637 — the New page dialog creates the page; the list is not patched
-    // locally. Every local write marks it stale (`watchLocalWrites` →
-    // `invalidatePageBrowserData`, wired in `main.tsx`, called by hand here),
-    // and the refetch shows the page only where the server's filtered answer
+    // locally. The change feed's event after the write marks it stale
+    // (`useSyncEvents` → `invalidatePageBrowserData`, called by hand here), and
+    // the refetch shows the page only where the server's filtered answer
     // includes it.
     it.each([
       ['with a Stub chip active, the unmatched new page stays out', true],

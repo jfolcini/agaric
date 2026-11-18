@@ -31,7 +31,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { isReadOnlyCommand } from '@/lib/local-write-watch'
+import { isReadOnlyCommand } from '@/lib/tauri-mock/change-feed'
 
 // ---------------------------------------------------------------------------
 // Command extraction (mirrors handlers-drift.test.ts)
@@ -134,8 +134,8 @@ function takesWriteHandle(signature: string): boolean {
 
 /*
  * A command is READ-ONLY (has no backend-observable persistent effect) when its
- * name begins with a query verb (`isReadOnlyCommand`, shared with the Pages
- * list's local-write watch). Everything NOT matched there is a
+ * name begins with a query verb (`isReadOnlyCommand`, shared with the mock's
+ * change feed). Everything NOT matched there is a
  * MUTATING candidate and must be covered by a fixture or allowlisted below —
  * so a new command with a mutating-shaped name is caught automatically.
  *

@@ -11,12 +11,14 @@
  *
  * `rebuild` runs `rebuild_derived_state` (#6488): it rewrites every derived
  * cache from the notes and returns the report that leaves, which replaces the
- * one on screen.
+ * one on screen. It appends no op, so the change feed sends no event for it
+ * (#6545): every view's cache is dropped here.
  */
 
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { unwrap } from '@/lib/app-error'
 import type { ReconciliationReport } from '@/lib/bindings'
@@ -62,6 +64,7 @@ export function useReconciliationReport(module: string): UseReconciliationReport
     module,
     errorLogMessage: 'integrity rebuild failed',
     onSuccess: (next) => {
+      invalidateDerivedCaches()
       setReport(next)
       notify.success(t('integrity.rebuilt'))
     },

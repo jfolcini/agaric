@@ -10,9 +10,9 @@
  * anything else is not) and `createPage` returns `null`, so the caller can
  * keep its form open.
  *
- * The Pages list is not patched here: every local write marks it stale
- * (`watchLocalWrites` → `invalidatePageBrowserData`), and the caller opens the
- * new page, which unmounts the list anyway.
+ * The Pages list is not patched here: the change feed's event after every
+ * local write marks it stale (`useSyncEvents` → `invalidateDomains`), and the
+ * caller opens the new page, which unmounts the list anyway.
  */
 
 import { useCallback, useRef, useState } from 'react'
