@@ -30,7 +30,6 @@ import {
 } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { unwrap } from '@/lib/app-error'
-import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
 import { MAX_ATTACHMENT_BYTES, blobToBase64 } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
@@ -145,7 +144,6 @@ function VoiceNoteRecorder({
           await blobToBase64(recording.blob),
         ),
       )
-      recordAttachmentInvalidation()
       notify.success(t('voiceNote.saved'))
       onClose()
     } catch (err) {

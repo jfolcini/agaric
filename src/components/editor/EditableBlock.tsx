@@ -24,7 +24,6 @@ import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollIntoViewOnFocus } from '@/hooks/useScrollIntoViewOnFocus'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { commands } from '@/lib/bindings'
 import { blobToBase64, extractFileInfo, isAttachmentAllowed } from '@/lib/file-utils'
@@ -240,7 +239,6 @@ export async function processFileAttachments(
           await blobToBase64(file),
         ),
       )
-      recordAttachmentInvalidation()
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
       // #1434 — an image becomes an INLINE image node referencing the attachment
       // by id, but only while THIS block's editor is the mounted one (so the

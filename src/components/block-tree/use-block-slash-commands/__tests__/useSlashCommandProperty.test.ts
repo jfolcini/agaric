@@ -17,7 +17,6 @@ import {
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
-import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
@@ -593,7 +592,7 @@ describe('useSlashCommandProperty — attach', () => {
     }
   }
 
-  it('ships file bytes via add_attachment_with_bytes and invalidates the attachment lists (#5282)', async () => {
+  it('ships file bytes via add_attachment_with_bytes (#5282)', async () => {
     stubPropertySlashInvoke({
       // `created_at` is epoch-ms (attachments.created_at is INTEGER since
       // migration 0081), not the ISO string the old literal carried.
@@ -607,7 +606,6 @@ describe('useSlashCommandProperty — attach', () => {
         created_at: 1_735_689_600_000,
       }),
     })
-    const before = getAttachmentInvalidationKey()
 
     await attach(new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' }))
 
@@ -622,7 +620,6 @@ describe('useSlashCommandProperty — attach', () => {
       mimeType: 'image/png',
       bytes: 'AQIDBA==',
     })
-    expect(getAttachmentInvalidationKey()).toBe(before + 1)
   })
 
   it('a failed attach toasts the failure', async () => {
