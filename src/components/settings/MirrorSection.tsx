@@ -27,9 +27,10 @@
  * and in the question a button moves focus to the switch, which sits in this
  * card, for a workflow such as renaming well-linked notes that wants it off.
  *
- * A tick that reads a file back emits `mirror:ingested`; the card reads its
- * status again then. A tick that only writes, or holds reading back, emits
- * nothing, so those show the next time the card mounts.
+ * A tick that reads a file back emits `mirror:ingested`, and one that starts
+ * or ends a hold `mirror:held`; the card reads its status again on either. A
+ * tick that only writes emits nothing, so that shows the next time the card
+ * mounts.
  *
  * Where the backend cannot mirror (`supported: false`, the mobile builds) the
  * card says so and offers no folder picker, which would only fail there.
@@ -51,7 +52,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
+import { MIRROR_HELD_EVENT, MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
 import { commands, type MirrorPendingKind, type MirrorStatus } from '@/lib/bindings'
@@ -113,13 +114,12 @@ export function MirrorSection(): React.ReactElement | null {
       })
   }, [])
 
-  useTauriEventListener(
-    MIRROR_INGESTED_EVENT,
-    () => {
-      void load()
-    },
-    { enabled: typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window },
-  )
+  const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  const reload = () => {
+    void load()
+  }
+  useTauriEventListener(MIRROR_INGESTED_EVENT, reload, { enabled: inTauri })
+  useTauriEventListener(MIRROR_HELD_EVENT, reload, { enabled: inTauri })
 
   const run = useCallback(
     async (action: Action) => {

@@ -70,17 +70,22 @@ pub struct Ingest {
     pub pool: SqlitePool,
     pub materializer: Materializer,
     pub notify: Arc<dyn Fn(MirrorIngested) + Send + Sync>,
+    /// Told the space folders that hold reading back, each time they change
+    /// ([`super::MirrorState::hold_mass_change`]); none once the hold ends.
+    pub notify_held: Arc<dyn Fn(Vec<String>) + Send + Sync>,
 }
 
 impl Ingest {
     /// The app's: each ingest is sent to the webview as
-    /// [`EVENT_MIRROR_INGESTED`], and its page as changed.
+    /// [`EVENT_MIRROR_INGESTED`], and its page as changed; the folders that
+    /// hold reading back as [`super::EVENT_MIRROR_HELD`].
     pub fn for_app<R: tauri::Runtime>(
         handle: tauri::AppHandle<R>,
         pool: SqlitePool,
         materializer: Materializer,
     ) -> Self {
         use crate::mcp::view_notify::{TauriViewChangeEmitter, ViewChangeEmitter};
+        let held = handle.clone();
         let notify = move |event: MirrorIngested| {
             let page_id = event.page_id.clone();
             crate::main_thread::emit(&handle, EVENT_MIRROR_INGESTED, event);
@@ -90,6 +95,9 @@ impl Ingest {
             pool,
             materializer,
             notify: Arc::new(notify),
+            notify_held: Arc::new(move |folders: Vec<String>| {
+                crate::main_thread::emit(&held, super::EVENT_MIRROR_HELD, folders);
+            }),
         }
     }
 }

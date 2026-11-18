@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { MirrorSection } from '@/components/settings/MirrorSection'
-import { MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
+import { MIRROR_HELD_EVENT, MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
 import type { AppError, MirrorPendingKind, MirrorStatus } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
@@ -843,6 +843,23 @@ describe('MirrorSection', () => {
       await screen.findByText(
         t('data.mirrorFailedItem', { path: 'Personal/New.md', message: 'not UTF-8' }),
       ),
+    ).toBeInTheDocument()
+  })
+
+  // #6964 — a hold a tick starts shows without reopening Settings.
+  it('reads its status again when a tick holds reading back', async () => {
+    folder = PICKED
+    await renderLoaded()
+    expect(screen.queryByRole('button', { name: t('data.mirrorMassChangeShowSetting') })).toBeNull()
+    held = ['Personal']
+    pendingFiles = ['Personal/A.md']
+    extra = { failed: [{ page_id: '', path: 'Personal', message: HOLD_REASON }] }
+
+    await waitFor(() => expect(eventListeners.has(MIRROR_HELD_EVENT)).toBe(true))
+    eventListeners.get(MIRROR_HELD_EVENT)?.({ payload: ['Personal'] })
+
+    expect(
+      await screen.findByRole('button', { name: t('data.mirrorMassChangeShowSetting') }),
     ).toBeInTheDocument()
   })
 

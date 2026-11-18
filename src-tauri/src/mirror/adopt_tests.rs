@@ -111,6 +111,7 @@ impl Fx {
             pool: self.pool.clone(),
             materializer: self.mat.clone(),
             notify: Arc::new(|_| {}),
+            notify_held: Arc::new(|_| {}),
         };
         Mirror::open(self.pool.clone(), DEV.to_owned(), self.state.clone())
             .await

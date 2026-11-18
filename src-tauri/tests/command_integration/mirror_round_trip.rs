@@ -166,6 +166,7 @@ async fn round_trip(specs: Vec<Spec>, encoding: (bool, bool)) -> Result<(), Test
         pool: pool.clone(),
         materializer: mat.clone(),
         notify: Arc::new(move |event| seen.lock().unwrap().push(event)),
+        notify_held: Arc::new(|_| {}),
     };
     let mut mirror = Mirror::open(pool.clone(), DEV.to_owned(), state.clone())
         .await

@@ -522,6 +522,8 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeTurnOff':
     'Si vous modifiez volontairement de nombreux fichiers d’un coup, par exemple en renommant une note vers laquelle beaucoup d’autres pointent, vous pouvez empêcher Agaric de demander.',
   'data.mirrorMassChangeShowSetting': 'Afficher le réglage',
+  'data.mirrorHeld':
+    'De nombreux fichiers de {{spaces}} ont changé ou disparu d’un coup hors d’Agaric\u00A0: rien n’est réintégré tant que vous ne les avez pas examinés',
   'data.mirrorReadPendingTitle': 'Réintégrer ce qui a changé\u00A0?',
   'data.mirrorReadPendingDesc_one':
     'Ce fichier a été modifié hors d’Agaric et n’a pas encore été réintégré. Activer la réintégration le réintègre.',

@@ -984,6 +984,13 @@ export const common: Record<string, string> = {
     'If you change many files at once on purpose, such as renaming a note that many others link to, you can stop Agaric asking.',
   'data.mirrorMassChangeShowSetting': 'Show the setting',
 
+  // Translators: Markdown mirror: toast when Agaric stopped reading back because many files of one
+  // or more spaces changed or vanished outside Agaric at once; {{spaces}} = the spaces' folder
+  // names joined as a list ("Work and Home"). It stays until closed; its button opens
+  // Settings › Data, where the files are listed.
+  'data.mirrorHeld':
+    'Many files in {{spaces}} changed or vanished outside Agaric at once, so nothing is read back until you review them',
+
   // Translators: ConfirmDialog when "Read changes back" is turned on, or a folder is chosen, while
   // files there changed outside Agaric; {{count}} = number of files; its two buttons. The files are
   // listed under three headings by what reading them in does: edited files, files that are new

@@ -12,6 +12,11 @@
  * restored, and keeps the notice up until closed: the folder changes while the
  * user works in another app. Its Undo sits on that page's own stack, which a
  * trashed page no longer shows.
+ *
+ * A mirror that stops reading back because many files of a space changed at
+ * once says so too (#6964), naming the spaces, in a notice that stays until
+ * closed and opens Settings › Data, where the files wait to be read in; it
+ * closes once the hold ends, however it ended.
  */
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +30,9 @@ import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 
 /** Emitted by `mirror::ingest` once an ingest's save has committed. */
 export const MIRROR_INGESTED_EVENT = 'mirror:ingested'
+
+/** Emitted by `mirror::Mirror::tick` when the space folders holding reading back change. */
+export const MIRROR_HELD_EVENT = 'mirror:held'
 
 /** `mirror::ingest::IngestKind`: what the change in the folder did to its page. */
 export type MirrorIngestKind = 'edited' | 'created' | 'renamed' | 'trashed'
@@ -41,6 +49,7 @@ type FolderChange = Exclude<MirrorIngestKind, 'edited'>
 
 const MIRROR_WARNINGS_TOAST_ID = 'mirror-ingest-warnings'
 const MIRROR_READ_BACK_TOAST_ID = 'mirror-read-back'
+const MIRROR_HELD_TOAST_ID = 'mirror-held'
 
 const NAMED_KEY = {
   trashed: 'data.mirrorReadBackTrashed',
@@ -97,6 +106,30 @@ export function useMirrorIngestEvents(): void {
       notify.info(message, opts)
     }
   }
+
+  useTauriEventListener<string[]>(MIRROR_HELD_EVENT, ({ payload: folders }) => {
+    if (folders.length === 0) {
+      notify.dismiss(MIRROR_HELD_TOAST_ID)
+      return
+    }
+    notify.warning(
+      t('data.mirrorHeld', {
+        spaces: new Intl.ListFormat(i18n.language, { type: 'conjunction' }).format(folders),
+      }),
+      {
+        id: MIRROR_HELD_TOAST_ID,
+        duration: Number.POSITIVE_INFINITY,
+        action: {
+          label: t('action.review'),
+          onClick: () => {
+            const navigation = useNavigationStore.getState()
+            navigation.setPendingSettingsTab('data')
+            navigation.setView('settings')
+          },
+        },
+      },
+    )
+  })
 
   useTauriEventListener<MirrorIngested>(MIRROR_INGESTED_EVENT, ({ payload }) => {
     const { kind, page_id, path, op_refs, report } = payload

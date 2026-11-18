@@ -76,6 +76,11 @@ const BEHIND: &str = "the vault is older than the folder, as after a restore fro
                       new start; choose the folder again to write this vault's pages there, which \
                       removes no file and writes over none, or choose another folder";
 
+/// The event a tick emits when the space folders that hold reading back
+/// change ([`MirrorState::hold_mass_change`]): the folders, none once the hold
+/// ends, so the app can say so while its settings are closed.
+pub const EVENT_MIRROR_HELD: &str = "mirror:held";
+
 /// A page's file, by its path below the mirror's folder, `/`-separated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 pub struct MirrorFile {
@@ -314,6 +319,12 @@ impl MirrorState {
     /// ([`MirrorState::hold_mass_change`]).
     pub fn read_back_held(&self) -> bool {
         !self.lock().held.is_empty()
+    }
+
+    /// The space folders that hold reading back
+    /// ([`MirrorState::hold_mass_change`]).
+    fn held_folders(&self) -> Vec<String> {
+        self.lock().held.keys().cloned().collect()
     }
 
     /// The status, for `settings`, with `pending` from [`read_back::pending`].
@@ -642,6 +653,8 @@ pub struct Mirror {
     adoption: Option<store::Adoption>,
     /// What the mirror learned of the folder it writes, forgotten for another.
     seen: Seen,
+    /// The held space folders [`Ingest::notify_held`] was last told.
+    told_held: Vec<String>,
     #[cfg(test)]
     races: Races,
 }
@@ -809,6 +822,7 @@ impl Mirror {
             copy_failed: BTreeMap::new(),
             unmirrored: HashSet::new(),
             adoption: None,
+            told_held: Vec::new(),
             #[cfg(test)]
             races: Races::default(),
         })
@@ -1034,7 +1048,12 @@ impl Mirror {
     }
 
     /// Write what changed since the last tick, or every page when a full pass
-    /// is due; nothing while the mirror is off or paused.
+    /// is due; nothing while the mirror is off or paused. Before and after,
+    /// tell the app when the folders holding reading back changed, by the
+    /// user since the last tick or by this one, so a hold is said as it
+    /// starts and its end too, however it ended, but not each tick it lasts;
+    /// one the user ended is said ended even when this tick holds the same
+    /// folders again.
     ///
     /// # Errors
     ///
@@ -1042,6 +1061,25 @@ impl Mirror {
     /// makes the next tick a full pass. A page that cannot be written is
     /// listed as failed instead.
     pub async fn tick(&mut self) -> Result<(), AppError> {
+        self.tell_held();
+        let ticked = self.tick_pass().await;
+        self.tell_held();
+        ticked
+    }
+
+    /// Send the folders holding reading back ([`Ingest::notify_held`]) when
+    /// they are not the ones last sent.
+    fn tell_held(&mut self) {
+        let held = self.state.held_folders();
+        if held != self.told_held
+            && let Some(ingest) = &self.ingest
+        {
+            (ingest.notify_held)(held.clone());
+            self.told_held = held;
+        }
+    }
+
+    async fn tick_pass(&mut self) -> Result<(), AppError> {
         // Off or paused, the watermark stays put: the pass that resumes is a
         // full one.
         let mut settings = store::settings(&self.pool).await?;

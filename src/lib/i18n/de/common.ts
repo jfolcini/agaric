@@ -518,6 +518,8 @@ export const common: Record<string, string> = {
   'data.mirrorMassChangeTurnOff':
     'Wenn du absichtlich viele Dateien auf einmal änderst, zum Beispiel beim Umbenennen einer Notiz, auf die viele andere verlinken, kannst du das Fragen abschalten.',
   'data.mirrorMassChangeShowSetting': 'Einstellung anzeigen',
+  'data.mirrorHeld':
+    'Viele Dateien in {{spaces}} wurden außerhalb von Agaric auf einmal geändert oder sind verschwunden, deshalb wird nichts zurückgelesen, bis du sie geprüft hast',
   'data.mirrorReadPendingTitle': 'Geänderte Dateien einlesen?',
   'data.mirrorReadPendingDesc_one':
     'Diese Datei wurde außerhalb von Agaric geändert und noch nicht eingelesen. Wird das Zurücklesen eingeschaltet, wird sie eingelesen.',

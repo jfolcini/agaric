@@ -26,13 +26,16 @@ import {
  * reading back on in Settings › Data asks first, listing that file, and only "Read them in" reads
  * it. A checkout that rewrites every file while it is off changes no page, and a folder chosen
  * again after Turn off, with reading back asked for, reads in nothing changed there meanwhile
- * until asked. The mock has no mirror task, so the tests are `@real-only`.
+ * until asked. More files of one space deleted at once than the mirror reads in unasked hold
+ * reading back, and a notice says so and opens Settings › Data (#6964). The mock has no mirror
+ * task, so the tests are `@real-only`.
  */
 
 interface MirrorStatus {
   read_back: boolean
   pending: Array<{ path: string; kind: 'edited' | 'new' | 'gone' }>
   diverged: Array<{ path: string }>
+  held: string[]
 }
 
 const TITLE = 'Read back page'
@@ -210,6 +213,47 @@ test.describe('Markdown mirror, reading changes back (#5363) @markdown @settings
       expect(await contentOf(page, blockId)).toBe(LINE)
       expect((await status(page)).pending.some((p) => p.path.endsWith(`${TITLE}.md`))).toBe(true)
       await expect(await readBackSwitch(page)).not.toBeChecked()
+    },
+  )
+
+  test(
+    'says a mass change holds reading back, in a notice that opens Settings › Data',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      await startMirror(page, folder, true)
+      // One more file of one space's folder than `read_back::MASS_CHANGE`.
+      const titles = [1, 2, 3, 4, 5, 6].map((n) => `Held page ${n}`)
+      for (const title of titles) {
+        await ipc(page, 'create_page_in_space', {
+          parentId: null,
+          content: title,
+          spaceId: SEED_IDS.SPACE_PERSONAL,
+        })
+      }
+      for (const title of titles) {
+        await expect.poll(() => mirrorFile(folder, title), { timeout: 30_000 }).toBeDefined()
+      }
+      for (const title of titles) rmSync(mirrorFile(folder, title) ?? '')
+
+      const toast = page
+        .locator('[data-sonner-toast]')
+        .filter({ hasText: 'changed or vanished outside Agaric at once' })
+      await toast.getByRole('button', { name: 'Review', exact: true }).click({ timeout: 30_000 })
+      await expect(page.getByTestId('settings-panel-data')).toBeVisible()
+      await expect(page.getByRole('switch', { name: 'Read changes back' })).not.toBeChecked()
+      const held = await status(page)
+      expect({ readBack: held.read_back, held: held.held.length }).toEqual({
+        readBack: false,
+        held: 1,
+      })
+
+      // Away and back, reading back is still off, and every page is still live.
+      await expect(await readBackSwitch(page)).not.toBeChecked()
+      const live = await ipc<Array<{ content: string }>>(page, 'list_all_pages_in_space', {
+        scope: PERSONAL,
+        tagIds: null,
+      })
+      expect(titles.filter((title) => live.some((p) => p.content === title))).toEqual(titles)
     },
   )
 })

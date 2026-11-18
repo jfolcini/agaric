@@ -20,9 +20,10 @@ vi.mock('@tauri-apps/api/event', () => ({
   ),
 }))
 
-vi.mock('@/lib/notify', () => ({ notify: { warning: vi.fn(), info: vi.fn() } }))
+vi.mock('@/lib/notify', () => ({ notify: { warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() } }))
 
 import {
+  MIRROR_HELD_EVENT,
   MIRROR_INGESTED_EVENT,
   type MirrorIngested,
   useMirrorIngestEvents,
@@ -61,10 +62,16 @@ function fromFolder(kind: MirrorIngested['kind'], page_id: string, path: string)
   return fire({ kind, page_id, path, op_refs: [REF], report: { ...report(), edited: 0 } })
 }
 
+/** The mirror's held space folders as a tick tells them; none once the hold ends. */
+async function held(folders: string[]) {
+  await waitFor(() => expect(eventListeners.has(MIRROR_HELD_EVENT)).toBe(true))
+  eventListeners.get(MIRROR_HELD_EVENT)?.({ payload: folders })
+}
+
 afterEach(() => {
   eventListeners.clear()
   useUndoStore.setState({ pages: new Map() })
-  useNavigationStore.setState({ currentView: 'journal' })
+  useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
   vi.clearAllMocks()
 })
 
@@ -229,5 +236,40 @@ describe('useMirrorIngestEvents', () => {
     expect(vi.mocked(notify.warning).mock.lastCall?.[0]).toBe(
       t('data.mirrorReadBackTrashed', { path: 'S/B.md' }),
     )
+  })
+
+  // #6964 — a hold is said while Settings is closed, in one notice that stays.
+  it('says a hold in one notice that stays and opens Settings › Data', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await held(['Work'])
+    // A second space held while the first still is updates the same notice.
+    await held(['Home', 'Work'])
+
+    const notice = {
+      id: 'mirror-held',
+      duration: Number.POSITIVE_INFINITY,
+      action: { label: t('action.review'), onClick: expect.any(Function) },
+    }
+    expect(vi.mocked(notify.warning).mock.calls).toEqual([
+      [t('data.mirrorHeld', { spaces: 'Work' }), notice],
+      [t('data.mirrorHeld', { spaces: 'Home and Work' }), notice],
+    ])
+    expect(t('data.mirrorHeld', { spaces: 'Work' })).toContain('Work')
+    const opts = vi.mocked(notify.warning).mock.lastCall?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+    opts.action.onClick()
+    expect(useNavigationStore.getState().currentView).toBe('settings')
+    expect(useNavigationStore.getState().pendingSettingsTab).toBe('data')
+    expect(notify.dismiss).not.toHaveBeenCalled()
+  })
+
+  it('closes the notice once the hold ends, however it ended', async () => {
+    renderHook(() => useMirrorIngestEvents())
+    await held(['Work'])
+    await held([])
+
+    expect(notify.warning).toHaveBeenCalledTimes(1)
+    expect(notify.dismiss).toHaveBeenCalledExactlyOnceWith('mirror-held')
   })
 })

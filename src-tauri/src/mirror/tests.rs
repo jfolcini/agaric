@@ -1344,6 +1344,7 @@ async fn a_folder_chosen_again_for_a_restored_vault_reads_in_nothing_unasked() {
         pool: fx.pool.clone(),
         materializer: fx.mat.clone(),
         notify: Arc::new(|_| {}),
+        notify_held: Arc::new(|_| {}),
     };
     fx.mirror = Mirror::open(fx.pool.clone(), DEV.to_owned(), fx.state.clone())
         .await
@@ -1533,6 +1534,7 @@ impl Fx {
             pool: self.pool.clone(),
             materializer: self.mat.clone(),
             notify: std::sync::Arc::new(|_| {}),
+            notify_held: std::sync::Arc::new(|_| {}),
         };
         self.mirror = Mirror::open(self.pool.clone(), DEV.to_owned(), self.state.clone())
             .await
