@@ -158,9 +158,10 @@ test.describe('Agenda filter builder narrows the rendered list (#5366) @journal 
 
 /**
  * A date preset and a property filter AND with the default TODO + DOING
- * status filter, and removing them returns the default list (#5735). The clock
- * is pinned to a Wednesday so "This week" holds yesterday, today and tomorrow
- * whichever day the week starts on, and never the task due a week out.
+ * status filter, and removing them returns the default list (#5735). "Next 7
+ * days" holds the seed's tasks due today and tomorrow, and neither yesterday's
+ * nor the one due a week out, on whatever day the run lands; the real backend
+ * stamps its seed by its own clock, which `page.clock` does not move.
  *
  * `context = @office` goes on one task due next week, so neither filter alone
  * yields the combined result.
@@ -181,10 +182,9 @@ test.describe('Agenda date preset and property filter (#5735) @journal @search',
     'Submit report',
   ]
 
-  test('Due this week and a property narrow the default list, and removing them restores it', async ({
+  test('Due in the next 7 days and a property narrow the default list, and removing them restores it', async ({
     page,
   }) => {
-    await page.clock.setFixedTime(new Date('2026-10-14T10:00:00'))
     await waitForBoot(page)
     for (const blockId of OFFICE_TASKS) {
       await ipc(page, 'set_property', { blockId, key: 'context', value: { value_text: '@office' } })
@@ -192,13 +192,12 @@ test.describe('Agenda date preset and property filter (#5735) @journal @search',
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expectListed(page, DEFAULT_LIST)
 
-    await addFilter(page, 'Due date', check('This week'))
+    await addFilter(page, 'Due date', check('Next 7 days'))
     await expectListed(page, [
       'Buy groceries',
       'Review pull requests',
       'Ship v2.0 release',
       'Fix login bug',
-      'Submit report',
     ])
 
     await addFilter(page, 'Property', async (popover) => {

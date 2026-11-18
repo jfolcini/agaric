@@ -8,7 +8,8 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * `autoCreateFirstBlock`). Once the caret has left it, the blur cleanup keeps
  * it, because it is the day's only block; a second empty block from "Add
  * block" then stranded it above the one the user types into, and no later
- * focus change ever revisits it.
+ * focus change ever revisits it. Leaving the journal and coming back reads what
+ * the backend kept.
  */
 test('Add block focuses the empty seed block of a fresh day @editor @journal', async ({ page }) => {
   await waitForBoot(page)
@@ -29,4 +30,16 @@ test('Add block focuses the empty seed block of a fresh day @editor @journal', a
   await page.getByRole('button', { name: 'Add block', exact: true }).click()
   await expect(editor).toHaveAttribute('data-block-id', seedId as string)
   await expect(rows).toHaveCount(1)
+
+  // What the backend kept: the typed text on the seed, and no empty block left over.
+  await page.keyboard.type('typed into the seed')
+  await page.keyboard.press('Escape')
+  await navigateToView(page, 'Pages')
+  await navigateToView(page, 'Journal')
+  await expect(rows).toHaveCount(1)
+  await expect(page.locator('[data-testid="block-static"]')).toHaveAttribute(
+    'data-block-id',
+    seedId as string,
+  )
+  await expect(page.locator('[data-testid="block-static"]')).toHaveText('typed into the seed')
 })
