@@ -383,7 +383,8 @@ pub fn bridge_path(app_exe: &Path) -> PathBuf {
 
 /// The program and leading arguments an agent config runs to start the
 /// bridge: the AppImage's copy of it at `stable_copy`, which outlives the
-/// AppImage file (#6980); else the AppImage file at `appimage` (its
+/// AppImage file (#6980), once one exists (a failed refresh leaves the
+/// previous copy named); else the AppImage file at `appimage` (its
 /// `$APPIMAGE`) with [`BRIDGE_ARG`], since the path inside its mount does not
 /// outlive the run; else the bridge beside the app.
 pub fn bridge_invocation(

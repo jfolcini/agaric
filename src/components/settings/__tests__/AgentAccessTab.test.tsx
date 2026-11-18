@@ -241,7 +241,7 @@ describe('AgentAccessTab — older agaric-mcp on the PATH', () => {
     setupInvoke(makeStatus({ enabled: false, foreign_path_bridge: FOREIGN }))
     const { container } = render(<AgentAccessTab />)
 
-    const notice = await screen.findByText(/An older agaric-mcp is on your PATH at/)
+    const notice = await screen.findByText(/Another agaric-mcp is on your PATH at/)
     expect(notice).toHaveTextContent(FOREIGN)
     await waitFor(
       async () => {
@@ -257,7 +257,7 @@ describe('AgentAccessTab — older agaric-mcp on the PATH', () => {
     render(<AgentAccessTab />)
 
     await screen.findByRole('switch', { name: TOGGLE })
-    expect(screen.queryByText(/An older agaric-mcp/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Another agaric-mcp/)).not.toBeInTheDocument()
   })
 })
 

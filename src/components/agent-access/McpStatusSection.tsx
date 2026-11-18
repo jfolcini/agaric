@@ -4,7 +4,7 @@
  *
  * Everything below the switch renders only while it is on: a socket path
  * and a connection count describe a server that is not running when it is
- * off. The notice about an older `agaric-mcp` on the PATH renders either way,
+ * off. The notice about another `agaric-mcp` on the PATH renders either way,
  * since scripts run it whether or not agents may connect (#6980). Which agent may do what is the agents card's business (#5667).
  *
  * Toggling and disconnect IPC calls are owned by the parent — this
