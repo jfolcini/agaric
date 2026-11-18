@@ -2,9 +2,9 @@
  * useSyncEvents — listens to Tauri sync events and updates the sync store.
  *
  * Handles two event types from the Rust backend:
- * - sync:complete — resets to idle, shows toast, reloads blocks if data changed
- * - sync:error — sets error state, shows error toast; a user cancel resets to idle,
- *   and an away peer sets the neutral waiting state
+ * - sync:complete — resets to idle and reloads blocks if data changed
+ * - sync:error — sets error state; a user cancel resets to idle, and an away
+ *   peer sets the neutral waiting state
  *
  * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
  * By Phase 2 — `useSyncTrigger` now consumes the Channel<T>
@@ -48,6 +48,14 @@ import { useUndoStore } from '@/stores/undo'
 // `BlocksChangedEvent`, `sync_events.rs`), where each field is documented.
 type SyncComplete = Extract<SyncEvent_Serialize, { type: 'complete' }>
 type SyncError = Extract<SyncEvent_Serialize, { type: 'error' }>
+
+/**
+ * Peers whose sync the user pressed and is waiting on: `useSyncTrigger` holds a
+ * peer here for the length of its pressed session. Only a press is answered
+ * with a toast; background sync's outcome is the Sync button's dot, icon and
+ * description (#6870).
+ */
+export const pressedSyncPeers = new Set<string>()
 
 /** i18n keys for a coded failure's sentence: with the peer's name, and without. */
 function codedSyncErrorKeys(payload: SyncError): [named: string, unnamed: string] | null {
@@ -209,26 +217,16 @@ export function useSyncEvents(): void {
         store.setOpsSent(ops_sent)
         store.updateLastSynced(new Date().toISOString())
 
-        // #4305 — a converged sync that moved nothing says nothing and reloads
-        // nothing. `changed_blocks === 0` is the backend stating exactly that;
+        // #4305 — a converged sync that moved nothing reloads nothing.
+        // `changed_blocks === 0` is the backend stating exactly that;
         // `ops_received > 0` (the old gate) is true on every tick of a
         // perfectly healthy pair, because it counts one message per space.
         //
-        // The pre-#4305 gate cost more than a toast: an empty `changed_page_ids`
+        // The pre-#4305 gate reloaded on it: an empty `changed_page_ids`
         // fell through to `reloadChangedPageStores`'s FULL-reload branch, so an
         // idle pair reloaded every mounted page store and re-ran the resolve
         // preload once a minute, forever, for nothing.
         if (changed_blocks === 0) return
-
-        // Something changed. Count it if the backend could count it; say so
-        // without a number if it could not (whole-space snapshot catch-up).
-        if (typeof changed_blocks === 'number') {
-          notify.success(i18n.t('sync.changesApplied', { count: changed_blocks }))
-          announce(i18n.t('announce.syncChangesApplied', { count: changed_blocks }))
-        } else {
-          notify.success(i18n.t('sync.changesAppliedUnknownCount'))
-          announce(i18n.t('announce.syncChangesAppliedUnknownCount'))
-        }
 
         // #1071 — TARGETED invalidation via the shared `reloadChangedPageStores`
         // helper: when `changed_page_ids` is present and non-empty, reload
@@ -298,6 +296,8 @@ export function useSyncEvents(): void {
           logger.debug('useSyncEvents', 'suppressed a pairing-window rejection toast', { message })
           return
         }
+        // #6870 — a background session's failure is the Sync button's to show.
+        if (!pressedSyncPeers.has(event.payload.remote_device_id)) return
         // #6538 — Android does not update itself; a version mismatch there
         // is fixed by installing the newest APK, so the toast says where,
         // unless the other device is the one to update (#6523).

@@ -149,7 +149,7 @@ async function freezeAndDial(device: SyncPeer, deviceId: string) {
 
 /**
  * The device row of `deviceId` as one read: whether it shows a running session
- * (its progress or its Cancel), the sync state card's label, and the open toasts.
+ * (its progress or its Cancel), and the sync state card's label.
  */
 function readSyncSurface(deviceId: string) {
   return browser.execute(
@@ -161,9 +161,6 @@ function readSyncSurface(deviceId: string) {
         rowFound: row !== undefined,
         sessionShown: row?.querySelector('.device-peer-progress, .device-cancel-sync-btn') != null,
         state: document.querySelector('.sync-state-label')?.textContent ?? '',
-        toasts: [...document.querySelectorAll('[data-sonner-toast]')].map(
-          (toast) => toast.textContent ?? '',
-        ),
       }
     },
     deviceId.slice(0, 12),
@@ -856,7 +853,6 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
           })
         seen = await readSyncSurface(deviceId)
         expect(seen.state).toBe('Idle')
-        expect(seen.toasts.filter((toast) => toast.includes('Sync failed'))).toEqual([])
       } finally {
         peer.resume()
       }
