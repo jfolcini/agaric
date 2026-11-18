@@ -33,10 +33,9 @@
 # itself) therefore falls back to `cargo binstall`, then `cargo install
 # --locked`, before giving up.
 #
-# Every tool installs at an exact version and replaces a differing one already
-# on PATH (#3602, #3611): `pinned_version_for` holds the versions CI shares,
-# checked against the workflows by scripts/check-tool-pins.mjs. A tarball this
-# script downloads itself is checked against a sha256 recorded here (AGENTS.md
+# Every tool installs at the exact version in pins.txt, the same one CI reads,
+# and replaces a differing one already on PATH (#3602, #3611). A tarball this
+# script downloads itself is checked against its pins.txt sha256 (AGENTS.md
 # § Supply-chain pinning); binstall, `uv tool` and `cargo install` take no hash,
 # so for them the exact version is the pin.
 set -uo pipefail
@@ -48,6 +47,11 @@ note() { printf '  \033[36m%s\033[0m\n' "$*"; }
 warn() { printf '  \033[33m! %s\033[0m\n' "$*"; }
 
 OS="$(uname -s)"
+
+# Every version and download digest below comes from pins.txt through
+# scripts/pins.sh (AGENTS.md § Supply-chain pinning).
+pin() { bash "$(dirname "$0")/pins.sh" "$@"; }
+PLATFORM="$(pin platform 2>/dev/null || true)"
 
 # Cargo / local binaries land here; make sure they're visible to the rest of
 # the script (a fresh shell may not have sourced the cargo env yet).
@@ -95,21 +99,6 @@ pkg_install() {
   esac
 }
 
-# verify_sha256 <file> <expected-hex> — true iff <file>'s SHA-256 equals the
-# pinned digest. Uses sha256sum (Linux/coreutils) or `shasum -a 256` (macOS);
-# returns non-zero if neither tool exists, so the caller can fail closed.
-verify_sha256() {
-  local file="$1" want="$2" got=""
-  if have sha256sum; then
-    got="$(sha256sum "$file" | awk '{print $1}')"
-  elif have shasum; then
-    got="$(shasum -a 256 "$file" | awk '{print $1}')"
-  else
-    return 1
-  fi
-  [ "$got" = "$want" ]
-}
-
 # cargo-binstall pulls prebuilt release binaries (seconds, low disk) instead
 # of the multi-minute from-source `cargo install` compile. Install it from the
 # pinned upstream prebuilt release TARBALL — NOT by piping the upstream install
@@ -125,31 +114,14 @@ verify_sha256() {
 # the prebuilt speed matters); macOS / other arches fall back to the
 # equally-pinned `cargo install --locked` to keep the pinned-hash set small.
 #
-# To bump: set BINSTALL_VERSION to the new release tag and refresh the two
-# linux-musl digests with, for each <triple>:
-#   curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/v<ver>/cargo-binstall-<triple>.tgz | sha256sum
-BINSTALL_VERSION="1.20.1"
-BINSTALL_SHA256_X86_64="f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e"
-BINSTALL_SHA256_AARCH64="23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288"
+BINSTALL_VERSION="$(pin version cargo-binstall)"
 ensure_cargo_binstall() {
   if have cargo-binstall; then
     ok "cargo-binstall (already installed)"
     return
   fi
   note "installing cargo-binstall (prebuilt-binary fetcher)…"
-  local triple="" want=""
-  case "${OS}-$(uname -m)" in
-    Linux-x86_64)
-      triple="x86_64-unknown-linux-musl"
-      want="$BINSTALL_SHA256_X86_64"
-      ;;
-    Linux-aarch64 | Linux-arm64)
-      triple="aarch64-unknown-linux-musl"
-      want="$BINSTALL_SHA256_AARCH64"
-      ;;
-  esac
-  if [ -n "$triple" ]; then
-    local url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-${triple}.tgz"
+  if pin asset cargo-binstall "$PLATFORM" >/dev/null 2>&1; then
     local dest="$HOME/.cargo/bin" tmp
     tmp="$(mktemp -d)"
     # `set -u` does NOT fire on a failed `mktemp -d` (#3622): the command
@@ -169,12 +141,11 @@ ensure_cargo_binstall() {
       # Download the tarball, verify its pinned SHA-256, then extract the
       # single `cargo-binstall` binary and install it. No downloaded content
       # is ever handed to a shell interpreter.
-      if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/cb.tgz" \
-        && verify_sha256 "$tmp/cb.tgz" "$want" \
+      if pin fetch cargo-binstall "$PLATFORM" "$tmp/cb.tgz" \
         && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
         && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
         && have cargo-binstall; then
-        ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${triple})"
+        ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${PLATFORM})"
         rm -rf "$tmp"
         return
       fi
@@ -200,44 +171,17 @@ ensure_cargo_binstall() {
 # Tarball-and-digest, never upstream's install.sh: a downloaded file reaching
 # a shell is the download-then-run Scorecard flags (#215) whatever verifies it.
 #
-# To bump: set UV_VERSION and refresh the four digests from upstream's
-# `<tarball>.sha256` sidecars — recomputing them, since a truncated fetch
-# hashes as empty rather than failing.
-UV_VERSION="0.8.17"
-UV_SHA256_X86_64="4057052999a210fe78d93599d2165da9e24c8bbb23370cdd26b66a98ab479203"
-UV_SHA256_AARCH64="bd141b7e263935d14f5725f2a5c1c942fd89642e37683cb904f1984ce7e365f4"
-UV_SHA256_DARWIN_ARM64="e4d4859d7726298daa4c12e114f269ff282b2cfc2b415dc0b2ca44ae2dbd358e"
-UV_SHA256_DARWIN_X86_64="31ed353cfd8e6c962e7c60617bd8a9d6b97b704c1ecb5b5eceaff8c6121b54ac"
+UV_VERSION="$(pin version uv)"
 ensure_uv() {
   if have uv; then
     ok "uv (already installed)"
     return
   fi
-  local triple="" want=""
-  case "${OS}-$(uname -m)" in
-    Linux-x86_64)
-      triple="x86_64-unknown-linux-musl"
-      want="$UV_SHA256_X86_64"
-      ;;
-    Linux-aarch64 | Linux-arm64)
-      triple="aarch64-unknown-linux-musl"
-      want="$UV_SHA256_AARCH64"
-      ;;
-    Darwin-arm64)
-      triple="aarch64-apple-darwin"
-      want="$UV_SHA256_DARWIN_ARM64"
-      ;;
-    Darwin-x86_64)
-      triple="x86_64-apple-darwin"
-      want="$UV_SHA256_DARWIN_X86_64"
-      ;;
-  esac
-  if [ -z "$triple" ]; then
+  if ! pin asset uv "$PLATFORM" >/dev/null 2>&1; then
     warn "no pinned uv build for ${OS}-$(uname -m) — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
     return
   fi
   note "installing uv (zizmor's wheel installer)…"
-  local url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${triple}.tar.gz"
   local dest="$HOME/.local/bin" tmp
   tmp="$(mktemp -d)"
   # Same guard, same reasoning as ensure_cargo_binstall above (#3622).
@@ -248,13 +192,12 @@ ensure_uv() {
   mkdir -p "$dest"
   # Verify the pinned digest, then extract the two binaries. No downloaded
   # content is ever handed to a shell interpreter.
-  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/uv.tgz" \
-    && verify_sha256 "$tmp/uv.tgz" "$want" \
-    && tar -xzf "$tmp/uv.tgz" -C "$tmp" "uv-${triple}/uv" "uv-${triple}/uvx" \
-    && install -m 0755 "$tmp/uv-${triple}/uv" "$dest/uv" \
-    && install -m 0755 "$tmp/uv-${triple}/uvx" "$dest/uvx" \
+  if pin fetch uv "$PLATFORM" "$tmp/uv.tgz" \
+    && tar -xzf "$tmp/uv.tgz" -C "$tmp" --strip-components=1 \
+    && install -m 0755 "$tmp/uv" "$dest/uv" \
+    && install -m 0755 "$tmp/uvx" "$dest/uvx" \
     && have uv; then
-    ok "uv ${UV_VERSION} (prebuilt, ${triple})"
+    ok "uv ${UV_VERSION} (prebuilt, ${PLATFORM})"
   else
     warn "uv download/verify failed — zizmor may be MISSING; it now rests on binstall finding a prebuilt, since a source build hits the rust-toolchain.toml pin"
   fi
@@ -267,21 +210,7 @@ ensure_uv() {
 # runner (#3742): a newer CI prek enforced a YAML limit the local one did not.
 # The shellcheck and shfmt rows are not crates: `release_get_pinned` reads
 # them. A plain `case` so this stays bash-3.2/macOS compatible.
-pinned_version_for() {
-  case "$1" in
-    sqruff) echo "0.44.0" ;;
-    prek) echo "0.5.10" ;;
-    taplo-cli) echo "0.10.0" ;;
-    typos-cli) echo "1.52.0" ;;
-    shellcheck) echo "0.11.0" ;;
-    shfmt) echo "3.14.1" ;;
-    cargo-deny) echo "0.20.2" ;;
-    cargo-machete) echo "0.9.2" ;;
-    cargo-audit) echo "0.22.2" ;;
-    cargo-nextest) echo "0.9.151" ;;
-    *) echo "" ;;
-  esac
-}
+pinned_version_for() { pin version "$1" 2>/dev/null || echo ""; }
 
 # prebuilt_get <crate> <version> <binary> — fetch a prebuilt binary by its
 # release URL, for a box where binstall cannot: a cloud session's proxy 403s
@@ -299,16 +228,12 @@ prebuilt_get() {
   [ -n "$version" ] || return 1
   mkdir -p "$dest" || return 1
   if [ "$crate" = taplo-cli ]; then
-    local sha
-    case "$version-$arch" in
-      0.10.0-x86_64) sha=8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156 ;;
-      0.10.0-aarch64) sha=033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3 ;;
-      *) return 1 ;; # no recorded sha256 for this version: refresh the case above
-    esac
+    # The pinned version only: pins.txt holds no digest for any other.
+    [ "$version" = "$(pin version taplo-cli)" ] || return 1
     tmp="$(mktemp)"
     [ -n "$tmp" ] || return 1
-    if curl -fsSL "https://github.com/tamasfe/taplo/releases/download/${version}/taplo-linux-${arch}.gz" -o "$tmp.gz" 2>/dev/null \
-      && verify_sha256 "$tmp.gz" "$sha" && gunzip -c "$tmp.gz" >"$tmp" 2>/dev/null \
+    if pin fetch taplo-cli "linux-$arch" "$tmp.gz" 2>/dev/null \
+      && gunzip -c "$tmp.gz" >"$tmp" 2>/dev/null \
       && install -m 0755 "$tmp" "$dest/taplo"; then
       rm -f "$tmp" "$tmp.gz"
       return 0
@@ -401,10 +326,7 @@ cargo_get_pinned() {
 # The pin lives in scripts/zizmor-hook.sh (single source of truth; the same
 # version is pinned in the CI `tool:` lists, and the wrapper hard-fails a CI
 # run whose binary disagrees).
-ZIZMOR_PINNED_VERSION="$(
-  sed -n 's/^ZIZMOR_PINNED_VERSION="\([^"]*\)".*/\1/p' \
-    "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
-)"
+ZIZMOR_PINNED_VERSION="$(pin version zizmor)"
 
 # Same source, same reason: the `zizmor --version` field extraction below
 # must be the exact one zizmor-hook.sh's own assertion uses, or the two can
@@ -458,17 +380,6 @@ TYPOS_VERSION_AWK='NR == 1 { print $2 }'
 # rustup's env puts ahead of the system directories that hold an apt or brew
 # copy.
 #
-# To bump: change the version in `pinned_version_for` and the CI `tool:`
-# lists, and refresh the digests below from the new release assets with
-# `sha256sum` (shellcheck publishes no checksum file).
-SHELLCHECK_SHA256_LINUX_X86_64="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
-SHELLCHECK_SHA256_LINUX_AARCH64="12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588"
-SHELLCHECK_SHA256_DARWIN_X86_64="3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6"
-SHELLCHECK_SHA256_DARWIN_ARM64="56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79"
-SHFMT_SHA256_LINUX_X86_64="76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf"
-SHFMT_SHA256_LINUX_AARCH64="5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489"
-SHFMT_SHA256_DARWIN_X86_64="d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6"
-SHFMT_SHA256_DARWIN_ARM64="b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5"
 # `shellcheck --version` prints `version: 0.11.0` on its second line;
 # `shfmt --version` prints `v3.14.1`.
 SHELLCHECK_VERSION_AWK='$1 == "version:" { print $2 }'
@@ -478,7 +389,7 @@ SHFMT_VERSION_AWK='NR == 1 { sub(/^v/, ""); print }'
 # version. The download is verified before anything is extracted or
 # installed, and no downloaded content reaches a shell.
 release_get_pinned() {
-  local bin="$1" version field current="" platform="" want="" url member=""
+  local bin="$1" version field current="" platform="" url member=""
   local dest="${CARGO_HOME:-$HOME/.cargo}/bin" tmp
   version="$(pinned_version_for "$bin")"
   case "$bin" in
@@ -493,64 +404,20 @@ release_get_pinned() {
     fi
     note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
   fi
-  case "${OS}-$(uname -m)" in
-    Linux-x86_64) platform=LINUX_X86_64 ;;
-    Linux-aarch64 | Linux-arm64) platform=LINUX_AARCH64 ;;
-    Darwin-x86_64) platform=DARWIN_X86_64 ;;
-    Darwin-arm64) platform=DARWIN_ARM64 ;;
-  esac
-  if [ -z "$platform" ]; then
-    warn "no pinned $bin build for ${OS}-$(uname -m) — install $bin $version by hand"
+  platform="$PLATFORM"
+  if ! pin asset "$bin" "$platform" >/dev/null 2>&1; then
+    warn "no pinned $bin build for $platform in pins.txt — install $bin $version by hand"
     return
   fi
-  case "$bin-$platform" in
-    shellcheck-LINUX_X86_64)
-      want="$SHELLCHECK_SHA256_LINUX_X86_64"
-      url=linux.x86_64
-      ;;
-    shellcheck-LINUX_AARCH64)
-      want="$SHELLCHECK_SHA256_LINUX_AARCH64"
-      url=linux.aarch64
-      ;;
-    shellcheck-DARWIN_X86_64)
-      want="$SHELLCHECK_SHA256_DARWIN_X86_64"
-      url=darwin.x86_64
-      ;;
-    shellcheck-DARWIN_ARM64)
-      want="$SHELLCHECK_SHA256_DARWIN_ARM64"
-      url=darwin.aarch64
-      ;;
-    shfmt-LINUX_X86_64)
-      want="$SHFMT_SHA256_LINUX_X86_64"
-      url=linux_amd64
-      ;;
-    shfmt-LINUX_AARCH64)
-      want="$SHFMT_SHA256_LINUX_AARCH64"
-      url=linux_arm64
-      ;;
-    shfmt-DARWIN_X86_64)
-      want="$SHFMT_SHA256_DARWIN_X86_64"
-      url=darwin_amd64
-      ;;
-    shfmt-DARWIN_ARM64)
-      want="$SHFMT_SHA256_DARWIN_ARM64"
-      url=darwin_arm64
-      ;;
-  esac
-  if [ "$bin" = shellcheck ]; then
-    member="shellcheck-v${version}/shellcheck"
-    url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${url}.tar.xz"
-  else
-    url="https://github.com/mvdan/sh/releases/download/v${version}/shfmt_v${version}_${url}"
-  fi
+  [ "$bin" = shellcheck ] && member="shellcheck-v${version}/shellcheck"
+  url="$(pin asset "$bin" "$platform" | awk '{ print $2 }')"
   tmp="$(mktemp -d)"
   # Same guard, same reasoning as ensure_cargo_binstall above (#3622).
   if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
     warn "mktemp -d failed (no writable temp dir?) — skipping the $bin download"
     return
   fi
-  if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/download" \
-    && verify_sha256 "$tmp/download" "$want" \
+  if pin fetch "$bin" "$platform" "$tmp/download" \
     && { [ -z "$member" ] || { tar -xJf "$tmp/download" -C "$tmp" "$member" && mv "$tmp/$member" "$tmp/download"; }; } \
     && mkdir -p "$dest" && install -m 0755 "$tmp/download" "$dest/$bin"; then
     current="$("$dest/$bin" --version 2>/dev/null | awk "$field")"
@@ -567,21 +434,13 @@ release_get_pinned() {
 # CI — pull the release tarball at CI's version and check its sha256. If that
 # download fails (some sandbox proxies 403 GitHub release assets, #2535), fall
 # back to binstall, then `cargo install --locked`, at the same version.
-LYCHEE_VERSION=0.24.2
+LYCHEE_VERSION="$(pin version lychee)"
 install_lychee() {
   if have lychee && [ "$(lychee --version 2>/dev/null | awk 'NR == 1 { print $NF }')" = "$LYCHEE_VERSION" ]; then
     ok "lychee $LYCHEE_VERSION (already installed)"
     return
   fi
-  local triple="" sha=""
-  case "$OS-$(uname -m)" in
-    Linux-x86_64) triple=x86_64-unknown-linux-gnu sha=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a ;;
-    Linux-aarch64 | Linux-arm64) triple=aarch64-unknown-linux-gnu sha=91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c ;;
-    Darwin-x86_64) triple=x86_64-apple-darwin sha=887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978 ;;
-    Darwin-arm64 | Darwin-aarch64) triple=aarch64-apple-darwin sha=c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977 ;;
-  esac
-  if [ -n "$triple" ]; then
-    local url="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${triple}.tar.gz"
+  if pin asset lychee "$PLATFORM" >/dev/null 2>&1; then
     local tmp bin=""
     tmp="$(mktemp -d)"
     # A failed `mktemp -d` leaves $tmp empty and nothing stops the script
@@ -591,13 +450,12 @@ install_lychee() {
     else
       # Find the binary rather than hard-code its path: the tarball layout
       # has changed between releases.
-      if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/lychee.tgz" \
-        && verify_sha256 "$tmp/lychee.tgz" "$sha" \
+      if pin fetch lychee "$PLATFORM" "$tmp/lychee.tgz" \
         && tar -xzf "$tmp/lychee.tgz" -C "$tmp" >/dev/null 2>&1; then
         bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
       fi
       if [ -n "$bin" ] && mkdir -p "$HOME/.local/bin" && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
-        ok "lychee $LYCHEE_VERSION (prebuilt $triple)"
+        ok "lychee $LYCHEE_VERSION (prebuilt $PLATFORM)"
         rm -rf "$tmp"
         return
       fi
@@ -605,7 +463,7 @@ install_lychee() {
       warn "prebuilt lychee tarball unreachable or failed its sha256 check — falling back to cargo binstall"
     fi
   else
-    warn "no prebuilt lychee tarball for $OS-$(uname -m) — falling back to cargo binstall"
+    warn "no prebuilt lychee tarball for $PLATFORM in pins.txt — falling back to cargo binstall"
   fi
   if have cargo && have cargo-binstall && cargo binstall -y --disable-strategies compile "lychee@${LYCHEE_VERSION}" >/dev/null 2>&1; then
     ok "lychee $LYCHEE_VERSION (binstall fallback)"
@@ -620,7 +478,7 @@ install_lychee() {
 
 # cargo-nextest is never compiled here: from source it was the longest step of
 # a cloud session's boot, and it competed with the agent's own first cargo run.
-# binstall without its compile fallback, then upstream's sha256-checked tarball.
+# binstall without its compile fallback, then upstream's tarball, checked against pins.txt.
 install_nextest() {
   local version
   version="$(pinned_version_for cargo-nextest)"
@@ -632,31 +490,23 @@ install_nextest() {
     ok "cargo-nextest $version (binstall)"
     return
   fi
-  local target="" sha=""
-  case "$OS-$(uname -m)" in
-    Linux-x86_64) target=x86_64-unknown-linux-gnu sha=1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4 ;;
-    Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-gnu sha=3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd ;;
-    Darwin-*) target=universal-apple-darwin sha=d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd ;;
-  esac
   local dest="${CARGO_HOME:-$HOME/.cargo}/bin" tmp
-  local url="https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${version}/cargo-nextest-${version}-${target}.tar.gz"
   tmp="$(mktemp -d)"
-  if [ -n "$target" ] && [ -n "$tmp" ] && mkdir -p "$dest" \
-    && curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/nextest.tgz" \
-    && verify_sha256 "$tmp/nextest.tgz" "$sha" \
+  if [ -n "$tmp" ] && mkdir -p "$dest" \
+    && pin fetch cargo-nextest "$PLATFORM" "$tmp/nextest.tgz" \
     && tar -xzf "$tmp/nextest.tgz" -C "$dest" >/dev/null 2>&1 \
     && have cargo-nextest; then
-    ok "cargo-nextest $version (prebuilt $target)"
+    ok "cargo-nextest $version (prebuilt $PLATFORM)"
     rm -rf "$tmp"
     return
   fi
   [ -n "$tmp" ] && rm -rf "$tmp"
-  warn "could not install cargo-nextest $version — download $url, check its sha256 against install_nextest in scripts/setup-hooks.sh, and extract it into $dest"
+  warn "could not install cargo-nextest $version — run: bash scripts/pins.sh fetch cargo-nextest $PLATFORM /tmp/nextest.tgz && tar -xzf /tmp/nextest.tgz -C \"$dest\""
 }
 
 # sqlx-cli needs custom features (rustls + sqlite only) — same as CI, and at
 # CI's version.
-SQLX_CLI_VERSION=0.9.0
+SQLX_CLI_VERSION="$(pin version sqlx-cli)"
 install_sqlx_cli() {
   if have sqlx && [ "$(sqlx --version 2>/dev/null | awk 'NR == 1 { print $NF }')" = "$SQLX_CLI_VERSION" ]; then
     ok "sqlx-cli $SQLX_CLI_VERSION (already installed)"
@@ -752,7 +602,7 @@ fi
 if have cargo; then
   cargo_get_pinned cargo-audit "$(pinned_version_for cargo-audit)"
   install_nextest
-  cargo_get_pinned just 1.59.0
+  cargo_get_pinned just "$(pin version just)"
   install_lychee
   install_sqlx_cli
 fi

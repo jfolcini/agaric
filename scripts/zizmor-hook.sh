@@ -51,27 +51,22 @@
 set -uo pipefail
 
 # ─── version pin ───────────────────────────────────────────────────────
-# The single source of truth for which zizmor this repo runs. Three places
-# must agree, and the assertion below is what proves they do rather than
-# assuming it:
-#   1. this constant                       (what the gate asserts)
-#   2. `tool: …,zizmor@<v>,…` in .github/workflows/_validate.yml and
-#      .github/workflows/scheduled-deep-checks.yml   (what CI installs)
-#   3. `cargo_get_pinned zizmor …` in scripts/setup-hooks.sh (what a dev box
-#      installs)
+# pins.txt holds zizmor's version; CI's `tool:` lists and setup-hooks.sh
+# install it from there. The assertion below proves the binary on PATH is
+# that version rather than assuming it.
 # A mismatch is a hard error in CI — CI is the run whose result everyone
 # trusts, and a CI binary that is not the pinned one voids the pin — and a
 # loud, visible warning locally, where hard-failing a push over a tool
 # version would recreate exactly the #2535 breakage this wrapper exists to
 # prevent.
-ZIZMOR_PINNED_VERSION="1.32.0"
+ZIZMOR_PINNED_VERSION="$(bash "$(dirname "$0")/pins.sh" version zizmor)"
 
 # The single source of truth for how `zizmor --version`'s one-line
 # `zizmor <semver>` output is turned into a bare version string. Extracted
 # as `$2` (the second field) rather than `$NF` (the last field) — the two
 # agree today but silently diverge the moment the output ever grows a
 # trailing token. scripts/setup-hooks.sh reads this constant via `sed`, the
-# same way it reads ZIZMOR_PINNED_VERSION above, instead of hard-coding its
+# same way it once read the version, instead of hard-coding its
 # own awk program (#3545): before this, a divergence would leave the
 # wrapper's assertion silent while `cargo_get_pinned` decided the installed
 # version no longer matched and reinstalled zizmor on every run — a hook

@@ -1864,11 +1864,15 @@ jobs:
       # nothing at all, so keeping it would leave a no-op in the lane that
       # reads as if this release were still cached. Deleting it says what
       # is actually true.
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Set up JDK 17
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
-          java-version: '17.0.21+9'
+          java-version: ${{ steps.pins.outputs.temurin }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -2365,14 +2369,12 @@ jobs:
       # tauri-plugin-updater's updater.rs::verify_signature runs at install time,
       # here at build time, turns that silent post-release failure into a red
       # release job.
-      - name: Install minisign (sha256-checked release binary)
-        # The upstream release tarball, checked against a hash recorded here,
-        # instead of an unversioned apt package on the release path.
+      - name: Install minisign (checked against pins.txt)
+        # The upstream release tarball instead of an unversioned apt package on
+        # the release path.
         run: |
           set -euo pipefail
-          url=https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/minisign.tgz" "$url"
-          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $RUNNER_TEMP/minisign.tgz" | sha256sum -c --quiet -
+          bash scripts/pins.sh fetch minisign linux-x86_64 "$RUNNER_TEMP/minisign.tgz"
           tar -xzf "$RUNNER_TEMP/minisign.tgz" -C "$RUNNER_TEMP" minisign-linux/x86_64/minisign
           echo "$RUNNER_TEMP/minisign-linux/x86_64" >> "$GITHUB_PATH"
 

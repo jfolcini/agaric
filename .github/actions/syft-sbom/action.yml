@@ -2,8 +2,8 @@ name: SBOM (syft)
 description: >-
   Writes `<output-prefix>.spdx.json` and `<output-prefix>.cyclonedx.json` for a
   directory or file with syft, the same `syft scan` call anchore/sbom-action
-  makes. syft is the upstream release for this runner, checked against a sha256
-  recorded here; sbom-action instead runs syft's `install.sh`, which checks the
+  makes. syft is the upstream release for this runner, checked against
+  pins.txt; sbom-action instead runs syft's `install.sh`, which checks the
   download only against a checksum file from the same release.
 
 inputs:
@@ -20,29 +20,21 @@ runs:
     - name: Install syft and write the SBOMs
       shell: bash
       env:
-        SYFT_VERSION: 1.54.0
         SYFT_CHECK_FOR_APP_UPDATE: 'false'
         SOURCE: ${{ inputs.source }}
         OUT: ${{ inputs.output-prefix }}
       run: |
         set -euo pipefail
-        case "$RUNNER_OS/$RUNNER_ARCH" in
-          Linux/X64) asset=linux_amd64.tar.gz sha=54a87372498168b2d033e876fd41fa4e8035b872699e525a57046e1f2f09c860 ;;
-          macOS/ARM64) asset=darwin_arm64.tar.gz sha=7e0bdad94c569fc6d5785c9a657bbae3d4c4e140ccb5eace3d0b5b6bc2b6dbcf ;;
-          Windows/X64) asset=windows_amd64.zip sha=77f4b472779058e819eec9a054753a5071a996aaa40db31a290f8b256748593f ;;
-          *) echo "::error file=.github/actions/syft-sbom/action.yml::no pinned syft for $RUNNER_OS/$RUNNER_ARCH" >&2; exit 1 ;;
-        esac
+        platform="$(bash scripts/pins.sh platform)"
         dir="$RUNNER_TEMP/syft"
         mkdir -p "$dir"
-        archive="$dir/syft_$asset"
-        curl -fsSL --retry 3 -o "$archive" \
-          "https://github.com/anchore/syft/releases/download/v$SYFT_VERSION/syft_${SYFT_VERSION}_$asset"
-        echo "$sha  $archive" | shasum -a 256 -c --quiet -
         if [ "$RUNNER_OS" = Windows ]; then
-          7z x -y -o"$dir" "$archive" syft.exe >/dev/null
+          bash scripts/pins.sh fetch syft "$platform" "$dir/syft.zip"
+          7z x -y -o"$dir" "$dir/syft.zip" syft.exe >/dev/null
           syft="$dir/syft.exe"
         else
-          tar -xzf "$archive" -C "$dir" syft
+          bash scripts/pins.sh fetch syft "$platform" "$dir/syft.tgz"
+          tar -xzf "$dir/syft.tgz" -C "$dir" syft
           syft="$dir/syft"
         fi
         "$syft" scan "$SOURCE" -o "spdx-json=$OUT.spdx.json" -o "cyclonedx-json=$OUT.cyclonedx.json"
