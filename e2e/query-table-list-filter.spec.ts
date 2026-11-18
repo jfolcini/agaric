@@ -10,6 +10,7 @@
 
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlock,
@@ -31,7 +32,7 @@ const AUTHORS: ReadonlyArray<[blockId: string, authors: string[]]> = [
 async function tableOfAnnsBlocks(page: Page): Promise<Locator> {
   await waitForBoot(page)
   await ipc(page, 'create_property_def', {
-    spaceId: 'SPACE_PERSONAL',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
     key: 'authors',
     valueType: 'text',
     options: null,

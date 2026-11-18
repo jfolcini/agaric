@@ -337,6 +337,10 @@ export function offsetIso(days: number): string {
  *  Must be valid 26-char Crockford base32 ULIDs so [[id]] and #[id] tokens
  *  parse correctly through the markdown serializer. */
 export const SEED_IDS = {
+  // Spelled as the backend's first boot makes them (`agaric-engine/src/spaces.rs`),
+  // so a spec that names a space runs unchanged on the real backend (#6529).
+  SPACE_PERSONAL: '00000000000000000AGAR1CPER',
+  SPACE_WORK: '00000000000000000AGAR1CWRK',
   PAGE_GETTING_STARTED: '00000000000000000000PAGE01',
   PAGE_QUICK_NOTES: '00000000000000000000PAGE02',
   PAGE_DAILY: '00000000000000000000PAGE03',
@@ -720,7 +724,7 @@ export function seedBlocks(): void {
     SEED_IDS.TAG_IDEA,
   ]) {
     const row = blocks.get(id)
-    if (row) row['space_id'] = 'SPACE_PERSONAL'
+    if (row) row['space_id'] = SEED_IDS.SPACE_PERSONAL
   }
 
   // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
@@ -806,8 +810,8 @@ export function seedBlocks(): void {
   blockTags.set(SEED_IDS.BLOCK_DAILY_3, new Set([SEED_IDS.TAG_PERSONAL]))
 
   // -- Seed the Personal space's property definitions --
-  seedDefaultPropertyDefs('SPACE_PERSONAL', '2026-01-01T00:00:00.000Z', false)
-  const personalDefs = spacePropertyDefs('SPACE_PERSONAL')
+  seedDefaultPropertyDefs(SEED_IDS.SPACE_PERSONAL, '2026-01-01T00:00:00.000Z', false)
+  const personalDefs = spacePropertyDefs(SEED_IDS.SPACE_PERSONAL)
   personalDefs.set('context', {
     key: 'context',
     value_type: 'text',
@@ -839,14 +843,17 @@ export function seedBlocks(): void {
   // unpinnable against the backend. It carries no `space`/`space_id`: a
   // space is not a member of itself (the backend leaves a space block's
   // `space_id` NULL), so it stays out of every space-scoped page listing.
-  blocks.set('SPACE_PERSONAL', makeBlock('SPACE_PERSONAL', 'page', 'Personal', null, 6))
+  blocks.set(
+    SEED_IDS.SPACE_PERSONAL,
+    makeBlock(SEED_IDS.SPACE_PERSONAL, 'page', 'Personal', null, 6),
+  )
   properties.set(
-    'SPACE_PERSONAL',
+    SEED_IDS.SPACE_PERSONAL,
     new Map([
       [
         'is_space',
         {
-          block_id: 'SPACE_PERSONAL',
+          block_id: SEED_IDS.SPACE_PERSONAL,
           key: 'is_space',
           value_text: 'true',
           value_num: null,
@@ -858,7 +865,7 @@ export function seedBlocks(): void {
       [
         'accent_color',
         {
-          block_id: 'SPACE_PERSONAL',
+          block_id: SEED_IDS.SPACE_PERSONAL,
           key: 'accent_color',
           value_text: 'accent-emerald',
           value_num: null,
@@ -877,7 +884,7 @@ export function seedBlocks(): void {
   // -- Seed template page (Meeting Notes template) --
   blocks.set(SEED_IDS.PAGE_TMPL_MEETING, {
     ...makeBlock(SEED_IDS.PAGE_TMPL_MEETING, 'page', 'Meeting Notes Template', null, 5),
-    space_id: 'SPACE_PERSONAL',
+    space_id: SEED_IDS.SPACE_PERSONAL,
   })
   blocks.set(
     SEED_IDS.BLOCK_TMPL_M1,
@@ -964,15 +971,15 @@ function seedWorkSpace(): void {
     enabled = false
   }
   if (!enabled) return
-  blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
-  seedDefaultPropertyDefs('SPACE_WORK', '2026-01-01T00:00:00.000Z', false)
+  blocks.set(SEED_IDS.SPACE_WORK, makeBlock(SEED_IDS.SPACE_WORK, 'page', 'Work', null, 1))
+  seedDefaultPropertyDefs(SEED_IDS.SPACE_WORK, '2026-01-01T00:00:00.000Z', false)
   properties.set(
-    'SPACE_WORK',
+    SEED_IDS.SPACE_WORK,
     new Map([
       [
         'is_space',
         {
-          block_id: 'SPACE_WORK',
+          block_id: SEED_IDS.SPACE_WORK,
           key: 'is_space',
           value_text: 'true',
           value_num: null,
@@ -1015,7 +1022,7 @@ function seedFacetFixturePage(): void {
   // canonical seed sets no page-level priority, so '1' here is unique and the
   // facet narrows to exactly this page.
   page['priority'] = '1'
-  blocks.set(pageId, { ...page, space_id: 'SPACE_PERSONAL' })
+  blocks.set(pageId, { ...page, space_id: SEED_IDS.SPACE_PERSONAL })
   // Same ≈90d-old real op-log edit the canonical pages get, so this opt-in
   // fixture lands in the same `last-edited:` bucket they do.
   stampPageLastEdited(pageId, offsetIso(-90))
@@ -1047,7 +1054,7 @@ function seedBulkPages(): void {
     const title = `Bulk Page ${String(i).padStart(3, '0')}`
     blocks.set(pageId, {
       ...makeBlock(pageId, 'page', title, null, 100 + i),
-      space_id: 'SPACE_PERSONAL',
+      space_id: SEED_IDS.SPACE_PERSONAL,
     })
     // Recent, monotonically-decreasing-by-index op-log edits: bulk pages are
     // newer than the canonical seed pages (≈90 days old) so they sort FIRST
@@ -1111,7 +1118,7 @@ export function addMockQuarantinedSlot(fields: Partial<QuarantinedSlot> = {}): Q
   const row: QuarantinedSlot = {
     id: quarantineIdCounter,
     inbox_id: quarantineIdCounter,
-    space_id: 'SPACE_PERSONAL',
+    space_id: SEED_IDS.SPACE_PERSONAL,
     byte_len: 1024,
     declared_end_vv: '[]',
     last_reason: 'replay failed: mock delta',

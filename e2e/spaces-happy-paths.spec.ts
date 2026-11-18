@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   navigateToView,
@@ -58,21 +59,21 @@ test('Open on launch keeps the chosen space, and falls back to Last used once a 
 
   // Work is deleted on another device: the mock store loses the space block,
   // then `sync:complete` refreshes the list.
-  await page.evaluate(async () => {
+  await page.evaluate(async (workId) => {
     const w = window as unknown as {
       __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
       __emitMockEvent: (event: string, payload?: unknown) => Promise<void>
     }
-    await w.__TAURI_INTERNALS__.invoke('delete_block', { blockId: 'SPACE_WORK' })
+    await w.__TAURI_INTERNALS__.invoke('delete_block', { blockId: workId })
     await w.__emitMockEvent('sync:complete', {
       type: 'complete',
       remote_device_id: 'device-b',
       ops_received: 1,
       ops_sent: 0,
       changed_blocks: 1,
-      changed_page_ids: ['SPACE_WORK'],
+      changed_page_ids: [workId],
     })
-  })
+  }, SEED_IDS.SPACE_WORK)
   await expect(panel.locator('[data-slot="space-manage-row"]')).toHaveCount(1)
 
   await navigateToView(page, 'Journal')
@@ -180,7 +181,7 @@ test('in the collapsed sidebar, the space badge switches to the next space @spac
 
   // Work has no accent of its own, so it shows the default (`DEFAULT_ACCENT_TOKEN`).
   await expect.poll(stripeColour).toBe(await tokenColour('accent-blue'))
-  await expect(stripe).toHaveAttribute('data-space-id', 'SPACE_WORK')
+  await expect(stripe).toHaveAttribute('data-space-id', SEED_IDS.SPACE_WORK)
   await expect(
     sidebar.getByRole('button', { name: 'Work space — click to switch', exact: true }),
   ).toBeVisible()

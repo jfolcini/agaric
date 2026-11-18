@@ -38,6 +38,7 @@ import { logger } from '@/lib/logger'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import {
   deleteSpaceTextJournalTemplates,
   expandTemplateVariables,
@@ -921,7 +922,7 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
 })
 
 describe('deleteSpaceTextJournalTemplates', () => {
-  const SPACE = 'SPACE_PERSONAL'
+  const SPACE = SEED_IDS.SPACE_PERSONAL
 
   async function setTextTemplate(): Promise<void> {
     unwrap(
@@ -1117,7 +1118,7 @@ describe('insertTemplateBlocks — text on one side of the placeholder (#5364)',
 })
 
 describe('insertTemplateBlocks — task state, priority, dates and properties (#6530)', () => {
-  const SPACE = 'SPACE_PERSONAL'
+  const SPACE = SEED_IDS.SPACE_PERSONAL
 
   beforeEach(() => {
     seedBlocks()

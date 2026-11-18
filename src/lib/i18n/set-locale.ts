@@ -26,7 +26,7 @@
  */
 
 import { i18n } from '@/lib/i18n'
-import { DEFAULT_LOCALE, type SupportedLocale } from '@/lib/i18n/locales'
+import { baseLocale, DEFAULT_LOCALE, type SupportedLocale } from '@/lib/i18n/locales'
 import { logger } from '@/lib/logger'
 
 /**
@@ -40,17 +40,23 @@ import { logger } from '@/lib/logger'
  */
 const localeLoads = new Map<SupportedLocale, Promise<void>>()
 
-/** Locale tag → its lazy chunk. `en` is absent: it is bundled above. */
+/** Locale tag → its lazy chunk. `en` is absent: it is bundled. */
 const LOCALE_LOADERS: Record<
-  Exclude<SupportedLocale, 'en'>,
+  Exclude<SupportedLocale, typeof DEFAULT_LOCALE>,
   () => Promise<Record<string, string>>
 > = {
+  de: async () => (await import('@/lib/i18n/de')).de,
+  'en-XA': async () => (await import('@/lib/i18n/en-XA')).enXA,
   es: async () => (await import('@/lib/i18n/es')).es,
+  fr: async () => (await import('@/lib/i18n/fr')).fr,
+  pt: async () => (await import('@/lib/i18n/pt')).pt,
 }
 
 /**
  * Fetch a locale's catalog chunk and merge it into i18next. No-op for
- * `en` (statically bundled) and for an already-loaded locale.
+ * `en` (statically bundled) and for an already-loaded locale. A regional
+ * variant loads its base language first: its own catalog holds only the
+ * keys it overrides, and i18next falls back through the base for the rest.
  *
  * Rejects if the chunk fails to load. `setLocale` is the call site that
  * decides what that means for the user; this function stays honest about
@@ -60,7 +66,9 @@ export async function loadLocale(lng: SupportedLocale): Promise<void> {
   if (lng === DEFAULT_LOCALE) return
   const existing = localeLoads.get(lng)
   if (existing !== undefined) return existing
-  const load = LOCALE_LOADERS[lng]()
+  const base = baseLocale(lng)
+  const load = (base === lng ? Promise.resolve() : loadLocale(base))
+    .then(LOCALE_LOADERS[lng])
     .then((catalog) => {
       // `deep`/`overwrite` false: a bundle is merged once, and a locale
       // never overwrites keys it already carries.
@@ -97,9 +105,8 @@ let latestRequest: SupportedLocale = DEFAULT_LOCALE
  * and the earlier claim that the Settings select provides it was wrong: that
  * select is bound to the STORED preference, which `setLanguage` wrote before
  * this ran, so it reads the language that failed to load while the UI stays
- * in the old one. Worth surfacing when a second catalog makes the failure
- * reachable in practice; today the only chunk is bundled beside the code
- * importing it.
+ * in the old one. Worth surfacing if a catalog ever ships outside the app
+ * bundle; today every chunk is served from disk beside the code importing it.
  *
  * The stored preference is read by the CALLERS (`src/main.tsx` at boot,
  * `useLanguage` afterwards), not here. This module is imported by almost

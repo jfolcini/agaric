@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { seedCommands } from '@/lib/tauri-mock/seed-commands'
 
 /** The `bridge` binary to run the specs against; unset means the mock. */
@@ -55,11 +56,14 @@ function listeningPort(child: ChildProcess): Promise<number> {
 async function seedVault(request: Bridge['request']): Promise<void> {
   const spaces = (await request('invoke', { cmd: 'list_spaces', args: {} })) as Array<{
     id: string
-    name: string
   }>
-  const personal = spaces.find((space) => space.name === 'Personal')
-  if (personal === undefined) throw new Error('bridge: the vault has no Personal space')
-  for (const { cmd, args } of seedCommands(personal.id)) {
+  // The specs name the space by `SEED_IDS`, so the backend must have made it under that id.
+  if (!spaces.some((space) => space.id === SEED_IDS.SPACE_PERSONAL)) {
+    throw new Error(
+      `bridge: the vault has no space ${SEED_IDS.SPACE_PERSONAL}: ${JSON.stringify(spaces)}`,
+    )
+  }
+  for (const { cmd, args } of seedCommands(SEED_IDS.SPACE_PERSONAL)) {
     // One at a time: a block's parent and its tags exist before it names them.
     await request('invoke', { cmd, args })
   }

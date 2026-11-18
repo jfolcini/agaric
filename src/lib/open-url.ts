@@ -32,12 +32,10 @@ export async function openUrl(url: string): Promise<boolean> {
     await opener.openUrl(url)
     return true
   } catch (err) {
+    logger.warn('open-url', 'the opener refused the link', { url }, err)
     // The Android app has one web view, so `window.open` would load the site
     // over the app, where the back gesture cannot leave it (#6774).
-    if (isAndroid() && '__TAURI_INTERNALS__' in window) {
-      logger.warn('open-url', 'the opener refused the link', { url }, err)
-      return false
-    }
+    if (isAndroid() && '__TAURI_INTERNALS__' in window) return false
     const handle = window.open(url, '_blank', 'noopener,noreferrer')
     return Boolean(handle)
   }

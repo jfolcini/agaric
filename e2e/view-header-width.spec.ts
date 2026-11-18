@@ -8,6 +8,7 @@
 
 import { devices, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, openPage, test, waitForBoot } from './helpers'
 
 interface MockWindow {
@@ -18,23 +19,26 @@ const TITLE = 'Long page'
 
 /** A page long enough to scroll at 800 px. */
 async function seedLongPage(page: Page): Promise<void> {
-  await page.evaluate(async (title) => {
-    const call = (cmd: string, args: Record<string, unknown>) =>
-      (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke(cmd, args)
-    const pageId = await call('create_page_in_space', {
-      parentId: null,
-      content: title,
-      spaceId: 'SPACE_PERSONAL',
-    })
-    await call('create_blocks_batch', {
-      specs: Array.from({ length: 60 }, (_, i) => ({
-        blockType: 'content',
-        content: `block ${i}`,
-        parentId: pageId,
-        position: null,
-      })),
-    })
-  }, TITLE)
+  await page.evaluate(
+    async ({ title, spaceId }) => {
+      const call = (cmd: string, args: Record<string, unknown>) =>
+        (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke(cmd, args)
+      const pageId = await call('create_page_in_space', {
+        parentId: null,
+        content: title,
+        spaceId,
+      })
+      await call('create_blocks_batch', {
+        specs: Array.from({ length: 60 }, (_, i) => ({
+          blockType: 'content',
+          content: `block ${i}`,
+          parentId: pageId,
+          position: null,
+        })),
+      })
+    },
+    { title: TITLE, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 }
 
 function modeSwitch(page: Page) {

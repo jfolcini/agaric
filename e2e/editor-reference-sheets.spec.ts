@@ -7,6 +7,7 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, test, waitForBoot } from './helpers'
 
 const EDITOR = '[data-testid="page-mode-editor"]'
@@ -59,14 +60,14 @@ test.describe('page mode hint references @editor @pages', () => {
       const pageId = await ipc<string>(page, 'create_page_in_space', {
         parentId: null,
         content: title,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
       await ipc(page, 'create_block', {
         blockType: 'content',
         content: 'Some text',
         parentId: pageId,
         index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       })
     }
     await openInPageMode(page, 'Reference one')

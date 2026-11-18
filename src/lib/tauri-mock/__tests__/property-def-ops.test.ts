@@ -11,7 +11,7 @@ import { coerce } from '@/lib/tauri-mock/coerce'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, opLog, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 
 interface Ref {
   device_id: string
@@ -165,7 +165,7 @@ describe('where set_property_def ops show', () => {
         limit: 50,
       }).items.map((row) => row.op_type)
     expect(history(SPACE)).toEqual(['set_property_def'])
-    expect(history('SPACE_WORK')).toEqual([])
+    expect(history(SEED_IDS.SPACE_WORK)).toEqual([])
   })
 })
 
@@ -565,7 +565,7 @@ describe('where rename and merge ops show', () => {
       }).items.map((row) => row.op_type)
     expect(history(SPACE, 'rename_property_key')).toEqual(['rename_property_key'])
     expect(history(SPACE, 'rewrite_properties')).toEqual(['rewrite_properties'])
-    expect(history('SPACE_WORK', 'rename_property_key')).toEqual([])
+    expect(history(SEED_IDS.SPACE_WORK, 'rename_property_key')).toEqual([])
   })
 })
 
@@ -1073,6 +1073,6 @@ describe('rename_property_option', () => {
         limit: 50,
       }).items.map((row) => row.op_type)
     expect(history(SPACE)).toEqual(['rename_property_option'])
-    expect(history('SPACE_WORK')).toEqual([])
+    expect(history(SEED_IDS.SPACE_WORK)).toEqual([])
   })
 })

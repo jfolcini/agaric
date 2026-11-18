@@ -1,5 +1,6 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   createPageFromPagesView,
   dragBlock,
@@ -85,7 +86,7 @@ async function storedBookmarkOrder(page: Page): Promise<string[]> {
         valueDateRange: null,
         excludeTodoStates: null,
       },
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     },
   )
   const props = await ipc<Record<string, Array<{ key: string; value_num: number | null }>>>(

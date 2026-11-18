@@ -18,6 +18,7 @@ import { t } from '@/lib/i18n'
 import { loadSavedViews, saveView } from '@/lib/saved-views'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import {
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
@@ -28,7 +29,7 @@ import { useSpaceStore } from '@/stores/space'
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 
-const SPACE_ID = 'SPACE_PERSONAL'
+const SPACE_ID = SEED_IDS.SPACE_PERSONAL
 
 /** A spec used by the load path. */
 const SAMPLE_SPEC = {
@@ -80,7 +81,7 @@ afterEach(resetStore)
 
 describe('SavedViews', () => {
   it("lists the space's saved queries, not its Pages views and not another space's", async () => {
-    await saveView('SPACE_WORK', 'Other space view', { kind: 'query', spec: SAMPLE_SPEC })
+    await saveView(SEED_IDS.SPACE_WORK, 'Other space view', { kind: 'query', spec: SAMPLE_SPEC })
     await saveView(SPACE_ID, 'A Pages view', { kind: 'pages', sort: 'recent', filters: [] })
     renderPicker()
 

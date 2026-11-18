@@ -46,6 +46,7 @@ export const MARKDOWN_REFERENCE: readonly MarkdownReferenceEntry[] = [
   { id: 'bold', group: 'text', typed: '**bold**', covers: ['bold'] },
   { id: 'italic', group: 'text', typed: '*italic*', covers: ['italic'] },
   { id: 'highlight', group: 'text', typed: '==highlight==', covers: ['highlight'] },
+  { id: 'highlight-color', group: 'text', typed: '==🟢highlight==', covers: [] },
   { id: 'strike', group: 'text', typed: '~~strike~~', covers: ['strike'] },
   { id: 'underline', group: 'text', typed: '<u>underline</u>', covers: ['underline'] },
   { id: 'inline-code', group: 'text', typed: '`code`', covers: ['code'] },

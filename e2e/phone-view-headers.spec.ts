@@ -10,6 +10,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 const VIEWPORT = { width: 360, height: 780 }
@@ -74,7 +75,7 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
       await ipc(page, 'create_page_in_space', {
         parentId: null,
         content: `Phone page ${String(i).padStart(2, '0')}`,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     }
     await navigateToView(page, 'Pages')

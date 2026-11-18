@@ -18,6 +18,7 @@
 
 mod backlink_integration;
 mod block_integration;
+mod change_feed;
 mod common;
 mod conformance;
 mod conformance_command;
@@ -33,6 +34,7 @@ mod mirror_round_trip;
 mod page_integration;
 mod pages_cache_counts;
 mod property_integration;
+mod pulled_vault_writes;
 mod read_after_write;
 mod sync_integration;
 mod tag_integration;

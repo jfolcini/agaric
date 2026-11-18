@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, openAddFilter, test, waitForBoot } from './helpers'
 
 /**
@@ -29,7 +30,7 @@ import { expect, ipc, openAddFilter, test, waitForBoot } from './helpers'
  * dimension is ignored.
  */
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 // SEED_IDS (src/lib/tauri-mock/seed.ts): BLOCK_DAILY_3, BLOCK_PROJ_2, BLOCK_PROJ_4.
 const ERRAND_TASKS = [
   '0000000000000000000B10CK10',

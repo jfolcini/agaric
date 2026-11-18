@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, openPage, test } from './helpers'
 
 /**
@@ -309,7 +310,7 @@ test.describe('Graph view @graph', () => {
    * on a small window, a graph that does not fit the canvas at zoom 1.
    */
   async function seedLinkedPages(page: Page): Promise<void> {
-    await page.evaluate(async () => {
+    await page.evaluate(async (spaceId) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -317,7 +318,7 @@ test.describe('Graph view @graph', () => {
         const id = (await internals.invoke('create_page_in_space', {
           parentId: null,
           content: title,
-          spaceId: 'SPACE_PERSONAL',
+          spaceId,
         })) as string
         if (links.length > 0) {
           await internals.invoke('create_blocks_batch', {
@@ -338,7 +339,7 @@ test.describe('Graph view @graph', () => {
       let previous: string[] = []
       for (let i = 0; i < 10; i++) previous = [await createPage(`Chain ${i}`, previous)]
       for (let i = 0; i < 15; i++) await createPage(`Loose ${i}`, [])
-    })
+    }, SEED_IDS.SPACE_PERSONAL)
   }
 
   for (const reducedMotion of ['no-preference', 'reduce'] as const) {

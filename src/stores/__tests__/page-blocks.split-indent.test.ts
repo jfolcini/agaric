@@ -485,7 +485,7 @@ describe('PageBlockStore', () => {
       /** The Getting Started page loaded off the real mock, GS_1 holding `PRE_SPLIT`. */
       async function loadPage(): Promise<StoreApi<PageBlockState>> {
         seedBlocks()
-        useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+        useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
         dispatch('edit_block', { blockId: BLOCK_GS_1, toText: PRE_SPLIT })
         dispatchExcept([])
         const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)

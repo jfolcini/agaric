@@ -19,7 +19,7 @@ import { SEED_IDS } from '@/lib/tauri-mock'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const BLOCK = SEED_IDS.BLOCK_QN_1
 const toggles = { caseSensitive: false, wholeWord: false, isRegex: false }
 

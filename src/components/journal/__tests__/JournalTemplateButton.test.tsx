@@ -22,7 +22,7 @@ import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { loadJournalTemplate, loadTemplatePages } from '@/lib/template-utils'
 import { useSpaceStore } from '@/stores/space'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const MEETING_TEMPLATE = 'Meeting Notes Template'
 
 const mockedInvoke = vi.mocked(invoke)

@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   activePopover,
@@ -68,17 +69,17 @@ async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
   }
   // The counts in this file are for the full seed, so start as a user who
   // removed the default journal chip; that chip has its own describe (#5370).
-  await page.addInitScript(() => {
+  await page.addInitScript((spaceId) => {
     const key = 'agaric:page-browser-filters'
     if (window.localStorage.getItem(key) !== null) return
     window.localStorage.setItem(
       key,
       JSON.stringify({
-        state: { filtersBySpace: { SPACE_PERSONAL: [] }, nextAddId: 0 },
+        state: { filtersBySpace: { [spaceId]: [] }, nextAddId: 0 },
         version: 1,
       }),
     )
-  })
+  }, SEED_IDS.SPACE_PERSONAL)
   await waitForBoot(page)
   await openPagesView(page)
 }
@@ -977,28 +978,31 @@ function invokePages(
       }
     }
 > {
-  return page.evaluate(async (a) => {
-    const invoke = (
-      window as unknown as {
-        __TAURI_INTERNALS__: {
-          invoke: (c: string, args?: Record<string, unknown>) => Promise<unknown>
+  return page.evaluate(
+    async (a) => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (c: string, args?: Record<string, unknown>) => Promise<unknown>
+          }
         }
+      ).__TAURI_INTERNALS__.invoke
+      try {
+        return (await invoke('list_pages_with_metadata', {
+          filter: { spaceId: a.spaceId, sort: a.sort, filters: [] },
+          cursor: a.cursor,
+          limit: a.limit,
+        })) as MetaResp
+      } catch (err) {
+        // Surface the AppError wire shape verbatim ({ kind, message, code })
+        // so the RequiresRefresh assertion can read it; a thrown value crossing
+        // the page.evaluate boundary otherwise arrives as an opaque Error string.
+        const e = err as { kind?: string; code?: string; message?: string }
+        return { __error: { kind: e?.kind, code: e?.code, message: e?.message } }
       }
-    ).__TAURI_INTERNALS__.invoke
-    try {
-      return (await invoke('list_pages_with_metadata', {
-        filter: { spaceId: 'SPACE_PERSONAL', sort: a.sort, filters: [] },
-        cursor: a.cursor,
-        limit: a.limit,
-      })) as MetaResp
-    } catch (err) {
-      // Surface the AppError wire shape verbatim ({ kind, message, code })
-      // so the RequiresRefresh assertion can read it; a thrown value crossing
-      // the page.evaluate boundary otherwise arrives as an opaque Error string.
-      const e = err as { kind?: string; code?: string; message?: string }
-      return { __error: { kind: e?.kind, code: e?.code, message: e?.message } }
-    }
-  }, args)
+    },
+    { ...args, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 }
 
 test.describe('cursor IPC contract (E12) @pages', () => {

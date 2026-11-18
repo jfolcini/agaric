@@ -34,7 +34,7 @@ describe('edit from a stale editor (#6533)', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     await answerInvokeFromMock(mockedInvoke)
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     page = await loadedPage()
     loadedText = page.getState().blocksById.get(BLOCK)?.content ?? ''
     expect(loadedText).not.toBe('')

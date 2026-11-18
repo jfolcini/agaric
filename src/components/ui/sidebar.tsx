@@ -267,6 +267,7 @@ const SidebarTrigger = ({
   ref,
   className,
   onClick,
+  children,
   ...props
 }: React.ComponentProps<typeof Button>) => {
   const { toggleSidebar } = useSidebar()
@@ -288,6 +289,7 @@ const SidebarTrigger = ({
     >
       <PanelLeftIcon />
       <span className="sr-only">{t('sidebar.toggleSidebar')}</span>
+      {children}
     </Button>
   )
 }

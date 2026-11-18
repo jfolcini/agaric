@@ -4,6 +4,7 @@
  * when the page is opened again.
  */
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   ipc,
@@ -14,7 +15,7 @@ import {
   waitForStableBlockRows,
 } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TITLE = 'Tilde fences and rules'
 const CONTENTS = ['~~~js\nconst tilde = 1\n~~~', '***', 'above\n___\nbelow'] as const
 

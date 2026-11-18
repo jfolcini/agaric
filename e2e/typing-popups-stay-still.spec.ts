@@ -1,5 +1,6 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, navigateMobile, openPage, test, waitForBoot } from './helpers'
 
 /**
@@ -55,7 +56,7 @@ test.describe('Typing into a popup keeps its input still @editor', () => {
     // A text value under a key later defined as `ref` opens the page picker.
     await ipc(page, 'set_property', { blockId: GS5, key: 'owner', value: { value_text: 'x' } })
     await ipc(page, 'create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'owner',
       valueType: 'ref',
       options: null,

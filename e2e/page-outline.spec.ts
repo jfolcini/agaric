@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, test } from './helpers'
 
 const TITLE = 'Outline long page'
@@ -11,25 +12,28 @@ const TITLE = 'Outline long page'
 test('the outline brings a heading far down a long page into view @pages', async ({ page }) => {
   await page.goto('/')
   await page.locator('[data-testid="block-static"]').first().waitFor()
-  await page.evaluate(async (title) => {
-    const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
-      invoke: (cmd: string, args: unknown) => Promise<unknown>
-    }
-    const parentId = await internals.invoke('create_page_in_space', {
-      parentId: null,
-      content: title,
-      spaceId: 'SPACE_PERSONAL',
-    })
-    await internals.invoke('create_blocks_batch', {
-      specs: Array.from({ length: 500 }, (_, i) => ({
-        blockType: 'content',
-        // Wrapped paragraphs, so a row's real height is well past the estimate.
-        content: i % 25 === 0 ? `# Heading ${i}` : `row ${i} ${'lorem ipsum '.repeat(20)}`,
-        parentId,
-        position: null,
-      })),
-    })
-  }, TITLE)
+  await page.evaluate(
+    async ({ title, spaceId }) => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      const parentId = await internals.invoke('create_page_in_space', {
+        parentId: null,
+        content: title,
+        spaceId,
+      })
+      await internals.invoke('create_blocks_batch', {
+        specs: Array.from({ length: 500 }, (_, i) => ({
+          blockType: 'content',
+          // Wrapped paragraphs, so a row's real height is well past the estimate.
+          content: i % 25 === 0 ? `# Heading ${i}` : `row ${i} ${'lorem ipsum '.repeat(20)}`,
+          parentId,
+          position: null,
+        })),
+      })
+    },
+    { title: TITLE, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 
   await page.keyboard.press('Control+k')
   await page.locator('[cmdk-input]').first().fill(TITLE)

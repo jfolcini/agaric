@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, focusBlockById, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -20,7 +21,7 @@ async function storedContent(page: Page): Promise<string> {
 
 function tags(page: Page): Promise<Array<{ tag_id: string; name: string }>> {
   return ipc(page, 'list_all_tags_in_space', {
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
 }
 

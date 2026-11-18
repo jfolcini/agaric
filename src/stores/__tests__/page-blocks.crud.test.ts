@@ -954,7 +954,7 @@ describe('PageBlockStore', () => {
       // pins the `isValidation` branch to the production wire shape
       // (pattern from the #2792 PagePropertyTable real-dispatch tests).
       seedBlocks()
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
       const s = createPageBlockStore(SEED_IDS.PAGE_QUICK_NOTES)
 
@@ -967,7 +967,7 @@ describe('PageBlockStore', () => {
       // Simulate the move: re-stamp the page's `space_id` to another space
       // (what `set_property` writes under PageHeader.handleMoveToSpace).
       const moved = mockBlocks.get(SEED_IDS.PAGE_QUICK_NOTES)
-      if (moved) moved['space_id'] = 'SPACE_WORK'
+      if (moved) moved['space_id'] = SEED_IDS.SPACE_WORK
 
       // Stale old-space state: the moved page tops the ONLY tab and sits in
       // the old space's recents.
@@ -979,7 +979,7 @@ describe('PageBlockStore', () => {
       useRecentPagesStore.setState({
         recentPages: [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }],
         recentPagesBySpace: {
-          SPACE_PERSONAL: [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }],
+          [SEED_IDS.SPACE_PERSONAL]: [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }],
         },
       })
 
@@ -993,14 +993,14 @@ describe('PageBlockStore', () => {
       // Last tab emptied → tab reset + pages view (same landing as delete).
       expect(selectPageStack(useTabsStore.getState())).toEqual([])
       expect(useNavigationStore.getState().currentView).toBe('pages')
-      expect(useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']).toEqual([])
+      expect(useRecentPagesStore.getState().recentPagesBySpace[SEED_IDS.SPACE_PERSONAL]).toEqual([])
     })
 
     it('#5243 — following a stale reference to a TRASHED page heals with the trash notice', async () => {
       // Real mock dispatch, so the rejection is the genuine `load_page_subtree`
       // `not_found` for a trashed root.
       seedBlocks()
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
       dispatch('delete_block', { blockId: SEED_IDS.PAGE_QUICK_NOTES })
 
@@ -1022,7 +1022,7 @@ describe('PageBlockStore', () => {
           { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
         ],
         recentPagesBySpace: {
-          SPACE_PERSONAL: [
+          [SEED_IDS.SPACE_PERSONAL]: [
             { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
             { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
           ],
@@ -1043,7 +1043,9 @@ describe('PageBlockStore', () => {
         SEED_IDS.PAGE_GETTING_STARTED,
       ])
       expect(
-        useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']?.map((p) => p.pageId),
+        useRecentPagesStore
+          .getState()
+          .recentPagesBySpace[SEED_IDS.SPACE_PERSONAL]?.map((p) => p.pageId),
       ).toEqual([SEED_IDS.PAGE_GETTING_STARTED])
     })
   })
@@ -1279,7 +1281,7 @@ describe('PageBlockStore', () => {
   describe('edit', () => {
     it('persists the edited content, read back by a fresh load', async () => {
       await answerInvokeFromMock(mockedInvoke)
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       const page = createPageBlockStore(SEED_IDS.PAGE_GETTING_STARTED)
       await page.getState().load()
 

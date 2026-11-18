@@ -9,8 +9,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 interface TrashPage {
   items: Record<string, unknown>[]

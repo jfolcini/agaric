@@ -61,5 +61,5 @@
 3 src-tauri/src/db/pool.rs
 54 src-tauri/src/db/recovery.rs
 4 src-tauri/src/lib.rs
-2 src-tauri/src/maintenance.rs
+4 src-tauri/src/maintenance.rs
 1 src-tauri/src/reconciliation_oracle.rs

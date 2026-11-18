@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   expect,
@@ -23,7 +24,7 @@ import {
  */
 
 const BLOCK_GS_1 = '0000000000000000000B10CK01'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 // Two 200 × 200 pages, Helvetica 24 pt: "Page one", then "Page two".
 const TWO_PAGE_PDF_B64 =
@@ -262,12 +263,12 @@ test.describe('A PDF highlight or comment becomes a block that links back to its
     const notesId = await ipc<string>(page, 'create_page_in_space', {
       parentId: null,
       content: 'Reading notes',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     await ipc(page, 'move_block', { blockId: block?.id, newParentId: notesId, newIndex: 0 })
     await ipc(page, 'move_blocks_to_space', {
       blockIds: [notesId],
-      spaceId: 'SPACE_WORK',
+      spaceId: SEED_IDS.SPACE_WORK,
       acknowledgedLoss: null,
     })
     expect(await highlightBlocksOf(page, first)).toEqual([])

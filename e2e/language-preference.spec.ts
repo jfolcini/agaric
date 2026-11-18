@@ -2,11 +2,11 @@
  * The language switch, end to end (#4555).
  *
  * The unit suites prove the pieces; this proves the one thing they cannot:
- * that the Spanish catalog is really DELIVERABLE from a production build.
+ * that each locale's catalog is really DELIVERABLE from a production build.
  * vitest resolves `@/lib/i18n/es` straight from source, so a chunk that a
  * real build emits but the runtime cannot fetch is green everywhere else
  * and red only here — verified by deleting `dist/assets/es-*.js` and
- * watching both tests below fail on the Spanish label never appearing.
+ * watching the Spanish tests below fail on the Spanish label never appearing.
  * (It does NOT pin the code-splitting itself: a static import would render
  * Spanish just as well. The chunk boundary is a bundle-size claim, and the
  * bundle-size gate is where it belongs.)
@@ -17,13 +17,65 @@
 
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, focusBlock, navigateToView, test, waitForBoot } from './helpers'
+
+/**
+ * The labels this spec navigates by, per language: the option that picks it,
+ * and the shell strings that prove its catalog rendered.
+ */
+const LABELS = {
+  en: {
+    option: 'English',
+    settings: 'Settings',
+    general: 'General',
+    journal: 'Journal',
+    language: 'Language',
+    weekStart: 'Week starts on',
+  },
+  es: {
+    option: 'Español',
+    settings: 'Configuración',
+    general: 'General',
+    journal: 'Diario',
+    language: 'Idioma',
+    weekStart: 'La semana empieza el',
+  },
+  pt: {
+    option: 'Português',
+    settings: 'Configurações',
+    general: 'Geral',
+    journal: 'Diário',
+    language: 'Idioma',
+    weekStart: 'A semana começa em',
+  },
+  de: {
+    option: 'Deutsch',
+    settings: 'Einstellungen',
+    general: 'Allgemein',
+    journal: 'Journal',
+    language: 'Sprache',
+    weekStart: 'Woche beginnt am',
+  },
+  fr: {
+    option: 'Français',
+    settings: 'Paramètres',
+    general: 'Général',
+    journal: 'Journal',
+    language: 'Langue',
+    weekStart: 'Premier jour de la semaine',
+  },
+} as const
 
 /** Open Settings → General, where the language control lives, from the shell. */
-async function openGeneral(page: Page): Promise<void> {
-  await navigateToView(page, 'Settings')
-  await page.getByRole('tab', { name: 'General' }).click()
+async function openGeneral(page: Page, labels: (typeof LABELS)[keyof typeof LABELS]) {
+  await navigateToView(page, labels.settings)
+  await page.getByRole('tab', { name: labels.general, exact: true }).click()
   await expect(page.locator('[data-testid="settings-panel-general"]')).toBeVisible()
+}
+
+async function pickLanguage(page: Page, current: string, option: string): Promise<void> {
+  await page.getByRole('combobox', { name: current }).click()
+  await page.getByRole('option', { name: option, exact: true }).click()
 }
 
 test.describe('Language preference @settings', () => {
@@ -31,48 +83,79 @@ test.describe('Language preference @settings', () => {
     await waitForBoot(page)
   })
 
-  test('switching to Español survives a navigation round trip', async ({ page }) => {
-    await openGeneral(page)
+  test('switching to Español translates the whole shell and survives a round trip', async ({
+    page,
+  }) => {
+    await openGeneral(page, LABELS.en)
 
-    // Ships English, with `<html lang>` following i18next rather than the
-    // build-time literal `index.html` used to hardcode.
+    // A browser set to English follows it, with `<html lang>` following
+    // i18next rather than the build-time literal `index.html` hardcodes.
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-    const languageSelect = page.getByRole('combobox', { name: 'Language' })
-    await expect(languageSelect).toBeVisible()
 
-    await languageSelect.click()
-    await page.getByRole('option', { name: 'Español', exact: true }).click()
+    await pickLanguage(page, LABELS.en.language, LABELS.es.option)
 
-    // The lazily-imported catalog arrived and the control renamed itself —
+    // The lazily-imported catalog arrived and the tab re-rendered in Spanish —
     // no reload, no remount.
-    await expect(page.getByRole('combobox', { name: 'Idioma' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: LABELS.es.weekStart })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
 
-    // Navigate away and back. The preference is device-scoped localStorage,
-    // so it must still be Spanish on return — and the catalog must not have
-    // to be re-fetched for it to render.
-    await navigateToView(page, 'Journal')
+    // A toast.
+    await pickLanguage(page, LABELS.es.weekStart, 'Domingo')
+    await expect(page.getByText('Primer día de la semana: Domingo')).toBeVisible()
+
+    // The sidebar (navigating by its Spanish label), the journal header and
+    // the formatting toolbar of a focused block.
+    await navigateToView(page, LABELS.es.journal)
     await expect(page.locator('[data-testid="settings-panel-general"]')).not.toBeVisible()
-    await openGeneral(page)
+    await expect(page.getByRole('button', { name: 'Ir a hoy' })).toBeVisible()
+    await focusBlock(page, 0)
+    await expect(
+      page.getByTestId('formatting-toolbar').getByRole('button', { name: 'Convertir en' }),
+    ).toBeVisible()
 
-    await expect(page.getByRole('combobox', { name: 'Idioma' })).toBeVisible()
+    // A dialog: the shortcuts sheet `?` opens.
+    await page.keyboard.press('Escape')
+    await page.locator('header').first().click()
+    await page.keyboard.type('?')
+    await expect(page.getByRole('heading', { name: 'Referencia rápida' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // Back to Settings: the preference is device-scoped localStorage, so it is
+    // still Spanish on return.
+    await openGeneral(page, LABELS.es)
+
+    await expect(page.getByRole('combobox', { name: LABELS.es.language })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
-
-    // A key this PR does not translate still renders English. That is the
-    // partial-catalog fallback working, not a missing translation bug.
-    await expect(page.getByRole('combobox', { name: 'Week starts on' })).toBeVisible()
   })
 
+  // Spanish has the full walk above; every other language gets the shell check.
+  const others = (Object.keys(LABELS) as (keyof typeof LABELS)[]).filter(
+    (tag) => tag !== 'en' && tag !== 'es',
+  )
+  for (const tag of others) {
+    const labels = LABELS[tag]
+    test(`switching to ${labels.option} renders the shell in it`, async ({ page }) => {
+      await openGeneral(page, LABELS.en)
+      await pickLanguage(page, LABELS.en.language, labels.option)
+
+      await expect(page.getByRole('combobox', { name: labels.weekStart })).toBeVisible()
+      await expect(page.locator('html')).toHaveAttribute('lang', tag)
+
+      await navigateToView(page, labels.journal)
+      await expect(page.locator('[data-testid="settings-panel-general"]')).not.toBeVisible()
+      await openGeneral(page, labels)
+      await expect(page.getByRole('combobox', { name: labels.language })).toBeVisible()
+    })
+  }
+
   test('switching back to English restores the English labels', async ({ page }) => {
-    await openGeneral(page)
-    await page.getByRole('combobox', { name: 'Language' }).click()
-    await page.getByRole('option', { name: 'Español', exact: true }).click()
-    await expect(page.getByRole('combobox', { name: 'Idioma' })).toBeVisible()
+    await openGeneral(page, LABELS.en)
+    await pickLanguage(page, LABELS.en.language, LABELS.es.option)
+    await expect(page.getByRole('combobox', { name: LABELS.es.language })).toBeVisible()
 
-    await page.getByRole('combobox', { name: 'Idioma' }).click()
-    await page.getByRole('option', { name: 'English', exact: true }).click()
+    await pickLanguage(page, LABELS.es.language, LABELS.en.option)
 
-    await expect(page.getByRole('combobox', { name: 'Language' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: LABELS.en.language })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   })
 })

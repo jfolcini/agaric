@@ -79,6 +79,7 @@ import type {
   TextNode,
   TodoState,
 } from '@/editor/types'
+import { highlightColorAt } from '@/lib/highlight-colors'
 import { logger } from '@/lib/logger'
 import { isAllowedUrl } from '@/lib/url-validation'
 
@@ -1564,8 +1565,13 @@ function mayToggle(s: Scanner, open: boolean): boolean {
  * closes the mark it opened (CommonMark §6.2): both stay text, so `a====b`
  * keeps its `====`. Call it as the mark closes, before the cursor moves on.
  */
-function keepEmptySpanAsText(st: InlineState, openPos: number, delimiter: string): void {
-  if (st.scanner.pos === openPos + delimiter.length) st.buf += delimiter + delimiter
+function keepEmptySpanAsText(
+  st: InlineState,
+  openPos: number,
+  delimiter: string,
+  closer = delimiter,
+): void {
+  if (st.scanner.pos === openPos + delimiter.length) st.buf += delimiter + closer
 }
 
 /** Bold toggle: `**` (asterisk) or `__` (underscore), each by its flanking rule. */
@@ -1618,18 +1624,31 @@ export function scanStrike(st: InlineState): boolean {
   return true
 }
 
-/** Highlight toggle: `==`. */
+/**
+ * Highlight toggle: `==`. An opener may carry a colour emoji (#6759,
+ * Obsidian's `==🔴text==`), which is part of the delimiter: the run flanks as
+ * if it were absent, so `a ==🔴b==` and `==🔴b==c` open as `==b==` would.
+ */
 export function scanHighlight(st: InlineState): boolean {
   if (peek(st.scanner) !== '=' || peek(st.scanner, 1) !== '=') return false
-  if (!mayToggle(st.scanner, st.inHighlight)) return false
+  const { src, pos } = st.scanner
+  const color = st.inHighlight ? null : highlightColorAt(src, pos + 2)
+  const flankScanner = color
+    ? { src: src.slice(0, pos + 2) + src.slice(pos + 2 + color.length), pos }
+    : st.scanner
+  if (!mayToggle(flankScanner, st.inHighlight)) return false
   flushBuf(st, currentMarks(st))
   if (st.inHighlight) {
     st.inHighlight = false
-    keepEmptySpanAsText(st, st.highlightOpenPos, '==')
+    keepEmptySpanAsText(st, st.highlightOpenPos, st.highlightOpenDelim, '==')
+    st.highlightColor = null
   } else {
-    st.highlightOpenPos = st.scanner.pos
+    st.highlightOpenPos = pos
     st.highlightOpenNodeLen = st.nodes.length
+    st.highlightOpenDelim = `==${color ? src.slice(pos + 2, pos + 2 + color.length) : ''}`
+    st.highlightColor = color?.color ?? null
     st.inHighlight = true
+    st.scanner.pos += st.highlightOpenDelim.length - 2
   }
   st.scanner.pos += 2
   return true
@@ -1749,7 +1768,7 @@ function revertUnclosedMarks(st: InlineState): void {
       mark: 'highlight',
       pos: st.highlightOpenPos,
       at: st.highlightOpenNodeLen,
-      text: '==',
+      text: st.highlightOpenDelim,
     })
   }
   for (const { mark, at, text } of unclosed.toSorted((a, b) => b.pos - a.pos)) {
