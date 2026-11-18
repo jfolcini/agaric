@@ -228,3 +228,30 @@ proptest! {
         prop_assert_eq!(folder_path_to_namespace_title(&path), title);
     }
 }
+
+fn entry(id: &str, title: &str) -> PageEntry {
+    PageEntry {
+        id: id.to_owned(),
+        space_id: "S".to_owned(),
+        title: title.to_owned(),
+    }
+}
+
+#[test]
+fn an_adopted_layout_keeps_pinned_paths_and_settles_the_rest_around_them() {
+    let pages = [
+        entry("01A", "Journal"),
+        entry("01B", "2026-11-18"),
+        entry("01C", "Plan"),
+    ];
+    let pinned = HashMap::from([
+        ("01B".to_owned(), "journals/2026_11_18.md".to_owned()),
+        ("01C".to_owned(), "journal.md".to_owned()),
+    ]);
+    let layout = adopted_layout(&pages, &pinned);
+    assert_eq!(layout["01B"], "journals/2026_11_18.md");
+    assert_eq!(layout["01C"], "journal.md");
+    // `Journal.md` folds onto the pinned `journal.md`, so it takes the suffix.
+    assert_eq!(layout["01A"], "Journal_01A.md");
+    assert_eq!(layout.len(), 3);
+}

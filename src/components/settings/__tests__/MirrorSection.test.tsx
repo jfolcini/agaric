@@ -58,6 +58,7 @@ function status(): MirrorStatus {
     pending: readBack ? [] : pendingFiles,
     copy_files: copyFiles,
     unmirrored_spaces: unmirrored,
+    adopted_space: null,
     ...extra,
   }
 }

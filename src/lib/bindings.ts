@@ -779,6 +779,8 @@ export const commands = {
 	setMirrorCopyFiles: (on: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_copy_files", { on })),
 	setMirrorSpace: (spaceId: string, mirrored: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("set_mirror_space", { spaceId, mirrored })),
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
+	previewMirrorAdoption: (folder: string, spaceId: string, files: AdoptFile[]) => typedError<AdoptionPreview, AppError>(__TAURI_INVOKE("preview_mirror_adoption", { folder, spaceId, files })),
+	adoptMirrorFolder: (folder: string, spaceId: string, files: AdoptFile[], readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("adopt_mirror_folder", { folder, spaceId, files, readBack })),
 	/**
 	 *  Tauri command: when the newest daily snapshot was taken, in Unix
 	 *  milliseconds; `null` before the first one. Delegates to
@@ -1494,6 +1496,36 @@ export type AddMeetingInput = {
 	transcript?: MeetingFileInput | null,
 	summary_text?: string | null,
 	summary_file?: MeetingFileInput | null,
+};
+
+/**
+ *  A file the mirror would write differently from how it stands once its
+ *  page is next written: `before` is the file, `after` what is written for
+ *  the page as it is now.
+ */
+export type AdoptChange = {
+	path: string,
+	page_id: string,
+	before: string,
+	after: string,
+};
+
+/**  A file of the folder and the page it was imported as. */
+export type AdoptFile = {
+	/**  Below the folder, `/`-separated, ending in `.md`. */
+	path: string,
+	page_id: string,
+};
+
+/**
+ *  What adopting the folder does: nothing is written at adoption; `changes`
+ *  lists the files a later write of their page would change beyond its
+ *  edit, and `left_alone` the files of the folder no page took, which the
+ *  mirror neither reads nor writes while they stay as they are.
+ */
+export type AdoptionPreview = {
+	changes: AdoptChange[],
+	left_alone: string[],
 };
 
 /**
@@ -3241,6 +3273,11 @@ export type MirrorStatus = {
 	copy_files: boolean,
 	/**  The spaces not mirrored; every other one is, a new one included. */
 	unmirrored_spaces: string[],
+	/**
+	 *  The space whose folder the mirror's is, when a folder of notes was
+	 *  adopted in place ([`adopt`]); `None` for a folder of space folders.
+	 */
+	adopted_space: string | null,
 };
 
 export type MoveResponse = {

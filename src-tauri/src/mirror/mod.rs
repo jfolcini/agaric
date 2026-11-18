@@ -1,6 +1,7 @@
 //! The outbound Markdown mirror (#5363 slice 1): every live page of every
 //! space written to a folder the user picks, as `<space>/<title>.md`, in the
-//! form [`get_page_file_inner`] renders, on desktop.
+//! form [`get_page_file_inner`] renders, on desktop; in a folder of notes
+//! adopted in place, one space's pages directly below it ([`adopt`]).
 //!
 //! One task polls every `TICK`. It writes the pages this device's own ops
 //! touched since its watermark, an `op_log` `seq` (never a timestamp: a
@@ -18,6 +19,7 @@
 //! when the page is gone, each only while it is unchanged. While the folder or
 //! its marker is missing, the mirror writes nothing and creates nothing.
 
+pub mod adopt;
 pub mod assets;
 pub mod ingest;
 pub mod paths;
@@ -91,6 +93,9 @@ pub struct MirrorStatus {
     pub copy_files: bool,
     /// The spaces not mirrored; every other one is, a new one included.
     pub unmirrored_spaces: Vec<String>,
+    /// The space whose folder the mirror's is, when a folder of notes was
+    /// adopted in place ([`adopt`]); `None` for a folder of space folders.
+    pub adopted_space: Option<String>,
 }
 
 /// Whether `root` holds nothing but hidden entries, as the mirror's marker.
@@ -131,6 +136,9 @@ struct Inner {
     /// The folder chosen again while it is emptied: the next tick drops its
     /// states and writes every page there as new.
     start_fresh: bool,
+    /// The folder's states were written outside the task, by an adoption:
+    /// the next tick loads them.
+    reload: bool,
 }
 
 impl MirrorState {
@@ -176,6 +184,17 @@ impl MirrorState {
         std::mem::take(&mut self.lock().start_fresh)
     }
 
+    /// Load the folder's states on the next tick, as [`adopt::adopt`] wrote
+    /// them, and start over there.
+    pub fn reload(&self) {
+        self.lock().reload = true;
+        self.restart();
+    }
+
+    fn take_reload(&self) -> bool {
+        std::mem::take(&mut self.lock().reload)
+    }
+
     /// Start over in a new folder: forget the old one's diverged and failed
     /// files and run a full pass on the next tick.
     pub fn restart(&self) {
@@ -197,6 +216,7 @@ impl MirrorState {
             read_back,
             copy_files,
             unmirrored,
+            adopted,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -253,6 +273,7 @@ impl MirrorState {
             pending,
             copy_files,
             unmirrored_spaces: unmirrored,
+            adopted_space: adopted.map(|adoption| adoption.space_id),
         }
     }
 
@@ -477,6 +498,8 @@ pub struct Mirror {
     copy_failed: BTreeMap<String, String>,
     /// The spaces neither written nor read, as of this tick.
     unmirrored: HashSet<String>,
+    /// The folder's adoption as one space's, as of this tick.
+    adoption: Option<store::Adoption>,
     /// What the mirror learned of the folder it writes, forgotten for another.
     seen: Seen,
     #[cfg(test)]
@@ -644,6 +667,7 @@ impl Mirror {
             unrendered: false,
             copy_failed: BTreeMap::new(),
             unmirrored: HashSet::new(),
+            adoption: None,
             #[cfg(test)]
             races: Races::default(),
         })
@@ -715,11 +739,14 @@ impl Mirror {
         // full one.
         let settings = store::settings(&self.pool).await?;
         self.read_back = settings.read_back;
-        if settings.copy_files != self.copy_files {
+        // An adopted folder is the user's own: no copy folders are made in it.
+        let copy_files = settings.copy_files && settings.adopted.is_none();
+        if copy_files != self.copy_files {
             // Every page's links change, and the copies go or come.
-            self.copy_files = settings.copy_files;
+            self.copy_files = copy_files;
             self.full_due = true;
         }
+        self.adoption = settings.adopted;
         let unmirrored: HashSet<String> = settings.unmirrored.into_iter().collect();
         if unmirrored != self.unmirrored {
             // A file refused because its space was off is read again.
@@ -736,7 +763,8 @@ impl Mirror {
         if fresh {
             self.store.forget(&folder)?;
         }
-        if self.store.bind(&folder)? || fresh {
+        let reload = self.state.take_reload();
+        if self.store.bind(&folder)? || fresh || reload {
             self.forget_folder();
             self.pages = self.store.load()?;
         }
@@ -843,16 +871,22 @@ impl Mirror {
             .into_iter()
             .map(|(space, folder)| (folder, space))
             .collect();
+        let adopted = self.adoption.as_ref().map(|a| a.space_id.clone());
         for path in new {
-            let Some((folder, below)) = path.split_once('/') else {
-                continue;
+            // An adopted folder is one space's: every file below it is its.
+            let (space_id, below) = match &adopted {
+                Some(space_id) => (Some(space_id), path.as_str()),
+                None => match path.split_once('/') {
+                    Some((folder, below)) => (by_folder.get(folder), below),
+                    None => continue,
+                },
             };
             let title = crate::commands::pages::folder_path_to_namespace_title(below);
-            let Some(space_id) = by_folder.get(folder).filter(|_| !title.is_empty()) else {
+            let Some(space_id) = space_id.filter(|_| !title.is_empty()).cloned() else {
                 continue;
             };
             if !self
-                .read_new_file(root, &ingest, space_id, &title, &path)
+                .read_new_file(root, &ingest, &space_id, &title, &path)
                 .await?
             {
                 return Ok(());
@@ -875,7 +909,8 @@ impl Mirror {
         let Some(bytes) = store::read_optional(&target)? else {
             return Ok(true);
         };
-        if !self.seen.new_file_settled(path, &bytes) {
+        let left_alone = (self.adoption.as_ref()).is_some_and(|a| a.leaves_alone(path, &bytes));
+        if left_alone || !self.seen.new_file_settled(path, &bytes) {
             return Ok(true);
         }
         if let Some(why) = pause_reason(root, &self.device_id) {
@@ -1168,11 +1203,12 @@ impl Mirror {
             .into_iter()
             .map(|space| (space.id, space.name))
             .collect();
+        let adopted = self.adoption.as_ref().map(|a| a.space_id.as_str());
         let mut pages = Vec::new();
-        for (space_id, _) in spaces
-            .iter()
-            .filter(|(id, _)| !self.unmirrored.contains(id))
-        {
+        for (space_id, _) in spaces.iter().filter(|(id, _)| match adopted {
+            Some(adopted) => id == adopted,
+            None => !self.unmirrored.contains(id),
+        }) {
             let listed =
                 crate::commands::pages::list_all_pages_in_space_inner(&self.pool, space_id, None)
                     .await?;
@@ -1182,7 +1218,21 @@ impl Mirror {
                 title: page.content.unwrap_or_default(),
             }));
         }
-        let mut paths = paths::layout(&spaces, &pages);
+        let mut paths = if adopted.is_some() {
+            // A file adopted in place stays there while its page keeps the
+            // title it had then.
+            let pinned = pages
+                .iter()
+                .filter_map(|page| {
+                    let state = self.pages.get(&page.id)?;
+                    (state.adopted_title.as_ref() == Some(&page.title))
+                        .then(|| (page.id.clone(), state.path.clone()))
+                })
+                .collect();
+            paths::adopted_layout(&pages, &pinned)
+        } else {
+            paths::layout(&spaces, &pages)
+        };
         Ok(pages
             .into_iter()
             .filter_map(|page| Some((page.id.clone(), (paths.remove(&page.id)?, page.title))))
@@ -1378,6 +1428,9 @@ impl Mirror {
             Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
+        if self.adopted_unchanged(root, page_id, path, &file.text)? {
+            return Ok(Wrote::Done);
+        }
         // Each attachment linked to its copy while copying is on.
         let rendered = assets::linked(&file.text);
         let file = self
@@ -1390,12 +1443,7 @@ impl Mirror {
             .get(page_id)
             .filter(|state| state.path == path)
             .and_then(PageState::newest);
-        let (text, line_ids) = match newest {
-            Some(shadow) => {
-                splice::splice(&shadow.text, &shadow.line_ids, &file.text, &file.line_ids)
-            }
-            None => (file.text.clone(), file.line_ids.clone()),
-        };
+        let (text, line_ids) = self.spliced(page_id, &file);
         let mut shadow = Shadow {
             text,
             line_ids,
@@ -1446,6 +1494,43 @@ impl Mirror {
             }
         }
         self.record(page_id, path, shadow)
+    }
+
+    /// `file`, the page's render, written over the text last written for the
+    /// page, keeping the lines of every block it did not change ([`splice`]),
+    /// wherever that text was: a page whose file moves keeps its own lines.
+    fn spliced(&self, page_id: &str, file: &PageFile) -> (String, Vec<Option<String>>) {
+        match self.pages.get(page_id).and_then(PageState::newest) {
+            Some(last) => splice::splice(&last.text, &last.line_ids, &file.text, &file.line_ids),
+            None => (file.text.clone(), file.line_ids.clone()),
+        }
+    }
+
+    /// Whether the page was adopted with its file (#6540), or with none, and
+    /// neither has changed since: the page renders as `render`, as it did
+    /// then, and its file is still what was adopted, or still missing. Nothing
+    /// is written for such a page, so adopting a folder rewrites no file and
+    /// adds none.
+    fn adopted_unchanged(
+        &self,
+        root: &Path,
+        page_id: &str,
+        path: &str,
+        render: &str,
+    ) -> std::io::Result<bool> {
+        let Some(state) = self.pages.get(page_id) else {
+            return Ok(false);
+        };
+        if state.adopted_render.as_deref() != Some(render) {
+            return Ok(false);
+        }
+        Ok(match state.newest() {
+            Some(adopted) if state.path == path => {
+                store::read_optional(&root.join(path))?.as_deref() == Some(adopted.text.as_bytes())
+            }
+            Some(_) => false,
+            None => !root.join(path).exists(),
+        })
     }
 
     /// How the file at `path` links `ids`' copies while copying is on, the
@@ -1524,7 +1609,11 @@ impl Mirror {
         if let Some(why) = pause_reason(root, &self.device_id).or_else(|| self.emptied(root)) {
             return Some(Ok(Wrote::Paused(why)));
         }
-        let space_folder = path.split_once('/').map(|(folder, _)| root.join(folder));
+        let space_folder = if self.adoption.is_some() {
+            Some(root.to_path_buf())
+        } else {
+            path.split_once('/').map(|(folder, _)| root.join(folder))
+        };
         if !space_folder.is_some_and(|folder| folder.is_dir()) {
             return None;
         }
@@ -1553,7 +1642,7 @@ impl Mirror {
             .cloned()
             .unwrap_or_else(|| PageState {
                 path: path.to_owned(),
-                shadows: Vec::new(),
+                ..PageState::default()
             });
         if state.path == path && state.newest() == Some(&shadow) {
             return Ok(Wrote::Done);

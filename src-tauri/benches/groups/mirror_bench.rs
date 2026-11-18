@@ -210,6 +210,7 @@ async fn mirrored(pages: usize, blocks_per_page: usize) -> (Vault, Mirror) {
         read_back: true,
         copy_files: false,
         unmirrored: Vec::new(),
+        adopted: None,
     };
     let status = vault.state.status(settings, Vec::new());
     assert!(

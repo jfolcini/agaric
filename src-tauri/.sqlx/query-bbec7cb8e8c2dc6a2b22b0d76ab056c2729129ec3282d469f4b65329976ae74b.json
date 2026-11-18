@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: String\" FROM blocks\n                WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bbec7cb8e8c2dc6a2b22b0d76ab056c2729129ec3282d469f4b65329976ae74b"
+}

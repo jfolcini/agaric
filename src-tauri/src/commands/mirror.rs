@@ -12,6 +12,8 @@ use tauri::State;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
+use crate::mirror::adopt::{AdoptFile, AdoptionPreview};
+use crate::mirror::read_back::Scope;
 use crate::mirror::{self, MirrorState, MirrorStatus};
 use agaric_core::error::AppError;
 use agaric_sync::device::DeviceId;
@@ -79,6 +81,12 @@ pub async fn set_mirror_folder_inner(
     if cfg!(mobile) {
         return Err(unsupported());
     }
+    let settings = mirror::store::settings(pool).await?;
+    if let (Some(adopted), None) = (settings.folder.as_deref(), &path)
+        && settings.adopted.is_some()
+    {
+        give_back(mirror, Path::new(adopted))?;
+    }
     if let Some(folder) = path.as_deref().map(Path::new) {
         mirror::check_folder(folder, device_id, mirror.app_data_dir())?;
         mirror::store::write_marker(folder, device_id).map_err(|e| {
@@ -93,7 +101,8 @@ pub async fn set_mirror_folder_inner(
             mirror::store::set_read_back(pool, read_back).await?;
         }
     }
-    let chosen_again = path.is_some() && mirror::store::folder(pool).await? == path;
+    let chosen_again = path.is_some() && settings.folder == path;
+    mirror::store::set_adoption(pool, None).await?;
     mirror::store::set_folder(pool, path.as_deref()).await?;
     match path.as_deref().map(Path::new) {
         // The way out of the pause on an emptied folder: the user says this
@@ -101,6 +110,81 @@ pub async fn set_mirror_folder_inner(
         Some(folder) if chosen_again && mirror::is_emptied(folder) => mirror.start_fresh(),
         _ => mirror.restart(),
     }
+    get_mirror_status_inner(pool, device_id, mirror).await
+}
+
+/// Give an adopted folder back to the user as it was: its marker and its
+/// states go, so choosing it again adopts it afresh and it is never taken
+/// for a folder of space folders, which would move its files.
+fn give_back(mirror: &MirrorState, folder: &Path) -> Result<(), AppError> {
+    let cannot = |e: std::io::Error| {
+        AppError::validation(format!("cannot give {} back: {e}", folder.display()))
+    };
+    mirror::store::StateDir::new(mirror.app_data_dir())
+        .forget(&folder.to_string_lossy())
+        .map_err(cannot)?;
+    match std::fs::remove_file(folder.join(mirror::store::MARKER_NAME)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(cannot(e)),
+        _ => Ok(()),
+    }
+}
+
+/// What adopting `folder`, a folder of notes imported into `space_id` with
+/// `files` naming each note's page, would do ([`mirror::adopt::preview`]).
+///
+/// # Errors
+///
+/// [`AppError::Validation`] on mobile, or naming why the folder or a file is
+/// refused.
+pub async fn preview_mirror_adoption_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mirror: &MirrorState,
+    folder: String,
+    space_id: String,
+    files: Vec<AdoptFile>,
+) -> Result<AdoptionPreview, AppError> {
+    if cfg!(mobile) {
+        return Err(unsupported());
+    }
+    let folder = Path::new(&folder);
+    mirror::adopt::preview(
+        pool,
+        device_id,
+        mirror.app_data_dir(),
+        folder,
+        &space_id,
+        &files,
+    )
+    .await
+}
+
+/// Turn the mirror on in `folder`, a folder of notes imported into
+/// `space_id`, keeping each file where it is ([`mirror::adopt::adopt`]).
+///
+/// # Errors
+///
+/// [`AppError::Validation`] on mobile, while the mirror is on, or naming why
+/// the folder or a file is refused.
+pub async fn adopt_mirror_folder_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    mirror: &MirrorState,
+    folder: String,
+    space_id: String,
+    files: Vec<AdoptFile>,
+    read_back: bool,
+) -> Result<MirrorStatus, AppError> {
+    if cfg!(mobile) {
+        return Err(unsupported());
+    }
+    let adoption = mirror::adopt::Request {
+        folder: Path::new(&folder),
+        space_id: &space_id,
+        files: &files,
+        read_back,
+    };
+    mirror::adopt::adopt(pool, device_id, mirror, adoption).await?;
     get_mirror_status_inner(pool, device_id, mirror).await
 }
 
@@ -206,17 +290,21 @@ async fn pending(
         .into_iter()
         .map(|space| (space.id, space.name))
         .collect();
-    let unmirrored = mirror::store::settings(pool).await?.unmirrored;
+    let settings = mirror::store::settings(pool).await?;
     let folders: HashSet<String> = mirror::paths::space_folders(&spaces)
         .into_iter()
-        .filter(|(space, _)| !unmirrored.contains(space))
+        .filter(|(space, _)| !settings.unmirrored.contains(space))
         .map(|(_, folder)| folder)
         .collect();
+    let scope = match &settings.adopted {
+        Some(adoption) => Scope::Adopted(adoption),
+        None => Scope::Spaces(&folders),
+    };
     let mut states = mirror::store::StateDir::new(mirror.app_data_dir());
     states
         .bind(&root.to_string_lossy())
         .map_err(|e| AppError::validation(format!("cannot tell which files changed: {e}")))?;
-    mirror::read_back::pending(root, device_id, &states, &folders)
+    mirror::read_back::pending(root, device_id, &states, &scope)
 }
 
 /// The mirror's settings and what it is doing. While reading back is off,
@@ -325,4 +413,52 @@ pub async fn get_mirror_status(
     get_mirror_status_inner(&pool.0, device_id.as_str(), &mirror)
         .await
         .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn preview_mirror_adoption(
+    pool: State<'_, ReadPool>,
+    device_id: State<'_, DeviceId>,
+    mirror: State<'_, MirrorState>,
+    folder: String,
+    space_id: String,
+    files: Vec<AdoptFile>,
+) -> Result<AdoptionPreview, AppError> {
+    preview_mirror_adoption_inner(
+        &pool.0,
+        device_id.as_str(),
+        &mirror,
+        folder,
+        space_id,
+        files,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn adopt_mirror_folder(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    mirror: State<'_, MirrorState>,
+    folder: String,
+    space_id: String,
+    files: Vec<AdoptFile>,
+    read_back: bool,
+) -> Result<MirrorStatus, AppError> {
+    adopt_mirror_folder_inner(
+        &pool.0,
+        device_id.as_str(),
+        &mirror,
+        folder,
+        space_id,
+        files,
+        read_back,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }

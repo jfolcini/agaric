@@ -140,6 +140,7 @@ beforeEach(() => {
       pending: [],
       copy_files: false,
       unmirrored_spaces: [],
+      adopted_space: null,
     }),
   })
 })
@@ -1836,6 +1837,7 @@ describe('DataTab', () => {
             pending: [],
             copy_files: false,
             unmirrored_spaces: [],
+            adopted_space: null,
           }),
         })
       }

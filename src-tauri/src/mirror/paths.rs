@@ -95,9 +95,16 @@ fn fold(path: &str) -> String {
 /// a name already taken gets `_` and its owner's first 8 id characters, and a
 /// counter after that while it is still taken, so the lowest id of a colliding
 /// set keeps the bare name.
-fn disambiguate(mut owners: Vec<(&str, String)>) -> HashMap<String, String> {
+fn disambiguate(owners: Vec<(&str, String)>) -> HashMap<String, String> {
+    disambiguate_around(owners, HashSet::new())
+}
+
+/// [`disambiguate`], with the names `taken`, already folded, held by others.
+fn disambiguate_around(
+    mut owners: Vec<(&str, String)>,
+    mut taken: HashSet<String>,
+) -> HashMap<String, String> {
     owners.sort_unstable_by(|a, b| a.0.cmp(b.0));
-    let mut taken = HashSet::new();
     owners
         .into_iter()
         .map(|(id, base)| {
@@ -156,6 +163,34 @@ pub fn layout(spaces: &[(String, String)], pages: &[PageEntry]) -> HashMap<Strin
                 .into_iter()
                 .map(move |(id, path)| (id, format!("{folder}/{path}.md")))
         })
+        .collect()
+}
+
+/// Each page's file below a folder adopted as one space's (#6540): a page in
+/// `pinned`, by id, keeps its path there, the path its file had when it was
+/// adopted; every other page is at `<title path>.md`, distinct under `fold`
+/// from the pinned paths and from each other.
+pub fn adopted_layout(
+    pages: &[PageEntry],
+    pinned: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let taken = pinned
+        .values()
+        .map(|path| fold(path.strip_suffix(".md").unwrap_or(path)))
+        .collect();
+    let free = pages
+        .iter()
+        .filter(|page| !pinned.contains_key(&page.id))
+        .map(|page| (page.id.as_str(), title_path(&page.title)))
+        .collect();
+    disambiguate_around(free, taken)
+        .into_iter()
+        .map(|(id, path)| (id, format!("{path}.md")))
+        .chain(
+            pages
+                .iter()
+                .filter_map(|page| Some((page.id.clone(), pinned.get(&page.id)?.clone()))),
+        )
         .collect()
 }
 

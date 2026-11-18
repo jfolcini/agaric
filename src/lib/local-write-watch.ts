@@ -37,6 +37,7 @@ const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
   'preview_property_merge',
   'preview_property_type_change',
   'preview_unfit_property_move',
+  'preview_mirror_adoption',
   'check_latest_release',
 ])
 

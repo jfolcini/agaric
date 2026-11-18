@@ -26,6 +26,9 @@ const COPY_FILES_KEY: &str = "mirror.copy_files";
 /// `app_settings` key: the ids of the spaces not mirrored, as a JSON array.
 /// Absent, every space is, a new one included.
 const UNMIRRORED_KEY: &str = "mirror.unmirrored_spaces";
+/// `app_settings` key: the [`Adoption`] of the folder, as JSON. Absent, the
+/// mirror writes every mirrored space below its own folder.
+const ADOPTED_KEY: &str = "mirror.adopted";
 
 /// The file in the mirror's folder that names the device writing it, so a
 /// second device refuses the folder.
@@ -77,15 +80,43 @@ pub struct Settings {
     pub copy_files: bool,
     /// The spaces neither written nor read, every other one being both.
     pub unmirrored: Vec<String>,
+    /// The folder adopted in place as one space's, if it was.
+    pub adopted: Option<Adoption>,
+}
+
+/// A folder of notes adopted in place (#6540): it is `space_id`'s folder, its
+/// pages' files directly below it, and no other space is mirrored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Adoption {
+    pub space_id: String,
+    /// The `.md` files no page took at adoption, by path, each with the
+    /// [`content_hash`] of its bytes then: not read as a new file until they
+    /// change.
+    pub left_alone: std::collections::BTreeMap<String, String>,
+}
+
+impl Adoption {
+    /// Whether the file at `path` is one left alone at adoption, unchanged.
+    pub fn leaves_alone(&self, path: &str, bytes: &[u8]) -> bool {
+        self.left_alone
+            .get(path)
+            .is_some_and(|hash| *hash == content_hash(bytes))
+    }
+}
+
+/// The hash an [`Adoption`] keeps of a file's bytes.
+pub fn content_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
         COPY_FILES_KEY,
         UNMIRRORED_KEY,
+        ADOPTED_KEY,
     )
     .fetch_all(pool)
     .await?;
@@ -103,12 +134,44 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
         })?,
         None => Vec::new(),
     };
+    // Unreadable, it stops the mirror rather than lay the folder out as
+    // another's, which would move every file the user wrote.
+    let adopted = value(ADOPTED_KEY)
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|e| AppError::validation(format!("the mirror's adoption cannot be read: {e}")))?;
     Ok(Settings {
         folder: value(FOLDER_KEY),
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
         copy_files: value(COPY_FILES_KEY).as_deref() == Some("true"),
         unmirrored,
+        adopted,
     })
+}
+
+/// Store the folder's [`Adoption`], or with `None` drop it.
+pub async fn set_adoption(pool: &SqlitePool, adoption: Option<&Adoption>) -> Result<(), AppError> {
+    let Some(adoption) = adoption else {
+        sqlx::query!("DELETE FROM app_settings WHERE key = ?", ADOPTED_KEY)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    };
+    let value = serde_json::to_string(adoption)?;
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        ADOPTED_KEY,
+        value,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn set_unmirrored(pool: &SqlitePool, spaces: &[String]) -> Result<(), AppError> {
@@ -234,10 +297,19 @@ pub struct Shadow {
 
 /// A page's file as the mirror last wrote it: the path below the folder,
 /// `/`-separated, and the last texts written, newest last.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageState {
     pub path: String,
     pub shadows: Vec<Shadow>,
+    /// The page's title when its file was adopted in place (#6540): the file
+    /// stays at `path` while the page keeps it, and moves to the path the
+    /// mirror names once the page is renamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted_title: Option<String>,
+    /// The page's render when its file was adopted: nothing is written for
+    /// the page while it still renders so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted_render: Option<String>,
 }
 
 impl PageState {
@@ -248,6 +320,10 @@ impl PageState {
     /// Record `shadow` as written at `path`, keeping the last
     /// `SHADOWS_KEPT` texts.
     pub fn record(&mut self, path: String, shadow: Shadow) {
+        if self.path != path {
+            self.adopted_title = None;
+        }
+        self.adopted_render = None;
         self.path = path;
         if self.newest() != Some(&shadow) {
             self.shadows.push(shadow);

@@ -10,7 +10,11 @@
  */
 
 import type { MirrorStatus } from '@/lib/bindings'
-import { type TypedHandlers, returnNull } from '@/lib/tauri-mock/handlers/shared'
+import {
+  type TypedHandlers,
+  returnNull,
+  validationRejection,
+} from '@/lib/tauri-mock/handlers/shared'
 import { appSettings, blocks } from '@/lib/tauri-mock/seed'
 
 /** The `app_settings` key the backend keeps this device's mirror folder under (#5363). */
@@ -21,6 +25,8 @@ const MIRROR_READ_BACK_KEY = 'mirror.read_back'
 const MIRROR_COPY_FILES_KEY = 'mirror.copy_files'
 /** The `app_settings` key holding the unmirrored spaces' ids, as a JSON array. */
 const MIRROR_UNMIRRORED_KEY = 'mirror.unmirrored_spaces'
+/** The adopted space's id; the backend keeps the whole adoption under `mirror.adopted`. */
+const MIRROR_ADOPTED_KEY = 'mirror.adopted'
 
 function unmirroredSpaces(): string[] {
   const stored = appSettings.get(MIRROR_UNMIRRORED_KEY)
@@ -44,6 +50,7 @@ function mirrorStatus(): MirrorStatus {
     pending: [],
     copy_files: appSettings.get(MIRROR_COPY_FILES_KEY) === 'true',
     unmirrored_spaces: unmirroredSpaces(),
+    adopted_space: appSettings.get(MIRROR_ADOPTED_KEY) ?? null,
   }
 }
 
@@ -188,6 +195,23 @@ export const systemHandlers = {
       }
       appSettings.set(MIRROR_FOLDER_KEY, path)
     } else appSettings.delete(MIRROR_FOLDER_KEY)
+    appSettings.delete(MIRROR_ADOPTED_KEY)
+    return mirrorStatus()
+  },
+  // #6540 — the mock reads no folder: nothing would change and nothing is left alone.
+  preview_mirror_adoption: () => ({ changes: [], left_alone: [] }),
+  adopt_mirror_folder: (args) => {
+    const { folder, spaceId, readBack } = args as {
+      folder: string
+      spaceId: string
+      readBack?: unknown
+    }
+    if (appSettings.has(MIRROR_FOLDER_KEY)) {
+      throw validationRejection('turn the mirror off before adopting a folder')
+    }
+    appSettings.set(MIRROR_READ_BACK_KEY, String(readBack !== false))
+    appSettings.set(MIRROR_ADOPTED_KEY, spaceId.toUpperCase())
+    appSettings.set(MIRROR_FOLDER_KEY, folder)
     return mirrorStatus()
   },
   set_mirror_space: (args) => {
@@ -239,6 +263,8 @@ export const systemHandlers = {
   | 'set_mirror_copy_files'
   | 'set_mirror_space'
   | 'get_mirror_status'
+  | 'preview_mirror_adoption'
+  | 'adopt_mirror_folder'
   | 'get_last_snapshot_ms'
   | 'open_data_folder'
 >
