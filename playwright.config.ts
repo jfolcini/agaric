@@ -130,6 +130,7 @@ const REAL_BACKEND_SPECS = [
   'tags-and-links-happy-paths.spec.ts',
   'tags-lifecycle.spec.ts',
   'tags-query-modes.spec.ts',
+  'task-repeat-toggle-race.spec.ts',
   'template-keeps-fields-6530.spec.ts',
   'templates-view.spec.ts',
   'templates.spec.ts',

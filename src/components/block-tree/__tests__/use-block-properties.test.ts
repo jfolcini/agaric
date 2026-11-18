@@ -978,3 +978,123 @@ describe('useBlockProperties handleToggleTodo — next occurrence of a repeating
     expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['BLOCK_1'])
   })
 })
+
+describe('useBlockProperties handleToggleTodo — a repeat reload against another toggle (#6972)', () => {
+  const REPEAT = makePropertyRow({ key: 'repeat', value_text: '+1w' })
+
+  /**
+   * The backend's task states, which `set_todo_state` writes once it commits
+   * and `load_page_subtree` reads at the moment it is called. BLOCK_2's write
+   * commits only when the test resolves `block2`; the first page read answers
+   * only when it resolves `firstRead`, if `holdFirstRead`.
+   */
+  function stubBackend(holdFirstRead: boolean) {
+    const states = new Map<string, string | null>([
+      ['BLOCK_1', 'DOING'],
+      ['BLOCK_2', 'TODO'],
+    ])
+    const block2 = deferred<void>()
+    const firstRead = deferred<void>()
+    let reads = 0
+    const snapshot = () => ({
+      blocks: [...states].map(([id, todo_state], i) =>
+        makeBlockRow({ id, parent_id: 'PAGE_1', todo_state, position: i + 1 }),
+      ),
+      truncated: false,
+      total: states.size,
+    })
+    stubPropertiesInvoke({
+      get_property: (args) =>
+        args['key'] === 'repeat' && args['blockId'] === 'BLOCK_1' ? REPEAT : null,
+      set_todo_state: async (args) => {
+        if (args['blockId'] === 'BLOCK_2') await block2.promise
+        states.set(args['blockId'] as string, args['state'] as string | null)
+        return todoRow(args)
+      },
+      load_page_subtree: async () => {
+        reads++
+        const read = snapshot()
+        if (reads === 1 && holdFirstRead) await firstRead.promise
+        return read
+      },
+    })
+    return { block2, firstRead, reads: () => reads }
+  }
+
+  const stateOf = (id: string) => pageStore.getState().blocksById.get(id)?.todo_state
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DOING' }),
+        makeBlock({ id: 'BLOCK_2', parent_id: 'PAGE_1', todo_state: 'TODO', position: 2 }),
+      ],
+    })
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it('the reload waits for a toggle still on its way when it starts', async () => {
+    const backend = stubBackend(false)
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let toggles: Promise<unknown> = Promise.resolve()
+    await act(async () => {
+      const second = result.current.handleToggleTodo('BLOCK_2')
+      toggles = Promise.all([result.current.handleToggleTodo('BLOCK_1'), second])
+      await vi.waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
+          blockId: 'BLOCK_1',
+          key: 'repeat',
+        }),
+      )
+    })
+    // Not yet read: a snapshot now would carry BLOCK_2's old state.
+    expect(backend.reads()).toBe(0)
+    expect(stateOf('BLOCK_2')).toBe('DOING')
+
+    await act(async () => {
+      backend.block2.resolve()
+      await toggles
+    })
+
+    expect(backend.reads()).toBe(1)
+    expect(stateOf('BLOCK_1')).toBe('DONE')
+    expect(stateOf('BLOCK_2')).toBe('DOING')
+  })
+
+  it('a reload whose snapshot was on its way when a toggle began reads again', async () => {
+    const backend = stubBackend(true)
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let first: Promise<void> = Promise.resolve()
+    await act(async () => {
+      first = result.current.handleToggleTodo('BLOCK_1')
+      await vi.waitFor(() => expect(backend.reads()).toBe(1))
+    })
+    let second: Promise<void> = Promise.resolve()
+    act(() => {
+      second = result.current.handleToggleTodo('BLOCK_2')
+    })
+    expect(stateOf('BLOCK_2')).toBe('DOING')
+
+    // The first snapshot, read before BLOCK_2's write, lands now.
+    await act(async () => {
+      backend.firstRead.resolve()
+      await Promise.resolve()
+    })
+    expect(stateOf('BLOCK_2')).toBe('DOING')
+
+    await act(async () => {
+      backend.block2.resolve()
+      await Promise.all([first, second])
+    })
+
+    expect(backend.reads()).toBe(2)
+    expect(stateOf('BLOCK_1')).toBe('DONE')
+    expect(stateOf('BLOCK_2')).toBe('DOING')
+  })
+})

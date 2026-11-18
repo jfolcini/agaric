@@ -158,6 +158,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
    * block, and a load whose snapshot would predate the command, wait for it.
    */
   const heldBlocks = new Map<string, Promise<void>>()
+  /**
+   * Optimistic writes in flight that only loads wait for (#6972): a snapshot
+   * read before such a write commits would put the old value back.
+   */
+  const heldLoads = new Set<Promise<void>>()
   /** How many holds have been taken; a load that saw it move read too early. */
   let holdsTaken = 0
 
@@ -178,6 +183,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       for (const id of ids) if (heldBlocks.get(id) === held) heldBlocks.delete(id)
       answered()
     }
+  }
+
+  /** Settles once every hold taken so far is released; `null` when none is held. */
+  function pendingHolds(): Promise<unknown> | null {
+    if (heldBlocks.size + heldLoads.size === 0) return null
+    return Promise.all([...heldBlocks.values(), ...heldLoads])
   }
 
   /**
@@ -223,6 +234,19 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
     getBlockById: (id: string) => get().blocksById.get(id),
 
+    holdLoads: () => {
+      let answered: () => void = () => undefined
+      const held = new Promise<void>((resolve) => {
+        answered = resolve
+      })
+      holdsTaken++
+      heldLoads.add(held)
+      return () => {
+        heldLoads.delete(held)
+        answered()
+      }
+    },
+
     load: async () => {
       // No active space yet: fail closed rather than send an empty space id,
       // which the backend might one day read as a wildcard. Clear `loading`
@@ -238,7 +262,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // A block created but not yet in the backend would be missing from the
       // snapshot, and read as deleted: its row dropped, the focus on it cleared.
       // A second Enter can start another create while this waits.
-      while (heldBlocks.size > 0) await Promise.all(heldBlocks.values())
+      // Likewise an optimistic write, which the snapshot would revert (#6972).
+      for (let held = pendingHolds(); held; held = pendingHolds()) await held
       const holdsAtStart = holdsTaken
       const generation = ++loadGeneration
       // What the focused editor was based on as this load started (#6533).

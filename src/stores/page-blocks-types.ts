@@ -63,6 +63,14 @@ export interface PageBlockState {
   /** `state.blocksById.get(id)`. */
   getBlockById: (id: string) => FlatBlock | undefined
 
+  /**
+   * Make `load()` wait until the returned function is called, for an
+   * optimistic write whose command is in flight: a snapshot read before the
+   * command commits would revert the write, and a load that began before this
+   * call reads again (#6972).
+   */
+  holdLoads: () => () => void
+
   /** Load the full block subtree from the backend. */
   load: () => Promise<void>
 
