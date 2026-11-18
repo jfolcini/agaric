@@ -148,6 +148,32 @@ describe('QuickCaptureFab', () => {
     expect(fab).toHaveAttribute('data-shown', 'false')
   })
 
+  // A restore lands in steps as the view's content loads (68 px, then 108 px on
+  // the real backend), so the later steps must not read as a scroll down either.
+  it('a scroll restore in several steps is not a scroll down', () => {
+    render(
+      <>
+        <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
+        <div id="main-content">
+          <div data-testid="scroller" />
+        </div>
+      </>,
+    )
+    const fab = screen.getByTestId('quick-capture-fab')
+    const scroller = screen.getByTestId('scroller')
+    const scrollTo = (top: number) =>
+      act(() => {
+        scroller.scrollTop = top
+        scroller.dispatchEvent(new Event('scroll'))
+      })
+    scrollTo(68)
+    scrollTo(108)
+    expect(fab).toHaveAttribute('data-shown', 'true')
+    fireEvent.wheel(scroller)
+    scrollTo(400)
+    expect(fab).toHaveAttribute('data-shown', 'false')
+  })
+
   it("stays shown when a popup's list scrolls down outside the view's content", () => {
     render(
       <>
