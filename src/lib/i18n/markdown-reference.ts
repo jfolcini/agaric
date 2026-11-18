@@ -21,6 +21,9 @@ export const markdownReference: Record<string, string> = {
   'markdownReference.italic.description': 'Makes the text italic. _italic_ works too.',
   'markdownReference.highlight.title': 'Highlight',
   'markdownReference.highlight.description': 'Highlights the text.',
+  'markdownReference.highlightColor.title': 'Coloured highlight',
+  'markdownReference.highlightColor.description':
+    'A colour emoji after the == colours the highlight: 🔴 🟠 🟡 🟢 🔵 🟣, as Obsidian writes it. The selection bubble picks one too.',
   'markdownReference.strike.title': 'Strikethrough',
   'markdownReference.strike.description': 'Crosses the text out.',
   'markdownReference.underline.title': 'Underline',

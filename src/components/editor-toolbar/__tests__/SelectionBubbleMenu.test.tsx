@@ -681,6 +681,18 @@ describe('SelectionBubbleMenu', () => {
       expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
 
+    it('opens the highlight colour swatches from its own button (#6759)', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const colorPopover = screen.getByTestId('highlight-color-picker').closest('[data-popover]')
+      expect(colorPopover).toHaveAttribute('data-open', 'false')
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.highlightColor') }))
+
+      expect(colorPopover).toHaveAttribute('data-open', 'true')
+      // The link popover stays closed.
+      expect(document.querySelector('[data-popover]')).toHaveAttribute('data-open', 'false')
+    })
+
     it('passes isEditing=false and empty initialUrl when no link is active', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
 
