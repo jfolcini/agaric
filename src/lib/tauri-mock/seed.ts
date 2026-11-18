@@ -956,21 +956,11 @@ export function seedBlocks(): void {
 }
 
 /**
- * Opt-in second space "Work" (`SPACE_WORK`), for e2e that needs a second
- * space to survive a reload: one made with the create form lives in this
- * in-memory store, which a reload re-seeds. Gated behind
- * `localStorage['__mockWorkSpace'] === 'true'` so the default seed keeps its
- * one space. No pages and the default property definitions, like a space the
- * create form makes.
+ * The second space, "Work", as the backend's first boot makes it
+ * (`agaric-engine/src/spaces.rs`): no pages, the default property definitions
+ * and the `accent-blue` accent.
  */
 function seedWorkSpace(): void {
-  let enabled = false
-  try {
-    enabled = globalThis.localStorage?.getItem('__mockWorkSpace') === 'true'
-  } catch {
-    enabled = false
-  }
-  if (!enabled) return
   blocks.set(SEED_IDS.SPACE_WORK, makeBlock(SEED_IDS.SPACE_WORK, 'page', 'Work', null, 1))
   seedDefaultPropertyDefs(SEED_IDS.SPACE_WORK, '2026-01-01T00:00:00.000Z', false)
   properties.set(
@@ -982,6 +972,18 @@ function seedWorkSpace(): void {
           block_id: SEED_IDS.SPACE_WORK,
           key: 'is_space',
           value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+      [
+        'accent_color',
+        {
+          block_id: SEED_IDS.SPACE_WORK,
+          key: 'accent_color',
+          value_text: 'accent-blue',
           value_num: null,
           value_date: null,
           value_ref: null,

@@ -250,8 +250,7 @@ test.describe('A PDF highlight or comment becomes a block that links back to its
   test('a block moved to another space still follows its file to the newer copy', async ({
     page,
   }) => {
-    // The mock's second space, "Work"; a reload re-seeds the mock, so the PDF too.
-    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    // Into the seeded second space, "Work".
     await page.reload()
     await waitForBoot(page)
     await seedPdf(page)

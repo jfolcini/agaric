@@ -72,8 +72,6 @@ test.describe('Settings › Data: Markdown mirror @settings @markdown', () => {
 
 test.describe('Settings › Data: which spaces are mirrored @settings @markdown', () => {
   test.beforeEach(async ({ page }) => {
-    // The mock's opt-in second space, "Work" (`seedWorkSpace`).
-    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
     await waitForBoot(page)
   })
 

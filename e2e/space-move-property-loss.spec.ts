@@ -16,7 +16,7 @@ import {
  * batch toolbar and from the page header.
  *
  * The seed's Meetings page holds `context` and `project` on its two blocks.
- * Personal declares both; Work, the mock's opt-in second space
+ * Personal declares both; Work, the seeded second space
  * (`seedWorkSpace` in `src/lib/tauri-mock/seed.ts`), starts with the defaults
  * only, so moving Meetings there would drop four values. The real-backend
  * lane carries the drop and its undo (`e2e-tauri/space-move-property-loss.e2e.ts`);
@@ -30,7 +30,6 @@ const PAGE_MEETINGS = '00000000000000000000PAGE05'
 const chips = (page: Page) => page.getByTestId('property-chip')
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
   await waitForBoot(page)
 })
 

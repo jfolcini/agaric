@@ -527,8 +527,6 @@ test.describe('Per-space property definitions @editor @spaces @settings', () => 
   const DEFINITIONS_IN = 'Definitions in'
 
   test.beforeEach(async ({ page }) => {
-    // A second space, Work, seeded with the defaults a new space starts with.
-    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
     await waitForBoot(page)
   })
 

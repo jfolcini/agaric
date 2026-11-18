@@ -27,7 +27,6 @@ const VIEW = 'Work blocks'
 const RENAMED = 'Work items'
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
   await waitForBoot(page)
 })
 

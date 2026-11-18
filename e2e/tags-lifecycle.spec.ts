@@ -63,18 +63,6 @@ function tagRow(page: Page, name: string) {
     .filter({ has: page.getByTestId(`tag-item-${name}`) })
 }
 
-/** Create a space in Settings › Spaces; the app stays on Settings and on the active space. */
-async function createSpace(page: Page, name: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  await page.mouse.move(0, 0)
-  await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-  const panel = page.getByTestId('settings-panel-spaces')
-  await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
-  await panel.getByPlaceholder('New space name').fill(name)
-  await panel.getByRole('button', { name: 'Create', exact: true }).click()
-  await expect(panel.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
-}
-
 async function createTagInList(page: Page, name: string): Promise<void> {
   await page.getByPlaceholder('New tag name...').fill(name)
   await page.getByRole('button', { name: 'Add tag' }).click()
@@ -87,7 +75,6 @@ test.describe('Tags view follows the active space (#5257) @pages @spaces', () =>
   })
 
   test('switching back lists that space, and a delete purges only its tag', async ({ page }) => {
-    await createSpace(page, 'Work')
     await navigateToView(page, 'Tags')
     await expect(page.getByTestId('tag-item-idea')).toBeVisible()
 

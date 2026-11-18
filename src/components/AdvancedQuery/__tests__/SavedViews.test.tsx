@@ -67,7 +67,6 @@ async function rowNames(): Promise<string[]> {
 beforeEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
-  localStorage.setItem('__mockWorkSpace', 'true')
   seedBlocks()
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
     dispatch(cmd, args),
