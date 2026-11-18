@@ -192,6 +192,10 @@ export const systemHandlers = {
   pick_mirror_folder: () => MOCK_MIRROR_FOLDER,
   set_mirror_folder: (args) => {
     const { path, readBack } = args as { path?: unknown; readBack?: unknown }
+    // As the backend: the adopted folder chosen again stays adopted, unchanged.
+    if (appSettings.has(MIRROR_ADOPTED_KEY) && path === appSettings.get(MIRROR_FOLDER_KEY)) {
+      return mirrorStatus()
+    }
     if (typeof path === 'string') {
       // As the backend: the choice applies only when the mirror turns on.
       if (!appSettings.has(MIRROR_FOLDER_KEY)) {
