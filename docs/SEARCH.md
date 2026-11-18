@@ -132,7 +132,7 @@ A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}
 | `not-priority:VALUE` | Block's `priority` is **not** `VALUE`. | Symmetric to `not-state:` — NULL-inclusive inversion. |
 | `due:RANGE` | Block's `due_date` matches `RANGE`. | See *Date predicates* below. |
 | `scheduled:RANGE` | Block's `scheduled_date` matches `RANGE`. | Same shape as `due:`. |
-| `prop:KEY=VALUE` | Block has property `KEY` with the given value (matches across `value_text` / `value_num` / `value_date` / `value_ref`). | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". |
+| `prop:KEY=VALUE` | Block has property `KEY` with the given value (matches across `value_text` / `value_num` / `value_date` / `value_ref`). | Multiple `prop:` tokens AND-combine. `prop:KEY=` (empty value) matches "block has the key at all". On a key declared Date & time, the value is a moment read in the device's time zone (`prop:start>2026-11-14T09:30`), and a day alone is that whole local day (`prop:start=2026-11-14`). |
 | `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
 | `"phrase"` | Quoted phrase passed verbatim to FTS5. | A phrase under three characters is matched as a short term (see *Short terms*). |
 | `AND` / `OR` / `NOT` | Boolean operators between words (FTS5 syntax). | `OR` between filters, and parentheses, are the filter grammar: see *OR between filters*. |

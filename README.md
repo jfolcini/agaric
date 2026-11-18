@@ -48,7 +48,7 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 
 **Tasks.** A block can be `TODO`, `DOING`, `DONE` or `CANCELLED` (`Ctrl+Enter` cycles), with a priority, due and scheduled dates, and a repeat rule. The Agenda filters, sorts and groups tasks and lists the future occurrences of repeating ones. On desktop, an optional reminder notifies you of tasks on their due date while the app is running.
 
-**Properties.** Typed values on any block or page: text, number, date, select, reference, boolean, URL. Definitions belong to a space and can be renamed, merged and retyped.
+**Properties.** Typed values on any block or page: text, number, date, date and time, select, reference, boolean, URL. Definitions belong to a space and can be renamed, merged and retyped.
 
 **Query.** A `{{query tag:#work state:TODO}}` block lists the matching blocks live inside a page, as a list or as a table with the columns you pick. The Advanced Query view filters by tags, properties, task state, dates and links with nested AND / OR / NOT, sorts, groups and summarises, and can lay the results out as a board with one column per task state or select option, where a card moves by dragging or from its *Move to…* menu. A query can be saved as a view.
 
