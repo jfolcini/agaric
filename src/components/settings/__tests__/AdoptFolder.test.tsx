@@ -8,7 +8,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
@@ -18,6 +17,11 @@ import { diskEntry, folderName } from '@/components/settings/useAdoptFolder'
 import type { AdoptionPreview, MirrorStatus } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
+
+const notified = vi.hoisted(() =>
+  Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() }),
+)
+vi.mock('@/lib/notify', () => ({ notify: notified }))
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -153,12 +157,15 @@ describe('Open a folder of notes', () => {
       ],
     })
     expect(await screen.findByTestId('mirror-folder')).toHaveTextContent(FOLDER)
+    // Adopted, never also told the folder was left unmirrored.
+    expect(notified.success).toHaveBeenCalledWith(t('data.mirrorAdopted', { name: 'Vault' }))
+    expect(notified).not.toHaveBeenCalledWith(t('data.mirrorAdoptDeclined', { name: 'Vault' }))
   })
 
   it('refuses a Logseq graph before anything is written', async () => {
     const user = userEvent.setup()
     disk = { 'logseq/config.edn': '{}', 'pages/A.md': '- a\n' }
-    const errorSpy = vi.spyOn(toast, 'error')
+    const errorSpy = notified.error
     render(<MirrorSection />)
     await user.click(await screen.findByRole('button', { name: t('data.mirrorAdoptButton') }))
 
@@ -175,6 +182,7 @@ describe('Open a folder of notes', () => {
 
     await waitFor(() => expect(screen.queryByTestId('mirror-adopt-dialog')).toBeNull())
     expect(adopted).toBeNull()
+    expect(notified).toHaveBeenCalledWith(t('data.mirrorAdoptDeclined', { name: 'Vault' }))
     // The imported notes stay in their space.
     expect(spaces).toEqual([{ id: 'SPACE_1', name: 'Vault' }])
   })
@@ -182,7 +190,7 @@ describe('Open a folder of notes', () => {
   it('says why when the adoption is refused, and the mirror stays off', async () => {
     const user = userEvent.setup()
     adoptRefused = true
-    const errorSpy = vi.spyOn(toast, 'error')
+    const errorSpy = notified.error
     const dialog = await openFolder(user)
     await user.click(within(dialog).getByTestId('mirror-adopt-confirm'))
 

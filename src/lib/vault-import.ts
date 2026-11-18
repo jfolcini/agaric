@@ -690,7 +690,7 @@ export function mdFilesToUnits(
   let orgTargets: Promise<OrgPickTargets> | undefined
   return notes.map(({ file, extension, path: importedAs }, index) => ({
     name: file.name,
-    source: vaultRelativePath(file.webkitRelativePath),
+    source: vaultRelativePath(file.webkitRelativePath) || undefined,
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,

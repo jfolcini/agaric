@@ -476,6 +476,7 @@ export function MirrorSection(): React.ReactElement | null {
           void adopt.confirm()
         }}
         onDecline={adopt.decline}
+        onDismiss={adopt.dismiss}
       />
       <ImportMergeDialog question={adopt.runner.mergeQuestion} />
     </Card>
