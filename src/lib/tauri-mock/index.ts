@@ -118,8 +118,10 @@ export function setupMock(): void {
     })
   })
 
-  // Expose error injection to E2E tests via window globals
+  // Expose error injection to E2E tests via window globals, unless a
+  // Playwright fixture asked for the bridge's surface, which has none of them.
   const w = window as unknown as Record<string, unknown>
+  if (w['__AGARIC_NO_MOCK_HOOKS__'] === true) return
   w['__injectMockError'] = injectMockError
   w['__clearMockErrors'] = clearMockErrors
   w['__setMockLatency'] = setMockLatency
