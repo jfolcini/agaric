@@ -379,6 +379,18 @@ impl Copies {
         Ok(left)
     }
 
+    /// Forget each copy whose attachment is not among `live`: it is then
+    /// never removed, as [`Copies::remove_except`] removes recorded copies
+    /// alone.
+    ///
+    /// # Errors
+    ///
+    /// The record of copies cannot be saved.
+    pub fn forget_except(&mut self, live: &HashSet<String>) -> Result<(), AppError> {
+        self.written.retain(|_, copy| live.contains(&copy.id));
+        self.save()
+    }
+
     /// The attachments the copies are of.
     pub fn ids(&self) -> Vec<String> {
         let ids: HashSet<&String> = self.written.values().map(|copy| &copy.id).collect();

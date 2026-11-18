@@ -235,7 +235,7 @@ export function useUnlinkedReferences(
   // `groupLimit` is part of the query key (deliberately: expanding must refetch
   // the full page). Expanding therefore switches the observer to a cache entry
   // that has no data yet, `data` is `undefined` for that render, and both counts
-  // fell back to 0 — so `UnlinkedReferences` rendered "No Unlinked References"
+  // fell back to 0 — so `UnlinkedReferences` rendered "No unlinked references"
   // over a panel it had just told the user held 12, then flipped back when the
   // limit-20 fetch resolved. The count was never unknown; only the key change
   // discarded it.

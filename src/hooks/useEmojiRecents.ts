@@ -2,7 +2,7 @@
  * useEmojiRecents — localStorage-backed FREQUENTLY-USED emoji list (#286).
  *
  * Shared by the browse-grid `<EmojiPicker>` dialog, the inline `:` picker, and
- * the page-title / tag emoji buttons so a "Frequently Used" row can surface the
+ * the page-title / tag emoji buttons so a "Frequently used" row can surface the
  * emoji the user reaches for most. Each insertion bumps a per-emoji use count
  * (and a last-used timestamp); the list is ranked by count, with recency as the
  * tiebreak — so a long-favourite emoji stays near the front and isn't pushed

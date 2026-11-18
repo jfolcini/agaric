@@ -5,7 +5,7 @@
  *  - Renders Sheet when open with block history content
  *  - Does not render content when closed
  *  - Passes blockId to HistoryPanel
- *  - SheetTitle shows "Block History"
+ *  - SheetTitle shows "Block history"
  *  - Close button works (calls onOpenChange with false)
  *  - Axe a11y audit passes
  */
@@ -50,10 +50,10 @@ describe('HistorySheet', () => {
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
   })
 
-  it('displays "Block History" as the sheet title', () => {
+  it('displays "Block history" as the sheet title', () => {
     render(<HistorySheet blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('Block History')).toBeInTheDocument()
+    expect(screen.getByText('Block history')).toBeInTheDocument()
   })
 
   it('close button calls onOpenChange with false', async () => {

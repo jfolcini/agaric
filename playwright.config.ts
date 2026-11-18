@@ -23,12 +23,18 @@ const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CL
 // so a PR that adds a hook call to a listed spec goes red before the nightly.
 const REAL_BACKEND = process.env['AGARIC_E2E_BRIDGE'] !== undefined
 const REAL_BACKEND_SPECS = [
+  'advanced-query-board.spec.ts',
+  'advanced-query-group.spec.ts',
+  'advanced-query-happy-paths.spec.ts',
   'advanced-query-saved-views.spec.ts',
   'header-search-button.spec.ts',
   'navigation-history.spec.ts',
   'query-block-text.spec.ts',
+  'query-blocks.spec.ts',
   'query-hint.spec.ts',
+  'query-table-cell-edit.spec.ts',
   'query-table-columns.spec.ts',
+  'query-table-list-filter.spec.ts',
   'search-filter-chips.spec.ts',
   'search-filters.spec.ts',
   'search-happy-paths.spec.ts',

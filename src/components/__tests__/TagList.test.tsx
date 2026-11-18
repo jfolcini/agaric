@@ -126,7 +126,7 @@ describe('TagList', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /Add Tag/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Add tag/i })).toBeInTheDocument()
   })
 
   it('loads and renders tags', async () => {
@@ -273,7 +273,7 @@ describe('TagList', () => {
     const input = screen.getByPlaceholderText('New tag name...')
     await user.type(input, 'my-new-tag')
 
-    const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+    const addBtn = screen.getByRole('button', { name: /Add tag/i })
     await user.click(addBtn)
 
     // New tag should appear
@@ -312,7 +312,7 @@ describe('TagList', () => {
     expect(await screen.findByTestId('tag-item-project')).toBeInTheDocument()
 
     await user.type(screen.getByPlaceholderText('New tag name...'), 'Project')
-    await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText('New tag name...')).toHaveValue('')
@@ -330,7 +330,7 @@ describe('TagList', () => {
       expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
     })
 
-    const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+    const addBtn = screen.getByRole('button', { name: /Add tag/i })
     expect(addBtn).toBeDisabled()
 
     // Type whitespace only — should still be disabled
@@ -696,7 +696,7 @@ describe('TagList', () => {
       render(<TagList />)
 
       await user.type(await screen.findByPlaceholderText('New tag name...'), 'deep work')
-      await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+      await user.click(screen.getByRole('button', { name: /Add tag/i }))
 
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(t('tags.nameHasWhitespace'))
@@ -791,7 +791,7 @@ describe('TagList', () => {
 
       const input = screen.getByPlaceholderText('New tag name...')
       await user.type(input, 'fail-tag')
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       await user.click(addBtn)
 
       await waitFor(() => {
@@ -819,7 +819,7 @@ describe('TagList', () => {
 
       const input = screen.getByPlaceholderText('New tag name...')
       await user.type(input, 'duplicate-tag')
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       await user.click(addBtn)
 
       await waitFor(() => {
@@ -867,7 +867,7 @@ describe('TagList', () => {
         expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
       })
 
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       expect(addBtn).toBeDisabled()
     })
 
@@ -880,7 +880,7 @@ describe('TagList', () => {
         expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
       })
 
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       expect(addBtn).toBeDisabled()
       // The button component's built-in disabled variant applies disabled:opacity-50
       // Verify the attribute is set (CSS classes are applied via cva)
@@ -897,7 +897,7 @@ describe('TagList', () => {
         expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
       })
 
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       expect(addBtn).toBeDisabled()
 
       const input = screen.getByPlaceholderText('New tag name...')
@@ -999,7 +999,7 @@ describe('TagList', () => {
       const input = screen.getByPlaceholderText('New tag name...')
       await user.type(input, longName)
 
-      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      const addBtn = screen.getByRole('button', { name: /Add tag/i })
       await user.click(addBtn)
 
       await waitFor(() => {
@@ -1310,7 +1310,7 @@ describe('TagList', () => {
         ).toBeInTheDocument()
 
         await user.type(screen.getByPlaceholderText(t('tagList.newTagPlaceholder')), 'brandnew')
-        await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+        await user.click(screen.getByRole('button', { name: /Add tag/i }))
 
         await waitFor(() =>
           expect(changes).toEqual([

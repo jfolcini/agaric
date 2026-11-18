@@ -920,7 +920,7 @@ describe('DuePanel', () => {
     await screen.findByText('due1')
 
     // Header should show breakdown with middle dot separator
-    expect(screen.getByText('2 Due \u00B7 1 Scheduled \u00B7 1 Properties')).toBeInTheDocument()
+    expect(screen.getByText('2 due \u00B7 1 scheduled \u00B7 1 by property')).toBeInTheDocument()
   })
 
   // #1540 — the breakdown is a date-equality heuristic, not a per-source
@@ -955,7 +955,7 @@ describe('DuePanel', () => {
     await screen.findByText('both1')
 
     // Both-dates block buckets as Due (not double-counted), summing to 2 total.
-    expect(screen.getByText('1 Due · 1 Scheduled')).toBeInTheDocument()
+    expect(screen.getByText('1 due · 1 scheduled')).toBeInTheDocument()
   })
 
   // 19. Header falls back to total count when only one source type

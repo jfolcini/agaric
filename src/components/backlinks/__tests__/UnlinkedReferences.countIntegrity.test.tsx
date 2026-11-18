@@ -19,7 +19,7 @@
  *     refetch healed it.
  *  2. `groupLimit` is part of the query key, so the first expand switched the
  *     observer to an empty cache entry, `totalCount` fell back to 0, and the
- *     header read "No Unlinked References" over a panel that had just said 12.
+ *     header read "No unlinked references" over a panel that had just said 12.
  *
  * Note 4 (also #3732 item 1's sibling) is a class-string concern: under
  * windowing `last:border-b-0` matches the last MOUNTED row, so the divider
@@ -207,7 +207,7 @@ function shownCounts(): { filtered: number; total: number } {
 }
 
 async function expand(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: /Unlinked References?/i }))
+  await user.click(await screen.findByRole('button', { name: /unlinked references?/i }))
 }
 
 /** Drive the REAL BacklinkFilterBuilder to apply a BlockType filter. */
@@ -263,7 +263,7 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   })
 
   // #3733 note 2.
-  it('expanding does not flash "No Unlinked References" over a known count', async () => {
+  it('expanding does not flash "No unlinked references" over a known count', async () => {
     const user = userEvent.setup()
     let releaseExpanded: ((v: GroupedBacklinkResponse) => void) | undefined
     mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {

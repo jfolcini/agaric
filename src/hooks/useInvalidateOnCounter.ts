@@ -9,6 +9,10 @@
  * The counter's first value is the mount, not a change, so the initial render
  * never invalidates.
  *
+ * A Load more in flight waits to land first (#6911): invalidating cancels a
+ * running fetch and refetches only the pages the cache already holds, so the
+ * page the user asked for would be dropped. Once it lands, the refetch covers it.
+ *
  * `queryKey` is a prefix — `invalidateQueries` prefix-matches, so every variant
  * under it refetches. Memoize it at the call site: it is an effect dependency.
  */
@@ -23,6 +27,11 @@ export function useInvalidateOnCounter(counter: number, queryKey: readonly unkno
   useEffect(() => {
     if (seenCounterRef.current === counter) return
     seenCounterRef.current = counter
-    void queryClient.invalidateQueries({ queryKey })
+    const loadingMore = queryClient
+      .getQueryCache()
+      .findAll({ queryKey, fetchStatus: 'fetching' })
+      .filter((query) => query.state.fetchMeta?.fetchMore != null)
+      .flatMap((query) => query.promise ?? [])
+    void Promise.allSettled(loadingMore).then(() => queryClient.invalidateQueries({ queryKey }))
   }, [counter, queryKey])
 }

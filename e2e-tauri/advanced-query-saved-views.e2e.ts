@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Real-backend Advanced Query saved views (#5738).
+// Real-backend Advanced query saved views (#5738).
 //
 // "Save view" stores the query spec as a page of the active space carrying the
 // `saved_view` property (`src/lib/saved-views.ts`, #6544); Saved views lists
@@ -8,7 +8,7 @@
 // listed on the real backend while the mock lane stayed green (#5738), so the
 // round trip is pinned here too.
 //
-// Advanced Query opens from the Pages header's "Advanced Query" button
+// Advanced query opens from the Pages header's "Advanced query" button
 // (PageBrowserHeader.tsx); a result row is `[data-testid="query-result-item"]`
 // (QueryResultList.tsx) and a saved view `[data-testid="saved-view-row"]`.
 //
@@ -52,10 +52,10 @@ function pagesListTitle(title: string): string {
   return `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
 }
 
-/** Open Advanced Query from the Pages header and wait for its builder. */
+/** Open Advanced query from the Pages header and wait for its builder. */
 async function openAdvancedQuery(): Promise<void> {
   await navigateTo('Pages')
-  const button = $('button[aria-label="Advanced Query"]')
+  const button = $('button[aria-label="Advanced query"]')
   await button.waitForClickable({ timeout: NAV_TIMEOUT })
   await button.click()
   await $(ROOT).waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -100,7 +100,7 @@ async function addTodoStateLeaf(): Promise<void> {
   await $(STATE_LEAF).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend Advanced Query saved views (#5738) @search', () => {
+describe('Agaric real-backend Advanced query saved views (#5738) @search', () => {
   before(async () => {
     await waitForAppReady()
     // A page with one TODO block and one plain block: the State leaf keeps the

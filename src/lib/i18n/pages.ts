@@ -8,12 +8,8 @@
 
 export const pages: Record<string, string> = {
   // Translators: Journal (JournalPage) header: "Today" is the button that jumps to today's date,
-  // also shown as "(Today)" after today's date heading. Daily / Weekly / Monthly are adjectives
-  // naming the journal's view modes (one day, one week, one month on screen).
+  // also shown as "(Today)" after today's date heading.
   'journal.today': 'Today',
-  'journal.daily': 'Daily',
-  'journal.weekly': 'Weekly',
-  'journal.monthly': 'Monthly',
 
   // Translators: The task list (the Journal's Agenda mode): Sidebar item, and the Journal header
   // title shown in place of a date while the Agenda is open. A noun.
@@ -492,7 +488,7 @@ export const pages: Record<string, string> = {
   // Translators: Pages view: "New Page" is the header button that opens the New page dialog; the
   // two other strings are the empty state of the list (the second when journal pages are hidden by
   // the default filter).
-  'pageBrowser.newPage': 'New Page',
+  'pageBrowser.newPage': 'New page',
   'pageBrowser.noPages': 'No pages yet.',
   // True with or without journal pages: the default chip hides them (#5370).
   'pageBrowser.noPagesOutsideJournal': 'No pages outside the journal yet.',

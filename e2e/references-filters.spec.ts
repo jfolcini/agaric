@@ -1,5 +1,5 @@
 /**
- * The References panel's filters: the builder's Status, Priority, Has Tag and
+ * The References panel's filters: the builder's Status, Priority, Has tag and
  * Property, and the source-page popover's include and exclude.
  *
  * A task's state and priority live in their `blocks` columns, so the builder
@@ -108,7 +108,7 @@ test.describe('References filters @pages @search', () => {
 })
 
 test.describe('References tag and property filters @pages @search', () => {
-  test('Has Tag and a Property filter narrow the references, each on its own', async ({ page }) => {
+  test('Has tag and a Property filter narrow the references, each on its own', async ({ page }) => {
     await waitForBoot(page)
     const link = `[[${GETTING_STARTED}]]`
     await seedSearchBlocks(page, [
@@ -125,7 +125,7 @@ test.describe('References tag and property filters @pages @search', () => {
     await expect(page.getByTestId('block-editor')).toHaveCount(0)
 
     await references.getByRole('button', { name: 'Add filter', exact: true }).click()
-    await chooseSelectOption(page, 'Filter category', 'Has Tag')
+    await chooseSelectOption(page, 'Filter category', 'Has tag')
     await references.getByTestId('tag-search-popover').click()
     await activePopover(page).getByRole('option', { name: 'work', exact: true }).click()
     await expect(references.getByTestId('tag-search-popover')).toHaveText('work')

@@ -159,6 +159,28 @@ describe('ListEditor', () => {
     expect(addInput()).toHaveValue('')
   })
 
+  it('the add field keeps the focus while its item is written, so the next one follows', async () => {
+    const user = userEvent.setup()
+    let finish = (): void => {}
+    stubInvoke({
+      set_property: () =>
+        new Promise((resolve) => {
+          finish = () => resolve(written)
+        }),
+    })
+    renderList(listDef('text'), ['alpha'])
+
+    await user.type(addInput(), 'beta{Enter}')
+    await waitFor(() => expect(writtenList()).toEqual(['alpha', 'beta']))
+
+    // A disabled field loses the focus, and the query table's cell closes on it (#6912).
+    expect(addInput()).toBeEnabled()
+    expect(addInput()).toHaveFocus()
+    finish()
+    await waitFor(() => expect(addInput()).toHaveValue(''))
+    expect(addInput()).toHaveFocus()
+  })
+
   it('a blank item adds nothing', async () => {
     const user = userEvent.setup()
     renderList(listDef('url'), ['https://a.example'])

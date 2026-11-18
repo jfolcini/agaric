@@ -110,7 +110,7 @@ const VIEWS: readonly TopLevelView[] = [
   'Settings',
   'Graph',
   'Templates',
-  'Advanced Query',
+  'Advanced query',
   'Status',
   'History',
   'Trash',

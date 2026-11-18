@@ -84,7 +84,7 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     expect((await rect(firstRow)).top).toBeLessThan(FIRST_ROW_LIMIT)
     await expect(page.getByRole('heading', { name: 'Pages', exact: true })).toHaveCount(1)
 
-    // Search, sort, ⋮ and New Page share one row.
+    // Search, sort, ⋮ and New page share one row.
     const header = page.locator('.page-browser-header')
     const search = header.getByRole('textbox', { name: 'Search pages...' })
     const searchBox = await rect(search)
@@ -92,7 +92,7 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     for (const control of [
       header.getByRole('combobox', { name: 'Sort order' }),
       header.getByRole('button', { name: 'More Pages options', exact: true }),
-      header.getByRole('button', { name: 'New Page', exact: true }),
+      header.getByRole('button', { name: 'New page', exact: true }),
     ]) {
       expect(Math.abs(centre(await rect(control)) - centre(searchBox))).toBeLessThan(2)
     }

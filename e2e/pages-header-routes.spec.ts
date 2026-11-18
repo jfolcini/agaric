@@ -1,12 +1,12 @@
 /**
  * #6544 — the Pages header's view buttons name their destination in visible
- * text at desktop widths, so Graph, Advanced Query, Templates and Trash are
+ * text at desktop widths, so Graph, Advanced query, Templates and Trash are
  * reachable without decoding an icon.
  */
 
 import { expect, expectViewLoaded, navigateToView, test, waitForBoot } from './helpers'
 
-const DESTINATIONS = ['Tags', 'Graph', 'Advanced Query', 'Templates', 'Trash'] as const
+const DESTINATIONS = ['Tags', 'Graph', 'Advanced query', 'Templates', 'Trash'] as const
 
 test.use({ viewport: { width: 1280, height: 800 } })
 

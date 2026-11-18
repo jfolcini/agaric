@@ -249,7 +249,7 @@ async function nextJournalDay(day: string): Promise<void> {
 /** Close the open property drawer. */
 async function closePropertyDrawer(): Promise<void> {
   await browser.keys(['Escape'])
-  await $('[role="dialog"]*=Block Properties').waitForExist({
+  await $('[role="dialog"]*=Block properties').waitForExist({
     reverse: true,
     timeout: ACTION_TIMEOUT,
   })

@@ -57,13 +57,19 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 }
 
 /// Turn the mirror on in `path`, reading files changed outside Agaric back
-/// in when `read_back` (ignored while the mirror is already on), or off with
-/// `None`. On, the folder is checked
+/// in when `read_back`, or off with `None`. While the mirror is already on,
+/// `read_back` is ignored and reading back stays as it is set, except that a
+/// folder other than the one mirrored, like one the mirror turns on in,
+/// turns it off when it holds files changed since the mirror last wrote
+/// there ([`MirrorStatus::pending`]), which turning reading back on then
+/// asks about. On, the folder is checked
 /// ([`mirror::check_folder`]), marked as this device's and stored, after
 /// `read_back`, so the first tick already follows it, and the next tick
 /// writes every page. Off, the setting goes and the files and the marker
 /// stay. The folder chosen again while it holds nothing but its marker
-/// starts fresh ([`MirrorState::start_fresh`]).
+/// starts fresh ([`MirrorState::start_fresh`]), and so does one chosen again
+/// while the vault is older than it ([`MirrorState::is_behind`]), which
+/// turns reading back off when it holds any file, each then no page's.
 ///
 /// # Errors
 ///
@@ -87,19 +93,39 @@ pub async fn set_mirror_folder_inner(
                 folder.display()
             ))
         })?;
-        // Only when the mirror turns on: while it is on, reading back is
-        // turned on by `set_mirror_read_back` alone, which asks first.
-        if mirror::store::folder(pool).await?.is_none() {
-            mirror::store::set_read_back(pool, read_back).await?;
-        }
     }
-    let chosen_again = path.is_some() && mirror::store::folder(pool).await? == path;
+    let stored = mirror::store::folder(pool).await?;
+    let chosen_again = path.is_some() && stored == path;
+    // The way out of the pause on an emptied folder, or on one the vault is
+    // older than: the user says this is the folder, so every page is written
+    // there, with no state, which leaves every file the vault lacks no page's.
+    let fresh = chosen_again
+        && path
+            .as_deref()
+            .map(Path::new)
+            .is_some_and(|folder| mirror::is_emptied(folder) || mirror.is_behind());
+    if let (Some(folder), false) = (path.as_deref(), chosen_again && !fresh) {
+        // `read_back` is taken only when the mirror turns on: while it is
+        // on, reading back is turned on by `set_mirror_read_back` alone,
+        // which asks first. A folder changed while the mirror was not
+        // there, one starting fresh that holds files, or one whose changes
+        // cannot be told, is mirrored with reading back off, so the user is
+        // shown those files and asked before any is read in.
+        let asked = match stored {
+            Some(_) => mirror::store::settings(pool).await?.read_back,
+            None => read_back,
+        };
+        let read_back = asked
+            && pending(pool, device_id, mirror, Path::new(folder), fresh)
+                .await
+                .is_ok_and(|changed| changed.is_empty());
+        mirror::store::set_read_back(pool, read_back).await?;
+    }
     mirror::store::set_folder(pool, path.as_deref()).await?;
-    match path.as_deref().map(Path::new) {
-        // The way out of the pause on an emptied folder: the user says this
-        // is the folder, so every page is written there.
-        Some(folder) if chosen_again && mirror::is_emptied(folder) => mirror.start_fresh(),
-        _ => mirror.restart(),
+    if fresh {
+        mirror.start_fresh();
+    } else {
+        mirror.restart();
     }
     get_mirror_status_inner(pool, device_id, mirror).await
 }
@@ -124,7 +150,7 @@ pub async fn set_mirror_read_back_inner(
 ) -> Result<MirrorStatus, AppError> {
     if on {
         let changed = match mirror::store::folder(pool).await? {
-            Some(folder) => pending(pool, device_id, mirror, Path::new(&folder)).await?,
+            Some(folder) => pending(pool, device_id, mirror, Path::new(&folder), false).await?,
             None => Vec::new(),
         };
         let unseen = changed
@@ -194,12 +220,15 @@ pub async fn set_mirror_space_inner(
 }
 
 /// [`mirror::read_back::pending`] for the folder at `root`, with this vault's
-/// space folders.
+/// space folders, and none of its states when they go with a `fresh` start,
+/// asked for or due ([`MirrorState::start_fresh`]): every file there is then
+/// no page's.
 async fn pending(
     pool: &SqlitePool,
     device_id: &str,
     mirror: &MirrorState,
     root: &Path,
+    fresh: bool,
 ) -> Result<Vec<String>, AppError> {
     let spaces: Vec<(String, String)> = super::spaces::list_spaces_inner(pool)
         .await?
@@ -213,9 +242,11 @@ async fn pending(
         .map(|(_, folder)| folder)
         .collect();
     let mut states = mirror::store::StateDir::new(mirror.app_data_dir());
-    states
-        .bind(&root.to_string_lossy())
-        .map_err(|e| AppError::validation(format!("cannot tell which files changed: {e}")))?;
+    if !fresh && !mirror.start_fresh_due() {
+        states
+            .bind(&root.to_string_lossy())
+            .map_err(|e| AppError::validation(format!("cannot tell which files changed: {e}")))?;
+    }
     mirror::read_back::pending(root, device_id, &states, &folders)
 }
 
@@ -233,12 +264,14 @@ pub async fn get_mirror_status_inner(
 ) -> Result<MirrorStatus, AppError> {
     let settings = mirror::store::settings(pool).await?;
     let changed = match settings.folder.as_deref() {
-        Some(folder) if !settings.read_back => pending(pool, device_id, mirror, Path::new(folder))
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "cannot list the mirror's pending files");
-                Vec::new()
-            }),
+        Some(folder) if !settings.read_back => {
+            pending(pool, device_id, mirror, Path::new(folder), false)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "cannot list the mirror's pending files");
+                    Vec::new()
+                })
+        }
         _ => Vec::new(),
     };
     Ok(mirror.status(settings, changed))

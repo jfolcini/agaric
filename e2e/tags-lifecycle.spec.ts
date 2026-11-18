@@ -77,7 +77,7 @@ async function createSpace(page: Page, name: string): Promise<void> {
 
 async function createTagInList(page: Page, name: string): Promise<void> {
   await page.getByPlaceholder('New tag name...').fill(name)
-  await page.getByRole('button', { name: 'Add Tag' }).click()
+  await page.getByRole('button', { name: 'Add tag' }).click()
   await expect(page.getByTestId(`tag-item-${name}`)).toBeVisible()
 }
 

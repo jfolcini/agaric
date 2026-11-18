@@ -81,10 +81,10 @@ test.describe('Enter and Space press the focused control in the Pages view @page
     await expectStillOnPages(page)
   })
 
-  test('Enter on New Page opens the New page dialog', async ({ page }) => {
+  test('Enter on New page opens the New page dialog', async ({ page }) => {
     await page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .focus()
     await page.keyboard.press('Enter')
     const dialog = page.getByTestId('new-page-dialog')

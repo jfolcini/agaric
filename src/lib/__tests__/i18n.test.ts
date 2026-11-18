@@ -123,7 +123,6 @@ describe('key existence', () => {
 
     // Journal
     'journal.today',
-    'journal.daily',
     'journal.noBlocks',
     'journal.addFirstBlock',
 
@@ -297,12 +296,12 @@ describe('interpolation', () => {
 
   it('interpolates {{count}} in references.header', () => {
     const result = i18n.t('references.header', { count: 42 })
-    expect(result).toBe('42 References')
+    expect(result).toBe('42 references')
   })
 
   it('interpolates {{count}} in unlinkedRefs.header', () => {
     const result = i18n.t('unlinkedRefs.header', { count: 7 })
-    expect(result).toBe('7 Unlinked References')
+    expect(result).toBe('7 unlinked references')
   })
 
   it('interpolates {{count}} in donePanel.header', () => {
