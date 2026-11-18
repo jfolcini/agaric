@@ -143,7 +143,7 @@ test('undo on the card’s page takes a board move back @search @editor', async 
   await card(page, 'DONE', 'Board spec undone').click()
   await expect(page.getByRole('textbox', { name: 'Page title' })).toHaveText('Projects')
   await page.keyboard.press('Control+z')
-  await expect(page.getByRole('status').filter({ hasText: 'Undone' })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Undid' })).toBeVisible()
 
   await navigateToView(page, 'Advanced Query')
   await expect(card(page, 'TODO', 'Board spec undone')).toHaveCount(1)
