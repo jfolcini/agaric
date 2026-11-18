@@ -47,7 +47,7 @@ What a spec can rely on there differs from the mock:
 - **`plugin:*` commands stay in the browser**, on the mock's handlers.
 - **Not carried**: a `Channel` argument's messages (an import's progress) and `read_attachment`'s raw bytes.
 
-The nightly `full-suite` lane of `scheduled-deep-checks.yml` runs specs this way: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`. On every PR the same tests run on a mock that withholds its hooks as the bridge does, so a hook call in a listed spec fails there unless its test is tagged `@mock-only`. Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
+The nightly `full-suite` lane of `scheduled-deep-checks.yml` runs specs this way: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`. On every PR the same tests run on a mock that withholds its hooks as the bridge does, so a hook call in a listed spec fails there unless its test is tagged `@mock-only`. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
 
 ## The mock is a contract, not a convenience
 

@@ -182,49 +182,53 @@ test.describe('HistoryView — op log compaction @pages', () => {
     await installIpcRecorder(page)
   })
 
-  test('compaction card shows live total ops and Compact now fires compact_op_log_cmd', async ({
-    page,
-  }) => {
-    // Generate at least one op so `total_ops` (real/stateful in the mock)
-    // is non-zero.
-    await openPage(page, 'Getting Started')
-    await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
+  // `@mock-only`: it compacts ops older than 90 days, which only the mock's
+  // seed holds; a command stamps every op with now.
+  test(
+    'compaction card shows live total ops and Compact now fires compact_op_log_cmd',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      // Generate at least one op so `total_ops` (real/stateful in the mock)
+      // is non-zero.
+      await openPage(page, 'Getting Started')
+      await page.getByRole('button', { name: 'Add block' }).click()
+      await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
-    await navigateToView(page, 'History')
+      await navigateToView(page, 'History')
 
-    // The card opens collapsed, whatever its status reports (#6535): History
-    // leads with the operations, not with a destructive button.
-    const toggle = page.getByRole('button', { name: 'Remove old history' })
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.getByRole('button', { name: 'Compact now' })).toBeHidden()
-    await toggle.click()
-    const totalOps = page.getByTestId('compaction-total-ops')
-    await expect(totalOps).toBeVisible()
-    await expect(totalOps).not.toHaveText('0')
+      // The card opens collapsed, whatever its status reports (#6535): History
+      // leads with the operations, not with a destructive button.
+      const toggle = page.getByRole('button', { name: 'Remove old history' })
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.getByRole('button', { name: 'Compact now' })).toBeHidden()
+      await toggle.click()
+      const totalOps = page.getByTestId('compaction-total-ops')
+      await expect(totalOps).toBeVisible()
+      await expect(totalOps).not.toHaveText('0')
 
-    const totalBefore = await totalOps.textContent()
-    const eligible = await page.getByTestId('compaction-eligible-ops').textContent()
+      const totalBefore = await totalOps.textContent()
+      const eligible = await page.getByTestId('compaction-eligible-ops').textContent()
 
-    await clearInvokeCalls(page)
-    await page.getByRole('button', { name: 'Compact now' }).click()
-    await expect(activeAlertDialog(page)).toBeVisible()
-    await expect(page.getByText('Compact op log?')).toBeVisible()
+      await clearInvokeCalls(page)
+      await page.getByRole('button', { name: 'Compact now' }).click()
+      await expect(activeAlertDialog(page)).toBeVisible()
+      await expect(page.getByText('Compact op log?')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Compact', exact: true }).click()
-    await expect(activeAlertDialog(page)).not.toBeVisible()
+      await page.getByRole('button', { name: 'Compact', exact: true }).click()
+      await expect(activeAlertDialog(page)).not.toBeVisible()
 
-    expect(await getInvokeCalls(page, 'compact_op_log_cmd')).toHaveLength(1)
+      expect(await getInvokeCalls(page, 'compact_op_log_cmd')).toHaveLength(1)
 
-    // The card compacts with the window its own status reported, so the purge
-    // removes precisely the ops it had just counted as eligible — asserted as
-    // that identity rather than as the literal 6 the seed produces, because
-    // `offsetIso(-90)` steps back 90 CALENDAR days while the cutoff subtracts
-    // 90 exact ones: across a spring-forward the stamps land an hour inside
-    // the window and none of them are eligible. `not '0'` keeps a run in that
-    // window honest instead of silently vacuous; CI is UTC, where it is 6.
-    expect(eligible).not.toBe('0')
-    await expect(page.getByText(`Compacted ${eligible} operations`)).toBeVisible()
-    await expect(totalOps).toHaveText(String(Number(totalBefore) - Number(eligible)))
-  })
+      // The card compacts with the window its own status reported, so the purge
+      // removes precisely the ops it had just counted as eligible — asserted as
+      // that identity rather than as the literal 6 the seed produces, because
+      // `offsetIso(-90)` steps back 90 CALENDAR days while the cutoff subtracts
+      // 90 exact ones: across a spring-forward the stamps land an hour inside
+      // the window and none of them are eligible. `not '0'` keeps a run in that
+      // window honest instead of silently vacuous; CI is UTC, where it is 6.
+      expect(eligible).not.toBe('0')
+      await expect(page.getByText(`Compacted ${eligible} operations`)).toBeVisible()
+      await expect(totalOps).toHaveText(String(Number(totalBefore) - Number(eligible)))
+    },
+  )
 })
