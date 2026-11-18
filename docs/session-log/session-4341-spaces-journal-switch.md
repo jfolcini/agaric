@@ -19,3 +19,16 @@ A user who opens a new day and presses "Add block" within that window gets two b
 **Tests, each shown red:**
 - `useJournalBlockCreation`: "takes the first block the day is still creating instead of adding a second" (red with the await removed), and "adds a block when the first block the day was creating never arrived".
 - `useBlockAutoCreateFirstBlock`: "publishes the block it is creating as the page store's seeding, until it is in" and "resolves its seeding to null when the create fails" (both red with the publish removed).
+
+**The spec had a second race, of its own.** With the app fix in, the test still failed 2 runs in 12 at load, now keeping only "line":
+- The day's first block had already landed and held focus when the test pressed "Add block".
+- With a blank block focused, "Add block" adds another by design (`useJournalBlockCreation`'s "creates a block when the blank last block is the focused one"). An unfocused blank block is reused instead.
+- The new block took focus a round trip later. The test's `toBeFocused` had matched the first block's editor, so "work " went there and "line" went to the new block.
+- Whether "Add block" adds a block on a new day turns on whether its first block holds focus, which no test can time.
+
+So for Work the spec now types into the block the journal opens a new day with, after waiting for exactly that one block with its editor focused. For Personal, where the seed's daily page ends in text, it presses "Add block" and waits for the sixth block's editor. The app race is pinned by the two vitest pairs above; the spec no longer presses "Add block" on a new day.
+
+**Ran:**
+- The test on the bridge at three workers: 15 of 15, against 2 of 12 and 5 of 12 failing before.
+- All of `spaces-happy-paths` on the bridge, twice (4 of 4 each), and on the mock (4 of 4).
+- The `useJournalBlockCreation` and `useBlockAutoCreateFirstBlock` tests (34), typecheck, and `oxlint --type-aware` are clean.
