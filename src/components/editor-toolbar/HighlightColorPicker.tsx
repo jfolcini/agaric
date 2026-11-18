@@ -16,20 +16,12 @@ import { Button } from '@/components/ui/button'
 import { asHighlightColor, HIGHLIGHT_COLORS, type HighlightColor } from '@/lib/highlight-colors'
 import { cn } from '@/lib/utils'
 
-/** Each swatch's fill, spelled out so Tailwind sees every class. */
 const SWATCHES: ReadonlyArray<{ color: HighlightColor | null; label: string; fill: string }> = [
   { color: null, label: 'toolbar.highlightDefault', fill: 'bg-highlight' },
-  ...HIGHLIGHT_COLORS.map(({ id }) => ({
+  ...HIGHLIGHT_COLORS.map(({ id, fill }) => ({
     color: id,
     label: `toolbar.highlight.${id}`,
-    fill: {
-      red: 'bg-(--highlight-red)',
-      orange: 'bg-(--highlight-orange)',
-      yellow: 'bg-(--highlight-yellow)',
-      green: 'bg-(--highlight-green)',
-      blue: 'bg-(--highlight-blue)',
-      purple: 'bg-(--highlight-purple)',
-    }[id],
+    fill,
   })),
 ]
 

@@ -2,16 +2,17 @@
  * The colours a highlight can carry (#6759), in Obsidian's form: a colour
  * emoji right after the opening `==` (`==🔴text==`, Obsidian help, *Basic
  * formatting syntax*). With no emoji a highlight takes the theme's default
- * colour. Each colour draws from its `--highlight-<id>` token pair.
+ * colour. Each colour draws from its `--highlight-<id>` token pair; `fill` is
+ * its swatch's class, spelled out so Tailwind sees it.
  */
 
 export const HIGHLIGHT_COLORS = [
-  { id: 'red', emoji: '🔴' },
-  { id: 'orange', emoji: '🟠' },
-  { id: 'yellow', emoji: '🟡' },
-  { id: 'green', emoji: '🟢' },
-  { id: 'blue', emoji: '🔵' },
-  { id: 'purple', emoji: '🟣' },
+  { id: 'red', emoji: '🔴', fill: 'bg-(--highlight-red)' },
+  { id: 'orange', emoji: '🟠', fill: 'bg-(--highlight-orange)' },
+  { id: 'yellow', emoji: '🟡', fill: 'bg-(--highlight-yellow)' },
+  { id: 'green', emoji: '🟢', fill: 'bg-(--highlight-green)' },
+  { id: 'blue', emoji: '🔵', fill: 'bg-(--highlight-blue)' },
+  { id: 'purple', emoji: '🟣', fill: 'bg-(--highlight-purple)' },
 ] as const
 
 export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number]['id']
