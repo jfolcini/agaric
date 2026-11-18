@@ -619,6 +619,10 @@ async fn query_by_property_plan_narrows_the_value_index() {
             "idx_block_props_key_text (key=? AND value_text=?)",
         ),
         (
+            date("deadline", "eq", "2025-01-10", 1),
+            "idx_block_props_date (value_date=?)",
+        ),
+        (
             text("todo_state", "eq", "TODO", 6),
             "idx_blocks_todo (todo_state=?)",
         ),
@@ -654,7 +658,7 @@ async fn query_by_property_plan_narrows_the_value_index() {
     }
 }
 
-/// A range or a day on a property key, `neq` and presence walk `idx_block_props_key`
+/// A range on a property key, `neq` and presence walk `idx_block_props_key`
 /// in id order and stop at the LIMIT, with and without `sqlite_stat1`: a value
 /// index would read every match (for a date, every key's) and sort it first.
 #[tokio::test]
@@ -666,8 +670,6 @@ async fn query_by_property_plan_walks_id_order_for_unselective_property_shapes()
             presence("status", 12),
             text("status", "neq", "open", 5),
             date("kind", "neq", "2025-03-02", 13),
-            // A day on a property key reads each row by its form (#6906).
-            date("deadline", "eq", "2025-01-10", 1),
             date_range("deadline", "2025-01-01", "2025-01-13", 5),
             Shape {
                 exclude_todo_states: strings(&["DONE", "DOING"]),

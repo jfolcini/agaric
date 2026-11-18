@@ -1197,19 +1197,6 @@ fn listed(bp_alias: &str, key_param: usize, condition: &str) -> String {
     )
 }
 
-/// The next free `?N` for `value`, bound in `binds`.
-fn bind_next<'b>(
-    next_param: &'b mut usize,
-    binds: &'b mut Vec<String>,
-) -> impl FnMut(&str) -> String + 'b {
-    move |value| {
-        binds.push(value.to_owned());
-        let p = format!("?{next_param}");
-        *next_param += 1;
-        p
-    }
-}
-
 /// [`scalar_or_listed`] on `value_date` of a day operand (#6906): the scalar
 /// and each string item read by its form ([`LocalDay::test`]).
 fn day_or_listed(
@@ -1405,7 +1392,12 @@ fn local_days(
     next_param: &mut usize,
     binds: &mut Vec<String>,
 ) -> Option<String> {
-    let bind = &mut bind_next(next_param, binds);
+    let bind = &mut |value: &str| {
+        binds.push(value.to_owned());
+        let p = format!("?{next_param}");
+        *next_param += 1;
+        p
+    };
     let local = |day: &str| LocalDay::read(day, &chrono::Local);
     if let Some(day) = pf.value_date.as_deref().and_then(local) {
         return Some(day_or_listed(bp_alias, key_param, sql_op, &day, bind));

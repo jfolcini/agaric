@@ -49,11 +49,18 @@ impl LocalDay {
     where
         F: FnMut(&'s str) -> String + ?Sized,
     {
+        if op == "=" {
+            // Two arms rather than a `CASE`, so an index on `held` can seek
+            // each (`query_by_property`'s day `=`); no instant equals the day.
+            let day = bind(&self.day);
+            let from = bind(&self.from);
+            let until = bind(&self.until);
+            return format!(
+                "({held} = {day} OR ({held} >= {from} AND {held} < {until} \
+                 AND length({held}) = 17))"
+            );
+        }
         let within = match op {
-            "=" => {
-                let from = bind(&self.from);
-                format!("{held} >= {from} AND {held} < {}", bind(&self.until))
-            }
             "<>" | "!=" => {
                 let from = bind(&self.from);
                 format!("({held} < {from} OR {held} >= {})", bind(&self.until))
