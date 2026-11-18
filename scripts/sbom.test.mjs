@@ -17,6 +17,7 @@ import {
   augmentSPDX,
   checkCycloneDX,
   npmComponents,
+  cargoChecksums,
   productPurl,
   rustComponents,
 } from './sbom.mjs'
@@ -26,61 +27,33 @@ import {
 
 const ROOT = resolve(import.meta.dirname, '..')
 const REG = 'registry+https://github.com/rust-lang/crates.io-index'
-const pkg = (name, version, { source = REG, kind = ['lib'] } = {}) => ({
-  id: `${name} ${version}`,
-  name,
-  version,
-  source,
-  targets: [{ kind }],
-})
-const dep = (id, kind = null) => ({ pkg: id, dep_kinds: [{ kind }] })
-const METADATA = {
-  packages: [
-    pkg('agaric', '0.25.0', { source: null }),
-    pkg('agaric-core', '0.1.0', { source: null }),
-    pkg('tauri', '2.12.5'),
-    pkg('serde', '1.0.0'),
-    pkg('serde_derive', '1.0.0', { kind: ['proc-macro'] }),
-    pkg('syn', '2.0.0'),
-    pkg('cc', '1.0.0'),
-    pkg('criterion', '0.5.0'),
-  ],
-  resolve: {
-    nodes: [
-      {
-        id: 'agaric 0.25.0',
-        deps: [
-          dep('agaric-core 0.1.0'),
-          dep('tauri 2.12.5'),
-          dep('cc 1.0.0', 'build'),
-          dep('criterion 0.5.0', 'dev'),
-        ],
-      },
-      { id: 'agaric-core 0.1.0', deps: [dep('serde 1.0.0'), dep('serde_derive 1.0.0')] },
-      { id: 'tauri 2.12.5', deps: [dep('serde 1.0.0')] },
-      { id: 'serde 1.0.0', deps: [] },
-      { id: 'serde_derive 1.0.0', deps: [dep('syn 2.0.0')] },
-      { id: 'syn 2.0.0', deps: [] },
-      { id: 'cc 1.0.0', deps: [] },
-      { id: 'criterion 0.5.0', deps: [] },
-    ],
-  },
-}
 const LOCK = `name = "tauri"\nversion = "2.12.5"\nsource = "${REG}"\nchecksum = "${'a'.repeat(64)}"\n`
 
 void describe('rustComponents', () => {
-  void it('keeps registry crates reached through normal dependencies, with their Cargo.lock sha256', () => {
-    const out = rustComponents(METADATA, LOCK)
+  const bundle = {
+    components: [{ purl: 'pkg:deb/agaric@0.25.0' }, { purl: 'pkg:cargo/tauri@2.12.5' }],
+  }
+  const binaries = {
+    components: [
+      { purl: 'pkg:cargo/tauri@2.12.5' },
+      { purl: 'pkg:cargo/serde@1.0.0' },
+      { purl: 'pkg:npm/x@1' },
+    ],
+  }
+  void it('collects the crates syft read from the binaries, once each, with their Cargo.lock sha256', () => {
+    const out = rustComponents([bundle, binaries], cargoChecksums(LOCK))
     assert.deepEqual(
       out.map((c) => c.purl),
       ['pkg:cargo/serde@1.0.0', 'pkg:cargo/tauri@2.12.5'],
     )
     assert.equal(out.find((c) => c.name === 'tauri').sha256, 'a'.repeat(64))
+    assert.equal(out.find((c) => c.name === 'serde').sha256, undefined)
   })
-  void it('drops build, dev and proc-macro dependencies and what only they pull in', () => {
-    const names = new Set(rustComponents(METADATA, LOCK).map((c) => c.name))
-    for (const gone of ['cc', 'criterion', 'serde_derive', 'syn', 'agaric-core'])
-      assert.ok(!names.has(gone), gone)
+  void it('finds none in a scan of binaries built without cargo auditable', () => {
+    assert.deepEqual(
+      rustComponents([{ components: [{ purl: 'pkg:deb/agaric@0.25.0' }] }], new Map()),
+      [],
+    )
   })
 })
 
@@ -155,6 +128,15 @@ void describe('augment and check', () => {
       { alg: 'SHA-256', content: 'b'.repeat(64) },
     ])
     assert.equal(doc.dependencies.at(-1).dependsOn.length, components.length)
+    const withSyftCrate = augmentCycloneDX(
+      { components: [{ type: 'library', name: 'tauri', purl: 'pkg:cargo/tauri@2.0.0' }] },
+      '0.25.0',
+      components,
+    )
+    assert.equal(withSyftCrate.components.filter((c) => c.name === 'tauri').length, 1)
+    assert.deepEqual(withSyftCrate.components[0].hashes, [
+      { alg: 'SHA-256', content: 'b'.repeat(64) },
+    ])
   })
   void it('SPDX gains the product, a CONTAINS per component, and no duplicates', () => {
     const syft = {
