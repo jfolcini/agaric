@@ -23,9 +23,7 @@ inputs:
     description: >-
       Also install the AppImage bundling deps (patchelf, libappindicator3-dev,
       and the GStreamer plugins the AppImage bundles for camera and microphone
-      capture, #5718). Such a lane caches its `.debs` under its own
-      `apt-tauri-bundle-*` key: its package superset must not land under the
-      `apt-tauri-*-v1` key the other lanes share.
+      capture, #5718).
     required: false
     default: 'false'
 
@@ -35,23 +33,6 @@ runs:
     - name: Prepare apt (free dpkg lock, bound downloads)
       uses: ./.github/actions/prepare-apt
 
-    - name: Cache apt archives (Tauri system deps)
-      # Bump a key's `-v1` suffix when its package list below changes. Only
-      # `main` saves: a PR's save is scoped to `refs/pull/<n>/merge`, which
-      # nothing else restores, so PRs restore only (#5853).
-      if: inputs.rust == 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: /var/cache/apt/archives/*.deb
-        key: ${{ inputs.bundle-deps == 'true' && 'apt-tauri-bundle' || 'apt-tauri' }}-${{ runner.os }}-v1
-
-    - name: Restore apt archives (Tauri system deps)
-      if: inputs.rust == 'true' && github.ref != 'refs/heads/main'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: /var/cache/apt/archives/*.deb
-        key: ${{ inputs.bundle-deps == 'true' && 'apt-tauri-bundle' || 'apt-tauri' }}-${{ runner.os }}-v1
-
     - name: Install system dependencies
       # webkit/gtk/ssl/rsvg/soup compile the Tauri crates; mold links them.
       # #4163: `apt-get update` is ADVISORY inside this action — only the
@@ -59,6 +40,7 @@ runs:
       if: inputs.rust == 'true'
       uses: ./.github/actions/apt-install
       with:
+        cache: 'true'
         packages: >-
           libwebkit2gtk-4.1-dev
           libgtk-3-dev
