@@ -238,7 +238,7 @@
         "valueType": "colour"
       },
       "command": "create_property_def",
-      "comment": "validate_property_def_shape refuses a value_type outside text/number/date/select/ref/boolean/url.",
+      "comment": "validate_property_def_shape refuses a value_type outside text/number/date/datetime/select/ref/boolean/url.",
       "expect_error": "validation",
       "name": "create_def_bad_value_type_rejects",
       "via": "command"

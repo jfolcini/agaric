@@ -1390,10 +1390,10 @@ pub(crate) fn validate_property_def_shape(
     // Validate value_type
     if !matches!(
         value_type,
-        "text" | "number" | "date" | "select" | "ref" | "boolean" | "url"
+        "text" | "number" | "date" | "datetime" | "select" | "ref" | "boolean" | "url"
     ) {
         return Err(AppError::validation(format!(
-            "invalid value_type '{value_type}': must be text, number, date, select, ref, boolean, or url"
+            "invalid value_type '{value_type}': must be text, number, date, datetime, select, ref, boolean, or url"
         )));
     }
     // Validate options: required for select, forbidden for others
@@ -1448,6 +1448,11 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
         "boolean" => shape == "boolean",
         // A url is text with a link rendering, never a block reference.
         "url" => shape == "text",
+        // Step 4 takes `value_date`, and step 2 only a stored datetime in it
+        // (#6758): no value an undeclared key holds is one, its `value_date`
+        // rows being days. `unfit_values` reads a declared key's rows, whose
+        // `value_date` is a stored datetime.
+        "datetime" => false,
         _ => true,
     }
 }
@@ -1842,14 +1847,14 @@ pub(crate) async fn refuse_restoring_def_over_conflicting_values(
     conn: &mut sqlx::SqliteConnection,
     p: &SetPropertyDefPayload,
 ) -> Result<(), AppError> {
-    use agaric_engine::loro::projection::str_column_for;
+    use agaric_engine::loro::projection::retype_moves_str_values;
     let Some(def) = &p.def else {
         return Ok(());
     };
     let space_id = p.space_id.as_str();
     let held = user_property_def(conn, space_id, &p.key).await?;
-    if str_column_for(held.as_ref().map(|row| row.value_type.as_str()))
-        == str_column_for(Some(&def.value_type))
+    let held_type = held.as_ref().map(|row| row.value_type.as_str());
+    if !retype_moves_str_values(held_type, Some(&def.value_type))
         && held.as_ref().is_some_and(|row| row.multiple) == def.multiple
     {
         return Ok(());
@@ -2879,7 +2884,7 @@ mod declared_type_admits_shape_tests {
     ///
     /// Anything not listed for a type must be REFUSED — that half is the
     /// one that keeps #4382 shut, and the half falsification found open.
-    const MATRIX: [(&str, &[&str]); 7] = [
+    const MATRIX: [(&str, &[&str]); 8] = [
         ("text", &["text", "ref"]),
         ("select", &["text", "ref"]),
         ("ref", &["ref"]),
@@ -2887,6 +2892,9 @@ mod declared_type_admits_shape_tests {
         ("date", &["date"]),
         ("boolean", &["boolean"]),
         ("url", &["text"]),
+        // `"datetime" => payload.value_date.is_some()`, and no stored
+        // `value_date` passes step 2 under it.
+        ("datetime", &[]),
     ];
 
     #[test]
@@ -2958,7 +2966,7 @@ mod declared_type_admits_shape_tests {
         };
         assert_eq!(
             message,
-            "invalid value_type 'septenary': must be text, number, date, select, ref, boolean, or url",
+            "invalid value_type 'septenary': must be text, number, date, datetime, select, ref, boolean, or url",
             "the declarable-type set changed. Every type `validate_property_def_shape` accepts \
              needs a row in this module's MATRIX and a named arm in \
              `declared_type_admits_shape` — otherwise it falls through to the `_ => true` \

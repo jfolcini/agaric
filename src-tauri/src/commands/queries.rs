@@ -178,10 +178,14 @@ struct PreparedSearchFilter {
 ///   through the FTS / regex-mode pipelines. The default (all-off) value
 /// Reproduces the pre- FTS-only behaviour.
 /// Resolve state / priority / due / scheduled / property
-///   metadata against today's date. Invalid dates / unknown bucket
+///   metadata against today's date, and a `datetime` key's operands
+///   against the definitions of the spaces searched (#6758). Invalid dates / unknown bucket
 ///   keywords surface as `AppError::Validation` with the
 ///   structured `InvalidDateFilter` code the frontend keys on (#2251).
-fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, AppError> {
+async fn prepare_search_filter(
+    pool: &SqlitePool,
+    filter: &SearchFilter,
+) -> Result<PreparedSearchFilter, AppError> {
     let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
     let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
     let toggles = fts::SearchToggles {
@@ -189,7 +193,16 @@ fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, 
         whole_word: filter.whole_word,
         is_regex: filter.is_regex,
     };
-    let metadata = fts::metadata_filter::prepare_metadata(filter)?;
+    let mut metadata = fts::metadata_filter::prepare_metadata(filter)?;
+    let spaces: Option<Vec<String>> = match &filter.scope {
+        agaric_store::search_types::SearchScope::Spaces(ids) => {
+            Some(ids.iter().map(|id| id.as_str().to_owned()).collect())
+        }
+        agaric_store::search_types::SearchScope::AllSpaces => None,
+    };
+    metadata
+        .read_datetime_operands(pool, spaces.as_deref())
+        .await?;
     Ok(PreparedSearchFilter {
         include_globs,
         exclude_globs,
@@ -259,7 +272,7 @@ pub async fn search_blocks_inner(
     };
     // BE-3 — marshal globs / toggles / metadata via the
     // shared helper so the cursor and partitioned paths stay in lockstep.
-    let prepared = prepare_search_filter(&filter)?;
+    let prepared = prepare_search_filter(pool, &filter).await?;
 
     fts::search_with_toggles(
         pool,
@@ -805,7 +818,7 @@ pub async fn search_blocks_partitioned_inner(
 
     // BE-3 — marshal globs / toggles / metadata via the shared
     // helper (same path the cursor `search_blocks_inner` uses).
-    let prepared = prepare_search_filter(&filter)?;
+    let prepared = prepare_search_filter(pool, &filter).await?;
 
     // `search_with_toggles_partitioned` runs the two
     // scans in parallel under `tokio::try_join!` and returns each

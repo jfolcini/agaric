@@ -20,6 +20,9 @@ pub(super) struct FrontmatterRow {
     /// The key is declared `ref` in the block's space, so `value_list`'s
     /// items are block ids.
     pub(super) list_of_refs: bool,
+    /// The key is declared `datetime` in the block's space, so `value_list`'s
+    /// items are stored datetimes (#6758).
+    pub(super) list_of_datetimes: bool,
     /// `value_text` is a single text under a key the block's space declares
     /// to hold a list: a value that doesn't fit it (#6741).
     pub(super) text_under_list: bool,
@@ -31,7 +34,8 @@ pub(super) struct FrontmatterRow {
 /// paths resolve a `block_properties` row identically.
 ///
 /// A list is one line of text (`import::write_property_list`, #6741) of the
-/// items [`frontmatter_row_items`] gives. Otherwise the precedence is date,
+/// items [`frontmatter_row_items`] gives. Otherwise the precedence is date
+/// (a stored datetime as [`local_datetime`] writes it),
 /// then text, then ref (`[[Title]]` where `link` gives the target's title,
 /// else the raw id, #6277 F3), then numeric, then bool. A
 /// `block_properties` row stores its value in exactly one column (enforced by
@@ -45,7 +49,7 @@ fn frontmatter_row_value<'a>(
         return import::write_property_list(&items);
     }
     if let Some(d) = prop.value_date.as_deref() {
-        d.to_string()
+        local_datetime(d)
     } else if let Some(t) = prop.value_text.as_deref() {
         t.to_string()
     } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
@@ -81,10 +85,19 @@ fn frontmatter_row_items<'a>(
         PropertyListItem::Text(id) if prop.list_of_refs => {
             link(id).map_or_else(|| id.clone(), |title| format!("[[{title}]]"))
         }
+        PropertyListItem::Text(at) if prop.list_of_datetimes => local_datetime(at),
         PropertyListItem::Text(text) => text.clone(),
         PropertyListItem::Num(n) => format!("{n}"),
     });
     Some(items.collect())
+}
+
+/// A `datetime` property's stored value as Markdown writes it (#6758): the
+/// device's local time with its offset, `2026-11-14T09:30+01:00`. A day, the
+/// other thing `value_date` holds, is written as it is.
+fn local_datetime(stored: &str) -> String {
+    agaric_core::date_validation::write_datetime(stored, &chrono::Local)
+        .unwrap_or_else(|| stored.to_owned())
 }
 
 /// Each list of text or numbers `data`'s blocks hold, as `(block, key, the
@@ -1496,11 +1509,10 @@ async fn load_page_properties(
         r#"SELECT bp.key AS "key!", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,
                   bp.value_bool AS "value_bool: i64",
                   bp.value_list AS "value_list: PropertyList",
-                  (bp.value_list IS NOT NULL AND EXISTS (
-                      SELECT 1 FROM blocks holder
-                      JOIN property_definitions d ON d.space_id = holder.space_id
-                      WHERE holder.id = bp.block_id AND d.key = bp.key
-                        AND d.value_type = 'ref')) AS "list_of_refs!: bool",
+                  (SELECT d.value_type FROM blocks holder
+                    JOIN property_definitions d ON d.space_id = holder.space_id
+                   WHERE bp.value_list IS NOT NULL AND holder.id = bp.block_id
+                     AND d.key = bp.key) AS "list_type?: String",
                   (bp.value_text IS NOT NULL AND EXISTS (
                       SELECT 1 FROM blocks holder
                       JOIN property_definitions d ON d.space_id = holder.space_id
@@ -1537,7 +1549,8 @@ async fn load_page_properties(
             value_ref: r.value_ref,
             value_bool: r.value_bool,
             value_list: r.value_list,
-            list_of_refs: r.list_of_refs,
+            list_of_refs: r.list_type.as_deref() == Some("ref"),
+            list_of_datetimes: r.list_type.as_deref() == Some("datetime"),
             text_under_list: r.text_under_list,
         })
         .collect();
@@ -1642,11 +1655,10 @@ async fn load_descendant_properties(
             r#"SELECT bp.block_id AS "block_id!", bp.key AS "key!", bp.value_text, bp.value_date,
                       bp.value_num, bp.value_ref, bp.value_bool AS "value_bool: i64",
                       bp.value_list AS "value_list: PropertyList",
-                      (bp.value_list IS NOT NULL AND EXISTS (
-                          SELECT 1 FROM blocks holder
-                          JOIN property_definitions d ON d.space_id = holder.space_id
-                          WHERE holder.id = bp.block_id AND d.key = bp.key
-                            AND d.value_type = 'ref')) AS "list_of_refs!: bool",
+                      (SELECT d.value_type FROM blocks holder
+                        JOIN property_definitions d ON d.space_id = holder.space_id
+                       WHERE bp.value_list IS NOT NULL AND holder.id = bp.block_id
+                         AND d.key = bp.key) AS "list_type?: String",
                       (bp.value_text IS NOT NULL AND EXISTS (
                           SELECT 1 FROM blocks holder
                           JOIN property_definitions d ON d.space_id = holder.space_id
@@ -1675,7 +1687,8 @@ async fn load_descendant_properties(
                     value_ref: r.value_ref,
                     value_bool: r.value_bool,
                     value_list: r.value_list,
-                    list_of_refs: r.list_of_refs,
+                    list_of_refs: r.list_type.as_deref() == Some("ref"),
+                    list_of_datetimes: r.list_type.as_deref() == Some("datetime"),
                     text_under_list: r.text_under_list,
                 });
         }

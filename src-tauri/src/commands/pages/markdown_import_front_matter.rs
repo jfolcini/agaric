@@ -125,6 +125,9 @@ pub(super) async fn apply_frontmatter_properties(
                 continue;
             }
         };
+        if lines.drops_seconds(&key, value) {
+            warnings.push(property_lines::seconds_dropped(&format!("{key}: {value}")));
+        }
         let (_page_block, prop_op) = Box::pin(agaric_engine::block_ops::set_property_value_in_tx(
             &mut tx,
             materializer.loro_state(),

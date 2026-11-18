@@ -292,7 +292,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// bytes travel raw after a header frame instead of inside the JSON (#5761);
 /// `6` = adds the per-space `property_definitions` root (#5841); `7` = a
 /// property slot may hold a list value and a definition may be `multiple`
-/// (#6741).
+/// (#6741); `8` = a property definition may be `datetime` (#6758).
 /// Each bump makes the sync handshake turn away a peer that would carry state
 /// it cannot project, or bytes it cannot read. The v1→v2
 /// forward-migration was retired in #332 once every persisted snapshot had
@@ -312,7 +312,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// #6525 skips a snapshot it cannot read and its next save overwrites it, so the
 /// migration makes such a build refuse the vault at the migration check instead
 /// of opening it.
-pub const ENGINE_FORMAT_VERSION: u32 = 7;
+pub const ENGINE_FORMAT_VERSION: u32 = 8;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
 /// (legacy-unstamped); such docs are *accepted* — see

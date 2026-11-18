@@ -129,6 +129,74 @@ pub enum DatePredicate {
 }
 
 impl MetadataPredicates {
+    /// #6758 — read the operands of the property filters on the keys one of
+    /// `spaces` (`None`: any space) declares `datetime`, a time with no zone
+    /// being the device's local time ([`crate::filters::datetime_operand`]).
+    pub async fn read_datetime_operands(
+        &mut self,
+        pool: &sqlx::SqlitePool,
+        spaces: Option<&[String]>,
+    ) -> Result<(), AppError> {
+        use crate::filters::datetime_operand::{datetime_keys, property_keys};
+        let filters = self.property_includes.iter().chain(&self.property_excludes);
+        let mut named: Vec<String> = filters.map(|pf| pf.key.trim().to_owned()).collect();
+        if let Some(expr) = &self.filter_expr {
+            property_keys(expr, &mut named);
+        }
+        let keys = datetime_keys(pool, spaces, &named).await?;
+        if !keys.is_empty() {
+            self.read_datetime_operands_in(&keys, &chrono::Local);
+        }
+        Ok(())
+    }
+
+    /// [`Self::read_datetime_operands`] for `keys`, in `tz`. A `prop:` filter
+    /// whose value is a day or a datetime leaves the include or exclude list
+    /// for a leaf of [`Self::filter_expr`], AND-ed with what it held: the
+    /// lists compare one text, and a day is a range of instants.
+    fn read_datetime_operands_in<Tz: chrono::TimeZone>(
+        &mut self,
+        keys: &std::collections::HashSet<String>,
+        tz: &Tz,
+    ) {
+        use crate::filters::datetime_operand::{datetime_predicate, read_operands};
+        use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+        let mut leaves = Vec::new();
+        for (filters, exclude) in [
+            (&mut self.property_includes, false),
+            (&mut self.property_excludes, true),
+        ] {
+            filters.retain(|pf| {
+                let key = pf.key.trim();
+                let value = PropertyValue::Text {
+                    value: pf.value.clone(),
+                };
+                let predicate = if exclude {
+                    PropertyPredicate::Ne { value }
+                } else {
+                    PropertyPredicate::Eq { value }
+                };
+                let read = keys
+                    .contains(key)
+                    .then(|| datetime_predicate(&predicate, tz))
+                    .flatten();
+                let Some(predicate) = read else { return true };
+                leaves.push(FilterExpr::leaf(FilterPrimitive::HasProperty {
+                    key: key.to_owned(),
+                    predicate,
+                }));
+                false
+            });
+        }
+        if let Some(expr) = &mut self.filter_expr {
+            read_operands(expr, keys, tz);
+        }
+        if !leaves.is_empty() {
+            leaves.extend(self.filter_expr.take());
+            self.filter_expr = Some(FilterExpr::And { children: leaves });
+        }
+    }
+
     /// `true` iff every field is the empty default — the SQL builder
     /// short-circuits the whole metadata-clause block in that case.
     #[must_use]
@@ -424,6 +492,85 @@ mod tests {
     // live in `crate::fts::filter_builder` (`infer_property_value` /
     // `add_property_predicate`) and are covered by the typed parity tests
     // there. This module no longer emits property SQL or owns `MetaBind`.
+
+    /// #6758 — `prop:` filters on a `datetime` key compile as leaves of the
+    /// expression, a day as the local day; every other filter stays put.
+    #[test]
+    fn datetime_property_filters_become_leaves_of_the_expression_6758() {
+        use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+        let pf = |key: &str, value: &str| SearchPropertyFilter {
+            key: key.into(),
+            value: value.into(),
+        };
+        let leaf = |key: &str, predicate: PropertyPredicate| {
+            FilterExpr::leaf(FilterPrimitive::HasProperty {
+                key: key.into(),
+                predicate,
+            })
+        };
+        let held = leaf(
+            "starts",
+            PropertyPredicate::Gt {
+                value: PropertyValue::Date {
+                    value: "2026-11-14".into(),
+                },
+            },
+        );
+        let mut m = MetadataPredicates {
+            property_includes: vec![
+                pf(" starts ", "2026-11-14"),
+                pf("status", "2026-11-14"),
+                pf("starts", ""),
+                pf("starts", "soon"),
+            ],
+            property_excludes: vec![pf("starts", "2026-11-14T09:30"), pf("status", "done")],
+            filter_expr: Some(held),
+            ..Default::default()
+        };
+        let keys = std::collections::HashSet::from(["starts".to_owned()]);
+        m.read_datetime_operands_in(&keys, &chrono::FixedOffset::west_opt(5 * 3600).unwrap());
+
+        assert_eq!(
+            m.property_includes,
+            vec![
+                pf("status", "2026-11-14"),
+                pf("starts", ""),
+                pf("starts", "soon")
+            ]
+        );
+        assert_eq!(m.property_excludes, vec![pf("status", "done")]);
+        let date = |value: &str| PropertyValue::Date {
+            value: value.into(),
+        };
+        assert_eq!(
+            m.filter_expr,
+            Some(FilterExpr::And {
+                children: vec![
+                    leaf(
+                        "starts",
+                        PropertyPredicate::Eq {
+                            value: PropertyValue::DatetimeDay {
+                                from: "2026-11-14T05:00Z".into(),
+                                until: "2026-11-15T05:00Z".into(),
+                            },
+                        },
+                    ),
+                    leaf(
+                        "starts",
+                        PropertyPredicate::Ne {
+                            value: date("2026-11-14T14:30Z"),
+                        },
+                    ),
+                    leaf(
+                        "starts",
+                        PropertyPredicate::Gte {
+                            value: date("2026-11-15T05:00Z"),
+                        },
+                    ),
+                ],
+            })
+        );
+    }
 
     #[test]
     fn empty_filter_yields_empty_predicates() {

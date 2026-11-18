@@ -230,6 +230,16 @@ pub enum PropertyValue {
     Date {
         value: String,
     },
+    /// #6758 — a calendar day against a `datetime` key: the stored instants
+    /// from `from` to before `until`. `Eq` and `Ne` take it; built by
+    /// [`read_datetime_operands`](crate::filters::datetime_operand::read_datetime_operands),
+    /// never sent by a client.
+    #[serde(skip)]
+    #[specta(skip)]
+    DatetimeDay {
+        from: String,
+        until: String,
+    },
 }
 
 /// #1280 — a predicate over a TEXT-ISO date column (`blocks.due_date`,
@@ -900,7 +910,9 @@ fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
         PropertyValue::Text { value } => ("value_text", Bind::Text(value.clone())),
         PropertyValue::Ref { value } => ("value_ref", Bind::Text(value.clone())),
         PropertyValue::Num { value } => ("value_num", Bind::Real(*value)),
-        PropertyValue::Date { value } => ("value_date", Bind::Text(value.clone())),
+        PropertyValue::Date { value } | PropertyValue::DatetimeDay { from: value, .. } => {
+            ("value_date", Bind::Text(value.clone()))
+        }
     }
 }
 
@@ -926,13 +938,31 @@ pub fn any_list_item(list: &str, numeric: bool, test: &str) -> String {
 /// scalar equals the value, or whose list holds an item that does (#6741).
 /// `Ne` is its `NOT EXISTS`, so a block without the key matches it.
 fn compile_property_eq(key: &str, value: &PropertyValue, negate: bool, alias: &str) -> WhereClause {
+    let exists = if negate { "NOT EXISTS" } else { "EXISTS" };
+    if let PropertyValue::DatetimeDay { from, until } = value {
+        let item = any_list_item("value_list", false, ">= ? AND li.value < ?");
+        let (from, until) = (Bind::Text(from.clone()), Bind::Text(until.clone()));
+        return WhereClause::new(
+            format!(
+                "{exists} (SELECT 1 FROM block_properties \
+                 WHERE block_id = {alias}.id AND key = ? \
+                   AND ((value_date >= ? AND value_date < ?) OR {item}))"
+            ),
+            vec![
+                Bind::Text(key.to_string()),
+                from.clone(),
+                until.clone(),
+                from,
+                until,
+            ],
+        );
+    }
     let (col, bind) = property_value_column(value);
     let item = any_list_item(
         "value_list",
         matches!(value, PropertyValue::Num { .. }),
         "= ?",
     );
-    let exists = if negate { "NOT EXISTS" } else { "EXISTS" };
     WhereClause::new(
         format!(
             "{exists} (SELECT 1 FROM block_properties \
@@ -984,7 +1014,9 @@ fn compile_property_like(
         PropertyValue::Text { value } => ("value_text", value.clone()),
         PropertyValue::Ref { value } => ("value_ref", value.clone()),
         PropertyValue::Date { value } => ("value_date", value.clone()),
-        PropertyValue::Num { .. } => return WhereClause::new("1=0", Vec::new()),
+        PropertyValue::Num { .. } | PropertyValue::DatetimeDay { .. } => {
+            return WhereClause::new("1=0", Vec::new());
+        }
     };
     let escaped = agaric_core::sql_utils::escape_like(&raw);
     let pattern = if contains {
@@ -1014,7 +1046,8 @@ pub(crate) fn column_text(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Text { value }
         | PropertyValue::Ref { value }
-        | PropertyValue::Date { value } => value.clone(),
+        | PropertyValue::Date { value }
+        | PropertyValue::DatetimeDay { from: value, .. } => value.clone(),
         PropertyValue::Num { value } => value.to_string(),
     }
 }

@@ -8184,3 +8184,73 @@ async fn block_properties_0133_value_list_preserves_rows_and_is_space_trigger_67
         .unwrap();
     assert_eq!(held, 0, "block_id cascades");
 }
+
+/// #6758 — 0134 recreates `property_definitions` to widen the `value_type`
+/// CHECK. Every definition survives column for column (`multiple` among
+/// them), the table stays STRICT with its `(space_id, key)` key, `datetime`
+/// becomes insertable, and the set stays closed.
+#[tokio::test]
+async fn property_definitions_0134_allow_datetime_preserves_rows_and_admits_datetime_6758() {
+    type DefRow = (String, String, String, Option<String>, String, i64);
+    const ROWS: &str = "SELECT space_id, key, value_type, options, created_at, multiple \
+                        FROM property_definitions ORDER BY space_id, key";
+    let insert = |space: &'static str, key: &'static str, value_type: &'static str| {
+        sqlx::query(
+            "INSERT INTO property_definitions (space_id, key, value_type, options, created_at, multiple) \
+             VALUES (?, ?, ?, NULL, '2026-01-01T00:00:00.000Z', 0)",
+        )
+        .bind(space)
+        .bind(key)
+        .bind(value_type)
+    };
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 133).await;
+
+    sqlx::query(
+        "INSERT INTO property_definitions (space_id, key, value_type, options, created_at, multiple) VALUES \
+             ('SPACE_A', 'stage', 'select', '[\"a\",\"b\"]', '2026-01-01T00:00:00.000Z', 0), \
+             ('SPACE_A', 'tags2', 'text', NULL, '2026-01-02T00:00:00.000Z', 1), \
+             ('SPACE_B', 'stage', 'url', NULL, '2026-01-03T00:00:00.000Z', 0)",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed pre-0134 definitions");
+    insert("SPACE_A", "early", "datetime")
+        .execute(&pool)
+        .await
+        .expect_err("pre-0134 the CHECK must refuse 'datetime'");
+    let before: Vec<DefRow> = sqlx::query_as(ROWS).fetch_all(&pool).await.unwrap();
+    assert_eq!(before.len(), 3);
+
+    apply_migrations_through(&pool, 133, 134).await;
+
+    let after: Vec<DefRow> = sqlx::query_as(ROWS).fetch_all(&pool).await.unwrap();
+    assert_eq!(after, before, "0134 copies every row, column for column");
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'property_definitions'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1, "still STRICT");
+    insert("SPACE_A", "starts", "datetime")
+        .execute(&pool)
+        .await
+        .expect("post-0134 the CHECK admits 'datetime'");
+    insert("SPACE_B", "starts", "datetime")
+        .execute(&pool)
+        .await
+        .expect("the key is per space");
+    insert("SPACE_A", "starts", "date")
+        .execute(&pool)
+        .await
+        .expect_err("(space_id, key) is still the primary key");
+    insert("SPACE_A", "bogus", "timestamp")
+        .execute(&pool)
+        .await
+        .expect_err("the value_type set stays closed");
+    sqlx::query("UPDATE property_definitions SET multiple = 2 WHERE key = 'starts'")
+        .execute(&pool)
+        .await
+        .expect_err("multiple is still 0 or 1");
+}

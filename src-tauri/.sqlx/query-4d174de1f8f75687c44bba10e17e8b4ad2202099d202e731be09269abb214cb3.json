@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT bp.key AS \"key!\", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,\n                  bp.value_bool AS \"value_bool: i64\",\n                  bp.value_list AS \"value_list: PropertyList\",\n                  (bp.value_list IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.value_type = 'ref')) AS \"list_of_refs!: bool\",\n                  (bp.value_text IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.multiple = 1)) AS \"text_under_list!: bool\"\n           FROM block_properties bp\n           WHERE bp.block_id = ?1\n             AND bp.key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
+  "query": "SELECT bp.key AS \"key!\", bp.value_text, bp.value_date, bp.value_num, bp.value_ref,\n                  bp.value_bool AS \"value_bool: i64\",\n                  bp.value_list AS \"value_list: PropertyList\",\n                  (SELECT d.value_type FROM blocks holder\n                    JOIN property_definitions d ON d.space_id = holder.space_id\n                   WHERE bp.value_list IS NOT NULL AND holder.id = bp.block_id\n                     AND d.key = bp.key) AS \"list_type?: String\",\n                  (bp.value_text IS NOT NULL AND EXISTS (\n                      SELECT 1 FROM blocks holder\n                      JOIN property_definitions d ON d.space_id = holder.space_id\n                      WHERE holder.id = bp.block_id AND d.key = bp.key\n                        AND d.multiple = 1)) AS \"text_under_list!: bool\"\n           FROM block_properties bp\n           WHERE bp.block_id = ?1\n             AND bp.key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat-seq', 'repeat-origin', 'attachments', 'listStyle'\n             )",
   "describe": {
     "columns": [
       {
@@ -81,10 +81,15 @@
         }
       },
       {
-        "name": "list_of_refs!: bool",
+        "name": "list_type?: String",
         "ordinal": 7,
-        "type_info": "Integer",
-        "origin": "Expression"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
       },
       {
         "name": "text_under_list!: bool",
@@ -104,9 +109,9 @@
       true,
       true,
       true,
-      false,
+      true,
       false
     ]
   },
-  "hash": "5659da8437d842c9234ebdcd5c7d0047eb68f6028cd2f9680406d0cc0356428b"
+  "hash": "4d174de1f8f75687c44bba10e17e8b4ad2202099d202e731be09269abb214cb3"
 }

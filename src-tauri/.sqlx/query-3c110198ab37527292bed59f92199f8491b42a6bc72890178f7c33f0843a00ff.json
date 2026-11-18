@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT key AS \"key!: String\" FROM property_definitions\n           WHERE value_type = 'datetime'\n             AND key IN (SELECT value FROM json_each(?1))\n             AND (?2 IS NULL OR space_id IN (SELECT value FROM json_each(?2)))",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3c110198ab37527292bed59f92199f8491b42a6bc72890178f7c33f0843a00ff"
+}

@@ -24,7 +24,7 @@ use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
 use agaric_engine::block_ops::{PropertyDeclaration, check_property_fields, property_declaration};
 use agaric_engine::import::property_list_items;
-use agaric_engine::loro::coerce::{coerce, value_fields_under};
+use agaric_engine::loro::coerce::{coerce_in, value_fields_under};
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_store::op::{
     OpPayload, PropertyDefState, PropertyList, PropertyListItem, PropertyValueFields,
@@ -260,6 +260,7 @@ async fn unfit_values(
                    WHEN 'url' THEN bp.value_text IS NOT NULL
                    WHEN 'number' THEN bp.value_num IS NOT NULL
                    WHEN 'date' THEN bp.value_date IS NOT NULL
+                   WHEN 'datetime' THEN bp.value_date IS NOT NULL
                    WHEN 'boolean' THEN bp.value_bool IS NOT NULL
                    WHEN 'ref' THEN bp.value_ref IS NOT NULL
                  END)
@@ -518,22 +519,24 @@ pub async fn list_distinct_unfit_property_values_inner(
     build_page_response(rows, page.limit, |last| Cursor::for_id(last.value.clone()))
 }
 
-/// `value` as `key` holds it under `decl`: converted as the projection
-/// converts a value (`coerce`), under a key that holds a list each item of
+/// `value` as `key` holds it under `decl`: converted as a type change
+/// converts a value on this device (`coerce_in`: a datetime with no zone is a
+/// local time, #6758), under a key that holds a list each item of
 /// one, then admitted by the check every typed write passes
 /// (`check_property_fields`), which adds a select's options and refuses blank
 /// text. `None` when it doesn't fit: a list fits only a key that holds one,
 /// and a single value only a key that doesn't.
 fn fitted(key: &str, value: &PropertyValue, decl: &PropertyDeclaration) -> Option<PropertyValue> {
+    let convert = |value: &PropertyValue| coerce_in(value, None, &decl.value_type, &chrono::Local);
     let held = match (value, decl.multiple) {
         (PropertyValue::List(list), true) => PropertyValue::List(PropertyList(
             list.0
                 .iter()
-                .map(|item| coerce(&PropertyValue::from(item), &decl.value_type)?.into_list_item())
+                .map(|item| convert(&PropertyValue::from(item))?.into_list_item())
                 .collect::<Option<_>>()?,
         )),
         (_, true) => return None,
-        (single, false) => coerce(single, &decl.value_type)?,
+        (single, false) => convert(single)?,
     };
     let fields = value_fields_under(&held, &decl.value_type);
     check_property_fields(key, fields, Some(decl))

@@ -161,7 +161,7 @@ mod tests {
         (Derivation::FtsStrip, 1, 10_971_062_773_864_822_168),
         (Derivation::LinkTokens, 1, 6_396_512_025_153_374_395),
         (Derivation::TagRefTokens, 1, 15_668_115_924_102_391_061),
-        (Derivation::Agenda, 1, 12_540_476_427_942_296_593),
+        (Derivation::Agenda, 1, 13_880_109_159_161_215_141),
         (Derivation::TitleSortKey, 1, 3_269_616_282_180_891_170),
         (Derivation::PageLink, 1, 11_583_657_963_650_717_047),
         (Derivation::TagUsage, 1, 4_696_616_430_259_714_054),

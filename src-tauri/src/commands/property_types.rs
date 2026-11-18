@@ -22,7 +22,7 @@ use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::materializer::Materializer;
 use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::BlockId;
-use agaric_engine::loro::coerce::coerce;
+use agaric_engine::loro::coerce::coerce_in;
 use agaric_engine::loro::engine::PropertyValue;
 use agaric_store::op::{
     OpPayload, PropertyDefState, PropertyDefWrite, PropertyList, PropertyListItem,
@@ -115,19 +115,20 @@ pub struct PropertyTypeTarget {
 /// (`None`: it does not fit).
 type Conversion = (String, PropertyValue, Option<PropertyValue>);
 
-/// The definition a change leaves, with its select options parsed, and the
-/// separator the change splits or joins with.
+/// The type a change leaves behind and the definition it leaves, with its
+/// select options parsed, and the separator the change splits or joins with.
 struct ConversionRule<'a> {
+    from: &'a str,
     to: &'a PropertyDefState,
     options: Option<Vec<String>>,
     separator: Option<ListSeparator>,
 }
 
 impl ConversionRule<'_> {
-    /// One value under the new type: what [`coerce`] makes of it, and under a
-    /// select only one of the options.
+    /// One value under the new type: what [`coerce_in`] makes of it on this
+    /// device, and under a select only one of the options.
     fn item(&self, value: &PropertyValue) -> Option<PropertyValue> {
-        let fit = coerce(value, &self.to.value_type)?;
+        let fit = coerce_in(value, Some(self.from), &self.to.value_type, &chrono::Local)?;
         let listed = match (&fit, &self.options) {
             (PropertyValue::Str(s), Some(options)) => options.contains(s),
             _ => true,
@@ -231,12 +232,13 @@ async fn conversions(
     conn: &mut SqliteConnection,
     space_id: &str,
     key: &str,
-    (to, separator): (&PropertyDefState, Option<ListSeparator>),
+    (from, to, separator): (&str, &PropertyDefState, Option<ListSeparator>),
     after: Option<&str>,
     keep: impl Fn(&Conversion) -> bool,
     wanted: usize,
 ) -> Result<Vec<Conversion>, AppError> {
     let rule = ConversionRule {
+        from,
         to,
         options: parse_options(to.options.as_deref())?,
         separator,
@@ -294,13 +296,13 @@ pub async fn preview_property_type_change_inner(
     target: PropertyTypeTarget,
 ) -> Result<PropertyTypeChangeCounts, AppError> {
     let mut conn = pool.acquire().await?;
-    let (_, to) = type_change_defs(&mut conn, space_id, &target).await?;
+    let (from, to) = type_change_defs(&mut conn, space_id, &target).await?;
     Ok(counts_of(
         &conversions(
             &mut conn,
             space_id,
             &target.key,
-            (&to, target.separator),
+            (&from.value_type, &to, target.separator),
             None,
             |_| true,
             usize::MAX,
@@ -366,7 +368,7 @@ pub async fn list_property_type_change_values_inner(
 ) -> Result<PageResponse<PropertyTypeChangeValue>, AppError> {
     let page = PageRequest::new(cursor, limit)?;
     let mut conn = pool.acquire().await?;
-    let (_, to) = type_change_defs(&mut conn, space_id, &target).await?;
+    let (from, to) = type_change_defs(&mut conn, space_id, &target).await?;
     let after = page.after.as_ref().map(|c| c.id.as_str());
     let converted = kind == PropertyTypeChangeKind::Converted;
     let of_kind = |(.., w): &Conversion| w.is_some() == converted;
@@ -375,7 +377,7 @@ pub async fn list_property_type_change_values_inner(
         &mut conn,
         space_id,
         &target.key,
-        (&to, target.separator),
+        (&from.value_type, &to, target.separator),
         after,
         of_kind,
         wanted,
@@ -440,7 +442,7 @@ pub async fn change_property_type_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let key = target.key.as_str();
     let (from, to) = type_change_defs(&mut tx, space_id, &target).await?;
-    let rule = (&to, target.separator);
+    let rule = (from.value_type.as_str(), &to, target.separator);
     let held = conversions(&mut tx, space_id, key, rule, None, |_| true, usize::MAX).await?;
     let counts = counts_of(&held);
     if counts != acknowledged {

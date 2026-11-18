@@ -5,6 +5,7 @@
 //! key that holds a list, a line's value is the list's text
 //! (`import::property_list_items`, #6741).
 
+use agaric_core::date_validation::read_datetime;
 use agaric_engine::block_ops::PropertyDeclaration;
 
 use super::*;
@@ -252,6 +253,11 @@ impl PropertyLines {
                     .trim()
                     .parse()
                     .map_or(PropertyListItem::Text(item), PropertyListItem::Num)),
+                // One the reader does not read stays as written, and the
+                // definition refuses it (#6758).
+                "datetime" => Ok(PropertyListItem::Text(
+                    read_datetime(item.trim(), &chrono::Local).map_or(item, |read| read.canonical),
+                )),
                 _ => Ok(PropertyListItem::Text(item)),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -299,6 +305,23 @@ impl PropertyLines {
             return self.read_list(value, "text");
         }
         self.read_value(key, value)
+    }
+
+    /// `value` names seconds that a `datetime` key does not keep (#6758):
+    /// [`Self::read`] drops them, and an import says so.
+    pub(super) fn drops_seconds(&self, key: &str, value: &str) -> bool {
+        let dropped = |text: &str| {
+            read_datetime(text.trim(), &chrono::Local).is_some_and(|read| read.seconds_dropped)
+        };
+        match self.declarations.get(key) {
+            Some(d) if d.value_type == "datetime" && d.multiple => {
+                import::property_list_items(value)
+                    .iter()
+                    .any(|item| dropped(item))
+            }
+            Some(d) if d.value_type == "datetime" => dropped(value),
+            _ => false,
+        }
     }
 
     /// [`Self::read`] of a value no list text names.
@@ -366,6 +389,9 @@ impl PropertyLines {
                 let key = self.canonical_key(&typed);
                 let held_by = HeldBy::Block(block.block_anchor.as_deref());
                 let Err(reason) = self.read(held_by, &key, &value) else {
+                    if self.drops_seconds(&key, &value) {
+                        warnings.push(seconds_dropped(&format!("{typed}:: {value}")));
+                    }
                     block.properties.push((key, value));
                     continue;
                 };
@@ -380,6 +406,11 @@ impl PropertyLines {
             }
         }
     }
+}
+
+/// The warning for `line`, a property whose datetime value named seconds.
+pub(super) fn seconds_dropped(line: &str) -> String {
+    format!("`{line}` was read to the minute: a datetime keeps no seconds")
 }
 
 /// Append `line` to `content` as a line of its own.

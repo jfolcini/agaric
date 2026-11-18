@@ -75,7 +75,8 @@ async fn apply_agenda_diff(
 ///
 /// Sources, in order (first-wins on PK `(date, block_id)` after
 /// the sort-merge dedup pass — M-19b):
-/// 1. `block_properties` rows with a non-null `value_date` →
+/// 1. `block_properties` rows whose `value_date` is a day (ten characters;
+///    a `datetime` property's instant, #6758, is no agenda date) →
 ///    `source = 'property:<key>'`, `prio = 0`. The lifecycle timestamps
 ///    `created_at` / `completed_at` / `repeat-until` are excluded (#5074):
 ///    they record when a task changed state, not when it is due, and
@@ -135,7 +136,8 @@ macro_rules! desired_agenda_sql {
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source, 0 AS prio
             FROM block_properties bp
             JOIN blocks b ON b.id = bp.block_id
-            WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+            WHERE bp.value_date IS NOT NULL AND length(bp.value_date) = 10
+              AND b.deleted_at IS NULL
               AND bp.key NOT IN ('created_at', 'completed_at', 'repeat-until')
               AND NOT EXISTS (
                 SELECT 1 FROM block_properties tp
@@ -714,6 +716,35 @@ mod tests {
             )],
             "created_at / completed_at / repeat-until must not project"
         );
+    }
+
+    /// #6758: a `datetime` property shares `value_date` with dates and is no
+    /// agenda source, in the whole-vault rebuild and the per-block one.
+    #[tokio::test]
+    async fn a_datetime_property_is_not_an_agenda_source_6758() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "WHEN01", "content", "meeting").await;
+        set_property(&pool, "WHEN01", "starts", "2026-11-14T08:30Z").await;
+        set_property(&pool, "WHEN01", "due", "2026-11-20").await;
+        let due = vec![(
+            "2026-11-20".to_owned(),
+            "WHEN01".to_owned(),
+            "property:due".to_owned(),
+        )];
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+        assert_eq!(snapshot(&pool).await, due);
+
+        sqlx::query("DELETE FROM agenda_cache")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        rederive_agenda_of(&mut conn, &["WHEN01".to_owned()])
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(snapshot(&pool).await, due);
     }
 
     /// Rebuild over an unchanged source set must report zero logical

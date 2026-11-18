@@ -1,0 +1,311 @@
+{
+  "description": "#6758 — a `datetime` definition and its values. `create_property_def` takes `datetime` (migration 0134); under it `set_property` takes `value_date` in the stored form only, `YYYY-MM-DDTHH:MMZ` in UTC naming a real date and time (`validate_property_value`), and refuses a local time, a time with an offset, seconds and a day with `validation`; the stored form is a date under no other key. Reading a user's text into the stored form (`read_datetime`) is the caller's, so no step depends on the host's time zone. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "key": "starts",
+          "op_type": "set_property"
+        },
+        {
+          "key": "starts",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "starts",
+        "value": "2026-11-15T23:59Z",
+        "value_type": "Date"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "create_datetime_def",
+      "returns": ["starts#value_type=datetime#options=null#builtin=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"starts\"]"],
+      "name": "the_stored_form_is_set",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_time_with_an_offset_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_local_time_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "seconds_are_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_day_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "no_such_date_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "no_such_time_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_undeclared_key_takes_no_datetime",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"starts\"]"],
+      "name": "the_stored_form_replaces_the_value",
+      "returns": ["B2"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_definition",
+      "rows": ["starts#value_type=datetime#options=null#builtin=false"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_value_held",
+      "rows": ["starts#Date=2026-11-15T23:59Z"],
+      "total_count": null
+    }
+  ],
+  "name": "property_datetime",
+  "ops": [
+    {
+      "args": {
+        "key": "starts",
+        "options": null,
+        "spaceId": "$SPACE",
+        "valueType": "datetime"
+      },
+      "command": "create_property_def",
+      "comment": "`datetime` is in the closed set of value types.",
+      "name": "create_datetime_def",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14T08:30Z"
+        }
+      },
+      "command": "set_property",
+      "comment": "The value lands in `value_date`, so the snapshot reads it back as a Date.",
+      "name": "the_stored_form_is_set",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14T09:30+01:00"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "a_time_with_an_offset_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14T09:30"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "a_local_time_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14T08:30:00Z"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "seconds_are_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "a_day_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-02-30T08:30Z"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "no_such_date_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-14T24:00Z"
+        }
+      },
+      "command": "set_property",
+      "expect_error": "validation",
+      "name": "no_such_time_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "review_at",
+        "value": {
+          "value_date": "2026-11-14T08:30Z"
+        }
+      },
+      "command": "set_property",
+      "comment": "Outside a `datetime` definition `value_date` is a calendar day.",
+      "expect_error": "validation",
+      "name": "an_undeclared_key_takes_no_datetime",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts",
+        "value": {
+          "value_date": "2026-11-15T23:59Z"
+        }
+      },
+      "command": "set_property",
+      "name": "the_stored_form_replaces_the_value",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "key": "starts",
+        "spaceId": "$SPACE"
+      },
+      "command": "get_property_def",
+      "name": "the_definition"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starts"
+      },
+      "command": "get_property",
+      "name": "the_value_held"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

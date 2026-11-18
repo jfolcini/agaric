@@ -18,6 +18,7 @@
 //! keeps regex / case-sensitive / whole-word / snippet specialty.
 
 pub mod assembly;
+pub mod datetime_operand;
 pub mod expr;
 pub mod primitive;
 
