@@ -70,11 +70,19 @@ async function seedVault(request: Bridge['request']): Promise<void> {
   await request('keep')
 }
 
-export async function startBridge(binary: string): Promise<Bridge> {
+/**
+ * `backgroundDelayMs` starts every background materializer batch that much
+ * later (`AGARIC_E2E_BACKGROUND_DELAY_MS`, a debug build's seam), for a spec
+ * whose view must not re-read before a cache rebuild has run.
+ */
+export async function startBridge(binary: string, backgroundDelayMs = 0): Promise<Bridge> {
   const root = await mkdtemp(path.join(tmpdir(), 'agaric-bridge-'))
   // Its stdin stays open for as long as this worker lives: the bridge exits
   // when it closes.
-  const child = spawn(binary, [root], { stdio: ['pipe', 'pipe', 'inherit'] })
+  const child = spawn(binary, [root], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+    env: { ...process.env, AGARIC_E2E_BACKGROUND_DELAY_MS: String(backgroundDelayMs) },
+  })
   const url = `ws://127.0.0.1:${await listeningPort(child)}`
 
   const socket = new WebSocket(url)
