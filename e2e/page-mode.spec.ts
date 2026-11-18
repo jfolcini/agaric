@@ -1842,6 +1842,56 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       '{{query type:tag expr:work}}',
     ])
   })
+
+  test('a slash command leaves the backend as block mode’s does', async ({ page }) => {
+    const pages = {
+      blocks: await seedRows(page, 'Slash in blocks', [
+        [0, 'buy milk'],
+        [0, 'call mom'],
+      ]),
+      page: await seedRows(page, 'Slash in page', [
+        [0, 'buy milk'],
+        [0, 'call mom'],
+      ]),
+    }
+    const menu = activeSuggestionPopup(page)
+    const rows = (seeded: Seeded) =>
+      Promise.all(
+        seeded.ids.map(async (id) => {
+          const row = await ipc<{ content: string; todo_state: string | null }>(page, 'get_block', {
+            blockId: id,
+          })
+          return [row.content, row.todo_state]
+        }),
+      )
+
+    await openViaPalette(page, 'Slash in blocks')
+    for (const [i, command] of ['todo', 'h2'].entries()) {
+      await focusBlockById(page, pages.blocks.ids[i] as string)
+      await page.keyboard.press('End')
+      await page.keyboard.type(` /${command}`)
+      await menu.locator(`#suggestion-${command}`).click()
+      await expect(menu).toHaveCount(0)
+      await page.keyboard.press('Escape')
+    }
+
+    await openViaPalette(page, 'Slash in page')
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
+    for (const [i, command] of ['todo', 'h2'].entries()) {
+      await caret(page, i, 'end')
+      await page.keyboard.type(` /${command}`)
+      await menu.locator(`#suggestion-${command}`).click()
+      await expect(menu).toHaveCount(0)
+    }
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => rows(pages.page)).toEqual(await rows(pages.blocks))
+    expect(await rows(pages.blocks)).toEqual([
+      ['buy milk ', 'TODO'],
+      ['## call mom ', null],
+    ])
+  })
 })
 
 /** Block mode's editor, on the block it is editing. */

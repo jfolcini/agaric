@@ -12,6 +12,7 @@ import type {
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import type { OpRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -43,7 +44,12 @@ export function readCurrentContent(ctx: SlashCommandContext): string {
   return block?.content ?? ''
 }
 
-/** Write `newContent` to the block; resolves whether it was written (a refusal is toasted here). */
+/**
+ * Write `newContent` to the block; resolves whether it was written (a refusal is toasted here).
+ * The editor's pending commit goes first (#6935): left pending, it fires while this write is in
+ * flight, carrying the text from before the command with its old base, and the backend merges
+ * it into what the command wrote.
+ */
 export async function applyContentEdit(
   ctx: SlashCommandContext,
   newContent: string,
@@ -54,6 +60,7 @@ export async function applyContentEdit(
     return true
   }
   try {
+    await flushActiveDraft()
     const resp = unwrap(await commands.editBlock(ctx.blockId, newContent, null))
     // Heading/callout/numbered-list/divider slash commands
     // must clear the redo stack just like every other content-edit
