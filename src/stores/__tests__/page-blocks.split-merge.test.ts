@@ -130,6 +130,45 @@ describe('splitOff and mergeInto (#6531)', () => {
       expect((await storedRows()).find(([id]) => id === NEW_ID)?.[2]).toBe('typed in the new block')
     })
 
+    it('keeps both halves shown when a reload read before the split answers after it (#6814)', async () => {
+      // The reload's snapshot is read when it is asked for, before the split.
+      const answer = mockedInvoke.getMockImplementation() as typeof invoke
+      const snapshotLate = deferred<void>()
+      mockedInvoke.mockImplementation((cmd, args) => {
+        if (cmd !== 'load_page_subtree') return answer(cmd, args)
+        const snapshot = answer(cmd, args)
+        return snapshotLate.promise.then(() => snapshot)
+      })
+      const reload = page.getState().load()
+      await Promise.resolve()
+      expect(commandsSent().filter((c) => c === 'load_page_subtree')).toHaveLength(2)
+
+      const before = firstText.slice(0, 4)
+      const after = firstText.slice(4)
+      const missing: string[] = []
+      const unsubscribe = page.subscribe((s) => {
+        if (!s.blocksById.has(NEW_ID)) missing.push('new block')
+        if (s.blocksById.get(FIRST)?.content !== before) missing.push('kept half')
+      })
+      const split = page.getState().splitOff(FIRST, before, after, NEW_ID)
+      snapshotLate.resolve()
+      expect(await split).toBe(true)
+      await reload
+      unsubscribe()
+
+      expect(missing).toEqual([])
+      const at = page.getState().blocks.findIndex((b) => b.id === FIRST)
+      expect(
+        page
+          .getState()
+          .blocks.slice(at, at + 2)
+          .map((b) => [b.id, b.content]),
+      ).toEqual([
+        [FIRST, before],
+        [NEW_ID, after],
+      ])
+    })
+
     it('puts the block back whole when the command is refused', async () => {
       const shownBefore = page.getState().blocks
       refuse('split_block')

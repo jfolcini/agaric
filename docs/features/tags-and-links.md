@@ -57,6 +57,7 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 - **Text edits only while unlocked.** Enter, Backspace, Tab and the block-move chords do nothing inside an embed: splitting, merging, indenting, moving or deleting a block there would be invisible on the page that actually holds it. The strip says so while unlocked; **Open source** is where you restructure.
 - **Escape leaves, and keeps your edit.** Since Tab does nothing inside an unlocked embed, Escape is what gets you back out: it relocks the embed and puts focus on the container, from where Tab continues through the page as usual. Like Escape in an ordinary block, it keeps what you typed, and the edit lands on the page that owns the block. With a `/`, `[[`, `#` or `::` menu open, Escape closes the menu and leaves you where you are.
 - **The embedded subtree re-bases its indentation to depth 0** inside the container. It does not continue the host page's indentation, and screen readers announce its rows relative to the host outline, not to the source page's depths.
+- **Rows draw what the block's own row draws**: a task's checkbox, a bulleted or numbered block's marker, and the priority, due, scheduled and property chips. The checkbox works without unlocking the embed, since it changes no text: ticking it steps the task on the page that owns it, and every other view of it moves with it.
 - **Live**: editing the source updates every mounted embed of it, including when the source page is open in another tab.
 - **Backlinks**: an embed produces a link edge like any other reference. It is currently *indistinguishable* from a plain reference in the backlinks panel — both read "referenced by".
 - **Degraded targets**: the container never silently disappears — the block's content still holds the token. A soft-deleted target shows *Source deleted* with a Restore control; a purged target, or one in another space, shows a non-navigating broken chip. Moving the target changes nothing: the token is a ULID.
@@ -68,7 +69,7 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 - **Arrow-key navigation does not descend into an embed** — Down from the row above lands on the row below it, unlocked or not. The edit toggle is how you get in, and clicking a row is how you move between rows once you are.
 - **Collapse applies to the whole container**, not to branches inside it. Container collapse is stored per host block, so it never touches the source page's own saved layout.
 - Only the first 32 rows of an embed render; the rest are one click away in the source.
-- **Embedded rows render content only.** No todo checkbox, no priority or date chips, no list markers, no properties, and no attachments — just the row's rich text. Embed a page of tasks and you'll see the text with no checkboxes; open the source to interact with any of that.
+- **Attachments do not show in embedded rows**, and an embedded row's priority, date and property chips are read-only: change them on the source page.
 - Embedding a block from a very large page loads that page's blocks to render the few you asked for.
 - Embedded blocks do **not** count toward the host page's block count or its truncation notice — they are not that page's blocks.
 

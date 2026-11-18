@@ -1,14 +1,16 @@
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 import { finishSyncSession } from './domain'
 import {
   emitMockEvent,
   expect,
+  ipc,
   keepSyncChannels,
   navigateToView,
   openSettingsTab,
   pairOnePeer,
   syncButton,
+  streamSyncProgress,
   syncChannelCount,
   syncTooltipLines,
   test,
@@ -112,7 +114,8 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   })
   await expect(dot).toHaveAttribute('data-sync-state', 'error')
   await expect(dot).toContainClass('bg-destructive')
-  // The failure stays on the button after the toast, not only in the dot's hue (#6528).
+  // A background session's failure is on the button, not only in the dot's hue
+  // (#6528), and in no toast (#6870).
   // Blurred, so the open tooltip does not join the description.
   await button.blur()
   await expect(button).toHaveAccessibleDescription(
@@ -158,7 +161,7 @@ test('a pressed Sync says "Sync complete" only once its session finished @sync',
   await expect(button).toHaveAttribute('aria-disabled', 'true')
   await page.clock.fastForward('01:00')
   await page.clock.runFor(100)
-  await expect(toasts.getByText(/^Sync failed for device /)).toBeVisible()
+  await expect(toasts.getByText('Sync with Paired Device failed', { exact: true })).toBeVisible()
   await expect(button).toHaveAttribute('aria-disabled', 'false')
   await expect(toasts.getByText('Sync complete', { exact: true })).toHaveCount(0)
 
@@ -170,6 +173,108 @@ test('a pressed Sync says "Sync complete" only once its session finished @sync',
   await page.clock.runFor(100)
   await expect(toasts.getByText('Sync complete', { exact: true })).toBeVisible()
   await expect(button).toHaveAttribute('aria-disabled', 'false')
+})
+
+// #6870 — a press is answered with a toast; a background session is not.
+test('a failure answers the press it ended; a background one shows on the button only @sync', async ({
+  page,
+}) => {
+  await page.clock.install()
+  await waitForBoot(page)
+  await pairOnePeer(page)
+  const [peer] = await ipc<Array<{ peer_id: string }>>(page, 'list_peer_refs', undefined)
+  const peerId = peer?.peer_id
+  await navigateToView(page, 'Settings')
+  await openSettingsTab(page, 'Sync & devices')
+  await expect(page.getByTestId('settings-panel-sync').locator('.device-peer-name')).toHaveText(
+    'Paired Device',
+  )
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
+  const button = syncButton(page)
+  const toasts = page.locator('[data-sonner-toast]')
+  await keepSyncChannels(page)
+
+  // The pressed session fails: the backend reports it, then ends the session.
+  await button.click()
+  await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(0)
+  await emitMockEvent(page, 'sync:error', {
+    type: 'error',
+    remote_device_id: peerId,
+    message: 'Connection refused',
+  })
+  await streamSyncProgress(page, {
+    kind: 'sync',
+    state: 'error',
+    remote_device_id: peerId,
+    ops_received: 0,
+    ops_sent: 0,
+  })
+  await page.clock.runFor(100)
+  await expect(toasts).toHaveCount(1)
+  await expect(toasts.getByText('Sync failed: Connection refused', { exact: true })).toBeVisible()
+  await expect(button).toHaveAttribute('aria-disabled', 'false')
+
+  // The toast closes on its own; then a scheduled session fails.
+  await page.clock.runFor(5000)
+  await expect(toasts).toHaveCount(0)
+  await emitMockEvent(page, 'sync:error', {
+    type: 'error',
+    remote_device_id: peerId,
+    message: 'Timed out',
+  })
+  await button.blur()
+  await expect(button).toHaveAccessibleDescription('Sync failed: Timed out Never synced')
+  await page.clock.runFor(100)
+  await expect(toasts).toHaveCount(0)
+})
+
+// #6870 — on a phone the Sync button sits in the closed drawer, so the button
+// that opens the drawer carries its status dot once a device is paired.
+test.describe('a phone shows the sync dot on its drawer button (#6870) @sync @mobile', () => {
+  const iPhone13 = devices['iPhone 13']
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test('the drawer button shows the sync state once a device is paired', async ({ page }) => {
+    await page.clock.install()
+    await waitForBoot(page)
+    const menu = page.getByTestId('mobile-sidebar-trigger')
+    const dot = menu.getByTestId('mobile-sync-status-dot')
+    await expect(menu).toBeVisible()
+    await expect(dot).toHaveCount(0)
+
+    await pairOnePeer(page)
+    // The next scheduled sync, a minute after the last, loads the peer into
+    // the store the dot reads.
+    await page.clock.fastForward('01:05')
+    await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+    await expect(dot).toContainClass('bg-sync-idle')
+
+    await emitMockEvent(page, 'sync:error', {
+      type: 'error',
+      remote_device_id: 'device-b',
+      message: 'Connection refused',
+    })
+    await expect(dot).toHaveAttribute('data-sync-state', 'error')
+    await expect(dot).toContainClass('bg-destructive')
+    await expect(menu).toHaveAccessibleDescription('Sync failed: Connection refused')
+    await page.screenshot({ path: test.info().outputPath('drawer-button-sync-failed.png') })
+
+    await emitMockEvent(page, 'sync:complete', {
+      type: 'complete',
+      remote_device_id: 'device-b',
+      ops_received: 1,
+      ops_sent: 1,
+      changed_blocks: 0,
+    })
+    await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+    await expect(menu).toHaveAccessibleDescription('')
+  })
 })
 
 function relayEnabled(page: Page): Promise<boolean> {
