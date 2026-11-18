@@ -30,10 +30,10 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | --- | --- | --- |
 | Editing | Live Preview, source mode and reading view over one file | Block mode with the Markdown syntax shown at the cursor; page mode (the whole page as one document, off by default, with a block cap per page); *Edit as Markdown* for the page as plain text |
 | Outlining | Lists in a document | The whole app is an outline: indent, drag, zoom, collapse, multi-select and move blocks |
-| Editor extras | Vim key bindings, multiple cursors, `%%comments%%`, highlight colours, slides | None of those. One highlight colour; a comment arrives as a visible comment callout |
+| Editor extras | Vim key bindings, multiple cursors, `%%comments%%`, highlight colours, slides | Highlight colours, Obsidian's six in its form; none of the rest. A comment arrives as a visible comment callout |
 | Tables, math, diagrams, callouts, footnotes | All built in | All built in; callouts show in a fixed set of styles |
 | Links | `[[Note]]`, `[[Note#Heading]]`, `[[Note#^id]]`; names in the file | The same forms can be typed; stored as ids and shown as chips. A rename changes no other block |
-| Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, text only: an embedded row shows no checkbox, properties or attachments |
+| Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, a row with its checkbox, which ticks in place, and read-only property chips; no attachments |
 | Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters |
 | Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL, and a list of any of them but boolean. No date-time |
 | Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table whose cells edit their block's properties and task state; Advanced Query with grouping, summaries and a board whose cards move by dragging or from a menu. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout |
@@ -52,7 +52,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it |
 | Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client. An agent can also edit the files directly. No first-party MCP server was found | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
 | Importers | An official importer for Notion, Evernote, OneNote, Apple Notes, Google Keep, Bear, Roam, Logseq and more | Markdown, Obsidian vaults, Logseq graphs, Org, Notion, Evernote, Joplin, bibliographies |
-| Languages | Many interface translations; right-to-left layout | English, with Spanish for error messages and a few settings. Right-to-left paragraphs in notes, not a right-to-left interface |
+| Languages | Many interface translations; right-to-left layout | English, German, Spanish, French and Portuguese, each complete, and a documented path to add more ([docs/TRANSLATING.md](docs/TRANSLATING.md)). Right-to-left paragraphs in notes, not a right-to-left interface |
 | Encryption at rest | None for the local vault | None for the local database |
 | Telemetry | None | None |
 
@@ -65,7 +65,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 - **You think visually**: Canvas, and drawing through plugins.
 - **You clip the web, publish a site, or share a vault.**
 - **You want Vim keys, multiple cursors, split or pop-out windows.**
-- **You need the interface in your language.**
+- **You need the interface in a language Agaric does not ship yet**, or laid out right to left.
 - **You want a company, security audits and store builds behind the tool.**
 
 ## Where Agaric is the better tool
@@ -104,7 +104,7 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 - **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
 - **No date-and-time property type** (#6758). Lists are kept: `authors: [a, b]` stays two values.
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
-- **Editor habits.** No Vim keys, no multiple cursors, one highlight colour (#6759), and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
+- **Editor habits.** No Vim keys, no multiple cursors, and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
 - **A tag name holds no spaces.**
 - **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
 - **Capture is thinner.** No web clipper (#6753), and Android's share sheet takes text only, into Quick Capture (#6555).

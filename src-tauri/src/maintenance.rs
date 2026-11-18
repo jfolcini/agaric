@@ -187,6 +187,7 @@ impl std::fmt::Debug for MaintenanceJob {
 /// held the WAL open; we log at debug and skip — the next tick
 /// retries. Errors log at warn with the underlying sqlx message.
 pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppError> {
+    // dynamic-sql: a pragma, which the compile-time macros do not check.
     let row: (i64, i64, i64) =
         sqlx::query_as::<_, (i64, i64, i64)>("PRAGMA wal_checkpoint(TRUNCATE)")
             .fetch_one(write_pool)
@@ -225,11 +226,36 @@ pub async fn op_log_compact(
     Ok(())
 }
 
+/// Statistics of a table or index with fewer rows than this are dropped after
+/// each optimize (#6811). Taken from a new vault's handful of blocks, they make
+/// the planner scan `blocks` once per row of a `json_each` batch, and a pull or
+/// an import can grow the vault a thousandfold before the next optimize. With
+/// no statistics the planner assumes a large table, which the queries are
+/// written for. The dense-rank write's plan turns at 50 to 100 rows.
+const MIN_ANALYZED_ROWS: i64 = 1_000;
+
 /// Issue #157 sub-item G — periodic `PRAGMA optimize` tick, 4 h
 /// cadence, always-on predicate.
+///
+/// SQLite loads statistics per connection, so the drop and the reload run on
+/// the connection the optimize loaded them into.
 pub async fn pragma_optimize(write_pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query("PRAGMA optimize").execute(write_pool).await?;
-    tracing::debug!("pragma_optimize tick ran");
+    let mut conn = write_pool.acquire().await?;
+    // dynamic-sql: pragmas and `sqlite_stat1`, which no compile-time schema holds.
+    sqlx::query("PRAGMA optimize").execute(&mut *conn).await?;
+    // dynamic-sql: as above. The leading integer of `stat` is the row count.
+    let dropped = sqlx::query("DELETE FROM sqlite_stat1 WHERE CAST(stat AS INTEGER) < ?")
+        .bind(MIN_ANALYZED_ROWS)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if dropped > 0 {
+        // dynamic-sql: as above.
+        sqlx::query("ANALYZE sqlite_schema")
+            .execute(&mut *conn)
+            .await?;
+    }
+    tracing::debug!(dropped, "pragma_optimize tick ran");
     Ok(())
 }
 
@@ -1170,6 +1196,99 @@ mod tests {
         pragma_optimize(&pool)
             .await
             .expect("PRAGMA optimize must succeed on a clean pool");
+    }
+
+    /// The `UPDATE … FROM json_each` shape every create's dense-rank write
+    /// runs (`write_dense_ranks` in agaric-engine's `loro/projection.rs`).
+    const DENSE_RANK_PLAN: &str = "EXPLAIN QUERY PLAN UPDATE blocks SET position = v.rank \
+         FROM (SELECT json_extract(value, '$.id') AS id, \
+                      json_extract(value, '$.rank') AS rank FROM json_each(?1)) AS v \
+         WHERE blocks.id = v.id AND blocks.position IS NOT v.rank";
+
+    /// A pool of one connection: the optimize's and every later query's.
+    async fn one_connection_vault(dir: &tempfile::TempDir) -> SqlitePool {
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        pool.close().await;
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(dir.path().join("test.db"))
+            .foreign_keys(true);
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap()
+    }
+
+    async fn add_blocks(pool: &SqlitePool, count: i64) {
+        sqlx::query(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1) \
+             INSERT INTO blocks (id, block_type, content, position) \
+             SELECT printf('01HZ6811%018d', i + (SELECT COUNT(*) FROM blocks)), 'page', 'x', i \
+             FROM n",
+        )
+        .bind(count)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn dense_rank_plan(pool: &SqlitePool) -> String {
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(DENSE_RANK_PLAN)
+            .bind("[]")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter()
+            .map(|r| r.3)
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    async fn blocks_stats(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'blocks'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #6811: an optimize on a new vault leaves `blocks` without statistics,
+    /// so the vault a pull or an import then grows keeps the dense-rank write
+    /// on its primary-key search instead of a scan of every block per sibling.
+    #[tokio::test]
+    async fn pragma_optimize_on_a_new_vault_keeps_no_blocks_stats_6811() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = one_connection_vault(&dir).await;
+        add_blocks(&pool, 2).await;
+
+        pragma_optimize(&pool).await.unwrap();
+        add_blocks(&pool, 3_000).await;
+
+        assert_eq!(blocks_stats(&pool).await, 0);
+        let plan = dense_rank_plan(&pool).await;
+        assert!(
+            plan.contains("SEARCH blocks USING INDEX sqlite_autoindex_blocks_1 (id=?)"),
+            "the dense-rank write searches blocks by id, got: {plan}"
+        );
+    }
+
+    /// #6811, the other arm: a vault past `MIN_ANALYZED_ROWS` keeps the
+    /// statistics the optimize took.
+    #[tokio::test]
+    async fn pragma_optimize_on_a_grown_vault_keeps_its_blocks_stats_6811() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = one_connection_vault(&dir).await;
+        add_blocks(&pool, MIN_ANALYZED_ROWS).await;
+
+        pragma_optimize(&pool).await.unwrap();
+
+        assert!(blocks_stats(&pool).await > 0);
+        let plan = dense_rank_plan(&pool).await;
+        assert!(
+            plan.contains("SEARCH blocks USING INDEX sqlite_autoindex_blocks_1 (id=?)"),
+            "the dense-rank write searches blocks by id, got: {plan}"
+        );
     }
 
     /// Issue #157 sub-item C — `op_log_compact` smoke test.

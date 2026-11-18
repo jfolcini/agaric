@@ -20,11 +20,12 @@ import { getMarkRange, posToDOMRect } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
-import { Link2 } from 'lucide-react'
+import { Link2, Palette } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { HighlightColorPicker } from '@/components/editor-toolbar/HighlightColorPicker'
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import {
@@ -154,6 +155,7 @@ export function SelectionBubbleMenu({
   // Desktop (fine pointer) behaviour is unchanged.
   const isTouch = useIsTouch()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false)
   const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
   // Snapshot of the existing link captured when the popover opens via Ctrl+K
   // on a link. `state.link` (from useEditorState) can lag or read false at
@@ -428,6 +430,19 @@ export function SelectionBubbleMenu({
         )
       })}
 
+      <Tip label={t('toolbar.highlightColor')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('toolbar.highlightColor')}
+          aria-haspopup="dialog"
+          aria-expanded={colorPopoverOpen}
+          {...toolbarPressHandlers(() => setColorPopoverOpen((prev) => !prev))}
+        >
+          <Palette />
+        </Button>
+      </Tip>
+
       <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
       <Tip label={withShortcutHint(t('toolbar.link'), 'linkPopover')}>
@@ -470,6 +485,12 @@ export function SelectionBubbleMenu({
             onClose={handleLinkPopoverClose}
             savedSelection={savedSelection}
           />
+        </PopoverContent>
+      </Popover>
+      <Popover open={colorPopoverOpen} onOpenChange={setColorPopoverOpen}>
+        <PopoverAnchor virtualRef={virtualAnchorRef} />
+        <PopoverContent align="start" className="w-auto p-1.5" data-editor-portal>
+          <HighlightColorPicker editor={editor} onPick={() => setColorPopoverOpen(false)} />
         </PopoverContent>
       </Popover>
     </BubbleMenu>

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { basename, relative } from 'node:path'
 
-import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
+import { test as baseTest, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 
 import { BRIDGE_BINARY, type Bridge, startBridge } from './bridge'
 
@@ -98,6 +98,13 @@ function expectNoConsoleErrors(page: Page): void {
   ).toEqual([])
 }
 
+/** Whether the nightly `real-backend` project also runs this test (`playwright.config.ts`). */
+function runsOnRealBackend(testInfo: TestInfo): boolean {
+  const specs = testInfo.project.metadata['realBackendSpecs'] as string[] | undefined
+  if (specs === undefined) throw new Error('playwright.config.ts: no realBackendSpecs metadata')
+  return specs.includes(basename(testInfo.file)) && !testInfo.tags.includes('@mock-only')
+}
+
 // An auto fixture, not module-level `beforeEach` / `afterEach`: a worker loads
 // this module once, so module-level hooks attach only to the first spec file
 // it runs and every later file in that worker goes ungated. A page the test
@@ -122,14 +129,20 @@ export const test = baseTest.extend<
     { scope: 'worker' },
   ],
   // Each test gets a fresh copy of the template vault, and every page of its
-  // context is told where the bridge is before the app boots.
+  // context is told where the bridge is before the app boots. On the mock, a
+  // test the nightly also runs on the bridge gets a mock without its
+  // `window.__*` hooks, which the bridge does not have either.
   realBackend: [
-    async ({ context, bridge }, use) => {
+    async ({ context, bridge }, use, testInfo) => {
       if (bridge !== null) {
         await bridge.request('reset')
         await context.addInitScript((url) => {
           ;(window as unknown as Record<string, unknown>)['__AGARIC_BRIDGE__'] = url
         }, bridge.url)
+      } else if (runsOnRealBackend(testInfo)) {
+        await context.addInitScript(() => {
+          ;(window as unknown as Record<string, unknown>)['__AGARIC_NO_MOCK_HOOKS__'] = true
+        })
       }
       await use()
     },
@@ -861,7 +874,11 @@ export async function openSettingsTab(page: Page, name: string) {
     return
   }
   await select.click()
-  await page.getByRole('option', { name, exact: true }).click()
+  // The open list scrolls to line the chosen item up with the trigger, and a
+  // tap aimed while it moves can miss under load, leaving the list open on the
+  // old tab. The keyboard needs no aim.
+  await page.getByRole('option', { name, exact: true }).press('Enter')
+  await expect(select).toHaveText(name)
 }
 
 /** Navigate to the page editor for a given page title. */

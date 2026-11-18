@@ -149,6 +149,7 @@ interface ReducerDeps {
   get: () => PageBlockState
   splitInProgress: Set<string>
   heldBlocks: Map<string, Promise<void>>
+  hold: (ids: readonly string[]) => () => void
   enqueueMove: <T>(blockId: string, run: () => Promise<T>) => Promise<T>
 }
 
@@ -157,6 +158,7 @@ export function createReducers({
   get,
   splitInProgress,
   heldBlocks,
+  hold,
   enqueueMove,
 }: ReducerDeps): Pick<
   PageBlockState,
@@ -180,24 +182,6 @@ export function createReducers({
 > {
   /** How many `edit`s of each block have not answered yet. */
   const editsInFlight = new Map<string, number>()
-
-  /**
-   * Hold later writes and loads for `ids` until the returned function is
-   * called, once the command in flight has answered. It runs before the
-   * caller's reconcile or rollback: either may load(), which waits on this.
-   */
-  function hold(ids: readonly string[]): () => void {
-    let answered: () => void = () => undefined
-    const held = new Promise<void>((resolve) => {
-      answered = resolve
-    })
-    for (const id of ids) heldBlocks.set(id, held)
-    return () => {
-      // A later command may hold the same block by now.
-      for (const id of ids) if (heldBlocks.get(id) === held) heldBlocks.delete(id)
-      answered()
-    }
-  }
 
   /**
    * Take the text the backend wrote for `blockId` when it is not the text

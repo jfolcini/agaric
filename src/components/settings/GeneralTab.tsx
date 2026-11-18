@@ -28,7 +28,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
-import { type LanguagePreference } from '@/lib/i18n/locales'
+import { type LanguagePreference, LOCALES, SUPPORTED_LOCALES } from '@/lib/i18n/locales'
 import { notify } from '@/lib/notify'
 
 // #1448 — each journal date-format preset maps to an i18n label key.
@@ -48,7 +48,7 @@ const SELECT_TRIGGER_WIDTH = 'sm:w-48'
 export function GeneralTab(): React.ReactElement {
   const { t } = useTranslation()
   // #4555 — the UI language. `system` follows the device; the other values
-  // pin a locale. Anything not yet translated falls back to English.
+  // pin a locale.
   const { language, setLanguage } = useLanguage()
   // The hook returns `0 | 1` (Sunday | Monday); the Select primitive only
   // deals in strings so we coerce on read/write.
@@ -112,8 +112,12 @@ export function GeneralTab(): React.ReactElement {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="system">{t('settings.languageSystem')}</SelectItem>
-              <SelectItem value="en">{t('settings.languageEnglish')}</SelectItem>
-              <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
+              {SUPPORTED_LOCALES.map((tag) => (
+                // `lang` so a screen reader voices "Español" as Spanish.
+                <SelectItem key={tag} value={tag} lang={tag}>
+                  {LOCALES[tag].nativeName}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </SettingRow>

@@ -78,7 +78,8 @@ const MARK_CASES: MarkCase[] = [
   // the "Code block language" button on the standing toolbar.
   { name: 'Inline code', button: 'Inline code', exact: true, tag: 'code' },
   { name: 'Strikethrough', button: 'Strikethrough', tag: 's' },
-  { name: 'Highlight', button: 'Highlight', tag: 'mark' },
+  // Exact: "Highlight" also names the bubble's "Highlight colour" button (#6759).
+  { name: 'Highlight', button: 'Highlight', exact: true, tag: 'mark' },
   { name: 'Underline', button: 'Underline', tag: 'u' },
 ]
 

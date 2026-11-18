@@ -34,6 +34,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -801,6 +802,10 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: xdg('xdg-config'),
     XDG_STATE_HOME: xdg('xdg-state'),
     XDG_CACHE_HOME: xdg('xdg-cache'),
+    // The app's language follows the webview's, which WebKitGTK takes from the
+    // environment, and the specs select by English text. Playwright pins its
+    // own `en-US`; this lane has no such default.
+    LANGUAGE: 'en_US',
   }
 }
 
@@ -1034,6 +1039,43 @@ async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
  */
 const SPECS_WITH_A_SLOW_MATERIALIZER = new Set(['agenda-count-after-write.e2e.ts'])
 
+/**
+ * Specs whose app starts the way an AppImage starts it (#6871): `APPDIR` set,
+ * its `usr/lib` first on `LD_LIBRARY_PATH` and its `usr/bin` first on `PATH`,
+ * holding the `xdg-open` the AppImage ships. Behind it on `PATH` a stand-in for
+ * the host's `xdg-open` appends the target and the `LD_LIBRARY_PATH` and
+ * `APPDIR` it was given to `launches.txt` in the vault.
+ */
+const SPECS_IN_AN_APPIMAGE_ENV = new Set(['appimage-launcher-env.e2e.ts'])
+
+function stageAppImageEnv(env: NodeJS.ProcessEnv): void {
+  if (sandboxRunDir === undefined) throw new Error('[sandbox] no run dir to stage the AppImage in')
+  const appDir = path.join(sandboxRunDir, 'appdir')
+  const bundleBin = path.join(appDir, 'usr', 'bin')
+  const hostLib = path.join(sandboxRunDir, 'host-lib')
+  const hostBin = path.join(sandboxRunDir, 'host-bin')
+  for (const dir of [path.join(appDir, 'usr', 'lib'), bundleBin, hostLib, hostBin]) {
+    mkdirSync(dir, { recursive: true })
+  }
+  // Copied with its mode: a wrapper that lost its exec bit is passed over on PATH.
+  copyFileSync(
+    path.join(rootDir, 'src-tauri', 'scripts', 'appimage-xdg-open.sh'),
+    path.join(bundleBin, 'xdg-open'),
+  )
+  writeFileSync(
+    path.join(hostBin, 'xdg-open'),
+    '#!/bin/sh\n' +
+      'printf \'%s\\t%s\\t%s\\n\' "$1" "${LD_LIBRARY_PATH-<unset>}" "${APPDIR-<unset>}" ' +
+      '>> "$AGARIC_DATA_DIR/launches.txt"\n',
+    { mode: 0o755 },
+  )
+  env['APPDIR'] = appDir
+  env['LD_LIBRARY_PATH'] = [path.join(appDir, 'usr', 'lib'), hostLib, env['LD_LIBRARY_PATH']]
+    .filter(Boolean)
+    .join(':')
+  env['PATH'] = [bundleBin, hostBin, env['PATH']].filter(Boolean).join(':')
+}
+
 export const config: WebdriverIO.Config = {
   runner: 'local',
 
@@ -1157,6 +1199,9 @@ export const config: WebdriverIO.Config = {
     const sandboxEnv = createSandboxEnv()
     if (specs.some((spec) => SPECS_WITH_A_SLOW_MATERIALIZER.has(path.basename(spec)))) {
       sandboxEnv['AGARIC_E2E_BACKGROUND_DELAY_MS'] = '1000'
+    }
+    if (specs.some((spec) => SPECS_IN_AN_APPIMAGE_ENV.has(path.basename(spec)))) {
+      stageAppImageEnv(sandboxEnv)
     }
     tauriDriver = spawn(tauriDriverPath, [], {
       stdio: [null, process.stdout, process.stderr],

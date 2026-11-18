@@ -336,8 +336,8 @@ pub(crate) fn sanitize_inline(s: &str) -> String {
 /// redactor dispatched per line on "does this parse as JSON?": `agaric.log` is
 /// JSON so it took the deny-by-default path, while these tab-separated
 /// `key=value` records fell through to a four-needle allow-list that passes all
-/// other text verbatim. A `tracing::info!(page = %page_title, …)` that became
-/// `[REDACTED]` in `agaric.log` was bundled here in the clear. The bundle now
+/// other text verbatim. A `tracing::info!(page = %page_title, …)` that was
+/// redacted in `agaric.log` was bundled here in the clear. The bundle now
 /// declares this format (`LineFormat::OtelSignal` in `commands::bug_report`)
 /// and applies a deny-by-default pass over every VALUE on the line, so the
 /// claim holds — but note the file itself is still written verbatim: redaction

@@ -197,6 +197,14 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'test(=loro::durability_cost_tests::durability_cost)'
 slow-timeout = { period = "30s", terminate-after = 6 }
 
+# `pulled_vault_writes::writes_on_a_pulled_vault_6811` (#6811) is a measurement
+# too: it writes the issue's 3K-block vault on two devices in a debug build,
+# pulls it twice through real sessions and times each arm, and gives a write
+# up to a minute before it reports it unfinished.
+[[profile.default.overrides]]
+filter = 'test(=pulled_vault_writes::writes_on_a_pulled_vault_6811)'
+slow-timeout = { period = "60s", terminate-after = 15 }
+
 # The Pages 20k-page perf gates (`list_pages_with_metadata_tests`) assert the
 # median of a first-page query, but most of their wall time is seeding 20k
 # pages through `pages_cache` and its per-sort indexes, which on a debug

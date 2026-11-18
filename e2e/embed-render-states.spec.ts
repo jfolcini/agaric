@@ -129,9 +129,10 @@ test.describe('embed render states @editor', () => {
     // The rail's side is square (docs/UX.md § Design tokens, Radius).
     await expect(embed).toHaveCSS('border-top-left-radius', '0px')
     await expect(embed).toHaveCSS('border-bottom-left-radius', '0px')
+    // Each row leads with its text; its property chips follow (#6747).
     await expect(embed.locator('[data-embed-block-id]')).toHaveText([
-      'Weekly standup notes',
-      'Design review feedback',
+      /^Weekly standup notes/,
+      /^Design review feedback/,
     ])
   })
 
