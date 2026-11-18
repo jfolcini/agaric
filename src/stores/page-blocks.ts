@@ -29,7 +29,7 @@ import { stopReading } from '@/lib/speech/read-aloud'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { buildBlocksById, reuseUnchangedBlocks } from '@/stores/page-blocks-map'
-import { createReducers } from '@/stores/page-blocks-reducers'
+import { createReducers, withContent } from '@/stores/page-blocks-reducers'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
@@ -519,6 +519,17 @@ function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): v
  */
 export function getPageStore(pageId: string): StoreApi<PageBlockState> | undefined {
   return pageBlockSlots.get(pageId)?.store
+}
+
+/**
+ * Show `to` as `blockId`'s text in the page's live store if it still shows
+ * `from`. A write that answers after the page was read again updates only the
+ * store that made it, which has since unmounted (#6953).
+ */
+export function adoptLateWrite(pageId: string, blockId: string, from: string, to: string): void {
+  const store = getPageStore(pageId)
+  if (store === undefined || store.getState().blocksById.get(blockId)?.content !== from) return
+  store.setState((state) => withContent(state, blockId, to))
 }
 
 /** Every mounted page store, one per pageId. */

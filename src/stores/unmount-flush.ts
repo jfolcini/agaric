@@ -37,6 +37,7 @@ import {
   type PageBlockStoreLike,
   readFlushSeq,
 } from '@/stores/inline-property-commit'
+import { adoptLateWrite } from '@/stores/page-blocks'
 
 // Saves whose text write lands only after an IPC answers (the checkbox and
 // property branches), by block id (#5448). Until then the page store shows the
@@ -232,12 +233,18 @@ async function commitTyped(
     lastWrite =
       dedupe?.content === changed ? dedupe.outcome : invokeSync(() => edit(blockId, changed))
   }
+  const typed = content
   return commitTypedTags({
     blockId,
     content,
     tags,
     textSaved: lastWrite,
     mySeq,
-    edit: write,
+    edit: async (id, named) => {
+      const rewritten = (await write(id, named)) !== false
+      // Creating a tag can outlast leaving the page and coming back (#6953).
+      if (rewritten && rootParentId !== null) adoptLateWrite(rootParentId, id, typed, named)
+      return rewritten
+    },
   })
 }
