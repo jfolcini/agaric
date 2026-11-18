@@ -48,7 +48,7 @@ Go / no-go for what #6559 left open, on these numbers:
 - **Enter right after a merge, and a second Backspace on a blank block, still dropped**: no-go on desktop. The window is the merge's answer, 0.23 to 0.27 s at p50 here; the phone row decides.
 - **Page-mode batching** (#6732): done; a 300-line paste is seconds in this build, and one Ctrl+Z undoes it. Batching a pasted list's style writes was not measured (the paste here is plain lines); no-go until a list paste is.
 - **Keys lost while a pull applies**: go, as #6814.
-- **Writes on a vault pulled from a peer, or with a peer paired before them, are far slower** (a split about 2 s, a 300-line paste 91 s): go, as #6811, before the phone row, since a phone gets its vault by a pull.
+- **Writes on a vault pulled from a peer, or with a peer paired before them, are far slower** (a split about 2 s, a 300-line paste 91 s): done, #6811. The cause was planner statistics taken while the vault was empty (§ [Loro engine cost](#loro-engine-cost-6563), the pulled-vault paragraph).
 
 ## Architectural decisions that buy responsiveness
 
@@ -143,6 +143,16 @@ Two runs, same container and build; each cell is the two runs' medians, then the
 
 - **No gap at this level.** A split on a pulled vault took as long as on the vault that wrote the blocks, and so did the paste, in the commands and the engine of a release build. #6811's gap (a split about 2 s, a paste 91 s) is not in how an engine built from a peer's snapshot performs a command. The harness has no UI or IPC, no paired peer and no running materializer or sync daemon, and its build is release, where #6811's table is a debug build: any of those can still hold the cause.
 - **A 300-line paste into a page of 1,100 blocks is seconds in a release build** on both arms (the fastest samples are 2.2–2.5 s).
+
+**The cause was not the pull** (#6811). `pulled_vault_writes` (`src-tauri/tests/command_integration/`, `#[ignore]`d) adds what the bench leaves out: the debug build, two devices running the sync daemon, a real pairing and pull, the running materializer, and a third arm on which `maintenance::pragma_optimize` ran while the vault was empty, as the daemon's first tick after boot does on a new device. Only that arm was slow. Statistics taken from a handful of blocks turn the dense-rank write every create runs (`write_dense_ranks`) into a scan of `blocks` per sibling; an edit or a delete ranks nothing, so merges were never slow. The optimize now drops the statistics of a table under `MIN_ANALYZED_ROWS`. One run per build, debug, the arms interleaved; each cell is median [min–max]:
+
+| Write | App-written | Pulled | Optimized while empty, before | Optimized while empty, after |
+|---|---|---|---|---|
+| Split, n=10 | 21–25 ms [18–34] | 21–30 ms [19–36] | 1,362 ms [1,286–1,507] | 29 ms [20–32] |
+| 300-line paste, n=3 | 3.6–4.0 s [3.1–5.3] | 3.9–4.2 s [3.4–4.9] | unfinished after 60 s | 4.2 s [3.5–5.0] |
+| First 1,000-block batch on a new vault, n=1 | 5.3–6.1 s | | unfinished after 60 s | 5.4 s |
+
+After the fix the optimized arm over the app-written one is a median 1.27 [0.70–1.42] for a split and 1.00 [0.93–1.04] for a paste, as the pulled arm's 1.00–1.20 and 1.04–1.06. A vault that already holds such statistics drops them at its next optimize; the connections opened before it keep them until the app restarts, since SQLite loads statistics per connection.
 
 ### Guidance for memory-constrained Android (1–3 GB)
 
