@@ -1,4 +1,4 @@
-# Session 4275 — App health counters explain themselves on a tap
+# Session 4278 — App health counters explain themselves on a tap
 
 First PR of #6895. Every counter on Settings › App health, and on the Sync status card in Sync & devices, kept its meaning in a Radix hover tooltip. A tap never opens one. On an iPhone 13 profile, tapping "Writes the sync engine missed" showed nothing, so its "Should stay at zero; if not, run the integrity check" never reached a phone user. The trigger was 21 px tall, and a screen reader heard a button that did nothing.
 
