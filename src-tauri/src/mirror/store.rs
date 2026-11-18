@@ -1,7 +1,8 @@
 //! What the Markdown mirror (#5363) keeps: the folder setting, the marker in
-//! the folder naming the device that writes it, and a state file per page in
-//! the app data dir, outside the folder, holding the path and the texts last
-//! written there. Every file goes through [`write_atomic`].
+//! the folder naming the device that writes it, and in the app data dir,
+//! outside the folder, a state file per page holding the path and the texts
+//! last written there, and beside them the vault's [`Head`] as of the last
+//! pass. Every file goes through [`write_atomic`].
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -257,6 +258,20 @@ impl PageState {
     }
 }
 
+/// This device's last op as of the folder's last pass, kept outside the
+/// vault so that a vault restored from a backup, or a new one, is told from
+/// the one that wrote the folder (#6887).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Head {
+    pub seq: i64,
+    /// The op's hash, `None` when the op log no longer held the op.
+    pub hash: Option<String>,
+}
+
+/// The file holding a folder's [`Head`], beside its pages' states: not a
+/// `.json`, which [`StateDir::load`] reads as a page's.
+const HEAD_NAME: &str = "head";
+
 /// The per-page state files of the folder the mirror writes:
 /// `mirror/folders/<key>/<PAGE_ID>.json` in the app data dir, one directory
 /// per folder, so a page whose file another folder held is never read as one
@@ -278,12 +293,29 @@ impl StateDir {
         }
     }
 
+    fn dir(&self) -> std::io::Result<&Path> {
+        self.dir
+            .as_deref()
+            .ok_or_else(|| std::io::Error::other("the mirror's states are bound to no folder"))
+    }
+
     fn file(&self, page_id: &str) -> std::io::Result<PathBuf> {
-        let dir = self
-            .dir
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("the mirror's states are bound to no folder"))?;
-        Ok(dir.join(format!("{page_id}.json")))
+        Ok(self.dir()?.join(format!("{page_id}.json")))
+    }
+
+    /// The head saved with the folder's last pass, `None` before the first.
+    pub fn head(&self) -> Result<Option<Head>, AppError> {
+        match read_optional(&self.dir()?.join(HEAD_NAME))? {
+            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn save_head(&self, head: &Head) -> Result<(), AppError> {
+        let dir = self.dir()?;
+        std::fs::create_dir_all(dir)?;
+        write_atomic(&dir.join(HEAD_NAME), &serde_json::to_vec(head)?)?;
+        Ok(())
     }
 
     /// Every page's state. A file that does not parse is skipped with a
@@ -357,8 +389,9 @@ impl StateDir {
         Ok(true)
     }
 
-    /// Drop `folder`'s states: the mirror then writes every page there as
-    /// new, which the guard keeps from overwriting a file that differs.
+    /// Drop `folder`'s states and its head: the mirror then writes every
+    /// page there as new, which the guard keeps from overwriting a file that
+    /// differs, and removes no file there.
     pub fn forget(&self, folder: &str) -> std::io::Result<()> {
         remove_dir_if_any(&self.dir_for(folder))
     }

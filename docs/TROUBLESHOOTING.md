@@ -311,7 +311,11 @@ was taken. To open one:
 2. Copy the backup to `notes.db` in the data folder.
 3. Start Agaric. A backup taken before an update is upgraded again.
 
-What was written after the backup was taken is not in it. Then, by cause:
+What was written after the backup was taken is not in it. With the
+[Markdown mirror](features/import-export.md#markdown-mirror-settings--data) on,
+its folder then holds newer notes than the vault, so the mirror pauses and
+changes no file until you choose the folder again in Settings › Data; that
+removes no file and writes over none. Then, by cause:
 
 - **An older version:** install the version that last opened the vault, or a
   newer one. The vault was not changed; there is nothing to restore.
