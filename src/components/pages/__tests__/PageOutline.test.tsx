@@ -40,6 +40,7 @@ function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
     staleFocusedBlock: null,
     seeding: null,
     getBlockById: (id: string) => blocksById.get(id),
+    holdLoads: () => () => undefined,
     load: vi.fn(),
     createBelow: vi.fn(),
     edit: vi.fn(),

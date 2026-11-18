@@ -152,7 +152,9 @@ export function useBlockProperties(
         const current = pageStore.getState().blocksById.get(blockId)?.todo_state ?? null
         const nextState = nextTaskState(current)
 
-        // Optimistic update (before IPC) to prevent race on rapid toggles
+        // Optimistic update (before IPC) to prevent race on rapid toggles. A
+        // reload meanwhile (another task's repeat, a sync) waits for the write.
+        const release = pageStore.getState().holdLoads()
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: nextState } : b)),
         }))
@@ -175,6 +177,9 @@ export function useBlockProperties(
           }
           notify.error(i18n.t('blockTree.setTaskStateFailed'))
           return
+        } finally {
+          // Before this toggle's own repeat reload, which would wait on it.
+          release()
         }
 
         // Only once the state is written: a refused write clears nothing.

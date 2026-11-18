@@ -169,6 +169,7 @@ describe('useCheckboxSyntax', () => {
       staleFocusedBlock: null,
       seeding: null,
       getBlockById: (id: string) => initialBlocks.find((b) => b.id === id),
+      holdLoads: () => () => undefined,
       load: vi.fn(),
       createBelow: vi.fn(),
       edit: vi.fn(),
