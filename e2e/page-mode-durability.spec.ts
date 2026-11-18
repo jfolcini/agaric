@@ -98,7 +98,7 @@ test.describe('page mode keeps what is typed (#5691) @editor @pages', () => {
     })
   }
 
-  test('a save the backend refuses says so, keeps the text and the mode, and the next save writes it', async ({
+  test('a save the backend refuses says so, keeps the text and the mode, and the next save writes it @mock-only', async ({
     page,
   }) => {
     await page.evaluate(() =>
@@ -169,9 +169,12 @@ test.describe('page mode keeps what is typed (#5691) @editor @pages', () => {
     await caret(page, 0, 'end')
     await page.keyboard.type(' typed')
     await expect.poll(async () => (await backendTexts(page, seeded.pageId))[0]).toBe('alpha typed')
+    const typedAt = Date.now()
     await blurEditors(page)
-    // Edits closer than the undo group window join one entry.
+    // Edits closer than the undo group window join one entry: on the mock by the page's clock, on
+    // the real backend by its own, which `page.clock` does not reach.
     await page.clock.fastForward(1000)
+    await expect.poll(() => Date.now() - typedAt).toBeGreaterThan(1000)
 
     await ipc(page, 'edit_block', { blockId: seeded.ids[2], toText: 'gamma, from an agent' })
     await emitMockEvent(page, 'blocks:changed', { changed_page_ids: [seeded.pageId] })

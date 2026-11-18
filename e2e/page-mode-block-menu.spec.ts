@@ -1,5 +1,5 @@
 /**
- * Page mode's block menu (#5972) against the mock backend: a right click on a
+ * Page mode's block menu (#5972), on the mock and on the bridge: a right click on a
  * block opens block mode's menu on it, and each row's effect is read back from
  * the backend, then again after leaving the page and coming back. Also what
  * keeps the webview's own menu (selected text), the menu key and Shift+F10, a
@@ -9,7 +9,15 @@
 import type { Locator, Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { axeViolations, expect, ipc, readClipboard, test, waitForBoot } from './helpers'
+import {
+  axeViolations,
+  expect,
+  ipc,
+  navigateToView,
+  readClipboard,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const EDITOR = '[data-testid="page-mode-editor"]'
@@ -332,6 +340,14 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     expect(
       await page.evaluate(() => (window as unknown as { __prevented: boolean[] }).__prevented),
     ).toEqual([false, true])
+
+    // The Agenda lists the task the menu cycled, from the backend's task column.
+    await page.keyboard.press('Escape')
+    await navigateToView(page, 'Journal')
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expect(
+      page.getByTestId('agenda-results-item').filter({ hasText: 'call mom' }),
+    ).toHaveCount(1)
   })
 
   test('the menu key and Shift+F10 open the menu on the caret’s block', async ({ page }) => {
@@ -641,7 +657,9 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await rightClick(page, ids[1])
     await pick(page, 'Properties...')
     await expect(page.getByRole('dialog')).toBeVisible()
-    await page.keyboard.press('Escape')
+    // Closed by its button: an Escape while the sheet still loads closes the tooltip of the control
+    // that took the focus, not the sheet.
+    await page.locator('[data-slot="sheet-content"] [data-slot="sheet-close"]').click()
     await expect(page.getByRole('dialog')).toBeHidden()
 
     await rightClick(page, ids[1])

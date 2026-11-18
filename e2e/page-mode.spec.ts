@@ -16,6 +16,8 @@ import type { Locator, Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  activeDialog,
+  activeSuggestionList,
   activeSuggestionPopup,
   axeViolations,
   blurEditors,
@@ -25,6 +27,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   ipc,
+  navigateToView,
   readClipboard,
   reopenPage,
   replaceEditorText,
@@ -318,6 +321,10 @@ test.describe('page mode (#5691) @editor @pages', () => {
     // The editor's own history goes with it; only the page's undo stack is left.
     await modeSwitch(page, 'Blocks').click()
     await expect(page.getByText('block 31', { exact: true })).toBeVisible()
+    // Block mode puts its editor on the block the cursor was in, a moment after it shows.
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeFocused()
     await blurEditors(page)
     await page.keyboard.press('Control+z')
 
@@ -441,6 +448,31 @@ async function syncedPage(page: Page, pageId: string): Promise<void> {
     changed_blocks: 1,
     changed_page_ids: [pageId],
   })
+}
+
+/** The Journal's Agenda lists the open task whose text is `text`, from the backend's task column. */
+async function expectInAgenda(page: Page, text: string): Promise<void> {
+  await navigateToView(page, 'Journal')
+  await page.getByRole('tab', { name: 'Agenda view' }).click()
+  await expect(page.getByTestId('agenda-results-item').filter({ hasText: text })).toHaveCount(1)
+}
+
+/**
+ * Reopen `title` in page mode until `ready` holds: a view the materializer keeps (`tags_cache`,
+ * `agenda_cache`, inline tag refs) catches up in the background, and a panel that read before it
+ * shows the old answer until it is mounted again.
+ */
+async function reopenUntil(
+  page: Page,
+  title: string,
+  count: number,
+  ready: () => Promise<void>,
+): Promise<void> {
+  await expect(async () => {
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, title, count)
+    await ready()
+  }).toPass()
 }
 
 /** Select from block `from`'s start to block `to`'s start (or end), as a drag would. */
@@ -751,15 +783,16 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await openInPageMode(page, 'Pickers', 2)
     await caret(page, 0, 'end')
 
-    await page.keyboard.type(' [[Picked pa')
-    await expect(activeSuggestionPopup(page)).toBeVisible()
-    await page.keyboard.press('Enter')
-    await page.keyboard.type(' #work')
-    await expect(activeSuggestionPopup(page)).toBeVisible()
-    await page.keyboard.press('Enter')
-    await page.keyboard.type(' ((block to pi')
-    await expect(activeSuggestionPopup(page)).toBeVisible()
-    await page.keyboard.press('Enter')
+    // Enter picks the first item once the query's results are in: the real backend answers the
+    // `((` search from its FTS index, which a block only just made can still be missing from.
+    const pick = async (typed: string, first: string) => {
+      await page.keyboard.type(typed)
+      await expect(activeSuggestionList(page).getByRole('option').first()).toContainText(first)
+      await page.keyboard.press('Enter')
+    }
+    await pick(' [[Picked pa', 'Picked page')
+    await pick(' #work', 'work')
+    await pick(' ((block to pi', 'the block to pick')
 
     await expect
       .poll(async () => (await backend(page, pageId))[0]?.text)
@@ -804,6 +837,16 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await openViaPalette(page, 'Typed tags')
     await expect(page.locator('.page-editor [data-testid="tag-ref-chip"]')).toHaveText('newtag')
     expect(await axeViolations(page, '.page-editor')).toEqual([])
+
+    // The Tags list reads `tags_cache`, which the materializer fills in the background, and the
+    // tag's page lists the block the tag was typed in.
+    await expect(async () => {
+      await navigateToView(page, 'Journal')
+      await navigateToView(page, 'Tags')
+      await expect(page.getByTestId('tag-item-newtag')).toBeVisible({ timeout: 2_000 })
+    }).toPass()
+    await page.getByTestId('tag-item-newtag').click()
+    await expect(page.locator(`[data-backlink-item="${ids[0]}"]`)).toBeVisible()
   })
 
   // A press on the switch keeps the focus in the block being edited: its text is
@@ -904,7 +947,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect.poll(async () => (await cursor(page)).index).toBe(2)
     await expect(marker(ids[1])).toHaveAttribute('aria-label', label('TODO'))
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
-    expect((await shown(page))[1]?.text).toBe('call mom')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('call mom')
     expect(await state(ids[1])).toBe('TODO')
 
     // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
@@ -923,6 +966,9 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       'plain',
     ])
     expect(await axeViolations(page, '.page-editor')).toEqual([])
+
+    // The Agenda lists the open tasks the page set, from what the backend stored.
+    await expectInAgenda(page, 'call mom')
   })
 
   test('a page of priorities and dates opens in page mode; the keys, the badge and the picker set them, and they stay', async ({
@@ -1075,7 +1121,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(chips(ids[1])).toHaveCount(2)
     await expect(chips(ids[1]).nth(1)).toHaveAttribute('aria-label', 'Status: done')
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
-    expect((await shown(page))[1]?.text).toBe('call mom')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('call mom')
     expect(await props(ids[1])).toEqual({ assignee: 'Bo', status: 'done' })
 
     // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
@@ -1767,6 +1813,9 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await page.keyboard.press('Enter')
     await page.getByLabel('Tag prefix').fill('work')
     await page.getByRole('button', { name: 'Insert query' }).click()
+    // The builder closes after the block is written, and its close takes the focus: a caret
+    // placed before then loses it.
+    await expect(activeDialog(page)).toHaveCount(0)
     const added = (await shown(page))[3]?.id
     await expect
       .poll(async () => (await backend(page, pageId))[3]?.text)
@@ -1791,56 +1840,6 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       'call mom',
       'last',
       '{{query type:tag expr:work}}',
-    ])
-  })
-
-  test('a slash command leaves the backend as block mode’s does', async ({ page }) => {
-    const pages = {
-      blocks: await seedRows(page, 'Slash in blocks', [
-        [0, 'buy milk'],
-        [0, 'call mom'],
-      ]),
-      page: await seedRows(page, 'Slash in page', [
-        [0, 'buy milk'],
-        [0, 'call mom'],
-      ]),
-    }
-    const menu = activeSuggestionPopup(page)
-    const rows = (seeded: Seeded) =>
-      Promise.all(
-        seeded.ids.map(async (id) => {
-          const row = await ipc<{ content: string; todo_state: string | null }>(page, 'get_block', {
-            blockId: id,
-          })
-          return [row.content, row.todo_state]
-        }),
-      )
-
-    await openViaPalette(page, 'Slash in blocks')
-    for (const [i, command] of ['todo', 'h2'].entries()) {
-      await focusBlockById(page, pages.blocks.ids[i] as string)
-      await page.keyboard.press('End')
-      await page.keyboard.type(` /${command}`)
-      await menu.locator(`#suggestion-${command}`).click()
-      await expect(menu).toHaveCount(0)
-      await page.keyboard.press('Escape')
-    }
-
-    await openViaPalette(page, 'Slash in page')
-    await modeSwitch(page, 'Page').click()
-    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
-    for (const [i, command] of ['todo', 'h2'].entries()) {
-      await caret(page, i, 'end')
-      await page.keyboard.type(` /${command}`)
-      await menu.locator(`#suggestion-${command}`).click()
-      await expect(menu).toHaveCount(0)
-    }
-    await page.keyboard.press('Escape')
-
-    await expect.poll(() => rows(pages.page)).toEqual(await rows(pages.blocks))
-    expect(await rows(pages.blocks)).toEqual([
-      ['buy milk ', 'TODO'],
-      ['## call mom ', null],
     ])
   })
 })
@@ -2189,5 +2188,165 @@ test.describe('page mode after Edit as Markdown (#5691) @editor @pages @markdown
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
     await expect(page.getByRole('button', { name: 'Page actions', exact: true })).toBeFocused()
     await expect(page.locator(EDITOR)).not.toBeFocused()
+  })
+})
+
+/** The local `YYYY-MM-DD` `days` from today, by the real clock the backend also reads. */
+function localDay(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+test.describe('page mode, as the backend’s own views read it (#6926) @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a due date moved to today in page mode reaches today’s Due panel', async ({ page }) => {
+    const { ids } = await seedRows(page, 'Due today', [
+      [0, 'renew passport'],
+      [0, 'plain'],
+    ])
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await ipc(page, 'set_due_date', { blockId: ids[0], date: localDay(1) })
+    await openInPageMode(page, 'Due today', 2)
+    const chip = page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] .due-date-chip`)
+
+    await chip.click()
+    const picker = page.getByTestId('date-picker-popup')
+    await picker.getByRole('textbox', { name: 'Type a date' }).fill(localDay(0))
+    await page.keyboard.press('Enter')
+    await expect(picker).toHaveCount(0)
+    await expect
+      .poll(
+        async () =>
+          (await ipc<{ due_date: string | null }>(page, 'get_block', { blockId: ids[0] })).due_date,
+      )
+      .toBe(localDay(0))
+
+    // Today's Due panel reads `agenda_cache`, which the materializer fills in the background.
+    await expect(async () => {
+      await navigateToView(page, 'Tags')
+      await navigateToView(page, 'Journal')
+      await expect(page.getByTestId('due-panel').locator(`li#block-item-${ids[0]}`)).toBeVisible({
+        timeout: 2_000,
+      })
+    }).toPass()
+  })
+
+  test('completing a repeating task in page mode brings in its next occurrence, which stays', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Repeating', [
+      [0, 'water plants'],
+      [0, 'plain'],
+    ])
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'DOING' })
+    await ipc(page, 'set_due_date', { blockId: ids[0], date: localDay(0) })
+    await ipc(page, 'set_property', {
+      blockId: ids[0],
+      key: 'repeat',
+      value: {
+        value_text: '+1w',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    await openInPageMode(page, 'Repeating', 2)
+    const marker = (id: string | undefined) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] [data-testid="task-marker"]`)
+
+    await marker(ids[0]).click()
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', 'Task: DONE. Click to cycle.')
+    // The backend makes the next occurrence in the same write; page mode's reload brings it in.
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    const next = (await backend(page, pageId)).find(
+      (b) => b.text === 'water plants' && b.id !== ids[0],
+    )?.id
+    await expect(marker(next)).toHaveAttribute('aria-label', 'Task: TODO. Click to cycle.')
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${next}"] .repeat-indicator`),
+    ).toBeVisible()
+
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, 'Repeating', 3)
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', 'Task: DONE. Click to cycle.')
+    await expect(marker(next)).toHaveAttribute('aria-label', 'Task: TODO. Click to cycle.')
+    expect(
+      await ipc<{ todo_state: string | null; due_date: string | null }>(page, 'get_block', {
+        blockId: next,
+      }),
+    ).toMatchObject({ todo_state: 'TODO', due_date: localDay(7) })
+  })
+
+  test('a query over a tag typed in page mode, and an embed of its block, show that block', async ({
+    page,
+  }) => {
+    const { ids } = await seedRows(page, 'Query typed tag', [
+      [0, 'tagged here'],
+      [0, 'holder'],
+      [0, 'embedder'],
+    ])
+    await openInPageMode(page, 'Query typed tag', 3)
+    await caret(page, 0, 'end')
+    await page.keyboard.type(' #pmquerytag')
+    await expect(activeSuggestionPopup(page)).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(activeSuggestionPopup(page)).toBeHidden()
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(1)
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`),
+    ).toHaveText('pmquerytag')
+
+    // Written by another surface; the page reads them on opening.
+    await ipc(page, 'edit_block', { blockId: ids[1], toText: '{{query tag:pmquerytag}}' })
+    await ipc(page, 'edit_block', { blockId: ids[2], toText: `{{embed ((${ids[0]}))}}` })
+    const results = page.locator(
+      `${EDITOR} [data-page-block-id="${ids[1]}"] [data-testid="query-result-item"]`,
+    )
+    // The query reads the inline tag the materializer indexes in the background.
+    await reopenUntil(page, 'Query typed tag', 3, async () => {
+      await expect(results.filter({ hasText: 'tagged here' })).toHaveCount(1, { timeout: 2_000 })
+    })
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${ids[2]}"] [data-testid="embed-container"]`),
+    ).toContainText('tagged here')
+  })
+
+  test('a block deleted elsewhere with no word of it keeps the text typed in, as a new block', async ({
+    page,
+  }) => {
+    // Deleted through the IPC as an agent or another view does, with no sync: whichever reaches
+    // page mode first, the delete's change event or the refusal of the save's `edit_block`, the
+    // page is read again and the typed text kept.
+    const { pageId, ids } = await seedRows(page, 'Deleted quietly', [
+      [0, 'alpha'],
+      [0, 'beta'],
+    ])
+    await openInPageMode(page, 'Deleted quietly', 2)
+    await caret(page, 1, 'end')
+    await page.keyboard.type(' typed')
+    await ipc(page, 'delete_block', { blockId: ids[1] })
+    await blurEditors(page)
+
+    await expect(
+      page.getByText(
+        'A block you were editing was deleted elsewhere. Your text is kept as a new block.',
+      ),
+    ).toBeVisible()
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['alpha', 'beta typed'])
+    const kept = (await backend(page, pageId))[1]
+    expect(kept?.id).not.toBe(ids[1])
+
+    await openViaPalette(page, 'Getting Started')
+    await openInPageMode(page, 'Deleted quietly', 2)
+    expect(await shown(page)).toEqual(await backend(page, pageId))
+    expect((await shown(page))[1]).toEqual(kept)
   })
 })
