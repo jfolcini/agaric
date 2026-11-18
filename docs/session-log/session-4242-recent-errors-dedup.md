@@ -1,4 +1,4 @@
-# Session 4238 — the bug report counts a repeated warning instead of listing it twenty times
+# Session 4242 — the bug report counts a repeated warning instead of listing it twenty times
 
 Review of #6764 after its fix (#6773) shipped in 0.24.0. The issue body's "Recent errors" held the same `paired peer resolved to no dialable address` warning twenty times: the daemon logs it on every tick, and `RECENT_ERRORS_CAP` counted lines. Any other warning or error in that window was pushed out of the summary a triager reads first.
 
