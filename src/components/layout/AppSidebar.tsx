@@ -4,9 +4,9 @@
  * #5269 — holds only the daily surfaces: a header (branding + collapse
  * toggle, space switcher, New page), one nav list (`SIDEBAR_NAV_ITEMS`)
  * above Bookmarks, and a footer row with the Sync and Settings icons. The other
- * views open from the Pages header or Settings. `CollapseButton` and
- * `syncDotClass` are sidebar-internal helpers and live alongside the JSX
- * they support.
+ * views open from the Pages header or Settings. `CollapseButton` is a
+ * sidebar-internal helper and lives alongside the JSX it supports;
+ * `syncDotClass` is shared with the phone's drawer button in App.tsx.
  *
  * Subscription split (design-system perf review tier-3 #19):
  * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`
@@ -58,7 +58,7 @@ import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
  * from "no peers" (pairing problem, the user needs to add a device). Offline
  * wins over no-peers because peer state is meaningless without a network.
  */
-function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
+export function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
   if (!hasPeers) return 'bg-status-pending-foreground'
   switch (syncState) {

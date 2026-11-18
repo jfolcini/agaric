@@ -36,7 +36,8 @@ interface DateChipProps {
   date: string
   icon: LucideIcon
   colorClass: string
-  onOpen: () => void
+  /** None draws the chip with no control, as an embedded row does (#6747). */
+  onOpen?: (() => void) | undefined
   i18nKey: string
   chipClass: string
 }
@@ -54,13 +55,23 @@ export function DateChip({
   // strings feed the title, the aria-label, and the visible text below.
   const compact = formatCompactDate(date)
   const label = t(i18nKey, { date: compact })
+  const chipClasses = `${chipClass} flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none`
+  // The chips pin text-xs, where 1em stays 12px at every font size, so their
+  // icons size from the setting itself (#5369).
+  const iconClass = 'size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0'
+  if (!onOpen) {
+    return (
+      <span className={cn(chipClasses, colorClass)} title={label}>
+        <Icon className={iconClass} aria-hidden="true" />
+        <span aria-hidden="true">{compact}</span>
+        <span className="sr-only">{label}</span>
+      </span>
+    )
+  }
   return (
     <button
       type="button"
-      className={cn(
-        `${chipClass} touch-hit-area flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
-        colorClass,
-      )}
+      className={cn(chipClasses, 'touch-hit-area cursor-pointer', colorClass)}
       title={label}
       aria-label={label}
       // #1498: keep the editor focused, its caret where it was, through the
@@ -69,9 +80,7 @@ export function DateChip({
       onMouseDown={(e) => e.preventDefault()}
       onClick={onOpen}
     >
-      {/* The chips pin text-xs, where 1em stays 12px at every font size, so
-          their icons size from the setting itself (#5369). */}
-      <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0" />
+      <Icon className={iconClass} />
       {compact}
     </button>
   )
@@ -138,6 +147,11 @@ export interface BlockMetadataRowProps {
   refCount?: number | undefined
   /** Opens this block's references: block mode zooms it. Takes the row's own id. */
   onOpenReferences?: ((blockId: string) => void) | undefined
+  /**
+   * Draws every chip with no control, as an embedded row does (#6747): the
+   * row shows the block's metadata, and its own page is where it changes.
+   */
+  readOnly?: boolean | undefined
 }
 
 /** The collapse chevron's classes, page mode's chevron's too. */
@@ -248,12 +262,31 @@ function PriorityBadge({
   blockId,
   priority,
   onTogglePriority,
+  readOnly,
 }: {
   blockId: string
   priority: string
   onTogglePriority?: ((blockId: string) => void | Promise<void>) | undefined
+  readOnly: boolean
 }): React.ReactElement {
   const { t } = useTranslation()
+  const badge = (
+    <span
+      className={cn(
+        'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5',
+        priorityColor(priority),
+      )}
+    >
+      {priorityLabel(priority)}
+    </span>
+  )
+  if (readOnly) {
+    return (
+      <span className="priority-badge flex-shrink-0 flex items-center" data-testid="priority-badge">
+        {badge}
+      </span>
+    )
+  }
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -274,14 +307,7 @@ function PriorityBadge({
             void onTogglePriority?.(blockId)
           }}
         >
-          <span
-            className={cn(
-              'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5',
-              priorityColor(priority),
-            )}
-          >
-            {priorityLabel(priority)}
-          </span>
+          {badge}
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom" sideOffset={4}>
@@ -315,10 +341,12 @@ function InlineProperties({
   onEditKey,
   onShowProperties,
   onNavigate,
+  readOnly,
 }: {
   blockId: string
   filteredProperties: InlineProperty[]
   inlinePropLimit: number
+  readOnly: boolean
   onEditProp: (prop: { key: string; value: string }) => void
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
   onShowProperties?: ((blockId: string) => void) | undefined
@@ -341,10 +369,16 @@ function InlineProperties({
             onShowProperties={onShowProperties}
             unfit={isUnfit(p.key, p.kind ?? 'text', p.value, def, p.items ?? null)}
             refItems={def?.value_type === 'ref'}
+            readOnly={readOnly}
           />
         )
       })}
-      {filteredProperties.length > inlinePropLimit && (
+      {filteredProperties.length > inlinePropLimit && readOnly && (
+        <span className="property-overflow inline-flex items-center flex-shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground select-none">
+          +{filteredProperties.length - inlinePropLimit}
+        </span>
+      )}
+      {filteredProperties.length > inlinePropLimit && !readOnly && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -521,6 +555,7 @@ export const BlockMetadataRow = React.memo(
     onNavigate,
     refCount = 0,
     onOpenReferences,
+    readOnly = false,
   }: BlockMetadataRowProps): React.ReactElement | null => {
     // #217 C2 / A3 (#1021): cap how many property chips render inline before the
     // `+N` overflow pill, relieving chip density on narrow viewports. The parent
@@ -594,6 +629,7 @@ export const BlockMetadataRow = React.memo(
             blockId={blockId}
             priority={priority}
             onTogglePriority={onTogglePriority}
+            readOnly={readOnly}
           />
         )}
 
@@ -602,7 +638,7 @@ export const BlockMetadataRow = React.memo(
             date={dueDate}
             icon={CalendarDays}
             colorClass={dueDateColor(dueDate)}
-            onOpen={() => onOpenDatePicker?.(blockId, 'due')}
+            onOpen={readOnly ? undefined : () => onOpenDatePicker?.(blockId, 'due')}
             i18nKey="block.dueDate"
             chipClass="due-date-chip"
           />
@@ -619,7 +655,7 @@ export const BlockMetadataRow = React.memo(
             date={scheduledDate}
             icon={Calendar}
             colorClass="bg-secondary text-secondary-foreground"
-            onOpen={() => onOpenDatePicker?.(blockId, 'schedule')}
+            onOpen={readOnly ? undefined : () => onOpenDatePicker?.(blockId, 'schedule')}
             i18nKey="block.scheduledDate"
             chipClass="scheduled-chip"
           />
@@ -638,6 +674,7 @@ export const BlockMetadataRow = React.memo(
             onEditKey={onEditKey}
             onShowProperties={onShowProperties}
             onNavigate={onNavigate}
+            readOnly={readOnly}
           />
         )}
 

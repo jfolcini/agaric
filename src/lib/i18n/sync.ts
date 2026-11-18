@@ -332,41 +332,24 @@ export const sync: Record<string, string> = {
     'Camera permission denied. Enable camera access for Agaric in your device settings, then retry.',
   'qrScanner.cameraNotFound': 'No camera was found on this device.',
 
-  // Translators: Toasts after a sync started from the Sidebar's Sync button or run automatically;
-  // "Sync failed" is also an error in Settings › Sync & devices. failedForDevice: {{deviceId}} =
-  // the first 12 characters of the device's ID; "..." shows it is cut off.
+  // Translators: Toasts after a sync started with the Sidebar's Sync button; "Sync failed" is also
+  // an error in Settings › Sync & devices. failedForDevice: {{name}} = the other device's name, or
+  // the start of its ID when it has none.
   'device.syncComplete': 'Sync complete',
   'device.syncFailed': 'Sync failed',
-  'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',
-
-  // Translators: Toast after a sync brought in changes from another device; {{count}} = changed
-  // blocks (always 1 or more). The last string is used when the number is unknown.
-  // #4305 — driven by `SyncEvent::Complete.changed_blocks`, the count of blocks
-  // a session actually changed. It replaced `sync.opsReceived`, which was fed
-  // `ops_received`: the number of protocol messages, one per registered space,
-  // sent whether or not that space had a delta. On the reporting user's
-  // two-space pair that read "Synced 2 changes from device" every 60 s forever,
-  // with no edits on either device. A count in a sentence has to be a count of
-  // the thing the sentence names.
-  //
-  // `_one` / `_other` only: `count` is never 0 here — a zero-change sync raises
-  // no toast at all (see `useSyncEvents`), which is the point of #4305.
-  'sync.changesApplied_one': 'Synced {{count}} change from device',
-  'sync.changesApplied_other': 'Synced {{count}} changes from device',
-  // #4305 — the whole-space snapshot catch-up reimports an entire space, so it
-  // has no meaningful block count to report. Rather than invent one (the old
-  // code's failure) or stay silent (which would hide a whole-space reimport),
-  // it says the true thing it can say and claims no number.
-  'sync.changesAppliedUnknownCount': 'Synced changes from device',
+  'sync.failedForDevice': 'Sync with {{name}} failed',
 
   // Translators: Toast, and the tooltip of the Sidebar's Sync button; {{message}} = the reason: one
   // of the sync error sentences below, or a technical error text.
   'sync.failed': 'Sync failed: {{message}}',
 
-  // Translators: Warning toast that stays until closed; {{title}} = a page title; "Trash" = the
-  // Trash view.
-  'sync.localTextKept':
+  // Translators: Warning toast that stays until closed, with a button that opens the Trash view.
+  // One kept page is named ({{title}} = a page title); several are counted ({{count}} = number of
+  // pages, 2 or more).
+  'sync.localTextKept_one':
     'Another device deleted or moved “{{title}}”. The blocks you added under it here that had not synced yet are in the Trash.',
+  'sync.localTextKept_other':
+    'Another device deleted or moved {{count}} pages. The blocks you added under them here that had not synced yet are in the Trash.',
 
   // Translators: Sync errors: shown after "Sync failed: " in a toast, and alone in the sync status
   // card of Settings › Sync & devices. {{peer}} = the other device's name; the "Unnamed" variants
@@ -409,10 +392,8 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'The other device holds changes this device made and no longer has, as after restoring an older backup here, so the two cannot merge. Export the notes from this device, set Agaric up fresh on it, pair it again, then import them.',
 
-  // Translators: Button inside the toast "Sync failed for device …": try that sync again.
+  // Translators: Button inside the toast "Sync with … failed": try that sync again.
   'sync.retryAction': 'Retry sync',
-  // Translators: Toast when the network connection comes back and a sync starts.
-  'sync.backOnline': 'Back online. Syncing\u2026',
 
   // Translators: Dialog shown when the Sidebar's Sync button is pressed with no paired device:
   // title (also the Sync button's tooltip), body, and the buttons (open the Pair device dialog;

@@ -44,7 +44,8 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-import { mapPeerRefToInfo, resetReportedSyncFailures, useSyncTrigger } from '@/hooks/useSyncTrigger'
+import { pressedSyncPeers } from '@/hooks/useSyncEvents'
+import { mapPeerRefToInfo, useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import type { PeerRef, SyncProgressUpdate, SyncSessionInfo } from '@/lib/bindings'
 import { startSync } from '@/lib/ipc-helpers'
@@ -129,10 +130,8 @@ describe('useSyncTrigger', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     Object.defineProperty(document, 'hidden', { value: false, configurable: true })
     useSyncStore.getState().reset()
-    // #4305 — the per-peer reported-failure memory is module-scoped (it must
-    // outlive a component, which is the whole point), so it also outlives a
-    // test in this module registry.
-    resetReportedSyncFailures()
+    // #6870 — the pressed-peer set is module-scoped, so it outlives a test.
+    pressedSyncPeers.clear()
   })
 
   afterEach(() => {
@@ -372,7 +371,9 @@ describe('useSyncTrigger', () => {
 
     /** Press Sync against one peer; the command resolves at once, as the backend's does. */
     async function pressSync() {
-      mockListPeerRefs.mockResolvedValue([makePeerRow({ peer_id: 'PEER_PRESS_123' })])
+      mockListPeerRefs.mockResolvedValue([
+        makePeerRow({ peer_id: 'PEER_PRESS_123', remote_device_name: 'Pixel 8' }),
+      ])
       let onProgress: Parameters<typeof startSync>[1]
       mockStartSync.mockImplementation(async (_peerId, callback) => {
         onProgress = callback
@@ -408,7 +409,7 @@ describe('useSyncTrigger', () => {
 
       expect(toast.success).not.toHaveBeenCalled()
       expect(toast.error).toHaveBeenCalledWith(
-        'Sync failed for device PEER_PRESS_1...',
+        'Sync with Pixel 8 failed',
         expect.objectContaining({ id: 'sync-peer-error:PEER_PRESS_123' }),
       )
       expect(useSyncStore.getState().state).toBe('idle')
@@ -427,6 +428,19 @@ describe('useSyncTrigger', () => {
       expect(toast.error).not.toHaveBeenCalled()
     })
 
+    // #6870 — what lets `useSyncEvents` toast this session's `sync:error`.
+    it('holds the peer as pressed until its session ends (#6870)', async () => {
+      const { run, send } = await pressSync()
+      expect([...pressedSyncPeers]).toEqual(['PEER_PRESS_123'])
+
+      await act(async () => {
+        send(terminal('complete'))
+        await run
+      })
+
+      expect([...pressedSyncPeers]).toEqual([])
+    })
+
     it("asks the backend to dial through the peer's backoff (#6523)", async () => {
       await pressSync()
       expect(mockStartSync).toHaveBeenCalledWith('PEER_PRESS_123', expect.any(Function), true)
@@ -441,7 +455,7 @@ describe('useSyncTrigger', () => {
 
       expect(toast.success).not.toHaveBeenCalled()
       expect(toast.error).toHaveBeenCalledWith(
-        'Sync failed for device PEER_PRESS_1...',
+        'Sync with Pixel 8 failed',
         expect.objectContaining({ id: 'sync-peer-error:PEER_PRESS_123' }),
       )
     })
@@ -724,11 +738,12 @@ describe('useSyncTrigger', () => {
     const { result } = renderHook(() => useSyncTrigger())
 
     await act(async () => {
-      await result.current.syncAll()
+      await result.current.syncAll({ userInitiated: true })
     })
 
+    // A peer with no name is named by its id, as the device list does.
     expect(toast.error).toHaveBeenCalledWith(
-      'Sync failed for device PEER_FAIL_12...',
+      'Sync with PEER_FAIL_12... failed',
       expect.objectContaining({
         duration: 5000,
         // Per-peer dedup id keyed by the full peer id — different peers
@@ -743,59 +758,26 @@ describe('useSyncTrigger', () => {
     )
   })
 
-  // #4305 — the same failing peer on every scheduled tick. The failure text
-  // does not vary with the cause (it is the peer id), so before this a device
-  // that was simply switched off produced a red toast once a minute for as long
-  // as the app ran. Sonner's `id` collapses *concurrent* duplicates; it does
-  // nothing about a toast raised again 60 s after the last one expired.
-  it('reports an unchanged per-peer failure once per streak (#4305)', async () => {
-    mockListPeerRefs.mockResolvedValue([
-      {
-        peer_id: 'PEER_DOWN_98765',
-        last_hash: null,
-        last_sent_hash: null,
-        streamed_at: null,
-        synced_at: null,
-        reset_count: 0,
-        last_reset_at: null,
-        cert_hash: null,
-        device_name: null,
-        remote_device_name: null,
-        last_address: null,
-        endpoint_id: null,
-        unpaired_by_peer_at_ms: null,
-      },
-    ])
+  // #6870 — a scheduled tick answers no one; the Sync button shows its failure.
+  it('raises no toast when a scheduled tick fails, and answers every press that does', async () => {
+    mockListPeerRefs.mockResolvedValue([makePeerRow({ peer_id: 'PEER_DOWN_98765' })])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
 
     const { result } = renderHook(() => useSyncTrigger())
 
-    for (let tick = 0; tick < 6; tick++) {
+    for (let tick = 0; tick < 3; tick++) {
       await act(async () => {
         await result.current.syncAll()
       })
     }
+    expect(mockStartSync).toHaveBeenCalledTimes(3)
+    expect(toast.error).not.toHaveBeenCalled()
 
-    expect(toast.error).toHaveBeenCalledTimes(1)
-
-    // …and it is news again once the peer recovers and fails anew: the marker
-    // is dropped on the successful run, so a failure that resolves and later
-    // recurs still reaches the user.
-    mockStartSync.mockResolvedValue({
-      state: 'complete',
-      local_device_id: 'LOCAL',
-      remote_device_id: 'REMOTE',
-      ops_received: 0,
-      ops_sent: 0,
-    })
-    await act(async () => {
-      await result.current.syncAll()
-    })
-    mockStartSync.mockRejectedValue(new Error('connection refused'))
-    await act(async () => {
-      await result.current.syncAll()
-    })
-
+    for (let press = 0; press < 2; press++) {
+      await act(async () => {
+        await result.current.syncAll({ userInitiated: true })
+      })
+    }
     expect(toast.error).toHaveBeenCalledTimes(2)
   })
 
@@ -823,12 +805,12 @@ describe('useSyncTrigger', () => {
     const { result } = renderHook(() => useSyncTrigger())
 
     await act(async () => {
-      await result.current.syncAll()
+      await result.current.syncAll({ userInitiated: true })
     })
 
     // Initial failure: startSync called once for the peer.
     expect(mockStartSync).toHaveBeenCalledTimes(1)
-    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function), false)
+    expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function), true)
 
     // Toast.error received the action with onClick.
     const errorCall = vi.mocked(toast.error).mock.calls[0]
@@ -847,13 +829,13 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenLastCalledWith('PEER_RETRY_999', expect.any(Function), true)
   })
 
-  it('shows toast.error when listPeerRefs fails', async () => {
+  it('shows toast.error when listPeerRefs fails on a press', async () => {
     mockListPeerRefs.mockRejectedValue(new Error('DB error'))
 
     const { result } = renderHook(() => useSyncTrigger())
 
     await act(async () => {
-      await result.current.syncAll()
+      await result.current.syncAll({ userInitiated: true })
     })
 
     expect(toast.error).toHaveBeenCalledWith(
@@ -939,6 +921,8 @@ describe('useSyncTrigger', () => {
     const state = useSyncStore.getState()
     expect(state.state).toBe('error')
     expect(state.error).toBe('Sync failed')
+    // #6870 — a scheduled run's failure is the Sync button's to show.
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('doubles resync interval on sync failure (#418)', async () => {
@@ -1135,30 +1119,10 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function), false)
   })
 
-  // Offline → online transition feedback
-  it('shows toast.info("Back online. Syncing…") when transitioning offline → online', async () => {
-    // Arrange: prior offline state in the sync store.
+  // #6870 — the Sync button says the network is back; a toast does not.
+  it('drops `offline` without a toast when the network comes back', async () => {
     useSyncStore.getState().setState('offline')
-    expect(useSyncStore.getState().state).toBe('offline')
-
-    mockListPeerRefs.mockResolvedValue([])
-
-    renderHook(() => useSyncTrigger())
-
-    // Act: dispatch the browser online event.
-    await act(async () => {
-      window.dispatchEvent(new Event('online'))
-    })
-
-    // Assert: toast.info fired with the expected key value.
-    expect(toast.info).toHaveBeenCalledWith('Back online. Syncing\u2026')
-  })
-
-  it('does NOT show "back online" toast when state was not offline', async () => {
-    // Arrange: idle (not offline) state.
-    useSyncStore.getState().setState('idle')
-
-    mockListPeerRefs.mockResolvedValue([])
+    mockListPeerRefs.mockResolvedValue([makePeerRow()])
 
     renderHook(() => useSyncTrigger())
 
@@ -1166,6 +1130,7 @@ describe('useSyncTrigger', () => {
       window.dispatchEvent(new Event('online'))
     })
 
+    expect(useSyncStore.getState().state).toBe('idle')
     expect(toast.info).not.toHaveBeenCalled()
   })
 
@@ -1232,13 +1197,13 @@ describe('useSyncTrigger', () => {
       expect(mockedAnnounce).not.toHaveBeenCalled()
     })
 
-    it('announces sync failed when listPeerRefs rejects', async () => {
+    it('announces sync failed when listPeerRefs rejects on a press', async () => {
       mockListPeerRefs.mockRejectedValue(new Error('DB error'))
 
       const { result } = renderHook(() => useSyncTrigger())
 
       await act(async () => {
-        await result.current.syncAll()
+        await result.current.syncAll({ userInitiated: true })
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
@@ -1490,9 +1455,10 @@ describe('useSyncTrigger', () => {
 
       const { result } = renderHook(() => useSyncTrigger())
 
-      // Begin a sync and let it reach the in-flight state.
+      // Begin a pressed sync, the kind that toasts, and let it reach the
+      // in-flight state.
       act(() => {
-        void result.current.syncAll()
+        void result.current.syncAll({ userInitiated: true })
       })
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0)

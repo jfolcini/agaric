@@ -33,7 +33,7 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Editor extras | Vim key bindings, multiple cursors, `%%comments%%`, highlight colours, slides | None of those. One highlight colour; a comment arrives as a visible comment callout |
 | Tables, math, diagrams, callouts, footnotes | All built in | All built in; callouts show in a fixed set of styles |
 | Links | `[[Note]]`, `[[Note#Heading]]`, `[[Note#^id]]`; names in the file | The same forms can be typed; stored as ids and shown as chips. A rename changes no other block |
-| Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, text only: an embedded row shows no checkbox, properties or attachments |
+| Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, a row with its checkbox, which ticks in place, and read-only property chips; no attachments |
 | Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters |
 | Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL, and a list of any of them but boolean. No date-time |
 | Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table whose cells edit their block's properties and task state; Advanced Query with grouping, summaries and a board whose cards move by dragging or from a menu. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout |

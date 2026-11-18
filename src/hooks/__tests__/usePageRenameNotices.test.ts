@@ -10,6 +10,7 @@ import {
 } from '@/hooks/usePageRenameNotices'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { useNavigationStore } from '@/stores/navigation'
 
 const { mockUnlisten, mockListen } = vi.hoisted(() => {
   const unlisten = vi.fn()
@@ -27,6 +28,12 @@ vi.mock('@/lib/logger', () => ({
 // `sonner` is mocked globally via test-setup.ts → src/__tests__/mocks/sonner.ts.
 
 const FOO: PageRenamed = { page_id: 'PAGE_FOO', from: 'Foo', to: 'Foo (2)' }
+/** The toast stays, and opens History, which lists each rename. */
+const LASTING = {
+  id: PAGES_RENAMED_TOAST_ID,
+  duration: Number.POSITIVE_INFINITY,
+  action: { label: 'Open History', onClick: expect.any(Function) },
+}
 const BAR: PageRenamed = { page_id: 'PAGE_BAR', from: 'bar', to: 'bar (3)' }
 
 let hadTauriInternals: boolean
@@ -70,7 +77,7 @@ describe('usePageRenameNotices', () => {
     emitRenamed([FOO])
     expect(toast.info).toHaveBeenCalledWith(
       t('pages.nameTieRenamed', { count: 1, from: 'Foo', to: 'Foo (2)' }),
-      { id: PAGES_RENAMED_TOAST_ID, duration: Number.POSITIVE_INFINITY },
+      LASTING,
     )
     expect(vi.mocked(toast.info).mock.calls[0]?.[0]).toContain('Foo (2)')
   })
@@ -79,11 +86,32 @@ describe('usePageRenameNotices', () => {
     renderHook(() => usePageRenameNotices())
     emitRenamed([FOO, BAR])
     expect(toast.info).toHaveBeenCalledTimes(1)
-    expect(toast.info).toHaveBeenCalledWith(t('pages.nameTieRenamed', { count: 2 }), {
-      id: PAGES_RENAMED_TOAST_ID,
-      duration: Number.POSITIVE_INFINITY,
-    })
+    expect(toast.info).toHaveBeenCalledWith(t('pages.nameTieRenamed', { count: 2 }), LASTING)
     expect(vi.mocked(toast.info).mock.calls[0]?.[0]).not.toContain('Foo')
+  })
+
+  it('shortens long titles so the toast keeps its size', () => {
+    renderHook(() => usePageRenameNotices())
+    const from = 'A page title that goes on far longer than any toast line can hold'
+    emitRenamed([{ page_id: 'PAGE_LONG', from, to: `${from} (2)` }])
+    expect(vi.mocked(toast.info).mock.calls[0]?.[0]).toBe(
+      t('pages.nameTieRenamed', {
+        count: 1,
+        from: 'A page title that goes on far longer th…',
+        to: 'A page title that goes on far longer th…',
+      }),
+    )
+  })
+
+  it('opens History from the toast', () => {
+    useNavigationStore.getState().setView('journal')
+    renderHook(() => usePageRenameNotices())
+    emitRenamed([FOO, BAR])
+    const opts = vi.mocked(toast.info).mock.lastCall?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+    opts.action.onClick()
+    expect(useNavigationStore.getState().currentView).toBe('history')
   })
 
   it('shows nothing for an empty payload', () => {

@@ -87,7 +87,18 @@ describe('Agaric real-backend inbound Markdown mirror (#5363) @markdown', () => 
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the edit made outside never reached the block',
     })
-    const status = await invoke<MirrorStatus>('get_mirror_status')
+    // The ingest commits mid-pass, and the page leaves `diverged`, where the
+    // settling tick listed it, only once that pass ends: read the status after
+    // the next pass to end. The ingest's own ops make the following tick pass.
+    let status = await invoke<MirrorStatus>('get_mirror_status')
+    const ingestedBy = status.last_pass_ms
+    await browser.waitUntil(
+      async () => {
+        status = await invoke<MirrorStatus>('get_mirror_status')
+        return status.last_pass_ms !== ingestedBy
+      },
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never finished a pass after the ingest' },
+    )
     expect(status.diverged).toEqual([])
     expect(status.failed).toEqual([])
     expect(readFileSync(written, 'utf8')).toBe(outside)
