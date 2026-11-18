@@ -1,6 +1,10 @@
-# Session 4362 — tag specs on the bridge
+# Session 4362 — tag and property specs on the bridge
 
-Slice 1 of #6926: the tag specs move onto the headless bridge (#6529), and five WebdriverIO specs are ported into them or deleted.
+Slices 1, 4 and 5 of #6926, one commit each, with the #6967 fix before slice 4.
+
+## Slice 1: tags
+
+The tag specs move onto the headless bridge (#6529), and five WebdriverIO specs are ported into them or deleted.
 
 **Promoted to `REAL_BACKEND_SPECS`:** `nested-tags`, `tag-management`, `tag-name-whitespace`, `tag-page-tagged-items`, `tags-query-modes`, `tags-and-links-happy-paths`. `tags-lifecycle` was already listed. Before any port, all 37 tests passed in each of three bridge runs; none needed `@mock-only`.
 
@@ -33,3 +37,32 @@ Two of those breaks did not reach the check I expected:
 - `tags-and-links-happy-paths` and `tag-suggested-properties` on the mock, two repeats: 10 passed;
 - `e2e-tauri/visibility-probe.test.ts`;
 - `npm run typecheck`.
+
+## #6967: the refusal toast's "Validation error: " prefix
+
+Promoting `properties-system` showed it. *Counts live uses, and a trashed one still blocks the delete* failed on the bridge every run: the refusal toast began "Validation error: Can't delete 'stage'…". An uncoded validation error keeps that display prefix in `message` on the wire; `AppError`'s `Serialize` does it on purpose and pins it. `formatErrorForDisplay` strips it, but `reportIpcErrorWithReason` and `PropertyDefinitionsList`'s in-use refusal showed the raw message. The mock throws the bare reason, so only the bridge showed it.
+
+Both call sites now go through `formatErrorForDisplay`, as `useSpaceMove` does. The mock's uncoded rejections still omit the prefix, but the UI now renders both lanes the same. The `report-ipc-error` test's fixture carries the wire's prefix. Showing the raw message again reddens it at the stripped toast. The bridge test passes 3 of 3.
+
+## Slice 4: properties, part 1
+
+**Promoted:** `property-def-undo`, `property-key-rename`, `property-type-change`, `properties-table-and-refusals`, `property-unfit-marks`, `property-unfit-values`, `properties-system`. All 37 of their tests passed on the bridge three times, except the #6967 test.
+
+**Deleted as duplicates:**
+- `property-key-rename`: twin is *a rename moves the definition and its values to the new key*.
+- `property-option-rename`: twin is *renaming an option renames the values blocks hold, and Undo takes it back*.
+- `property-unfit-values`: twin is *Remove takes them off, and the toast's Undo puts them back*.
+
+**Ported, then deleted:**
+- `property-type-change` → `property-type-change.spec.ts`: a text key holding `3` and `plum`, changed to number, previews one value converted and one that doesn't fit. Afterwards `get_properties` reads `3` as a number and `plum` as text, and the chips show both.
+- `property-list-type-change` → the same file: `Ann, Bob` split at commas is stored as the list of `Ann` and `Bob`. The toast's Undo stores the text again, and the key is listed as text after leaving Settings.
+- `property-defs-per-space` → `properties-system.spec.ts`: `size` is a number in Personal and text in Work. The same `size:: plum` line becomes a property in Work and stays as text in Personal, with its toast. Both hold after reopening.
+
+**Shown red on the bridge**, each by one break and a rebuild:
+- `coerce` refusing every text-to-number conversion: the preview read 0 converted.
+- The type change recording the converted value as its `prior`: the Undo left the list.
+- `block_property_declaration` reading Personal's definition for every block: Work refused `plum`.
+
+Two breaks did not redden the number test. With `type_change_writes` writing nothing, the conversion still landed through `reproject_key_values`; skipping the reprojection alone, the value writes made it. Each path covers the other, which is why the coercion they share is the break that shows. Writing nothing did redden the list test.
+
+**Ran:** the seven files on the bridge, three times after the fix: 41 passed each time; on the mock, two repeats: 82 passed.

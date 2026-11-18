@@ -9,10 +9,13 @@ import {
   chooseSelectOption,
   clearConsoleErrors,
   expect,
+  focusBlock,
   getConsoleErrors,
   navigateToView,
   openPage,
   openSettingsTab,
+  reopenPage,
+  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -552,6 +555,73 @@ test.describe('Per-space property definitions @editor @spaces @settings', () => 
 
     await chooseSelectOption(page, DEFINITIONS_IN, 'Personal')
     await expect(row('context')).toBeVisible()
+  })
+
+  /** A page `title` in `spaceId` holding one block `anchor`; returns that block's id. */
+  async function seedAnchor(page: Page, spaceId: string, title: string, anchor: string) {
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId,
+    })
+    const { blocks } = await ipc<{ blocks: Array<{ id: string }> }>(page, 'create_blocks_batch', {
+      specs: [{ blockType: 'content', content: anchor, parentId: pageId, position: null }],
+    })
+    return blocks[0]?.id ?? ''
+  }
+
+  /** On the open page, make `size:: <value>` the first block's only text, and leave it. */
+  async function typeSizeLine(page: Page, value: string): Promise<void> {
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type(`size:: ${value}`, { delay: 30 })
+    await page.keyboard.press('Escape')
+  }
+
+  async function stored(page: Page, blockId: string) {
+    const { content } = await ipc<{ content: string }>(page, 'get_block', { blockId })
+    const rows = await ipc<Array<{ key: string; value_text: string | null }>>(
+      page,
+      'get_properties',
+      { blockId },
+    )
+    return { content, size: rows.find((row) => row.key === 'size')?.value_text ?? null }
+  }
+
+  // The two spaces are each other's control: Work shows the line is read and stored when
+  // its type admits it, so Personal's kept text is not a parser that never ran.
+  test('reads one key by each space’s own type (#5841)', async ({ page }) => {
+    for (const [spaceId, valueType] of [
+      [SEED_IDS.SPACE_PERSONAL, 'number'],
+      [SEED_IDS.SPACE_WORK, 'text'],
+    ] as const) {
+      await ipc(page, 'create_property_def', { spaceId, key: 'size', valueType, options: null })
+    }
+    const inWork = await seedAnchor(page, SEED_IDS.SPACE_WORK, 'Size work', 'work anchor')
+    const inPersonal = await seedAnchor(page, SEED_IDS.SPACE_PERSONAL, 'Size home', 'home anchor')
+
+    await switchToSpace(page, 'Work')
+    await openPage(page, 'Size work')
+    await typeSizeLine(page, 'plum')
+    await expect.poll(() => stored(page, inWork)).toEqual({ content: '', size: 'plum' })
+
+    await switchToSpace(page, 'Personal')
+    await openPage(page, 'Size home')
+    await typeSizeLine(page, 'plum')
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: 'size:: plum' }),
+    ).toBeVisible()
+    await expect
+      .poll(() => stored(page, inPersonal))
+      .toEqual({ content: 'size:: plum', size: null })
+
+    await reopenPage(page, 'Size home')
+    await expect(page.getByTestId('block-static')).toHaveText(['size:: plum'])
+    await switchToSpace(page, 'Work')
+    await reopenPage(page, 'Size work')
+    await expect(
+      page.locator('[data-testid="property-chip"][aria-label="Size: plum"]'),
+    ).toBeVisible()
   })
 
   test('copies a definition to another space, where it stays', async ({ page }) => {
