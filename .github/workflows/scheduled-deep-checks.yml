@@ -3300,17 +3300,17 @@ jobs:
 
       - name: Install Node 22 (the `engines.node` floor)
         # The Node floor is checked nightly here, not per PR. Pinned to the
-        # exact floor of `engines.node` (^22.22.2), not a floating 22, so the
+        # exact floor of `engines.node` (^22.23.4), not a floating 22, so the
         # lane tests the lowest version we claim to support — keep in lockstep
         # with package.json.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 22.22.2
+          node-version: 22.23.4
           cache: npm
 
       - name: Install npm dependencies (Node 22)
         # `.npmrc` sets engine-strict=true, so this step is itself part of the
-        # test: npm refuses to install if `engines.node` excludes 22.22.2.
+        # test: npm refuses to install if `engines.node` excludes 22.23.4.
         run: npm ci
 
       - name: Typecheck + vitest on Node 22 (no coverage)
