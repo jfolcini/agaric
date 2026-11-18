@@ -8,12 +8,8 @@
 
 export const pages: Record<string, string> = {
   // Translators: Journal (JournalPage) header: "Today" is the button that jumps to today's date,
-  // also shown as "(Today)" after today's date heading. Daily / Weekly / Monthly are adjectives
-  // naming the journal's view modes (one day, one week, one month on screen).
+  // also shown as "(Today)" after today's date heading.
   'journal.today': 'Today',
-  'journal.daily': 'Daily',
-  'journal.weekly': 'Weekly',
-  'journal.monthly': 'Monthly',
 
   // Translators: The task list (the Journal's Agenda mode): Sidebar item, and the Journal header
   // title shown in place of a date while the Agenda is open. A noun.

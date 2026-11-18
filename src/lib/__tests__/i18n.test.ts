@@ -123,7 +123,6 @@ describe('key existence', () => {
 
     // Journal
     'journal.today',
-    'journal.daily',
     'journal.noBlocks',
     'journal.addFirstBlock',
 
