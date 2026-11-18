@@ -253,8 +253,7 @@ fn reserved_column(key: &str) -> Result<&'static str, AppError> {
 ///
 /// A filter the caller left out adds no SQL (#5426). Only the selective shapes
 /// let a value index drive the plan: equality and `value_text_in` on either
-/// path, but for a day on a property key (#6906), and a range on `due_date` /
-/// `scheduled_date`. On the property path
+/// path, and a range on `due_date` / `scheduled_date`. On the property path
 /// every other shape orders by `bp.block_id`, so the plan walks
 /// `idx_block_props_key` (key, block_id) in id order and stops at the LIMIT
 /// instead of sorting every row the key holds.
@@ -276,10 +275,18 @@ fn query_by_property_sql<'a>(
         )
     } else {
         binds.push(key);
+        // A day `=` seeks `idx_block_props_date` with both of its arms; the
+        // unary `+` keeps the planner from rating `idx_block_props_key` above
+        // that union (#6906).
+        let key_col = if filters.value_day.is_some() && filters.sql_op == "=" {
+            "+bp.key"
+        } else {
+            "bp.key"
+        };
         (
             format!(
                 "SELECT {cols} FROM block_properties bp \
-                 JOIN blocks b ON b.id = bp.block_id WHERE bp.key = ?"
+                 JOIN blocks b ON b.id = bp.block_id WHERE {key_col} = ?"
             ),
             "bp.value_text".to_owned(),
             "bp.value_date".to_owned(),
@@ -297,8 +304,7 @@ fn query_by_property_sql<'a>(
     push_block_filters(&mut sql, &mut binds, filters);
     let selective = filters.value_text_in_json.is_some()
         || (filters.sql_op == "="
-            && (filters.value_text.is_some()
-                || (filters.value_date.is_some() && filters.value_day.is_none())));
+            && (filters.value_text.is_some() || filters.value_date.is_some()));
     let walk = if reserved || selective {
         "b.id"
     } else {
