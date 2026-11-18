@@ -15,7 +15,8 @@ Built by five subagents in their own worktrees on disjoint files; the orchestrat
 
 ## What ran
 
-- `npx vitest related --run` over the changed source: 1129 files green, the catalog guards included.
+- `npx vitest related --run` over the changed source: 1129 files green, the catalog guards included; 1132 after the replay onto #6879's catalogs.
 - Each removal shown red by putting it back (subagents: 6 settings, 2 views, 7 forms, 6 part-A and 5 part-B announcement sites; orchestrator: both sync announcements), each restored by a `trap`.
 - Playwright: the 71 specs for the areas touched (search, Settings, Trash, undo, History, pairing, saved views, page header, reschedule, agenda, phone sheets) green, 349 tests. New: the search hint and the clamp notice, each shown red with its change removed.
 - `npm run typecheck`, `typecheck:e2e`, `oxlint` and `oxfmt --check` on the changed files: clean.
+- After the replay: the i18n suite, and 40 Playwright tests (language, search hint, clamp, phone sheets, and the page-mode slash and picker specs main had changed), green; the language spec's new trigger check shown red by breaking the Sunday pick.
