@@ -26,7 +26,7 @@ import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachmen
 import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
 import { type TextPoint, textPointAtClick } from '@/editor/click-caret'
-import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
+import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { parseEmbedToken } from '@/lib/embed-token'
 import { cn } from '@/lib/utils'
 
@@ -104,7 +104,6 @@ function StaticBlockInner({
   // pre-fetch state of `useBlockAttachments`.
   const batchAttachments = useBatchAttachments()
   const attachments = batchAttachments?.get(blockId) ?? []
-  const attachmentsLoading = useBatchAttachmentsLoading()
   // Rows already held stay up while the batch refetches: any attachment write
   // anywhere refetches it, and unmounting would flash every image (#6545).
   const hasAttachments = attachments.length > 0
