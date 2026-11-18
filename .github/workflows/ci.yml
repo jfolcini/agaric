@@ -114,6 +114,9 @@ jobs:
           bundle-deps: 'true'
           rust-shared-key: rust-release
 
+      - name: Seed the AppImage tools (sha256-checked)
+        uses: ./.github/actions/tauri-appimage-tools
+
       - name: Build Tauri app
         # `-v` raises tauri-bundler's log level so the real stdout/stderr
         # of linuxdeploy / candle / light / codesign is captured in CI
@@ -259,7 +262,7 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17.0.21+9'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -274,7 +277,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies

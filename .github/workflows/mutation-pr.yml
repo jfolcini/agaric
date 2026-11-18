@@ -132,7 +132,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Select mutation modules touched by this PR

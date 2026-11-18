@@ -255,7 +255,6 @@ jobs:
         # default npm cache after an unrelated package.json edit.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           package-manager-cache: false
 
       - name: Install Node dependencies
@@ -325,6 +324,10 @@ jobs:
               --generate-notes \
               || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
+
+      - name: Seed the AppImage tools (sha256-checked)
+        if: matrix.platform == 'ubuntu-24.04'
+        uses: ./.github/actions/tauri-appimage-tools
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
@@ -404,8 +407,8 @@ jobs:
       # linuxdeploy-plugin-appimage, and then replace the asset on the draft
       # release via `gh release upload --clobber`.
       #
-      # tauri-action runs `cargo tauri build` internally, which downloads
-      # linuxdeploy-plugin-appimage to ~/.cache/tauri/, so the tool is already
+      # The "Seed the AppImage tools" step put a sha256-checked
+      # linuxdeploy-plugin-appimage in ~/.cache/tauri/, so the tool is already
       # present when the fix script runs. FIX_APPIMAGE_STRICT=1 makes the
       # script fail (rather than warn-and-continue) if the tool is missing, so
       # a broken upstream cache blocks the release instead of silently shipping
@@ -1489,27 +1492,15 @@ jobs:
       # PEND-41 R9 — SBOM generation per platform. Two formats so downstream
       # consumers (Flathub, Homebrew tap, security scanners) get whichever
       # they support: SPDX-JSON (Linux Foundation standard) and CycloneDX-JSON
-      # (OWASP standard). Anchore's `sbom-action` wraps Syft; runs in <30 s
+      # (OWASP standard). Syft (.github/actions/syft-sbom) runs in <30 s
       # against a directory. Output files are temp-paths so the subsequent
       # attest + upload steps can reference them by predictable name; the
       # rust target triple keeps the per-matrix-cell filenames unique.
-      - name: Generate SBOM (SPDX-JSON)
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - name: Generate SBOMs (SPDX-JSON + CycloneDX-JSON)
+        uses: ./.github/actions/syft-sbom
         with:
-          path: src-tauri/target/${{ matrix.target }}/release/bundle
-          format: spdx-json
-          artifact-name: agaric-${{ matrix.target }}.spdx.json
-          output-file: ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
-          upload-release-assets: false
-
-      - name: Generate SBOM (CycloneDX-JSON)
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          path: src-tauri/target/${{ matrix.target }}/release/bundle
-          format: cyclonedx-json
-          artifact-name: agaric-${{ matrix.target }}.cyclonedx.json
-          output-file: ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
-          upload-release-assets: false
+          source: dir:src-tauri/target/${{ matrix.target }}/release/bundle
+          output-prefix: ${{ runner.temp }}/agaric-${{ matrix.target }}
 
       # PEND-41 R29 — build-time secret scan against the produced bundles.
       # `gitleaks` catches secrets in source; this catches the orthogonal
@@ -1877,7 +1868,7 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17.0.21+9'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -1900,7 +1891,6 @@ jobs:
         # either way; only the ~/.npm download cache is skipped.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           package-manager-cache: false
 
       - name: Install npm dependencies
@@ -2103,26 +2093,14 @@ jobs:
           esac
 
       # PEND-41 R9 — SBOM for the Android APK in both standard formats.
-      # Anchore's `sbom-action` extracts dependency metadata from the APK
+      # Syft extracts dependency metadata from the APK
       # archive (Syft understands JAR/APK structure). Same per-platform
       # pattern as the desktop matrix above.
-      - name: Generate SBOM (SPDX-JSON, Android)
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - name: Generate SBOMs (SPDX-JSON + CycloneDX-JSON, Android)
+        uses: ./.github/actions/syft-sbom
         with:
-          file: ${{ steps.sign_apk.outputs.apk }}
-          format: spdx-json
-          artifact-name: agaric-android-aarch64.spdx.json
-          output-file: ${{ runner.temp }}/agaric-android-aarch64.spdx.json
-          upload-release-assets: false
-
-      - name: Generate SBOM (CycloneDX-JSON, Android)
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          file: ${{ steps.sign_apk.outputs.apk }}
-          format: cyclonedx-json
-          artifact-name: agaric-android-aarch64.cyclonedx.json
-          output-file: ${{ runner.temp }}/agaric-android-aarch64.cyclonedx.json
-          upload-release-assets: false
+          source: file:${{ steps.sign_apk.outputs.apk }}
+          output-prefix: ${{ runner.temp }}/agaric-android-aarch64
 
       # PEND-40 #5: SLSA build provenance attestation for the Android APK.
       # Runs against the final signed APK emitted by the previous step,
@@ -2231,7 +2209,7 @@ jobs:
         # what a future package.json edit does.
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Generate OpenVEX statements
@@ -2387,28 +2365,17 @@ jobs:
       # tauri-plugin-updater's updater.rs::verify_signature runs at install time,
       # here at build time, turns that silent post-release failure into a red
       # release job.
-      # #4115: this job installs one small package and shares none of the
-      # checkout -> prepare -> cache -> Tauri-stack shape of the other apt
-      # sites, which is why it was first left without prepare-apt. It is on the
-      # RELEASE path, though, so failing fast is a poor substitute for
-      # succeeding, and prepare-apt's dpkg-lock handling applies here as much
-      # as anywhere. (The Azure mirror rewrite this comment used to cite as the
-      # reason was removed by #4163 — it had been matching nothing, and the
-      # host it preferred was the sick one. See the action.)
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
+      - name: Install minisign (sha256-checked release binary)
+        # The upstream release tarball, checked against a hash recorded here,
+        # instead of an unversioned apt package on the release path.
+        run: |
+          set -euo pipefail
+          url=https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/minisign.tgz" "$url"
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $RUNNER_TEMP/minisign.tgz" | sha256sum -c --quiet -
+          tar -xzf "$RUNNER_TEMP/minisign.tgz" -C "$RUNNER_TEMP" minisign-linux/x86_64/minisign
+          echo "$RUNNER_TEMP/minisign-linux/x86_64" >> "$GITHUB_PATH"
 
-      - name: Install minisign
-        # 120s, not the 300s default: this job's budget is 20 minutes, the
-        # smallest of any apt site in the tree, and two 300s attempts would
-        # spend half of it. Same reasoning as _validate.yml's coverage job.
-        # #4163: `apt-get update` is ADVISORY inside this action -- the install,
-        # not the index refresh, decides this step. See the action for the trace.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            minisign
-          update-timeout: '120'
       - name: Verify updater signatures against pinned pubkey
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

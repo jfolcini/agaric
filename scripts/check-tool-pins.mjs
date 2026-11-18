@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// CI installs prek, zizmor, taplo-cli, typos-cli, sqruff, shellcheck and shfmt
-// from the `taiki-e/install-action` `tool:` lists under .github/workflows/; a dev box
+// CI installs prek, zizmor, taplo-cli, typos-cli, shellcheck and shfmt from the
+// `taiki-e/install-action` `tool:` lists under .github/workflows/, and sqruff
+// from `SQRUFF_VERSION` in .github/actions/install-sqruff/action.yml; a dev box
 // installs the versions in scripts/setup-hooks.sh (`pinned_version_for`) and
 // scripts/zizmor-hook.sh (`ZIZMOR_PINNED_VERSION`). Dependabot bumps action
 // refs, not tool strings, so nothing else keeps those copies equal (#3523,
@@ -64,6 +65,13 @@ for (const name of workflows) {
     }
   }
 }
+
+const ACTION = '.github/actions/install-sqruff/action.yml'
+const sqruff = read(ACTION).match(/^\s*SQRUFF_VERSION:\s*(\S+)\s*$/m)
+if (sqruff) {
+  installedByCi.add('sqruff')
+  record('sqruff', sqruff[1], ACTION)
+} else problems.push(`${ACTION}: found no \`SQRUFF_VERSION: <version>\` line`)
 
 for (const tool of pinnedInScripts) {
   if (!installedByCi.has(tool)) {
