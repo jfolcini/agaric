@@ -1,3 +1,4 @@
+import { PAGINATION_LIMIT } from '../src/lib/constants'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
@@ -20,23 +21,27 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view @pages'
     page,
     Array.from({ length: SEEDED_BLOCKS }, (_, i) => ({ content: `History row ${i}` })),
   )
-  const total = await page.evaluate(async (spaceId) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    const res = (await invoke('list_page_history', {
-      pageId: '__all__',
-      opTypeFilter: null,
-      scope: { kind: 'active', space_id: spaceId },
-      cursor: null,
-      limit: 50,
-    })) as { items: unknown[] }
-    // End goes to the last loaded row. The real backend's seed holds more than
-    // one page of ops, so that is the first page's last row, not the log's.
-    return res.items.length
-  }, SEED_IDS.SPACE_PERSONAL)
+  // The History view's own page size, so the probe loads exactly its first page.
+  const total = await page.evaluate(
+    async ({ spaceId, limit }) => {
+      const { invoke } = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const res = (await invoke('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: null,
+        scope: { kind: 'active', space_id: spaceId },
+        cursor: null,
+        limit,
+      })) as { items: unknown[] }
+      // End goes to the last loaded row. The real backend's seed holds more than
+      // one page of ops, so that is the first page's last row, not the log's.
+      return res.items.length
+    },
+    { spaceId: SEED_IDS.SPACE_PERSONAL, limit: PAGINATION_LIMIT },
+  )
   expect(total).toBeGreaterThanOrEqual(SEEDED_BLOCKS)
 
   await navigateToView(page, 'History')
