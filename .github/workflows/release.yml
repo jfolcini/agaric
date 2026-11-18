@@ -2223,6 +2223,13 @@ jobs:
             "${{ runner.temp }}/agaric-android-aarch64.openvex.json" \
             --clobber
 
+  # #808 — fan-in: stitch the four per-platform updater signatures (uploaded
+  # as `.sig` draft-release assets by the build-and-release matrix) into the
+  # `latest.json` manifest the configured updater endpoint serves, then upload
+  # it to the draft release. Without this, every installed app's update check
+  # 404s on `releases/latest/download/latest.json`. Runs after all four desktop
+  # cells finish; Android is excluded (it updates by installing a newer APK, not
+  # through Tauri's updater).
   generate-latest-json:
     needs: [verify-version, validate, build-and-release]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
@@ -2433,6 +2440,18 @@ jobs:
           done < <(jq -r '.platforms[].url' "$tmp/latest.json")
           echo "latest.json smoke check passed (all updater payload URLs resolve to release assets)."
 
+  # ---------------------------------------------------------------------------
+  # PEND-41 R18 — finalize the draft release notes after all bundles + SBOMs
+  # have been attested + uploaded: regenerate the changelog (tauri-action v1.0.0
+  # clobbers the pre-created one) and append a copy-pasteable verify-recipe
+  # section. End users (and downstream packagers / security-conscious tinkerers)
+  # get an in-line invocation showing exactly how to verify SLSA provenance on
+  # what they just downloaded; the same content also lands on the workflow
+  # run's step-summary page for the maintainer's at-a-glance check. This job
+  # sets the FINAL body but leaves the release a draft — the `publish-release`
+  # job below (added #3076) is now the terminal step that flips it to published,
+  # so the release is no longer published by hand.
+  # ---------------------------------------------------------------------------
   finalize-release-notes:
     needs: [verify-version, validate, build-and-release, android-build-and-release, generate-latest-json]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-latest-json.result == 'success' }}

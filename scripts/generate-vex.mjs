@@ -165,10 +165,22 @@ export async function buildVex({ waivers, sbom, osv, timestamp = new Date().toIS
   }
 }
 
-async function osvFetch(id) {
-  const res = await fetch(`https://api.osv.dev/v1/vulns/${id}`)
-  if (!res.ok) throw new Error(`OSV ${id}: HTTP ${res.status}`)
-  return res.json()
+// A brief osv.dev outage or rate limit should not red a pull request's build;
+// a lasting one, or a 4xx that retrying cannot fix, still fails the run.
+export async function osvFetch(id, { fetchImpl = fetch, attempts = 4, delayMs = 2000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    let res
+    try {
+      res = await fetchImpl(`https://api.osv.dev/v1/vulns/${id}`)
+    } catch (e) {
+      if (attempt >= attempts) throw new Error(`OSV ${id}: ${e.message}`, { cause: e })
+    }
+    if (res?.ok) return res.json()
+    if (res && res.status !== 429 && res.status < 500)
+      throw new Error(`OSV ${id}: HTTP ${res.status}`)
+    if (res && attempt >= attempts) throw new Error(`OSV ${id}: HTTP ${res.status}`)
+    await new Promise((done) => setTimeout(done, delayMs * 2 ** (attempt - 1)))
+  }
 }
 
 async function main(argv) {
