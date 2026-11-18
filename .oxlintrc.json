@@ -74,6 +74,54 @@
     "unicorn/prefer-set-has": "error",
     "unicorn/prefer-array-find": "error",
     "react/jsx-no-constructed-context-values": "error",
+    // A native title never shows on a tap, and one that repeats visible text is noise. The full
+    // text of a truncated line goes through `TruncatedText`, an explanation through `InfoPopover`
+    // (#6895).
+    // The same for a component that forwards `title` to the DOM. Listed: components whose `title`
+    // is text they show.
+    "react/forbid-component-props": [
+      "error",
+      {
+        "forbid": [
+          {
+            "propName": "title",
+            "allowedFor": [
+              "AlertSection",
+              "BoardCard",
+              "BugReportForm",
+              "CalloutBlock",
+              "DiagramViewer",
+              "FeaturePageHeader",
+              "MenuSheet",
+              "NewTabTarget",
+              "PageEditor",
+              "PageEditorInner",
+              "PageHeader",
+              "PageLink",
+              "PageQuickActions",
+              "PageRow",
+              "PageTitleEditor",
+              "ReferenceSheet",
+              "RenameDialog",
+              "SortableBookmark",
+              "Title"
+            ],
+            "message": "This component forwards title to a native title, which never shows on a tap (#6895): truncated text uses TruncatedText, an explanation InfoPopover; a title repeating visible text or an aria-label is deleted. A component whose title prop is shown text goes in allowedFor in .oxlintrc.json."
+          }
+        ]
+      }
+    ],
+    "react/forbid-dom-props": [
+      "error",
+      {
+        "forbid": [
+          {
+            "propName": "title",
+            "message": "A native title never shows on a tap (#6895): truncated text uses TruncatedText (ui/truncated-text), an explanation InfoPopover (ui/info-popover); a title repeating visible text or an aria-label is deleted."
+          }
+        ]
+      }
+    ],
 
     "eslint/eqeqeq": ["error", "always", { "null": "ignore" }],
 
@@ -292,7 +340,9 @@
       "rules": {
         "typescript/require-await": "off",
         "eslint/no-console": "off",
-        "eslint/no-restricted-imports": "off"
+        "eslint/no-restricted-imports": "off",
+        // Tests pass a component's own `title` prop to fixtures; the rule guards app code.
+        "react/forbid-component-props": "off"
       }
     },
     {
