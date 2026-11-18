@@ -57,10 +57,12 @@ pub async fn pick_mirror_folder_inner<R: tauri::Runtime>(
 }
 
 /// Turn the mirror on in `path`, reading files changed outside Agaric back
-/// in when `read_back` (ignored while the mirror is already on, and taken as
-/// `false` when the folder holds files changed since the mirror last wrote
-/// there, [`MirrorStatus::pending`], which turning reading back on then asks
-/// about), or off with `None`. On, the folder is checked
+/// in when `read_back`, or off with `None`. While the mirror is already on,
+/// `read_back` is ignored and reading back stays as it is set, except that a
+/// folder other than the one mirrored, like one the mirror turns on in,
+/// turns it off when it holds files changed since the mirror last wrote
+/// there ([`MirrorStatus::pending`]), which turning reading back on then
+/// asks about. On, the folder is checked
 /// ([`mirror::check_folder`]), marked as this device's and stored, after
 /// `read_back`, so the first tick already follows it, and the next tick
 /// writes every page. Off, the setting goes and the files and the marker
@@ -90,20 +92,26 @@ pub async fn set_mirror_folder_inner(
                 folder.display()
             ))
         })?;
-        // Only when the mirror turns on: while it is on, reading back is
-        // turned on by `set_mirror_read_back` alone, which asks first. A
-        // folder changed while the mirror was off, or one whose changes
-        // cannot be told, turns it on with reading back off, so the user is
-        // shown those files and asked before any is read in.
-        if mirror::store::folder(pool).await?.is_none() {
-            let read_back = read_back
-                && pending(pool, device_id, mirror, folder)
-                    .await
-                    .is_ok_and(|changed| changed.is_empty());
-            mirror::store::set_read_back(pool, read_back).await?;
-        }
     }
-    let chosen_again = path.is_some() && mirror::store::folder(pool).await? == path;
+    let stored = mirror::store::folder(pool).await?;
+    let chosen_again = path.is_some() && stored == path;
+    if let (Some(folder), false) = (path.as_deref(), chosen_again) {
+        // `read_back` is taken only when the mirror turns on: while it is
+        // on, reading back is turned on by `set_mirror_read_back` alone,
+        // which asks first. A folder changed while the mirror was not
+        // there, or one whose changes cannot be told, is mirrored with
+        // reading back off, so the user is shown those files and asked
+        // before any is read in.
+        let asked = match stored {
+            Some(_) => mirror::store::settings(pool).await?.read_back,
+            None => read_back,
+        };
+        let read_back = asked
+            && pending(pool, device_id, mirror, Path::new(folder))
+                .await
+                .is_ok_and(|changed| changed.is_empty());
+        mirror::store::set_read_back(pool, read_back).await?;
+    }
     mirror::store::set_folder(pool, path.as_deref()).await?;
     match path.as_deref().map(Path::new) {
         // The way out of the pause on an emptied folder, or on one the vault

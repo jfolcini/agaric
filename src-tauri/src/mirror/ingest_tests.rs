@@ -1332,6 +1332,53 @@ async fn a_folder_unchanged_while_off_and_chosen_again_keeps_reading_back_on() {
     assert!(status.read_back);
 }
 
+/// Another folder chosen while the mirror is on, then the first one again:
+/// what changed there meanwhile is listed, not read in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_changed_while_another_was_mirrored_turns_reading_back_off() {
+    let mut fx = Fx::new().await;
+    let (alpha, _) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let home = fx.root.to_str().unwrap().to_owned();
+    let other = TempDir::new().unwrap();
+    let away = other.path().to_str().unwrap().to_owned();
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(away), true)
+        .await
+        .unwrap();
+    assert!(status.read_back, "an empty folder holds no change");
+    fx.tick().await;
+    fx.write(fx.read().replace("one", "uno"));
+
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(home), true)
+        .await
+        .unwrap();
+    assert!(!status.read_back);
+    assert_eq!(status.pending, [ALPHA]);
+
+    for _ in 0..5 {
+        fx.tick().await;
+    }
+    assert_eq!(fx.contents(&alpha).await, ["one"]);
+}
+
+/// Reading back turned off stays off in another folder, whatever the choice
+/// made when the mirror was turned on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_folder_chosen_while_mirroring_keeps_reading_back_off() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    read_back(&fx, false, false).await.unwrap();
+    let other = TempDir::new().unwrap();
+    let away = other.path().to_str().unwrap().to_owned();
+
+    let status = set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(away), true)
+        .await
+        .unwrap();
+
+    assert!(!status.read_back);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 8, ..ProptestConfig::default() })]
 

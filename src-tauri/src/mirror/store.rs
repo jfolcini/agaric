@@ -266,6 +266,10 @@ pub struct Head {
     pub seq: i64,
     /// The op's hash, `None` when the op log no longer held the op.
     pub hash: Option<String>,
+    /// The vault was found older than the folder: kept, so the pause
+    /// outlasts compaction of the op that told it.
+    #[serde(default)]
+    pub older: bool,
 }
 
 /// The file holding a folder's [`Head`], beside its pages' states: not a

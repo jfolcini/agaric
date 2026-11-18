@@ -176,7 +176,8 @@ impl MirrorState {
     /// [`is_emptied`] holds and of the one [`MirrorState::is_behind`] tells:
     /// the user chose the folder again, so it is the one to fill. With no
     /// state, no file there is removed, and one that differs from its page's
-    /// render is kept as changed outside Agaric.
+    /// render is kept as changed outside Agaric; nor is the copy of an
+    /// attachment the vault lacks.
     pub fn start_fresh(&self) {
         self.lock().start_fresh = true;
         self.restart();
@@ -698,19 +699,25 @@ impl Mirror {
     /// is when this device's last op is before the folder's saved [`Head`],
     /// or when its op at that head has another hash: a restored vault soon
     /// numbers its own ops past it. A folder with no head saved yet, or whose
-    /// head's op compaction has removed, is taken as this vault's.
+    /// head's op compaction has removed, is taken as this vault's; a vault
+    /// once found older stays so ([`Head::older`]) until the folder is
+    /// chosen again.
     async fn behind(&self) -> Result<bool, AppError> {
         let Some(saved) = self.store.head()? else {
             return Ok(false);
         };
-        if durable_head(&self.pool, &self.device_id).await? < saved.seq {
+        if saved.older {
             return Ok(true);
         }
-        let Some(hash) = saved.hash else {
-            return Ok(false);
-        };
-        let now = op_hash(&self.pool, &self.device_id, saved.seq).await?;
-        Ok(now.is_some_and(|now| now != hash))
+        let mut older = durable_head(&self.pool, &self.device_id).await? < saved.seq;
+        if let (false, Some(hash)) = (older, &saved.hash) {
+            let now = op_hash(&self.pool, &self.device_id, saved.seq).await?;
+            older = now.is_some_and(|now| now != *hash);
+        }
+        if older {
+            self.store.save_head(&Head { older, ..saved })?;
+        }
+        Ok(older)
     }
 
     /// Save this device's last op as the folder's [`Head`], which
@@ -718,7 +725,18 @@ impl Mirror {
     async fn save_head(&self) -> Result<(), AppError> {
         let seq = durable_head(&self.pool, &self.device_id).await?;
         let hash = op_hash(&self.pool, &self.device_id, seq).await?;
-        self.store.save_head(&Head { seq, hash })
+        let older = false;
+        self.store.save_head(&Head { seq, hash, older })
+    }
+
+    /// On a fresh start, forget the copies whose attachments the vault
+    /// lacks, as one restored from a backup does: such a copy may be the
+    /// only one of its file left, and [`Mirror::sweep_copies`] would remove
+    /// it as unchanged. The rest stay recorded, so one changed in the folder
+    /// is not written over.
+    async fn forget_lost_copies(&mut self) -> Result<(), AppError> {
+        let live = assets::attachments(&self.pool, self.copies.ids()).await?;
+        self.copies.forget_except(&live.into_keys().collect())
     }
 
     /// Start over in another folder, with its own states: nothing it lacks
@@ -783,6 +801,7 @@ impl Mirror {
         let fresh = self.state.take_start_fresh();
         if fresh {
             self.store.forget(&folder)?;
+            self.forget_lost_copies().await?;
         }
         if self.store.bind(&folder)? || fresh {
             self.forget_folder();

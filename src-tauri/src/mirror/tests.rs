@@ -1041,6 +1041,16 @@ impl Fx {
             .unwrap()
     }
 
+    /// Compaction with none of this device's ops left.
+    async fn compact(&self) {
+        let mut tx = self.pool.begin().await.unwrap();
+        agaric_store::op_log::prune(&mut tx, i64::MAX, DEV, i64::MAX)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(self.head().await, 0, "the fixture: no op is left");
+    }
+
     async fn paused_as_older(&self) -> bool {
         let status = self.status().await;
         status
@@ -1102,8 +1112,6 @@ async fn a_restored_vault_pauses_the_mirror_and_changes_no_file() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restored_vault_written_past_the_folder_s_last_op_stays_paused() {
     let (mut fx, folder) = Fx::restored().await;
-    fx.tick().await;
-
     let (_, blocks) = fx.page("Gamma", &["three"]).await;
     for text in ["four", "five", "six", "seven"] {
         fx.edit(&blocks[0], text).await;
@@ -1145,6 +1153,36 @@ async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_file() {
         fx.read("TestSpace/Gamma.md").is_some(),
         "the vault's own pages are written"
     );
+}
+
+/// The folder chosen again keeps its copies too: one whose attachment the
+/// vault lacks may be the only copy of that file left, and one changed in
+/// the folder is the user's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_copy() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["one", "two"]).await;
+    let held = fx.image_in(&blocks[0]).await;
+    fx.tick().await;
+    let backup = fx.backup().await;
+    let lacked = fx.image_in(&blocks[1]).await;
+    fx.tick().await;
+    std::fs::write(fx.root.join(&held), b"drawn over").unwrap();
+    fx.start_over(backup).await;
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.status().await.paused, None);
+    let copy = |path: &str| std::fs::read(fx.root.join(path)).ok();
+    assert_eq!(copy(&lacked).as_deref(), Some(PNG), "the vault lacks it");
+    assert_eq!(copy(&held).as_deref(), Some(&b"drawn over"[..]));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1193,13 +1231,29 @@ async fn a_vault_whose_op_log_was_compacted_is_not_paused() {
     fx.page("Alpha", &["one"]).await;
     fx.tick().await;
 
-    let mut tx = fx.pool.begin().await.unwrap();
-    agaric_store::op_log::prune(&mut tx, i64::MAX, DEV, i64::MAX)
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
-    assert_eq!(fx.head().await, 0, "the fixture: none of its ops is left");
+    fx.compact().await;
     fx.tick().await;
 
     assert_eq!(fx.status().await.paused, None);
+}
+
+/// The pause outlasts the op that told the vault older: compaction removing
+/// it does not resume the mirror.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_vault_whose_op_log_was_compacted_stays_paused() {
+    let (mut fx, folder) = Fx::restored().await;
+    let (_, blocks) = fx.page("Gamma", &["three"]).await;
+    for text in ["four", "five", "six", "seven"] {
+        fx.edit(&blocks[0], text).await;
+    }
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    fx.compact().await;
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
 }

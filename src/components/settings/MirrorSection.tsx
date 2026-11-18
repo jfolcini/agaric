@@ -12,8 +12,8 @@
  * asks first, and the confirm sends the files the dialog listed, so the
  * backend refuses it when another file changed since: nothing is read in that
  * the user was not shown. A folder chosen again holding files changed while
- * the mirror was off turns the mirror on with reading back off, for the same
- * question.
+ * the mirror was off or writing elsewhere turns it on with reading back off,
+ * for the same question.
  *
  * Copying attachments into the folder is a stored switch of its own, off by
  * default; a copy changed in the folder is kept, and listed under `diverged`.
