@@ -448,6 +448,32 @@ export const common: Record<string, string> = {
   'data.mirrorOff': 'Désactivé. Aucun dossier choisi.',
   'data.mirrorChooseButton': 'Choisir un dossier…',
   'data.mirrorTurnOffButton': 'Désactiver',
+  'data.mirrorAdoptLabel': 'Ouvrir un dossier de notes',
+  'data.mirrorAdoptDesc':
+    "Gardez un coffre Obsidian ou un dossier de fichiers Markdown là où il est : ses notes sont importées dans un nouvel espace et le dossier devient le dossier miroir de cet espace, sans qu'aucun fichier soit réécrit ni déplacé. Un graphe Logseq est importé à la place, comme les fichiers Evernote et Org.",
+  'data.mirrorAdoptButton': 'Ouvrir un dossier de notes…',
+  'data.mirrorAdoptImporting': 'Importation de {{current}} sur {{total}}…',
+  'data.mirrorAdoptCancel': 'Annuler',
+  'data.mirrorAdoptLogseq':
+    'Ce dossier est un graphe Logseq. Les graphes Logseq sont importés, pas ouverts sur place : utilisez Importer, plus haut.',
+  'data.mirrorAdoptFailed': "Le dossier n'a pas été ouvert : {{reason}}",
+  'data.mirrorAdoptTitle': 'Garder « {{name}} » tel quel ?',
+  'data.mirrorAdoptDescription':
+    "Ses notes sont des pages du nouvel espace « {{name}} ». Agaric n'écrit aucun fichier du dossier pour l'instant. Un bloc que vous modifiez dans Agaric est écrit dans son fichier sous la forme d'Agaric ; une page que vous renommez renomme son fichier dans son dossier, et ne le déplace que si la partie avant son dernier / change ; une page que vous supprimez envoie son fichier à la corbeille du système.",
+  'data.mirrorAdoptConfirm': 'Le garder sur place',
+  'data.mirrorAdoptDecline': 'Pas maintenant',
+  'data.mirrorAdoptChangesHeading_one':
+    "{{count}} fichier a des lignes qu'Agaric écrit sous sa propre forme dès que leur bloc change",
+  'data.mirrorAdoptChangesHeading_other':
+    "{{count}} fichiers ont des lignes qu'Agaric écrit sous sa propre forme dès que leur bloc change",
+  'data.mirrorAdoptNoChanges': "Agaric lit chaque note telle qu'elle est écrite.",
+  'data.mirrorAdoptLeftAloneHeading_one':
+    "{{count}} fichier laissé tel quel : pas une note qu'Agaric a importée",
+  'data.mirrorAdoptLeftAloneHeading_other':
+    "{{count}} fichiers laissés tels quels : pas des notes qu'Agaric a importées",
+  'data.mirrorAdopted': 'Agaric tient « {{name}} » à jour avec son espace.',
+  'data.mirrorAdoptDeclined':
+    "Les notes restent dans l'espace « {{name}} » ; le dossier n'est pas reflété.",
   'data.mirrorFailed': 'Le dossier miroir n’a pas été modifié\u00A0: {{reason}}',
   'data.mirrorPaused': 'En pause\u00A0: {{reason}}',
   'data.mirrorDivergedHeading': 'Modifiés hors d’Agaric\u00A0; pas encore réintégrés',

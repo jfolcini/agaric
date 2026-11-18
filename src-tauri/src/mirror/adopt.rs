@@ -355,6 +355,76 @@ fn seed_line_ids(text: &str, render_ids: &[Option<String>]) -> Vec<Option<String
     ids
 }
 
+/// A file of a folder offered for adoption, by its path below the folder,
+/// `/`-separated, and its size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct FolderFile {
+    pub path: String,
+    pub size_bytes: i64,
+}
+
+/// Every file of `folder` but the hidden ones, as the importer is served it
+/// before an adoption (#6540), sorted by path.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] when `folder` is no absolute path to a folder,
+/// or cannot be read.
+pub fn list_folder(folder: &Path) -> Result<Vec<FolderFile>, AppError> {
+    if !folder.is_absolute() || !folder.is_dir() {
+        return Err(AppError::validation(
+            "the folder must be an absolute path to an existing folder".to_owned(),
+        ));
+    }
+    let unreadable =
+        |e: std::io::Error| AppError::validation(format!("cannot read the folder: {e}"));
+    let mut paths = Vec::new();
+    files_below(folder, folder, &mut paths).map_err(unreadable)?;
+    paths.sort_unstable();
+    paths
+        .into_iter()
+        .map(|path| {
+            let len = std::fs::metadata(folder.join(&path))
+                .map_err(unreadable)?
+                .len();
+            let size_bytes = i64::try_from(len).unwrap_or(i64::MAX);
+            Ok(FolderFile { path, size_bytes })
+        })
+        .collect()
+}
+
+/// The bytes of the file at `path` below `folder`, as base64, one of those
+/// [`list_folder`] lists.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] when `path` climbs out of the folder, names a
+/// hidden entry, or names no file of it.
+pub fn read_folder_file(folder: &Path, path: &str) -> Result<String, AppError> {
+    use base64::Engine;
+    let refuse = || AppError::validation(format!("{path} is no file of the folder"));
+    let below = Path::new(path).components().all(|part| match part {
+        Component::Normal(name) => !name.to_string_lossy().starts_with('.'),
+        _ => false,
+    });
+    let file = folder.join(path);
+    if !below || path.is_empty() || !file.is_file() {
+        return Err(refuse());
+    }
+    // A link inside the folder to a file outside it is not the folder's.
+    let inside = file
+        .canonicalize()
+        .ok()
+        .zip(folder.canonicalize().ok())
+        .is_some_and(|(file, folder)| file.starts_with(folder));
+    if !inside {
+        return Err(refuse());
+    }
+    let bytes = std::fs::read(&file)
+        .map_err(|e| AppError::validation(format!("cannot read {path}: {e}")))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// Every file below `dir`, as `/`-separated paths below `root`, hidden
 /// entries left out as the mirror's scan leaves them out.
 fn files_below(root: &Path, dir: &Path, found: &mut Vec<String>) -> std::io::Result<()> {

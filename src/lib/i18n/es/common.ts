@@ -445,6 +445,32 @@ export const common: Record<string, string> = {
   'data.mirrorOff': 'Desactivado. No se ha elegido ninguna carpeta.',
   'data.mirrorChooseButton': 'Elegir carpeta…',
   'data.mirrorTurnOffButton': 'Desactivar',
+  'data.mirrorAdoptLabel': 'Abrir una carpeta de notas',
+  'data.mirrorAdoptDesc':
+    'Conserva una bóveda de Obsidian o una carpeta de archivos Markdown donde está: sus notas se importan a un espacio nuevo y la carpeta pasa a ser la carpeta espejo de ese espacio, sin reescribir ni mover ningún archivo. Un grafo de Logseq se importa en su lugar, como los archivos de Evernote y Org.',
+  'data.mirrorAdoptButton': 'Abrir una carpeta de notas…',
+  'data.mirrorAdoptImporting': 'Importando {{current}} de {{total}}…',
+  'data.mirrorAdoptCancel': 'Cancelar',
+  'data.mirrorAdoptLogseq':
+    'Esa carpeta es un grafo de Logseq. Los grafos de Logseq se importan, no se abren donde están: usa Importar, más arriba.',
+  'data.mirrorAdoptFailed': 'No se abrió la carpeta: {{reason}}',
+  'data.mirrorAdoptTitle': '¿Conservar «{{name}}» tal como está?',
+  'data.mirrorAdoptDescription':
+    'Sus notas son páginas del nuevo espacio «{{name}}». Agaric no escribe ahora ningún archivo de la carpeta. Un bloque que cambies en Agaric se escribe en su archivo con el formato de Agaric; una página que renombres renombra su archivo en su carpeta, y solo lo mueve si cambia la parte anterior a su última /; una página que borres envía su archivo a la papelera del sistema.',
+  'data.mirrorAdoptConfirm': 'Conservarla donde está',
+  'data.mirrorAdoptDecline': 'Ahora no',
+  'data.mirrorAdoptChangesHeading_one':
+    '{{count}} archivo tiene líneas que Agaric escribe con su propio formato cuando cambia su bloque',
+  'data.mirrorAdoptChangesHeading_other':
+    '{{count}} archivos tienen líneas que Agaric escribe con su propio formato cuando cambia su bloque',
+  'data.mirrorAdoptNoChanges': 'Agaric lee cada nota tal como está escrita.',
+  'data.mirrorAdoptLeftAloneHeading_one':
+    '{{count}} archivo sin tocar: no es una nota que Agaric haya importado',
+  'data.mirrorAdoptLeftAloneHeading_other':
+    '{{count}} archivos sin tocar: no son notas que Agaric haya importado',
+  'data.mirrorAdopted': 'Agaric mantiene «{{name}}» al día con su espacio.',
+  'data.mirrorAdoptDeclined':
+    'Las notas quedan en el espacio «{{name}}»; la carpeta no se refleja.',
   'data.mirrorFailed': 'No se ha cambiado la carpeta del espejo: {{reason}}',
   'data.mirrorPaused': 'En pausa: {{reason}}',
   'data.mirrorDivergedHeading': 'Cambiado fuera de Agaric; aún no se ha leído',

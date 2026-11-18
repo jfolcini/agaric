@@ -570,3 +570,55 @@ async fn a_refused_folder_leaves_the_adopted_one_adopted() {
     assert_eq!(status.folder, Some(fx.folder()));
     assert!(fx.vault.join(store::MARKER_NAME).exists());
 }
+
+/// What the importer is served of a folder picked to adopt (#6540): every
+/// file but the hidden ones, by path and size, and one file's bytes at a
+/// time.
+#[tokio::test]
+async fn a_folder_offered_for_adoption_is_listed_and_read_file_by_file() {
+    let fx = Fx::new(&[
+        ("Inbox.md", "A loose thought\n"),
+        ("Projects/Plan.md", PLAN),
+        ("diagram.png", "png"),
+        (".obsidian/app.json", "{}"),
+    ])
+    .await;
+    let listed = list_folder(&fx.vault).unwrap();
+    assert_eq!(
+        listed,
+        [
+            FolderFile {
+                path: "Inbox.md".into(),
+                size_bytes: 16
+            },
+            FolderFile {
+                path: "Projects/Plan.md".into(),
+                size_bytes: i64::try_from(PLAN.len()).unwrap()
+            },
+            FolderFile {
+                path: "diagram.png".into(),
+                size_bytes: 3
+            },
+        ]
+    );
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(read_folder_file(&fx.vault, "Projects/Plan.md").unwrap())
+        .unwrap();
+    assert_eq!(bytes, PLAN.as_bytes());
+    for refused in [
+        "../outside.md",
+        ".obsidian/app.json",
+        "/etc/passwd",
+        "Projects",
+        "Gone.md",
+    ] {
+        assert!(
+            matches!(
+                read_folder_file(&fx.vault, refused),
+                Err(AppError::Validation { .. })
+            ),
+            "{refused}"
+        );
+    }
+}

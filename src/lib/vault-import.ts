@@ -80,6 +80,27 @@ export function vaultRelativePath(webkitRelativePath: string | undefined): strin
 }
 
 /**
+ * A file of a picked folder: a browser `File` from a folder pick, or one the
+ * desktop app reads from disk when a folder is adopted in place (#6540).
+ * `webkitRelativePath` is the folder's name then the file's path below it,
+ * as a folder pick gives it; `base64`, when present, reads the bytes.
+ */
+export interface VaultEntry {
+  readonly name: string
+  readonly webkitRelativePath: string
+  readonly size: number
+  text(): Promise<string>
+  base64?: (() => Promise<string>) | undefined
+}
+
+/** `entry`'s bytes as base64: read by its own reader, or as the `Blob` it is. */
+function entryBase64(entry: VaultEntry): Promise<string> {
+  if (entry instanceof Blob) return blobToBase64(entry)
+  if (entry.base64 !== undefined) return entry.base64()
+  return Promise.reject(new TypeError(`${entry.name} has no reader`))
+}
+
+/**
  * The page title the backend gives a note filed at `path`: no `.md`, each
  * segment trimmed, empty ones dropped. Mirrors `folder_path_to_namespace_title`.
  */
@@ -165,7 +186,7 @@ function parseSpaceFile(text: string): SpaceFile {
  * logged and answered as a warning; the notes import either way.
  */
 export async function restoreSpaceFile(
-  files: readonly File[],
+  files: readonly VaultEntry[],
   spaceId: string,
 ): Promise<{ titles: ReadonlyMap<string, string>; warnings: string[] }> {
   const file = files.find((f) => vaultRelativePath(f.webkitRelativePath) === SPACE_FILE_PATH)
@@ -277,8 +298,8 @@ export function basename(path: string): string {
  * the Obsidian `![[img.png]]` fallback.
  */
 export interface VaultIndex {
-  byPath: Map<string, File>
-  byBase: Map<string, File[]>
+  byPath: Map<string, VaultEntry>
+  byBase: Map<string, VaultEntry[]>
 }
 
 /**
@@ -287,9 +308,9 @@ export interface VaultIndex {
  * scanned ref, so including it is harmless). The first file wins on a path
  * collision so the lookup is deterministic.
  */
-export function indexVaultFiles(files: File[]): VaultIndex {
-  const byPath = new Map<string, File>()
-  const byBase = new Map<string, File[]>()
+export function indexVaultFiles(files: VaultEntry[]): VaultIndex {
+  const byPath = new Map<string, VaultEntry>()
+  const byBase = new Map<string, VaultEntry[]>()
   for (const file of files) {
     const rel = vaultRelativePath(file.webkitRelativePath)
     if (!byPath.has(rel)) byPath.set(rel, file)
@@ -321,7 +342,11 @@ export function resolveVaultPath(dir: string, path: string): string | null {
  * else the vault-root path, else the first two files of its basename. The
  * backend takes the first of a basename tie and warns, so a tie ships.
  */
-export function resolveVaultRef(reference: string, noteDir: string, index: VaultIndex): File[] {
+export function resolveVaultRef(
+  reference: string,
+  noteDir: string,
+  index: VaultIndex,
+): VaultEntry[] {
   const want = reference.replace(/\\/g, '/')
   for (const dir of [noteDir, '']) {
     const path = resolveVaultPath(dir, want)
@@ -353,7 +378,7 @@ export async function collectVaultFiles(
 
   // Resolve refs to distinct files (a ref may resolve to a file already picked
   // up by another ref — dedup by path so we read each once).
-  const matched = new Map<string, File>()
+  const matched = new Map<string, VaultEntry>()
   for (const ref of refs) {
     for (const file of resolveVaultRef(ref, noteDir, index)) {
       matched.set(vaultRelativePath(file.webkitRelativePath), file)
@@ -363,7 +388,7 @@ export async function collectVaultFiles(
 
   const vaultFiles = await Promise.all(
     [...matched].map(
-      async ([path, file]) => ({ path, bytes: await blobToBase64(file) }) satisfies VaultFile,
+      async ([path, file]) => ({ path, bytes: await entryBase64(file) }) satisfies VaultFile,
     ),
   )
   return vaultFiles
@@ -423,6 +448,8 @@ export function inferBibliographyFormat(filename: string): BibliographyFormat | 
  */
 export interface ImportUnit {
   name: string
+  /** The path below the picked folder of the file a folder's note was read from. */
+  source?: string | undefined
   bytes: number
   /**
    * The `path` a unit the backend may merge into the page of its title
@@ -474,7 +501,7 @@ function noteExtension(name: string): string | null {
 }
 
 /** Whether a pick is a Notion export, as the names of its Markdown files tell. */
-export function isNotionPick(files: readonly File[]): boolean {
+export function isNotionPick(files: readonly VaultEntry[]): boolean {
   const mdNames = files.filter((file) => noteExtension(file.name) === '.md')
   return isNotionExport(mdNames.map((file) => file.name))
 }
@@ -488,7 +515,7 @@ export function isNotionPick(files: readonly File[]): boolean {
  * the export; Notion writes each as `X.csv` and again as `X_all.csv`.
  */
 export function skippedFiles(
-  files: readonly File[],
+  files: readonly VaultEntry[],
   notion: boolean,
   attached: ReadonlySet<string>,
 ): { other: number; databases: number } {
@@ -515,7 +542,7 @@ export function skippedFiles(
  * (#6277 decision 8). A plain file pick has an empty `webkitRelativePath`, so
  * fall back to the basename. A Notion export's ids leave every segment.
  */
-function importPath(file: File, extension: string, notion: boolean): string {
+function importPath(file: VaultEntry, extension: string, notion: boolean): string {
   const path = vaultRelativePath(file.webkitRelativePath) || file.name
   const md = `${path.slice(0, path.length - extension.length)}.md`
   return notion ? stripNotionIds(md) : md
@@ -563,11 +590,11 @@ interface NamedNotes {
  * whole title.
  */
 async function nameNotes(
-  files: readonly File[],
-  notes: readonly { file: File; path: string }[],
+  files: readonly VaultEntry[],
+  notes: readonly { file: VaultEntry; path: string }[],
   logseq: boolean,
 ): Promise<NamedNotes> {
-  const relPath = (file: File) => vaultRelativePath(file.webkitRelativePath)
+  const relPath = (file: VaultEntry) => vaultRelativePath(file.webkitRelativePath)
   const config = logseq ? files.find((file) => relPath(file) === LOGSEQ_CONFIG) : undefined
   const graph = logseq
     ? logseqGraph(
@@ -609,7 +636,7 @@ interface OrgPickTargets {
  * page title, the title the backend gives its path.
  */
 async function orgPickTargets(
-  orgNotes: readonly { file: File; path: string }[],
+  orgNotes: readonly { file: VaultEntry; path: string }[],
 ): Promise<OrgPickTargets> {
   const ids = new Map<string, string | null>()
   const titles = new Map<string, string>()
@@ -641,7 +668,7 @@ async function orgPickTargets(
  * counts those left as code blocks.
  */
 export function mdFilesToUnits(
-  files: File[],
+  files: VaultEntry[],
   vaultIndex: VaultIndex | null,
   notion: boolean,
   titles: ReadonlyMap<string, string> = new Map(),
@@ -663,6 +690,7 @@ export function mdFilesToUnits(
   let orgTargets: Promise<OrgPickTargets> | undefined
   return notes.map(({ file, extension, path: importedAs }, index) => ({
     name: file.name,
+    source: vaultRelativePath(file.webkitRelativePath),
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
