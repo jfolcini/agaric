@@ -136,7 +136,6 @@ test(
   "a block holding two items of a list key sits in both items' groups (#6741) @search",
   { tag: '@real-only' },
   async ({ page }) => {
-    await waitForBoot(page)
     await ipc(page, 'create_property_def', {
       spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'authors',

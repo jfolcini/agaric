@@ -15,6 +15,7 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   blurEditors,
   expect,
+  expectSearchListed,
   focusBlockById,
   ipc,
   navigateToView,
@@ -25,8 +26,6 @@ import {
   submitSearch,
   test,
 } from './helpers'
-
-const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** Run a query from the search view and wait for the result region. */
 async function runSearch(page: import('@playwright/test').Page, query: string) {
@@ -280,42 +279,14 @@ test.describe('Search on the backend’s index (#6926) @search', () => {
     await openSearchView(page)
   })
 
-  /** Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. */
-  async function expectListed(
-    page: import('@playwright/test').Page,
-    query: string,
-    ids: string[],
-    ordered = false,
-  ): Promise<void> {
-    const want = ordered ? ids : ids.toSorted(byCode)
-    await expect(async () => {
-      await submitSearch(page, query)
-      await expect
-        .poll(
-          async () => {
-            const shown = await page
-              .locator('[data-testid^="search-result-row-"]')
-              .evaluateAll((rows) =>
-                rows.map(
-                  (r) => r.getAttribute('data-testid')?.replace('search-result-row-', '') ?? '',
-                ),
-              )
-            return ordered ? shown : shown.toSorted(byCode)
-          },
-          { timeout: 2_000 },
-        )
-        .toEqual(want)
-    }).toPass()
-  }
-
   test('a two-character term is found alone and beside a longer word (#6752)', async ({ page }) => {
     const [term, both] = await seedSearchBlocks(page, [
       { content: 'ink qz pod' },
       { content: 'owl qz hen' },
       { content: 'owl fig hen' },
     ])
-    await expectListed(page, 'qz', [term as string, both as string])
-    await expectListed(page, 'owl qz', [both as string])
+    await expectSearchListed(page, 'qz', [term as string, both as string])
+    await expectSearchListed(page, 'owl qz', [both as string])
   })
 
   test('an edited block is found by its new word and not by its old one (#5366)', async ({
@@ -325,7 +296,7 @@ test.describe('Search on the backend’s index (#6926) @search', () => {
       { content: 'kept quartzite' },
       { content: 'edited quartzite' },
     ])
-    await expectListed(page, 'quartzite', [kept as string, edited as string])
+    await expectSearchListed(page, 'quartzite', [kept as string, edited as string])
 
     await openPage(page, 'Projects')
     await focusBlockById(page, edited as string)
@@ -336,8 +307,8 @@ test.describe('Search on the backend’s index (#6926) @search', () => {
     ).toHaveText('edited violetite')
 
     await navigateToView(page, 'Search')
-    await expectListed(page, 'violetite', [edited as string])
-    await expectListed(page, 'quartzite', [kept as string])
+    await expectSearchListed(page, 'violetite', [edited as string])
+    await expectSearchListed(page, 'quartzite', [kept as string])
   })
 
   // `@real-only`: the mock ranks by its own rule, not bm25.
@@ -349,7 +320,7 @@ test.describe('Search on the backend’s index (#6926) @search', () => {
         { content: 'zap of ink' },
         { content: 'zap fig zap owl zap bun zap kit zap hen jam pod ivy' },
       ])
-      await expectListed(page, 'zap', [dense as string, sparse as string], true)
+      await expectSearchListed(page, 'zap', [dense as string, sparse as string], true)
     },
   )
 
@@ -410,9 +381,7 @@ test.describe('Search on the backend’s index (#6926) @search', () => {
           }
           return [...seen.entries()].toSorted(([a], [b]) => a - b).map(([, text]) => text)
         })
-      expect(listed.map((text) => /seq-(\d{2})/.exec(text)?.[1] ?? text).toSorted(byCode)).toEqual(
-        seqs,
-      )
+      expect(listed.map((text) => /seq-(\d{2})/.exec(text)?.[1] ?? text).toSorted()).toEqual(seqs)
     },
   )
 })

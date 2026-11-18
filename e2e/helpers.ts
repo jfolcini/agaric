@@ -1154,6 +1154,37 @@ export async function searchResultIds(page: Page): Promise<string[]> {
   return ids.toSorted()
 }
 
+/**
+ * Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. The
+ * backend writes its FTS index after a block's commit, so each try submits again.
+ */
+export async function expectSearchListed(
+  page: Page,
+  query: string,
+  ids: string[],
+  ordered = false,
+): Promise<void> {
+  const want = ordered ? ids : ids.toSorted()
+  await expect(async () => {
+    await submitSearch(page, query)
+    await expect
+      .poll(
+        async () => {
+          if (!ordered) return searchResultIds(page)
+          return page
+            .locator('[data-testid^="search-result-row-"]')
+            .evaluateAll((rows) =>
+              rows.map(
+                (r) => r.getAttribute('data-testid')?.replace('search-result-row-', '') ?? '',
+              ),
+            )
+        },
+        { timeout: 2_000 },
+      )
+      .toEqual(want)
+  }).toPass()
+}
+
 declare global {
   interface Window {
     __ipcCalls__?: Array<{ cmd: string; args: unknown }>

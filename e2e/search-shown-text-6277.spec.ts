@@ -1,4 +1,3 @@
-import type { Page } from '@playwright/test'
 /**
  * E2E — search matches block text as the editor shows it (#6277 B3): a
  * backslash escape is found by the character it shows, and a `((ULID))` block
@@ -10,6 +9,7 @@ import type { Page } from '@playwright/test'
 
 import {
   expect,
+  expectSearchListed,
   ipc,
   openSearchView,
   searchResultIds,
@@ -17,8 +17,6 @@ import {
   submitSearch,
   test,
 } from './helpers'
-
-const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 test.describe('Search matches block text as the editor shows it (#6277) @search', () => {
   test.beforeEach(async ({ page }) => {
@@ -47,15 +45,6 @@ test.describe('Search matches block text as the editor shows it (#6277) @search'
     expect(await searchResultIds(page)).toHaveLength(2)
   })
 
-  /** Submit `query` until the listed result ids are exactly `ids`, in any order. */
-  async function expectFound(page: Page, query: string, ids: string[]): Promise<void> {
-    const want = ids.toSorted(byCode)
-    await expect(async () => {
-      await submitSearch(page, query)
-      await expect.poll(() => searchResultIds(page), { timeout: 2_000 }).toEqual(want)
-    }).toPass()
-  }
-
   // `@real-only`: the mock strips at query time, so only the backend's index can keep the
   // referrer's row under the target's old first line.
   test(
@@ -67,15 +56,15 @@ test.describe('Search matches block text as the editor shows it (#6277) @search'
         { content: 'target amberine' },
       ])
       const [ref] = await seedSearchBlocks(page, [{ content: `referrer see ((${target}))` }])
-      await expectFound(page, 'amberine', [kept as string, target as string, ref as string])
+      await expectSearchListed(page, 'amberine', [kept as string, target as string, ref as string])
 
       await ipc(page, 'edit_block', { blockId: target, toText: 'target cobaltine' })
-      await expectFound(page, 'cobaltine', [target as string, ref as string])
+      await expectSearchListed(page, 'cobaltine', [target as string, ref as string])
       // The row shows the indexed text: the target's line, not the ref.
       const row = page.getByTestId(`search-result-row-${ref}`)
       await expect(row).toContainText('cobaltine')
       await expect(row).not.toHaveText(/\(\(|[0-9A-Z]{26}/)
-      await expectFound(page, 'amberine', [kept as string])
+      await expectSearchListed(page, 'amberine', [kept as string])
     },
   )
 
@@ -87,10 +76,10 @@ test.describe('Search matches block text as the editor shows it (#6277) @search'
       { content: 'target garnetine' },
     ])
     const [ref] = await seedSearchBlocks(page, [{ content: `referrer see ((${target}))` }])
-    await expectFound(page, 'garnetine', [kept as string, target as string, ref as string])
+    await expectSearchListed(page, 'garnetine', [kept as string, target as string, ref as string])
 
     await ipc(page, 'delete_block', { blockId: target })
     await ipc(page, 'purge_block', { blockId: target })
-    await expectFound(page, 'garnetine', [kept as string])
+    await expectSearchListed(page, 'garnetine', [kept as string])
   })
 })
