@@ -167,7 +167,11 @@ describe('PageSourceEditor link to page mode', () => {
     const link = pageLink()
 
     expect(link).toHaveAttribute('aria-disabled', 'true')
-    expect(link).toHaveAccessibleDescription(BLOCKED)
+    await user.click(screen.getByRole('button', { name: t('pageMode.blockedInfo') }))
+    expect(
+      await screen.findByRole('dialog', { name: t('pageMode.blockedInfo') }),
+    ).toHaveTextContent(BLOCKED)
+    await user.keyboard('{Escape}')
     await user.click(link)
 
     expect(onSwitchToPage).not.toHaveBeenCalled()

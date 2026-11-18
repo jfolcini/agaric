@@ -115,10 +115,11 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.op.or': 'Au moins une',
   'advancedQuery.builder.op.andTitle': 'Remplir TOUTES les conditions de ce groupe (AND)',
   'advancedQuery.builder.op.orTitle': 'Remplir AU MOINS UNE des conditions de ce groupe (OR)',
+  'advancedQuery.builder.opInfoLabel': 'À propos de Toutes et Au moins une',
   'advancedQuery.builder.negate': 'NOT',
-  'advancedQuery.builder.negateTitle': 'Inverser {{kind}} (envelopper dans NOT)',
-  'advancedQuery.builder.negateOnTitle':
-    'Inversion active — cliquez pour annuler l’inversion de {{kind}}',
+  'advancedQuery.builder.negateInfoLabel': 'À propos de NOT',
+  'advancedQuery.builder.negateHelp':
+    'NOT sur un groupe ou une condition trouve les blocs qu’il laisserait sinon de côté.',
   'advancedQuery.builder.kindGroup': 'ce groupe',
   'advancedQuery.builder.kindLeaf': 'cette condition',
   'advancedQuery.builder.addFilter': 'Ajouter un filtre',
@@ -455,6 +456,7 @@ export const properties: Record<string, string> = {
   'tagFilter.andModeTooltip': 'Toutes les étiquettes sélectionnées',
   'tagFilter.orMode': 'Au moins une',
   'tagFilter.orModeTooltip': 'Au moins une des étiquettes sélectionnées',
+  'tagFilter.modeInfoLabel': 'À propos des modes de correspondance des étiquettes',
   'tagFilter.selectTagsMessage': 'Sélectionnez des étiquettes ci-dessus pour filtrer les blocs',
   'tagFilter.blockMatch_one': '{{count}} bloc correspond',
   'tagFilter.blockMatch_other': '{{count}} blocs correspondent',
@@ -478,6 +480,7 @@ export const properties: Record<string, string> = {
   'tagFilter.includeInherited': 'Inclure les blocs imbriqués',
   'tagFilter.includeInheritedTooltip':
     'Inclure aussi les blocs imbriqués sous un bloc étiqueté. Une étiquette posée sur un bloc s’applique à tous les blocs situés en dessous, quelle que soit la profondeur — une étiquette sur le premier bloc d’une page correspond à toute la page. Seules les étiquettes ajoutées à un bloc sont héritées\u00A0; une puce d’étiquette @ dans son texte ne l’est pas.',
+  'tagFilter.includeInheritedInfoLabel': 'À propos des blocs imbriqués',
   'tagFilter.includingInherited': '(blocs imbriqués inclus)',
   'tagFilter.composer.show': 'Avancé',
   'tagFilter.composer.hide': 'Simple',
@@ -527,7 +530,6 @@ export const properties: Record<string, string> = {
   'property.repeatHelpFromCompletion': 'Replanifier à partir du moment où la tâche est terminée.',
   'property.repeatHelpExample':
     'Exemple\u00A0: `++1d` se répète chaque jour en rattrapant le retard\u00A0; `.+1w` attend une semaine à partir du moment où vous l’avez marquée comme terminée.',
-  'property.repeatHelpPopoverLabel': 'Aide sur la syntaxe de répétition',
   'filter.operatorContains': 'contient',
   'filter.operatorStartsWith': 'commence par',
   'filter.isSet': 'est défini',

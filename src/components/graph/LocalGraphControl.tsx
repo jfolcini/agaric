@@ -14,6 +14,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { LOCAL_GRAPH_HOP_OPTIONS, type LocalGraphHops } from '@/lib/graph-neighborhood'
 
@@ -28,7 +29,7 @@ export interface LocalGraphControlProps {
   onHopsChange: (hops: LocalGraphHops) => void
   /**
    * Label of the page that would be (or is being) focused. `null` when no page
-   * is open in the active tab — the toggle is then disabled with a hint.
+   * is open in the active tab — the toggle is then disabled, an ⓘ beside it saying why.
    */
   seedLabel: string | null
   /** Label of the page the walk started from, once the graph is centred elsewhere. */
@@ -62,7 +63,6 @@ export function LocalGraphControl({
         onClick={() => onToggle(!active)}
         disabled={!hasSeed}
         aria-pressed={active}
-        title={hasSeed ? undefined : t('graph.local.noPage')}
         data-testid="local-graph-toggle"
       >
         {active ? (
@@ -72,6 +72,13 @@ export function LocalGraphControl({
         )}
         {active ? t('graph.local.exit') : t('graph.local.focus')}
       </Button>
+      {!hasSeed && (
+        <InfoPopover
+          variant="icon"
+          ariaLabel={t('graph.local.noPageInfo')}
+          content={t('graph.local.noPage')}
+        />
+      )}
 
       {active && hasSeed && (
         <>

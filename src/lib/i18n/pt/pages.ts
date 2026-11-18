@@ -79,6 +79,7 @@ export const pages: Record<string, string> = {
   'pageHeader.inheritedTag': 'Etiqueta herdada {{name}}',
   'pageHeader.inheritedTagHint':
     "Herdada de um bloco pai. A visualização Etiquetas só a encontra com a opção 'Incluir blocos aninhados' ativada.",
+  'pageHeader.inheritedTagInfo': 'Sobre etiquetas herdadas',
   'pageHeader.searchTags': 'Pesquisar ou criar etiqueta...',
   'pageHeader.searchTagsLabel': 'Pesquisar etiquetas',
   'pageHeader.tagPicker': 'Seletor de etiquetas',
@@ -113,6 +114,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintLabel': 'Marcadores:',
   'templates.variablesHintIntro':
     'Digite-os em qualquer lugar de um modelo; cada um é preenchido quando o modelo é inserido.',
+  'templates.variablesHintInfoLabel': 'Sobre os marcadores',
   'templates.variableToday': 'Data atual (YYYY-MM-DD)',
   'templates.variableTime': 'Hora atual (HH:MM)',
   'templates.variableDatetime': 'Data e hora atuais',
@@ -228,6 +230,7 @@ export const pages: Record<string, string> = {
   'pageMode.codeCopyFailed': 'Não foi possível copiar o código',
   'pageMode.blocked.overCap':
     'O modo página abre páginas de até {{cap}} blocos; esta tem {{blocks}}.',
+  'pageMode.blockedInfo': 'Por que o modo página não está disponível',
   'pageSource.preview': 'Pré-visualização',
   'pageSource.changes': 'Alterações',
   'pageSource.saveChanges_one': 'Salvar ({{count}} alteração)',
@@ -417,6 +420,7 @@ export const pages: Record<string, string> = {
   'pageProperty.propertiesButton': 'Propriedades',
   'pageProperty.addPropertyLabel': 'Adicionar propriedade',
   'pageProperty.addPropertyButton': 'Adicionar propriedade',
+  'pageProperty.addPropertyDisabledInfo': 'Por que ainda não é possível adicionar propriedades',
   'pageProperty.pickerLabel': 'Seletor de propriedades',
   'pageProperty.searchPlaceholder': 'Pesquisar definições...',
   'pageProperty.searchLabel': 'Pesquisar definições',

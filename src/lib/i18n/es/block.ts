@@ -229,8 +229,6 @@ export const block: Record<string, string> = {
   'blockTree.dnd.movingSubtree_one': 'Moviendo {{count}} bloque al nivel {{depth}}',
   'blockTree.dnd.movingSubtree_other': 'Moviendo {{count}} bloques al nivel {{depth}}',
   'block.emptyPlaceholder': 'Escribe / para ver los comandos...',
-  'block.attachHint':
-    'Suelta archivos aquí o pégalos — imágenes, texto, PDF, JSON, ZIP (máx. 50 MB)',
   'block.attachDropZoneCaption':
     'Suelta para adjuntar — imágenes, texto, PDF, JSON, ZIP (máx. 50 MB)',
   'blockContext.selected': 'seleccionado(s)',

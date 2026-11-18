@@ -4,8 +4,9 @@
  * Coverage:
  *  - When emptiness=true and isLastSpace=false: button is enabled, click
  *    opens confirmation, confirm calls deleteBlock, cancel closes dialog.
- *  - When isLastSpace=true: button is disabled (last-space tooltip wins).
- *  - When emptiness=false: button disabled with non-empty tooltip.
+ *  - When isLastSpace=true: button is disabled (the last-space reason wins).
+ *  - When emptiness=false: button disabled with the non-empty reason.
+ *  - A disabled button's reason opens from the ⓘ beside it.
  *  - When emptiness=null (probe in flight): button disabled.
  *  - On IPC failure: toast.error fires and dialog stays open.
  *  - SpaceDeleteBlockedHint renders only when emptiness=false &&
@@ -18,6 +19,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { axe } from '@/__tests__/helpers/axe'
 import {
   SpaceDeleteBlockedHint,
   SpaceDeleteButton,
@@ -103,6 +105,85 @@ describe('SpaceDeleteButton', () => {
       />,
     )
     expect(screen.getByRole('button', { name: t('space.deleteSpaceLabel') })).toBeDisabled()
+  })
+
+  it.each([
+    {
+      name: 'a space still being checked',
+      isLastSpace: false,
+      emptiness: null,
+      reason: 'space.deleteSpaceTooltipDisabled',
+    },
+    {
+      name: 'the last space',
+      isLastSpace: true,
+      emptiness: false,
+      reason: 'space.deleteLastTooltipDisabled',
+    },
+  ])(
+    'says why Delete is disabled for $name behind an ⓘ (#6895)',
+    async ({ isLastSpace, emptiness, reason }) => {
+      const user = userEvent.setup()
+      renderWithProvider(
+        <SpaceDeleteButton
+          spaceId="SPACE_1"
+          spaceName="Personal"
+          isLastSpace={isLastSpace}
+          emptiness={emptiness}
+          onRefresh={() => {}}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: t('space.deleteDisabledInfo') }))
+
+      expect(
+        await screen.findByRole('dialog', { name: t('space.deleteDisabledInfo') }),
+      ).toHaveTextContent(t(reason))
+    },
+  )
+
+  it('shows no ⓘ for a non-empty space, whose reason shows under its row', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness={false}
+        onRefresh={() => {}}
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: t('space.deleteDisabledInfo') }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows no ⓘ while Delete is enabled', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: t('space.deleteDisabledInfo') }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations, enabled or disabled', async () => {
+    const props = { spaceId: 'SPACE_1', spaceName: 'Personal', onRefresh: () => {} }
+    const { container, rerender } = renderWithProvider(
+      <SpaceDeleteButton {...props} isLastSpace={false} emptiness />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+    rerender(
+      <TooltipProvider>
+        <SpaceDeleteButton {...props} isLastSpace={false} emptiness={false} />
+      </TooltipProvider>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('confirm deletes, closes before the refresh settles, and refreshes', async () => {
@@ -311,7 +392,7 @@ describe('SpaceDeleteBlockedHint', () => {
     expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
   })
 
-  it('returns null when isLastSpace=true (already covered by tooltip)', () => {
+  it('returns null when isLastSpace=true (already covered by the ⓘ)', () => {
     const { container } = render(<SpaceDeleteBlockedHint emptiness={false} isLastSpace />)
     expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
   })

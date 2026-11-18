@@ -232,8 +232,6 @@ export const block: Record<string, string> = {
   'blockTree.dnd.movingSubtree_one': 'Déplacement de {{count}} bloc au niveau {{depth}}',
   'blockTree.dnd.movingSubtree_other': 'Déplacement de {{count}} blocs au niveau {{depth}}',
   'block.emptyPlaceholder': 'Tapez / pour les commandes...',
-  'block.attachHint':
-    'Déposez des fichiers ici ou collez-les — images, texte, PDF, JSON, ZIP (50 MB max)',
   'block.attachDropZoneCaption': 'Déposez pour joindre — images, texte, PDF, JSON, ZIP (50 MB max)',
   'blockContext.selected': 'sélectionné(s)',
   'blockContext.clear': 'Effacer',

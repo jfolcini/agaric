@@ -208,10 +208,10 @@ export const block: Record<string, string> = {
     'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',
   'status.importButton': 'Select .md files',
 
-  // Translators: Settings › App health, StatusPanel: what each counter means, shown when its
-  // label is tapped. The materializer is the background work that keeps search, the agenda and counts up to date. "FTS" = the
-  // full-text search index; "operations"/"sync messages" = recorded changes; "peers" = your other
-  // paired devices; "sync engine" = the part that sends changes to them.
+  // Translators: Settings › App health, StatusPanel: what each counter means, shown when its label
+  // is tapped. The materializer is the background work that keeps search, the agenda and counts up
+  // to date. "FTS" = the full-text search index; "operations"/"sync messages" = recorded changes;
+  // "peers" = your other paired devices; "sync engine" = the part that sends changes to them.
   'status.foregroundQueueInfo':
     'Operations waiting to be applied to the database. Should stay near zero.',
   'status.backgroundQueueInfo':
@@ -403,11 +403,10 @@ export const block: Record<string, string> = {
   'blockTree.dnd.movingSubtree_one': 'Moving {{count}} block to depth {{depth}}',
   'blockTree.dnd.movingSubtree_other': 'Moving {{count}} blocks to depth {{depth}}',
 
-  // Translators: Grey placeholder in an empty block ("/" opens the command menu, keep it), the
-  // tooltip of the paperclip icon on an empty block, and the caption shown while dragging a file
-  // over a block. Keep "PDF", "JSON", "ZIP" and "MB" as written.
+  // Translators: Grey placeholder in an empty block ("/" opens the command menu, keep it), and the
+  // caption shown while dragging a file over a block. Keep "PDF", "JSON", "ZIP" and "MB" as
+  // written.
   'block.emptyPlaceholder': 'Type / for commands...',
-  'block.attachHint': 'Drop files here, or paste — images, text, PDF, JSON, ZIP (max 50 MB)',
   'block.attachDropZoneCaption': 'Drop to attach — images, text, PDF, JSON, ZIP (max 50 MB)',
 
   // Translators: Toolbar shown when several blocks are selected. "selected" follows the number of

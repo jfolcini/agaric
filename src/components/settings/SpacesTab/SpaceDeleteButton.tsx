@@ -3,7 +3,7 @@
  * confirmation ConfirmDialog.
  *
  * Extracted from `SpaceRowEditor` (D-2). Renders both the
- * Trash icon button (with disabled-state tooltip when the gate
+ * Trash icon button (with an ⓘ beside it giving the reason when the gate
  * Blocks) and the inline-blocked hint paragraph. The
  * Parent owns the emptiness probe and passes the
  * resolved tri-state result.
@@ -26,7 +26,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -85,6 +85,8 @@ export function SpaceDeleteButton({
       : t('space.deleteSpaceTooltipDisabled')
 
   const deleteEnabled = deleteDisabledReason === null
+  // A non-empty space says why under its row (`SpaceDeleteBlockedHint`).
+  const reasonShownBelow = !isLastSpace && emptiness === false
 
   return (
     <>
@@ -99,22 +101,24 @@ export function SpaceDeleteButton({
           <Trash2 className="h-4 w-4" />
         </Button>
       ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('space.deleteSpaceLabel')}
-                disabled
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="left">{deleteDisabledReason}</TooltipContent>
-        </Tooltip>
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('space.deleteSpaceLabel')}
+            disabled
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+          {!reasonShownBelow && (
+            <InfoPopover
+              variant="icon"
+              ariaLabel={t('space.deleteDisabledInfo')}
+              content={deleteDisabledReason}
+            />
+          )}
+        </>
       )}
       <ConfirmDialog
         open={confirmOpen}

@@ -426,7 +426,6 @@ function AttachmentImage({
         <span
           aria-hidden="true"
           data-testid="image-resize-hint"
-          title={t('attachment.resizeHint')}
           className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-50 group-hover:opacity-50 [@media(hover:none)]:opacity-50"
         >
           <MoveHorizontal className="h-3.5 w-3.5" aria-hidden="true" />

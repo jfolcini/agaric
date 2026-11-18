@@ -370,12 +370,18 @@ export const editor: Record<string, string> = {
   // Translators: a link to a page that was deleted or is in another space. brokenLinkTooltip =
   // tooltip on it (clicking removes the link); brokenLinkRemoved = toast after removing it;
   // brokenLinkRemoveAction = screen-reader text read after the link's text (keep the
-  // parentheses); brokenLinkUndoStale = toast when Undo comes too late.
+  // parentheses); brokenLinkUndoStale = toast when Undo comes too late; brokenLinkExplanation =
+  // shown when the link is tapped, above a button (brokenLinkRemove) that removes it;
+  // brokenLinkState = screen-reader text read after the link's text there (keep the parentheses).
   'editor.brokenLinkTooltip': 'Broken link or in another space — click to remove',
   'editor.brokenLinkRemoved': 'Broken link removed',
   'editor.brokenLinkRemoveAction': '(remove broken link)',
   'editor.brokenLinkUndoStale':
     'The page changed after the removal, so it can no longer be undone here',
+  'editor.brokenLinkExplanation':
+    'This link is broken: the page it pointed to was deleted or is in another space.',
+  'editor.brokenLinkRemove': 'Remove link',
+  'editor.brokenLinkState': '(broken link)',
   // Translators: tooltip on a reference to a block that was deleted ("ref" = block reference).
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
 
@@ -566,11 +572,8 @@ export const editor: Record<string, string> = {
   'linkEdit.urlPlaceholder': 'https://...',
 
   // Translators: an attached image under a block's text. toggleResizeToolbar = its aria-label
-  // (Enter shows its size toolbar); resizeHint = tooltip of a small icon in its corner;
-  // resizeHandle = tooltip of the corner grip; saveFailed = toast.
+  // (Enter shows its size toolbar); resizeHandle = tooltip of the corner grip; saveFailed = toast.
   'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
-  // FIL-008 (#218 item 6) — discoverability hint that the image is resizable.
-  'attachment.resizeHint': 'Resize image — hover or focus to open the toolbar',
   // #294 item 6 — inline drag-to-resize corner handle.
   'attachment.resizeHandle': 'Drag to resize image',
   'imageResize.saveFailed': 'Could not save image size',

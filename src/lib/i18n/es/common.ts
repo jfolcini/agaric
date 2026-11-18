@@ -76,6 +76,7 @@ export const common: Record<string, string> = {
     'Mueve o elimina primero las páginas de este espacio para poder eliminarlo.',
   'space.deleteLastTooltipDisabled':
     'Debes conservar al menos un espacio — no se puede eliminar el último que queda.',
+  'space.deleteDisabledInfo': 'Por qué no se puede eliminar este espacio',
   'space.deleteConfirmTitle': "¿Eliminar el espacio '{{name}}'?",
   'space.deleteConfirmDescription': 'Este espacio ya debe estar vacío. No se puede deshacer.',
   'space.deleteFailed': 'No se ha podido eliminar el espacio',

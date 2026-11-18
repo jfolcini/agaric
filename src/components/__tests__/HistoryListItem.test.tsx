@@ -44,6 +44,7 @@ import { axe } from 'vitest-axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { BlockHistoryItemProps, HistoryListItemProps } from '@/components/HistoryListItem'
 import { BlockHistoryItem, HistoryListItem, opIcon } from '@/components/HistoryListItem'
+import { formatTimestamp } from '@/lib/format'
 import { t } from '@/lib/i18n'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
@@ -321,6 +322,25 @@ describe('HistoryListItem', () => {
       expect(screen.queryByText('Non-reversible action')).not.toBeInTheDocument()
     })
 
+    it('explains why behind an ⓘ, without selecting the row', async () => {
+      const user = userEvent.setup()
+      const onRowClick = vi.fn()
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'purge_block', { block_id: 'B1' }),
+          isNonReversible: true,
+          onRowClick,
+        }),
+      )
+
+      await user.click(screen.getByRole('button', { name: t('history.nonReversibleInfoLabel') }))
+
+      expect(
+        await screen.findByRole('dialog', { name: t('history.nonReversibleInfoLabel') }),
+      ).toHaveTextContent(t('history.nonReversibleTooltip'))
+      expect(onRowClick).not.toHaveBeenCalled()
+    })
+
     it('retains opacity-50 on non-reversible rows alongside the visible label (multi-cue)', () => {
       renderInListbox(
         defaultProps({
@@ -335,6 +355,35 @@ describe('HistoryListItem', () => {
       expect(item).toHaveClass('opacity-50')
       expect(screen.getByText('Non-reversible action')).toBeInTheDocument()
     })
+  })
+
+  // -- Exact time ------------------------------------------------------------
+
+  it('shows the exact time on a tap without selecting the row', async () => {
+    const user = userEvent.setup()
+    const onRowClick = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInListbox(defaultProps({ entry, onRowClick }))
+    const time = document.querySelector('.history-item-time') as HTMLElement
+
+    await user.click(time)
+
+    expect(time).toHaveTextContent(formatTimestamp(entry.created_at, 'full'))
+    expect(onRowClick).not.toHaveBeenCalled()
+  })
+
+  it('Space on the time swaps it without toggling the row', async () => {
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'content' })
+    renderInListbox(defaultProps({ entry, onToggleSelection, isFocused: true }))
+    const time = document.querySelector('.history-item-time') as HTMLElement
+
+    time.focus()
+    await user.keyboard(' ')
+
+    expect(time).toHaveTextContent(formatTimestamp(entry.created_at, 'full'))
+    expect(onToggleSelection).not.toHaveBeenCalled()
   })
 
   // -- Diff display ----------------------------------------------------------
@@ -1024,10 +1073,7 @@ describe('BlockHistoryItem', () => {
     renderInList(
       blockDefaultProps({ entry: makeBlockEntry(1, 'create_block', { content: 'new' }) }),
     )
-    // No `aria-expanded` button means the row is non-restorable; only
-    // the parent <ul> remains in the a11y tree.
-    expect(screen.queryByRole('button', { expanded: false })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { expanded: true })).not.toBeInTheDocument()
+    expect(screen.getByTestId('block-history-row-0')).not.toHaveAttribute('role')
   })
 
   it('shows lock affordance + non-reversible label on non-restorable rows', () => {
@@ -1056,6 +1102,41 @@ describe('BlockHistoryItem', () => {
     expect(wrapper).not.toBeNull()
     expect(wrapper).toHaveClass('flex', 'flex-col', 'items-start')
     expect(wrapper).not.toHaveClass('items-center')
+  })
+
+  it("explains a non-restorable row's lock behind an ⓘ", async () => {
+    const user = userEvent.setup()
+    renderInList(
+      blockDefaultProps({ entry: makeBlockEntry(1, 'create_block', { content: 'new' }) }),
+    )
+
+    await user.click(screen.getByRole('button', { name: t('history.nonReversibleInfoLabel') }))
+
+    expect(
+      await screen.findByRole('dialog', { name: t('history.nonReversibleInfoLabel') }),
+    ).toHaveTextContent(t('history.nonReversibleTooltip'))
+  })
+
+  it("Enter on a non-restorable row's time swaps it and stays out of the list's Enter", async () => {
+    const user = userEvent.setup()
+    // Stands in for HistoryPanel's list, whose Enter restores the expanded row.
+    const onListEnter = vi.fn((e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') e.preventDefault()
+    })
+    const entry = makeBlockEntry(1, 'create_block', { content: 'new' })
+    render(
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- mirrors HistoryPanel's keyboard list
+      <ul aria-label="Block history" onKeyDown={onListEnter}>
+        <BlockHistoryItem {...blockDefaultProps({ entry })} />
+      </ul>,
+    )
+    const time = document.querySelector('.history-item-time') as HTMLElement
+
+    time.focus()
+    await user.keyboard('{Enter}')
+
+    expect(time).toHaveTextContent(formatTimestamp(entry.created_at, 'full'))
+    expect(onListEnter).not.toHaveBeenCalled()
   })
 
   it('does not show the lock affordance on restorable rows', () => {
@@ -1102,6 +1183,14 @@ describe('BlockHistoryItem', () => {
     renderInList(blockDefaultProps({ isExpanded: true }))
     const btn = screen.getByTestId('block-history-restore-0')
     expect(btn).toHaveTextContent(/Restore this version/i)
+  })
+
+  it('names the exact time on the expanded restorable row, whose own time cannot toggle (#6895)', () => {
+    const props = blockDefaultProps({ isExpanded: true })
+    renderInList(props)
+    expect(screen.getByTestId('block-history-restore-0')).toHaveTextContent(
+      formatTimestamp(props.entry.created_at, 'full'),
+    )
   })
 
   it('clicking "Restore this version" triggers onRestore directly (no ConfirmDialog)', async () => {

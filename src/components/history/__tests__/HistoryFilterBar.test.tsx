@@ -7,53 +7,20 @@
  *  - Calls onFilterChange(null) when "All types" is selected
  *  - Calls onFilterChange with op type when a specific type is selected
  *  - a11y compliance
- * ? help icon opens a popover legend listing every op type
- *    with a one-line description.
+ *  - the legend ⓘ opens, on a click, a popover listing every op type
+ *    with a one-line description
  */
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import { HistoryFilterBar } from '@/components/history/HistoryFilterBar'
 import { t } from '@/lib/i18n'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
-
-// Mock Popover to avoid Radix portal / positioning issues in jsdom — matches
-// the pattern used in SourcePageFilter.test.tsx and GraphFilterBar.test.tsx.
-// With this mock the PopoverContent is always rendered, which is what we
-// want for asserting the legend's descriptions.
-vi.mock('@/components/ui/popover', () => ({
-  Popover: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="popover-root">{children}</div>
-  ),
-  PopoverTrigger: ({
-    children,
-    asChild,
-    ...props
-  }: {
-    children: React.ReactNode
-    asChild?: boolean
-    [key: string]: unknown
-  }) => {
-    if (asChild) return <>{children}</>
-    return <button {...props}>{children}</button>
-  },
-  PopoverContent: ({
-    children,
-    ...props
-  }: {
-    children: React.ReactNode
-    [key: string]: unknown
-  }) => (
-    <div data-testid="popover-content" {...props}>
-      {children}
-    </div>
-  ),
-}))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -106,7 +73,7 @@ describe('HistoryFilterBar', () => {
     expect(row).not.toBeNull()
 
     // The Select trigger (rendered as a `combobox` by the global Radix
-    // Select mock), the legend `?` button and the clear `✕` button should
+    // Select mock), the legend ⓘ button and the clear `✕` button should
     // all be present.
     expect(screen.getByRole('combobox', { name: /Filter by operation type/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Op type legend' })).toBeInTheDocument()
@@ -216,37 +183,28 @@ describe('HistoryFilterBar', () => {
       expect(screen.getByRole('button', { name: 'Op type legend' })).toBeInTheDocument()
     })
 
-    it('clicking the help button does not throw and keeps the legend reachable', async () => {
+    it('opens the legend on a click, named after its trigger', async () => {
+      const user = userEvent.setup()
+      const onFilterChange = vi.fn()
+      const { container } = render(
+        <HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Op type legend' }))
+
+      expect(await screen.findByRole('dialog', { name: 'Op type legend' })).toHaveTextContent(
+        'What do these mean?',
+      )
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('the popover content includes op-type descriptions for every op type', async () => {
       const user = userEvent.setup()
       const onFilterChange = vi.fn()
       render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} />)
 
-      const trigger = screen.getByRole('button', { name: 'Op type legend' })
-      await user.click(trigger)
-
-      // The Popover is mocked so its content is always rendered; what we
-      // validate here is that clicking the trigger is wired up cleanly and
-      // the legend container is present in the tree.
-      expect(screen.getByTestId('popover-content')).toBeInTheDocument()
-    })
-
-    // PopoverContent must carry an aria-label so screen readers
-    // announce the popover purpose, not a generic "dialog".
-    it('labels the popover with history.opTypeLegendPopoverLabel', () => {
-      const onFilterChange = vi.fn()
-      render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} />)
-
-      expect(screen.getByTestId('popover-content')).toHaveAttribute(
-        'aria-label',
-        'Operation type legend',
-      )
-    })
-
-    it('the popover content includes op-type descriptions for every op type', () => {
-      const onFilterChange = vi.fn()
-      render(<HistoryFilterBar opTypeFilter={null} onFilterChange={onFilterChange} />)
-
-      const content = screen.getByTestId('popover-content')
+      await user.click(screen.getByRole('button', { name: 'Op type legend' }))
+      const content = await screen.findByRole('dialog', { name: 'Op type legend' })
 
       // Title.
       expect(content).toHaveTextContent('What do these mean?')

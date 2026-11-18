@@ -2,8 +2,8 @@
  * EditModeSwitch — the Blocks | Page switch (#5691): the page on screen edited
  * one block at a time or as one document. Page's tooltip names
  * its shortcut; where page mode cannot show the page yet, Page is
- * `aria-disabled`, not `disabled`, so the tooltip can say why instead, and
- * choosing it does nothing. A press keeps the focus where it was, so the switch
+ * `aria-disabled`, an ⓘ beside the switch saying why, and choosing it does
+ * nothing. A press keeps the focus where it was, so the switch
  * finds the caret being typed at, in either mode, still there. It shows in a
  * page's header and on the journal's day (on a phone, their *Page actions*
  * menu has the item instead); its shortcut is the page's
@@ -11,9 +11,9 @@
  */
 
 import type React from 'react'
-import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { InfoPopover } from '@/components/ui/info-popover'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getShortcutKeys } from '@/lib/keyboard-config'
@@ -32,41 +32,42 @@ export function EditModeSwitch({
   blocked,
 }: EditModeSwitchProps): React.ReactElement {
   const { t } = useTranslation()
-  const reasonId = useId()
   const page = (
     <ToggleGroupItem
       value="page"
       aria-disabled={blocked ? true : undefined}
-      aria-describedby={blocked ? reasonId : undefined}
       className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
     >
       {t('pageMode.page')}
     </ToggleGroupItem>
   )
   return (
-    <ToggleGroup
-      type="single"
-      value={mode}
-      onValueChange={(next) => {
-        // Radix reports '' when the pressed item is pressed again.
-        if (next === 'blocks' || (next === 'page' && !blocked)) onChange(next)
-      }}
-      aria-label={t('pageMode.switchLabel')}
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
-      {/* One tooltip throughout: a reason found while it is open replaces the hint. */}
-      <Tooltip>
-        <TooltipTrigger asChild>{page}</TooltipTrigger>
-        <TooltipContent>
-          {blocked || `${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}
-        </TooltipContent>
-      </Tooltip>
+    // One box, so the ⓘ keeps its gap and never wraps away from the switch.
+    <span className="inline-flex items-center gap-1">
+      <ToggleGroup
+        type="single"
+        value={mode}
+        onValueChange={(next) => {
+          // Radix reports '' when the pressed item is pressed again.
+          if (next === 'blocks' || (next === 'page' && !blocked)) onChange(next)
+        }}
+        aria-label={t('pageMode.switchLabel')}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
+        {/* Always the same element, so a reason that arrives while Page has
+            focus does not remount it and drop the focus; the hint just stays
+            shut while the ⓘ carries the reason. */}
+        <Tooltip {...(blocked ? { open: false } : {})}>
+          <TooltipTrigger asChild>{page}</TooltipTrigger>
+          <TooltipContent>
+            {`${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}
+          </TooltipContent>
+        </Tooltip>
+      </ToggleGroup>
       {blocked && (
-        <span id={reasonId} className="sr-only">
-          {blocked}
-        </span>
+        <InfoPopover variant="icon" ariaLabel={t('pageMode.blockedInfo')} content={blocked} />
       )}
-    </ToggleGroup>
+    </span>
   )
 }

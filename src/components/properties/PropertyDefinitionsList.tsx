@@ -10,7 +10,7 @@
  */
 
 import { skipToken, useQuery } from '@tanstack/react-query'
-import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
+import { Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +30,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { IconButton } from '@/components/ui/icon-button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ListItem, listCardVariants } from '@/components/ui/list-item'
@@ -41,7 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isValidation, unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyUsage } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -389,22 +389,12 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     {hasOptionsCell && (
                       <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
                         {def.key === 'todo_state' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="text-muted-foreground"
-                                data-testid="todo-state-cycle-help"
-                                aria-label={t('propertiesView.taskCycleHelpLabel')}
-                              >
-                                <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              {t('propertiesView.taskCycleHelpContent')}
-                            </TooltipContent>
-                          </Tooltip>
+                          <InfoPopover
+                            variant="icon"
+                            data-testid="todo-state-cycle-help"
+                            ariaLabel={t('propertiesView.taskCycleHelpLabel')}
+                            content={t('propertiesView.taskCycleHelpContent')}
+                          />
                         )}
                         {!def.builtin && spaceId !== null && (
                           <EditSelectOptions

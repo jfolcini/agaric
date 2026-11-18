@@ -224,6 +224,10 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkRemoveAction': '(defekten Link entfernen)',
   'editor.brokenLinkUndoStale':
     'Die Seite wurde nach dem Entfernen geändert, daher lässt es sich hier nicht mehr rückgängig machen',
+  'editor.brokenLinkExplanation':
+    'Dieser Link ist defekt: Die Seite, auf die er zeigte, wurde gelöscht oder liegt in einem anderen Bereich.',
+  'editor.brokenLinkRemove': 'Link entfernen',
+  'editor.brokenLinkState': '(defekter Link)',
   'editor.brokenRefTooltip': 'Defekter Verweis — Zielblock gelöscht',
   'editor.footnoteLink': 'Fußnote {{number}}',
   'editor.footnoteMissing': 'Kein Block auf dieser Seite definiert diese Fußnote',
@@ -324,8 +328,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Entfernen',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Symbolleiste für die Größe ein-/ausblenden',
-  'attachment.resizeHint':
-    'Bildgröße ändern — zum Öffnen der Symbolleiste mit der Maus darauf zeigen oder fokussieren',
   'attachment.resizeHandle': 'Ziehen, um die Bildgröße zu ändern',
   'imageResize.saveFailed': 'Die Bildgröße konnte nicht gespeichert werden',
   'imageCaption.placeholder': 'Bildunterschrift hinzufügen…',

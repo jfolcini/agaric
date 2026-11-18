@@ -1,9 +1,12 @@
 import type React from 'react'
+import { useId, useState } from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { BlockLinkNode } from '@/editor/types'
 import { i18n } from '@/lib/i18n'
+import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
 import { getPageDisplayName } from '@/lib/page-display'
 import { cn } from '@/lib/utils'
 
@@ -34,6 +37,65 @@ function blockLinkProps(linkId: string, onNavigate: (id: string) => void): Recor
   }
 }
 
+/**
+ * A broken link in content that can be edited: a tap explains it, with a Remove
+ * button, so a stray tap removes nothing (#6895). No `data-editor-portal`: the
+ * chip renders in a static block, which has no editor for the popover to keep.
+ */
+function BrokenBlockLink({
+  node,
+  label,
+  anchored,
+  remove,
+}: {
+  node: BlockLinkNode
+  label: string
+  anchored: boolean
+  remove: (link: BlockLinkNode) => void
+}): React.ReactElement {
+  const chipId = useId()
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          id={chipId}
+          type="button"
+          className={cn(
+            'block-link-chip block-link-deleted inline cursor-pointer',
+            anchored && 'ref-chip-anchor',
+          )}
+          data-testid="block-link-chip"
+          // The press must not put the block into edit mode.
+          onClick={(e) => e.stopPropagation()}
+        >
+          {label}
+          <span className="sr-only"> {i18n.t('editor.brokenLinkState')}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        aria-labelledby={chipId}
+        className="w-auto max-w-xs space-y-2 p-3 text-sm"
+        // Removing the link moves the focus to the block's row.
+        onCloseAutoFocus={keepFocusThatMovedOn}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p>{i18n.t('editor.brokenLinkExplanation')}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setOpen(false)
+            remove(node)
+          }}
+        >
+          {i18n.t('editor.brokenLinkRemove')}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function renderBlockLink(
   node: BlockLinkNode,
   key: string,
@@ -48,28 +110,14 @@ export function renderBlockLink(
   // label is shown in the leaf's place (#5160 D9).
   const label = node.attrs.label ?? getPageDisplayName(title, 'leaf').label
   if (status === 'deleted' && ctx.interactive === true && ctx.removeBrokenLink !== undefined) {
-    const remove = ctx.removeBrokenLink
     return (
-      <Tooltip key={key}>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              'block-link-chip block-link-deleted inline cursor-pointer',
-              linkId === ctx.anchorRefId && 'ref-chip-anchor',
-            )}
-            data-testid="block-link-chip"
-            onClick={(e) => {
-              e.stopPropagation()
-              remove(node)
-            }}
-          >
-            {label}
-            <span className="sr-only"> {i18n.t('editor.brokenLinkRemoveAction')}</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{i18n.t('editor.brokenLinkTooltip')}</TooltipContent>
-      </Tooltip>
+      <BrokenBlockLink
+        key={key}
+        node={node}
+        label={label}
+        anchored={linkId === ctx.anchorRefId}
+        remove={ctx.removeBrokenLink}
+      />
     )
   }
   // The name opens with the shown label, not the title: voice control matches

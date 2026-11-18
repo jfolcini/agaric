@@ -235,9 +235,9 @@ export const agenda: Record<string, string> = {
   // Translators: DuePanel empty state when the selected filter button shows no tasks.
   'duePanel.noItemsForFilter': 'No items match this filter.',
 
-  // Translators: DuePanel filter buttons (short, a count may follow in parentheses) and their
-  // tooltips. "Due" = has a deadline; "Scheduled" = has a planned start day; "Properties" = matches
-  // a custom field.
+  // Translators: DuePanel filter buttons (short, a count may follow in parentheses), their
+  // explanations, and the screen-reader label of the ⓘ beside them that opens those. "Due" = has
+  // a deadline; "Scheduled" = has a planned start day; "Properties" = matches a custom field.
   'duePanel.filterAll': 'All',
   'duePanel.filterDue': 'Due',
   'duePanel.filterScheduled': 'Scheduled',
@@ -246,6 +246,7 @@ export const agenda: Record<string, string> = {
   'duePanel.filterDueTooltip': 'Hard due date — overdue if past',
   'duePanel.filterScheduledTooltip': 'Soft scheduled start — not overdue if past',
   'duePanel.filterPropertiesTooltip': 'Filter by block properties (effort, assignee, etc.)',
+  'duePanel.filterInfoLabel': 'About these filters',
 
   // Translators: DuePanel heading when the day's tasks come from more than one source, joined by
   // " · " as in "3 due · 2 scheduled · 1 by property". {{count}} = tasks from that source: a due

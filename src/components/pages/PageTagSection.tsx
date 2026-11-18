@@ -1,11 +1,12 @@
 import { CornerDownRight, Plus, Smile, X } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { Fragment, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
@@ -45,6 +46,7 @@ export function PageTagSection({
   const tagInputRef = useRef<HTMLInputElement>(null)
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
   const { push: pushEmojiRecent } = useEmojiRecents()
+  const firstInheritedId = appliedTags.find((tag) => tag.inherited)?.id
 
   // Insert a picked emoji into the tag-name input at the caret (or append).
   // The input may have lost focus to the picker dialog, so fall back to a
@@ -74,19 +76,26 @@ export function PageTagSection({
           // direct chip by an outlined (not solid) tone, reduced opacity,
           // italic name, and a propagation icon — not color alone. The
           // chip is NOT directly removable (the tag lives on an ancestor);
-          // the `title` + `aria-label` name it as inherited, so the
-          // distinction is perceivable by screen readers.
-          <Badge
-            key={tag.id}
-            tone="outline"
-            data-inherited="true"
-            className="gap-1 border-dashed italic opacity-70"
-            title={t('pageHeader.inheritedTagHint')}
-            aria-label={t('pageHeader.inheritedTag', { name: tag.name })}
-          >
-            <CornerDownRight aria-hidden="true" className="h-3 w-3" />
-            {tag.name}
-          </Badge>
+          // its screen-reader text names it as inherited. The first one
+          // carries the ⓘ that explains inherited tags.
+          <Fragment key={tag.id}>
+            <Badge
+              tone="outline"
+              data-inherited="true"
+              className="gap-1 border-dashed italic opacity-70"
+            >
+              <CornerDownRight aria-hidden="true" className="h-3 w-3" />
+              <span aria-hidden="true">{tag.name}</span>
+              <span className="sr-only">{t('pageHeader.inheritedTag', { name: tag.name })}</span>
+            </Badge>
+            {tag.id === firstInheritedId && (
+              <InfoPopover
+                variant="icon"
+                ariaLabel={t('pageHeader.inheritedTagInfo')}
+                content={t('pageHeader.inheritedTagHint')}
+              />
+            )}
+          </Fragment>
         ) : (
           <Badge key={tag.id} tone="secondary" className="gap-1">
             {tag.name}

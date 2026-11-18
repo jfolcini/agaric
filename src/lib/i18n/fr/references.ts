@@ -118,6 +118,7 @@ export const references: Record<string, string> = {
   'graph.local.active': 'Affichage des voisins de "{{page}}"',
   'graph.local.back': 'Retour à "{{page}}"',
   'graph.local.noPage': 'Ouvrez une page pour y centrer le graphe',
+  'graph.local.noPageInfo': 'Pourquoi le centrage n’est pas disponible',
   'graph.local.seedHidden': 'La page "{{page}}" est masquée par les filtres actifs',
   'graph.local.seedIsTag': '"{{page}}" est une étiquette, et le graphe n’affiche que des pages',
   'graph.local.depthLabel': 'Sauts',

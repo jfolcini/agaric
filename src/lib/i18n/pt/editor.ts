@@ -222,6 +222,10 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkRemoveAction': '(remover link quebrado)',
   'editor.brokenLinkUndoStale':
     'A página mudou depois da remoção, então não é mais possível desfazer aqui',
+  'editor.brokenLinkExplanation':
+    'Este link está quebrado: a página para a qual apontava foi excluída ou está em outro espaço.',
+  'editor.brokenLinkRemove': 'Remover link',
+  'editor.brokenLinkState': '(link quebrado)',
   'editor.brokenRefTooltip': 'Referência quebrada — o bloco de destino foi excluído',
   'editor.footnoteLink': 'Nota de rodapé {{number}}',
   'editor.footnoteMissing': 'Nenhum bloco desta página define esta nota de rodapé',
@@ -320,8 +324,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Remover',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Mostrar ou ocultar a barra de redimensionamento',
-  'attachment.resizeHint':
-    'Redimensionar imagem — passe o mouse ou foque para abrir a barra de ferramentas',
   'attachment.resizeHandle': 'Arraste para redimensionar a imagem',
   'imageResize.saveFailed': 'Não foi possível salvar o tamanho da imagem',
   'imageCaption.placeholder': 'Adicionar uma legenda…',

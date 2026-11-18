@@ -81,6 +81,24 @@ describe('InfoPopover', () => {
     expect(onRowClick).not.toHaveBeenCalled()
   })
 
+  it('closes on Escape without the Escape reaching a list around it', async () => {
+    const user = userEvent.setup()
+    const onListKeyDown = vi.fn()
+    render(
+      // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- stands in for a list that collapses its expanded row on Escape
+      <div onKeyDown={onListKeyDown}>
+        <InfoPopover content="Should stay at zero.">Missed writes</InfoPopover>
+      </div>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Missed writes' }))
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(onListKeyDown).not.toHaveBeenCalledWith(expect.objectContaining({ key: 'Escape' }))
+  })
+
   it('has no a11y violations closed or open', async () => {
     const user = userEvent.setup()
     const { container } = renderInfo()

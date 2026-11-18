@@ -34,6 +34,7 @@ import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictD
 import { notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { findUnresolvedUlidTokens } from '@/components/pages/ulid-tokens'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -51,6 +52,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { cn } from '@/lib/utils'
 import { usePageBlockStore } from '@/stores/page-blocks'
 import { latestUndoEntry } from '@/stores/undo'
 
@@ -127,7 +129,8 @@ export function refusedLine(message: string): number | null {
 
 /**
  * The link to page mode, its tooltip naming it and its shortcut as the header's switch does; where
- * page mode cannot show the page, `aria-disabled` with the reason, which pressing it leaves as is.
+ * page mode cannot show the page, `aria-disabled` with an ⓘ beside it giving the reason, and
+ * pressing it leaves things as they are.
  */
 function PageModeLink({
   blocked,
@@ -139,32 +142,38 @@ function PageModeLink({
   onClick: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const blockedId = useId()
-  return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="link"
-            className="mr-auto px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-            aria-disabled={blocked ? true : undefined}
-            aria-describedby={blocked ? blockedId : undefined}
-            onClick={onClick}
-            disabled={disabled}
-          >
-            {t('pageMode.page')}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {blocked || `${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}
-        </TooltipContent>
-      </Tooltip>
-      {blocked && (
-        <span id={blockedId} className="sr-only">
-          {blocked}
-        </span>
+  const link = (
+    <Button
+      variant="link"
+      className={cn(
+        'px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50',
+        !blocked && 'mr-auto',
       )}
-    </>
+      aria-disabled={blocked ? true : undefined}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {t('pageMode.page')}
+    </Button>
+  )
+  if (blocked) {
+    return (
+      <>
+        {link}
+        <InfoPopover
+          variant="icon"
+          className="mr-auto"
+          ariaLabel={t('pageMode.blockedInfo')}
+          content={blocked}
+        />
+      </>
+    )
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent>{`${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}</TooltipContent>
+    </Tooltip>
   )
 }
 

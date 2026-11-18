@@ -15,6 +15,7 @@ vi.mock('lucide-react', () => ({
   CornerDownRight: (props: Record<string, unknown>) => (
     <svg data-testid="inherited-icon" {...props} />
   ),
+  Info: (props: Record<string, unknown>) => <svg {...props} />,
 }))
 
 // Stub the heavy <EmojiPickerDialog> (virtualized grid) with a minimal shell
@@ -34,6 +35,7 @@ const TAG_2: TagEntry = { id: 'TAG_2', name: 'review' }
 const TAG_3: TagEntry = { id: 'TAG_3', name: 'later' }
 // #1423 — a derived (inherited) chip, flagged via `inherited: true`.
 const TAG_INHERITED: TagEntry = { id: 'TAG_INH', name: 'project', inherited: true }
+const TAG_INHERITED_2: TagEntry = { id: 'TAG_INH_2', name: 'area', inherited: true }
 
 const defaultProps = {
   appliedTags: [] as TagEntry[],
@@ -156,16 +158,34 @@ describe('PageTagSection inherited chips (#1423)', () => {
     expect(chip).toHaveClass('opacity-70')
     expect(chip).toHaveClass('border-dashed')
 
-    // Perceivable beyond color: the propagation icon + an aria label that
-    // names it as inherited, and a tooltip title that points at the switch
-    // which makes a tag filter match it (#4548) — never a claim that every
-    // tag query matches descendants unconditionally.
+    // Perceivable beyond color: the propagation icon + screen-reader text
+    // that names it as inherited.
     expect(screen.getByTestId('inherited-icon')).toBeInTheDocument()
-    expect(screen.getByLabelText(/inherited tag project/i)).toBeInTheDocument()
-    expect(chip).toHaveAttribute('title', t('pageHeader.inheritedTagHint'))
+    expect(chip).toHaveTextContent(t('pageHeader.inheritedTag', { name: 'project' }))
 
     // Inherited chips are NOT directly removable (the tag lives on an ancestor).
     expect(screen.queryByRole('button', { name: /remove tag project/i })).not.toBeInTheDocument()
+  })
+
+  it('a tap on the ⓘ beside the first inherited chip explains inherited tags (#6895)', async () => {
+    const user = userEvent.setup()
+    render(
+      <PageTagSection
+        {...defaultProps}
+        appliedTags={[TAG_1, TAG_INHERITED, TAG_INHERITED_2]}
+        allTags={[TAG_1, TAG_INHERITED, TAG_INHERITED_2]}
+      />,
+    )
+    const info = screen.getAllByRole('button', { name: t('pageHeader.inheritedTagInfo') })
+    expect(info).toHaveLength(1)
+
+    await user.click(info[0] as HTMLElement)
+
+    // It points at the switch which makes a tag filter match it (#4548) —
+    // never a claim that every tag query matches descendants unconditionally.
+    expect(
+      await screen.findByRole('dialog', { name: t('pageHeader.inheritedTagInfo') }),
+    ).toHaveTextContent(t('pageHeader.inheritedTagHint'))
   })
 
   it('renders a direct tag WITHOUT the inherited affordance', () => {
@@ -175,6 +195,9 @@ describe('PageTagSection inherited chips (#1423)', () => {
 
     expect(container.querySelector('[data-inherited="true"]')).toBeNull()
     expect(screen.queryByTestId('inherited-icon')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: t('pageHeader.inheritedTagInfo') }),
+    ).not.toBeInTheDocument()
     // The direct chip keeps its remove affordance.
     expect(screen.getByRole('button', { name: /remove tag urgent/i })).toBeInTheDocument()
   })

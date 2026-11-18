@@ -9,7 +9,7 @@
 
 import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ChoiceValuePicker } from '@/components/properties/ChoiceValuePicker'
@@ -19,7 +19,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   type AgendaFilter,
   type AgendaFilterDimension,
@@ -176,6 +175,7 @@ function AddFilterPopover({
   const [dimension, setDimension] = useState<AgendaFilterDimension | null>(null)
   const [values, setValues] = useState<string[]>([])
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const descIdBase = useId()
 
   const reset = useCallback(() => {
     setStep('pick-dimension')
@@ -220,9 +220,9 @@ function AddFilterPopover({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         {step === 'pick-dimension' && (
-          // Wrap each dimension item in a Tooltip so the
+          // Each dimension item shows its description under its label so the
           // distinction between visually-similar dimensions (dueDate vs
-          // scheduledDate, completedDate vs createdDate) is discoverable
+          // scheduledDate, completedDate vs createdDate) is readable
           // without opening the dimension and trying its values.
           //
           // Visually group the 8 dimensions under
@@ -252,24 +252,20 @@ function AddFilterPopover({
                     const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
                     return (
                       <li key={dim}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            {/* Span wrapper so the tooltip surfaces over disabled
-                                  menu items too — disabled buttons swallow pointer
-                                  events otherwise. */}
-                            <span className="block">
-                              <PopoverMenuItem
-                                disabled={alreadyUsed}
-                                onClick={() => handleSelectDimension(dim)}
-                              >
-                                {dimensionLabel(dim)}
-                              </PopoverMenuItem>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" className="max-w-xs">
+                        <PopoverMenuItem
+                          disabled={alreadyUsed}
+                          aria-label={dimensionLabel(dim)}
+                          aria-describedby={`${descIdBase}-${dim}`}
+                          onClick={() => handleSelectDimension(dim)}
+                        >
+                          <span className="block">{dimensionLabel(dim)}</span>
+                          <span
+                            id={`${descIdBase}-${dim}`}
+                            className="block text-xs text-muted-foreground"
+                          >
                             {t(`filter.dimension.${dim}.description`)}
-                          </TooltipContent>
-                        </Tooltip>
+                          </span>
+                        </PopoverMenuItem>
                       </li>
                     )
                   })}

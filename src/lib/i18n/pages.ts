@@ -159,15 +159,17 @@ export const pages: Record<string, string> = {
   // a tag chip's remove (x) button; {{name}} = a tag name.
   'pageHeader.addTag': 'Add tag',
   'pageHeader.removeTag': 'Remove tag {{name}}',
-  // #1423 — inherited (derived) tag chips. The aria description marks the
-  // chip as derived for screen readers (styling alone is not color-only);
-  // the tooltip points at the one query surface that can match it (#4548).
-  // Translators: Inherited tag chip (a tag set on a parent block): aria-label and tooltip.
+  // #1423 — inherited (derived) tag chips. The screen-reader text marks the
+  // chip as derived (styling alone is not color-only); the explanation points
+  // at the one query surface that can match it (#4548).
+  // Translators: Inherited tag chip (a tag set on a parent block): its screen-reader text, the
+  // explanation shown from an (i) button beside it, and that button's screen-reader label.
   // "Tags view" is the name of the Tags view; 'Include nested blocks' is the label of an option
   // there, use the same translation.
   'pageHeader.inheritedTag': 'Inherited tag {{name}}',
   'pageHeader.inheritedTagHint':
     "Inherited from a parent block. The Tags view matches it only with 'Include nested blocks' turned on.",
+  'pageHeader.inheritedTagInfo': 'About inherited tags',
   // Translators: Tag picker popover: search input placeholder and aria-label, the popover's
   // aria-label, a button that creates a new tag ({{name}} = the typed tag name), and its empty
   // state.
@@ -222,16 +224,17 @@ export const pages: Record<string, string> = {
   'templates.createFailed': 'Failed to create template',
   'templates.titleTaken': 'A page titled "{{name}}" already exists in this space',
 
-  // #215 — dynamic-variable discoverability. These tokens are expanded by
-  // `expandTemplateVariables` when a template is inserted; previously they
-  // were documented only in code comments.
+  // #215 — dynamic-variable discoverability. These tokens are expanded by `expandTemplateVariables`
+  // when a template is inserted; previously they were documented only in code comments.
   // Translators: Templates view, bottom row: "Placeholders:" labels a list of tokens like
-  // "<% today %>" (keep the colon); the intro is its tooltip, and each "variable" string is the
-  // tooltip of one token, saying what it is replaced with when the template is inserted. Keep
-  // literal syntax as is: YYYY-MM-DD, HH:MM, "time:/datetime:", "date+7, date-1".
+  // "<% today %>" (keep the colon). The ⓘ beside it ("About placeholders" is its screen-reader
+  // label) opens the intro and one "variable" string per token, saying what it is replaced with
+  // when the template is inserted. Keep literal syntax as is: YYYY-MM-DD, HH:MM,
+  // "time:/datetime:", "date+7, date-1".
   'templates.variablesHintLabel': 'Placeholders:',
   'templates.variablesHintIntro':
     'Type these anywhere in a template; each fills in when the template is inserted.',
+  'templates.variablesHintInfoLabel': 'About placeholders',
   'templates.variableToday': 'Current date (YYYY-MM-DD)',
   'templates.variableTime': 'Current time (HH:MM)',
   'templates.variableDatetime': 'Current date and time',
@@ -421,9 +424,11 @@ export const pages: Record<string, string> = {
 
   // Translators: Why page mode cannot open this page: inserted as {{reason}} into
   // pageMode.switchedToBlocks, also shown alone in a toast and as the disabled reason of the Page
-  // switch. {{cap}} = the block limit; {{blocks}} = this page's number of blocks.
+  // switch. {{cap}} = the block limit; {{blocks}} = this page's number of blocks. blockedInfo =
+  // screen-reader label of the (i) button beside the Page switch that shows that reason.
   'pageMode.blocked.overCap':
     'Page mode opens pages of up to {{cap}} blocks; this one has {{blocks}}.',
+  'pageMode.blockedInfo': 'Why page mode is unavailable',
 
   // Translators: Edit as Markdown: the Preview and Changes tabs (nouns; "Changes" also names the
   // line diff), the Save button with the number of changes ({{count}}), the empty Changes and
@@ -743,9 +748,12 @@ export const pages: Record<string, string> = {
   // parentheses) and the "Add property" picker: button and its aria-label (also the picker's title
   // on phones), the picker's screen-reader name, its search box ("definitions" = named properties
   // with a value type), and a button creating a property named {{name}} (the typed name).
+  // addPropertyDisabledInfo = screen-reader label of the (i) button beside a disabled "Add
+  // property" button that says why.
   'pageProperty.propertiesButton': 'Properties',
   'pageProperty.addPropertyLabel': 'Add property',
   'pageProperty.addPropertyButton': 'Add property',
+  'pageProperty.addPropertyDisabledInfo': 'Why properties cannot be added yet',
   'pageProperty.pickerLabel': 'Property picker',
   'pageProperty.searchPlaceholder': 'Search definitions...',
   'pageProperty.searchLabel': 'Search definitions',

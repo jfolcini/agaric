@@ -14,10 +14,10 @@ import type React from 'react'
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Radix ToggleGroup values are strings; the "All" source (no filter) is `null`
 // upstream, so it needs a string stand-in.
@@ -41,30 +41,30 @@ export function DuePanelFilters({
   const { t } = useTranslation()
   const hideFutureId = useId()
 
-  // Tooltips clarify the axis of each pill, especially the
+  // The ⓘ explains the axis of each segment, especially the
   // Due-vs-Scheduled distinction (hard deadline vs soft planned start).
   const filterOptions = [
     {
       label: t('duePanel.filterAll'),
-      tooltip: t('duePanel.filterAllTooltip'),
+      help: t('duePanel.filterAllTooltip'),
       value: null,
       countKey: 'all' as const,
     },
     {
       label: t('duePanel.filterDue'),
-      tooltip: t('duePanel.filterDueTooltip'),
+      help: t('duePanel.filterDueTooltip'),
       value: 'column:due_date',
       countKey: 'due' as const,
     },
     {
       label: t('duePanel.filterScheduled'),
-      tooltip: t('duePanel.filterScheduledTooltip'),
+      help: t('duePanel.filterScheduledTooltip'),
       value: 'column:scheduled_date',
       countKey: 'scheduled' as const,
     },
     {
       label: t('duePanel.filterProperties'),
-      tooltip: t('duePanel.filterPropertiesTooltip'),
+      help: t('duePanel.filterPropertiesTooltip'),
       value: 'property:',
       countKey: 'property' as const,
     },
@@ -93,21 +93,31 @@ export function DuePanelFilters({
               : sourceCounts[opt.countKey]
             : 0
           return (
-            <Tooltip key={opt.label}>
-              <TooltipTrigger asChild>
-                <ToggleGroupItem
-                  value={opt.value ?? ALL_SOURCES}
-                  className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
-                >
-                  {opt.label}
-                  {sourceCounts && count > 0 ? ` (${count})` : ''}
-                </ToggleGroupItem>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">{opt.tooltip}</TooltipContent>
-            </Tooltip>
+            <ToggleGroupItem
+              key={opt.label}
+              value={opt.value ?? ALL_SOURCES}
+              className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
+            >
+              {opt.label}
+              {sourceCounts && count > 0 ? ` (${count})` : ''}
+            </ToggleGroupItem>
           )
         })}
       </ToggleGroup>
+      <InfoPopover
+        variant="icon"
+        ariaLabel={t('duePanel.filterInfoLabel')}
+        content={
+          <dl className="space-y-1">
+            {filterOptions.map((opt) => (
+              <div key={opt.label}>
+                <dt className="inline font-medium">{opt.label}: </dt>
+                <dd className="inline">{opt.help}</dd>
+              </div>
+            ))}
+          </dl>
+        }
+      />
       <div className="flex items-center gap-2">
         <Switch
           id={hideFutureId}

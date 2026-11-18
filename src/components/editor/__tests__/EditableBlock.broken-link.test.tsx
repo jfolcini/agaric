@@ -1,5 +1,5 @@
 /**
- * A broken `[[link]]` chip in an unfocused block (#5736): clicking it writes
+ * A broken `[[link]]` chip in an unfocused block (#5736): its popover's Remove (#6895) writes
  * the block's content without the link through the page store's `edit`, the
  * same `edit_block` any edit writes, so page-level undo restores it, from
  * Ctrl+Z or the toast's Undo. Real `EditableBlock`, `StaticBlock` and page
@@ -78,8 +78,14 @@ function renderBlock() {
 
 const brokenChip = () =>
   screen.getByRole('button', {
-    name: `[[01DEAD00...]] ${t('editor.brokenLinkRemoveAction')}`,
+    name: `[[01DEAD00...]] ${t('editor.brokenLinkState')}`,
   })
+
+/** Open a broken chip's popover and press its Remove. */
+async function pressRemove(user: ReturnType<typeof userEvent.setup>, chip: HTMLElement) {
+  await user.click(chip)
+  await user.click(await screen.findByRole('button', { name: t('editor.brokenLinkRemove') }))
+}
 
 describe('EditableBlock — removing a broken link from a static block', () => {
   beforeEach(() => {
@@ -90,7 +96,7 @@ describe('EditableBlock — removing a broken link from a static block', () => {
     mockedInvoke.mockImplementation(mockInvokeCommands({ edit_block: echoEditBlock }))
     const user = userEvent.setup()
     const { content, onNavigate } = renderBlock()
-    await user.click(brokenChip())
+    await pressRemove(user, brokenChip())
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledTimes(1)
     })
@@ -113,7 +119,7 @@ describe('EditableBlock — removing a broken link from a static block', () => {
     )
     const user = userEvent.setup()
     const { content } = renderBlock()
-    await user.click(brokenChip())
+    await pressRemove(user, brokenChip())
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledTimes(1)
     })
@@ -159,10 +165,9 @@ describe('EditableBlock — the removal toast’s Undo', () => {
     await act(() => pageStore().getState().load())
     if (typed !== undefined) await act(() => pageStore().getState().edit(QN_1, typed))
     const user = userEvent.setup()
-    await user.click(
-      await screen.findByRole('button', {
-        name: `Moved ${t('editor.brokenLinkRemoveAction')}`,
-      }),
+    await pressRemove(
+      user,
+      await screen.findByRole('button', { name: `Moved ${t('editor.brokenLinkState')}` }),
     )
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledTimes(1)

@@ -36,14 +36,14 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { formatTimestamp } from '@/lib/format'
 import { getPayloadRawContent } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -217,14 +217,12 @@ export function BlockHistoryItem({
         isExpanded && 'bg-accent/30',
       )}
     >
-      {/* Collapsed-state click target — the whole row. We use a div with
-          conditional role="button" rather than a real <button> because the
-          row already contains nested interactive elements (Tooltip-wrapped
-          timestamp, Badge with potential popover). Non-restorable rows
-          render no role at all (just a static div). */}
+      {/* Collapsed-state click target — the whole row, a div with
+          role="button" because a <button> cannot hold the core's block
+          content. Non-restorable rows render no role at all. */}
       {isRestorable ? (
         <div
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row contains nested interactive elements (Tooltip timestamp, Badge popover) via HistoryItemCore; a real <button> can't legally nest interactive content
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- HistoryItemCore renders block content (rich-content preview) that a real <button> cannot hold
           role="button"
           tabIndex={0}
           aria-expanded={isExpanded}
@@ -234,7 +232,7 @@ export function BlockHistoryItem({
           onClick={handleRowClick}
           onKeyDown={handleRowKeyDown}
         >
-          <HistoryItemCore entry={entry} />
+          <HistoryItemCore entry={entry} inRowButton />
         </div>
       ) : (
         // Non-restorable rows stack `flex-col` so the lock chip drops onto
@@ -244,31 +242,28 @@ export function BlockHistoryItem({
         // largest contributor to "crowded row" in the narrow Sheet.
         // Restorable rows (the branch above) stay `flex items-center` —
         // they don't render the lock chip, so their layout is fine.
+        // Enter or Space on the time or an ⓘ presses that control; it must not
+        // reach the list, whose Enter restores the expanded row.
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- only stops keys bubbling from the controls inside
         <div
           data-testid={`block-history-row-${index}`}
           className="flex flex-col items-start gap-1 w-full"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+          }}
         >
           <HistoryItemCore entry={entry} />
-          {/* re-add the lock affordance + tooltip for
-              non-restorable rows so users understand why the row is
-              inert. Mirrors the legacy `HistoryListItem` rendering at
-              lines ~330-344 ('s "two visual cues for WCAG"
-              rationale: opacity-50 alone was a single cue; the lock
-              icon + visible label adds a second cue for both visual
-              and SR users). i18n keys `history.nonReversibleLabel` /
-              `history.nonReversibleTooltip` are reused from the
-              legacy path — no new translations needed. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{t('history.nonReversibleLabel')}</span>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('history.nonReversibleTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
+          {/* Why the row is inert: the lock and visible label are two cues
+              beyond the row's look, and the ⓘ says why. */}
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{t('history.nonReversibleLabel')}</span>
+            <InfoPopover
+              variant="icon"
+              ariaLabel={t('history.nonReversibleInfoLabel')}
+              content={t('history.nonReversibleTooltip')}
+            />
+          </span>
         </div>
       )}
       {isExpanded && isRestorable && rawContent != null && (
@@ -292,8 +287,10 @@ export function BlockHistoryItem({
             ref={restoreButtonRef}
           >
             <RotateCcw className="mr-1.5" />
+            {/* The exact time: the row above shows only the relative one, since
+                that row is a button and cannot hold the RelativeTime toggle. */}
             {t('history.restoreThisVersion', {
-              timestamp: formatRelativeTime(entry.created_at, t),
+              timestamp: formatTimestamp(entry.created_at, 'full'),
             })}
           </Button>
           {/* The preview is a labelled region — using a real <section>

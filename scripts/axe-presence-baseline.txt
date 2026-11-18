@@ -47,7 +47,6 @@ src/components/rendering/__tests__/MermaidDiagram.error-leak.test.tsx
 src/components/search/__tests__/ResultCountSummary.test.tsx
 src/components/search/__tests__/SnippetHighlight.test.tsx
 src/components/search/filter-forms/__tests__/SearchDateFilterForm.test.tsx
-src/components/settings/SpacesTab/__tests__/SpaceDeleteButton.test.tsx
 src/components/settings/SpacesTab/__tests__/SpaceNameEditor.test.tsx
 src/components/settings/__tests__/AutostartRow.test.tsx
 src/components/settings/__tests__/BibliographySection.test.tsx

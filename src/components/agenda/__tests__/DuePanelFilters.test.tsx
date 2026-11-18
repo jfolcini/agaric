@@ -7,14 +7,15 @@
  *  - Shows correct aria-checked state for selected filter
  *  - Calls onSourceFilterChange with correct value
  *  - Renders the hide-future-scheduled switch; it reflects and toggles the state
+ *  - The ⓘ beside the segments opens an explanation of each source
  *  - a11y audit passes (axe)
  */
 
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
 
 describe('DuePanelFilters', () => {
@@ -209,42 +210,36 @@ describe('DuePanelFilters', () => {
     }
   })
 
-  // Tooltip explaining the Due axis (the most ambiguous one
-  // for users unfamiliar with Agaric's date model: hard deadline vs
-  // soft scheduled start).
-  it('shows a tooltip explaining the "Due" axis on hover', async () => {
+  // The ⓘ beside the segments explains each source on a tap — the Due axis
+  // most of all, for users unfamiliar with Agaric's date model: hard
+  // deadline vs soft scheduled start (#6895).
+  it('opens an explanation of every source segment from the ⓘ', async () => {
     const user = userEvent.setup()
-    render(<DuePanelFilters {...defaultProps} />)
+    const { container } = render(<DuePanelFilters {...defaultProps} />)
 
-    await user.hover(screen.getByRole('radio', { name: 'Due' }))
+    await user.click(screen.getByRole('button', { name: 'About these filters' }))
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole('tooltip', { name: 'Hard due date — overdue if past' }),
-      ).toBeInTheDocument()
+    const help = await screen.findByRole('dialog', { name: 'About these filters' })
+    expect(help).toHaveTextContent('All blocks with any due or scheduled date, or property filter')
+    expect(help).toHaveTextContent('Hard due date — overdue if past')
+    expect(help).toHaveTextContent('Soft scheduled start — not overdue if past')
+    expect(help).toHaveTextContent('Filter by block properties (effort, assignee, etc.)')
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 
-  // Each segment is its own tooltip trigger: the tooltip opens on keyboard focus
-  // alone, and an arrow key moves focus and the selection together.
-  it('opens the segment tooltip on keyboard focus and an arrow key selects the next segment', async () => {
+  // An arrow key moves focus and the selection together.
+  it('an arrow key selects the next segment', async () => {
     const user = userEvent.setup()
     const onFilterChange = vi.fn()
     render(<DuePanelFilters {...defaultProps} onSourceFilterChange={onFilterChange} />)
 
     await user.tab()
     expect(screen.getByRole('radio', { name: 'All' })).toHaveFocus()
-    expect(
-      await screen.findByRole('tooltip', {
-        name: 'All blocks with any due or scheduled date, or property filter',
-      }),
-    ).toBeInTheDocument()
 
     await user.keyboard('{ArrowRight}')
     expect(screen.getByRole('radio', { name: 'Due' })).toHaveFocus()
-    expect(
-      await screen.findByRole('tooltip', { name: 'Hard due date — overdue if past' }),
-    ).toBeInTheDocument()
     expect(onFilterChange).toHaveBeenCalledWith('column:due_date')
     expect(screen.getAllByRole('radio').filter((radio) => radio.tabIndex === 0)).toEqual([
       screen.getByRole('radio', { name: 'Due' }),

@@ -111,7 +111,7 @@ describe('BlockHistoryItem (extracted sibling)', () => {
 
   it('renders a non-restorable row (create_block) without a button affordance', () => {
     renderInList(defaultProps({ entry: makeEntry(1, 'create_block', { content: 'x' }) }))
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('block-history-row-0')).not.toHaveAttribute('role')
   })
 
   // #1092: the restorable row uses the canonical focus-ring-visible utility,

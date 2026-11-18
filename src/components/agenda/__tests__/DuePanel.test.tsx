@@ -85,6 +85,7 @@ vi.mock('lucide-react', () => ({
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
   Repeat: (props: Record<string, unknown>) => <svg data-testid="repeat-icon" {...props} />,
   Check: (props: Record<string, unknown>) => <svg data-testid="check-icon" {...props} />,
+  Info: (props: Record<string, unknown>) => <svg data-testid="info-icon" {...props} />,
   X: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 

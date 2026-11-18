@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -454,44 +454,89 @@ describe('RichContentRenderer', () => {
       )
     }
 
-    it('is a button named for what it does, with the broken-link tooltip', async () => {
+    const chipName = `Dead Page ${t('editor.brokenLinkState')}`
+
+    /** Open the chip's popover and press its Remove. */
+    async function removeVia(user: ReturnType<typeof userEvent.setup>, chip: HTMLElement) {
+      await user.click(chip)
+      await user.click(await screen.findByRole('button', { name: t('editor.brokenLinkRemove') }))
+    }
+
+    it('is a button that a tap opens to explain it, removing nothing (#6895)', async () => {
+      const onRemoveBrokenLink = vi.fn()
       const user = userEvent.setup()
-      renderEditable(`[[${BLOCK_ID}]]`, vi.fn())
-      const chip = screen.getByRole('button', {
-        name: `Dead Page ${t('editor.brokenLinkRemoveAction')}`,
-      })
+      renderEditable(`[[${BLOCK_ID}]]`, onRemoveBrokenLink)
+      const chip = screen.getByRole('button', { name: chipName })
       expect(chip).toHaveAttribute('data-testid', 'block-link-chip')
       expect(chip.classList.contains('block-link-deleted')).toBe(true)
-      await user.hover(chip)
-      expect(await screen.findByRole('tooltip')).toHaveTextContent(t('editor.brokenLinkTooltip'))
+
+      await user.click(chip)
+
+      expect(await screen.findByRole('dialog', { name: chipName })).toHaveTextContent(
+        t('editor.brokenLinkExplanation'),
+      )
+      expect(onRemoveBrokenLink).not.toHaveBeenCalled()
     })
 
-    it('a click hands back the content without exactly that link', async () => {
+    it('has no a11y violations with the chip open', async () => {
+      const user = userEvent.setup()
+      renderEditable(`[[${BLOCK_ID}]]`, vi.fn())
+      await user.click(screen.getByRole('button', { name: chipName }))
+      expect(await axe(await screen.findByRole('dialog', { name: chipName }))).toHaveNoViolations()
+    })
+
+    it('a press on the chip or in its popover stays out of the block around it', async () => {
+      const onBlockClick = vi.fn()
+      const user = userEvent.setup()
+      render(
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- stands in for the static block's click-to-edit surface
+        <div onClick={onBlockClick}>
+          {renderRichContent(`[[${BLOCK_ID}]]`, {
+            interactive: true,
+            onRemoveBrokenLink: vi.fn(),
+            resolveBlockTitle: () => 'Dead Page',
+            resolveBlockStatus: () => 'deleted',
+          })}
+        </div>,
+      )
+      await user.click(screen.getByRole('button', { name: chipName }))
+      await user.click(await screen.findByRole('dialog', { name: chipName }))
+      expect(onBlockClick).not.toHaveBeenCalled()
+    })
+
+    it('Remove hands back the content without exactly that link, and closes', async () => {
       const onRemoveBrokenLink = vi.fn()
       const user = userEvent.setup()
       renderEditable(`a [[${BLOCK_ID}]] b [[${OTHER_ID}]] c`, onRemoveBrokenLink)
-      await user.click(screen.getAllByTestId('block-link-chip')[1] as HTMLElement)
+      await removeVia(user, screen.getAllByTestId('block-link-chip')[1] as HTMLElement)
       expect(onRemoveBrokenLink).toHaveBeenCalledExactlyOnceWith(`a [[${BLOCK_ID}]] b  c`)
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      })
     })
 
     it('keeps a labelled link’s label as text, and empties a block that held only the link', async () => {
       const onRemoveBrokenLink = vi.fn()
       const user = userEvent.setup()
       const { unmount } = renderEditable(`see [[${BLOCK_ID}|the plan]] here`, onRemoveBrokenLink)
-      await user.click(screen.getByTestId('block-link-chip'))
+      await removeVia(user, screen.getByTestId('block-link-chip'))
       expect(onRemoveBrokenLink).toHaveBeenLastCalledWith('see the plan here')
       unmount()
       renderEditable(`[[${BLOCK_ID}]]`, onRemoveBrokenLink)
-      await user.click(screen.getByTestId('block-link-chip'))
+      await removeVia(user, screen.getByTestId('block-link-chip'))
       expect(onRemoveBrokenLink).toHaveBeenLastCalledWith('')
     })
 
-    it('Enter on the focused chip removes it', async () => {
+    it('Enter on the focused chip opens it, and Enter on Remove removes it', async () => {
       const onRemoveBrokenLink = vi.fn()
       const user = userEvent.setup()
       renderEditable(`x [[${BLOCK_ID}]]`, onRemoveBrokenLink)
       await user.tab()
       expect(screen.getByTestId('block-link-chip')).toHaveFocus()
+      await user.keyboard('{Enter}')
+      await screen.findByRole('dialog', { name: chipName })
+      expect(onRemoveBrokenLink).not.toHaveBeenCalled()
+      screen.getByRole('button', { name: t('editor.brokenLinkRemove') }).focus()
       await user.keyboard('{Enter}')
       expect(onRemoveBrokenLink).toHaveBeenCalledExactlyOnceWith('x ')
     })

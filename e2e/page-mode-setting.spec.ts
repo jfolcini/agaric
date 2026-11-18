@@ -138,10 +138,11 @@ test.describe('page mode’s setting and switch (#5691) @editor @pages @settings
     await expect(page.locator(EDITOR)).toHaveCount(0)
     const pageRadio = modeSwitch(page, 'Page')
     await expect(pageRadio).toHaveAttribute('aria-disabled', 'true')
-    await expect(pageRadio).toHaveAccessibleDescription(why)
-    await pageRadio.hover()
-    await expect(page.getByRole('tooltip')).toHaveText(why)
     expect(await axeViolations(page, '[role="radiogroup"]')).toEqual([])
+    const info = 'Why page mode is unavailable'
+    await page.getByRole('button', { name: info, exact: true }).click()
+    await expect(page.getByRole('dialog', { name: info })).toHaveText(why)
+    await page.keyboard.press('Escape')
 
     await page.keyboard.press('Control+Shift+M')
     await expect(page.getByText(why).last()).toBeVisible()

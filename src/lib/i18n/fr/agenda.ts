@@ -128,6 +128,7 @@ export const agenda: Record<string, string> = {
   'duePanel.filterDueTooltip': 'Date d’échéance ferme — en retard si elle est dépassée',
   'duePanel.filterScheduledTooltip': 'Début planifié indicatif — pas en retard s’il est dépassé',
   'duePanel.filterPropertiesTooltip': 'Filtrer par propriétés de bloc (effort, responsable, etc.)',
+  'duePanel.filterInfoLabel': 'À propos de ces filtres',
   'duePanel.countDue_one': '{{count}} à échéance',
   'duePanel.countDue_other': '{{count}} à échéance',
   'duePanel.countScheduled_one': '{{count}} planifié',

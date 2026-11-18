@@ -1,6 +1,6 @@
 /**
  * EditModeSwitch (#5691): a page's Blocks | Page switch, and Page disabled
- * with its reason where page mode cannot show the page.
+ * with an ⓘ giving its reason where page mode cannot show the page.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -31,6 +31,9 @@ describe('EditModeSwitch', () => {
     const user = userEvent.setup()
     render(<EditModeSwitch mode="blocks" onChange={() => {}} />)
 
+    expect(
+      screen.queryByRole('button', { name: t('pageMode.blockedInfo') }),
+    ).not.toBeInTheDocument()
     await user.hover(radio(t('pageMode.page')))
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -38,29 +41,18 @@ describe('EditModeSwitch', () => {
     )
   })
 
-  it('a reason found while Page’s tooltip is open replaces its hint', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(<EditModeSwitch mode="blocks" onChange={() => {}} />)
-    await user.hover(radio(t('pageMode.page')))
-    await screen.findByRole('tooltip')
-
-    rerender(<EditModeSwitch mode="blocks" onChange={() => {}} blocked="Can’t show tasks yet." />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Can’t show tasks yet.')
-    })
-  })
-
-  it('where page mode cannot show the page, Page says why and choosing it does nothing', async () => {
+  it('where page mode cannot show the page, an ⓘ says why and choosing Page does nothing', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     render(<EditModeSwitch mode="blocks" onChange={onChange} blocked="Can’t show tasks yet." />)
     const page = radio(t('pageMode.page'))
 
     expect(page).toHaveAttribute('aria-disabled', 'true')
-    expect(page).toHaveAccessibleDescription('Can’t show tasks yet.')
-    await user.hover(page)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Can’t show tasks yet.')
+    await user.click(screen.getByRole('button', { name: t('pageMode.blockedInfo') }))
+    expect(
+      await screen.findByRole('dialog', { name: t('pageMode.blockedInfo') }),
+    ).toHaveTextContent('Can’t show tasks yet.')
+    await user.keyboard('{Escape}')
 
     await user.click(page)
     expect(onChange).not.toHaveBeenCalled()
@@ -68,6 +60,17 @@ describe('EditModeSwitch', () => {
     await user.click(radio(t('pageMode.blocks')))
     await user.click(radio(t('pageMode.page')))
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps focus on Page when a reason arrives while it is focused', () => {
+    const { rerender } = render(<EditModeSwitch mode="blocks" onChange={() => {}} />)
+    const page = screen.getByRole('radio', { name: t('pageMode.page') })
+    page.focus()
+
+    rerender(<EditModeSwitch mode="blocks" onChange={() => {}} blocked="Why not." />)
+
+    expect(screen.getByRole('radio', { name: t('pageMode.page') })).toBe(page)
+    expect(page).toHaveFocus()
   })
 
   it('has no a11y violations, offered or blocked', async () => {

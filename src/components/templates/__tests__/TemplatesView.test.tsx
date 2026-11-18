@@ -17,9 +17,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
 import { emptyPage } from '@/__tests__/fixtures'
+import { axe } from '@/__tests__/helpers/axe'
 import {
   type CommandReturns,
   deferred,
@@ -134,6 +134,26 @@ describe('TemplatesView', () => {
     expect(screen.getByTestId('template-variable-datetime')).toHaveTextContent('<% datetime %>')
     expect(screen.getByTestId('template-variable-page-title')).toHaveTextContent('<% page title %>')
     expect(screen.getByText(t('templates.variablesHintLabel'))).toBeInTheDocument()
+  })
+
+  it('opens what each placeholder expands to from the ⓘ beside the label (#6895)', async () => {
+    const user = userEvent.setup()
+    stubTemplates()
+
+    const { container } = render(<TemplatesView />)
+
+    await user.click(
+      await screen.findByRole('button', { name: t('templates.variablesHintInfoLabel') }),
+    )
+    const help = await screen.findByRole('dialog', {
+      name: t('templates.variablesHintInfoLabel'),
+    })
+    expect(help).toHaveTextContent(t('templates.variablesHintIntro'))
+    expect(help).toHaveTextContent('<% today %>')
+    expect(help).toHaveTextContent(t('templates.variableToday'))
+    expect(help).toHaveTextContent('<% recording %>')
+    expect(help).toHaveTextContent(t('templates.variableRecording'))
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('leads with what a template is, before the placeholder hint (#6548)', async () => {

@@ -82,10 +82,13 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
       'pill right vs list right',
     ).toBeLessThan(2)
 
-    // The type select and its "?" share a row; Diff and Reset sit above the text.
+    // The type select and its ⓘ share a row; Diff and Reset sit above the text.
     const select = await box(page.locator('#op-type-filter'))
     const help = await box(page.getByTestId('history-filter-legend-trigger'))
-    expect(Math.abs(select.y - help.y), 'select top vs "?" top').toBeLessThan(2)
+    expect(
+      Math.abs(select.y + select.height / 2 - (help.y + help.height / 2)),
+      'select middle vs ⓘ middle',
+    ).toBeLessThan(2)
     const item = page.getByTestId('history-item-0')
     const preview = await box(item.locator('.history-item-preview'))
     for (const name of ['Diff', 'Reset']) {

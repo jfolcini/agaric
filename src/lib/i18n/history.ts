@@ -64,12 +64,11 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.restoreBlock': 'A soft-deleted block was restored',
   'history.opTypeDescription.purgeBlock': 'A block was permanently deleted',
 
-  // Translators: The "?" help button of the history filter bar and the popover it opens:
-  // screen-reader label of the button, the popover's heading, and its screen-reader label. "Op" =
-  // operation, one kind of change.
+  // Translators: The ⓘ help button of the history filter bar and the popover it opens:
+  // screen-reader label of the button (it also names the popover) and the popover's heading.
+  // "Op" = operation, one kind of change.
   'history.opTypeLegendLabel': 'Op type legend',
   'history.opTypeLegendTitle': 'What do these mean?',
-  'history.opTypeLegendPopoverLabel': 'Operation type legend',
 
   // Translators: Empty-state messages of the Block History sheet.
   'history.selectBlockEmpty': 'Select a block to see history',
@@ -116,11 +115,13 @@ export const history: Record<string, string> = {
 
   // Translators: One entry of the History view list. Screen-reader label of its checkbox:
   // {{opType}} = a change type such as "Edit", {{seq}} = the change's sequence number. Then the
-  // button that opens the text comparison ("Diff", short), and the tooltip on a purged entry
-  // ("Purges" = permanent deletions), which cannot be reverted.
+  // button that opens the text comparison ("Diff", short), and on an entry that cannot be reverted
+  // the text of its ⓘ button ("Purges" = permanent deletions) and that button's screen-reader
+  // label.
   'history.selectOperationLabel': 'Select operation {{opType}} #{{seq}}',
   'history.diffButton': 'Diff',
   'history.nonReversibleTooltip': 'Purges cannot be undone',
+  'history.nonReversibleInfoLabel': "Why this can't be undone",
 
   // Translators: History view: empty-state messages (for the whole space, or for one page); the
   // header line when a page's menu opened the view on that page alone ({{title}} = the page title),
@@ -392,13 +393,12 @@ export const history: Record<string, string> = {
   'history.revertPanelFailed': 'Failed to revert',
   'history.notRestorable': "This entry can't be restored",
 
-  // Translators: Marks on a history entry. foreignOp: tooltip and screen-reader text of the icon on
-  // a change synced from another device ("audit-only" = kept as a record only). agentOp:
-  // screen-reader text of the chip on a change written by an AI agent (an assistant app given Agent
-  // access); {{name}} = the agent's name.
-  // #2481 — foreign op badge (audit-only, not revertible here). Shared by
-  // the sr-only accessible name and the visible tooltip content.
+  // Translators: Marks on a history entry. foreignOp: text of the ⓘ button beside the icon on a
+  // change synced from another device ("audit-only" = kept as a record only); foreignOpInfoLabel:
+  // that button's screen-reader label. agentOp: screen-reader text of the chip on a change written
+  // by an AI agent (an assistant app given Agent access); {{name}} = the agent's name.
   'history.foreignOp': 'Synced from another device (audit-only; not revertible here)',
+  'history.foreignOpInfoLabel': 'Synced from another device',
   'history.agentOp': 'Written by agent {{name}}',
 
   // Translators: Error when the text comparison of an entry fails to load (a toast, or inline in
@@ -425,9 +425,8 @@ export const history: Record<string, string> = {
   // Translators: Short visible label beside a lock icon on an entry that cannot be undone.
   'history.nonReversibleLabel': 'Non-reversible action',
   // Translators: The ✕ button beside the change-type dropdown: screen-reader label (this one) and
-  // tooltip (filterBar.clear). filterBar.legend: tooltip of the "?" button ("op" = change).
+  // tooltip (filterBar.clear).
   'history.clearFilter': 'Clear filter',
-  'history.filterBar.legend': 'Show op type legend',
   'history.filterBar.clear': 'Clear active filter',
 
   // Translators: Floating toolbar shown on touch screens only in the History view: its

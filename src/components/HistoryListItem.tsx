@@ -23,6 +23,7 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { listRowVariants } from '@/components/ui/list-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
@@ -213,17 +214,15 @@ function HistoryListItemInner({
             opacity-50 alone is a single visual cue (WCAG concern); the
             visible text label adds a second cue for both visual and SR users. */}
         {isNonReversible && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{t('history.nonReversibleLabel')}</span>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('history.nonReversibleTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{t('history.nonReversibleLabel')}</span>
+            <InfoPopover
+              variant="icon"
+              ariaLabel={t('history.nonReversibleInfoLabel')}
+              content={t('history.nonReversibleTooltip')}
+            />
+          </span>
         )}
       </div>
       {isExpanded && diffSpans != null && (

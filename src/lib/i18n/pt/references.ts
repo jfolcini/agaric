@@ -117,6 +117,7 @@ export const references: Record<string, string> = {
   'graph.local.active': 'Mostrando os vizinhos de "{{page}}"',
   'graph.local.back': 'Voltar para "{{page}}"',
   'graph.local.noPage': 'Abra uma página para focar o grafo nela',
+  'graph.local.noPageInfo': 'Por que não é possível focar o grafo',
   'graph.local.seedHidden': '"{{page}}" está oculta pelos filtros ativos',
   'graph.local.seedIsTag': '"{{page}}" é uma etiqueta, e o grafo mostra apenas páginas',
   'graph.local.depthLabel': 'Saltos',
