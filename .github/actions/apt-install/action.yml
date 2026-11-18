@@ -288,7 +288,7 @@ runs:
         done
 
         infra() {
-          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: $1 Ubuntu mirror problem, not this diff."
+          echo "::error title=apt (infra, not this diff)::AGARIC_APT_INFRA: $1 An infra problem, not this diff."
           {
             echo "### apt could not run (infra, not this diff)"
             echo
