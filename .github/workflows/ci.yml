@@ -241,6 +241,12 @@ jobs:
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
     timeout-minutes: 45
+    env:
+      # Gradle retries a 429 or 5xx from Maven Central 3 times, 1 s then 2 s
+      # apart, and then disables the repository for the rest of the build, so a
+      # short rate limit fails it (run 43889772262). 8 tries from 2 s, doubling,
+      # ride out about 4 min. The daemon inherits these from the client JVM.
+      GRADLE_OPTS: -Dorg.gradle.internal.repository.max.tentatives=8 -Dorg.gradle.internal.repository.initial.backoff=2000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
