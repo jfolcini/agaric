@@ -1901,6 +1901,7 @@ export async function seedBulkPages(page: Page, count: number): Promise<void> {
     },
     { n: count, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
+  await settleBackend(page)
 }
 
 /**
@@ -1924,6 +1925,19 @@ export async function seedFacetPage(page: Page): Promise<void> {
     scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     blockId: null,
   })
+  await settleBackend(page)
+}
+
+/**
+ * Resolve once every write so far has had its `blocks:changed` sent, so a view
+ * opened next is not refetched behind the test's back by a seed's late event.
+ * On the real backend that event waits for the writes' cache rebuilds,
+ * debounced ones included.
+ */
+export function settleBackend(page: Page): Promise<void> {
+  return page.evaluate(() =>
+    (window as unknown as { __settleBackend: () => Promise<void> }).__settleBackend(),
+  )
 }
 
 /** Fire a backend event at the app's `listen()` callbacks, as `emit()` from the Rust side would. */

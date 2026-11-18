@@ -1040,7 +1040,6 @@ async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
 const SPECS_WITH_A_SLOW_MATERIALIZER = new Set([
   'agenda-count-after-write.e2e.ts',
   'link-it-linked-refs.e2e.ts',
-  'pages-list-local-write.e2e.ts',
 ])
 
 /**

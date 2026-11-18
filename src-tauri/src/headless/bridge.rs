@@ -19,6 +19,7 @@
 //! | `emit` | `event`, `payload` | emit the event in the app, as its backend would |
 //! | `reset` | | the open vault is dropped and a new copy of the template opens |
 //! | `keep` | | the open vault becomes the template, and a copy of it opens |
+//! | `settle` | | answered once every commit so far has had its `blocks:changed` sent |
 //!
 //! Requests are taken in the order they arrive, on the thread that owns the
 //! app; an `invoke` is only started there, so commands run concurrently, as a
@@ -27,10 +28,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::{Value, json};
-use tauri::{Emitter as _, Listener as _};
+use tauri::{Emitter as _, Listener as _, Manager as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc as async_mpsc};
 use tokio_tungstenite::tungstenite::Message;
@@ -39,6 +41,9 @@ use super::HeadlessApp;
 
 /// Events a slow client may fall behind by before it loses the oldest.
 const EVENT_BACKLOG: usize = 1024;
+
+/// How long `settle` waits for the change feed before it refuses.
+const SETTLE_LIMIT: Duration = Duration::from_secs(30);
 
 type Respond = Box<dyn FnOnce(Value) + Send>;
 
@@ -122,6 +127,17 @@ impl Bridge {
             (Some("keep"), ..) => {
                 reply(self.keep().map(|()| Value::Null).map_err(|e| json!(e)));
             }
+            (Some("settle"), ..) => {
+                let materializer = self
+                    .app()
+                    .app
+                    .state::<crate::materializer::Materializer>()
+                    .inner()
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    reply(settled(&materializer).await.map(|()| Value::Null));
+                });
+            }
             _ => reply(Err(json!(format!("not a bridge request: {request}")))),
         }
     }
@@ -181,6 +197,22 @@ impl Bridge {
         );
         Ok(())
     }
+}
+
+/// Once the change feed has sent every commit recorded so far. It sends one
+/// once its rebuilds, a debounced lifecycle rebuild included, have run, so by
+/// then every cache a seed touched is rebuilt and no event for it is left.
+async fn settled(materializer: &crate::materializer::Materializer) -> Result<(), Value> {
+    let started = Instant::now();
+    while !materializer.change_feed().is_idle() {
+        if started.elapsed() > SETTLE_LIMIT {
+            return Err(json!(format!(
+                "the change feed did not settle within {SETTLE_LIMIT:?}"
+            )));
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {

@@ -6,11 +6,13 @@ import {
   activePopover,
   createPageFromPagesView,
   expect,
+  ipc,
   navigateToView,
   openAddFilter,
   runAxe,
   seedBulkPages,
   seedFacetPage,
+  settleBackend,
   test,
   waitForBoot,
 } from './helpers'
@@ -341,30 +343,34 @@ test.describe('facet narrowing (each facet does the thing) @pages', () => {
     await expect(countChip(page)).toHaveText('5 matching pages')
   })
 
-  test('Last-edited buckets: recent buckets match bulk pages, long-ago matches the seed', async ({
-    page,
-  }) => {
-    // Bulk pages are stamped "recent"; the six canonical pages are ~90d old.
-    await bootPages(page, { extraPages: 5 })
+  // `@mock-only`: "long ago" needs pages last edited months back, which only the mock's
+  // backdated seed has; the real backend stamps every write now.
+  test(
+    'Last-edited buckets: recent buckets match bulk pages, long-ago matches the seed',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      // Bulk pages are stamped "recent"; the six canonical pages are ~90d old.
+      await bootPages(page, { extraPages: 5 })
 
-    for (const bucket of ['Edited today', 'Edited this week', 'Edited this month']) {
+      for (const bucket of ['Edited today', 'Edited this week', 'Edited this month']) {
+        await openAddFilter(page)
+        await activePopover(page).getByRole('button', { name: bucket }).click()
+        // Only the recent bulk pages match these rolling windows.
+        await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
+        await expect(grid(page).getByText('Getting Started', { exact: true })).toHaveCount(0)
+        await expect(countChip(page)).toHaveText('5 matching pages')
+        await page.getByRole('button', { name: /^Remove filter/ }).click()
+        await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
+      }
+
+      // Long-ago → the six canonical (old) pages, none of the recent bulk pages.
       await openAddFilter(page)
-      await activePopover(page).getByRole('button', { name: bucket }).click()
-      // Only the recent bulk pages match these rolling windows.
-      await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
-      await expect(grid(page).getByText('Getting Started', { exact: true })).toHaveCount(0)
-      await expect(countChip(page)).toHaveText('5 matching pages')
-      await page.getByRole('button', { name: /^Remove filter/ }).click()
+      await activePopover(page).getByRole('button', { name: 'Edited long ago' }).click()
       await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
-    }
-
-    // Long-ago → the six canonical (old) pages, none of the recent bulk pages.
-    await openAddFilter(page)
-    await activePopover(page).getByRole('button', { name: 'Edited long ago' }).click()
-    await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
-    await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toHaveCount(0)
-    await expect(countChip(page)).toHaveText('6 matching pages')
-  })
+      await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toHaveCount(0)
+      await expect(countChip(page)).toHaveText('6 matching pages')
+    },
+  )
 })
 
 // ===========================================================================
@@ -539,6 +545,42 @@ test.describe('search box @pages', () => {
 // 7. Sort
 // ===========================================================================
 test.describe('sort @pages', () => {
+  // #5366 — the backend sorts by the stored `inbound_link_count`, kept in step
+  // with every link it stores; the mock counts the links on each read.
+  test('a page linked from two new pages leads Most linked, with its count', async ({ page }) => {
+    await bootPages(page)
+    const create = (content: string): Promise<string> =>
+      ipc<string>(page, 'create_page_in_space', {
+        parentId: null,
+        content,
+        spaceId: SEED_IDS.SPACE_PERSONAL,
+      })
+    const link = (from: string, to: string): Promise<unknown> =>
+      ipc(page, 'create_block', {
+        blockType: 'content',
+        content: `see [[${to}]]`,
+        parentId: from,
+        index: null,
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+        blockId: null,
+      })
+    // RIVAL first, so with no counts the id tie-break would put it above TARGET.
+    const rival = await create('Rival')
+    const target = await create('Target')
+    await link(target, rival)
+    for (const source of ['Source one', 'Source two']) await link(await create(source), target)
+    await settleBackend(page)
+
+    await selectSort(page, 'Most linked')
+    // Rival ties the seed's once-linked pages, so only its count is pinned.
+    const inbound = (row: Locator): Locator =>
+      row.locator('[data-metadata-inbound] > [aria-hidden="true"]')
+    const rows = grid(page).locator('[data-page-item]')
+    await expect(pageTitleLocator(page).first()).toHaveText('Target')
+    await expect(inbound(rows.first())).toHaveText('2')
+    await expect(inbound(rows.filter({ hasText: 'Rival' }))).toHaveText('1')
+  })
+
   test('the six modes reorder the list', async ({ page }) => {
     await bootPages(page)
     const daily = localDateStr(new Date())
@@ -603,10 +645,14 @@ test.describe('sort @pages', () => {
     await selectSort(page, 'Most content')
     await expect(pageTitleLocator(page)).toHaveText(mostContentOrder())
 
-    // Last edited — every seed page shares the hoisted ~90d stamp (`seed.ts`)
-    // and no child carries an op, so the id-ASC tiebreak gives `idAscOrder`.
+    // Last edited — the page whose block was edited last leads.
+    await ipc(page, 'edit_block', {
+      blockId: SEED_IDS.BLOCK_PROJ_1,
+      toText: 'Fix login bug, again',
+    })
+    await settleBackend(page)
     await selectSort(page, 'Last edited')
-    await expect(pageTitleLocator(page)).toHaveText(idAscOrder)
+    await expect(pageTitleLocator(page).first()).toHaveText('Projects')
 
     // Last opened — nothing opened yet, so every page is "never opened" and
     // falls to id DESC: the Created order.

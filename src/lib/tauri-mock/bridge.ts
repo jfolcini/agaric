@@ -126,4 +126,8 @@ export function setupBridge(url: string): void {
   w['__emitMockEvent'] = async (event: string, payload?: unknown): Promise<void> => {
     await request('emit', { event, payload: payload ?? null })
   }
+  // The backend's change feed has sent every write's `blocks:changed`.
+  w['__settleBackend'] = async (): Promise<void> => {
+    await request('settle', {})
+  }
 }
