@@ -880,6 +880,34 @@ export const common: Record<string, string> = {
   'data.mirrorOff': 'Off. No folder chosen.',
   'data.mirrorChooseButton': 'Choose folder…',
   'data.mirrorTurnOffButton': 'Turn off',
+  // Translators: Markdown mirror: "Open a folder of notes" (#6540) keeps an existing folder of
+  // Markdown notes (an Obsidian vault) where it is: its notes are imported into a new space named
+  // after the folder, then the folder becomes that space's mirror folder. A dialog shows first
+  // how the files would change; {{name}} = the folder's name, {{current}}/{{total}} = files
+  // imported so far / in all, {{reason}} = the error message. "Import above" is the Import card.
+  'data.mirrorAdoptLabel': 'Open a folder of notes',
+  'data.mirrorAdoptDesc':
+    "Keep an Obsidian vault or a folder of Markdown files where it is: its notes are imported into a new space, and the folder becomes that space's mirror folder, with no file rewritten or moved. A Logseq graph is imported instead, as Evernote and Org files are.",
+  'data.mirrorAdoptButton': 'Open a folder of notes…',
+  'data.mirrorAdoptImporting': 'Importing {{current}} of {{total}}…',
+  'data.mirrorAdoptCancel': 'Cancel',
+  'data.mirrorAdoptLogseq':
+    'That folder is a Logseq graph. Logseq graphs are imported, not opened in place: use Import above.',
+  'data.mirrorAdoptFailed': 'The folder was not opened: {{reason}}',
+  'data.mirrorAdoptTitle': 'Keep “{{name}}” as it is?',
+  'data.mirrorAdoptDescription':
+    "Its notes are pages of the new space “{{name}}”. Agaric writes no file of the folder now. A block you change in Agaric is written to its file in Agaric's form; a page you rename renames its file in its folder, moving it only if the part before its last / changes; a page you delete sends its file to the system trash.",
+  'data.mirrorAdoptConfirm': 'Keep it in place',
+  'data.mirrorAdoptDecline': 'Not now',
+  'data.mirrorAdoptChangesHeading_one':
+    '{{count}} file has lines Agaric writes in its own form once their block is changed',
+  'data.mirrorAdoptChangesHeading_other':
+    '{{count}} files have lines Agaric writes in its own form once their block is changed',
+  'data.mirrorAdoptNoChanges': 'Agaric reads every note as it is written.',
+  'data.mirrorAdoptLeftAloneHeading_one': '{{count}} file left alone: no note Agaric imported',
+  'data.mirrorAdoptLeftAloneHeading_other': '{{count}} files left alone: no notes Agaric imported',
+  'data.mirrorAdopted': 'Agaric keeps “{{name}}” in step with its space.',
+  'data.mirrorAdoptDeclined': 'The notes stay in the space “{{name}}”; the folder is not mirrored.',
 
   // Translators: Markdown mirror: error toast, and a status line when the mirror stopped;
   // {{reason}} = the error message.

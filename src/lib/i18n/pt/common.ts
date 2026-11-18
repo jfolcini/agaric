@@ -445,6 +445,31 @@ export const common: Record<string, string> = {
   'data.mirrorOff': 'Desativado. Nenhuma pasta escolhida.',
   'data.mirrorChooseButton': 'Escolher pasta…',
   'data.mirrorTurnOffButton': 'Desativar',
+  'data.mirrorAdoptLabel': 'Abrir uma pasta de notas',
+  'data.mirrorAdoptDesc':
+    'Mantenha um cofre do Obsidian ou uma pasta de arquivos Markdown onde está: as notas são importadas para um novo espaço e a pasta passa a ser a pasta espelho desse espaço, sem reescrever nem mover nenhum arquivo. Um grafo do Logseq é importado em vez disso, como os arquivos do Evernote e do Org.',
+  'data.mirrorAdoptButton': 'Abrir uma pasta de notas…',
+  'data.mirrorAdoptImporting': 'Importando {{current}} de {{total}}…',
+  'data.mirrorAdoptCancel': 'Cancelar',
+  'data.mirrorAdoptLogseq':
+    'Essa pasta é um grafo do Logseq. Grafos do Logseq são importados, não abertos onde estão: use Importar, acima.',
+  'data.mirrorAdoptFailed': 'A pasta não foi aberta: {{reason}}',
+  'data.mirrorAdoptTitle': 'Manter “{{name}}” como está?',
+  'data.mirrorAdoptDescription':
+    'As notas são páginas do novo espaço “{{name}}”. O Agaric não grava nenhum arquivo da pasta agora. Um bloco que você mudar no Agaric é gravado no arquivo no formato do Agaric; uma página que você renomear renomeia o arquivo na pasta dele, e só o move se mudar a parte antes da última /; uma página que você excluir envia o arquivo para a lixeira do sistema.',
+  'data.mirrorAdoptConfirm': 'Manter onde está',
+  'data.mirrorAdoptDecline': 'Agora não',
+  'data.mirrorAdoptChangesHeading_one':
+    '{{count}} arquivo tem linhas que o Agaric grava no próprio formato quando o bloco delas muda',
+  'data.mirrorAdoptChangesHeading_other':
+    '{{count}} arquivos têm linhas que o Agaric grava no próprio formato quando o bloco delas muda',
+  'data.mirrorAdoptNoChanges': 'O Agaric lê cada nota exatamente como está escrita.',
+  'data.mirrorAdoptLeftAloneHeading_one':
+    '{{count}} arquivo deixado como está: não é uma nota que o Agaric importou',
+  'data.mirrorAdoptLeftAloneHeading_other':
+    '{{count}} arquivos deixados como estão: não são notas que o Agaric importou',
+  'data.mirrorAdopted': 'O Agaric mantém “{{name}}” em dia com o espaço dela.',
+  'data.mirrorAdoptDeclined': 'As notas ficam no espaço “{{name}}”; a pasta não é espelhada.',
   'data.mirrorFailed': 'A pasta do espelho não foi alterada: {{reason}}',
   'data.mirrorPaused': 'Pausado: {{reason}}',
   'data.mirrorDivergedHeading': 'Alterados fora do Agaric; ainda não lidos',

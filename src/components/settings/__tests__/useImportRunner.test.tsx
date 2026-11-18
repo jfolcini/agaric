@@ -132,6 +132,8 @@ describe('useImportRunner', () => {
     // Outcome aggregate.
     expect(outcome).toEqual({
       totalBlocks: 3,
+      // These units carry no folder path, so none is a folder note.
+      imported: [],
       pagesUpdated: 0,
       upToDate: false,
       succeededFiles: 1,

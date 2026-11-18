@@ -21,6 +21,7 @@ import {
   BibliographyResultPanel,
   useBibliographyImport,
 } from '@/components/settings/BibliographySection'
+import { folderGroup } from '@/components/settings/folder-group'
 import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
 import { ImportVaultDialog, type VaultQuestion } from '@/components/settings/ImportVaultDialog'
 import {
@@ -37,7 +38,6 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { countEvernoteNoteLinks, parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
-import { i18n } from '@/lib/i18n'
 import { NOTE_EXTENSIONS } from '@/lib/import-attachments'
 import { parseJex } from '@/lib/jex-import'
 import { logger } from '@/lib/logger'
@@ -46,61 +46,11 @@ import {
   type ImportUnit,
   enexNotesToUnits,
   importErrorReason,
-  indexVaultFiles,
-  isNotionPick,
   jexNotesToUnits,
-  mdFilesToUnits,
-  restoreSpaceFile,
-  skippedFiles,
   type VaultSpace,
   vaultRestoreSpaces,
 } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
-
-/**
- * #1925 — only a folder/vault pick (`webkitdirectory`) carries sibling assets:
- * the browser populates `webkitRelativePath` for folder picks and leaves it
- * empty for the plain `.md` multi-file pick. A single-file (non-folder) import
- * has no siblings — documented limitation — so it ships no `vaultFiles`.
- */
-function isFolderPick(files: readonly File[]): boolean {
-  return files.some(
-    (f) => typeof f.webkitRelativePath === 'string' && f.webkitRelativePath.length > 0,
-  )
-}
-
-/**
- * What a folder or file pick imports into `spaceId`. An export's definitions
- * exist before its first note imports (#6277 decision 8), and a file that is
- * no note and no attachment is said, not dropped (#6032).
- */
-async function folderGroup(files: File[], spaceId: string): Promise<RunGroup> {
-  // A folder pick's whole FileList is indexed, so each note's referenced
-  // attachments can be matched and shipped.
-  const vaultIndex = isFolderPick(files) ? indexVaultFiles(files) : null
-  const notion = isNotionPick(files)
-  const restored = await restoreSpaceFile(files, spaceId)
-  const keptQueries = { count: 0 }
-  return {
-    spaceId,
-    units: mdFilesToUnits(files, vaultIndex, notion, restored.titles, keptQueries),
-    initialWarnings: restored.warnings,
-    finalWarnings: (attached) => {
-      const skipped = skippedFiles(files, notion, attached)
-      const warnings: string[] = []
-      if (skipped.other > 0) {
-        warnings.push(i18n.t('data.importFolderSkipped', { count: skipped.other }))
-      }
-      if (skipped.databases > 0) {
-        warnings.push(i18n.t('data.importNotionDatabases', { count: skipped.databases }))
-      }
-      if (keptQueries.count > 0) {
-        warnings.push(i18n.t('data.importLogseqQueriesKept', { count: keptQueries.count }))
-      }
-      return warnings
-    },
-  }
-}
 
 export function ImportSection(): React.ReactElement {
   const { t } = useTranslation()

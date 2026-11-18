@@ -796,6 +796,8 @@ export const commands = {
 	getMirrorStatus: () => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("get_mirror_status")),
 	previewMirrorAdoption: (folder: string, spaceId: string, files: AdoptFile[]) => typedError<AdoptionPreview, AppError>(__TAURI_INVOKE("preview_mirror_adoption", { folder, spaceId, files })),
 	adoptMirrorFolder: (folder: string, spaceId: string, files: AdoptFile[], readBack: boolean) => typedError<MirrorStatus, AppError>(__TAURI_INVOKE("adopt_mirror_folder", { folder, spaceId, files, readBack })),
+	listAdoptionFolder: (folder: string) => typedError<FolderFile[], AppError>(__TAURI_INVOKE("list_adoption_folder", { folder })),
+	readAdoptionFile: (folder: string, path: string) => typedError<string, AppError>(__TAURI_INVOKE("read_adoption_file", { folder, path })),
 	/**
 	 *  Tauri command: when the newest daily snapshot was taken, in Unix
 	 *  milliseconds; `null` before the first one. Delegates to
@@ -2688,6 +2690,15 @@ export type FlushAllDraftsResult = {
 	 *  or soft-deleted) — anything that consumed a draft row counts.
 	 */
 	flushed: number,
+};
+
+/**
+ *  A file of a folder offered for adoption, by its path below the folder,
+ *  `/`-separated, and its size.
+ */
+export type FolderFile = {
+	path: string,
+	size_bytes: number,
 };
 
 /**

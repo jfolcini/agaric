@@ -36,6 +36,11 @@ function unmirroredSpaces(): string[] {
 }
 /** What the mock's folder dialog answers: there is no OS dialog to drive. */
 const MOCK_MIRROR_FOLDER = '/home/mock/Agaric mirror'
+/** The notes of the folder the mock offers to adopt (#6540), by path. */
+const MOCK_ADOPTION_FOLDER: Record<string, string> = {
+  'Inbox.md': 'A loose thought\n',
+  'Projects/Plan.md': '- First step\n- Second step\n',
+}
 
 /** 14 March 2026, 09:30 UTC: the mock's one daily snapshot. */
 const MOCK_LAST_SNAPSHOT_MS = Date.UTC(2026, 2, 14, 9, 30)
@@ -208,6 +213,18 @@ export const systemHandlers = {
   },
   // #6540 — the mock reads no folder: nothing would change and nothing is left alone.
   preview_mirror_adoption: () => ({ changes: [], left_alone: [] }),
+  // The mock's folder of notes to adopt: two notes, read as the backend reads
+  // them, as base64.
+  list_adoption_folder: () =>
+    Object.entries(MOCK_ADOPTION_FOLDER).map(([path, text]) => ({
+      path,
+      size_bytes: new TextEncoder().encode(text).length,
+    })),
+  read_adoption_file: (args) => {
+    const text = MOCK_ADOPTION_FOLDER[(args as { path: string }).path]
+    if (text === undefined) throw validationRejection('no file of the folder')
+    return btoa(String.fromCodePoint(...new TextEncoder().encode(text)))
+  },
   adopt_mirror_folder: (args) => {
     const { folder, spaceId, readBack } = args as {
       folder: string
@@ -281,6 +298,8 @@ export const systemHandlers = {
   | 'get_mirror_status'
   | 'preview_mirror_adoption'
   | 'adopt_mirror_folder'
+  | 'list_adoption_folder'
+  | 'read_adoption_file'
   | 'get_last_snapshot_ms'
   | 'open_data_folder'
   | 'list_daily_snapshots'

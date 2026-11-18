@@ -476,6 +476,12 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   preview_mirror_adoption:
     'environment dependent: reads a folder of notes on disk (#6540), so the answer is not a ' +
     'function of the seeded state',
+  list_adoption_folder:
+    'environment dependent: lists a folder on disk (#6540), so the answer is not a function ' +
+    'of the seeded state',
+  read_adoption_file:
+    'environment dependent: reads a file on disk (#6540), so the answer is not a function of ' +
+    'the seeded state',
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +632,8 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   'list_daily_snapshots',
   // Reads a folder of notes on disk (#6540), likewise.
   'preview_mirror_adoption',
+  'list_adoption_folder',
+  'read_adoption_file',
 ])
 
 /**

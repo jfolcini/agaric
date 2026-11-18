@@ -446,6 +446,32 @@ export const common: Record<string, string> = {
   'data.mirrorOff': 'Aus. Kein Ordner gewählt.',
   'data.mirrorChooseButton': 'Ordner wählen…',
   'data.mirrorTurnOffButton': 'Ausschalten',
+  'data.mirrorAdoptLabel': 'Einen Notizordner öffnen',
+  'data.mirrorAdoptDesc':
+    'Behalte einen Obsidian-Vault oder einen Ordner mit Markdown-Dateien, wo er ist: Seine Notizen werden in einen neuen Bereich importiert, und der Ordner wird zum Spiegelordner dieses Bereichs, ohne dass eine Datei umgeschrieben oder verschoben wird. Ein Logseq-Graph wird stattdessen importiert, wie Evernote- und Org-Dateien.',
+  'data.mirrorAdoptButton': 'Einen Notizordner öffnen…',
+  'data.mirrorAdoptImporting': 'Importiere {{current}} von {{total}}…',
+  'data.mirrorAdoptCancel': 'Abbrechen',
+  'data.mirrorAdoptLogseq':
+    'Dieser Ordner ist ein Logseq-Graph. Logseq-Graphen werden importiert, nicht an Ort und Stelle geöffnet: Nutze oben Importieren.',
+  'data.mirrorAdoptFailed': 'Der Ordner wurde nicht geöffnet: {{reason}}',
+  'data.mirrorAdoptTitle': '„{{name}}“ so lassen, wie er ist?',
+  'data.mirrorAdoptDescription':
+    'Seine Notizen sind Seiten des neuen Bereichs „{{name}}“. Agaric schreibt jetzt keine Datei des Ordners. Ein Block, den du in Agaric änderst, wird in Agarics Form in seine Datei geschrieben; eine Seite, die du umbenennst, benennt ihre Datei in ihrem Ordner um und verschiebt sie nur, wenn sich der Teil vor ihrem letzten / ändert; eine Seite, die du löschst, schickt ihre Datei in den Papierkorb des Systems.',
+  'data.mirrorAdoptConfirm': 'An Ort und Stelle behalten',
+  'data.mirrorAdoptDecline': 'Nicht jetzt',
+  'data.mirrorAdoptChangesHeading_one':
+    '{{count}} Datei hat Zeilen, die Agaric in seiner eigenen Form schreibt, sobald sich ihr Block ändert',
+  'data.mirrorAdoptChangesHeading_other':
+    '{{count}} Dateien haben Zeilen, die Agaric in seiner eigenen Form schreibt, sobald sich ihr Block ändert',
+  'data.mirrorAdoptNoChanges': 'Agaric liest jede Notiz so, wie sie geschrieben ist.',
+  'data.mirrorAdoptLeftAloneHeading_one':
+    '{{count}} Datei bleibt unberührt: keine Notiz, die Agaric importiert hat',
+  'data.mirrorAdoptLeftAloneHeading_other':
+    '{{count}} Dateien bleiben unberührt: keine Notizen, die Agaric importiert hat',
+  'data.mirrorAdopted': 'Agaric hält „{{name}}“ mit seinem Bereich auf dem gleichen Stand.',
+  'data.mirrorAdoptDeclined':
+    'Die Notizen bleiben im Bereich „{{name}}“; der Ordner wird nicht gespiegelt.',
   'data.mirrorFailed': 'Der Spiegelordner wurde nicht geändert: {{reason}}',
   'data.mirrorPaused': 'Pausiert: {{reason}}',
   'data.mirrorDivergedHeading': 'Außerhalb von Agaric geändert; noch nicht eingelesen',

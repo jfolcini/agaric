@@ -101,8 +101,8 @@ export interface RunGroup {
 
 /** Options for a single {@link UseImportRunner.run}. */
 export type RunOptions = {
-  /** The change event whose input is reset (`value = ''`) after the run. */
-  event: React.ChangeEvent<HTMLInputElement>
+  /** The change event whose input is reset (`value = ''`) after the run, if any. */
+  event?: React.ChangeEvent<HTMLInputElement> | undefined
   /** #2513 — NOTE-based (`.enex`/`.jex`) vs FILE-based (`.md`) wording. */
   notes: boolean
   /**
@@ -130,6 +130,8 @@ export type RunOptions = {
 /** What a completed {@link UseImportRunner.run} returns to the caller. */
 export interface RunOutcome {
   totalBlocks: number
+  /** Each folder note imported, by its path below the folder, with its page. */
+  imported: { path: string; pageId: string }[]
   /** Existing pages a merge changed, which may have added no block. */
   pagesUpdated: number
   /** Whether the run's only effect was pages re-imported without a change. */
@@ -191,6 +193,20 @@ async function linkImported(
     logger.error('DataSettingsTab', 'linking the imported notes failed', undefined, err)
     return [t('data.importLinkingFailed', { reason: importErrorReason(err) })]
   }
+}
+
+/** Each of `imported` read from a folder's file, by that file's path. */
+function folderNotes(
+  imported: readonly { unit: ImportUnit; pageId: string }[],
+): { path: string; pageId: string }[] {
+  return imported.flatMap(({ unit, pageId }) =>
+    unit.source === undefined ? [] : [{ path: unit.source, pageId }],
+  )
+}
+
+/** Clear the picked input, so the same file can be picked again. */
+function resetInput(event: React.ChangeEvent<HTMLInputElement> | undefined): void {
+  if (event) event.target.value = ''
 }
 
 function runGroups(opts: RunOptions): RunGroup[] {
@@ -315,6 +331,7 @@ export function useImportRunner(): UseImportRunner {
       const failedFiles: FailedFile[] = initialFailures ? [...initialFailures] : []
       const finalWarnings: string[] = []
       let succeededFiles = 0
+      const imported: { unit: ImportUnit; pageId: string }[] = []
       let fileIndex = 0
       let lastTitle = ''
       // #1927 — true once the user hits Cancel mid-loop, or declines the merges.
@@ -404,6 +421,7 @@ export function useImportRunner(): UseImportRunner {
             deferred.push(...result.deferred)
             succeededFiles += 1
             importedPageIds.add(result.page_id)
+            imported.push({ unit, pageId: result.page_id })
             for (const file of vaultFiles ?? []) attached.add(file.path)
             lastTitle = result.page_title
           } catch (err) {
@@ -478,10 +496,11 @@ export function useImportRunner(): UseImportRunner {
 
       // Reset file input before any async toast handler so a retry can
       // re-open the picker without a stale value.
-      event.target.value = ''
+      resetInput(event)
 
       return {
         totalBlocks,
+        imported: folderNotes(imported),
         pagesUpdated,
         upToDate,
         succeededFiles,

@@ -12,7 +12,7 @@ use tauri::State;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
-use crate::mirror::adopt::{AdoptFile, AdoptionPreview};
+use crate::mirror::adopt::{AdoptFile, AdoptionPreview, FolderFile};
 use crate::mirror::read_back::Scope;
 use crate::mirror::{self, MirrorState, MirrorStatus};
 use agaric_core::error::AppError;
@@ -200,6 +200,32 @@ pub async fn preview_mirror_adoption_inner(
         &files,
     )
     .await
+}
+
+/// Every file of `folder` but the hidden ones, which the importer reads
+/// before the folder is adopted ([`mirror::adopt::list_folder`]).
+///
+/// # Errors
+///
+/// [`AppError::Validation`] on mobile, or when the folder cannot be read.
+pub fn list_adoption_folder_inner(folder: &str) -> Result<Vec<FolderFile>, AppError> {
+    if cfg!(mobile) {
+        return Err(unsupported());
+    }
+    mirror::adopt::list_folder(Path::new(folder))
+}
+
+/// The bytes of one file of `folder`, as base64
+/// ([`mirror::adopt::read_folder_file`]).
+///
+/// # Errors
+///
+/// [`AppError::Validation`] on mobile, or when `path` is no file of it.
+pub fn read_adoption_file_inner(folder: &str, path: &str) -> Result<String, AppError> {
+    if cfg!(mobile) {
+        return Err(unsupported());
+    }
+    mirror::adopt::read_folder_file(Path::new(folder), path)
 }
 
 /// Turn the mirror on in `folder`, a folder of notes imported into
@@ -550,4 +576,18 @@ pub async fn adopt_mirror_folder(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn list_adoption_folder(folder: String) -> Result<Vec<FolderFile>, AppError> {
+    list_adoption_folder_inner(&folder).map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[tracing::instrument(skip_all, err)]
+pub async fn read_adoption_file(folder: String, path: String) -> Result<String, AppError> {
+    read_adoption_file_inner(&folder, &path).map_err(sanitize_internal_error)
 }

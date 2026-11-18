@@ -239,6 +239,30 @@ describe('collectVaultFiles', () => {
     expect(collected?.[0]?.bytes).toBe('AQIDBA==')
   })
 
+  it('reads a sibling the desktop app serves from disk through its own reader (#6540)', async () => {
+    const png = {
+      name: 'diagram.png',
+      webkitRelativePath: 'MyVault/assets/diagram.png',
+      size: 4,
+      text: async () => '',
+      base64: async () => 'AQIDBA==',
+    }
+    const collected = await collectVaultFiles('![](assets/diagram.png)', '', indexVaultFiles([png]))
+    expect(collected).toEqual([{ path: 'assets/diagram.png', bytes: 'AQIDBA==' }])
+  })
+
+  it('refuses a sibling it has no way to read', async () => {
+    const png = {
+      name: 'diagram.png',
+      webkitRelativePath: 'MyVault/assets/diagram.png',
+      size: 4,
+      text: async () => '',
+    }
+    await expect(
+      collectVaultFiles('![](assets/diagram.png)', '', indexVaultFiles([png])),
+    ).rejects.toThrow('diagram.png has no reader')
+  })
+
   it('returns null when there are no refs or none resolve', async () => {
     const md = folderFile(['no refs here'], 'note.md', 'MyVault/note.md')
     const index = indexVaultFiles([md])

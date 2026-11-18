@@ -42,6 +42,9 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { AdoptFolderDialog, AdoptFolderRow } from '@/components/settings/AdoptFolder'
+import { ImportMergeDialog } from '@/components/settings/ImportMergeDialog'
+import { useAdoptFolder } from '@/components/settings/useAdoptFolder'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -83,6 +86,7 @@ export function MirrorSection(): React.ReactElement | null {
   // its button moved there, else back to what opened the question.
   const focusAfterQuestion = useRef<HTMLElement | null>(null)
   const [status, setStatus] = useState<MirrorStatus | null>(null)
+  const adopt = useAdoptFolder(setStatus)
   const [pending, setPending] = useState<Action | null>(null)
   const [askToReadPending, setAskToReadPending] = useState(false)
 
@@ -285,6 +289,8 @@ export function MirrorSection(): React.ReactElement | null {
           </div>
         </SettingRow>
 
+        {!on && <AdoptFolderRow adopt={adopt} disabled={pending !== null} />}
+
         <SettingRow
           label={t('data.mirrorReadBackLabel')}
           description={t('data.mirrorReadBackDesc')}
@@ -464,6 +470,14 @@ export function MirrorSection(): React.ReactElement | null {
           </div>
         )}
       </CardContent>
+      <AdoptFolderDialog
+        question={adopt.question}
+        onConfirm={() => {
+          void adopt.confirm()
+        }}
+        onDecline={adopt.decline}
+      />
+      <ImportMergeDialog question={adopt.runner.mergeQuestion} />
     </Card>
   )
 }
