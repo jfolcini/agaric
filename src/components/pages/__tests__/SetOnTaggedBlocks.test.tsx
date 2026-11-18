@@ -1,6 +1,7 @@
 /**
  * #6755 — "Set on tagged blocks" against the mock backend: a write the
- * backend refuses after the preview says so and changes nothing.
+ * backend refuses after the preview says so and changes nothing, and counts
+ * that changed before the confirm are asked again in the same dialog.
  * The happy path runs through `TagPropertiesSection.test.tsx`.
  */
 
@@ -68,5 +69,35 @@ describe('SetOnTaggedBlocks', () => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('tagProperties.setFailed')),
     )
     expect(properties.get(PROJ_1)?.get('context')).toBeUndefined()
+  })
+
+  it('asks again with the new counts when the tagged blocks changed meanwhile', async () => {
+    const user = userEvent.setup()
+    render(<SetOnTaggedBlocks tagId={WORK} keys={['context']} definitions={[CONTEXT]} />)
+    const value = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'context' }))
+    await user.type(value, '@home')
+    await user.tab()
+    await user.click(screen.getByRole('button', { name: t('tagProperties.setButton') }))
+    const asked = await screen.findByRole('alertdialog')
+    expect(
+      within(asked).getByText(t('tagProperties.confirmDescription', { added: 3 })),
+    ).toBeInTheDocument()
+
+    await dispatch('add_tag', { blockId: SEED_IDS.BLOCK_PROJ_3, tagId: WORK })
+    await user.click(within(asked).getByRole('button', { name: t('tagProperties.confirmButton') }))
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('tagProperties.countsChanged')),
+    )
+    const again = await screen.findByRole('alertdialog')
+    expect(
+      await within(again).findByText(t('tagProperties.confirmDescription', { added: 4 })),
+    ).toBeInTheDocument()
+    expect(properties.get(PROJ_1)?.get('context')).toBeUndefined()
+
+    await user.click(within(again).getByRole('button', { name: t('tagProperties.confirmButton') }))
+    await waitFor(() =>
+      expect(properties.get(SEED_IDS.BLOCK_PROJ_3)?.get('context')?.['value_text']).toBe('@home'),
+    )
   })
 })

@@ -216,6 +216,30 @@
         "undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false",
         "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false"
       ]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_internal_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_single_value_is_refused",
+      "returns": []
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "a_builtin_key_is_not_set_on_tagged_blocks",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "a_page_is_not_a_tag",
+      "returns": []
     }
   ],
   "expected_queries": [
@@ -253,6 +277,22 @@
       "has_more": null,
       "name": "counts_after_the_undo",
       "rows": ["tagged_write_counts#added=2#changed=1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "counts_by_default",
+      "rows": ["tagged_write_counts#added=1#changed=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "trashed_block_is_offered_nothing",
+      "rows": [],
       "total_count": null
     }
   ],
@@ -364,6 +404,79 @@
       "comment": "O12–O14 — one undo: S2 and S4 lose `stage`, S3 has `draft` back.",
       "name": "undo_the_set",
       "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "tag_properties",
+        "value": {
+          "value_list": ["template"]
+        }
+      },
+      "command": "set_property",
+      "comment": "A key the app keeps for itself is not one a tag offers.",
+      "expect_error": "validation",
+      "name": "an_internal_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "tag_properties",
+        "value": {
+          "value_text": "stage"
+        }
+      },
+      "command": "set_property",
+      "comment": "`tag_properties` holds a list, not one value.",
+      "expect_error": "validation",
+      "name": "a_single_value_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "added": 1,
+          "changed": 0
+        },
+        "write": {
+          "include_nested": false,
+          "key": "todo_state",
+          "overwrite": false,
+          "tag_id": "S5",
+          "value": {
+            "value_text": "TODO"
+          }
+        }
+      },
+      "command": "set_property_on_tagged_blocks",
+      "comment": "A built-in is set where its own rules run.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "a_builtin_key_is_not_set_on_tagged_blocks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "added": 0,
+          "changed": 0
+        },
+        "write": {
+          "include_nested": false,
+          "key": "stage",
+          "overwrite": false,
+          "tag_id": "S1",
+          "value": {
+            "value_text": "final"
+          }
+        }
+      },
+      "command": "set_property_on_tagged_blocks",
+      "comment": "A page is not a tag.",
+      "expect_error": "not_found",
+      "name": "a_page_is_not_a_tag",
+      "via": "command"
     }
   ],
   "queries": [
@@ -406,6 +519,31 @@
       "command": "preview_set_property_on_tagged_blocks",
       "comment": "After the undo the counts are the first set's again.",
       "name": "counts_after_the_undo"
+    },
+    {
+      "args": {
+        "write": {
+          "include_nested": false,
+          "key": "stage",
+          "overwrite": false,
+          "tag_id": "S5",
+          "value": {
+            "value_text": "final"
+          }
+        }
+      },
+      "command": "preview_set_property_on_tagged_blocks",
+      "comment": "Nested tags and held values left out, as the form starts: only S2.",
+      "name": "counts_by_default"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "list_suggested_properties",
+      "comment": "S7 is tagged `book`, whose keys S2 is offered, but it is in the Trash. `expect_empty` because the emptiness is the behaviour: a mock that skips the Trash check offers `book`'s keys.",
+      "name": "trashed_block_is_offered_nothing",
+      "expect_empty": true
     }
   ],
   "seed": {
