@@ -36,7 +36,9 @@ export function reportIpcError(
  * a human: it names the thing that is wrong and what to do about it, and
  * `sanitize_internal_error` passes it to the frontend verbatim (only
  * `database` / `io` / `internal` kinds are replaced with a correlation id).
- * A coded one renders as its translated sentence (`formatErrorForDisplay`).
+ * Both go through `formatErrorForDisplay`: a coded one renders as its translated
+ * sentence, an uncoded one as its message without the `Validation error: ` prefix
+ * the wire keeps (#6967).
  * Every other kind is either not actionable by the user, already
  * correlation-id'd, or a storage failure `StorageFailureBanner` names once, so
  * those keep the localized generic toast.
@@ -68,11 +70,6 @@ export function reportIpcErrorWithReason(
   context?: Record<string, unknown>,
 ): void {
   logger.error(module, `${messageKey} (IPC error)`, context, err)
-  const reason =
-    isValidation(err) && err.message.trim() !== ''
-      ? err.code == null
-        ? err.message
-        : formatErrorForDisplay(err)
-      : null
+  const reason = isValidation(err) && err.message.trim() !== '' ? formatErrorForDisplay(err) : null
   notify.error(reason ?? t(messageKey))
 }

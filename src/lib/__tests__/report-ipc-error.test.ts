@@ -95,15 +95,20 @@ describe('reportIpcErrorWithReason (#4399)', () => {
     // err.message : undefined` could never reach.
     const err = {
       kind: 'validation',
+      // An uncoded validation keeps its display prefix on the wire (`AppError`'s `Serialize`).
       message:
-        "cannot declare property 'year' as 'number': 1 value(s) already stored under this key " +
-        'would be rejected by that type (1 stored as text).',
+        "Validation error: cannot declare property 'year' as 'number': 1 value(s) already " +
+        'stored under this key would be rejected by that type (1 stored as text).',
       code: null,
     }
     reportIpcErrorWithReason('Mod', 'property.errorCreate', err, mockT, { key: 'year' })
 
     expect(toast.error).toHaveBeenCalledTimes(1)
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('1 stored as text'))
+    // The reason, without the prefix (#6967).
+    expect(toast.error).toHaveBeenCalledWith(
+      "cannot declare property 'year' as 'number': 1 value(s) already stored under this key " +
+        'would be rejected by that type (1 stored as text).',
+    )
     // ...and never the generic fallback.
     expect(toast.error).not.toHaveBeenCalledWith('translated:property.errorCreate')
     // The structured log line is still emitted, with the context.
