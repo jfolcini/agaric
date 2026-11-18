@@ -53,7 +53,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   beforeEach(() => {
     seedBlocks()
     // The block is in the active space, whose definitions apply (#5841).
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     vi.clearAllMocks()
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
       dispatch(cmd, args),
@@ -84,7 +84,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
 
   it('a value a `date` definition refuses stays as text, as in the app', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'due',
       valueType: 'date',
       options: null,
@@ -99,7 +99,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   it('a ref value names a page by title or `[[id]]`, and one naming none stays text (D11)', async () => {
     for (const key of ['owner', 'approver', 'watcher']) {
       dispatch('create_property_def', {
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
         key,
         valueType: 'ref',
         options: null,
@@ -138,7 +138,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
 
   it('a value that cannot be stored stays as text, and one toast names it (D11)', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'estimate',
       valueType: 'number',
       options: null,
@@ -159,7 +159,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
   // the list of its items.
   it('a typed list under a list definition is stored as its items', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'stages',
       valueType: 'text',
       options: null,
@@ -178,7 +178,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
 
   it('a ref list names each page by title or `[[id]]`; one naming none keeps the line as text', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'links',
       valueType: 'ref',
       options: null,
@@ -200,7 +200,7 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
 
   it('a key that folds to two definitions names neither and stays as typed (D13)', async () => {
     dispatch('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'due-date',
       valueType: 'text',
       options: null,

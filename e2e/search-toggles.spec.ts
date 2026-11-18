@@ -114,45 +114,56 @@ test.describe('Search backend-error surface (E2E-2) @search', () => {
   // real backend rejection carries, so the panel's code-discriminated
   // `regexError` lights up `search-inline-error` and the body error-state
   // is suppressed.
-  test('invalid regex shows the inline error (search-inline-error)', async ({ page }) => {
-    await openSearchView(page)
-    await page.evaluate(() => {
-      ;(window as unknown as MockErrorWindow).__injectMockError?.('search_blocks', {
-        kind: 'validation',
-        code: 'InvalidRegex',
-        message: 'unclosed group at position 0',
+  // `@mock-only`: the mock answers an invalid pattern with no rows, not with
+  // `InvalidRegex` (`buildSearchRegex`), so the error comes from `__injectMockError`.
+  test(
+    'invalid regex shows the inline error (search-inline-error)',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await openSearchView(page)
+      await page.evaluate(() => {
+        ;(window as unknown as MockErrorWindow).__injectMockError?.('search_blocks', {
+          kind: 'validation',
+          code: 'InvalidRegex',
+          message: 'unclosed group at position 0',
+        })
       })
-    })
 
-    await page.getByTestId('search-toggle-regex').click()
-    const input = page.getByRole('combobox', { name: 'Search blocks' })
-    await input.fill('(unclosed')
-    await input.press('Enter')
+      await page.getByTestId('search-toggle-regex').click()
+      const input = page.getByRole('combobox', { name: 'Search blocks' })
+      await input.fill('(unclosed')
+      await input.press('Enter')
 
-    const inlineError = page.getByTestId('search-inline-error')
-    await expect(inlineError).toBeVisible()
-    await expect(inlineError).toContainText('unclosed group')
-    // The inline regex error owns the failure; the body error-state stays out.
-    await expect(page.getByTestId('search-error-state')).toHaveCount(0)
-  })
+      const inlineError = page.getByTestId('search-inline-error')
+      await expect(inlineError).toBeVisible()
+      await expect(inlineError).toContainText('unclosed group')
+      // The inline regex error owns the failure; the body error-state stays out.
+      await expect(page.getByTestId('search-error-state')).toHaveCount(0)
+    },
+  )
 
-  test('a non-regex backend error renders a visible error state', async ({ page }) => {
-    await openSearchView(page)
-    await page.evaluate(() => {
-      ;(window as unknown as MockErrorWindow).__injectMockError?.(
-        'search_blocks',
-        'database is locked',
-      )
-    })
+  // `@mock-only`: the error comes from the mock's `__injectMockError`.
+  test(
+    'a non-regex backend error renders a visible error state',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await openSearchView(page)
+      await page.evaluate(() => {
+        ;(window as unknown as MockErrorWindow).__injectMockError?.(
+          'search_blocks',
+          'database is locked',
+        )
+      })
 
-    const input = page.getByRole('combobox', { name: 'Search blocks' })
-    await input.fill('anything')
-    await input.press('Enter')
+      const input = page.getByRole('combobox', { name: 'Search blocks' })
+      await input.fill('anything')
+      await input.press('Enter')
 
-    // Generic (non-regex) failures previously left the panel blank;
-    // they now render a visible, role="alert" error state.
-    const errorState = page.getByTestId('search-error-state')
-    await expect(errorState).toBeVisible()
-    await expect(errorState).toHaveAttribute('role', 'alert')
-  })
+      // Generic (non-regex) failures previously left the panel blank;
+      // they now render a visible, role="alert" error state.
+      const errorState = page.getByTestId('search-error-state')
+      await expect(errorState).toBeVisible()
+      await expect(errorState).toHaveAttribute('role', 'alert')
+    },
+  )
 })

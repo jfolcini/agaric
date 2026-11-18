@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { pageRow } from './domain'
 import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
 
@@ -12,7 +13,11 @@ test('a bookmark re-sort keeps focus and a collapsed namespace with their pages 
 }) => {
   await waitForBoot(page)
   for (const content of ['Alpha/one', 'Beta/two']) {
-    await ipc(page, 'create_page_in_space', { parentId: null, content, spaceId: 'SPACE_PERSONAL' })
+    await ipc(page, 'create_page_in_space', {
+      parentId: null,
+      content,
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
   }
   await navigateToView(page, 'Pages')
   const grid = page.getByRole('grid')

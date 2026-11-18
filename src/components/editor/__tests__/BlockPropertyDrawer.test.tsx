@@ -117,7 +117,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   pageStore = createPageBlockStore('PAGE_1')
   // The block is in the active space, whose definitions the drawer lists (#5841).
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
@@ -710,7 +710,7 @@ describe('BlockPropertyDrawer', () => {
     useResolveStore.setState({
       cache: new Map([
         [
-          keyFor('SPACE_PERSONAL', 'TARGET_PAGE'),
+          keyFor(SEED_IDS.SPACE_PERSONAL, 'TARGET_PAGE'),
           { title: 'My Target Page', deleted: false, resolved: true },
         ],
       ]),
@@ -1123,7 +1123,7 @@ describe('BlockPropertyDrawer', () => {
 
     function seedBillable(valueBool: number) {
       seedBlocks()
-      spacePropertyDefs('SPACE_PERSONAL').set('billable', {
+      spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('billable', {
         key: 'billable',
         value_type: 'boolean',
         options: null,
@@ -1182,14 +1182,14 @@ describe('BlockPropertyDrawer', () => {
 
     beforeEach(() => {
       seedBlocks()
-      spacePropertyDefs('SPACE_PERSONAL').set('owner', {
+      spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('owner', {
         key: 'owner',
         value_type: 'ref',
         options: null,
         created_at: '2026-01-01T00:00:00.000Z',
         builtin: false,
       })
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
     })
 
@@ -1258,7 +1258,7 @@ describe('BlockPropertyDrawer', () => {
 
     beforeEach(() => {
       seedBlocks()
-      spacePropertyDefs('SPACE_PERSONAL').set('scores', {
+      spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('scores', {
         key: 'scores',
         value_type: 'number',
         options: null,
@@ -1407,7 +1407,7 @@ describe("BlockPropertyDrawer values that don't fit", () => {
     useResolveStore.setState({
       cache: new Map([
         [
-          keyFor('SPACE_PERSONAL', 'TARGET_PAGE'),
+          keyFor(SEED_IDS.SPACE_PERSONAL, 'TARGET_PAGE'),
           { title: 'My Target', deleted: false, resolved: true },
         ],
       ]),
@@ -1429,7 +1429,7 @@ describe("BlockPropertyDrawer values that don't fit", () => {
 
     beforeEach(() => {
       seedBlocks()
-      spacePropertyDefs('SPACE_PERSONAL').set('weight', {
+      spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('weight', {
         key: 'weight',
         value_type: 'number',
         options: null,

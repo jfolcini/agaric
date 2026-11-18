@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 /**
@@ -19,7 +20,7 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view @pages'
     page,
     Array.from({ length: SEEDED_BLOCKS }, (_, i) => ({ content: `History row ${i}` })),
   )
-  const total = await page.evaluate(async () => {
+  const total = await page.evaluate(async (spaceId) => {
     const { invoke } = (
       window as unknown as {
         __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
@@ -28,13 +29,13 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view @pages'
     const res = (await invoke('list_page_history', {
       pageId: '__all__',
       opTypeFilter: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: spaceId },
       cursor: null,
       limit: 50,
     })) as { items: unknown[]; has_more: boolean }
     // One page, so End's target is loaded without a load-more.
     return res.has_more ? -1 : res.items.length
-  })
+  }, SEED_IDS.SPACE_PERSONAL)
   expect(total).toBeGreaterThanOrEqual(SEEDED_BLOCKS)
 
   await navigateToView(page, 'History')

@@ -42,7 +42,7 @@ function row(content: string): HTMLElement {
 
 beforeEach(async () => {
   vi.clearAllMocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   useUndoStore.setState({ pages: new Map() })
   await answerInvokeFromMock(mockedInvoke)
 })
@@ -170,7 +170,7 @@ describe('a query table cell against the mock backend', () => {
 
   it('writes the page a ref cell picks', async () => {
     await invoke('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'owner',
       valueType: 'ref',
       options: null,
@@ -198,7 +198,7 @@ describe('a query table cell against the mock backend', () => {
   async function holdList(key: string, valueType: string | null, items: string[]): Promise<void> {
     if (valueType !== null) {
       await invoke('create_property_def', {
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
         key,
         valueType,
         options: null,

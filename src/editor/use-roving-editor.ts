@@ -91,6 +91,7 @@ import { TableMoveKeys } from '@/editor/table-edit'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
 import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
+import { asHighlightColor } from '@/lib/highlight-colors'
 import { t } from '@/lib/i18n'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -222,6 +223,21 @@ export const StrikeWithShortcut = Strike.extend({
 
 /** Highlight with configurable shortcut to toggle highlight. @internal Exported for testing. */
 export const HighlightWithShortcut = Highlight.extend({
+  // A highlight's colour (#6759): null is the theme's default. Drawn by
+  // `mark[data-highlight-color]` in index.css from its token pair.
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          asHighlightColor(element.getAttribute('data-highlight-color')),
+        renderHTML: (attributes: { color?: unknown }) => {
+          const color = asHighlightColor(attributes.color)
+          return color ? { 'data-highlight-color': color } : {}
+        },
+      },
+    }
+  },
   addKeyboardShortcuts() {
     return tipTapShortcutMap('highlight', () => this.editor.commands.toggleHighlight())
   },

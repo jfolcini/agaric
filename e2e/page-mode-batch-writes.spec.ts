@@ -7,9 +7,10 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, getInvokeCalls, installIpcRecorder, ipc, test, waitForBoot } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const EDITOR = '[data-testid="page-mode-editor"]'
 
 interface MockWindow {

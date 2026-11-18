@@ -45,7 +45,7 @@
 | Callouts | `> [!type]`, custom titles, foldable with `+` / `-`, custom types through CSS | The built-in styles (`CALLOUT_TYPES` in `src/components/RichContentRenderer/context.ts`); Obsidian's and GitHub's type names map to the nearest of them. A `-` or `+` after the type folds or opens the callout with a toggle; the fold is not saved (`src/editor/extensions/callout-blockquote.ts`) | Partial |
 | Footnotes | `[^id]`, plus a Footnotes view core plugin | `[^label]` references numbered by first use and `[^label]:` definition blocks (`src/editor/extensions/footnote.ts`). No footnotes panel | Done |
 | Comments | `%%hidden%%` | A block that is one comment imports, pastes and saves from *Edit as Markdown* as a `comment` callout of its text, shown in the quietest callout style; it is kept and marked, not hidden. A comment inside a sentence stays text with its `%%` markers, counted in one import warning (`comment_as_callout` in `src-tauri/agaric-engine/src/import.rs`, `docs/features/import-export.md`, #6751) | Partial |
-| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | One highlight (`==`) (#6759) | Gap |
+| Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | The same six, stored in Obsidian's form (`==🔴text==`), picked from the selection bubble or the Format popover, each drawn from a theme token (`src/lib/highlight-colors.ts`, #6759) | Done |
 | Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
 | Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode; the Search view replaces literal text across pages, with a preview and an Undo (`docs/SEARCH.md`) | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | None | Gap |
@@ -62,7 +62,7 @@
 | Aliases | `aliases` property; `[[Note\|label]]` | Page aliases as synced ops; `[[Page\|label]]` (`docs/features/tags-and-links.md`). A title and an alias share one name per space, ignoring case and Unicode form: a clash is refused, and a twin made on two devices is renamed `Title (2)` once they sync (#6318, #6345, #6356) | Done |
 | Heading links | `[[Note#Heading]]`, `[[#Heading]]`, nested headings | `[[Page#Heading]]` and `[[#Heading]]` store a reference to the heading's block | Done |
 | Block references | `[[Note#^id]]`; the id is added to the target line; `[[^^` searches blocks vault-wide | `((ULID))` for any block, no id line to add; shown as a chip with a peek (`src/components/BlockRefPeek.tsx`), and a referenced block shows how many blocks reference it. The chip does not render the block's content inline | Partial |
-| Embeds | `![[Note]]`, `![[Note#Heading]]`, `![[Note#^id]]`, images with `\|WxH`, audio, video, PDF, and embedded search queries | `{{embed}}` blocks (typed as `![[`) for pages, headings and blocks, live, editable behind an unlock; rows show content only (#6747), with depth and row caps (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`). Images keep Obsidian's `\|300` width (#4712) | Partial |
+| Embeds | `![[Note]]`, `![[Note#Heading]]`, `![[Note#^id]]`, images with `\|WxH`, audio, video, PDF, and embedded search queries | `{{embed}}` blocks (typed as `![[`) for pages, headings and blocks, live, editable behind an unlock; rows show their task checkbox, which ticks in place, and read-only chips, but no attachments (#6747), with depth and row caps (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`). Images keep Obsidian's `\|300` width (#4712) | Partial |
 | Backlinks | Linked mentions per note, in a pane or in the document, with a search filter, sort order and context toggle (help, *Backlinks*) | Linked references grouped by page, paginated, with a filter tree and a link-kind toggle (`src/components/backlinks/LinkedReferences.tsx`) | Done |
 | Unlinked mentions | Incoming, in Backlinks; outgoing, in Outgoing links | Incoming only, on pages, with "Link it" (`docs/features/tags-and-links.md`) | Partial |
 | Outgoing links pane | Core plugin | An *Outgoing links* section with a page's references, grouped by target page, unresolved targets apart (`src/components/backlinks/OutgoingLinks.tsx`). No outgoing unlinked mentions, and no sidebar pane | Partial |
@@ -297,7 +297,7 @@
 | --- | --- | --- | --- |
 | Vault scale | No published benchmark found. The 1.15.1 notes say search results "appear much faster when a search matches thousands of notes". Community reports of vaults with tens of thousands of notes are **unverified** | A weekly latency gate on backend commands at `FIXTURE_SIZE` blocks (`src-tauri/benches/interactive_slo.rs`); page mode stops at `PAGE_MODE_BLOCK_CAP`; no Android number, no memory number | Unverified |
 | Accessibility | No accessibility statement found in the help source (**unverified**) | Keyboard reach for every action; `axe` assertions in the component tests under `src/` and a rendered axe sweep of every top-level view in the light and dark themes (`e2e/views-axe.spec.ts`); text and surface colour pairs held to WCAG AA across the themes (`src/lib/__tests__/theme-contrast.test.ts`); reduced-motion handling (`docs/FEATURE-MAP.md`) and an *Animations* setting that follows the system, speeds motion up or turns it off. No screen-reader audit on record | Unverified |
-| Interface languages | Many, by volunteer translators (help) | English, plus Spanish for error messages and a few settings strings (`src/lib/i18n/es/`, #6750) | Gap |
+| Interface languages | Many, by volunteer translators (help) | English, German, Spanish, French and Portuguese, each complete and held there by `locale-catalogs.test.ts`; a contributor path in `docs/TRANSLATING.md` (#6750) | Partial |
 | Right-to-left | A right-to-left setting; 1.14 added a layout flip | Automatic per paragraph, by its first strong letter (`docs/features/appearance.md`); the interface stays left to right, and there is no direction setting | Partial |
 
 ## 25. Platforms, Packaging and Updates
@@ -327,7 +327,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | Section | Ahead | Level | Behind | Not ranked |
 | --- | :---: | :---: | :---: | :---: |
 | 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
-| 2. Editor | 1 | 9 | 9 | 2 |
+| 2. Editor | 1 | 10 | 8 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
 | 4. Properties and Bases | 3 | 4 | 4 | 0 |
 | 5. Tags | 1 | 3 | 1 | 0 |
@@ -352,7 +352,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **48** | **87** | **22** |
+| **Total (175 rows)** | **18** | **49** | **86** | **22** |
 <!-- scorecard:end -->
 
 How to read it:

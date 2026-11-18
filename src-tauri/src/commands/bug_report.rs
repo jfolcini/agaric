@@ -56,9 +56,9 @@ use agaric_core::error::AppError;
 //
 // Bug-report redaction is **deny-by-default at the field-value level**.
 // Anything that does not match a member of [`SAFE_TOKEN_PATTERNS`] is
-// replaced with `[REDACTED]`. This is the inverse of H-9a, which scrubbed
-// SPECIFIC values (`$HOME`, `device_id`, peer IDs) and let
-// everything else through.
+// replaced with `[REDACTED:<tag>]` ([`redacted_value_marker`]). This is the
+// inverse of H-9a, which scrubbed SPECIFIC values (`$HOME`, `device_id`, peer
+// IDs) and let everything else through.
 //
 // **Two formats, declared not sniffed** (#3317). Every file in the bundle
 // declares its [`LineFormat`] at the call site that read it: `agaric.log`
@@ -72,12 +72,12 @@ use agaric_core::error::AppError;
 // **Pipeline** (per [`redact_line`], the `TracingLog` format):
 //   1. If the line parses as JSON (i.e. structured `tracing` JSON output),
 //      walk the parsed tree and replace every leaf string VALUE that
-//      doesn't match a safe-token pattern with `[REDACTED]`. Field KEYS
+//      doesn't match a safe-token pattern with `[REDACTED:<tag>]`. Field KEYS
 //      are preserved verbatim — the schema of a log line is not PII.
 //   2. The `message` field gets one extra exception: if it appears in
 //      [`STABLE_MESSAGES`] it is kept verbatim. Free-text messages that
 //      don't match a stable string OR a safe-token shape collapse to
-//      `[REDACTED]`. (Per-word tokenization makes log bundles
+//      `[REDACTED:<tag>]`. (Per-word tokenization makes log bundles
 //      unreadable without bringing privacy benefit.)
 //   3. If the line does NOT parse as JSON (older rolled
 //      `agaric.log.YYYY-MM-DD` files written before tracing switched to
@@ -106,7 +106,7 @@ use agaric_core::error::AppError;
 
 /// Safe-token regex set: a value is preserved verbatim if-and-only-if it
 /// matches AT LEAST ONE pattern below — OR appears in [`SAFE_LITERALS`].
-/// Anything else is `[REDACTED]`.
+/// Anything else is `[REDACTED:<tag>]`.
 ///
 /// Edit this list — and only this list — when tuning what survives the
 /// deny-list. Each entry is anchored with `^…$` so a longer string that
@@ -236,7 +236,7 @@ static SAFE_TOKEN_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 /// verbatim, it is preserved through the deny-list.
 ///
 /// Add new entries here when an existing static `tracing::*!("…")` site
-/// would otherwise lose critical diagnostic context to `[REDACTED]`. Do
+/// would otherwise lose critical diagnostic context to `[REDACTED:<tag>]`. Do
 /// NOT add formatted / interpolated messages — only stable string
 /// literals from `tracing::*!` macros (the `"…"` final argument).
 const STABLE_MESSAGES: &[&str] = &[
@@ -314,7 +314,7 @@ const STABLE_MESSAGES: &[&str] = &[
 ///
 /// Used by the JSON deny-list pipeline ([`redact_json_value`]) to decide
 /// per leaf string value whether to keep the literal or replace it with
-/// `[REDACTED]`.
+/// `[REDACTED:<tag>]`.
 fn is_safe_token(s: &str) -> bool {
     if SAFE_LITERALS.contains(&s) {
         return true;
@@ -1393,8 +1393,30 @@ fn redact_json_line(line: &str) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
+/// The key [`redacted_value_marker`] hashes with.
+static REDACTION_TAG_KEY: LazyLock<[u8; 32]> = LazyLock::new(rand::random);
+
+/// What replaces a value the deny-list does not keep. Equal values get the
+/// same tag and different values different ones, so a reader can tell one peer
+/// logged repeatedly from several peers (#6764).
+///
+/// The key is drawn per process, not per call: the issue body and the ZIP are
+/// two IPC calls and must give one value the same tag. The hash is keyed at
+/// all because a plain hash of a low-entropy value (a first name) would let
+/// anyone confirm a guess from the public issue. Eight hex digits, because a
+/// bundle hides thousands of distinct values and four would often give two of
+/// them one tag.
+fn redacted_value_marker(value: &str) -> String {
+    let tag: String = blake3::keyed_hash(&REDACTION_TAG_KEY, value.as_bytes())
+        .to_hex()
+        .chars()
+        .take(8)
+        .collect();
+    format!("[REDACTED:{tag}]")
+}
+
 /// Recursively walk a JSON value and replace every leaf string VALUE
-/// that is not a safe token with `[REDACTED]`. Numbers, booleans, and
+/// that is not a safe token with `[REDACTED:<tag>]`. Numbers, booleans, and
 /// `null` are inherently safe (never PII shapes) and pass through
 /// untouched. Object keys are NEVER redacted — the schema of a log
 /// line is part of the structural skeleton the user reads to follow
@@ -1409,6 +1431,7 @@ fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&s
     // payload (timestamp + level + target + fields + spans rarely
     // exceeds 4 levels).
     if depth > 32 {
+        // A whole subtree, not one value: there is nothing to tag.
         *value = serde_json::Value::String("[REDACTED]".into());
         return;
     }
@@ -1420,7 +1443,7 @@ fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&s
             if is_safe_token(s) || (is_message && STABLE_MESSAGES.contains(&s.as_str())) {
                 // keep verbatim
             } else {
-                *s = "[REDACTED]".into();
+                *s = redacted_value_marker(s);
             }
         }
         serde_json::Value::Number(_) | serde_json::Value::Bool(_) | serde_json::Value::Null => {
@@ -1577,7 +1600,7 @@ fn cap_line_length(out: String) -> String {
 /// 1. **JSON path:** if `line` parses as a JSON object (the structured
 ///    `tracing` JSON layer's per-line emission), every leaf string VALUE
 ///    that doesn't match a [`SAFE_TOKEN_PATTERNS`] regex (or appear in
-///    [`SAFE_LITERALS`]) is replaced with `[REDACTED]`. The `message`
+///    [`SAFE_LITERALS`]) is replaced with `[REDACTED:<tag>]`. The `message`
 ///    field gets the [`STABLE_MESSAGES`] whitelist exception. Field keys
 ///    are preserved verbatim.
 /// 2. **Fallback path:** if `line` is not JSON (older rolled files, the
@@ -1609,7 +1632,7 @@ fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
 /// except four known needles and an email regex. `agaric.log` is JSON, so it
 /// took the strong path; the OpenTelemetry signal files are tab-separated
 /// `key=value` (see `agaric_observability::exporter`), so they silently took
-/// the weak one — a page title that became `[REDACTED]` in `agaric.log` was
+/// the weak one — a page title that was redacted in `agaric.log` was
 /// bundled verbatim from `otel-logs/`. Making the format an explicit input
 /// means a file cannot get the wrong (weaker) treatment by looking like
 /// something it is not.
@@ -1641,16 +1664,12 @@ fn redact_line_with_redactor(line: &str, redactor: &Redactor, format: LineFormat
         // so the OTel branch keeps every H-9a guarantee on top of its own:
         // a `device_id=<ULID>` value is a "safe token" by shape and would
         // otherwise survive the deny-list, but the needle pass rewrites it.
-        // Markers (`[REDACTED]`) match no needle, so this cannot double-rewrite.
+        // Markers (`[REDACTED:<tag>]`) match no needle, so this cannot double-rewrite.
         LineFormat::OtelSignal => {
             cap_line_length(apply_allow_list(&redact_kv_line(line), redactor))
         }
     }
 }
-
-/// Replacement marker for anything the deny-list does not positively allow.
-/// Same spelling as the JSON path so a reader of the bundle sees one marker.
-const REDACTED: &str = "[REDACTED]";
 
 /// The exact ORDERED key sequences the OTel line FORMATS themselves write —
 /// the fixed leading skeleton of a signal record — rather than a key an
@@ -1670,7 +1689,7 @@ const REDACTED: &str = "[REDACTED]";
 /// [`is_safe_token`] (see [`skeleton_value_is_allowed`]) because these values
 /// are structural — a dotted span name or a fractional `dur_ms` is not a
 /// "safe token" by shape, and redacting them would leave a bundle of
-/// `[REDACTED]` skeletons with no diagnostic value at all.
+/// `[REDACTED:<tag>]` skeletons with no diagnostic value at all.
 ///
 /// This must be the EXACT ordered sequence per format, not the flattened
 /// union of every format's keys: `name` is written by `format_span` and
@@ -1795,11 +1814,11 @@ fn redact_kv_line(line: &str) -> String {
         }
         let Some((key, value)) = segment.split_once('=') else {
             candidates.clear();
-            out.push_str(if is_safe_token(segment) {
-                segment
+            if is_safe_token(segment) {
+                out.push_str(segment);
             } else {
-                REDACTED
-            });
+                out.push_str(&redacted_value_marker(segment));
+            }
             continue;
         };
 
@@ -1813,16 +1832,16 @@ fn redact_kv_line(line: &str) -> String {
         }
         position += 1;
 
-        out.push_str(if is_structural_key(key) {
-            key
+        if is_structural_key(key) {
+            out.push_str(key);
         } else {
-            REDACTED
-        });
+            out.push_str(&redacted_value_marker(key));
+        }
         out.push('=');
         if is_safe_token(value) || (skeleton && skeleton_value_is_allowed(key, value)) {
             out.push_str(value);
         } else {
-            out.push_str(REDACTED);
+            out.push_str(&redacted_value_marker(value));
         }
     }
     out
@@ -1832,7 +1851,7 @@ fn redact_kv_line(line: &str) -> String {
 /// to an oversized file's tail (`…[truncated N bytes of older content]`).
 ///
 /// It carries no `=`, so on the `OtelSignal` branch [`redact_kv_line`] would
-/// otherwise deny-by-default it to `[REDACTED]` — the marker exists to tell
+/// otherwise deny-by-default it to `[REDACTED:<tag>]` — the marker exists to tell
 /// the reader content was DROPPED, and collapsing it erases that notice
 /// (#3712). This only brings `OtelSignal` to the `TracingLog` branch's
 /// behaviour, which already round-trips this exact line unchanged (a
@@ -2621,7 +2640,7 @@ mod tests {
     /// real `tracing::*!("…")` call site so the redaction deny-list keeps
     /// that diagnostic verbatim in a redacted bundle. If a call site's
     /// literal is edited (e.g. "run" → "build") without updating this list,
-    /// the whitelist entry silently collapses to `[REDACTED]` in bug
+    /// the whitelist entry silently collapses to `[REDACTED:<tag>]` in bug
     /// reports — the exact regression #700 documented.
     ///
     /// This test walks every `.rs` file under the crate's `src/` and
@@ -2711,7 +2730,7 @@ mod tests {
     /// positional walk in [`redact_kv_line`] stops matching that sequence at
     /// the new key, so every field from there on — `dur_ms`, `status`, and
     /// the whole attribute tail — loses the skeleton allowance and collapses
-    /// to `[REDACTED]` in every bundled trace line. That is fail-SAFE
+    /// to `[REDACTED:<tag>]` in every bundled trace line. That is fail-SAFE
     /// (over-redaction, never leakage) and therefore silent: the bundle
     /// still ships, just with no diagnostic value.
     ///
@@ -2797,7 +2816,7 @@ mod tests {
              sequence one writer emits, and each writer must have an entry — \
              an unlisted or mis-ordered sequence does not lose the bundle, it \
              silently redacts the rest of every line of that shape down to \
-             [REDACTED]. Writers found: {found:#?}"
+             [REDACTED:<tag>]. Writers found: {found:#?}"
         );
     }
 
@@ -4531,7 +4550,7 @@ mod tests {
     /// #609 — redaction must be applied even when the optional redaction
     /// inputs are unknown (`None` / `&[]`): JSON-format lines still take
     /// the H-9b deny-list path, so free-text PII the needle list never
-    /// knew about (a name, an arbitrary path) collapses to `[REDACTED]`
+    /// knew about (a name, an arbitrary path) collapses to `[REDACTED:<tag>]`
     /// while safe tokens (timestamp, level, target) survive.
     #[test]
     fn collect_metadata_recent_errors_json_lines_take_deny_list_path() {
@@ -4557,7 +4576,7 @@ mod tests {
             "free-text PII must be deny-listed, got: {line}"
         );
         assert!(
-            line.contains("[REDACTED]"),
+            mask_tags(line).contains("[REDACTED:TAG]"),
             "deny-list marker must be present, got: {line}"
         );
         assert!(
@@ -4617,7 +4636,7 @@ mod tests {
     ///
     /// 1. The UUID inside a larger message string — the composite string
     ///    matches no safe-token pattern, so the whole value collapses to
-    ///    `[REDACTED]`.
+    ///    `[REDACTED:<tag>]`.
     /// 2. The UUID as a standalone leaf value — a hyphenated UUID matches
     ///    none of [`SAFE_TOKEN_PATTERNS`] (the hex-digest patterns are
     ///    dash-free exact lengths; the ULID pattern is 26-char Crockford),
@@ -4663,7 +4682,7 @@ mod tests {
             "device id must not survive inside JSON string values, got: {line}"
         );
         assert!(
-            line.contains("[REDACTED]"),
+            mask_tags(line).contains("[REDACTED:TAG]"),
             "deny-list marker must be present, got: {line}"
         );
     }
@@ -5101,7 +5120,7 @@ mod tests {
         // strictly stronger; the needle pass still covers safe-token-shaped
         // identifiers (see `otel_branch_keeps_the_h9a_needle_scrubs`).
         assert!(
-            traces.contents.contains("path=[REDACTED]"),
+            mask_tags(&traces.contents).contains("path=[REDACTED:TAG]"),
             "a filesystem path attribute must be denied by default, got: {}",
             traces.contents
         );
@@ -5112,7 +5131,7 @@ mod tests {
         );
         assert!(
             traces.contents.contains("device=[REDACTED_DEVICE_ID]")
-                || traces.contents.contains("device=[REDACTED]"),
+                || mask_tags(&traces.contents).contains("device=[REDACTED:TAG]"),
             "the device id must be replaced by a marker, got: {}",
             traces.contents
         );
@@ -5593,7 +5612,7 @@ mod tests {
             "JSON number must survive: {out}"
         );
         assert!(
-            !out.contains("[REDACTED]"),
+            !out.contains("[REDACTED"),
             "no value should be redacted, got: {out}"
         );
     }
@@ -5617,11 +5636,11 @@ mod tests {
             "free-text field value must NOT survive: {out}"
         );
         assert!(
-            out.contains(r#""message":"[REDACTED]""#),
+            mask_tags(&out).contains(r#""message":"[REDACTED:TAG]""#),
             "message redaction marker must be present: {out}"
         );
         assert!(
-            out.contains(r#""note":"[REDACTED]""#),
+            mask_tags(&out).contains(r#""note":"[REDACTED:TAG]""#),
             "note redaction marker must be present: {out}"
         );
     }
@@ -5639,7 +5658,7 @@ mod tests {
             "STABLE_MESSAGES entry must survive: {out}"
         );
         assert!(
-            !out.contains("[REDACTED]"),
+            !out.contains("[REDACTED"),
             "no redaction for whitelisted message: {out}"
         );
 
@@ -5651,8 +5670,8 @@ mod tests {
             "non-whitelisted message must be redacted: {out}"
         );
         assert!(
-            out.contains(r#""message":"[REDACTED]""#),
-            "message replaced by [REDACTED]: {out}"
+            mask_tags(&out).contains(r#""message":"[REDACTED:TAG]""#),
+            "message replaced by a tagged marker: {out}"
         );
     }
 
@@ -5692,7 +5711,7 @@ mod tests {
             "free-text in nested array must be redacted: {out}"
         );
         assert!(
-            out.contains(r#""note":"[REDACTED]""#),
+            mask_tags(&out).contains(r#""note":"[REDACTED:TAG]""#),
             "redaction marker in nested array: {out}"
         );
     }
@@ -5746,7 +5765,7 @@ mod tests {
 
     /// H-9b — property test: random alphanumeric / PII-shaped strings
     /// fed into a JSON log line's free-text fields collapse to
-    /// `[REDACTED]`. Verifies the safety contract: no value outside the
+    /// `[REDACTED:<tag>]`. Verifies the safety contract: no value outside the
     /// safe-token set survives.
     ///
     /// `proptest` is a workspace dev-dep (per `src-tauri/Cargo.toml`)
@@ -5794,7 +5813,7 @@ mod tests {
                     "PII-shaped sample {sample:?} must NOT survive in {out:?}"
                 );
                 prop_assert!(
-                    out.contains(r#""secret":"[REDACTED]""#),
+                    mask_tags(&out).contains(r#""secret":"[REDACTED:TAG]""#),
                     "redaction marker missing for sample {sample:?}: got {out:?}"
                 );
                 Ok(())
@@ -5842,7 +5861,7 @@ mod tests {
                     "safe sample {sample:?} must survive in {out:?}"
                 );
                 prop_assert!(
-                    !out.contains(r#""token":"[REDACTED]""#),
+                    !out.contains(r#""token":"[REDACTED"#),
                     "safe token wrongly redacted: sample {sample:?}, got {out:?}"
                 );
                 Ok(())
@@ -5943,7 +5962,7 @@ mod tests {
             "embedded email must not survive: {out}"
         );
         assert!(
-            out.contains(r#""note":"[REDACTED]""#),
+            mask_tags(&out).contains(r#""note":"[REDACTED:TAG]""#),
             "whole-value redaction (not substring): {out}"
         );
     }
@@ -6005,7 +6024,7 @@ mod tests {
             "a bridged page title must never survive into the bundle: {out}"
         );
         assert!(
-            out.contains("page=[REDACTED]"),
+            mask_tags(&out).contains("page=[REDACTED:TAG]"),
             "the attribute KEY stays, the value goes: {out}"
         );
         // The structural skeleton stays readable — redaction that destroys the
@@ -6044,7 +6063,7 @@ mod tests {
             LineFormat::OtelSignal,
         );
         assert!(
-            out.ends_with("a_field_invented_tomorrow=[REDACTED]"),
+            mask_tags(&out).ends_with("a_field_invented_tomorrow=[REDACTED:TAG]"),
             "an unknown attribute must be denied by default: {out}"
         );
     }
@@ -6069,7 +6088,8 @@ mod tests {
         assert!(out.contains("status=Unset"), "{out}");
         assert!(out.contains("blocks_total=7"), "{out}");
         assert!(
-            out.contains("page_title=[REDACTED]") && !out.contains("My Secret Page"),
+            mask_tags(&out).contains("page_title=[REDACTED:TAG]")
+                && !out.contains("My Secret Page"),
             "a content-bearing span attribute must be redacted: {out}"
         );
     }
@@ -6096,7 +6116,7 @@ mod tests {
              redacted (it is not a safe token): {out}"
         );
         assert_eq!(
-            out.matches("[REDACTED]").count(),
+            mask_tags(&out).matches("[REDACTED:TAG]").count(),
             2,
             "both trailing attributes are redacted: {out}"
         );
@@ -6142,7 +6162,7 @@ mod tests {
              skeleton's identifier-label allowance: {out}"
         );
         assert!(
-            out.contains("name=[REDACTED]"),
+            mask_tags(&out).contains("name=[REDACTED:TAG]"),
             "the out-of-bounds attribute is redacted: {out}"
         );
     }
@@ -6150,7 +6170,7 @@ mod tests {
     /// #3712 — the whole-line truncation marker `read_capped_file` prepends
     /// to an oversized file's tail carries no `=`, so on the `OtelSignal`
     /// branch `redact_kv_line`'s deny-by-default fallback used to collapse
-    /// it to `[REDACTED]`, erasing the notice that content was dropped.
+    /// it to `[REDACTED:<tag>]`, erasing the notice that content was dropped.
     ///
     /// Deleting `is_truncation_marker_line`'s early return in `redact_kv_line`
     /// turns this red: the marker becomes indistinguishable from any other
@@ -6188,7 +6208,8 @@ mod tests {
                 LineFormat::OtelSignal,
             );
             assert_eq!(
-                out, REDACTED,
+                mask_tags(&out),
+                "[REDACTED:TAG]",
                 "only a digits-only byte count is exempt; this must be denied: {forged:?} -> {out}"
             );
         }
@@ -6220,7 +6241,7 @@ mod tests {
             LineFormat::OtelSignal,
         );
         assert!(
-            freeform.ends_with("body=[REDACTED]"),
+            mask_tags(&freeform).ends_with("body=[REDACTED:TAG]"),
             "a free-text body is redacted: {freeform}"
         );
     }
@@ -6330,5 +6351,108 @@ mod tests {
             raw.iter().any(|e| e.contents.contains(secret)),
             "redact=false must still bundle the raw signal files"
         );
+    }
+
+    // =================================================================
+    // #6764 — a redacted value carries a tag
+    // =================================================================
+
+    static TAGGED_MARKER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[REDACTED:([0-9a-f]{8})\]").unwrap());
+
+    /// The tag of each redacted value in `out`, in order.
+    fn tags(out: &str) -> Vec<&str> {
+        TAGGED_MARKER
+            .captures_iter(out)
+            .map(|marker| marker.extract::<1>().1[0])
+            .collect()
+    }
+
+    /// `out` with every tag spelled `TAG`, so an assertion can pin where a
+    /// tagged marker sits without knowing this process's key.
+    fn mask_tags(out: &str) -> String {
+        TAGGED_MARKER
+            .replace_all(out, "[REDACTED:TAG]")
+            .into_owned()
+    }
+
+    #[test]
+    fn equal_redacted_values_share_a_tag_and_different_values_do_not() {
+        let line = r#"{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{"message":"sync session failed","peer_a":"192.168.1.20","peer_b":"192.168.1.20","peer_c":"192.168.1.21"},"target":"agaric::sync"}"#;
+        let out = redact_line(line, &RedactionContext::default());
+
+        assert!(!out.contains("192.168.1."), "the values are hidden: {out}");
+        let tags = tags(&out);
+        assert_eq!(tags.len(), 3, "each hidden value carries a tag: {out}");
+        assert_eq!(tags[0], tags[1], "one value reads as one tag: {out}");
+        assert_ne!(tags[0], tags[2], "two values read as two tags: {out}");
+    }
+
+    #[test]
+    fn issue_body_and_zip_give_one_value_the_same_tag() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(
+            log_dir.join("agaric.log"),
+            concat!(
+                r#"{"timestamp":"2026-04-28T10:23:45Z","level":"WARN","fields":{"message":"sync session failed","peer":"192.168.1.20"},"target":"agaric::sync"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let body = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
+        let zip = read_logs_for_report_inner(&log_dir, true, None, None, &[]).unwrap();
+
+        let body_tags = tags(&body.recent_errors[0]);
+        assert_eq!(body_tags.len(), 1, "got: {:?}", body.recent_errors);
+        assert_eq!(
+            tags(&zip[0].contents),
+            body_tags,
+            "the ZIP names the peer by the tag the issue body used: {}",
+            zip[0].contents
+        );
+    }
+
+    #[test]
+    fn a_tag_is_not_the_plain_hash_of_its_value() {
+        let out = redact_line(
+            r#"{"fields":{"message":"sync session failed","name":"alice"}}"#,
+            &RedactionContext::default(),
+        );
+
+        let plain_hash: String = blake3::hash(b"alice").to_hex().chars().take(8).collect();
+        assert_eq!(tags(&out).len(), 1, "the hidden value carries a tag: {out}");
+        assert_ne!(
+            tags(&out)[0],
+            plain_hash,
+            "hashing a guessed value must not reproduce its tag: {out}"
+        );
+    }
+
+    #[test]
+    fn otel_keys_values_and_bare_segments_are_tagged() {
+        let line = "end=2026-08-09T10:23:45.123Z\tlevel=WARN\ttrace=-\tspan=-\t\
+                    target=agaric::sync\tbody=sync session failed\t\
+                    peer_a=192.168.1.20\tpeer_b=192.168.1.20\ta prose key=192.168.1.21\t\
+                    bare words";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+
+        assert!(
+            mask_tags(&out).ends_with(
+                "body=sync session failed\tpeer_a=[REDACTED:TAG]\tpeer_b=[REDACTED:TAG]\t\
+                 [REDACTED:TAG]=[REDACTED:TAG]\t[REDACTED:TAG]"
+            ),
+            "every hidden key, value and bare segment carries a tag: {out}"
+        );
+        let tags = tags(&out);
+        assert_eq!(tags[0], tags[1], "one value reads as one tag: {out}");
+        assert_ne!(tags[0], tags[3], "two values read as two tags: {out}");
     }
 }

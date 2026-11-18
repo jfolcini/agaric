@@ -233,17 +233,15 @@ describe('i18n catalog parity — missing keys (#2946)', () => {
  * DID carry plural forms — rendered correctly ("Removed 1 item…") for the
  * same user action. See #3860.
  *
- * This catalog uses two valid plural patterns, both of which i18next
- * resolves correctly:
- *   1. An explicit `key_one` / `key_other` pair.
- *   2. A bare `key` doubling as the singular form, with only `key_other`
- *      added alongside it — i18next falls back to the bare key for
- *      count === 1 when no `key_one` variant exists (e.g.
- *      `graph.local.depthOption` / `graph.local.depthOption_other`).
- *
- * The one shape that is wrong for every count is a bare `key` that
- * interpolates `{{count}}` with NO `_other` sibling at all: every count
- * then renders the identical (singular-shaped) string.
+ * A plural is an explicit `key_one` / `key_other` pair, and nothing else.
+ * Two shapes are wrong:
+ *   1. A bare `key` that interpolates `{{count}}` with no `_other` sibling:
+ *      every count renders the identical (singular-shaped) string.
+ *   2. A bare `key` doubling as the singular beside `key_other`. English
+ *      resolves it, but a locale with a plural category English lacks
+ *      (Spanish `many`) falls back from the missing form to the bare key
+ *      before `_other`, so a translation mirroring it would render the
+ *      singular for a million.
  */
 function findCountPluralViolations(catalog: Record<string, string>): string[] {
   interface Coverage {
@@ -271,11 +269,12 @@ function findCountPluralViolations(catalog: Record<string, string>): string[] {
 
   const violations: string[] = []
   for (const [base, entry] of bases) {
-    if (!entry.interpolatesCount) continue
-    const hasSingularForm = entry.hasOne || entry.hasPlain
-    if (!(hasSingularForm && entry.hasOther)) {
+    if (entry.hasPlain && (entry.hasOne || entry.hasOther)) {
       violations.push(base)
+      continue
     }
+    if (!entry.interpolatesCount) continue
+    if (!(entry.hasOne && entry.hasOther)) violations.push(base)
   }
   return violations.toSorted()
 }
@@ -393,13 +392,9 @@ const PRE_EXISTING_COUNT_EXEMPT: Readonly<Record<string, string>> = {
 describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860, #3882)', () => {
   const catalog = i18n.getResourceBundle('en', 'translation') as Record<string, string>
 
-  it('scan sanity: recognizes both plural patterns used in this catalog', () => {
-    // Explicit _one/_other pair (this PR's fix for trash.*).
+  it('scan sanity: recognizes the explicit _one/_other pair', () => {
     expect(catalog['trash.allPurged_one']).toBeDefined()
     expect(catalog['trash.allPurged_other']).toBeDefined()
-    // Bare-key-as-singular + _other pair (pre-existing pattern elsewhere).
-    expect(catalog['graph.local.depthOption']).toBeDefined()
-    expect(catalog['graph.local.depthOption_other']).toBeDefined()
   })
 
   it('every {{count}}-interpolating key has plural forms, outside the not-yet-fixed/exempt lists', () => {
@@ -414,7 +409,7 @@ describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860,
       expect.fail(
         `${violations.length} i18n key(s) interpolate {{count}} without complete plural forms ` +
           `(count === 1 will render the same "_other"-shaped wording, e.g. "1 items"):\n${report}\n` +
-          `Add "<key>_one" and "<key>_other" (or a bare "<key>" singular plus "<key>_other") to ` +
+          `Give each a "<key>_one" and "<key>_other" pair (and no bare "<key>") in ` +
           `the namespace file that owns each key, or — if it's genuinely not a grammar bug — add ` +
           `it to PRE_EXISTING_COUNT_EXEMPT with a stated reason.`,
       )
@@ -428,13 +423,15 @@ describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860,
     const fakeCatalog = {
       ...catalog,
       'zzGuardTest.newViolation': '{{count}} new thing(s) with no plural forms',
+      'zzGuardTest.bareSingular': '{{count}} thing',
+      'zzGuardTest.bareSingular_other': '{{count}} things',
     }
     const violations = findCountPluralViolations(fakeCatalog).filter(
       (base) =>
         !PRE_EXISTING_COUNT_NOT_YET_FIXED.has(base) &&
         !Object.hasOwn(PRE_EXISTING_COUNT_EXEMPT, base),
     )
-    expect(violations).toContain('zzGuardTest.newViolation')
+    expect(violations).toEqual(['zzGuardTest.bareSingular', 'zzGuardTest.newViolation'])
   })
 
   it('PRE_EXISTING_COUNT_NOT_YET_FIXED never grows past its ceiling (#3882 ratchet)', () => {

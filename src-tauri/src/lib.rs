@@ -13,6 +13,7 @@ pub mod appimage_integration;
 // honouring `AGARIC_DATA_DIR` and refusing to fall back to the real vault under
 // `AGARIC_E2E_SANDBOX`. Nothing else may call `app.path().app_data_dir()`.
 pub mod app_paths;
+pub mod change_feed;
 pub mod commands;
 pub mod db;
 pub mod deeplink;
@@ -2098,6 +2099,19 @@ fn spawn_background_tasks(
             tauri::async_runtime::spawn(fut);
         },
     );
+
+    // #6545: one `blocks:changed` per burst of local commits, after their
+    // background rebuilds.
+    tauri::async_runtime::spawn(change_feed::run(
+        pools.read.clone(),
+        materializer.clone(),
+        {
+            let app = app.clone();
+            move |event| {
+                main_thread::emit(&app, agaric_sync::sync_events::EVENT_BLOCKS_CHANGED, event);
+            }
+        },
+    ));
 
     // Issue #157 — MaintenanceDaemon, wired with its full job
     // vector (wal_checkpoint_truncate, op_log_compact,

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   activePopover,
@@ -25,7 +26,7 @@ const MESSAGE = "A tag name can't contain spaces. Use - instead, as in deep-work
 
 async function tagNames(page: Page): Promise<string[]> {
   const rows = await ipc<Array<{ name: string }>>(page, 'list_all_tags_in_space', {
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   return rows.map((row) => row.name).toSorted()
 }

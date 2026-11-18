@@ -113,6 +113,8 @@ impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
             BlocksChangedEvent {
                 changed_page_ids,
                 local_ops_appended: true,
+                domains: None,
+                local_command: false,
             },
         );
     }
@@ -124,6 +126,8 @@ impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
             BlocksChangedEvent {
                 changed_page_ids,
                 local_ops_appended: false,
+                domains: None,
+                local_command: false,
             },
         );
     }
@@ -212,6 +216,8 @@ impl ViewChangeEmitter for RecordingViewChangeEmitter {
             .push(BlocksChangedEvent {
                 changed_page_ids,
                 local_ops_appended: true,
+                domains: None,
+                local_command: false,
             });
     }
     fn emit_blocks_changed_by_peer(&self, changed_page_ids: Vec<String>) {
@@ -221,6 +227,8 @@ impl ViewChangeEmitter for RecordingViewChangeEmitter {
             .push(BlocksChangedEvent {
                 changed_page_ids,
                 local_ops_appended: false,
+                domains: None,
+                local_command: false,
             });
     }
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>) {
@@ -293,8 +301,8 @@ mod tests {
         assert_eq!(
             payloads,
             [
-                r#"{"changed_page_ids":["MCP"],"local_ops_appended":true}"#,
-                r#"{"changed_page_ids":["PEER"],"local_ops_appended":false}"#,
+                r#"{"changed_page_ids":["MCP"],"local_ops_appended":true,"domains":null,"local_command":false}"#,
+                r#"{"changed_page_ids":["PEER"],"local_ops_appended":false,"domains":null,"local_command":false}"#,
             ]
         );
     }

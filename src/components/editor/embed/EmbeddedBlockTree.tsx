@@ -40,11 +40,22 @@ import type React from 'react'
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
+import { BlockMetadataRow } from '@/components/editor/BlockInlineControls'
 import { useEmbedRenderer } from '@/components/editor/embed/embed-renderer'
 import { useEmbedRowEditor } from '@/components/editor/embed/embed-row-editor-context'
+import { ListMarker } from '@/components/editor/ListMarker'
+import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { useRichContent } from '@/components/editor/useRichContent'
+import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
+import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { type InlineProperty, useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
+import { useListStyles } from '@/hooks/useListStyles'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { parseEmbedToken } from '@/lib/embed-token'
+import { computeListOrdinals } from '@/lib/list-ordinals'
+import { contentShowsListMarker, type ListStyle } from '@/lib/list-style'
 import { computeSiblingAriaProps } from '@/lib/outline-aria'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
@@ -78,7 +89,13 @@ export function EmbeddedBlockTree({
   unlocked = false,
 }: EmbeddedBlockTreeProps): React.ReactElement {
   const { t } = useTranslation()
-  const siblingAria = useMemo(() => computeSiblingAriaProps(rows), [rows])
+  // The host tree's property batch holds the HOST page's rows, so the embed
+  // reads its own rows' properties in one batch of its own (#6747).
+  const rowIds = useMemo(() => rows.map((r) => r.id), [rows])
+  const ownedIds = useMemo(() => new Set(rowIds), [rowIds])
+  const { invalidationKey } = useScopedBlockPropertyEvents({
+    ownsBlock: (blockId) => ownedIds.has(blockId),
+  })
 
   if (rows.length === 0) {
     return (
@@ -87,6 +104,44 @@ export function EmbeddedBlockTree({
       </p>
     )
   }
+
+  return (
+    <BatchPropertiesProvider blockIds={rowIds} invalidationKey={invalidationKey}>
+      <EmbeddedRowList
+        rows={rows}
+        baseAriaLevel={baseAriaLevel}
+        onNavigate={onNavigate}
+        unlocked={unlocked}
+      />
+    </BatchPropertiesProvider>
+  )
+}
+
+function EmbeddedRowList({
+  rows,
+  baseAriaLevel,
+  onNavigate,
+  unlocked,
+}: Required<Pick<EmbeddedBlockTreeProps, 'rows' | 'baseAriaLevel'>> & {
+  onNavigate?: ((id: string) => void) | undefined
+  unlocked: boolean
+}): React.ReactElement {
+  const siblingAria = useMemo(() => computeSiblingAriaProps(rows), [rows])
+  const blockProperties = useExtraBlockProperties(rows)
+  const listStyles = useListStyles(rows)
+  // Ordinals count a run of same-depth siblings that show a marker, as the
+  // host outline's do (`BlockListRenderer`).
+  const ordinals = useMemo(() => {
+    const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
+    const styleOf = (id: string): ListStyle => {
+      const style = listStyles.get(id) ?? 'none'
+      return style !== 'none' && contentShowsListMarker(content.get(id) ?? '') ? style : 'none'
+    }
+    return computeListOrdinals(rows, styleOf)
+  }, [rows, listStyles])
+  // Inside the SOURCE page's provider: the tick writes through the store of
+  // the page that owns the block, which mirrors it to every view of that page.
+  const { handleToggleTodo } = useBlockProperties()
 
   return (
     <ul
@@ -112,6 +167,10 @@ export function EmbeddedBlockTree({
               baseAriaLevel={baseAriaLevel + 1 + row.depth}
               onNavigate={onNavigate}
               unlocked={unlocked}
+              properties={blockProperties[row.id]}
+              listStyle={listStyles.get(row.id) ?? 'none'}
+              listOrdinal={ordinals.get(row.id)}
+              onToggleTodo={handleToggleTodo}
             />
           </li>
         )
@@ -120,16 +179,27 @@ export function EmbeddedBlockTree({
   )
 }
 
+/** The read-only metadata row never calls its edit handlers. */
+const NO_EDIT = (): void => {}
+
 function EmbeddedRow({
   row,
   baseAriaLevel,
   onNavigate,
   unlocked,
+  properties,
+  listStyle,
+  listOrdinal,
+  onToggleTodo,
 }: {
   row: FlatBlock
   baseAriaLevel: number
   onNavigate?: ((id: string) => void) | undefined
   unlocked: boolean
+  properties: InlineProperty[] | undefined
+  listStyle: ListStyle
+  listOrdinal: number | undefined
+  onToggleTodo: (blockId: string) => Promise<void>
 }): React.ReactElement {
   const { t } = useTranslation()
   const resolvers = useBlockResolvers()
@@ -196,18 +266,86 @@ function EmbeddedRow({
     // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface while unlocked, as `StaticBlock`'s row is: the click mounts the editor, and keyboard users reach the content through the inner chips
     <div
       className={cn(
-        'embed-row w-full min-h-[1.5rem] rounded-md px-3 py-1 text-left text-sm',
+        'embed-row flex w-full min-h-[1.5rem] items-start rounded-md text-left text-sm',
         editable && 'cursor-text hover:bg-accent/50',
       )}
       data-embed-editable={editable ? 'true' : undefined}
       onClick={editable ? handleRowClick : undefined}
     >
-      <span className="embed-row-marker" aria-hidden="true" />
-      {richContent ?? (
-        <span className="block-placeholder text-muted-foreground italic">
-          {t('block.emptyPlaceholder')}
-        </span>
-      )}
+      <EmbeddedRowBody
+        row={row}
+        properties={properties}
+        listStyle={listStyle}
+        listOrdinal={listOrdinal}
+        onToggleTodo={onToggleTodo}
+      >
+        {richContent ?? (
+          <span className="block-placeholder text-muted-foreground italic">
+            {t('block.emptyPlaceholder')}
+          </span>
+        )}
+      </EmbeddedRowBody>
     </div>
+  )
+}
+
+/**
+ * What the block's own row draws around its text (#6747): the task checkbox,
+ * the list marker, and the metadata row, its chips read-only.
+ */
+function EmbeddedRowBody({
+  row,
+  properties,
+  listStyle,
+  listOrdinal,
+  onToggleTodo,
+  children,
+}: {
+  row: FlatBlock
+  properties: InlineProperty[] | undefined
+  listStyle: ListStyle
+  listOrdinal: number | undefined
+  onToggleTodo: (blockId: string) => Promise<void>
+  children: React.ReactNode
+}): React.ReactElement {
+  const content = row.content ?? ''
+  const task = row.todo_state || null
+  const showsListMarker = listStyle !== 'none' && contentShowsListMarker(content)
+  const filteredProperties = useMemo(
+    () => (properties ?? []).filter((p) => !INTERNAL_PROPERTY_KEYS.has(p.key)),
+    [properties],
+  )
+  return (
+    <>
+      {task !== null && (
+        // The tick changes no text and no structure, so it needs no unlock.
+        <div className="flex min-h-block-line flex-shrink-0 items-center pl-1">
+          <TaskMarkerButton blockId={row.id} todoState={task} onToggleTodo={onToggleTodo} />
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="px-3 py-1">
+          {task === null && !showsListMarker && (
+            <span className="embed-row-marker" aria-hidden="true" />
+          )}
+          <ListMarker style={listStyle} ordinal={listOrdinal} content={content} />
+          {children}
+        </div>
+        <BlockMetadataRow
+          readOnly
+          blockId={row.id}
+          priority={row.priority}
+          dueDate={row.due_date}
+          scheduledDate={row.scheduled_date}
+          properties={properties}
+          filteredProperties={filteredProperties}
+          attachmentCount={0}
+          showAttachments={false}
+          onToggleAttachments={NO_EDIT}
+          onEditProp={NO_EDIT}
+          onEditKey={NO_EDIT}
+        />
+      </div>
+    </>
   )
 }

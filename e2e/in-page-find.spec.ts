@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 /**
  * E2E for in-page find (Ctrl+F) — #2710.
  *
@@ -169,7 +170,7 @@ const LONG_PAGE_ROWS = 200
 
 async function seedLongPage(page: import('@playwright/test').Page): Promise<string> {
   return page.evaluate(
-    async ({ title, rows }) => {
+    async ({ title, rows, spaceId }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -177,7 +178,7 @@ async function seedLongPage(page: import('@playwright/test').Page): Promise<stri
       const pageId = await invoke('create_page_in_space', {
         parentId: null,
         content: title,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId,
       })
       // `needle` in every fifth row, the last one included: 40 rows.
       const content = (i: number): string => {
@@ -205,7 +206,7 @@ async function seedLongPage(page: import('@playwright/test').Page): Promise<stri
       })
       return pageId as string
     },
-    { title: LONG_PAGE, rows: LONG_PAGE_ROWS },
+    { title: LONG_PAGE, rows: LONG_PAGE_ROWS, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
 }
 

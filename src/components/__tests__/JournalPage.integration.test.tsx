@@ -310,7 +310,7 @@ describe('JournalPage / BlockTree integration — auto-create race', () => {
 // rendering its blocks until a reload. Driven through the tauri-mock, so the
 // delete cascade and every re-read are its real handlers.
 describe('JournalPage — Delete page empties the day (#5358)', () => {
-  const PERSONAL = 'SPACE_PERSONAL'
+  const PERSONAL = SEED_IDS.SPACE_PERSONAL
   const todayStr = formatDate(new Date())
 
   beforeEach(() => {

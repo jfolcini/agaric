@@ -8,6 +8,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
@@ -175,7 +176,7 @@ test.describe('journal headings and chips on a 360 px touch phone @mobile @journ
       content: 'See [[00000000000000000000PAGE03]]',
       parentId: '00000000000000000000PAGE01',
       index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     })
 
     await chooseMode(page, /^Week/)
@@ -256,7 +257,7 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
     const tags = await ipc<Array<{ tag_id: string; name: string }>>(
       page,
       'list_all_tags_in_space',
-      { scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } },
+      { scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } },
     )
     const idOf = (name: string) => tags.find((tag) => tag.name === name)?.tag_id
     await ipc(page, 'edit_block', {
@@ -310,7 +311,7 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
     const tags = await ipc<Array<{ tag_id: string; name: string }>>(
       page,
       'list_all_tags_in_space',
-      { scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } },
+      { scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } },
     )
     const work = tags.find((tag) => tag.name === 'work')?.tag_id
     await ipc(page, 'edit_block', {

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } from './helpers'
 
 /**
@@ -15,7 +16,7 @@ import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } f
  * Seed ids: src/lib/tauri-mock/seed.ts `SEED_IDS`.
  */
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const PAGE_PROJECTS = '00000000000000000000PAGE04'
 const PAGE_MEETINGS = '00000000000000000000PAGE05'
 /** "Fix login bug" — DOING, due today, on Projects. */
@@ -40,8 +41,12 @@ function peerWrite<T>(page: Page, cmd: string, args: Record<string, unknown>): P
   ) as Promise<T>
 }
 
-/** Deliver the `sync:complete` that follows the peer's ops, and wait for its toast. */
+/**
+ * Deliver the `sync:complete` that follows the peer's ops, and wait for the
+ * handler to have run: it moves "last synced" before it reloads anything.
+ */
 async function peerSyncComplete(page: Page, changedPageIds: string[], changedBlocks: number) {
+  await expect(page.getByTestId('last-synced')).toHaveText('Never synced')
   await page.evaluate(
     (payload) => (window as unknown as PeerWindow).__emitMockEvent?.('sync:complete', payload),
     {
@@ -53,13 +58,7 @@ async function peerSyncComplete(page: Page, changedPageIds: string[], changedBlo
       changed_page_ids: changedPageIds,
     },
   )
-  await expect(
-    page.getByText(
-      changedBlocks === 1
-        ? 'Synced 1 change from device'
-        : `Synced ${changedBlocks} changes from device`,
-    ),
-  ).toBeVisible()
+  await expect(page.getByTestId('last-synced')).toHaveText('Last synced just now')
 }
 
 // ===========================================================================

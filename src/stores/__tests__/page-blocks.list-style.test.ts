@@ -35,7 +35,7 @@ async function openPage() {
 beforeEach(async () => {
   vi.clearAllMocks()
   seedBlocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   dispatch('edit_block', { blockId: ITEM, toText: 'item' })
   await setListStyle(ITEM, 'bullet')

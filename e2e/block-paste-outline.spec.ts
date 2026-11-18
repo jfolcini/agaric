@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blockRow } from './domain'
 import {
   blurEditors,
@@ -80,7 +81,7 @@ async function listStyle(page: import('@playwright/test').Page, blockId: string)
 async function childrenOf(page: import('@playwright/test').Page, parentId: string) {
   const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   return resp.items
 }
@@ -345,7 +346,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
       content: CHILD_TEXT,
       parentId: GS3,
       index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       blockId: null,
     })
     await openPage(page, PAGE)
@@ -383,7 +384,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
       content: '',
       parentId: PAGE_ID,
       index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       blockId: null,
     })
     await openPage(page, PAGE)

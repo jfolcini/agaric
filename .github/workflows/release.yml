@@ -1525,7 +1525,11 @@ jobs:
         with:
           source: dir:src-tauri/target/${{ matrix.target }}/release/bundle
           output-prefix: ${{ runner.temp }}/agaric-${{ matrix.target }}
-          binaries: src-tauri/target/${{ matrix.target }}/release/agaric*
+          # The app and its agaric-mcp sidecar, the two Rust executables the
+          # bundle ships.
+          binaries: >-
+            src-tauri/target/${{ matrix.target }}/release/agaric${{ runner.os == 'Windows' && '.exe' || '' }}
+            src-tauri/target/${{ matrix.target }}/release/agaric-mcp${{ runner.os == 'Windows' && '.exe' || '' }}
 
       # PEND-41 R29 — build-time secret scan against the produced bundles.
       # `gitleaks` catches secrets in source; this catches the orthogonal
@@ -1822,6 +1826,9 @@ jobs:
       contents: write # gh release upload attaches the APK to the existing release
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token
       attestations: write # actions/attest-build-provenance — write to GH attestations API
+    env:
+      # Ride out a registry 429 or 5xx; why in `ci.yml`'s `android-build`.
+      GRADLE_OPTS: -Dorg.gradle.internal.repository.max.tentatives=8 -Dorg.gradle.internal.repository.initial.backoff=2000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -38,7 +38,7 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
 
   it('lands the copy and its child right after the original and records ONE undo entry of exactly the returned refs', async () => {
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     let returnedRefs: OpRef[] = []
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const resp = dispatch(cmd, args)
@@ -51,7 +51,7 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
       content: 'nested under GS_1',
       parentId: BLOCK_GS_1,
       index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       blockId: null,
     }) as { id: string }
     dispatch('set_todo_state', { blockId: BLOCK_GS_1, state: 'TODO' })

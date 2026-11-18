@@ -1,4 +1,14 @@
-import { lazy, type ReactElement, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
+import {
+  lazy,
+  type ReactElement,
+  Suspense,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { reloadMeetingLink } from '@/components/attachments/meeting-link'
@@ -9,7 +19,7 @@ import { StorageFailureBanner } from '@/components/common/StorageFailureBanner'
 import { NoPeersPairing } from '@/components/dialogs/NoPeersPairing'
 import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
-import { AppSidebar } from '@/components/layout/AppSidebar'
+import { AppSidebar, syncDotClass } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
 import { SpaceTopStripe } from '@/components/layout/SpaceTopStripe'
 import { TabBar } from '@/components/layout/TabBar'
@@ -37,6 +47,7 @@ import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLanguage } from '@/hooks/useLanguage'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { useMirrorIngestEvents } from '@/hooks/useMirrorIngestEvents'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -60,8 +71,10 @@ import { commands, type PeerRef } from '@/lib/bindings'
 import { lazyWithPreload } from '@/lib/lazy-with-preload'
 import { logger } from '@/lib/logger'
 import { openNewPageDialog } from '@/lib/overlay-events'
+import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
+import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
@@ -166,25 +179,88 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
  * Self-gating in its own component rather than an inline `isMobile && …` in
  * App: App is already at its cyclomatic-complexity ceiling, and a render
  * condition is not what that budget is for.
+ *
+ * #6870: once a device is paired it carries the Sync button's status dot,
+ * since that button sits in the closed drawer, and any state but idle as its
+ * description, so the dot is never colour alone.
  */
 function MobileSidebarTrigger(): ReactElement | null {
   const { t } = useTranslation()
   const { isMobile } = useSidebar()
+  const syncState = useSyncStore((s) => s.state)
+  const syncPeers = useSyncStore((s) => s.peers)
+  const syncError = useSyncStore((s) => s.error)
+  const waitingFor = useSyncStore((s) => s.waitingFor)
+  const now = useMinuteClock()
+  const syncStatusId = useId()
   if (!isMobile) return null
+  const paired = syncPeers.length > 0
+  const syncStatus = paired
+    ? syncStateLine(t, syncState, syncError, syncPeers, waitingFor, now)
+    : null
   return (
-    <SidebarTrigger
-      data-testid="mobile-sidebar-trigger"
-      aria-label={t('sidebar.openMenu')}
-      aria-haspopup="dialog"
-      // On touch, `self-start` keeps the 44px target on the first row of a
-      // header whose content stacks (a long title above its controls); the
-      // header's padding makes that row the whole header when it does not
-      // stack. A mouse header has no such padding, so there the trigger
-      // centres like the controls beside it. The negative margin puts the
-      // icon, not the button, on the header's 16px content edge.
-      className="-ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3.5 [@media(pointer:coarse)]:self-start"
-    />
+    <>
+      <SidebarTrigger
+        data-testid="mobile-sidebar-trigger"
+        aria-label={t('sidebar.openMenu')}
+        aria-haspopup="dialog"
+        aria-describedby={syncStatus === null ? undefined : syncStatusId}
+        // On touch, `self-start` keeps the 44px target on the first row of a
+        // header whose content stacks (a long title above its controls); the
+        // header's padding makes that row the whole header when it does not
+        // stack. A mouse header has no such padding, so there the trigger
+        // centres like the controls beside it. The negative margin puts the
+        // icon, not the button, on the header's 16px content edge.
+        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3.5 [@media(pointer:coarse)]:self-start"
+      >
+        {paired && (
+          // On the icon's top-right corner, as on the sidebar's Sync icon.
+          <span
+            className={cn(
+              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2.5 [@media(pointer:coarse)]:right-2.5',
+              syncDotClass(syncState, true),
+            )}
+            data-testid="mobile-sync-status-dot"
+            data-sync-state={syncState}
+            aria-hidden="true"
+          />
+        )}
+      </SidebarTrigger>
+      {syncStatus !== null && (
+        <span id={syncStatusId} className="sr-only">
+          {syncStatus}
+        </span>
+      )}
+    </>
   )
+}
+
+/** The words for a sync state the dot alone would carry; none for idle. */
+function syncStateLine(
+  t: TFunction,
+  state: SyncState,
+  error: string | null,
+  peers: readonly PeerInfo[],
+  waitingFor: string | null,
+  now: number,
+): string | null {
+  switch (state) {
+    case 'error': {
+      return t('sync.failed', { message: error ?? '' })
+    }
+    case 'syncing': {
+      return t('sidebar.syncing')
+    }
+    case 'offline': {
+      return t('sidebar.offline')
+    }
+    case 'waiting': {
+      return waitingFor === null ? null : waitingForPeerLabel(peers, waitingFor, t, now)
+    }
+    case 'idle': {
+      return null
+    }
+  }
 }
 
 /**

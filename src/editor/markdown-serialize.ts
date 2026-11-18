@@ -52,6 +52,7 @@ import type {
   TableNode,
   TextNode,
 } from '@/editor/types'
+import { asHighlightColor, highlightColorEmoji } from '@/lib/highlight-colors'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
@@ -246,15 +247,32 @@ interface Delimiter {
  * then toggle italic) — matching the intended semantics.
  */
 function markTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): Delimiter[] {
-  const closes = MARK_ORDER.filter((mark) => from.has(mark) && !to.has(mark)).map((mark) => ({
-    mark,
-    open: false,
-    text: CLOSE_DELIMITER[mark],
-  }))
-  const opens = MARK_ORDER.toReversed()
-    .filter((mark) => to.has(mark) && !from.has(mark))
-    .map((mark) => ({ mark, open: true, text: OPEN_DELIMITER[mark] }))
+  const closes = MARK_ORDER.filter((mark) => {
+    const was = markEntry(from, mark)
+    return was !== null && was !== markEntry(to, mark)
+  }).map((mark) => ({ mark, open: false, text: CLOSE_DELIMITER[mark] }))
+  const opens = MARK_ORDER.toReversed().flatMap((mark) => {
+    const entry = markEntry(to, mark)
+    if (entry === null || entry === markEntry(from, mark)) return []
+    return [{ mark, open: true, text: OPEN_DELIMITER[mark] + colorEmojiOf(entry) }]
+  })
   return [...closes, ...opens]
+}
+
+/** A coloured highlight's entry in a mark set names its colour (#6759): `highlight:red`. */
+const COLOR_SEPARATOR = ':'
+
+/** `mark`'s entry in `set`: the mark itself, a coloured highlight's entry, or null. */
+function markEntry(set: ReadonlySet<string>, mark: EmphasisMark): string | null {
+  if (set.has(mark)) return mark
+  for (const entry of set) if (entry.startsWith(mark + COLOR_SEPARATOR)) return entry
+  return null
+}
+
+/** The colour emoji a coloured highlight's opener carries after its `==`, else ''. */
+function colorEmojiOf(entry: string): string {
+  const color = asHighlightColor(entry.split(COLOR_SEPARATOR)[1])
+  return color ? highlightColorEmoji(color) : ''
 }
 
 function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): string {
@@ -712,7 +730,9 @@ function edgeChar(
 export function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
   const desired = new Set<string>()
   for (const m of marks) {
-    if (
+    if (m.type === 'highlight' && m.attrs?.color) {
+      desired.add(`highlight${COLOR_SEPARATOR}${m.attrs.color}`)
+    } else if (
       m.type === 'bold' ||
       m.type === 'italic' ||
       m.type === 'strike' ||

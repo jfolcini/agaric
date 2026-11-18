@@ -6,6 +6,7 @@
  * can import these same types for consistency.
  */
 
+import type { HighlightColor } from '@/lib/highlight-colors'
 import type { TodoState } from '@/lib/task-states'
 
 export type { TodoState } from '@/lib/task-states'
@@ -30,6 +31,8 @@ export interface StrikeMark {
 
 export interface HighlightMark {
   readonly type: 'highlight'
+  /** None, or a null colour from the editor, is the theme's default highlight (#6759). */
+  readonly attrs?: { readonly color: HighlightColor | null }
 }
 
 export interface UnderlineMark {

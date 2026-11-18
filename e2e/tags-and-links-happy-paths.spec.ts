@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
@@ -34,7 +35,7 @@ async function createTag(page: Page, name: string): Promise<string> {
     content: name,
     parentId: null,
     index: null,
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     blockId: null,
   })
   return id

@@ -10,6 +10,7 @@
  */
 
 import {
+  SEED_IDS,
   blocks,
   blockTags,
   DEFAULT_PROPERTY_DEFS,
@@ -23,9 +24,6 @@ interface SeedCommand {
   cmd: string
   args: Record<string, unknown>
 }
-
-/** The mock's id for the space the seed lives in. */
-const MOCK_SPACE = 'SPACE_PERSONAL'
 
 /** A page or tag first, so a block's `[[id]]` and `#[id]` tokens resolve as it is created. */
 const CREATE_ORDER = ['page', 'tag']
@@ -48,7 +46,7 @@ export function seedCommands(spaceId: string): SeedCommand[] {
   seedBlocks()
   const commands: SeedCommand[] = []
   const defaults = new Set(DEFAULT_PROPERTY_DEFS.map(([key]) => key))
-  for (const def of spacePropertyDefs(MOCK_SPACE).values()) {
+  for (const def of spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).values()) {
     if (defaults.has(def['key'] as string)) continue
     commands.push({
       cmd: 'create_property_def',

@@ -10,7 +10,7 @@
  *  - Error/panic section renders when counts > 0 and hides when all zero
  *  - High-water marks displayed under queue depth cards
  *  - Health color classes applied based on queue depth (green/default/amber)
- *  - Tooltip triggers present for all metric labels; content appears on hover
+ *  - Each metric label opens its explanation on click or Enter (#6895)
  *  - SyncStatusCard: sync state and metrics once a device is paired, nothing before
  */
 
@@ -617,56 +617,65 @@ describe('StatusPanel', () => {
     })
   })
 
-  describe('tooltips', () => {
-    it('shows tooltip content when hovering a metric label', async () => {
+  describe('counter explanations (#6895)', () => {
+    it('opens a counter explanation on click, named by its label', async () => {
       const user = userEvent.setup()
       stubInvoke({ get_status: () => mockStatus })
 
       render(<StatusPanel />)
 
-      const fgLabel = await screen.findByText('Foreground queue')
-      await user.hover(fgLabel)
+      await user.click(await screen.findByRole('button', { name: 'Writes the sync engine missed' }))
 
-      await waitFor(() => {
-        const matches = screen.getAllByText(
-          'Operations waiting to be applied to the database. Should stay near zero.',
-        )
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      })
+      const info = await screen.findByRole('dialog', { name: 'Writes the sync engine missed' })
+      expect(info).toHaveTextContent(t('status.sqlOnlyFallbackInfo'))
     })
 
-    it('has tooltip triggers for all six metric labels', async () => {
+    it('opens with Enter and closes with Escape, back on its label', async () => {
+      const user = userEvent.setup()
+      stubInvoke({ get_status: () => mockStatus })
+
+      render(<StatusPanel />)
+
+      const label = await screen.findByRole('button', { name: 'Foreground queue' })
+      label.focus()
+      await user.keyboard('{Enter}')
+      expect(await screen.findByRole('dialog', { name: 'Foreground queue' })).toHaveTextContent(
+        t('status.foregroundQueueInfo'),
+      )
+
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(label).toHaveFocus()
+    })
+
+    it('makes every counter label an explanation trigger', async () => {
+      stubInvoke({ get_status: () => mockStatus })
+
+      render(<StatusPanel />)
+
+      await screen.findByRole('button', { name: 'Foreground queue' })
+      const terms = screen.getAllByRole('term')
+      expect(terms.map((term) => within(term).getByRole('button').textContent)).toEqual([
+        'Foreground queue',
+        'Background queue',
+        'Ops processed',
+        'Background dispatched',
+        'Writes the sync engine missed',
+        'Cascades the sync engine missed',
+      ])
+    })
+
+    it('has no a11y violations with an explanation open', async () => {
+      const user = userEvent.setup()
       stubInvoke({ get_status: () => mockStatus })
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground queue')
-
-      // All 6 labels should be wrapped in tooltip trigger spans with cursor-help
-      const tooltipTriggers = container.querySelectorAll('.cursor-help')
-      expect(tooltipTriggers).toHaveLength(6)
-      expect(tooltipTriggers[0]?.textContent).toBe('Foreground queue')
-      expect(tooltipTriggers[1]?.textContent).toBe('Background queue')
-      expect(tooltipTriggers[2]?.textContent).toBe('Ops processed')
-      expect(tooltipTriggers[3]?.textContent).toBe('Background dispatched')
-      expect(tooltipTriggers[4]?.textContent).toBe('Writes the sync engine missed')
-      expect(tooltipTriggers[5]?.textContent).toBe('Cascades the sync engine missed')
-    })
-  })
-
-  describe('tooltip keyboard accessibility', () => {
-    it('tooltip triggers have tabIndex={0} for keyboard access', async () => {
-      stubInvoke({ get_status: () => mockStatus })
-
-      const { container } = render(<StatusPanel />)
-
-      await screen.findByText('Foreground queue')
-
-      const tooltipTriggers = container.querySelectorAll('.cursor-help')
-      expect(tooltipTriggers).toHaveLength(6)
-      for (const trigger of tooltipTriggers) {
-        expect(trigger.getAttribute('tabindex')).toBe('0')
-      }
+      await user.click(await screen.findByRole('button', { name: 'Background queue' }))
+      // The explanation is portalled out of the panel.
+      const info = await screen.findByRole('dialog', { name: 'Background queue' })
+      expect(await axe(container)).toHaveNoViolations()
+      expect(await axe(info)).toHaveNoViolations()
     })
   })
 
@@ -904,18 +913,15 @@ describe('StatusPanel', () => {
       })
     })
 
-    it('shows tooltip on sync metric label hover', async () => {
+    it('opens a sync counter explanation on click', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
       const user = userEvent.setup()
       render(<SyncStatusCard />)
-      // Hover over "Ops received" metric label
-      const label = screen.getByText('Ops received')
-      await user.hover(label)
-      await waitFor(() => {
-        const matches = screen.getAllByText(/sync messages received from peers/i)
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      })
+      await user.click(screen.getByRole('button', { name: 'Ops received' }))
+      expect(await screen.findByRole('dialog', { name: 'Ops received' })).toHaveTextContent(
+        t('status.opsReceivedInfo'),
+      )
     })
   })
 })

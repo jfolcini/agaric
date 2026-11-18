@@ -64,7 +64,7 @@ beforeEach(() => {
   localStorage.clear()
   touch.value = false
   seedBlocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: null })
   useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })

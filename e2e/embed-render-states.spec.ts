@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   deleteBlockViaContextMenu,
   expect,
@@ -33,7 +34,7 @@ const BLOCK_QN_2 = '0000000000000000000B10CK09'
 const BLOCK_MTG_1 = '0000000000000000000B10CK17'
 const BLOCK_MTG_2 = '0000000000000000000B10CK18'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
   return page.evaluate(
@@ -129,9 +130,10 @@ test.describe('embed render states @editor', () => {
     // The rail's side is square (docs/UX.md § Design tokens, Radius).
     await expect(embed).toHaveCSS('border-top-left-radius', '0px')
     await expect(embed).toHaveCSS('border-bottom-left-radius', '0px')
+    // Each row leads with its text; its property chips follow (#6747).
     await expect(embed.locator('[data-embed-block-id]')).toHaveText([
-      'Weekly standup notes',
-      'Design review feedback',
+      /^Weekly standup notes/,
+      /^Design review feedback/,
     ])
   })
 

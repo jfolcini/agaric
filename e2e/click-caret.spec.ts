@@ -1,6 +1,7 @@
 import { devices } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   ipc,
@@ -19,7 +20,7 @@ import {
  * and after a tag chip, on a page, in the journal and under a touch profile.
  */
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TAG_WORK = '000000000000000000000TAG01'
 const PLAIN = 'the quick brown fox jumps over the lazy dog'
 const RICH = `say #[${TAG_WORK}] then **bold words** end`

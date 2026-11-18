@@ -20,7 +20,7 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(async () => {
   vi.clearAllMocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   await answerInvokeFromMock(mockedInvoke)
 })
 

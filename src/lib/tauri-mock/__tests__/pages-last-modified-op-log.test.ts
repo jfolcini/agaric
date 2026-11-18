@@ -69,7 +69,7 @@ import {
   todayDate,
 } from '@/lib/tauri-mock/seed'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 
 /** The six canonical seed pages, in the order `seedBlocks` stamps them. */
 const CANONICAL_PAGE_IDS = [

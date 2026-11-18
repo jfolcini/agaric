@@ -1622,7 +1622,7 @@ where
 /// byte-stable across cycles.
 /// (A *submitted* bug report does not: the line is not in `bug_report`'s
 /// `STABLE_MESSAGES` and an IP address matches no `SAFE_TOKEN_PATTERNS` entry,
-/// so both collapse to `[REDACTED]` there. That is the sanitizer working as
+/// so both are redacted there. That is the sanitizer working as
 /// designed; the claim is about the log on the device.)
 fn dial_timeout_message(
     peer_id: &str,

@@ -183,7 +183,7 @@ describe('EditableBlock — the removal toast’s Undo', () => {
     seedBlocks()
     vi.clearAllMocks()
     useUndoStore.setState({ pages: new Map() })
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })
 
