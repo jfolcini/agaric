@@ -582,3 +582,234 @@ async fn the_pages_view_reads_a_datetime_keys_operand_6758() {
         std::slice::from_ref(&f.page)
     );
 }
+
+const AWAY_SPACE: &str = "01TESTSPACE000000000000002";
+
+/// The ids `filter` finds in every space, in order of id.
+async fn found_everywhere(pool: &SqlitePool, filter: SearchFilter) -> Vec<String> {
+    let page = search_blocks_inner(pool, String::new(), None, None, filter, None)
+        .await
+        .unwrap();
+    let mut ids: Vec<String> = page
+        .items
+        .into_iter()
+        .map(|row| row.id.as_str().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// An all-spaces search reads a day on each row by its form: where the test
+/// space declares `due` a date and another space a datetime, a day finds both
+/// spaces' blocks on it, and `>` and `<` place each by its own form.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_all_spaces_day_filter_reads_each_rows_form_6906() {
+    use agaric_store::filters::expr::FilterExpr;
+    use agaric_store::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+    let f = fixture().await;
+    f.declare("due", "date").await.unwrap();
+    insert_block(&f.pool, AWAY_SPACE, "page", "Away", None, None).await;
+    mark_block_as_space(&f.pool, AWAY_SPACE).await;
+    let (key, ty) = ("due".into(), "datetime".into());
+    create_property_def_inner(&f.pool, DEV, &f.mat, AWAY_SPACE, key, ty, None)
+        .await
+        .unwrap();
+    let away = create_page_in_space_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        None,
+        "Abroad".into(),
+        AWAY_SPACE.into(),
+    )
+    .await
+    .unwrap();
+    let meeting = dup_child(&f.pool, &f.mat, &away, "meeting").await;
+    let later = dup_child(&f.pool, &f.mat, &f.page, "later").await;
+    f.set(&f.block, "due", None, Some("2026-11-14"))
+        .await
+        .unwrap();
+    f.set(&later, "due", None, Some("2026-11-15"))
+        .await
+        .unwrap();
+    // Noon UTC is the 14th in every zone a host runs in.
+    f.set(&meeting, "due", None, Some("2026-11-14T12:00Z"))
+        .await
+        .unwrap();
+    let ids = |blocks: &[&BlockId]| {
+        let mut ids: Vec<String> = blocks.iter().map(|b| b.as_str().to_owned()).collect();
+        ids.sort();
+        ids
+    };
+
+    let mut on_the_day = search_filter(SearchScope::AllSpaces);
+    on_the_day.property_filters = vec![SearchPropertyFilter {
+        key: "due".into(),
+        value: "2026-11-14".into(),
+    }];
+    assert_eq!(
+        found_everywhere(&f.pool, on_the_day).await,
+        ids(&[&f.block, &meeting])
+    );
+    let compared = |predicate: PropertyPredicate| {
+        let mut filter = search_filter(SearchScope::AllSpaces);
+        filter.filter_expr = Some(FilterExpr::leaf(FilterPrimitive::HasProperty {
+            key: "due".into(),
+            predicate,
+        }));
+        found_everywhere(&f.pool, filter)
+    };
+    let day = |value: &str| PropertyValue::Date {
+        value: value.into(),
+    };
+    assert_eq!(
+        compared(PropertyPredicate::Gt {
+            value: day("2026-11-14")
+        })
+        .await,
+        ids(&[&later])
+    );
+    assert_eq!(
+        compared(PropertyPredicate::Lt {
+            value: day("2026-11-15")
+        })
+        .await,
+        ids(&[&f.block, &meeting])
+    );
+    assert_eq!(
+        compared(PropertyPredicate::Lt {
+            value: day("2026-11-14")
+        })
+        .await,
+        Vec::<String>::new()
+    );
+}
+
+/// One filter of the older `{{query property:…}}` surfaces: `filtered`
+/// picks `filtered_blocks_query`, else `query_by_property`. The ids found, in
+/// order of id.
+async fn legacy(
+    pool: &SqlitePool,
+    filtered: bool,
+    key: &str,
+    operator: &str,
+    value_date: Option<&str>,
+    range: Option<(&str, &str)>,
+) -> Vec<String> {
+    let (key, operator) = (key.to_owned(), operator.to_owned());
+    let value_date = value_date.map(str::to_owned);
+    let range = range.map(|(from, to)| (from.to_owned(), to.to_owned()));
+    let page = if filtered {
+        let filter = PropertyFilter {
+            key,
+            value_text: None,
+            value_text_in: Vec::new(),
+            value_date,
+            value_date_range: range,
+            operator,
+        };
+        let scope = test_space_scope();
+        filtered_blocks_query_inner(pool, vec![filter], None, None, &scope, None, None).await
+    } else {
+        query_by_property_inner(
+            pool,
+            key,
+            None,
+            value_date,
+            Some(operator),
+            None,
+            None,
+            &test_space_scope(),
+            None,
+            false,
+            None,
+            None,
+            range,
+            None,
+        )
+        .await
+    };
+    let mut ids: Vec<String> = page
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|row| row.id.as_str().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// `filtered_blocks_query` and `query_by_property` read a day on each row by
+/// its form: a datetime key's instants against the device's day, a date
+/// key's days as written, under every operator and a range of days.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_older_property_queries_read_a_day_per_row_6906() {
+    let f = fixture().await;
+    f.declare("due", "date").await.unwrap();
+    let train = dup_child(&f.pool, &f.mat, &f.page, "train").await;
+    // Noon UTC is its UTC day in every zone a host runs in.
+    f.set(&f.block, "starts", None, Some("2026-11-14T12:00Z"))
+        .await
+        .unwrap();
+    f.set(&train, "starts", None, Some("2026-11-20T12:00Z"))
+        .await
+        .unwrap();
+    f.set(&f.block, "due", None, Some("2026-11-14"))
+        .await
+        .unwrap();
+    f.set(&train, "due", None, Some("2026-11-15"))
+        .await
+        .unwrap();
+    let (flight, train) = (f.block.as_str().to_owned(), train.as_str().to_owned());
+    let mut both_sorted = vec![flight.clone(), train.clone()];
+    both_sorted.sort();
+    let none = Vec::<String>::new();
+    let (day, next) = (Some("2026-11-14"), Some("2026-11-15"));
+
+    for filtered in [false, true] {
+        let found = |key: &'static str, op: &'static str, date, range| {
+            legacy(&f.pool, filtered, key, op, date, range)
+        };
+        let surface = if filtered { "filtered" } else { "by property" };
+        for (key, op, date, range, expected) in [
+            ("starts", "eq", day, None, vec![flight.clone()]),
+            ("starts", "neq", day, None, vec![train.clone()]),
+            ("starts", "gt", day, None, vec![train.clone()]),
+            ("starts", "gte", day, None, both_sorted.clone()),
+            ("starts", "lt", day, None, none.clone()),
+            ("starts", "lte", day, None, vec![flight.clone()]),
+            (
+                "starts",
+                "lt",
+                Some("2026-11-20"),
+                None,
+                vec![flight.clone()],
+            ),
+            ("due", "eq", day, None, vec![flight.clone()]),
+            ("due", "neq", day, None, vec![train.clone()]),
+            ("due", "gt", day, None, vec![train.clone()]),
+            ("due", "lt", next, None, vec![flight.clone()]),
+            ("due", "lte", day, None, vec![flight.clone()]),
+            (
+                "starts",
+                "eq",
+                None,
+                Some(("2026-11-14", "2026-11-15")),
+                vec![flight.clone()],
+            ),
+            (
+                "due",
+                "eq",
+                None,
+                Some(("2026-11-14", "2026-11-15")),
+                vec![flight.clone()],
+            ),
+        ] {
+            assert_eq!(
+                found(key, op, date, range).await,
+                expected,
+                "{surface}: {key} {op} {date:?} {range:?}"
+            );
+        }
+    }
+}

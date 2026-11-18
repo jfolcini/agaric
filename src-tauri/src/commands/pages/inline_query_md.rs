@@ -347,9 +347,8 @@ fn predicate_value(p: &PropertyPredicate) -> Option<&PropertyValue> {
 
 fn property_value_str(v: &PropertyValue) -> String {
     match v {
-        PropertyValue::Text { value }
-        | PropertyValue::Date { value }
-        | PropertyValue::DatetimeDay { from: value, .. } => value.clone(),
+        PropertyValue::Text { value } | PropertyValue::Date { value } => value.clone(),
+        PropertyValue::DatetimeDay(day) => day.day.clone(),
         // A `Ref` value is a block ULID — mark it when unresolved so no raw
         // opaque id reaches the readable description.
         PropertyValue::Ref { value } => readable_ref(value),

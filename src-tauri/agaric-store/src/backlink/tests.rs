@@ -7523,6 +7523,13 @@ mod parity_p1 {
         insert_list_property(pool, &s5, "authors", "[4]").await;
         insert_list_property(pool, &nolink, "authors", r#"["Ann"]"#).await;
         insert_list_property(pool, &s3, "points", "[3,7.5]").await;
+        // #6906 `starts`: an instant at noon UTC (the 14th in every zone a
+        // host runs in), a day as a `date` key holds it, a list of an
+        // instant, and a later instant.
+        insert_property(pool, &s1, "starts", None, None, Some("2026-11-14T12:00Z")).await;
+        insert_property(pool, &s2, "starts", None, None, Some("2026-11-14")).await;
+        insert_list_property(pool, &s3, "starts", r#"["2026-11-14T12:00Z"]"#).await;
+        insert_property(pool, &s5, "starts", None, None, Some("2026-11-20T12:00Z")).await;
 
         // Tag blocks must exist as `block_type = 'tag'` rows (block_tags
         // FKs `tag_id` → blocks(id)).
@@ -7674,6 +7681,54 @@ mod parity_p1 {
         }
     }
 
+    /// #6906 — a `PropertyDate` leaf on `starts` against the day 2026-11-14.
+    fn on_day(op: CompareOp) -> BacklinkFilter {
+        BacklinkFilter::PropertyDate {
+            key: "starts".into(),
+            op,
+            value: "2026-11-14".into(),
+        }
+    }
+
+    /// #6906 — the References panel's day filter reads each `starts` row by
+    /// its form: the instants against the local day, the day as written, a
+    /// list's instant as a scalar's. `Neq` needs the key, so S4 (no
+    /// `starts`) is never found. The battery holds the compiler to the same.
+    #[tokio::test]
+    async fn a_day_filter_reads_each_rows_form_6906() {
+        let (pool, _dir) = test_pool().await;
+        seed_fixture(&pool).await;
+        let holder = |value: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT block_id FROM block_properties \
+                     WHERE key = 'starts' AND (value_date = ?1 OR value_list = ?1)",
+                )
+                .bind(value)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let instant = holder("2026-11-14T12:00Z").await;
+        let day = holder("2026-11-14").await;
+        let listed = holder(r#"["2026-11-14T12:00Z"]"#).await;
+        let later = holder("2026-11-20T12:00Z").await;
+        let set = |ids: &[&String]| ids.iter().map(|id| (*id).clone()).collect::<FxHashSet<_>>();
+        for (op, expected) in [
+            (CompareOp::Eq, set(&[&instant, &day, &listed])),
+            (CompareOp::Neq, set(&[&later])),
+            (CompareOp::Lt, set(&[])),
+            (CompareOp::Lte, set(&[&instant, &day, &listed])),
+            (CompareOp::Gt, set(&[&later])),
+            (CompareOp::Gte, set(&[&instant, &day, &listed, &later])),
+        ] {
+            let found = resolve_filter(&pool, &on_day(op.clone()), 0).await.unwrap();
+            assert_eq!(found, expected, "{op:?}");
+        }
+    }
+
     /// The full battery of filter trees. Each entry is (label, filters).
     fn battery() -> Vec<(&'static str, Vec<BacklinkFilter>)> {
         vec![
@@ -7764,6 +7819,12 @@ mod parity_p1 {
                     value: "2025-01-01".into(),
                 }],
             ),
+            ("day_eq", vec![on_day(CompareOp::Eq)]),
+            ("day_neq", vec![on_day(CompareOp::Neq)]),
+            ("day_lt", vec![on_day(CompareOp::Lt)]),
+            ("day_lte", vec![on_day(CompareOp::Lte)]),
+            ("day_gt", vec![on_day(CompareOp::Gt)]),
+            ("day_gte", vec![on_day(CompareOp::Gte)]),
             (
                 "prop_date_startswith",
                 vec![BacklinkFilter::PropertyDate {
