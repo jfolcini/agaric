@@ -16,6 +16,7 @@ use agaric_core::ulid::{BlockId, PageId};
 use agaric_store::backlink::{
     self, BacklinkFilter, BacklinkSort, GroupedBacklinkResponse, LinkKind,
 };
+use agaric_store::filters::datetime_operand::LocalDay;
 use agaric_store::fts;
 use agaric_store::pagination::{
     self, ActiveBlockRow, BlockRow, Cursor, OutgoingLinkRow, PageRequest, PageResponse,
@@ -1185,15 +1186,71 @@ pub async fn list_outgoing_links(
 // order until the page filled (#5426).
 
 /// `{bp_alias}`'s block is one whose list under the key bound at
-/// `?{key_param}` holds a string item `li.value {test}` (#6741). A join
-/// rather than a correlated `EXISTS`, so SQLite builds the set once instead
-/// of once per property row.
-fn listed(bp_alias: &str, key_param: usize, test: &str) -> String {
+/// `?{key_param}` holds a string item `li.value` meeting `condition` (#6741).
+/// A join rather than a correlated `EXISTS`, so SQLite builds the set once
+/// instead of once per property row.
+fn listed(bp_alias: &str, key_param: usize, condition: &str) -> String {
     format!(
         "{bp_alias}.block_id IN (SELECT l.block_id FROM block_properties l \
          JOIN json_each(l.value_list) li \
-         WHERE l.key = ?{key_param} AND li.type = 'text' AND li.value {test})"
+         WHERE l.key = ?{key_param} AND li.type = 'text' AND {condition})"
     )
+}
+
+/// The next free `?N` for `value`, bound in `binds`.
+fn bind_next<'b>(
+    next_param: &'b mut usize,
+    binds: &'b mut Vec<String>,
+) -> impl FnMut(&str) -> String + 'b {
+    move |value| {
+        binds.push(value.to_owned());
+        let p = format!("?{next_param}");
+        *next_param += 1;
+        p
+    }
+}
+
+/// [`scalar_or_listed`] on `value_date` of a day operand (#6906): the scalar
+/// and each string item read by its form ([`LocalDay::test`]).
+fn day_or_listed(
+    bp_alias: &str,
+    key_param: usize,
+    sql_op: &str,
+    day: &LocalDay,
+    bind: &mut dyn FnMut(&str) -> String,
+) -> String {
+    let col = format!("{bp_alias}.value_date");
+    let scalar = day.test(&col, sql_op, bind);
+    if sql_op == "!=" {
+        let on = listed(bp_alias, key_param, &day.test("li.value", "=", bind));
+        format!(" AND ({col} IS NULL OR {scalar}) AND NOT {on}")
+    } else {
+        let item = listed(bp_alias, key_param, &day.test("li.value", sql_op, bind));
+        format!(" AND ({scalar} OR {item})")
+    }
+}
+
+/// A half-open range of days on `value_date` (#6906), the scalar and each
+/// string item read by its form ([`LocalDay::test`]).
+fn day_range_or_listed(
+    bp_alias: &str,
+    key_param: usize,
+    (from, to): (&LocalDay, &LocalDay),
+    bind: &mut dyn FnMut(&str) -> String,
+) -> String {
+    let col = format!("{bp_alias}.value_date");
+    let scalar = format!(
+        "{} AND {}",
+        from.test(&col, ">=", bind),
+        to.test(&col, "<", bind)
+    );
+    let after = from.test("li.value", ">=", bind);
+    let item = listed(
+        bp_alias,
+        key_param,
+        &format!("{after} AND {}", to.test("li.value", "<", bind)),
+    );
+    format!(" AND (({scalar}) OR {item})")
 }
 
 /// `{column} {sql_op} ?{p}` on the row's scalar or on one string item of its
@@ -1213,12 +1270,12 @@ fn scalar_or_listed(
         // NULL and silently exclude the row.
         format!(
             " AND ({bp_alias}.{column} IS NULL OR {bp_alias}.{column} != ?{p}) AND NOT {}",
-            listed(bp_alias, key_param, &format!("= ?{p}"))
+            listed(bp_alias, key_param, &format!("li.value = ?{p}"))
         )
     } else {
         format!(
             " AND ({bp_alias}.{column} {sql_op} ?{p} OR {})",
-            listed(bp_alias, key_param, &format!("{sql_op} ?{p}"))
+            listed(bp_alias, key_param, &format!("li.value {sql_op} ?{p}"))
         )
     }
 }
@@ -1287,20 +1344,37 @@ fn property_value_predicate_sql(
         let member = format!("IN (SELECT value FROM json_each(?{p}))");
         return Ok(format!(
             " AND ({bp_alias}.value_text {member} OR {})",
-            listed(bp_alias, key_param, &member)
+            listed(bp_alias, key_param, &format!("li.value {member}"))
         ));
+    }
+    if pf.value_date.is_some() || pf.value_date_range.is_some() {
+        return Ok(date_predicate_sql(
+            pf, bp_alias, key_param, sql_op, next_param, binds,
+        ));
+    }
+    // No value predicate: key presence alone matches.
+    Ok(String::new())
+}
+
+/// The `value_date` / `value_date_range` arm of [`property_value_predicate_sql`]:
+/// days read as the device's local days (#6906), anything else as written;
+/// empty when `pf` has neither.
+fn date_predicate_sql(
+    pf: &PropertyFilter,
+    bp_alias: &str,
+    key_param: usize,
+    sql_op: &str,
+    next_param: &mut usize,
+    binds: &mut Vec<String>,
+) -> String {
+    if let Some(day) = local_days(pf, bp_alias, key_param, sql_op, next_param, binds) {
+        return day;
     }
     if let Some(v) = &pf.value_date {
         let p = *next_param;
         *next_param += 1;
         binds.push(v.clone());
-        return Ok(scalar_or_listed(
-            bp_alias,
-            key_param,
-            "value_date",
-            sql_op,
-            p,
-        ));
+        return scalar_or_listed(bp_alias, key_param, "value_date", sql_op, p);
     }
     if let Some((from, to)) = &pf.value_date_range {
         let p_from = *next_param;
@@ -1309,17 +1383,36 @@ fn property_value_predicate_sql(
         let p_to = *next_param;
         *next_param += 1;
         binds.push(to.clone());
-        return Ok(format!(
+        return format!(
             " AND (({bp_alias}.value_date >= ?{p_from} AND {bp_alias}.value_date < ?{p_to}) OR {})",
             listed(
                 bp_alias,
                 key_param,
-                &format!(">= ?{p_from} AND li.value < ?{p_to}")
+                &format!("li.value >= ?{p_from} AND li.value < ?{p_to}")
             )
-        ));
+        );
     }
-    // No value predicate: key presence alone matches.
-    Ok(String::new())
+    String::new()
+}
+
+/// The predicate of `pf`'s `value_date` or `value_date_range` read as the
+/// device's local days (#6906), when it holds days.
+fn local_days(
+    pf: &PropertyFilter,
+    bp_alias: &str,
+    key_param: usize,
+    sql_op: &str,
+    next_param: &mut usize,
+    binds: &mut Vec<String>,
+) -> Option<String> {
+    let bind = &mut bind_next(next_param, binds);
+    let local = |day: &str| LocalDay::read(day, &chrono::Local);
+    if let Some(day) = pf.value_date.as_deref().and_then(local) {
+        return Some(day_or_listed(bp_alias, key_param, sql_op, &day, bind));
+    }
+    let (from, to) = pf.value_date_range.as_ref()?;
+    let (from, to) = (local(from)?, local(to)?);
+    Some(day_range_or_listed(bp_alias, key_param, (&from, &to), bind))
 }
 
 /// AND-intersect property + tag predicates entirely in SQL.

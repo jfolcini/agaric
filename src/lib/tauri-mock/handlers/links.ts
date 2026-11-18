@@ -37,6 +37,7 @@ import {
   refInclusiveTags,
   resolveRangeBound,
   readActiveSpaceScope,
+  sameProperty,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { inheritedTagIds } from '@/lib/tauri-mock/handlers/shared'
@@ -164,7 +165,9 @@ function propertyLeafMatches(b: Record<string, unknown>, filter: Record<string, 
       // `<>` over a non-NULL value; a list (#6741) needs an item of the leaf's
       // type and none equal to it.
       const items = listCandidates(prop, value.type === 'Num')
-      if (items.length > 0) return !items.includes(value.value as string | number)
+      if (items.length > 0) {
+        return !items.some((item) => sameProperty(item, value.value as string | number))
+      }
       return propertyCompareMatches(prop, 'Lt', value) || propertyCompareMatches(prop, 'Gt', value)
     }
     case 'Contains':

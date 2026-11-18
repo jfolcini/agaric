@@ -5,9 +5,10 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::projection::{BacklinkProjection, list_items_match};
+use super::projection::{BacklinkProjection, list_items_match, list_items_on_day};
 use super::types::{BacklinkFilter, CompareOp};
 use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
+use crate::filters::datetime_operand::LocalDay;
 use crate::filters::primitive::{
     DatePredicate, FilterPrimitive, Projection, PropertyPredicate, PropertyValue,
 };
@@ -142,9 +143,10 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 resolve_property_num(pool, key, op, *value).await
             }
 
-            BacklinkFilter::PropertyDate { key, op, value } => {
-                resolve_property_string(pool, "value_date", key, op, value).await
-            }
+            BacklinkFilter::PropertyDate { key, op, value } => match day_operand(op, value) {
+                Some(day) => resolve_property_day(pool, key, op, &day).await,
+                None => resolve_property_string(pool, "value_date", key, op, value).await,
+            },
 
             BacklinkFilter::PropertyIsSet { key } => resolve_property_is_set(pool, key).await,
 
@@ -249,6 +251,52 @@ async fn resolve_property_string(
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// A `PropertyDate` leaf's operand as a [`LocalDay`] (#6906), when it is a
+/// day and `op` compares: in the device's zone, as each surface reads a day.
+fn day_operand(op: &CompareOp, value: &str) -> Option<LocalDay> {
+    let compares = !matches!(op, CompareOp::Contains | CompareOp::StartsWith);
+    compares
+        .then(|| LocalDay::read(value, &chrono::Local))
+        .flatten()
+}
+
+/// A `PropertyDate` leaf on a day: the row's `value_date` and its list's
+/// string items, each read by its form ([`LocalDay::test`]).
+async fn resolve_property_day(
+    pool: &SqlitePool,
+    key: &str,
+    op: &CompareOp,
+    day: &LocalDay,
+) -> Result<FxHashSet<String>, AppError> {
+    let op = match op {
+        CompareOp::Neq => "<>",
+        CompareOp::Lt => "<",
+        CompareOp::Gt => ">",
+        CompareOp::Lte => "<=",
+        CompareOp::Gte => ">=",
+        _ => "=",
+    };
+    let mut binds = vec![key.to_owned()];
+    let mut bind = |value: &str| {
+        binds.push(value.to_owned());
+        "?".to_owned()
+    };
+    let scalar = day.test("bp.value_date", op, &mut bind);
+    let list = list_items_on_day(op, day, &mut bind);
+    let sql = format!(
+        "SELECT bp.block_id \
+         FROM block_properties bp \
+         JOIN blocks b ON b.id = bp.block_id \
+         WHERE bp.key = ? AND ({scalar} OR {list}) AND b.deleted_at IS NULL"
+    );
+    // dynamic-sql: the day test's operator and placeholders are built per leaf
+    let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+    for value in binds {
+        query = query.bind(value);
+    }
+    Ok(query.fetch_all(pool).await?.into_iter().collect())
 }
 
 /// A `PropertyNum` leaf, over `value_num` or the number items of the row's
@@ -872,7 +920,10 @@ fn route_property(
 ) -> Result<CompiledFilter, AppError> {
     let pv = match kind {
         PropValueKind::Text => PropertyValue::Text { value },
-        PropValueKind::Date => PropertyValue::Date { value },
+        PropValueKind::Date => match day_operand(op, &value) {
+            Some(day) => PropertyValue::DatetimeDay(day),
+            None => PropertyValue::Date { value },
+        },
     };
     let pred = property_predicate(op, pv);
     Ok(route_has_property(key, &pred))

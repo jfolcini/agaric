@@ -2,10 +2,9 @@
 //! (#6758), read as the user wrote it into what the stored instants
 //! (`YYYY-MM-DDTHH:MMZ` in `value_date`) compare with.
 //!
-//! A full datetime is the instant it names. A day alone is the device's
-//! local day, `[its first instant, the next day's)`: `=` is within it, `!=`
-//! not within it, `>` at or after its end, `>=` at or after its start, `<`
-//! before its start and `<=` before its end.
+//! A full datetime is the instant it names. A day alone is a [`LocalDay`],
+//! which each row reads by its own form: a stored instant against the
+//! device's local day, any other value against the day as written.
 //!
 //! The compilers are pure and know no definition, so the surfaces that hold a
 //! pool run [`read_datetime_operands`] on the filter before compiling it: one
@@ -19,6 +18,55 @@ use sqlx::SqlitePool;
 
 use super::expr::FilterExpr;
 use super::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+
+/// A day operand (#6758, #6906): the day as written, and the bounds of the
+/// device's local day in the stored form, `[from, until)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalDay {
+    pub day: String,
+    pub from: String,
+    pub until: String,
+}
+
+impl LocalDay {
+    /// `day` in `tz`, or `None` when it is no `YYYY-MM-DD` calendar day.
+    pub fn read<Tz: chrono::TimeZone>(day: &str, tz: &Tz) -> Option<Self> {
+        let (from, until) = local_day_bounds(day, tz)?;
+        Some(Self {
+            day: day.to_owned(),
+            from,
+            until,
+        })
+    }
+
+    /// `held {op}` this day, read per row: a stored instant (a 17-character
+    /// `YYYY-MM-DDTHH:MMZ`) against the local day, `=` within it, `<>` / `!=`
+    /// not within it, `>` at or after its end, `>=` at or after its start,
+    /// `<` before its start and `<=` before its end; any other value against
+    /// the day as written. `bind` takes each operand in the order its
+    /// placeholder appears and returns the placeholder.
+    pub fn test<'s, F>(&'s self, held: &str, op: &str, bind: &mut F) -> String
+    where
+        F: FnMut(&'s str) -> String + ?Sized,
+    {
+        let within = match op {
+            "=" => {
+                let from = bind(&self.from);
+                format!("{held} >= {from} AND {held} < {}", bind(&self.until))
+            }
+            "<>" | "!=" => {
+                let from = bind(&self.from);
+                format!("({held} < {from} OR {held} >= {})", bind(&self.until))
+            }
+            ">" => format!("{held} >= {}", bind(&self.until)),
+            ">=" => format!("{held} >= {}", bind(&self.from)),
+            "<" => format!("{held} < {}", bind(&self.from)),
+            _ => format!("{held} < {}", bind(&self.until)),
+        };
+        let day = bind(&self.day);
+        format!("CASE WHEN length({held}) = 17 THEN {within} ELSE {held} {op} {day} END")
+    }
+}
 
 /// `predicate` on a `datetime` key with its operand read in `tz`, or `None`
 /// when it compares with no date or datetime and stays as it is.
@@ -36,30 +84,20 @@ pub fn datetime_predicate<Tz: chrono::TimeZone>(
     else {
         return None;
     };
-    let date = |value: String| PropertyValue::Date { value };
-    if !is_valid_iso_date(operand) {
-        let value = date(read_datetime(operand, tz)?.canonical);
-        return Some(match predicate {
-            Eq { .. } => Eq { value },
-            Ne { .. } => Ne { value },
-            Gt { .. } => Gt { value },
-            Gte { .. } => Gte { value },
-            Lt { .. } => Lt { value },
-            _ => Lte { value },
-        });
-    }
-    let (from, until) = local_day_bounds(operand, tz)?;
+    let value = if is_valid_iso_date(operand) {
+        PropertyValue::DatetimeDay(LocalDay::read(operand, tz)?)
+    } else {
+        PropertyValue::Date {
+            value: read_datetime(operand, tz)?.canonical,
+        }
+    };
     Some(match predicate {
-        Eq { .. } => Eq {
-            value: PropertyValue::DatetimeDay { from, until },
-        },
-        Ne { .. } => Ne {
-            value: PropertyValue::DatetimeDay { from, until },
-        },
-        Gt { .. } => Gte { value: date(until) },
-        Gte { .. } => Gte { value: date(from) },
-        Lt { .. } => Lt { value: date(from) },
-        _ => Lt { value: date(until) },
+        Eq { .. } => Eq { value },
+        Ne { .. } => Ne { value },
+        Gt { .. } => Gt { value },
+        Gte { .. } => Gte { value },
+        Lt { .. } => Lt { value },
+        _ => Lte { value },
     })
 }
 
@@ -202,41 +240,26 @@ mod tests {
     }
 
     fn day() -> PropertyValue {
-        PropertyValue::DatetimeDay {
+        PropertyValue::DatetimeDay(LocalDay {
+            day: "2026-11-14".to_owned(),
             from: "2026-11-14T05:00Z".to_owned(),
             until: "2026-11-15T05:00Z".to_owned(),
-        }
+        })
     }
 
-    /// The module's table: a day is the local day's bounds in UTC.
+    /// A day is itself with the local day's bounds in UTC, under every
+    /// comparison.
     #[test]
     fn a_day_operand_is_the_local_day() {
         let read = |predicate: PropertyPredicate| datetime_predicate(&predicate, &new_york());
-        let (start, end) = (date("2026-11-14T05:00Z"), date("2026-11-15T05:00Z"));
         for operand in [date("2026-11-14"), text("2026-11-14")] {
             let value = || operand.clone();
             assert_eq!(read(Eq { value: value() }), Some(Eq { value: day() }));
             assert_eq!(read(Ne { value: value() }), Some(Ne { value: day() }));
-            assert_eq!(
-                read(Gt { value: value() }),
-                Some(Gte { value: end.clone() })
-            );
-            assert_eq!(
-                read(Gte { value: value() }),
-                Some(Gte {
-                    value: start.clone()
-                })
-            );
-            assert_eq!(
-                read(Lt { value: value() }),
-                Some(Lt {
-                    value: start.clone()
-                })
-            );
-            assert_eq!(
-                read(Lte { value: value() }),
-                Some(Lt { value: end.clone() })
-            );
+            assert_eq!(read(Gt { value: value() }), Some(Gt { value: day() }));
+            assert_eq!(read(Gte { value: value() }), Some(Gte { value: day() }));
+            assert_eq!(read(Lt { value: value() }), Some(Lt { value: day() }));
+            assert_eq!(read(Lte { value: value() }), Some(Lte { value: day() }));
         }
     }
 
@@ -371,6 +394,10 @@ mod tests {
                 r#"["2026-11-13T12:00Z","2026-11-14T14:30Z"]"#,
             ),
             ("B8", "value_text", "2026-11-14"),
+            // A day, the next and a list of a day, as a `date` key holds them.
+            ("BA", "value_date", "2026-11-14"),
+            ("BB", "value_date", "2026-11-15"),
+            ("BC", "value_list", r#"["2026-11-14"]"#),
         ] {
             sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', '')")
                 .bind(id)
@@ -418,23 +445,30 @@ mod tests {
     }
 
     /// Each comparison against stored instants on either side of both local
-    /// midnights, single and in lists, and a block without the key.
+    /// midnights, single and in lists, against days as a `date` key holds
+    /// them (#6906), and a block without the key.
     #[tokio::test]
     async fn a_day_operand_selects_the_local_days_instants() {
         let (pool, _dir) = crate::test_support::test_pool().await;
         seed(&pool).await;
         let day = || date("2026-11-14");
-        assert_eq!(matched(&pool, Eq { value: day() }).await, "B2 B3 B4 B7");
-        assert_eq!(matched(&pool, Ne { value: day() }).await, "B1 B5 B6 B8 B9");
-        assert_eq!(matched(&pool, Gt { value: day() }).await, "B5 B6");
+        assert_eq!(
+            matched(&pool, Eq { value: day() }).await,
+            "B2 B3 B4 B7 BA BC"
+        );
+        assert_eq!(
+            matched(&pool, Ne { value: day() }).await,
+            "B1 B5 B6 B8 B9 BB"
+        );
+        assert_eq!(matched(&pool, Gt { value: day() }).await, "B5 B6 BB");
         assert_eq!(
             matched(&pool, Gte { value: day() }).await,
-            "B2 B3 B4 B5 B6 B7"
+            "B2 B3 B4 B5 B6 B7 BA BB BC"
         );
         assert_eq!(matched(&pool, Lt { value: day() }).await, "B1 B6 B7");
         assert_eq!(
             matched(&pool, Lte { value: day() }).await,
-            "B1 B2 B3 B4 B6 B7"
+            "B1 B2 B3 B4 B6 B7 BA BC"
         );
         assert_eq!(
             matched(
@@ -454,7 +488,7 @@ mod tests {
                 }
             )
             .await,
-            "B4 B5 B6"
+            "B4 B5 B6 BB"
         );
     }
 

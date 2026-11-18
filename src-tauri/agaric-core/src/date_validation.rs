@@ -36,6 +36,15 @@ use crate::error::AppError;
 /// surprising "valid" dates that the canonical date format invariant
 /// rejects.
 pub fn validate_date_format(s: &str) -> Result<(), AppError> {
+    parse_iso_date(s).map(drop).ok_or_else(|| {
+        AppError::validation(format!(
+            "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
+        ))
+    })
+}
+
+/// `s` as a calendar date: the strict shape, then one parse.
+fn parse_iso_date(s: &str) -> Option<chrono::NaiveDate> {
     let bytes = s.as_bytes();
     let shape_ok = bytes.len() == 10
         && bytes[4] == b'-'
@@ -43,18 +52,9 @@ pub fn validate_date_format(s: &str) -> Result<(), AppError> {
         && bytes[..4].iter().all(u8::is_ascii_digit)
         && bytes[5..7].iter().all(u8::is_ascii_digit)
         && bytes[8..10].iter().all(u8::is_ascii_digit);
-    if !shape_ok {
-        return Err(AppError::validation(format!(
-            "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-        )));
-    }
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map(|_| ())
-        .map_err(|_| {
-            AppError::validation(format!(
-                "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-            ))
-        })
+    shape_ok
+        .then(|| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .flatten()
 }
 
 /// I-CommandsCRUD-8: previously a separate structural validator that
@@ -81,9 +81,7 @@ pub struct ReadDatetime {
 /// twice is the earlier. A day alone is a date, never a datetime.
 pub fn read_datetime<Tz: chrono::TimeZone>(s: &str, tz: &Tz) -> Option<ReadDatetime> {
     let (day, rest) = s.split_at_checked(10)?;
-    let date = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
-        .ok()
-        .filter(|_| is_valid_iso_date(day))?;
+    let date = parse_iso_date(day)?;
     let rest = rest.strip_prefix(['T', ' '])?;
     let (hours, rest) = rest.split_at_checked(2)?;
     let (minutes, rest) = rest.strip_prefix(':')?.split_at_checked(2)?;
@@ -163,9 +161,7 @@ where
 /// its first instant, and the next day's. A `datetime` value falls on the day
 /// when it is at or after the first and before the second.
 pub fn local_day_bounds<Tz: chrono::TimeZone>(day: &str, tz: &Tz) -> Option<(String, String)> {
-    let date = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
-        .ok()
-        .filter(|_| is_valid_iso_date(day))?;
+    let date = parse_iso_date(day)?;
     let start = |date: chrono::NaiveDate| {
         let midnight = date.and_hms_opt(0, 0, 0)?;
         // A day whose midnight the clocks skip starts an hour later.

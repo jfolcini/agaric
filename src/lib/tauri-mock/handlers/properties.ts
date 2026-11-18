@@ -37,6 +37,7 @@ import {
   definitionSpaceOf,
   isLiveSpace,
   notFoundRejection,
+  onLocalDay,
   ownerSpaceOf,
   pageRequestLimit,
   propertyDefinition,
@@ -551,9 +552,12 @@ export const propertiesHandlers = {
     // non-reserved `neq` predicate is written `IS NULL OR !=` (#384). Only
     // the non-reserved path reaches this with a NULL: the reserved one
     // returns on a NULL column first.
-    const compare = (actual: string | null, wanted: string | null): boolean => {
+    // A property's date may be a datetime, which a day reads as the local day (#6906).
+    const compare = (actual: string | null, wanted: string | null, dated = false): boolean => {
       if (wanted === null) return true
       if (actual === null) return operator === 'neq'
+      const day = dated ? onLocalDay(operator, actual, wanted) : null
+      if (day !== null) return day
       switch (operator) {
         case 'neq': {
           return actual !== wanted
@@ -592,11 +596,12 @@ export const propertiesHandlers = {
     }
     const inSet = (v: string | null): boolean =>
       valueTextIn.length === 0 || (v !== null && valueTextIn.includes(v))
-    const inRange = (v: string | null): boolean => {
+    const inRange = (v: string | null, dated = false): boolean => {
       if (valueDateRange === null) return true
       if (v === null) return false
       const [from, to] = valueDateRange
-      return v >= from && v < to
+      const after = (dated ? onLocalDay('gte', v, from) : null) ?? v >= from
+      return after && ((dated ? onLocalDay('lt', v, to) : null) ?? v < to)
     }
     const items = [...blocks.values()].filter((b) => {
       if (!blockPredicates(b)) return false
@@ -611,7 +616,12 @@ export const propertiesHandlers = {
       if (!prop) return false
       const text = (prop['value_text'] as string | null | undefined) ?? null
       const date = (prop['value_date'] as string | null | undefined) ?? null
-      return compare(text, valueText) && compare(date, valueDate) && inSet(text) && inRange(date)
+      return (
+        compare(text, valueText) &&
+        compare(date, valueDate, true) &&
+        inSet(text) &&
+        inRange(date, true)
+      )
     })
     items.sort((x, y) => String(x['id']).localeCompare(String(y['id'])))
     return { items, next_cursor: null, has_more: false, total_count: null }

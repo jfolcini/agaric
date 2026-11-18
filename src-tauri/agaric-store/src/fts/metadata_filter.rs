@@ -542,31 +542,23 @@ mod tests {
         let date = |value: &str| PropertyValue::Date {
             value: value.into(),
         };
+        let day = PropertyValue::DatetimeDay(crate::filters::datetime_operand::LocalDay {
+            day: "2026-11-14".into(),
+            from: "2026-11-14T05:00Z".into(),
+            until: "2026-11-15T05:00Z".into(),
+        });
         assert_eq!(
             m.filter_expr,
             Some(FilterExpr::And {
                 children: vec![
-                    leaf(
-                        "starts",
-                        PropertyPredicate::Eq {
-                            value: PropertyValue::DatetimeDay {
-                                from: "2026-11-14T05:00Z".into(),
-                                until: "2026-11-15T05:00Z".into(),
-                            },
-                        },
-                    ),
+                    leaf("starts", PropertyPredicate::Eq { value: day.clone() },),
                     leaf(
                         "starts",
                         PropertyPredicate::Ne {
                             value: date("2026-11-14T14:30Z"),
                         },
                     ),
-                    leaf(
-                        "starts",
-                        PropertyPredicate::Gte {
-                            value: date("2026-11-15T05:00Z"),
-                        },
-                    ),
+                    leaf("starts", PropertyPredicate::Gt { value: day }),
                 ],
             })
         );

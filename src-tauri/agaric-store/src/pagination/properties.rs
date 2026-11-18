@@ -1,6 +1,7 @@
 use sqlx::SqlitePool;
 
 use super::{BlockRow, Cursor, PageRequest, PageResponse, build_page_response};
+use crate::filters::datetime_operand::LocalDay;
 use crate::op::is_reserved_property_key;
 use agaric_core::error::AppError;
 
@@ -108,9 +109,12 @@ pub async fn query_by_property(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     validate_value_filters(value_text, value_date, value_text_in)?;
 
+    let (value_day, range_days) = local_days(key, value_date, value_date_range);
     let filters = PropertyFilters {
         value_text,
         value_date,
+        value_day,
+        range_days,
         sql_op: sql_operator(operator),
         after_id: page.after.as_ref().map(|c| c.id.as_str()),
         space_id,
@@ -137,6 +141,10 @@ pub async fn query_by_property(
 struct PropertyFilters<'a> {
     value_text: Option<&'a str>,
     value_date: Option<&'a str>,
+    /// `value_date` as a day each row reads by its form (#6906).
+    value_day: Option<LocalDay>,
+    /// `value_date_range`'s bounds read the same way.
+    range_days: Option<(LocalDay, LocalDay)>,
     sql_op: &'static str,
     /// The previous page's last id; `None` on the first page.
     after_id: Option<&'a str>,
@@ -159,6 +167,22 @@ struct PropertyFilters<'a> {
     /// stop occupying the bounded fetch window and starving overdue TODOs.
     /// `b.todo_state IS NULL OR` keeps blocks that carry a date but no state.
     exclude_todo_states_json: Option<String>,
+}
+
+/// `value_date` and `value_date_range` read as the device's local days
+/// (#6906); none on a reserved key, whose column holds days only.
+fn local_days(
+    key: &str,
+    value_date: Option<&str>,
+    value_date_range: Option<(&str, &str)>,
+) -> (Option<LocalDay>, Option<(LocalDay, LocalDay)>) {
+    let local = |day: &str| {
+        (!is_reserved_property_key(key))
+            .then(|| LocalDay::read(day, &chrono::Local))
+            .flatten()
+    };
+    let range = value_date_range.and_then(|(from, to)| Some((local(from)?, local(to)?)));
+    (value_date.and_then(local), range)
 }
 
 /// At most one value filter may be supplied. Both conflicts are rejected here
@@ -229,7 +253,8 @@ fn reserved_column(key: &str) -> Result<&'static str, AppError> {
 ///
 /// A filter the caller left out adds no SQL (#5426). Only the selective shapes
 /// let a value index drive the plan: equality and `value_text_in` on either
-/// path, and a range on `due_date` / `scheduled_date`. On the property path
+/// path, but for a day on a property key (#6906), and a range on `due_date` /
+/// `scheduled_date`. On the property path
 /// every other shape orders by `bp.block_id`, so the plan walks
 /// `idx_block_props_key` (key, block_id) in id order and stops at the LIMIT
 /// instead of sorting every row the key holds.
@@ -272,7 +297,8 @@ fn query_by_property_sql<'a>(
     push_block_filters(&mut sql, &mut binds, filters);
     let selective = filters.value_text_in_json.is_some()
         || (filters.sql_op == "="
-            && (filters.value_text.is_some() || filters.value_date.is_some()));
+            && (filters.value_text.is_some()
+                || (filters.value_date.is_some() && filters.value_day.is_none())));
     let walk = if reserved || selective {
         "b.id"
     } else {
@@ -307,7 +333,9 @@ fn push_value_predicates<'a>(
         sql.push_str(&value_predicate(text_col, &text_range, filters.sql_op));
         binds.push(value);
     }
-    if let Some(value) = filters.value_date {
+    if let Some(day) = &filters.value_day {
+        sql.push_str(&day_predicate(date_col, filters.sql_op, day, binds));
+    } else if let Some(value) = filters.value_date {
         sql.push_str(&value_predicate(date_col, &date_range, filters.sql_op));
         binds.push(value);
     }
@@ -317,9 +345,39 @@ fn push_value_predicates<'a>(
         ));
         binds.push(values);
     }
-    if let Some((from, to)) = filters.value_date_range {
+    if let Some((from, to)) = &filters.range_days {
+        let mut bind = |value: &'a str| {
+            binds.push(value);
+            "?".to_owned()
+        };
+        let from = from.test(date_col, ">=", &mut bind);
+        sql.push_str(&format!(
+            " AND {from} AND {}",
+            to.test(date_col, "<", &mut bind)
+        ));
+    } else if let Some((from, to)) = filters.value_date_range {
         sql.push_str(&format!(" AND {date_range} >= ? AND {date_range} < ?"));
         binds.extend([from, to]);
+    }
+}
+
+/// [`value_predicate`] of a day operand, each row read by its form
+/// ([`LocalDay::test`]); `!=` keeps the `IS NULL OR` escape.
+fn day_predicate<'a>(
+    col: &str,
+    sql_op: &str,
+    day: &'a LocalDay,
+    binds: &mut Vec<&'a str>,
+) -> String {
+    let mut bind = |value: &'a str| {
+        binds.push(value);
+        "?".to_owned()
+    };
+    let test = day.test(col, sql_op, &mut bind);
+    if sql_op == "!=" {
+        format!(" AND ({col} IS NULL OR {test})")
+    } else {
+        format!(" AND {test}")
     }
 }
 

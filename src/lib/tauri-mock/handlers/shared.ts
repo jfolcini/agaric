@@ -1408,25 +1408,56 @@ function localDayBounds(held: string | number, wanted: string | number): [string
   return [localDayStartUtc(wanted), localDayStartUtc(next.toISOString().slice(0, 10))]
 }
 
-/** `=`: the same value, or a datetime within an operand's local day. */
-function sameProperty(held: string | number, wanted: string | number): boolean {
+/**
+ * `held <op> wanted` by the backend's per-row day rule (`LocalDay::test`,
+ * #6906): a datetime against a day-only operand compares with the local day's
+ * bounds. `op` is `eq`/`neq`/`lt`/`lte`/`gt`/`gte` in any case; null for any
+ * other pair, which compares as it is.
+ */
+export function onLocalDay(
+  op: string,
+  held: string | number,
+  wanted: string | number,
+): boolean | null {
   const day = localDayBounds(held, wanted)
-  return day === null ? held === wanted : held >= day[0] && held < day[1]
+  if (day === null) return null
+  const h = held as string
+  switch (op.toLowerCase()) {
+    case 'eq': {
+      return h >= day[0] && h < day[1]
+    }
+    case 'neq': {
+      return h < day[0] || h >= day[1]
+    }
+    case 'lt': {
+      return h < day[0]
+    }
+    case 'lte': {
+      return h < day[1]
+    }
+    case 'gt': {
+      return h >= day[1]
+    }
+    case 'gte': {
+      return h >= day[0]
+    }
+    default: {
+      return null
+    }
+  }
+}
+
+/** `=`: the same value, or a datetime within an operand's local day. */
+export function sameProperty(held: string | number, wanted: string | number): boolean {
+  return onLocalDay('eq', held, wanted) ?? held === wanted
 }
 
 /** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
  * comparand, lexical (SQLite BINARY collation, ASCII-equivalent) otherwise; a
  * datetime against a day-only operand compares with the local day's bounds. */
 export function compareProperty(op: string, a: string | number, b: string | number): boolean {
-  const day = localDayBounds(a, b)
-  if (day !== null) {
-    const held = a as string
-    if (op === 'Lt') return held < day[0]
-    if (op === 'Lte') return held < day[1]
-    if (op === 'Gt') return held >= day[1]
-    if (op === 'Gte') return held >= day[0]
-    return false
-  }
+  const day = onLocalDay(op, a, b)
+  if (day !== null) return day
   // TEXT compares by UTF-8 bytes in SQLite where JS `<` compares UTF-16 code
   // units; numeric properties keep the numeric comparison.
   const cmp =
@@ -2135,8 +2166,11 @@ export const FBQ_ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
   scheduled_date: 'date',
 }
 
-/** Compare `lhs`/`rhs` under the named PropertyFilter operator. */
-export function fbqCompare(operator: string, lhs: string, rhs: string): boolean {
+/** Compare `lhs`/`rhs` under the named PropertyFilter operator; a date filter
+ * (`dated`) reads a datetime against a day by the local day (#6906). */
+export function fbqCompare(operator: string, lhs: string, rhs: string, dated = false): boolean {
+  const day = dated ? onLocalDay(operator, lhs, rhs) : null
+  if (day !== null) return day
   switch (operator) {
     case 'neq': {
       return lhs !== rhs
@@ -2167,9 +2201,10 @@ function fbqTypedValueMatches(
   lhs: string | null,
   rhs: string,
   source: 'property' | 'reserved',
+  dated: boolean,
 ): boolean {
   if (lhs === null) return operator === 'neq' && source === 'property'
-  return fbqCompare(operator, lhs, rhs)
+  return fbqCompare(operator, lhs, rhs, dated)
 }
 
 /** The scalar comparison, or a list's (#6741): `neq` when no string item is equal, any other
@@ -2180,10 +2215,11 @@ function fbqValueMatches(
   items: readonly string[],
   rhs: string,
   source: 'property' | 'reserved',
+  dated: boolean,
 ): boolean {
-  const scalar = fbqTypedValueMatches(operator, lhs, rhs, source)
-  if (operator === 'neq') return scalar && !items.includes(rhs)
-  return scalar || items.some((item) => fbqCompare(operator, item, rhs))
+  const scalar = fbqTypedValueMatches(operator, lhs, rhs, source, dated)
+  if (operator === 'neq') return scalar && !items.some((item) => fbqCompare('eq', item, rhs, dated))
+  return scalar || items.some((item) => fbqCompare(operator, item, rhs, dated))
 }
 
 /** Resolve a block's candidate text/date and storage source for `key`.
@@ -2239,6 +2275,8 @@ export function fbqPropertyFilterMatches(
   // which without this check fell through every guard below and matched
   // regardless of whether the column was actually set.
   if (source === 'reserved' && pText === null && pDate === null) return false
+  // A reserved column holds days only; a property's date may be a datetime (#6906).
+  const dated = source === 'property'
 
   const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
   if (
@@ -2251,15 +2289,16 @@ export function fbqPropertyFilterMatches(
   const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
   if (valueDateRange) {
     const [from, to] = valueDateRange
-    const inRange = (held: string): boolean => held >= from && held < to
+    const inRange = (held: string): boolean =>
+      fbqCompare('gte', held, from, dated) && fbqCompare('lt', held, to, dated)
     if (!(pDate != null && inRange(pDate)) && !pItems.some(inRange)) return false
   }
   const valueText = (pf['valueText'] as string | null) ?? null
-  if (valueText !== null && !fbqValueMatches(operator, pText, pItems, valueText, source)) {
+  if (valueText !== null && !fbqValueMatches(operator, pText, pItems, valueText, source, false)) {
     return false
   }
   const valueDate = (pf['valueDate'] as string | null) ?? null
-  if (valueDate !== null && !fbqValueMatches(operator, pDate, pItems, valueDate, source)) {
+  if (valueDate !== null && !fbqValueMatches(operator, pDate, pItems, valueDate, source, dated)) {
     return false
   }
   return true

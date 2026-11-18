@@ -28,9 +28,10 @@
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+use crate::filters::datetime_operand::LocalDay;
 use crate::filters::primitive::{
     Bind, DatePredicate, Projection, PropertyPredicate, PropertyValue, WhereClause, any_list_item,
-    column_text, compile_column_property,
+    any_list_item_where, column_text, compile_column_property,
 };
 use agaric_core::sql_utils::escape_like;
 
@@ -396,10 +397,13 @@ pub(super) fn list_items_match(numeric: bool, op: &str, operand: &str) -> String
 /// `Num` short-circuits a `LIKE` to `1=0` exactly as the resolver returns
 /// the empty set. A row's list matches as [`list_items_match`] says.
 fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
+    if let (PropertyValue::DatetimeDay(day), PropCmp::Op(op)) = (value, cmp) {
+        return prop_day(key, day, op);
+    }
     let col = match value {
         PropertyValue::Text { .. } => "value_text",
         PropertyValue::Ref { .. } => "value_ref",
-        PropertyValue::Date { .. } | PropertyValue::DatetimeDay { .. } => "value_date",
+        PropertyValue::Date { .. } | PropertyValue::DatetimeDay(_) => "value_date",
         PropertyValue::Num { .. } => "value_num",
     };
     let numeric = matches!(value, PropertyValue::Num { .. });
@@ -410,7 +414,9 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
                 PropertyValue::Text { value }
                 | PropertyValue::Ref { value }
                 | PropertyValue::Date { value }
-                | PropertyValue::DatetimeDay { from: value, .. } => Bind::Text(value.clone()),
+                | PropertyValue::DatetimeDay(LocalDay { day: value, .. }) => {
+                    Bind::Text(value.clone())
+                }
             };
             (op, val_bind)
         }
@@ -421,7 +427,7 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
                 PropertyValue::Text { value }
                 | PropertyValue::Ref { value }
                 | PropertyValue::Date { value } => value.clone(),
-                PropertyValue::Num { .. } | PropertyValue::DatetimeDay { .. } => {
+                PropertyValue::Num { .. } | PropertyValue::DatetimeDay(_) => {
                     return WhereClause::new("1=0", Vec::new());
                 }
             };
@@ -445,6 +451,41 @@ fn prop_cmp(key: &str, value: &PropertyValue, cmp: PropCmp) -> WhereClause {
         ),
         vec![Bind::Text(key.to_string()), bind.clone(), bind],
     )
+}
+
+/// [`prop_cmp`] of a day operand (#6906): the row's `value_date` and its
+/// list's string items, each read by its form ([`LocalDay::test`]).
+fn prop_day(key: &str, day: &LocalDay, op: &str) -> WhereClause {
+    let mut binds = vec![Bind::Text(key.to_string())];
+    let mut bind = |value: &str| {
+        binds.push(Bind::Text(value.to_owned()));
+        "?".to_owned()
+    };
+    let scalar = day.test("bp.value_date", op, &mut bind);
+    let list = list_items_on_day(op, day, &mut bind);
+    WhereClause::new(
+        format!(
+            "EXISTS (SELECT 1 FROM block_properties bp \
+             WHERE bp.block_id = b.id AND bp.key = ? AND ({scalar} OR {list}))"
+        ),
+        binds,
+    )
+}
+
+/// [`list_items_match`] of a day operand: `<>` needs a string item and none
+/// on the day. `prop_day` and the resolver share it.
+pub(super) fn list_items_on_day(
+    op: &str,
+    day: &LocalDay,
+    bind: &mut dyn FnMut(&str) -> String,
+) -> String {
+    if op == "<>" {
+        let any = any_list_item("bp.value_list", false, "IS NOT NULL");
+        let on = any_list_item_where("bp.value_list", false, &day.test("li.value", "=", bind));
+        format!("({any} AND NOT {on})")
+    } else {
+        any_list_item_where("bp.value_list", false, &day.test("li.value", op, bind))
+    }
 }
 
 #[cfg(test)]

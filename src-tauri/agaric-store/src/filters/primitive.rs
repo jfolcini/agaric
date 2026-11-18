@@ -14,6 +14,7 @@
 //! ([`Bind`], [`WhereClause`], [`Projection`], the projection structs)
 //! stay backend-only — they are NOT serde/specta.
 
+use super::datetime_operand::LocalDay;
 use agaric_core::error::{AppError, ValidationCode};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -230,16 +231,13 @@ pub enum PropertyValue {
     Date {
         value: String,
     },
-    /// #6758 — a calendar day against a `datetime` key: the stored instants
-    /// from `from` to before `until`. `Eq` and `Ne` take it; built by
+    /// #6758 — a calendar day against a `datetime` key, which each row reads
+    /// by its form ([`LocalDay::test`]). Built by
     /// [`read_datetime_operands`](crate::filters::datetime_operand::read_datetime_operands),
     /// never sent by a client.
     #[serde(skip)]
     #[specta(skip)]
-    DatetimeDay {
-        from: String,
-        until: String,
-    },
+    DatetimeDay(LocalDay),
 }
 
 /// #1280 — a predicate over a TEXT-ISO date column (`blocks.due_date`,
@@ -910,7 +908,7 @@ fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
         PropertyValue::Text { value } => ("value_text", Bind::Text(value.clone())),
         PropertyValue::Ref { value } => ("value_ref", Bind::Text(value.clone())),
         PropertyValue::Num { value } => ("value_num", Bind::Real(*value)),
-        PropertyValue::Date { value } | PropertyValue::DatetimeDay { from: value, .. } => {
+        PropertyValue::Date { value } | PropertyValue::DatetimeDay(LocalDay { day: value, .. }) => {
             ("value_date", Bind::Text(value.clone()))
         }
     }
@@ -924,13 +922,42 @@ fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
 /// without it `<` would match a number item against a text bound (#6741).
 #[must_use]
 pub fn any_list_item(list: &str, numeric: bool, test: &str) -> String {
+    any_list_item_where(list, numeric, &format!("li.value {test}"))
+}
+
+/// [`any_list_item`] with a whole condition on the item `li.value`.
+#[must_use]
+pub fn any_list_item_where(list: &str, numeric: bool, condition: &str) -> String {
     let item_type = if numeric {
         "IN ('integer', 'real')"
     } else {
         "= 'text'"
     };
-    format!(
-        "EXISTS (SELECT 1 FROM json_each({list}) li WHERE li.type {item_type} AND li.value {test})"
+    format!("EXISTS (SELECT 1 FROM json_each({list}) li WHERE li.type {item_type} AND {condition})")
+}
+
+/// `{exists}` a row of `key` whose scalar or one of whose string items is
+/// `{op}` `day`, each read by its form ([`LocalDay::test`]).
+fn compile_property_day(
+    key: &str,
+    day: &LocalDay,
+    op: &str,
+    exists: &str,
+    alias: &str,
+) -> WhereClause {
+    let mut binds = vec![Bind::Text(key.to_string())];
+    let mut bind = |value: &str| {
+        binds.push(Bind::Text(value.to_owned()));
+        "?".to_owned()
+    };
+    let scalar = day.test("value_date", op, &mut bind);
+    let item = any_list_item_where("value_list", false, &day.test("li.value", op, &mut bind));
+    WhereClause::new(
+        format!(
+            "{exists} (SELECT 1 FROM block_properties \
+             WHERE block_id = {alias}.id AND key = ? AND ({scalar} OR {item}))"
+        ),
+        binds,
     )
 }
 
@@ -939,23 +966,8 @@ pub fn any_list_item(list: &str, numeric: bool, test: &str) -> String {
 /// `Ne` is its `NOT EXISTS`, so a block without the key matches it.
 fn compile_property_eq(key: &str, value: &PropertyValue, negate: bool, alias: &str) -> WhereClause {
     let exists = if negate { "NOT EXISTS" } else { "EXISTS" };
-    if let PropertyValue::DatetimeDay { from, until } = value {
-        let item = any_list_item("value_list", false, ">= ? AND li.value < ?");
-        let (from, until) = (Bind::Text(from.clone()), Bind::Text(until.clone()));
-        return WhereClause::new(
-            format!(
-                "{exists} (SELECT 1 FROM block_properties \
-                 WHERE block_id = {alias}.id AND key = ? \
-                   AND ((value_date >= ? AND value_date < ?) OR {item}))"
-            ),
-            vec![
-                Bind::Text(key.to_string()),
-                from.clone(),
-                until.clone(),
-                from,
-                until,
-            ],
-        );
+    if let PropertyValue::DatetimeDay(day) = value {
+        return compile_property_day(key, day, "=", exists, alias);
     }
     let (col, bind) = property_value_column(value);
     let item = any_list_item(
@@ -983,6 +995,9 @@ fn compile_property_compare(
     value: &PropertyValue,
     alias: &str,
 ) -> WhereClause {
+    if let PropertyValue::DatetimeDay(day) = value {
+        return compile_property_day(key, day, op, "EXISTS", alias);
+    }
     let (col, bind) = property_value_column(value);
     let item = any_list_item(
         "value_list",
@@ -1014,7 +1029,7 @@ fn compile_property_like(
         PropertyValue::Text { value } => ("value_text", value.clone()),
         PropertyValue::Ref { value } => ("value_ref", value.clone()),
         PropertyValue::Date { value } => ("value_date", value.clone()),
-        PropertyValue::Num { .. } | PropertyValue::DatetimeDay { .. } => {
+        PropertyValue::Num { .. } | PropertyValue::DatetimeDay(_) => {
             return WhereClause::new("1=0", Vec::new());
         }
     };
@@ -1047,7 +1062,7 @@ pub(crate) fn column_text(value: &PropertyValue) -> String {
         PropertyValue::Text { value }
         | PropertyValue::Ref { value }
         | PropertyValue::Date { value }
-        | PropertyValue::DatetimeDay { from: value, .. } => value.clone(),
+        | PropertyValue::DatetimeDay(LocalDay { day: value, .. }) => value.clone(),
         PropertyValue::Num { value } => value.to_string(),
     }
 }
