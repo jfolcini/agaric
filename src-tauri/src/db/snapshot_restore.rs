@@ -93,21 +93,22 @@ pub fn request_restore(db_path: &Path, day: NaiveDate) -> Result<(), AppError> {
 }
 
 /// The pending restore's snapshot day and timestamp, `None` when none is
-/// pending. A marker that does not read is removed.
-fn pending(marker: &Path) -> Option<(NaiveDate, u64)> {
+/// pending. A marker that does not parse is removed; one that cannot be read
+/// is an error, because a crash mid-swap may have moved the vault already.
+fn pending(marker: &Path) -> std::io::Result<Option<(NaiveDate, u64)>> {
     let text = match std::fs::read_to_string(marker) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        read => read,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        read => read?,
     };
-    let parsed = text.as_deref().ok().and_then(|text| {
-        let (day, asked_at) = text.trim().split_once(' ')?;
-        Some((day.parse().ok()?, asked_at.parse().ok()?))
-    });
+    let parsed = text
+        .trim()
+        .split_once(' ')
+        .and_then(|(day, asked_at)| Some((day.parse().ok()?, asked_at.parse().ok()?)));
     if parsed.is_none() {
-        tracing::error!(marker = ?text, "a pending restore's marker does not read; the vault is unchanged");
+        tracing::error!(marker = %text, "a pending restore's marker does not parse; the vault is unchanged");
         remove_marker(marker);
     }
-    parsed
+    Ok(parsed)
 }
 
 /// One left in place is read again at every boot.
@@ -153,7 +154,7 @@ fn rename_if_any(from: &Path, to: &Path) -> std::io::Result<()> {
 /// by those states. The next launch tries again.
 pub async fn restore_pending(db_path: &Path) -> Result<(), AppError> {
     let marker = marker_file(db_path);
-    let Some((day, asked_at)) = pending(&marker) else {
+    let Some((day, asked_at)) = pending(&marker)? else {
         return Ok(());
     };
     let kept = beside(db_path, &format!("{KEPT_INFIX}{asked_at}"));
@@ -646,6 +647,23 @@ mod tests {
             "the copy made before the crash is the one put in place"
         );
         assert_eq!(setting_in(&kept, "note").await.as_deref(), Some("newer"));
+    }
+
+    #[tokio::test]
+    async fn a_marker_that_cannot_be_read_stops_boot_and_stays() {
+        // A directory where the marker should be: a read error that is not a
+        // parse failure, like an I/O error at boot.
+        let (_dir, db_path) = vault_with_snapshot().await;
+        std::fs::create_dir(marker_file(&db_path)).unwrap();
+
+        assert!(
+            restore_pending(&db_path).await.is_err(),
+            "a marker that could not be read must stop boot, not cancel the restore"
+        );
+        assert!(
+            marker_file(&db_path).exists(),
+            "the next launch reads it again"
+        );
     }
 
     #[tokio::test]
