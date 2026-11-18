@@ -9,6 +9,8 @@ import {
   navigateToView,
   openAddFilter,
   runAxe,
+  seedBulkPages,
+  seedFacetPage,
   test,
   waitForBoot,
 } from './helpers'
@@ -32,9 +34,9 @@ import {
  *     `Tag` / `Priority` and returns a real `total_count`, so narrowing AND
  *     the count chip are assertable.
  *   - Page-level `Tag` / `Priority` are not set on the canonical seed (its
- *     tags/priorities live on child blocks). The `__mockFacetFixture` opt-in
- *     adds one "Facet Fixture" page carrying a page-level tag `work` +
- *     priority `1` so those two facets narrow to a concrete non-empty set.
+ *     tags/priorities live on child blocks). `seedFacetPage` adds one
+ *     "Facet Fixture" page carrying a page-level tag `work` + priority `1`
+ *     so those two facets narrow to a concrete non-empty set.
  *
  * Seed pages (6, alphabetical): the daily page (YYYY-MM-DD), Getting Started,
  * Meeting Notes Template, Meetings, Projects, Quick Notes.
@@ -54,19 +56,9 @@ async function openPagesView(page: Page): Promise<void> {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-/** Set localStorage state before boot, then open the Pages view. */
+/** Boot, seed through the real commands, then open the Pages view. */
 async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
   const { extraPages = 0, facetFixture = false } = opts
-  if (extraPages > 0) {
-    await page.addInitScript((n) => {
-      window.localStorage.setItem('__mockExtraPages', String(n))
-    }, extraPages)
-  }
-  if (facetFixture) {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('__mockFacetFixture', 'true')
-    })
-  }
   // The counts in this file are for the full seed, so start as a user who
   // removed the default journal chip; that chip has its own describe (#5370).
   await page.addInitScript((spaceId) => {
@@ -81,6 +73,8 @@ async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
     )
   }, SEED_IDS.SPACE_PERSONAL)
   await waitForBoot(page)
+  if (extraPages > 0) await seedBulkPages(page, extraPages)
+  if (facetFixture) await seedFacetPage(page)
   await openPagesView(page)
 }
 

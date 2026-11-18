@@ -173,7 +173,7 @@ test.describe('Graph view @graph', () => {
   // "Meeting Notes Template" (`PAGE_TMPL_MEETING`, flagged via the
   // `template` block property), among the 6 canonical seed pages. It's the
   // only dimension in `src/lib/graph-filters.ts` that's satisfiable against
-  // the DEFAULT seed with no `__mockFacetFixture` / `tagIds` plumbing: the
+  // the DEFAULT seed with no `seedFacetPage` / `tagIds` plumbing: the
   // `tag` dimension only matches PAGE-level tags (`blockTags.get(pageId)`),
   // and the canonical seed's `work`/`personal` tags live on child blocks,
   // not the page blocks themselves — so `excludeTemplates` is the

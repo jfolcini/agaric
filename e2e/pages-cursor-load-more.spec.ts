@@ -1,4 +1,4 @@
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, navigateToView, seedBulkPages, test, waitForBoot } from './helpers'
 
 /**
  * Loading more rows is not a new list: the Pages list cursor keeps its row and
@@ -6,8 +6,8 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * list back to the top on every load-more.
  */
 test('the list cursor and scroll position survive a load-more @pages', async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockExtraPages', '120'))
   await waitForBoot(page)
+  await seedBulkPages(page, 120)
   await navigateToView(page, 'Pages')
   const grid = page.getByRole('grid')
   const rows = grid.locator('[data-page-item]')

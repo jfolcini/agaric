@@ -1852,6 +1852,69 @@ export function attachFile(
   })
 }
 
+/**
+ * Create `count` pages "Bulk Page 001"… in Personal through the real commands,
+ * each with one child block, so none is a stub or has a link. Pages are created
+ * in title order and their children in reverse, so "Bulk Page 001" is the
+ * oldest created and the most recently edited. Seed after boot, before opening
+ * the view that lists them.
+ */
+export async function seedBulkPages(page: Page, count: number): Promise<void> {
+  await page.evaluate(
+    async ({ n, spaceId }) => {
+      const { invoke } = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const pages: Array<{ id: string; title: string }> = []
+      for (let i = 1; i <= n; i++) {
+        const title = `Bulk Page ${String(i).padStart(3, '0')}`
+        const id = (await invoke('create_page_in_space', {
+          parentId: null,
+          content: title,
+          spaceId,
+        })) as string
+        pages.push({ id, title })
+      }
+      for (const { id, title } of pages.toReversed()) {
+        await invoke('create_block', {
+          blockType: 'content',
+          content: `${title} body`,
+          parentId: id,
+          index: null,
+          scope: { kind: 'active', space_id: spaceId },
+          blockId: null,
+        })
+      }
+    },
+    { n: count, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
+}
+
+/**
+ * Create "Facet Fixture" in Personal through the real commands: a page tagged
+ * `work` at page level, with priority 1 and one child block, so the Tag and
+ * Priority page facets each narrow to it alone.
+ */
+export async function seedFacetPage(page: Page): Promise<void> {
+  const id = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: 'Facet Fixture',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
+  })
+  await ipc(page, 'add_tag', { blockId: id, tagId: SEED_IDS.TAG_WORK })
+  await ipc(page, 'set_priority', { blockId: id, level: '1' })
+  await ipc(page, 'create_block', {
+    blockType: 'content',
+    content: 'Facet Fixture body',
+    parentId: id,
+    index: null,
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+    blockId: null,
+  })
+}
+
 /** Fire a backend event at the app's `listen()` callbacks, as `emit()` from the Rust side would. */
 export function emitMockEvent(page: Page, event: string, payload: unknown): Promise<void> {
   return page.evaluate(

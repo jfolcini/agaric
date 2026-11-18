@@ -1,4 +1,4 @@
-import { activePopover, expect, openAddFilter, test, waitForBoot } from './helpers'
+import { activePopover, expect, openAddFilter, seedBulkPages, test, waitForBoot } from './helpers'
 
 /**
  * E2E coverage for Pages-view compound-filter chip-row.
@@ -50,18 +50,14 @@ interface BootOpts {
   extraPages?: number
 }
 
-/** Set localStorage state before boot, then open the Pages view. */
+/** Boot, seed through the real commands, then open the Pages view. */
 async function bootPages(
   page: import('@playwright/test').Page,
   opts: BootOpts = {},
 ): Promise<void> {
   const { extraPages = 0 } = opts
-  if (extraPages > 0) {
-    await page.addInitScript((n) => {
-      window.localStorage.setItem('__mockExtraPages', String(n))
-    }, extraPages)
-  }
   await waitForBoot(page)
+  if (extraPages > 0) await seedBulkPages(page, extraPages)
   await openPagesView(page)
 }
 

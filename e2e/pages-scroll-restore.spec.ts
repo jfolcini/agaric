@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, navigateToView, seedBulkPages, test, waitForBoot } from './helpers'
 
 /** The title of the page row whose top sits nearest below `fromTop` px into the Pages list. */
 async function rowBelow(page: Page, fromTop: number) {
@@ -27,8 +27,8 @@ async function rowBelow(page: Page, fromTop: number) {
  * page's own scroll restore (`scroll-restore.spec.ts`) is another scroller.
  */
 test('returning to Pages restores where the list was scrolled @pages', async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockExtraPages', '120'))
   await waitForBoot(page)
+  await seedBulkPages(page, 120)
   await navigateToView(page, 'Pages')
   const grid = page.getByRole('grid')
   await expect(grid.locator('[data-page-item]').first()).toBeVisible()
