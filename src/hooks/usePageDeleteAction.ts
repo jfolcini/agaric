@@ -35,12 +35,11 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { takenNameReason, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
+import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -149,18 +148,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           setResolveDeletedStatus(deletedTarget, false)
           // #5246 — and the cascade the delete struck through with it.
           void useResolveStore.getState().refreshDeleted(deletedTarget.originSpaceId)
-          // #3626 — the page is back; the calendar's cached journal-page
-          // ranges predate the restore and would keep its dot hidden.
-          invalidateCalendarPageDates()
-          // #4007 — same story for the picker name caches, which dropped the
-          // page on delete. A restore is the one mutation they can't fold in:
-          // an EMPTY cache means "not fetched for this space yet", so
-          // re-adding this one row would latch a one-row list as the whole
-          // space (and the restore cascades to descendants besides). Drop
-          // them and let the next picker read re-fetch. The title IS
-          // available here (`deletedTarget.title`, used two lines up) — it is
-          // the latch, not a missing title, that rules an insert out.
-          invalidateNameCaches()
           // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           deletedTarget.onRestored?.(deletedTarget.id)
@@ -198,11 +185,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // #4391 — `target.originSpaceId` (captured at `requestDelete` time,
         // same field `setResolveDeletedStatus` above already gates on) is the
         // space this delete belongs to, not whatever is active once the IPC
-        // settles. `null` (space unhydrated when the dialog opened) falls back
-        // to a full invalidation rather than silently dropping the removal.
-        // Skipping would be equally correct; the "When the caller has NO active
-        // space" section of `src/lib/name-change-bus.ts` is where that is
-        // settled once for all the publishers.
+        // settles. `null` (space unhydrated when the dialog opened) publishes
+        // nothing; the "When the caller has NO active space" section of
+        // `src/lib/name-change-bus.ts` settles that for all the publishers.
         //
         // #4523 — the set to evict is NOT just `id`. `delete_block`'s cascade
         // walks `parent_id` with no page-boundary stop, so deleting a page
@@ -256,14 +241,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         //
         // #4558 — cascade is space-less, see notifyPageRemoved.
         notifyPagesRemoved([canonicalSeedId], originSpaceId, cascadedPageIds)
-        // #5287 — a seed outside the page cohort is a tag, deleted from its own
-        // page, and the tag lists (header chips, `#` picker) only reload on
-        // `invalidated`.
-        if (!cascadedPageIds.includes(canonicalSeedId)) invalidateNameCaches()
-        // #3626 — a deleted page must stop lighting up the calendar. The
-        // journal's own DaySection routes its delete through here too, so this
-        // one call covers every surface that can remove a journal page.
-        invalidateCalendarPageDates()
         // A trashed page must leave every tab, not just the one it was deleted from.
         useTabsStore.getState().removePages([canonicalSeedId, ...cascadedPageIds])
         notify.success(t('pageDeleteAction.deleted'), {

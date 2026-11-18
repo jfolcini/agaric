@@ -65,7 +65,7 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
+import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
 import { announcePagesMovedOut } from '@/stores/page-move'
@@ -239,9 +239,6 @@ export function PageBrowserBatchToolbar({
           onMutated()
           // #5246 — the chips the trash struck through go live again.
           void useResolveStore.getState().refreshDeleted(spaceId)
-          // #4007 — the restored pages must become offerable again in the
-          // `[[` picker, whose cache dropped them on the trash below.
-          invalidateNameCaches()
           // Now, not at the change feed: expires subtrees prefetched before this write.
           recordGraphStructureChange()
           notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
@@ -273,10 +270,10 @@ export function PageBrowserBatchToolbar({
       // #4007 — drop every trashed page from the `[[` picker's name cache;
       // it is filled once per space and has no other delete signal.
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
-      // synchronous work; above the measured threshold collapse it into a
-      // single invalidation. #4391 — no active space (`currentSpaceId == null`)
-      // also falls back to a full invalidation: there is no space to scope a
-      // per-id event to. Both rules, and the de-duplication below, now live in
+      // synchronous work; above the measured threshold publish nothing and
+      // leave it to the trash's change-feed invalidation. #4391 — no active
+      // space (`currentSpaceId == null`) publishes nothing either: there is no
+      // space to scope a per-id event to. Both rules, and the de-duplication below, now live in
       // `notifyPagesRemoved` (#4524) so the block tree's multi-select delete
       // applies the same policy instead of a second copy of it.
       //

@@ -168,7 +168,8 @@ describe('notifyPagesRemoved (#4524)', () => {
     expect(changes.map((c) => (c.kind === 'removed' ? c.id : c.kind))).toEqual(['P1', 'P2'])
   })
 
-  it(`collapses into one invalidation above ${NAME_CACHE_FANOUT_MAX_IDS} ids`, () => {
+  // Above the budget the write's change-feed event drops the caches.
+  it(`publishes nothing above ${NAME_CACHE_FANOUT_MAX_IDS} ids`, () => {
     const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `P${i}`)
     const { changes, unsubscribe } = record()
     try {
@@ -176,7 +177,7 @@ describe('notifyPagesRemoved (#4524)', () => {
     } finally {
       unsubscribe()
     }
-    expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    expect(changes).toEqual([])
   })
 
   // The budget is checked AFTER de-duplication, because that is what is
@@ -193,14 +194,14 @@ describe('notifyPagesRemoved (#4524)', () => {
     expect(changes).toHaveLength(NAME_CACHE_FANOUT_MAX_IDS)
   })
 
-  it('falls back to one invalidation with no active space', () => {
+  it('publishes nothing with no active space', () => {
     const { changes, unsubscribe } = record()
     try {
       notifyPagesRemoved(['P1', 'P2'], null)
     } finally {
       unsubscribe()
     }
-    expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    expect(changes).toEqual([])
   })
 
   // Load-bearing for the block tree, whose selections are usually pure

@@ -46,8 +46,8 @@ function invalidateBookmarks(): void {
 }
 
 // The signal for writes no event names: a sync, an MCP write, an import, an
-// undo (all through `invalidateDerivedCaches`) and a restore from the trash,
-// which brings back a bookmarked page the list left out while it was trashed
+// undo (all through `invalidateDerivedCaches`) and a restore from the trash
+// (through the change feed's `names` domain), which brings back a bookmarked page the list left out while it was trashed
 // (#5293). Subscribed here, not per hook, so a list no surface shows (the
 // phone's closed sidebar) is still re-read when it next mounts.
 subscribeToNameChanges((change) => {

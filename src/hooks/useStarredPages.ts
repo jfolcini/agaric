@@ -11,7 +11,7 @@
  * backend; a failed write toasts once and re-reads what the backend holds. A change that
  * arrives some other way (sync, MCP, import, undo, a restore from the trash)
  * is re-read through `invalidateNameCaches`, which `invalidateDerivedCaches`
- * calls.
+ * and the change feed's `names` domain call.
  */
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'

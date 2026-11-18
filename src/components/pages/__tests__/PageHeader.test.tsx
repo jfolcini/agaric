@@ -25,6 +25,7 @@ import { bookmarkInvokeHandlers, seedBookmarks } from '@/__tests__/helpers/bookm
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { invalidateDomains } from '@/hooks/derived-caches'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
@@ -2886,6 +2887,8 @@ describe('PageHeader delete from the page-actions menu', () => {
 
 // #5287 — the header stays mounted across page navigation, so a change made
 // on another page, or by the header's own Undo, has to reach its tag chips.
+// The mock sends no change feed, so `invalidateDomains(['names'])` stands in for
+// the `names` event a tag's rename or delete sends.
 describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
   const PAGE = SEED_IDS.PAGE_PROJECTS
 
@@ -2933,6 +2936,7 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
     await waitFor(() => {
       expect(blocks.get(SEED_IDS.TAG_WORK)?.['content']).toBe('project')
     })
+    act(() => invalidateDomains(['names']))
 
     rerender(headerFor(PAGE, 'Projects'))
     expect(await screen.findByText('project')).toBeInTheDocument()
@@ -2950,6 +2954,7 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
     await waitFor(() => {
       expect(blocks.get(SEED_IDS.TAG_IDEA)?.['deleted_at']).toBeTruthy()
     })
+    act(() => invalidateDomains(['names']))
 
     rerender(headerFor(PAGE, 'Projects'))
     await user.click(await screen.findByRole('button', { name: /add tag/i }))

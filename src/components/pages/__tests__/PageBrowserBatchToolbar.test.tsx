@@ -753,20 +753,6 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
       unsubscribe()
     }
   })
-
-  it(`fires exactly one invalidation at ${NAME_CACHE_FANOUT_MAX_IDS + 1} ids`, async () => {
-    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `BIG_${i}`)
-    const { changes, unsubscribe } = recordChanges()
-    try {
-      await confirmTrash(ids)
-      await waitFor(() => {
-        expect(changes).toHaveLength(1)
-      })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
-    } finally {
-      unsubscribe()
-    }
-  })
 })
 
 // #4480 — the batch trash cascade walks `parent_id` with NO page-boundary
@@ -882,34 +868,6 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
         'P_LIVE',
         'P_GONE',
       ])
-    } finally {
-      unsubscribe()
-    }
-  })
-
-  // The `NAME_CACHE_FANOUT_MAX_IDS` budget exists because `notifyPageRemoved`
-  // is a synchronous O(ids x listeners x pages) fan-out. #4480 makes the
-  // emitted set larger than the selection, so the threshold must be measured
-  // against what will ACTUALLY be emitted.
-  //
-  // NON-TAUTOLOGY: 20 selected roots is comfortably under the cap of 25, so
-  // the pre-#4480 `ids.length > NAME_CACHE_FANOUT_MAX_IDS` test passes and the
-  // code takes the per-id branch — firing 30 synchronous events, the exact
-  // frame-budget overrun the cap was measured to prevent. Only a check against
-  // the union collapses this into one invalidation.
-  it('measures the fan-out budget against the union, not the selection', async () => {
-    const roots = Array.from({ length: 20 }, (_, i) => `ROOT_${i}`)
-    const nested = Array.from({ length: 10 }, (_, i) => `NESTED_${i}`)
-    expect(roots.length).toBeLessThanOrEqual(NAME_CACHE_FANOUT_MAX_IDS)
-    expect(roots.length + nested.length).toBeGreaterThan(NAME_CACHE_FANOUT_MAX_IDS)
-
-    const { changes, unsubscribe } = recordChanges()
-    try {
-      await confirmTrash(roots, nested)
-      await waitFor(() => {
-        expect(changes).toHaveLength(1)
-      })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
     } finally {
       unsubscribe()
     }
@@ -1057,20 +1015,6 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
             ({ kind: 'removed', entity: 'page', id, spaceId: 'SPACE_TEST' }) satisfies NameChange,
         ),
       )
-    } finally {
-      unsubscribe()
-    }
-  })
-
-  it(`fires exactly one invalidation at ${NAME_CACHE_FANOUT_MAX_IDS + 1} ids`, async () => {
-    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `BIGMOVE_${i}`)
-    const { changes, unsubscribe } = recordChanges()
-    try {
-      await confirmMove(ids, 'SPACE_OTHER')
-      await waitFor(() => {
-        expect(changes).toHaveLength(1)
-      })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
     } finally {
       unsubscribe()
     }

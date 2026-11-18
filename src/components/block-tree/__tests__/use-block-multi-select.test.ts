@@ -1127,17 +1127,14 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       await act(async () => {
         await result.current.handleBatchDelete()
       })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+      expect(changes).toEqual([])
     } finally {
       unsubscribe()
     }
   })
 
-  // #4391 — with no active space there is nothing to scope a per-id event to,
-  // so the conservative fallback fires. Paired with the content-only test
-  // above, which proves the fallback is NOT reached for an empty cohort: a
-  // null space plus nothing removed must still publish nothing.
-  it('falls back to one invalidation when there is no active space', async () => {
+  // #4391 — with no active space there is nothing to scope a per-id event to.
+  it('publishes nothing for a removed page when there is no active space', async () => {
     pageStore.setState({
       blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
     })
@@ -1150,7 +1147,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       await act(async () => {
         await result.current.handleBatchDelete()
       })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+      expect(changes).toEqual([])
     } finally {
       unsubscribe()
     }

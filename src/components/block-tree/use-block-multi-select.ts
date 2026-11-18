@@ -35,7 +35,7 @@ export interface UseBlockMultiSelectParams {
    * scoping" mislabelling `src/lib/name-change-bus.ts` warns about. Closing
    * over the prop and listing it in the delete callback's dep array is what
    * pins it (see the long note in `handleTrash`). `null` (space unhydrated)
-   * falls back to a full invalidation inside `notifyPagesRemoved`.
+   * publishes nothing inside `notifyPagesRemoved`.
    */
   currentSpaceId: string | null
   t: TFunction
@@ -243,7 +243,7 @@ export function useBlockMultiSelect({
         // `PageBrowserBatchToolbar.handleTrash` has published for the identical
         // cache consequence since #4007, over the identical command. The policy
         // (de-duplicate, budget the fan-out against what is actually emitted,
-        // fall back to a full invalidation with no active space) is
+        // skip with no active space) is
         // `notifyPagesRemoved`, shared with that toolbar rather than copied.
         //
         // The cohort is the UNION of two halves, and BOTH are needed — but
@@ -268,29 +268,12 @@ export function useBlockMultiSelect({
         // construction (it is the Pages view); a block-tree selection is
         // mostly CONTENT rows, which the picker never offers. Publishing them
         // would fire O(listeners x pages) of synchronous work per id that
-        // cannot match anything, and — worse — a routine 30-block content
-        // delete would exceed `NAME_CACHE_FANOUT_MAX_IDS` and wipe a warm
-        // cache to describe the removal of nothing. `block_type` is on the
-        // rows already in the store, so the filter costs one map lookup per
-        // selected id. `blocksById` is the snapshot captured above, BEFORE
-        // both the await and the splice below drop those rows — see the
-        // review-note-2 comment at its capture site.
-        //
-        // What "wipe a warm cache" costs, spelled out because it is NEW on
-        // this surface (#4534 review note 3): past `NAME_CACHE_FANOUT_MAX_IDS`
-        // — and on the `spaceId == null` branch — `notifyPagesRemoved` falls
-        // back to `invalidateNameCaches()`, and that event is not page-scoped.
-        // `useBlockResolve` subscribes BOTH caches to it, so `applyTagNameChange`
-        // returns `[]` as well and the `#` picker's `tagsListRef` is dropped
-        // alongside `pagesListRef` — for a delete that removed no tag at all.
-        // The consequence is a re-fetch on the next `#` read, never a wrong
-        // suggestion, and it is the policy `PageBrowserBatchToolbar` has
-        // carried since #4007 (a big trash drops both caches too), so the
-        // block tree matching it is deliberate. It is written down here
-        // because this hook is the surface where the fallback is EASIEST to
-        // reach by accident: a block-tree selection is mostly content rows, so
-        // it is the page-subset filter above — not the cap — that keeps an
-        // everyday 30-block content delete from clearing the tag cache.
+        // cannot match anything, and a routine 30-block content delete would
+        // exceed `NAME_CACHE_FANOUT_MAX_IDS` and skip the pages it did remove.
+        // `block_type` is on the rows already in the store, so the filter
+        // costs one map lookup per selected id. `blocksById` is the snapshot
+        // captured above, BEFORE both the await and the splice below drop
+        // those rows — see the review-note-2 comment at its capture site.
         const selectedPageIds = new Set<string>()
         for (const id of ids) {
           if (blocksById.get(id)?.block_type === 'page') selectedPageIds.add(id)

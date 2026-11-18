@@ -369,10 +369,10 @@ describe('usePageDeleteAction', () => {
 
   // #4007 — the `[[` picker's page-name cache (`pagesListRef` in
   // `useBlockResolve`) is a React ref, not a store, so this flow can only
-  // reach it through the name-change bus. Without these two emissions the
-  // picker keeps offering a deleted page for the rest of the session (and,
-  // after an Undo, keeps hiding a page that is back).
-  it('broadcasts the delete — and the Undo — to the picker name caches', async () => {
+  // reach it through the name-change bus. Without this emission the picker
+  // keeps offering a deleted page until the delete's change-feed event. The
+  // Undo's restore reaches the caches through its own change-feed event.
+  it('broadcasts the delete to the picker name caches', async () => {
     stubInvoke({
       delete_block: () =>
         withOps({
@@ -381,7 +381,6 @@ describe('usePageDeleteAction', () => {
           descendants_affected: 1,
           affected_page_ids: ['PAGE_1'],
         }),
-      restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
@@ -396,15 +395,6 @@ describe('usePageDeleteAction', () => {
       expect(changes).toEqual([
         { kind: 'removed', entity: 'page', id: 'PAGE_1', spaceId: 'SPACE_A' },
       ])
-
-      act(() => {
-        lastUndoAction()()
-      })
-      await waitFor(() => expect(changes).toHaveLength(2))
-      // A restore ADDS a row back, and the bus has no "added" event: an empty
-      // cache means "not fetched yet", so inserting one row would latch a
-      // one-row list as the whole space. Hence drop, not patch.
-      expect(changes[1]).toEqual({ kind: 'invalidated' })
     } finally {
       unsubscribe()
     }
@@ -535,18 +525,15 @@ describe('single delete — cascaded nested pages (#4523)', () => {
   // a replacement: swapping the union for `new Set(affected_page_ids)` would
   // leave the seed in the picker whenever the cohort does not name it. The
   // page cohort never names a tag, which is what the header's delete on a
-  // tag's own page sends (#5287), and only `invalidated` reloads the tag lists.
+  // tag's own page sends (#5287).
   it('still evicts the requested id when the cohort does not name it', async () => {
     stubInvoke({ delete_block: () => deleteReply('TAG_1', []) })
     const { changes, unsubscribe } = recordChanges()
     try {
       await confirmDelete('TAG_1')
-      await waitFor(() => {
-        expect(changes).toHaveLength(2)
-      })
+      await waitFor(() => expect(toast.success).toHaveBeenCalled())
       expect(changes).toEqual([
         { kind: 'removed', entity: 'page', id: 'TAG_1', spaceId: 'SPACE_A' },
-        { kind: 'invalidated' },
       ] satisfies NameChange[])
     } finally {
       unsubscribe()
@@ -561,9 +548,9 @@ describe('single delete — cascaded nested pages (#4523)', () => {
   // NON-TAUTOLOGY: the request is ONE id, so a budget measured against the
   // request can never trip — it would take the per-id branch and fire 31
   // synchronous events, the exact frame-budget overrun the cap was measured to
-  // prevent. Only a check against the union collapses this into one
-  // invalidation. This is the arm that makes `1 <= budget` a bug rather than a
-  // tautology.
+  // prevent. Only a check against the union publishes nothing, leaving the
+  // caches to the delete's change-feed event. This is the arm that makes
+  // `1 <= budget` a bug rather than a tautology.
   it('measures the fan-out budget against the union, not the requested id', async () => {
     const nested = Array.from({ length: 30 }, (_, i) => `NESTED_${i}`)
     expect(1).toBeLessThanOrEqual(NAME_CACHE_FANOUT_MAX_IDS)
@@ -573,10 +560,8 @@ describe('single delete — cascaded nested pages (#4523)', () => {
     const { changes, unsubscribe } = recordChanges()
     try {
       await confirmDelete('PAGE_ROOT')
-      await waitFor(() => {
-        expect(changes).toHaveLength(1)
-      })
-      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+      await waitFor(() => expect(toast.success).toHaveBeenCalled())
+      expect(changes).toEqual([])
     } finally {
       unsubscribe()
     }
