@@ -107,7 +107,7 @@ avdmanager create avd -n spike_test -k "system-images;android-36;google_apis;x86
 
 `android emulator create` can neither name the AVD nor pick its image, so the `spike_test` AVD that [AGENTS.md § Android](../AGENTS.md#android) launches comes from `avdmanager`.
 
-**Gradle dependency verification.** The tracked `src-tauri/gen/android/gradle/verification-metadata.xml` holds the sha256 of every Gradle dependency, and Gradle refuses an artifact that does not match. After a Tauri, Tauri-plugin or Android toolchain bump, CI's Android build fails with `Dependency verification failed` until it is regenerated: build once (`npm run tauri -- android build --target x86_64 --debug`, which may stop at that same failure), then run `bash scripts/update-gradle-verification.sh` and commit the file with `git add -f`.
+**Gradle dependency verification.** The tracked `src-tauri/gen/android/gradle/verification-metadata.xml` holds the sha256 of every Gradle dependency, and Gradle refuses an artifact that does not match. After a Tauri, Tauri-plugin or Android toolchain bump, CI's Android build fails with `Dependency verification failed` until it is regenerated: build once (`npm run tauri -- android build --target x86_64 --debug`, which may stop at that same failure), then run `just update-gradle-verification` (or `bash scripts/update-gradle-verification.sh`) and commit the file with `git add -f`.
 
 ### Developer tools (prek hook host-binaries)
 

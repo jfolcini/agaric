@@ -113,8 +113,8 @@ Everything that enters the build from outside the repo is pinned by digest, so a
 
 - **Packages:** the lockfiles (`package-lock.json` integrity, `Cargo.lock` checksums); CI installs with `npm ci`, and `verify-lockfiles` fails on drift.
 - **GitHub Actions:** a 40-char commit SHA.
-- **Anything a workflow or script downloads itself:** a sha256 recorded beside the URL and checked before the file is used.
-- **Gradle dependencies (Android):** `src-tauri/gen/android/gradle/verification-metadata.xml`; regenerate it with `scripts/update-gradle-verification.sh` after a Tauri or plugin bump ([docs/BUILD.md](docs/BUILD.md#android)).
+- **Anything a workflow or script downloads itself:** a sha256 recorded beside the URL and checked before the file is used. `just pin-sha256 <url>…` prints it when bumping.
+- **Gradle dependencies (Android):** `src-tauri/gen/android/gradle/verification-metadata.xml`; regenerate it with `just update-gradle-verification` after a Tauri or plugin bump ([docs/BUILD.md](docs/BUILD.md#android)).
 
 Where the installer takes no hash, pin the exact version, never a range, tag, `latest` or bare major: `setup-node` (`.nvmrc`), `setup-java`, rustup (`rust-toolchain.toml`, a dated nightly), sdkmanager packages and the emulator build, `cargo install --version --locked`, `cargo binstall`, `uv tool`. Runner images, apt and brew packages are the accepted floating exceptions. A pin Dependabot cannot bump is bumped by hand.
 
