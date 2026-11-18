@@ -24,7 +24,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, opLog, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, opLog, seedBlocks, stampPageLastEdited } from '@/lib/tauri-mock/seed'
 import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
 import { addBulkPages } from './mock-store-helpers'
@@ -91,19 +91,22 @@ describe('addBulkPages op_log ordering — list_page_history / undo_page_op read
   })
 
   it("undo_page_op's undo_depth 0 reverses the chronologically NEWEST op, not the last one pushed", () => {
-    const bulk1 = pageIdByTitle('Bulk Page 001') // stamped "now" — the newest op-log entry overall
-    const expectedOp = opLog.find(
+    // `undo_page_op` reads one page's ops, and each bulk page carries one, so
+    // the cross-page push order above cannot reach it. Give Bulk Page 001 a
+    // second, OLDER stamp pushed AFTER its newer one.
+    const bulk1 = pageIdByTitle('Bulk Page 001')
+    const newest = opLog.find(
       (o) => (JSON.parse(o.payload) as Record<string, unknown>)['block_id'] === bulk1,
     )
-    expect(expectedOp).toBeDefined()
+    if (newest === undefined) throw new Error('Bulk Page 001 has no op-log stamp')
+    const olderTs = new Date(Date.parse(newest.created_at) - 60 * 60 * 1000).toISOString()
+    const older = stampPageLastEdited(bulk1, olderTs)
+    expect(older.seq).toBeGreaterThan(newest.seq)
 
     const result = dispatch('undo_page_op', { pageId: bulk1, undoDepth: 0 }) as {
       reversed_op: { device_id: string; seq: number }
     }
 
-    // addBulkPages pushes Bulk Page 003's (oldest, "now - 2h") stamp LAST,
-    // so a handler that trusted array/push order instead of `created_at`
-    // would reverse Bulk Page 003's op here instead of Bulk Page 001's.
-    expect(result.reversed_op.seq).toBe(expectedOp?.seq)
+    expect(result.reversed_op.seq).toBe(newest.seq)
   })
 })
