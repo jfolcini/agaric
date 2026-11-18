@@ -52,7 +52,9 @@ struct State {
     writes: u64,
     pending: PendingChanges,
     /// Changes [`ChangeFeed::take_if_quiet`] handed over that
-    /// [`ChangeFeed::emitted`] has not yet confirmed sent.
+    /// [`ChangeFeed::emitted`] has not yet confirmed sent; only the headless
+    /// bridge's `settle` reads it.
+    #[cfg(any(test, feature = "test-util"))]
     in_flight: bool,
 }
 
@@ -115,16 +117,21 @@ impl ChangeFeed {
             return None;
         }
         let taken = std::mem::take(&mut state.pending);
-        state.in_flight = !taken.is_empty();
+        #[cfg(any(test, feature = "test-util"))]
+        {
+            state.in_flight = !taken.is_empty();
+        }
         Some(taken)
     }
 
     /// The changes last taken have been sent.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn emitted(&self) {
         self.state().in_flight = false;
     }
 
     /// Whether every commit recorded so far has been taken and sent.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn is_idle(&self) -> bool {
         let state = self.state();
         state.pending.is_empty() && !state.in_flight

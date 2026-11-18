@@ -11,7 +11,7 @@
 
 **Fix: a backend-condition wait.**
 - The bridge gets a `settle` op. It answers once the change feed has sent every commit recorded so far, which the new `ChangeFeed::is_idle` reports.
-- The feed now marks changes as in flight from the take until `emitted()`. Without that mark, `settle` could answer while the app crate still resolves the event's pages, before it emits.
+- The feed now marks changes as in flight from the take until `emitted()`. The mark, `emitted()` and `is_idle()` compile only under `test-util`, so production carries none of them. Without that mark, `settle` could answer while the app crate still resolves the event's pages, before it emits.
 - `settleBackend(page)` in `e2e/helpers.ts` calls it, through `window.__settleBackend`. On the mock that waits one task, when its feed fires. `seedBulkPages` and `seedFacetPage` call it.
 - Under the load that failed 4 runs in 8, the test passes 12 of 12.
 - Two waits I tried did not work:

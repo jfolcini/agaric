@@ -61,6 +61,8 @@ pub async fn run(
             domains: Some(pending.domains.into_iter().collect()),
             local_command: true,
         });
+        // What the headless bridge's `settle` waits for.
+        #[cfg(feature = "test-util")]
         materializer.change_feed().emitted();
     }
 }
