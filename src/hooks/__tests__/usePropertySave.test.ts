@@ -24,6 +24,7 @@ import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import type { PropertyRow } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
@@ -109,8 +110,8 @@ describe('usePropertySave handleSave', () => {
   // `set_property` and ships the reason as a CODED validation error
   // (`InvalidRepeatRule`). Collapsing that into the generic toast would leave
   // the user exactly as uninformed as the silent misbehaviour the validation
-  // replaced, so the reason must reach the toast verbatim.
-  it('surfaces the backend reason verbatim for a malformed repeat rule (#3647)', async () => {
+  // replaced, so the toast says which rules are valid.
+  it('surfaces the repeat-rule help for a malformed repeat rule (#3647)', async () => {
     stubInvoke({
       set_property: () =>
         Promise.reject(
@@ -130,9 +131,7 @@ describe('usePropertySave handleSave', () => {
       await result.current.handleSave('repeat', '++ 1d', 'text')
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-      "repeat rule '++ 1d' is not valid: it contains a space — write `++1d`, not `++ 1d`",
-    )
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('errorCode.invalidRepeatRule'))
     expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith('Failed to save property')
   })
 

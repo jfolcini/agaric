@@ -7,13 +7,17 @@
  * - **Plain strings/numbers pass through untouched.** Most call sites
  *   already hand `notify.error` a translated human string (`t('…')`);
  *   those must render verbatim regardless of debug mode.
- * - **Errors and IPC `AppError` objects** are reduced to their message
- *   with the cosmetic Rust `Xxx error:` display prefix stripped. Any
- *   `(err: <id>)` correlation code embedded by the backend's
- *   `sanitize_internal_error` is preserved in **both** modes, so a user
- *   can always read the code back and an operator can grep the daily log.
- * - **Debug mode on** additionally appends the structured `kind` (the
- *   machine-readable "error code"), e.g. `· code: invalid_operation`.
+ * - **A coded validation error, or a sanitized internal error, renders its
+ *   translated sentence** ({@link translatedErrorSentence}), because the
+ *   backend writes its messages in English. The internal sentence keeps the
+ *   `(err: <id>)` correlation code `sanitize_internal_error` embeds, so a
+ *   user can read it back and an operator can grep the daily log.
+ * - **Every other error renders its own message**, with the cosmetic Rust
+ *   `Xxx error:` display prefix stripped: it explains this one failure in a
+ *   way no generic sentence could.
+ * - **Debug mode on** appends the machine details: the backend's raw message
+ *   after a translated sentence, then the structured `kind` (and validation
+ *   `code`), e.g. `· code: invalid_operation`.
  *
  * This is intentionally the only formatter: routing the `notify`
  * chokepoint and the inline banners through it is what makes "every error
@@ -21,8 +25,51 @@
  * per-call-site discipline.
  */
 
-import { isAppError } from '@/lib/app-error'
+import { isAppError, type ValidationCode } from '@/lib/app-error'
+import { t } from '@/lib/i18n'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
+
+/**
+ * The i18n key of the sentence each validation code renders as, or `null` to
+ * keep the backend's message. `tsc` fails here when the backend adds a code.
+ */
+export const VALIDATION_CODE_KEYS: Record<ValidationCode, string | null> = {
+  InvalidGlob: 'errorCode.invalidGlob',
+  InvalidRegex: 'errorCode.invalidRegex',
+  InvalidDateFilter: 'errorCode.invalidDateFilter',
+  InvalidFilter: 'pageBrowser.filter.invalidFilter',
+  RequiresRefresh: 'errorCode.requiresRefresh',
+  PageNotInSpace: 'error.pageNotInCurrentSpace',
+  InvalidRepeatRule: 'errorCode.invalidRepeatRule',
+  // Only the English message names the clashing title, which a batch move,
+  // restore or revert needs (#6051, #6099); translating it needs the title
+  // as structured data from the backend.
+  DuplicatePageTitle: null,
+  DuplicatePageAlias: 'pageHeader.aliasTaken',
+  InvalidAgentName: 'agentAccess.agents.invalidName',
+  DuplicateAgentName: 'errorCode.duplicateAgentName',
+  BuiltinPropertyLocked: 'errorCode.builtinPropertyLocked',
+  UnacknowledgedPropertyLoss: 'errorCode.unacknowledgedPropertyLoss',
+  TagNameWhitespace: 'tags.nameHasWhitespace',
+}
+
+/** The `(err: <id>)` that ends a message `sanitize_internal_error` wrote. */
+const CORRELATION_ID = /\(err: (\w+)\)$/
+
+/**
+ * The translated sentence for a backend error, or `null` when it has none
+ * and its own message is what to show.
+ */
+function translatedErrorSentence(err: unknown): string | null {
+  if (!isAppError(err)) return null
+  if (err.code != null) {
+    const key = VALIDATION_CODE_KEYS[err.code]
+    return key === null ? null : t(key)
+  }
+  if (err.kind !== 'internal') return null
+  const id = CORRELATION_ID.exec(err.message)?.[1]
+  return id === undefined ? null : t('error.internal', { id })
+}
 
 /**
  * Leading `AppError` Display prefixes (mirrors the `#[error("… : {0}")]`
@@ -90,6 +137,8 @@ export function formatErrorForDisplay(err: unknown, opts: FormatErrorOptions = {
 
   const debug = opts.debug ?? readPreference(PREFERENCES.debugMode)
   const base = stripErrorPrefix(message)
+  const sentence = translatedErrorSentence(err)
+  if (sentence !== null) return debug ? `${sentence} · ${base} · code: ${kind}` : sentence
   if (!debug || !kind) return base
   return `${base} · code: ${kind}`
 }
