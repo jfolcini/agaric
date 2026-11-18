@@ -98,31 +98,33 @@ test.describe('page mode keeps what is typed (#5691) @editor @pages', () => {
     })
   }
 
-  test('a save the backend refuses says so, keeps the text and the mode, and the next save writes it', async ({
-    page,
-  }) => {
-    await page.evaluate(() =>
-      (window as unknown as MockErrors).__injectMockError('edit_block', 'disk full'),
-    )
-    await caret(page, 2, 'end')
-    await page.keyboard.type(' kept')
+  test(
+    'a save the backend refuses says so, keeps the text and the mode, and the next save writes it',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await page.evaluate(() =>
+        (window as unknown as MockErrors).__injectMockError('edit_block', 'disk full'),
+      )
+      await caret(page, 2, 'end')
+      await page.keyboard.type(' kept')
 
-    await expect(page.getByText(SAVE_FAILED)).toBeVisible()
-    expect((await backendTexts(page, seeded.pageId))[2]).toBe('gamma')
+      await expect(page.getByText(SAVE_FAILED)).toBeVisible()
+      expect((await backendTexts(page, seeded.pageId))[2]).toBe('gamma')
 
-    // A switch whose save fails stays in page mode, the text still there.
-    await modeSwitch(page, 'Blocks').click()
-    await expect(page.getByText(SAVE_FAILED)).toBeVisible()
-    await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-checked', 'true')
-    expect((await shownBlocks(page))[2]?.text).toBe('gamma kept')
+      // A switch whose save fails stays in page mode, the text still there.
+      await modeSwitch(page, 'Blocks').click()
+      await expect(page.getByText(SAVE_FAILED)).toBeVisible()
+      await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-checked', 'true')
+      expect((await shownBlocks(page))[2]?.text).toBe('gamma kept')
 
-    await page.evaluate(() => (window as unknown as MockErrors).__clearMockErrors())
-    await modeSwitch(page, 'Blocks').click()
+      await page.evaluate(() => (window as unknown as MockErrors).__clearMockErrors())
+      await modeSwitch(page, 'Blocks').click()
 
-    await expect(modeSwitch(page, 'Blocks')).toHaveAttribute('aria-checked', 'true')
-    await expect(page.getByText('gamma kept', { exact: true })).toBeVisible()
-    expect(await backendTexts(page, seeded.pageId)).toEqual(['alpha', 'beta', 'gamma kept'])
-  })
+      await expect(modeSwitch(page, 'Blocks')).toHaveAttribute('aria-checked', 'true')
+      await expect(page.getByText('gamma kept', { exact: true })).toBeVisible()
+      expect(await backendTexts(page, seeded.pageId)).toEqual(['alpha', 'beta', 'gamma kept'])
+    },
+  )
 
   test('Ctrl+Z takes typed text back and Ctrl+Y and Ctrl+Shift+Z put it back, each saved', async ({
     page,
@@ -169,9 +171,12 @@ test.describe('page mode keeps what is typed (#5691) @editor @pages', () => {
     await caret(page, 0, 'end')
     await page.keyboard.type(' typed')
     await expect.poll(async () => (await backendTexts(page, seeded.pageId))[0]).toBe('alpha typed')
+    const typedAt = Date.now()
     await blurEditors(page)
-    // Edits closer than the undo group window join one entry.
+    // Edits closer than the undo group window join one entry: on the mock by the page's clock, on
+    // the real backend by its own, which `page.clock` does not reach.
     await page.clock.fastForward(1000)
+    await expect.poll(() => Date.now() - typedAt).toBeGreaterThan(1000)
 
     await ipc(page, 'edit_block', { blockId: seeded.ids[2], toText: 'gamma, from an agent' })
     await emitMockEvent(page, 'blocks:changed', { changed_page_ids: [seeded.pageId] })
