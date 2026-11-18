@@ -33,7 +33,7 @@ test('toolbar and selection bubble icons render at 16 px @editor', async ({ page
 
   const toolbar = await iconSizes('formatting-toolbar')
   const bubble = await iconSizes('selection-bubble-menu')
-  expect(bubble).toHaveLength(7)
+  expect(bubble).toHaveLength(8)
   expect(toolbar).toHaveLength(16)
   for (const sizes of [toolbar, bubble]) {
     expect(sizes).toEqual(sizes.map((s) => `${s.split(':')[0]}: 16x16`))

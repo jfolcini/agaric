@@ -13,9 +13,12 @@ Decisions:
 - The bubble gets a *Highlight colour* button that opens the swatches in a popover anchored like the link popover. The Format popover, the touch path, shows them as a second row.
 - English strings only: #6879, which enforces complete es/pt/de/fr catalogs, had not merged.
 
+Two existing e2e assertions changed with the new bubble button. `toolbar-icons.spec.ts` counted 7 bubble icons and now counts 8. `bubble-marks.spec.ts` matched the *Highlight* button by substring, which now also finds *Highlight colour*, so it matches exactly, as its *Inline code* row already does.
+
 ## What ran
 
 - `src/editor/__tests__/highlight-colors.test.ts`: red first on ten of its cases, then green. The renderer, picker, reveal and contrast changes were each falsified and went red on the predicted assertion.
 - `e2e/highlight-colours.spec.ts`: green in blocks and page mode, and red with the picker's colour dropped.
+- The selection-bubble, toolbar and touch-menu e2e specs: green after the merge of `main`.
 - `bash scripts/test-related-ts.sh --range origin/main`, `npm run typecheck`, oxlint, oxfmt, `node --test scripts/e2e-related.test.mjs`, `node scripts/comparison-scorecard.mjs --write`.
 - `cargo nextest run --workspace -E 'test(a_coloured_highlight_is_left_as_written) | test(each_foreign_form_is_written_in_agarics)'`: green; red when the normalizer's early return was made to rewrite `==🔴` as `==`.
