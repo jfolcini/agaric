@@ -122,9 +122,14 @@ test.describe('Replace across pages from Search @search @pages @editor', () => {
   })
 
   test('Ctrl+Z on a page opened after a run undoes that page’s part only', async ({ page }) => {
+    // Ctrl+Z on a page the undo store never tracked is positional, and groups
+    // ops less than `UNDO_GROUP_WINDOW_MS` apart: the clock steps past it, so
+    // the seed's blocks are not undone with the run.
+    await page.clock.install()
     await openSearchView(page)
     const alpha = await seedPage(page, 'Undo Alpha', ['one pinnacle', 'two pinnacle'])
     const beta = await seedPage(page, 'Undo Beta', ['three pinnacle'])
+    await page.clock.fastForward(1000)
     await previewReplace(page, 'pinnacle', 'zorbex')
     await confirmReplace(page, 'Replace in 3 blocks across 2 pages')
     await expect.poll(() => stored(page, alpha)).toEqual(['one zorbex', 'two zorbex'])
