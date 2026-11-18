@@ -114,14 +114,15 @@ describe('renderBlockRef — chip label reflects the stored title verbatim', () 
    * information. The remaining job — reveal what `max-width` clipped — is the
    * label's `TruncatedText`, which sets a title only while it is cut (#6895).
    */
-  it('puts the title in a TruncatedText label and no floating tooltip', async () => {
+  it('shows the title with no hover title and no floating tooltip', async () => {
     const user = userEvent.setup()
     const title = 'shared title'
     render(<>{renderBlockRef(node('BR4'), 'k', baseCtx({ resolveBlockTitle: () => title }))}</>)
     const chip = screen.getByTestId('block-ref-chip')
     expect(chip.textContent).toBe(title)
     expect(chip).not.toHaveAttribute('title')
-    expect(chip.querySelector('[data-slot="truncated-text"]')).toHaveTextContent(title)
+    // Its peek shows the whole block on hover, so nothing inside carries a title.
+    expect(chip.querySelector('[title]')).toBeNull()
 
     // No duplicated floating copy of the string the chip already shows.
     await user.hover(chip)

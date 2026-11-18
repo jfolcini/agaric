@@ -146,9 +146,8 @@ export function PageTreeItem({
             type="button"
             className="min-w-0 flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded focus-ring-visible"
             onClick={() => onNavigate(hybridId, node.fullPath)}
-            data-page-title={node.fullPath}
           >
-            <TruncatedText text={node.name} className="block">
+            <TruncatedText text={node.name} className="block" data-page-title={node.fullPath}>
               <HighlightMatch text={node.name} filterText={filterText} />
             </TruncatedText>
           </button>

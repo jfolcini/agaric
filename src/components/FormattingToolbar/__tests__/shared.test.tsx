@@ -17,7 +17,7 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { renderConfigButton } from '@/components/FormattingToolbar/shared'
+import { renderConfigButton, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
 import { t } from '@/lib/i18n'
 
@@ -81,11 +81,10 @@ describe('renderConfigButton activation contract', () => {
       expect(config.action).toHaveBeenCalledTimes(1)
     })
 
-    // #6895 — a finger acts on the release of a short tap, and a press held long
-    // enough to show the button's name does nothing when it lifts. Its press is
-    // still prevented, so the editor keeps its selection either way.
-    it('a short finger tap acts on release, its press prevented, and once only', () => {
-      const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+    // #6895 — a finger acts on its release, unless the press showed the button's
+    // name (its tooltip open on the trigger), so learning a name never applies
+    // it. Its press is still prevented, so the editor keeps its selection.
+    it('a finger acts on release, its press prevented, and once only', () => {
       const config = makeConfig()
       render(renderConfigButton(config, {}, mode, t))
       const btn = screen.getByRole('button', { name: t('toolbar.divider') })
@@ -99,25 +98,22 @@ describe('renderConfigButton activation contract', () => {
       expect(btn.dispatchEvent(down)).toBe(false)
       expect(config.action).not.toHaveBeenCalled()
 
-      now.mockReturnValue(1150)
       fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
       fireEvent.click(btn, { detail: 1 })
       expect(config.action).toHaveBeenCalledTimes(1)
-      now.mockRestore()
     })
 
-    it('a finger held past the long-press delay does nothing on release', () => {
-      const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+    it('a finger whose hold showed the name does nothing on release', () => {
       const config = makeConfig()
       render(renderConfigButton(config, {}, mode, t))
       const btn = screen.getByRole('button', { name: t('toolbar.divider') })
 
       fireEvent.pointerDown(btn, { button: 0, pointerType: 'touch' })
-      now.mockReturnValue(1600)
+      // What Radix sets on the trigger once the long-press opened its tooltip.
+      btn.dataset['state'] = 'delayed-open'
       fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
       fireEvent.click(btn, { detail: 1 })
       expect(config.action).not.toHaveBeenCalled()
-      now.mockRestore()
     })
 
     it('does not double-fire on a pointer press (pointerdown + trailing click)', () => {
@@ -128,6 +124,19 @@ describe('renderConfigButton activation contract', () => {
       fireEvent.click(btn, { detail: 1 })
       expect(config.action).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it('a finger on a control with no name to show acts on release, however long it held', () => {
+    const action = vi.fn()
+    render(
+      <button type="button" {...toolbarPressHandlers(action)}>
+        Save
+      </button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Save' })
+    fireEvent.pointerDown(btn, { button: 0, pointerType: 'touch' })
+    fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
+    expect(action).toHaveBeenCalledTimes(1)
   })
 
   it('overflow mode runs onAfterAction on keyboard activation too', () => {

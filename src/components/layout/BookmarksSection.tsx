@@ -101,7 +101,7 @@ function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkP
           onClick={() => onOpen(pageId, title)}
         >
           <Bookmark />
-          <TruncatedText>{label}</TruncatedText>
+          <TruncatedText text={fullTitle}>{label}</TruncatedText>
         </SidebarMenuButton>
       </NewTabTarget>
       <SidebarMenuAction

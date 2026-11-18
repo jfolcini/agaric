@@ -188,6 +188,14 @@ describe('the link bubble', () => {
     press(t('toolbar.link'))
     expect(heard).toHaveBeenCalledWith({ from: 7, to: 7 })
   })
+
+  it('names the link button with its shortcut apart, for a keyboard (#6895)', async () => {
+    setup(LINK, 7)
+    fireEvent.focus(screen.getByRole('button', { name: t('toolbar.link') }))
+    const tip = (await screen.findAllByRole('tooltip'))[0]
+    expect(tip).toHaveTextContent(t('toolbar.link'))
+    expect(tip?.querySelector('kbd')).toHaveTextContent('Ctrl + K')
+  })
 })
 
 describe('the table bubble', () => {

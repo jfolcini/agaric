@@ -516,11 +516,11 @@ describe('BlockRefPeek', () => {
       }
     }
 
-    function PageLink(): ReactElement {
+    function PageLink({ link = `[[${PAGE}]]` }: { link?: string }): ReactElement {
       const [el, setEl] = useState<HTMLDivElement | null>(null)
       return (
         <div ref={setEl}>
-          {renderRichContent(`see [[${PAGE}]]`, {
+          {renderRichContent(`see ${link}`, {
             interactive: true,
             onNavigate: () => {},
             resolveBlockTitle: (id) => (id === PAGE ? 'Design Notes' : 'Linked page'),
@@ -579,7 +579,8 @@ describe('BlockRefPeek', () => {
 
     it('parks the chip title while open and puts it back on close', async () => {
       const user = userEvent.setup()
-      render(<PageLink />)
+      // A labelled chip is shortened, so it carries its full title (#6895).
+      render(<PageLink link={`[[${PAGE}|Notes]]`} />)
 
       const chip = screen.getByTestId('block-link-chip')
       expect(chip).toHaveAttribute('title', 'Design Notes')

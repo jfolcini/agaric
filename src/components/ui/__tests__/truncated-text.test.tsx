@@ -41,12 +41,17 @@ describe('TruncatedText', () => {
     expect(el).not.toHaveAttribute('title')
   })
 
-  it('measures on keyboard focus too', () => {
-    render(<TruncatedText tabIndex={0}>{FULL}</TruncatedText>)
-    const el = screen.getByText(FULL)
-    setWidths(el, 300, 120)
-    fireEvent.focus(el)
-    expect(el).toHaveAttribute('title', FULL)
+  it('carries the full text when it shows a shortened form, cut or not', () => {
+    render(<TruncatedText text="Work/Notes">Notes</TruncatedText>)
+    expect(screen.getByText('Notes')).toHaveAttribute('title', 'Work/Notes')
+  })
+
+  it('carries no title when its text is the full text and fits', () => {
+    render(<TruncatedText text="Notes">Notes</TruncatedText>)
+    const el = screen.getByText('Notes')
+    setWidths(el, 50, 120)
+    fireEvent.pointerEnter(el)
+    expect(el).not.toHaveAttribute('title')
   })
 
   it('takes rich content, with its full text for the hover', () => {

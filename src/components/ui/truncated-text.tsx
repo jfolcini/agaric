@@ -1,12 +1,14 @@
 /**
  * TruncatedText — one line of text cut with an ellipsis, whose full text shows
- * on hover only while it is actually cut.
+ * on hover when the line does not show all of it.
  *
  * The native `title` is banned in app code (`react/forbid-dom-props`, #6895): a
  * tap never shows it, and a title that repeats visible text is noise. This is
- * its one sanctioned home, for the one case it serves: text a desktop user
- * cannot otherwise read because it was truncated. Overflow is measured when the
- * pointer or focus arrives, so a text that fits carries no title.
+ * its sanctioned home, for the text a desktop user cannot otherwise read:
+ * - the line is cut: overflow is measured when the pointer arrives;
+ * - the line is shortened on purpose: it shows a namespaced page's leaf, and
+ *   `text` holds the full title.
+ * A line that shows its full text, uncut, carries no title.
  */
 
 import { useState } from 'react'
@@ -19,9 +21,10 @@ type SpanProps = Omit<React.ComponentProps<'span'>, 'children' | 'title'>
 export type TruncatedTextProps = SpanProps &
   (
     | {
-        /** The full text, shown cut to the box. */
+        /** The text shown, cut to the box. */
         children: string
-        text?: never
+        /** The full text, when `children` shortens it (a namespaced page's leaf). */
+        text?: string
       }
     | {
         /** Rich content (a search highlight), shown cut to the box. */
@@ -40,23 +43,20 @@ function TruncatedText({
   text,
   className,
   onPointerEnter,
-  onFocus,
   ...props
 }: TruncatedTextProps): React.ReactElement {
   const [cut, setCut] = useState(false)
+  const full = text ?? (children as string)
+  const shortened = typeof children === 'string' && full !== children
   return (
     <span
       data-slot="truncated-text"
       className={cn('min-w-0 truncate', className)}
-      // oxlint-disable-next-line react/forbid-dom-props -- the sanctioned home: the full text of a truncated line, set only while it is cut (#6895)
-      title={cut ? (text ?? (children as string)) : undefined}
+      // oxlint-disable-next-line react/forbid-dom-props -- the sanctioned home: the full text of a line that is cut or shortened (#6895)
+      title={cut || shortened ? full : undefined}
       onPointerEnter={(e) => {
         setCut(isCut(e.currentTarget))
         onPointerEnter?.(e)
-      }}
-      onFocus={(e) => {
-        setCut(isCut(e.currentTarget))
-        onFocus?.(e)
       }}
       {...props}
     >

@@ -106,6 +106,11 @@ describe('TabBar', () => {
 
       const tab = screen.getByRole('tab', { name: /Plan/ })
       expect(within(tab).getByText('Plan')).toHaveAttribute('data-slot', 'truncated-text')
+      // The leaf is shortened, so the full path stays on hover; a full title has none (#6895).
+      expect(within(tab).getByText('Plan')).toHaveAttribute('title', 'Work/Plan')
+      expect(
+        within(screen.getByRole('tab', { name: /Project/ })).getByText('Project'),
+      ).not.toHaveAttribute('title')
     })
 
     it('displays "Untitled" for tabs with empty labels', () => {

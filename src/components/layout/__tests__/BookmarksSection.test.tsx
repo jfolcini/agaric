@@ -172,14 +172,16 @@ describe('BookmarksSection', () => {
       expect(within(bookmarkList() as HTMLElement).queryByText('Bravo')).toBeNull()
     })
 
-    it('shows a namespaced bookmark by its leaf, as TruncatedText', () => {
+    it('shows a namespaced bookmark by its leaf, with the full title on hover (#6895)', () => {
       bookmark([{ id: 'A', title: 'Work/A rather long bookmarked page name' }])
 
       renderSection()
 
-      expect(
-        within(bookmarkList() as HTMLElement).getByText('A rather long bookmarked page name'),
-      ).toHaveAttribute('data-slot', 'truncated-text')
+      const leaf = within(bookmarkList() as HTMLElement).getByText(
+        'A rather long bookmarked page name',
+      )
+      expect(leaf).toHaveAttribute('data-slot', 'truncated-text')
+      expect(leaf).toHaveAttribute('title', 'Work/A rather long bookmarked page name')
     })
 
     it('lists bookmarks in the order they were added', () => {
