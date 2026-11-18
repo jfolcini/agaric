@@ -1,4 +1,4 @@
-# Session 4255 — highlight colours in Obsidian's form (#6759)
+# Session 4270 — highlight colours in Obsidian's form (#6759)
 
 A highlight was one colour. Now it can carry one of Obsidian's six (red, orange, yellow, green, blue, purple), picked from the selection bubble or the toolbar's Format popover.
 
