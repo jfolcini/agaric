@@ -123,21 +123,29 @@ test('switching spaces restores each space its own tabs, recent pages and journa
 // The journal kept the day page it created in one space and showed it in the
 // next, so a block added there after a switch landed in the old space.
 test("a journal block added after a space switch is the new space's @spaces", async ({ page }) => {
-  const addLine = async (text: string) => {
-    await navigateToView(page, 'Journal')
-    await page.getByRole('button', { name: /^Add (your first )?block$/ }).click()
-    await expect(
-      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
-    ).toBeFocused()
+  const rows = page.locator('[data-testid="sortable-block"]')
+  const lastEditor = () =>
+    rows.last().locator('[data-testid="block-editor"] [contenteditable="true"]')
+  const typeLine = async (text: string) => {
     await page.keyboard.type(text)
     await saveBlock(page, 'Escape')
   }
   const line = (text: string) => page.locator('[data-testid="block-static"]', { hasText: text })
 
+  // Work's today is new: opening the journal makes it with one empty block, focused.
   await switchToSpace(page, 'Work')
-  await addLine('work line')
+  await navigateToView(page, 'Journal')
+  await expect(rows).toHaveCount(1)
+  await expect(lastEditor()).toBeFocused()
+  await typeLine('work line')
+  // Personal's today is the seed's daily page; "Add block" adds a sixth.
   await switchToSpace(page, 'Personal')
-  await addLine('personal line')
+  await navigateToView(page, 'Journal')
+  await expect(rows).toHaveCount(5)
+  await page.getByRole('button', { name: 'Add block', exact: true }).click()
+  await expect(rows).toHaveCount(6)
+  await expect(lastEditor()).toBeFocused()
+  await typeLine('personal line')
   await expect(line('work line')).toHaveCount(0)
 
   await navigateToView(page, 'Pages')
