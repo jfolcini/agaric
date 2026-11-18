@@ -282,6 +282,9 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_mirror_space:
     'device-local setting whose effect is the mirror folder on disk (files removed, kept or ' +
     'left alone), which a fixture seed cannot express',
+  adopt_mirror_folder:
+    'device-local file I/O: reads a folder of notes on disk and writes a marker file into it ' +
+    '(#6540), which a fixture seed cannot express',
   open_data_folder: 'no persistent state — opens the OS file manager on the data folder (#6554)',
   request_snapshot_restore:
     'device-local file I/O: validates a snapshot file beside the database and writes a marker ' +
@@ -470,6 +473,9 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   list_daily_snapshots:
     'environment dependent: the snapshot files beside the database and their modified times ' +
     '(#6744), which no fixture seed can spell',
+  preview_mirror_adoption:
+    'environment dependent: reads a folder of notes on disk (#6540), so the answer is not a ' +
+    'function of the seeded state',
 }
 
 // ---------------------------------------------------------------------------
@@ -618,6 +624,8 @@ const PINNING_BLOCKED_READ: ReadonlySet<string> = new Set([
   'get_last_snapshot_ms',
   // Lists the snapshot files (#6744), likewise.
   'list_daily_snapshots',
+  // Reads a folder of notes on disk (#6540), likewise.
+  'preview_mirror_adoption',
 ])
 
 /**
@@ -683,6 +691,8 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
   // The input is a snapshot file beside the database, and its effect a marker
   // file the next launch acts on (#6744): neither is in a fixture's reach.
   'request_snapshot_restore',
+  // The input is a folder of notes on disk (#6540): same input problem.
+  'adopt_mirror_folder',
 ])
 
 /**

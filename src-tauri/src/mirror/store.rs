@@ -31,6 +31,9 @@ const ASK_MASS_CHANGE_KEY: &str = "mirror.ask_mass_change";
 /// `app_settings` key: the ids of the spaces not mirrored, as a JSON array.
 /// Absent, every space is, a new one included.
 const UNMIRRORED_KEY: &str = "mirror.unmirrored_spaces";
+/// `app_settings` key: the [`Adoption`] of the folder, as JSON. Absent, the
+/// mirror writes every mirrored space below its own folder.
+const ADOPTED_KEY: &str = "mirror.adopted";
 
 /// `app_settings` key a restore from a daily snapshot writes
 /// (`db::snapshot_restore`, #6744): the folder's files may be newer than the
@@ -94,17 +97,45 @@ pub struct Settings {
     /// Whether the vault was restored from a snapshot since the folder was
     /// last chosen ([`RESTORED_KEY`]).
     pub restored: bool,
+    /// The folder adopted in place as one space's, if it was.
+    pub adopted: Option<Adoption>,
+}
+
+/// A folder of notes adopted in place (#6540): it is `space_id`'s folder, its
+/// pages' files directly below it, and no other space is mirrored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Adoption {
+    pub space_id: String,
+    /// The `.md` files no page took at adoption, by path, each with the
+    /// [`content_hash`] of its bytes then: not read as a new file until they
+    /// change.
+    pub left_alone: std::collections::BTreeMap<String, String>,
+}
+
+impl Adoption {
+    /// Whether the file at `path` is one left alone at adoption, unchanged.
+    pub fn leaves_alone(&self, path: &str, bytes: &[u8]) -> bool {
+        self.left_alone
+            .get(path)
+            .is_some_and(|hash| *hash == content_hash(bytes))
+    }
+}
+
+/// The hash an [`Adoption`] keeps of a file's bytes.
+pub fn content_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
     let rows = sqlx::query!(
-        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?)",
+        "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?)",
         FOLDER_KEY,
         READ_BACK_KEY,
         COPY_FILES_KEY,
         ASK_MASS_CHANGE_KEY,
         UNMIRRORED_KEY,
         RESTORED_KEY,
+        ADOPTED_KEY,
     )
     .fetch_all(pool)
     .await?;
@@ -122,6 +153,12 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
         })?,
         None => Vec::new(),
     };
+    // Unreadable, it stops the mirror rather than lay the folder out as
+    // another's, which would move every file the user wrote.
+    let adopted = value(ADOPTED_KEY)
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|e| AppError::validation(format!("the mirror's adoption cannot be read: {e}")))?;
     Ok(Settings {
         folder: value(FOLDER_KEY),
         read_back: value(READ_BACK_KEY).as_deref() != Some("false"),
@@ -129,6 +166,7 @@ pub async fn settings(pool: &SqlitePool) -> Result<Settings, AppError> {
         ask_mass_change: value(ASK_MASS_CHANGE_KEY).as_deref() != Some("false"),
         unmirrored,
         restored: value(RESTORED_KEY).is_some(),
+        adopted,
     })
 }
 
@@ -145,6 +183,31 @@ pub async fn clear_restored(pool: &SqlitePool) -> Result<(), AppError> {
 /// a file that differs from its page as it is, and removes nothing.
 pub fn forget_everything(app_data_dir: &Path) -> std::io::Result<()> {
     remove_dir_if_any(&app_data_dir.join("mirror"))
+}
+
+/// Store the folder's [`Adoption`], or with `None` drop it.
+pub async fn set_adoption(pool: &SqlitePool, adoption: Option<&Adoption>) -> Result<(), AppError> {
+    let Some(adoption) = adoption else {
+        sqlx::query!("DELETE FROM app_settings WHERE key = ?", ADOPTED_KEY)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    };
+    let value = serde_json::to_string(adoption)?;
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        ADOPTED_KEY,
+        value,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn set_unmirrored(pool: &SqlitePool, spaces: &[String]) -> Result<(), AppError> {
@@ -303,10 +366,26 @@ impl Shadow {
 
 /// A page's file as the mirror last wrote it: the path below the folder,
 /// `/`-separated, and the last texts written, newest last.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageState {
     pub path: String,
     pub shadows: Vec<Shadow>,
+    /// Where the page's file was when it was adopted in place (#6540), and
+    /// the title it had then: the file's place from then on
+    /// ([`super::paths::adopted_layout`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<Pin>,
+    /// The page's buffer when its file was adopted: nothing is written for
+    /// the page while it is unchanged since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted_buffer: Option<String>,
+}
+
+/// An adopted file's path below the folder and its page's title then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pin {
+    pub path: String,
+    pub title: String,
 }
 
 impl PageState {
@@ -317,6 +396,7 @@ impl PageState {
     /// Record `shadow` as written at `path`, keeping the last
     /// `SHADOWS_KEPT` texts.
     pub fn record(&mut self, path: String, shadow: Shadow) {
+        self.adopted_buffer = None;
         self.path = path;
         if self.newest() != Some(&shadow) {
             self.shadows.push(shadow);

@@ -289,6 +289,8 @@ macro_rules! agaric_commands {
             $crate::commands::mirror::set_mirror_ask_mass_change,
             $crate::commands::mirror::set_mirror_space,
             $crate::commands::mirror::get_mirror_status,
+            $crate::commands::mirror::preview_mirror_adoption,
+            $crate::commands::mirror::adopt_mirror_folder,
             // The daily snapshot row (#6554)
             $crate::commands::daily_snapshot::get_last_snapshot_ms::<tauri::Wry>,
             $crate::commands::daily_snapshot::open_data_folder::<tauri::Wry>,

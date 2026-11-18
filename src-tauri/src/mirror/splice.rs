@@ -162,15 +162,15 @@ impl<'a> Laid<'a> {
     /// Whether this reads as `other` does: the same front matter and the
     /// same blocks, each under the same id, in the same order; the front
     /// matter when `front_kept`, and a block of `other` that is `kept`, may
-    /// read otherwise.
+    /// read otherwise, a kept block at the same depth.
     fn reads_as(&self, other: &Laid, front_kept: bool, kept: &dyn Fn(&Segment) -> bool) -> bool {
         (front_kept || same_front(&self.parsed, &other.parsed))
             && self.segments.len() == other.segments.len()
-            && self
-                .segments
-                .iter()
-                .zip(&other.segments)
-                .all(|(a, b)| a.id == b.id && (kept(b) || same_block(self, a, other, b)))
+            && self.segments.iter().zip(&other.segments).all(|(a, b)| {
+                a.id == b.id
+                    && a.block.depth == b.block.depth
+                    && (kept(b) || same_block(self, a, other, b))
+            })
     }
 }
 

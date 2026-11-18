@@ -612,7 +612,7 @@ fn a_state_keeps_the_last_three_texts_written_once_each() {
     };
     let mut state = PageState {
         path: ALPHA.to_owned(),
-        shadows: Vec::new(),
+        ..PageState::default()
     };
     for n in 0..5 {
         state.record(ALPHA.to_owned(), shadow(n));
@@ -861,6 +861,7 @@ fn one_state(text: &str) -> PageState {
             buffer: None,
             render: None,
         }],
+        ..PageState::default()
     }
 }
 

@@ -15,7 +15,16 @@ use specta::Type;
 
 use agaric_core::error::AppError;
 
-use super::store::{self, StateDir};
+use super::store::{self, Adoption, StateDir};
+
+/// Which files of the folder the mirror reads.
+pub enum Scope<'a> {
+    /// Those in the mirrored spaces' folders.
+    Spaces(&'a HashSet<String>),
+    /// Every file of a folder adopted as one space's, but those left alone
+    /// at adoption and unchanged since.
+    Adopted(&'a Adoption),
+}
 
 /// What reading a [`MirrorPending`] file in does to Agaric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -47,14 +56,21 @@ pub const MASS_CHANGE: usize = 5;
 
 /// The space folders holding more than [`MASS_CHANGE`] of `changed`, files by
 /// their paths below the mirror's folder, that are not among `confirmed`,
-/// each with how many.
+/// each with how many. In a folder `adopted` as one space's (#6540), every
+/// file is that space's: the folder itself, `.`, holds them all.
 pub fn mass_changed<'a>(
     changed: &'a [String],
     confirmed: &HashSet<String>,
+    adopted: bool,
 ) -> BTreeMap<&'a str, usize> {
     let mut counts = BTreeMap::new();
     for path in changed.iter().filter(|path| !confirmed.contains(*path)) {
-        if let Some((folder, _)) = path.split_once('/') {
+        let folder = if adopted {
+            Some(".")
+        } else {
+            path.split_once('/').map(|(folder, _)| folder)
+        };
+        if let Some(folder) = folder {
             *counts.entry(folder).or_default() += 1;
         }
     }
@@ -63,10 +79,9 @@ pub fn mass_changed<'a>(
 }
 
 /// The files, as paths below `root`, that reading back would act on now, in
-/// `space_folders`, the mirrored spaces' folders, by path, each with what
-/// reading it in does: each page's file that is not the text last written
-/// there or is gone, and each `.md` file no page owns. A file that cannot be
-/// read is listed too, as edited.
+/// `scope`, by path, each with what reading it in does: each page's file
+/// that is not the text last written there or is gone, and each `.md` file
+/// no page owns. A file that cannot be read is listed too, as edited.
 ///
 /// # Errors
 ///
@@ -76,7 +91,7 @@ pub fn pending(
     root: &Path,
     device_id: &str,
     states: &StateDir,
-    space_folders: &HashSet<String>,
+    scope: &Scope,
 ) -> Result<Vec<MirrorPending>, AppError> {
     if let Some(why) = super::pause_reason(root, device_id) {
         return Err(AppError::validation(format!(
@@ -87,9 +102,11 @@ pub fn pending(
         |e: std::io::Error| AppError::validation(format!("cannot tell which files changed: {e}"));
     let pages = states.load().map_err(unreadable)?;
     // Only the mirrored spaces' files: the others are never read.
-    let mirrored = |path: &str| {
-        path.split_once('/')
-            .is_some_and(|(folder, _)| space_folders.contains(folder))
+    let mirrored = |path: &str| match scope {
+        Scope::Spaces(space_folders) => path
+            .split_once('/')
+            .is_some_and(|(folder, _)| space_folders.contains(folder)),
+        Scope::Adopted(_) => true,
     };
     let written: HashMap<&str, &[u8]> = pages
         .values()
@@ -111,8 +128,21 @@ pub fn pending(
         })
         .collect();
     let mut found = Vec::new();
-    for folder in space_folders {
-        markdown_below(root, &root.join(folder), &mut found).map_err(unreadable)?;
+    match scope {
+        Scope::Spaces(space_folders) => {
+            for folder in *space_folders {
+                markdown_below(root, &root.join(folder), &mut found).map_err(unreadable)?;
+            }
+        }
+        Scope::Adopted(adoption) => {
+            markdown_below(root, root, &mut found).map_err(unreadable)?;
+            found.retain(|path| {
+                store::read_optional(&root.join(path))
+                    .ok()
+                    .flatten()
+                    .is_none_or(|bytes| !adoption.leaves_alone(path, &bytes))
+            });
+        }
     }
     let owned = written.keys().copied().collect();
     pending.extend(

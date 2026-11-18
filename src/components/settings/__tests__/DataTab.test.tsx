@@ -142,6 +142,7 @@ beforeEach(() => {
       ask_mass_change: true,
       held: [],
       unmirrored_spaces: [],
+      adopted_space: null,
     }),
   })
 })
@@ -1840,6 +1841,7 @@ describe('DataTab', () => {
             ask_mass_change: true,
             held: [],
             unmirrored_spaces: [],
+            adopted_space: null,
           }),
         })
       }
