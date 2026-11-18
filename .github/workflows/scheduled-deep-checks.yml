@@ -107,6 +107,12 @@ name: Scheduled deep checks
 #                    `release.yml`). Only a release build reproduces
 #                    `panic = "abort"`, which 0.15.0 crashed on while CI was
 #                    green.
+#   stale-pins     — pins.txt, .nvmrc and rust-toolchain.toml against their
+#                    upstreams (`node scripts/pins.mjs stale`). Dependabot
+#                    cannot see these pins, so this is how one that fell
+#                    behind, a tool's security release included, gets noticed.
+#                    Red: a newer release past the 7-day cooldown, or an
+#                    upstream that could not be read. Weekly only.
 #   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
@@ -156,7 +162,7 @@ on:
         description: >-
           Which lanes to run: `all`, or a comma-separated subset of
           clippy-clean, bench-smoke, bench-slo, mutants, mutants-frontend,
-          fuzz, type-aware-lint, android-launch, full-suite. Re-running one lane after a fix
+          fuzz, type-aware-lint, android-launch, full-suite, stale-pins. Re-running one lane after a fix
           costs that lane instead of the whole ~4 h matrix.
 
           A subset still WRITES for the two mutation lanes: each owns its own
@@ -259,6 +265,7 @@ jobs:
       type_aware_lint: ${{ steps.pick.outputs.type_aware_lint }}
       android_launch: ${{ steps.pick.outputs.android_launch }}
       full_suite: ${{ steps.pick.outputs.full_suite }}
+      stale_pins: ${{ steps.pick.outputs.stale_pins }}
     steps:
       - name: Resolve the lane selection
         id: pick
@@ -270,7 +277,7 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
-          known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint android-launch full-suite'
+          known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint android-launch full-suite stale-pins'
           # A cron run has no `lanes` input; the cron that fired picks them.
           # An unknown cron fails rather than running every lane.
           case "$SCHEDULE" in
@@ -3465,6 +3472,33 @@ jobs:
           fi
           echo "full-suite: every leg green" >> "$GITHUB_STEP_SUMMARY"
 
+  # ---------------------------------------------------------------------------
+  # stale-pins — see the header. The step summary lists every pin, its
+  # upstream version and the `just pin-bump` that moves it.
+  stale-pins:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.stale_pins == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Compare every pin with its upstream
+        env:
+          # Authenticated GitHub API reads, for the release lookups' rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/pins.mjs stale
+
   # android-launch (#6050) — the emulator launch of a release-profile APK and
   # the on-device checks after it. The called workflow takes no secrets and
   # restores no cache.
@@ -3495,6 +3529,7 @@ jobs:
       - type-aware-lint
       - android-launch
       - full-suite
+      - stale-pins
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
