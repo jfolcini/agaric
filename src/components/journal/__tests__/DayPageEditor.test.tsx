@@ -175,7 +175,8 @@ describe('DayPageEditor', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
-  it('with the setting on Page, a day over the cap stays in block mode, Page saying why', async () => {
+  it('with the setting on Page, a day over the cap stays in block mode, an ⓘ saying why', async () => {
+    const user = userEvent.setup()
     writePreference(PREFERENCES.editMode, 'page')
     stubInvoke({ load_page_subtree: () => dayOf(PAGE_MODE_BLOCK_CAP + 1) })
     renderDay()
@@ -185,7 +186,10 @@ describe('DayPageEditor', () => {
     expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
     expect(radio(t('pageMode.page'))).toHaveAttribute('aria-disabled', 'true')
-    expect(radio(t('pageMode.page'))).toHaveAccessibleDescription(
+    await user.click(screen.getByRole('button', { name: t('pageMode.blockedInfo') }))
+    expect(
+      await screen.findByRole('dialog', { name: t('pageMode.blockedInfo') }),
+    ).toHaveTextContent(
       t('pageMode.blocked.overCap', { cap: PAGE_MODE_BLOCK_CAP, blocks: PAGE_MODE_BLOCK_CAP + 1 }),
     )
   })

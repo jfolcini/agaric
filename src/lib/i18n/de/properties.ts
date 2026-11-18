@@ -115,10 +115,11 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.op.or': 'Beliebige',
   'advancedQuery.builder.op.andTitle': 'ALLE Bedingungen dieser Gruppe müssen zutreffen (AND)',
   'advancedQuery.builder.op.orTitle': 'MINDESTENS EINE Bedingung dieser Gruppe muss zutreffen (OR)',
+  'advancedQuery.builder.opInfoLabel': 'Über „Alle“ und „Beliebige“',
   'advancedQuery.builder.negate': 'NOT',
-  'advancedQuery.builder.negateTitle': 'Diese {{kind}} negieren (in NOT einschließen)',
-  'advancedQuery.builder.negateOnTitle':
-    'Negiert — klicken, um die Negation dieser {{kind}} aufzuheben',
+  'advancedQuery.builder.negateInfoLabel': 'Über NOT',
+  'advancedQuery.builder.negateHelp':
+    'NOT auf einer Gruppe oder Bedingung findet die Blöcke, die sie sonst ausschließen würde.',
   'advancedQuery.builder.kindGroup': 'Gruppe',
   'advancedQuery.builder.kindLeaf': 'Bedingung',
   'advancedQuery.builder.addFilter': 'Filter hinzufügen',
@@ -453,6 +454,7 @@ export const properties: Record<string, string> = {
   'tagFilter.andModeTooltip': 'Alle ausgewählten Tags',
   'tagFilter.orMode': 'Beliebige',
   'tagFilter.orModeTooltip': 'Mindestens ein ausgewählter Tag',
+  'tagFilter.modeInfoLabel': 'Über die Tag-Abgleichsmodi',
   'tagFilter.selectTagsMessage': 'Wähle oben Tags aus, um Blöcke zu filtern',
   'tagFilter.blockMatch_one': '{{count}} Block passt',
   'tagFilter.blockMatch_other': '{{count}} Blöcke passen',
@@ -476,6 +478,7 @@ export const properties: Record<string, string> = {
   'tagFilter.includeInherited': 'Verschachtelte Blöcke einbeziehen',
   'tagFilter.includeInheritedTooltip':
     'Findet auch Blöcke, die unter einem getaggten Block verschachtelt sind. Ein Tag an einem Block gilt für jeden Block darunter, egal wie tief — ein Tag am ersten Block einer Seite trifft auf die ganze Seite zu. Nur Tags, die einem Block hinzugefügt wurden, werden vererbt; ein Inline-@-Tag-Chip im Text nicht.',
+  'tagFilter.includeInheritedInfoLabel': 'Über verschachtelte Blöcke',
   'tagFilter.includingInherited': '(einschließlich verschachtelter Blöcke)',
   'tagFilter.composer.show': 'Erweitert',
   'tagFilter.composer.hide': 'Einfach',
@@ -525,7 +528,6 @@ export const properties: Record<string, string> = {
   'property.repeatHelpFromCompletion': 'Ab dem Zeitpunkt des Abschließens neu planen.',
   'property.repeatHelpExample':
     'Beispiel: `++1d` wiederholt täglich mit Nachholen; `.+1w` wartet eine Woche ab dem Zeitpunkt, an dem du die Aufgabe als erledigt markiert hast.',
-  'property.repeatHelpPopoverLabel': 'Hilfe zur Wiederholungssyntax',
   'filter.operatorContains': 'enthält',
   'filter.operatorStartsWith': 'beginnt mit',
   'filter.isSet': 'ist gesetzt',

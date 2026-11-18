@@ -217,7 +217,8 @@ export const properties: Record<string, string> = {
   // Translators: Advanced Query filter builder (nested AND / OR groups of conditions), also in the
   // Build Query dialog's Advanced tab. "Filter" / "Filter group" are screen-reader names of the
   // top and nested groups; "Match" names the All / Any toggle (how a group combines its
-  // conditions), whose tooltips explain each choice.
+  // conditions), whose explanations open from the ⓘ beside it ("About All and Any" is that ⓘ's
+  // screen-reader label).
   // #1280 D3 — nested And/Or/Not boolean filter builder.
   'advancedQuery.builder.rootLabel': 'Filter',
   'advancedQuery.builder.groupLabel': 'Filter group',
@@ -226,13 +227,16 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.op.or': 'Any',
   'advancedQuery.builder.op.andTitle': 'Match ALL of the conditions in this group (AND)',
   'advancedQuery.builder.op.orTitle': 'Match ANY of the conditions in this group (OR)',
+  'advancedQuery.builder.opInfoLabel': 'About All and Any',
 
   // Translators: Builder NOT toggle on each group and condition: "NOT" is the short button text
-  // (shown in capitals); the titles are its tooltips. {{kind}} = kindGroup or kindLeaf, inserted
-  // mid-sentence (lowercase): "group" = a nested group, "condition" = one filter.
+  // (shown in capitals); "About NOT" names the ⓘ beside a group's NOT, which opens the
+  // explanation. kindGroup / kindLeaf are inserted mid-sentence (lowercase) as {{kind}}:
+  // "group" = a nested group, "condition" = one filter.
   'advancedQuery.builder.negate': 'NOT',
-  'advancedQuery.builder.negateTitle': 'Negate this {{kind}} (wrap in NOT)',
-  'advancedQuery.builder.negateOnTitle': 'Negated — click to un-negate this {{kind}}',
+  'advancedQuery.builder.negateInfoLabel': 'About NOT',
+  'advancedQuery.builder.negateHelp':
+    'NOT on a group or a condition matches the blocks it would otherwise leave out.',
   'advancedQuery.builder.kindGroup': 'group',
   'advancedQuery.builder.kindLeaf': 'condition',
 
@@ -661,8 +665,9 @@ export const properties: Record<string, string> = {
   'propertiesView.editOptionsTooltip': 'Edit options',
   'propertiesView.noFilterResults': 'No properties match your search',
 
-  // Translators: Settings › Properties, help icon beside the built-in task-state property, and its
-  // tooltip. Keep TODO, DOING, DONE and CANCELLED as they are: they are the task states shown.
+  // Translators: Settings › Properties, screen-reader label of the ⓘ beside the built-in task-state
+  // property, and the explanation it opens. Keep TODO, DOING, DONE and CANCELLED as they are: they
+  // are the task states shown.
   'propertiesView.taskCycleHelpLabel': 'Task cycle help',
   'propertiesView.taskCycleHelpContent':
     'Task states cycle in a fixed order: TODO → DOING → DONE → CANCELLED → none. The order puts the common terminal (DONE) immediately after work begins (DOING); CANCELLED is the abandon-without-completing escape hatch at the end.',
@@ -724,12 +729,14 @@ export const properties: Record<string, string> = {
   'tagFilter.removeTagLabel': 'Remove tag {{name}}',
 
   // Translators: Tag filter mode toggle: label "Show blocks with:" then short buttons All (every
-  // selected tag) / Any (at least one); their tooltips explain. The third, None, is further down.
+  // selected tag) / Any (at least one), explained in the popover of the ⓘ beside them, whose
+  // screen-reader label is "About tag match modes". The third, None, is further down.
   'tagFilter.modeLabel': 'Show blocks with:',
   'tagFilter.andMode': 'All',
   'tagFilter.andModeTooltip': 'Every selected tag',
   'tagFilter.orMode': 'Any',
   'tagFilter.orModeTooltip': 'At least one selected tag',
+  'tagFilter.modeInfoLabel': 'About tag match modes',
   'tagFilter.selectTagsMessage': 'Select tags above to filter blocks',
 
   // Translators: Tag filter feedback line: prompt before any tag is chosen, and the match count.
@@ -765,14 +772,16 @@ export const properties: Record<string, string> = {
   'tagFilter.prefixPillLabel': '{{prefix}}*',
   'tagFilter.removePrefixLabel': 'Remove prefix {{prefix}}',
 
-  // Translators: Tag filter switch "Include nested blocks", its tooltip, and the note appended to
-  // the match count while it is on. "inline @ tag chip" = a tag typed in a block's text.
-  // #4548 — the "Include nested blocks" switch. One flag for the whole query
-  // (`query_by_tags` / `query_by_tag_expr` take a single `include_inherited`),
-  // default off so an existing query keeps its result set.
+  // Translators: Tag filter switch "Include nested blocks", the explanation its ⓘ opens and that
+  // ⓘ's screen-reader label, and the note appended to the match count while it is on.
+  // "inline @ tag chip" = a tag typed in a block's text.
+  // #4548 — the "Include nested blocks" switch. One flag for the whole query (`query_by_tags` /
+  // `query_by_tag_expr` take a single `include_inherited`), default off so an existing query keeps
+  // its result set.
   'tagFilter.includeInherited': 'Include nested blocks',
   'tagFilter.includeInheritedTooltip':
     "Also match blocks nested under a tagged block. A tag on a block applies to every block beneath it, however deep — a tag on a page's first block matches the whole page. Only tags added to a block are inherited; an inline @ tag chip in its text is not.",
+  'tagFilter.includeInheritedInfoLabel': 'About nested blocks',
   'tagFilter.includingInherited': '(including nested blocks)',
 
   // Translators: Tag filter toggle button: reads "Advanced" to open the nested AND / OR composer,
@@ -820,7 +829,8 @@ export const properties: Record<string, string> = {
   'property.editKeyLabel': 'Edit property {{key}}',
   'property.selectValue': '{{key}}: {{value}}',
 
-  // Translators: Tag filter mode toggle: third button (blocks with none of the tags) and tooltip.
+  // Translators: Tag filter mode toggle: third button (blocks with none of the tags) and its
+  // explanation in the mode ⓘ popover.
   'tagFilter.notMode': 'None',
   'tagFilter.notModeTooltip': 'None of the selected tags',
 
@@ -842,8 +852,8 @@ export const properties: Record<string, string> = {
   'property.datetimeTimeLabel': '{{label}}, time',
 
   // Translators: Help popover beside the "repeat" property field (recurring tasks): screen-reader
-  // labels of its button and popover, its title, and the two rule prefixes it explains
-  // ("++", ".+").
+  // label of its ⓘ button (it also names the popover), its title, and the two rule prefixes it
+  // explains ("++", ".+").
   'property.repeatHelpLabel': 'Repeat syntax help',
   'property.repeatHelpTitle': 'Repeat syntax',
   'property.repeatHelpCatchup': 'Reschedule from the original date plus the interval (catch-up).',
@@ -856,7 +866,6 @@ export const properties: Record<string, string> = {
   // Translators: Keep `++1d` and `.+1w` exactly: they are the syntax to type.
   'property.repeatHelpExample':
     'Example: `++1d` repeats daily catching up; `.+1w` waits a week from when you marked it done.',
-  'property.repeatHelpPopoverLabel': 'Repeat syntax help',
 
   // Translators: Linked references filters: words combined into each filter pill, e.g. "due is
   // set" or 'tag prefix "proj"'. Lowercase, mid-phrase; "filter" = generic pill text.

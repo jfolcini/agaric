@@ -16,8 +16,9 @@
  *
  * Both get a 44 px hit area under a coarse pointer. The popover is named by its
  * trigger, so a screen reader hears what it explains. A press on the trigger or
- * inside the popover stays out of a selectable row around it (History): React
- * bubbles a portal's events to the trigger's ancestors.
+ * inside the popover, and the Escape that closes it, stay out of a selectable
+ * row or list around it (History): React bubbles a portal's events to the
+ * trigger's ancestors. Radix closes on Escape from its own document listener.
  */
 
 import { cva } from 'class-variance-authority'
@@ -42,6 +43,8 @@ interface InfoPopoverBaseProps {
   content: React.ReactNode
   /** Forwarded to the trigger button. */
   className?: string
+  /** Forwarded to the trigger button, for specs that measure it. */
+  'data-testid'?: string
 }
 
 export type InfoPopoverProps = InfoPopoverBaseProps &
@@ -68,6 +71,7 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
           id={triggerId}
           type="button"
           data-slot="info-popover-trigger"
+          data-testid={props['data-testid']}
           className={cn(triggerVariants({ variant }), props.className)}
           {...(props.variant === 'icon' ? { 'aria-label': props.ariaLabel } : {})}
           onClick={(e) => e.stopPropagation()}
@@ -80,10 +84,12 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
         </button>
       </PopoverTrigger>
       <PopoverContent
-        data-slot="info-popover-content"
         aria-labelledby={triggerId}
         className="w-auto max-w-xs p-3 text-sm"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') e.stopPropagation()
+        }}
       >
         {props.content}
       </PopoverContent>

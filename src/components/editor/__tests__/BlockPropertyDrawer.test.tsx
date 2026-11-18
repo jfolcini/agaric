@@ -146,7 +146,7 @@ describe('BlockPropertyDrawer', () => {
     expect(skeletons?.length).toBe(3)
   })
 
-  it('disables the Add property button while loading with a tooltip (sub-fix 3)', async () => {
+  it('disables the Add property button while loading, an ⓘ saying why (sub-fix 3, #6895)', async () => {
     const user = userEvent.setup()
     const pending = deferred<CommandReturns['get_properties']>()
     setupMock([], [], { get_properties: () => pending.promise })
@@ -155,16 +155,12 @@ describe('BlockPropertyDrawer', () => {
     const addBtn = screen.getByRole('button', { name: 'Add property' })
     expect(addBtn).toBeDisabled()
 
-    // Hover surfaces the loading tooltip
-    const trigger = addBtn.parentElement as HTMLElement
-    await user.hover(trigger)
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText('Properties loading\u2026')
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
+    await user.click(
+      screen.getByRole('button', { name: t('pageProperty.addPropertyDisabledInfo') }),
     )
+    expect(
+      await screen.findByRole('dialog', { name: t('pageProperty.addPropertyDisabledInfo') }),
+    ).toHaveTextContent('Properties loading\u2026')
   })
 
   it('shows property list after loading', async () => {
@@ -553,7 +549,6 @@ describe('BlockPropertyDrawer', () => {
     })
 
     expect(screen.getByRole('button', { name: 'Repeat syntax help' })).toBeInTheDocument()
-    expect(screen.getByTestId('repeat-help-trigger')).toBeInTheDocument()
   })
 
   it('opens a popover explaining ++ and .+ when the help trigger is clicked', async () => {
@@ -567,31 +562,14 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByTestId('repeat-help-trigger'))
+    await user.click(screen.getByRole('button', { name: 'Repeat syntax help' }))
 
-    expect(await screen.findByText('Repeat syntax')).toBeInTheDocument()
-    expect(
-      screen.getByText('Reschedule from the original date plus the interval (catch-up).'),
-    ).toBeInTheDocument()
-    expect(screen.getByText('Reschedule from the moment of completion.')).toBeInTheDocument()
-  })
-
-  // PopoverContent must carry an aria-label so screen readers
-  // announce the popover purpose, not a generic "dialog".
-  it('labels the open repeat-help popover with property.repeatHelpPopoverLabel', async () => {
-    const user = userEvent.setup()
-    const props = [makeProp('repeat', { value_text: '++ 1d' })]
-    setupMock(props, [makeDef('repeat')])
-
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
-
-    await waitFor(() => {
-      expect(screen.getByText('Repeat')).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByTestId('repeat-help-trigger'))
-
-    expect(await screen.findByRole('dialog', { name: 'Repeat syntax help' })).toBeInTheDocument()
+    const help = await screen.findByRole('dialog', { name: 'Repeat syntax help' })
+    expect(help).toHaveTextContent('Repeat syntax')
+    expect(help).toHaveTextContent(
+      'Reschedule from the original date plus the interval (catch-up).',
+    )
+    expect(help).toHaveTextContent('Reschedule from the moment of completion.')
   })
 
   it('does not render the repeat-syntax help popover for non-repeat properties', async () => {
@@ -605,7 +583,6 @@ describe('BlockPropertyDrawer', () => {
     })
 
     expect(screen.queryByRole('button', { name: 'Repeat syntax help' })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('repeat-help-trigger')).not.toBeInTheDocument()
   })
 
   // ── Consistent built-in property rendering ────────────────────

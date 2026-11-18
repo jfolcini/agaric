@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
@@ -33,7 +34,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
@@ -62,9 +62,9 @@ export interface AddPropertyPopoverProps {
   open?: boolean
   /** Controlled open-change handler (optional). */
   onOpenChange?: (open: boolean) => void
-  /** When true, the trigger is disabled and a tooltip explains why. */
+  /** When true, the trigger is disabled and an ⓘ beside it explains why. */
   disabled?: boolean
-  /** Tooltip text to show when disabled. */
+  /** The ⓘ's explanation while disabled. */
   disabledTooltip?: string
 }
 
@@ -152,23 +152,19 @@ export function AddPropertyPopover({
     </Button>
   )
 
-  // Trigger (with the disabled-state tooltip wrapper) is shared between the
-  // Popover and Sheet variants.
-  const trigger =
-    disabled && disabledTooltip ? (
-      <Tooltip>
-        {/* `span` wrapper so the tooltip still shows on a disabled button.
-            Radix Tooltip requires a focusable trigger; a disabled <button>
-            doesn't fire pointer events, so we wrap it in a focusable span. */}
-        <TooltipTrigger asChild>
-          {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
-          <span tabIndex={0}>{triggerButton}</span>
-        </TooltipTrigger>
-        <TooltipContent>{disabledTooltip}</TooltipContent>
-      </Tooltip>
-    ) : (
-      triggerButton
+  // A disabled button opens nothing, so it needs no picker around it.
+  if (disabled && disabledTooltip) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        {triggerButton}
+        <InfoPopover
+          variant="icon"
+          ariaLabel={t('pageProperty.addPropertyDisabledInfo')}
+          content={disabledTooltip}
+        />
+      </span>
     )
+  }
 
   // Picker body (search + list + create-flow) is identical in both variants.
   const pickerBody = (
@@ -279,7 +275,7 @@ export function AddPropertyPopover({
   if (isTouch) {
     return (
       <Sheet open={popoverOpen} onOpenChange={setPopoverOpen}>
-        <SheetTrigger asChild>{trigger}</SheetTrigger>
+        <SheetTrigger asChild>{triggerButton}</SheetTrigger>
         <SheetContent
           side="bottom"
           data-testid="add-property-sheet"
@@ -298,7 +294,7 @@ export function AddPropertyPopover({
   // Desktop → anchored Popover (unchanged).
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
       <MenuPopoverContent
         className="space-y-2 p-3"
         aria-label={t('pageProperty.pickerLabel')}

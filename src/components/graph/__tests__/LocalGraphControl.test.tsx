@@ -4,10 +4,12 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
+import { t } from '@/lib/i18n'
 
 function setup(overrides: Partial<React.ComponentProps<typeof LocalGraphControl>> = {}) {
   const props: React.ComponentProps<typeof LocalGraphControl> = {
@@ -36,6 +38,24 @@ describe('LocalGraphControl', () => {
   it('disables the toggle when no page is open', () => {
     setup({ seedLabel: null })
     expect(screen.getByTestId('local-graph-toggle')).toBeDisabled()
+  })
+
+  it('says why the toggle is disabled behind an ⓘ beside it (#6895)', async () => {
+    const user = userEvent.setup()
+    setup({ seedLabel: null })
+
+    await user.click(screen.getByRole('button', { name: t('graph.local.noPageInfo') }))
+
+    expect(
+      await screen.findByRole('dialog', { name: t('graph.local.noPageInfo') }),
+    ).toHaveTextContent(t('graph.local.noPage'))
+  })
+
+  it('shows no ⓘ while a page is open', () => {
+    setup()
+    expect(
+      screen.queryByRole('button', { name: t('graph.local.noPageInfo') }),
+    ).not.toBeInTheDocument()
   })
 
   it('calls onToggle(true) when the toggle is clicked from the off state', () => {
@@ -84,6 +104,11 @@ describe('LocalGraphControl', () => {
 
   it('has no a11y violations with the way back shown', async () => {
     const { container } = setup({ active: true, seedLabel: 'Neighbour', originLabel: 'My Page' })
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has no a11y violations (disabled)', async () => {
+    const { container } = setup({ seedLabel: null })
     expect(await axe(container)).toHaveNoViolations()
   })
 

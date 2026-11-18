@@ -116,9 +116,11 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.op.andTitle': 'Coincidir con TODAS las condiciones de este grupo (AND)',
   'advancedQuery.builder.op.orTitle':
     'Coincidir con CUALQUIERA de las condiciones de este grupo (OR)',
+  'advancedQuery.builder.opInfoLabel': 'Acerca de Todas y Cualquiera',
   'advancedQuery.builder.negate': 'NOT',
-  'advancedQuery.builder.negateTitle': 'Negar {{kind}} (envolver en NOT)',
-  'advancedQuery.builder.negateOnTitle': 'Negación activa — haz clic para dejar de negar {{kind}}',
+  'advancedQuery.builder.negateInfoLabel': 'Acerca de NOT',
+  'advancedQuery.builder.negateHelp':
+    'NOT en un grupo o una condición encuentra los bloques que, de otro modo, dejaría fuera.',
   'advancedQuery.builder.kindGroup': 'el grupo',
   'advancedQuery.builder.kindLeaf': 'la condición',
   'advancedQuery.builder.addFilter': 'Añadir filtro',
@@ -448,6 +450,7 @@ export const properties: Record<string, string> = {
   'tagFilter.andModeTooltip': 'Todas las etiquetas seleccionadas',
   'tagFilter.orMode': 'Cualquiera',
   'tagFilter.orModeTooltip': 'Al menos una etiqueta seleccionada',
+  'tagFilter.modeInfoLabel': 'Acerca de los modos de coincidencia de etiquetas',
   'tagFilter.selectTagsMessage': 'Selecciona etiquetas arriba para filtrar bloques',
   'tagFilter.blockMatch_one': '{{count}} bloque coincide',
   'tagFilter.blockMatch_other': '{{count}} bloques coinciden',
@@ -471,6 +474,7 @@ export const properties: Record<string, string> = {
   'tagFilter.includeInherited': 'Incluir bloques anidados',
   'tagFilter.includeInheritedTooltip':
     'Coincide también con los bloques anidados bajo un bloque etiquetado. Una etiqueta en un bloque se aplica a todos los bloques que tiene debajo, a cualquier profundidad — una etiqueta en el primer bloque de una página coincide con toda la página. Solo se heredan las etiquetas añadidas a un bloque; una etiqueta @ en línea dentro de su texto, no.',
+  'tagFilter.includeInheritedInfoLabel': 'Acerca de los bloques anidados',
   'tagFilter.includingInherited': '(incluidos los bloques anidados)',
   'tagFilter.composer.show': 'Avanzado',
   'tagFilter.composer.hide': 'Básico',
@@ -520,7 +524,6 @@ export const properties: Record<string, string> = {
   'property.repeatHelpFromCompletion': 'Reprograma a partir del momento en que se completa.',
   'property.repeatHelpExample':
     'Ejemplo: `++1d` se repite a diario poniéndose al día; `.+1w` espera una semana desde que la marcaste como hecha.',
-  'property.repeatHelpPopoverLabel': 'Ayuda sobre la sintaxis de repetición',
   'filter.operatorContains': 'contiene',
   'filter.operatorStartsWith': 'empieza por',
   'filter.isSet': 'tiene valor',

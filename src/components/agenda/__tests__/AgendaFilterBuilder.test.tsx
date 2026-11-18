@@ -21,8 +21,8 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ReactElement, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import {
   type CommandReturns,
   mockInvokeCommands,
@@ -245,33 +245,20 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Dimension picker carries a Tooltip describing each dimension
+  // Each dimension item shows its description as visible text (#6895)
   // -----------------------------------------------------------------------
-  it('renders a tooltip describing each dimension when hovered', async () => {
+  it('shows each dimension description under its label, keeping the label as its name', async () => {
     const user = userEvent.setup()
-    renderBuilder()
+    const { container } = renderBuilder()
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    // Hover the dueDate row — its tooltip explains the contrast with
-    // scheduledDate, which is the whole point of the discoverability fix.
-    const dueDateBtn = screen
-      .getByText(t('agendaFilter.dueDate'))
-      .closest('button') as HTMLButtonElement | null
-    expect(dueDateBtn).not.toBeNull()
-    // The Tooltip wraps the menu item in a `<span>`. Hover the span so
-    // disabled-button pointer handling does not swallow the event.
-    const triggerSpan = (dueDateBtn as HTMLButtonElement).parentElement as HTMLElement
-    expect(triggerSpan).not.toBeNull()
-    await user.hover(triggerSpan)
-
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText(t('filter.dimension.dueDate.description'))
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
-    )
+    // The dueDate description explains the contrast with scheduledDate, which
+    // is the whole point of the discoverability fix.
+    const dueDateBtn = screen.getByRole('button', { name: t('agendaFilter.dueDate') })
+    expect(dueDateBtn).toHaveTextContent(t('filter.dimension.dueDate.description'))
+    expect(dueDateBtn).toHaveAccessibleDescription(t('filter.dimension.dueDate.description'))
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   // -----------------------------------------------------------------------

@@ -78,6 +78,7 @@ export const common: Record<string, string> = {
     'Verschiebe oder lösche zuerst die Seiten in diesem Bereich, um ihn löschen zu können.',
   'space.deleteLastTooltipDisabled':
     'Du musst mindestens einen Bereich behalten — der letzte verbleibende Bereich kann nicht gelöscht werden.',
+  'space.deleteDisabledInfo': 'Warum dieser Bereich nicht gelöscht werden kann',
   'space.deleteConfirmTitle': "Bereich '{{name}}' löschen?",
   'space.deleteConfirmDescription':
     'Dieser Bereich muss bereits leer sein. Das kann nicht rückgängig gemacht werden.',

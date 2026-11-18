@@ -18,12 +18,12 @@ import { PageLink } from '@/components/pages/PageLink'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { unwrap } from '@/lib/app-error'
@@ -171,10 +171,10 @@ function FlatModeToggle({
 }): React.ReactElement {
   const { t } = useTranslation()
   const labelId = useId()
-  const options: { value: 'and' | 'or' | 'not'; label: string; tooltip: string }[] = [
-    { value: 'and', label: t('tagFilter.andMode'), tooltip: t('tagFilter.andModeTooltip') },
-    { value: 'or', label: t('tagFilter.orMode'), tooltip: t('tagFilter.orModeTooltip') },
-    { value: 'not', label: t('tagFilter.notMode'), tooltip: t('tagFilter.notModeTooltip') },
+  const options: { value: 'and' | 'or' | 'not'; label: string; help: string }[] = [
+    { value: 'and', label: t('tagFilter.andMode'), help: t('tagFilter.andModeTooltip') },
+    { value: 'or', label: t('tagFilter.orMode'), help: t('tagFilter.orModeTooltip') },
+    { value: 'not', label: t('tagFilter.notMode'), help: t('tagFilter.notModeTooltip') },
   ]
   return (
     <div className="flex items-center gap-2">
@@ -191,17 +191,26 @@ function FlatModeToggle({
           if (option) onSetMode(option.value)
         }}
       >
-        {options.map(({ value, label, tooltip }) => (
-          <Tooltip key={value}>
-            <TooltipTrigger asChild>
-              <ToggleGroupItem value={value}>{label}</ToggleGroupItem>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{tooltip}</p>
-            </TooltipContent>
-          </Tooltip>
+        {options.map(({ value, label }) => (
+          <ToggleGroupItem key={value} value={value}>
+            {label}
+          </ToggleGroupItem>
         ))}
       </ToggleGroup>
+      <InfoPopover
+        variant="icon"
+        ariaLabel={t('tagFilter.modeInfoLabel')}
+        content={
+          <dl className="space-y-1">
+            {options.map(({ value, label, help }) => (
+              <div key={value}>
+                <dt className="inline font-medium">{label}: </dt>
+                <dd className="inline">{help}</dd>
+              </div>
+            ))}
+          </dl>
+        }
+      />
     </div>
   )
 }
@@ -224,20 +233,14 @@ function InheritedToggle({
   return (
     <div className="flex items-center gap-2">
       <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-      {/* The tooltip hangs off the LABEL: a `TooltipTrigger asChild` around the
-          switch hands it the trigger's own `data-state` ("closed"), which the
-          switch spreads over its "checked"/"unchecked" — and the track's fill
-          is keyed on exactly that attribute. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Label htmlFor={id} className="font-normal">
-            {t('tagFilter.includeInherited')}
-          </Label>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p className="max-w-xs">{t('tagFilter.includeInheritedTooltip')}</p>
-        </TooltipContent>
-      </Tooltip>
+      <Label htmlFor={id} className="font-normal">
+        {t('tagFilter.includeInherited')}
+      </Label>
+      <InfoPopover
+        variant="icon"
+        ariaLabel={t('tagFilter.includeInheritedInfoLabel')}
+        content={t('tagFilter.includeInheritedTooltip')}
+      />
     </div>
   )
 }

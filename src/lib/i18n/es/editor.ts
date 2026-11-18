@@ -227,6 +227,10 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkRemoveAction': '(quitar enlace roto)',
   'editor.brokenLinkUndoStale':
     'La página ha cambiado después de quitar el enlace, así que ya no se puede deshacer aquí',
+  'editor.brokenLinkExplanation':
+    'Este enlace está roto: la página a la que apuntaba se eliminó o está en otro espacio.',
+  'editor.brokenLinkRemove': 'Quitar enlace',
+  'editor.brokenLinkState': '(enlace roto)',
   'editor.brokenRefTooltip': 'Referencia rota — se ha eliminado el bloque de destino',
   'editor.footnoteLink': 'Nota al pie {{number}}',
   'editor.footnoteMissing': 'Ningún bloque de esta página define esta nota al pie',
@@ -325,8 +329,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Quitar',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Mostrar u ocultar la barra de cambio de tamaño',
-  'attachment.resizeHint':
-    'Cambiar el tamaño de la imagen — pasa el cursor o enfoca para abrir la barra de herramientas',
   'attachment.resizeHandle': 'Arrastra para cambiar el tamaño de la imagen',
   'imageResize.saveFailed': 'No se ha podido guardar el tamaño de la imagen',
   'imageCaption.placeholder': 'Añade un pie de imagen…',

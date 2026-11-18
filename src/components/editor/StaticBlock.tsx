@@ -14,7 +14,6 @@
  *   - {@link StaticBlockAttachments} — attachments + PDF viewer + image lightbox/props
  */
 
-import { Paperclip } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,7 +25,6 @@ import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachments'
 import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { type TextPoint, textPointAtClick } from '@/editor/click-caret'
 import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
 import { parseEmbedToken } from '@/lib/embed-token'
@@ -192,21 +190,6 @@ function StaticBlockInner({
           <span className="block-placeholder text-muted-foreground italic">
             {t('block.emptyPlaceholder')}
           </span>
-        )}
-        {!content?.trim() && !hasAttachments && !attachmentsLoading && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none float-right ml-2 opacity-0 transition-opacity group-hover:opacity-40 group-focus-within:opacity-40 [@media(pointer:coarse)]:hidden"
-              >
-                <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>
-              {t('block.attachHint')}
-            </TooltipContent>
-          </Tooltip>
         )}
       </div>
       {hasAttachments && <StaticBlockAttachments blockId={blockId} attachments={attachments} />}

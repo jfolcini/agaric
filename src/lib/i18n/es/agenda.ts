@@ -129,6 +129,7 @@ export const agenda: Record<string, string> = {
     'Inicio programado flexible — no se considera vencida si ya ha pasado',
   'duePanel.filterPropertiesTooltip':
     'Filtrar por propiedades del bloque (esfuerzo, responsable, etc.)',
+  'duePanel.filterInfoLabel': 'Acerca de estos filtros',
   'duePanel.countDue_one': '{{count}} con vencimiento',
   'duePanel.countDue_other': '{{count}} con vencimiento',
   'duePanel.countScheduled_one': '{{count}} programada',

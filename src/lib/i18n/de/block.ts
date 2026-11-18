@@ -230,8 +230,6 @@ export const block: Record<string, string> = {
   'blockTree.dnd.movingSubtree_one': '{{count}} Block wird auf Ebene {{depth}} verschoben',
   'blockTree.dnd.movingSubtree_other': '{{count}} Blöcke werden auf Ebene {{depth}} verschoben',
   'block.emptyPlaceholder': 'Tippe / für Befehle...',
-  'block.attachHint':
-    'Dateien hier ablegen oder einfügen — Bilder, Text, PDF, JSON, ZIP (max. 50 MB)',
   'block.attachDropZoneCaption': 'Zum Anhängen ablegen — Bilder, Text, PDF, JSON, ZIP (max. 50 MB)',
   'blockContext.selected': 'ausgewählt',
   'blockContext.clear': 'Aufheben',

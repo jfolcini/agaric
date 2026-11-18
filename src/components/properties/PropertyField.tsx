@@ -15,15 +15,15 @@
  */
 
 import type { LucideIcon } from 'lucide-react'
-import { HelpCircle, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useDateInput } from '@/hooks/useDateInput'
 import { cn } from '@/lib/utils'
 
@@ -116,7 +116,7 @@ export function PropertyField({
       </Badge>
       <div className="flex-1">
         {/* when the row is the `repeat` property, wrap the Input
-            and a `<Popover>` help trigger in a flex container, as a value
+            and its ⓘ help trigger in a flex container, as a value
             that doesn't fit wraps it with its mark. For all other rows
             (including dates, where `BuiltinDateFields.test` queries
             `input.parentElement?.querySelector('.text-muted-foreground')`
@@ -125,42 +125,30 @@ export function PropertyField({
         {isRepeat ? (
           <div className="flex items-center gap-1">
             {input}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0 text-muted-foreground"
-                  aria-label={t('property.repeatHelpLabel')}
-                  data-testid="repeat-help-trigger"
-                >
-                  <HelpCircle aria-hidden="true" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-72 text-xs space-y-2"
-                align="start"
-                aria-label={t('property.repeatHelpPopoverLabel')}
-              >
-                <p className="font-medium">{t('property.repeatHelpTitle')}</p>
-                <dl className="space-y-1">
-                  <div>
-                    <dt className="font-mono inline">++ </dt>
-                    <dd className="inline text-muted-foreground">
-                      {t('property.repeatHelpCatchup')}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-mono inline">.+ </dt>
-                    <dd className="inline text-muted-foreground">
-                      {t('property.repeatHelpFromCompletion')}
-                    </dd>
-                  </div>
-                </dl>
-                <p className="text-muted-foreground italic">{t('property.repeatHelpExample')}</p>
-              </PopoverContent>
-            </Popover>
+            <InfoPopover
+              variant="icon"
+              ariaLabel={t('property.repeatHelpLabel')}
+              content={
+                <div className="w-72 space-y-2 text-xs">
+                  <p className="font-medium">{t('property.repeatHelpTitle')}</p>
+                  <dl className="space-y-1">
+                    <div>
+                      <dt className="font-mono inline">++ </dt>
+                      <dd className="inline text-muted-foreground">
+                        {t('property.repeatHelpCatchup')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono inline">.+ </dt>
+                      <dd className="inline text-muted-foreground">
+                        {t('property.repeatHelpFromCompletion')}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-muted-foreground italic">{t('property.repeatHelpExample')}</p>
+                </div>
+              }
+            />
             {mark}
           </div>
         ) : unfit ? (

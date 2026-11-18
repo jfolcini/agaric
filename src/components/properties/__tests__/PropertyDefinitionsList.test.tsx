@@ -15,9 +15,9 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
 import { withOps } from '@/__tests__/fixtures'
+import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
@@ -724,23 +724,26 @@ describe('PropertyDefinitionsList', () => {
     expect(className).not.toMatch(/group-hover:opacity-100/)
   })
 
-  // Explain WHY the todo_state cycle is fixed via a HelpCircle
-  // tooltip on the todo_state row only.
+  // Explain WHY the todo_state cycle is fixed via an ⓘ on the todo_state row
+  // only; it opens on a tap, so a phone user can read it (#6895).
   describe('todo_state cycle help', () => {
-    it('renders the HelpCircle on the todo_state row', async () => {
+    it('opens the task cycle explanation from the ⓘ on the todo_state row', async () => {
+      const user = userEvent.setup()
       stubDefs(
         pageOf([makeBuiltinDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
       )
 
-      render(<PropertyDefinitionsList />)
+      const { container } = render(<PropertyDefinitionsList />)
 
       await screen.findByText('Todo State')
-      const help = screen.getByTestId('todo-state-cycle-help')
-      expect(help).toBeInTheDocument()
-      expect(help).toHaveAttribute('aria-label', t('propertiesView.taskCycleHelpLabel'))
+      await user.click(screen.getByRole('button', { name: t('propertiesView.taskCycleHelpLabel') }))
+      expect(
+        await screen.findByRole('dialog', { name: t('propertiesView.taskCycleHelpLabel') }),
+      ).toHaveTextContent(t('propertiesView.taskCycleHelpContent'))
+      expect(await axe(container)).toHaveNoViolations()
     })
 
-    it('does NOT render the HelpCircle on non-todo_state rows', async () => {
+    it('does NOT render the ⓘ on non-todo_state rows', async () => {
       stubDefs(
         pageOf([
           makeBuiltinDef('priority', 'select', '["1","2","3"]'),

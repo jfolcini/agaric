@@ -117,15 +117,19 @@ function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: Tool
     [setTrigger, setPressed, openOnLongPress, longPress],
   )
 
-  // A call site that controls `open` itself owns it entirely.
+  // A call site that controls `open` itself owns it entirely. The same tree
+  // shape as below, so a call site that switches to controlling it (to keep a
+  // tooltip shut) does not remount its trigger and drop the focus on it.
   if (open !== undefined) {
     return (
-      <TooltipPrimitive.Root
-        data-slot="tooltip"
-        open={open}
-        {...(onOpenChange === undefined ? {} : { onOpenChange })}
-        {...props}
-      />
+      <TooltipTriggerContext.Provider value={null}>
+        <TooltipPrimitive.Root
+          data-slot="tooltip"
+          open={open}
+          {...(onOpenChange === undefined ? {} : { onOpenChange })}
+          {...props}
+        />
+      </TooltipTriggerContext.Provider>
     )
   }
 

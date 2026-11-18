@@ -18,9 +18,9 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
 import { emptyPage, makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { axe } from '@/__tests__/helpers/axe'
 import {
   type CommandReturns,
   deferred,
@@ -295,47 +295,17 @@ describe('TagFilterPanel', () => {
     ).not.toBeInTheDocument()
   })
 
-  // Sub-fix 2 — each AND/OR/NOT button must surface its tooltip so
-  // the chosen variant isn't the only thing distinguishing them visually.
-  it('exposes a tooltip on each AND/OR/NOT mode segment', async () => {
+  // The ⓘ beside the AND/OR/NOT toggle explains each mode on a tap, so the
+  // chosen variant isn't the only thing distinguishing them (#6895).
+  it('opens an explanation of every AND/OR/NOT mode from the ⓘ beside the toggle', async () => {
     render(<TagFilterPanel />)
 
-    const andBtn = screen.getByRole('radio', { name: t('tagFilter.andMode') })
-    const orBtn = screen.getByRole('radio', { name: t('tagFilter.orMode') })
-    const notBtn = screen.getByRole('radio', { name: t('tagFilter.notMode') })
+    await user.click(screen.getByRole('button', { name: t('tagFilter.modeInfoLabel') }))
 
-    expect(andBtn).toBeInTheDocument()
-    expect(orBtn).toBeInTheDocument()
-    expect(notBtn).toBeInTheDocument()
-
-    await user.hover(andBtn)
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText(t('tagFilter.andModeTooltip'))
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
-    )
-    await user.unhover(andBtn)
-
-    await user.hover(orBtn)
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText(t('tagFilter.orModeTooltip'))
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
-    )
-    await user.unhover(orBtn)
-
-    await user.hover(notBtn)
-    await waitFor(
-      async () => {
-        const matches = await screen.findAllByText(t('tagFilter.notModeTooltip'))
-        expect(matches.length).toBeGreaterThanOrEqual(1)
-      },
-      { timeout: 3000 },
-    )
+    const help = await screen.findByRole('dialog', { name: t('tagFilter.modeInfoLabel') })
+    expect(help).toHaveTextContent(t('tagFilter.andModeTooltip'))
+    expect(help).toHaveTextContent(t('tagFilter.orModeTooltip'))
+    expect(help).toHaveTextContent(t('tagFilter.notModeTooltip'))
   })
 
   it('toggles AND/OR/NOT mode', async () => {
@@ -1745,6 +1715,22 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
       'for',
       sw.getAttribute('id'),
     )
+  })
+
+  it('opens what the switch does from the ⓘ beside its label (#6895)', async () => {
+    vi.useRealTimers()
+    const realUser = userEvent.setup()
+    routeByInheritance()
+    const { container } = render(<TagFilterPanel />)
+
+    await realUser.click(
+      screen.getByRole('button', { name: t('tagFilter.includeInheritedInfoLabel') }),
+    )
+
+    expect(
+      await screen.findByRole('dialog', { name: t('tagFilter.includeInheritedInfoLabel') }),
+    ).toHaveTextContent(t('tagFilter.includeInheritedTooltip'))
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('off by default: a selected tag queries with includeInherited=false and shows only the tagged block', async () => {

@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ListItem, listCardVariants } from '@/components/ui/list-item'
@@ -47,7 +48,7 @@ interface TemplateItem {
  * `expandTemplateVariables` (`template-utils.ts`). Surfaced as a low-chrome
  * hint row beneath the create form so users discover them without reading
  * source comments. `token` is the literal syntax; `descKey` names the i18n
- * description shown in the tooltip. Keep in sync with the `LEGACY_RESOLVERS`
+ * description shown in the ⓘ popover. Keep in sync with the `LEGACY_RESOLVERS`
  * token → resolver map in `expandTemplateVariables` (#1450 Phase 1), plus the
  * `<% recording %>` placeholder, which `insertTemplateBlocks` reads.
  */
@@ -347,29 +348,39 @@ export function TemplatesView(): React.ReactElement {
       </ListViewState>
 
       {/* #215 — dynamic-variable discoverability hint. Low-chrome muted row;
-          each token carries a tooltip describing what it expands to. */}
+          the ⓘ beside the label says what each token expands to. */}
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
-          </TooltipTrigger>
-          <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
-        </Tooltip>
-        {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
-          <Tooltip key={token}>
-            <TooltipTrigger asChild>
-              <code
-                className="rounded bg-muted px-1 py-0.5 font-mono text-xs cursor-help"
-                data-testid={`template-variable-${token
-                  .toLowerCase()
-                  .replace(/[^a-z0-9]+/g, '-')
-                  .replace(/^-|-$/g, '')}`}
-              >
-                {token}
-              </code>
-            </TooltipTrigger>
-            <TooltipContent>{t(descKey)}</TooltipContent>
-          </Tooltip>
+        <span className="inline-flex items-center gap-1">
+          <span className="font-medium">{t('templates.variablesHintLabel')}</span>
+          <InfoPopover
+            variant="icon"
+            ariaLabel={t('templates.variablesHintInfoLabel')}
+            content={
+              <div className="space-y-2">
+                <div>{t('templates.variablesHintIntro')}</div>
+                <dl className="space-y-1 text-xs">
+                  {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
+                    <div key={token}>
+                      <dt className="font-mono">{token}</dt>
+                      <dd className="text-muted-foreground">{t(descKey)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            }
+          />
+        </span>
+        {TEMPLATE_VARIABLES.map(({ token }) => (
+          <code
+            key={token}
+            className="rounded bg-muted px-1 py-0.5 font-mono text-xs"
+            data-testid={`template-variable-${token
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-|-$/g, '')}`}
+          >
+            {token}
+          </code>
         ))}
       </p>
       <ConfirmDialog

@@ -115,9 +115,11 @@ export const properties: Record<string, string> = {
   'advancedQuery.builder.op.or': 'Qualquer',
   'advancedQuery.builder.op.andTitle': 'Corresponder a TODAS as condições deste grupo (AND)',
   'advancedQuery.builder.op.orTitle': 'Corresponder a QUALQUER uma das condições deste grupo (OR)',
+  'advancedQuery.builder.opInfoLabel': 'Sobre Todas e Qualquer',
   'advancedQuery.builder.negate': 'NOT',
-  'advancedQuery.builder.negateTitle': 'Negar {{kind}} (envolver em NOT)',
-  'advancedQuery.builder.negateOnTitle': 'Negação ativa — clique para deixar de negar {{kind}}',
+  'advancedQuery.builder.negateInfoLabel': 'Sobre NOT',
+  'advancedQuery.builder.negateHelp':
+    'NOT aplicado a um grupo ou a uma condição encontra os blocos que, de outra forma, ficariam de fora.',
   'advancedQuery.builder.kindGroup': 'o grupo',
   'advancedQuery.builder.kindLeaf': 'a condição',
   'advancedQuery.builder.addFilter': 'Adicionar filtro',
@@ -446,6 +448,7 @@ export const properties: Record<string, string> = {
   'tagFilter.andModeTooltip': 'Todas as etiquetas selecionadas',
   'tagFilter.orMode': 'Qualquer',
   'tagFilter.orModeTooltip': 'Pelo menos uma etiqueta selecionada',
+  'tagFilter.modeInfoLabel': 'Sobre os modos de correspondência de etiquetas',
   'tagFilter.selectTagsMessage': 'Selecione etiquetas acima para filtrar blocos',
   'tagFilter.blockMatch_one': '{{count}} bloco corresponde',
   'tagFilter.blockMatch_other': '{{count}} blocos correspondem',
@@ -469,6 +472,7 @@ export const properties: Record<string, string> = {
   'tagFilter.includeInherited': 'Incluir blocos aninhados',
   'tagFilter.includeInheritedTooltip':
     'Também corresponde a blocos aninhados sob um bloco com etiqueta. Uma etiqueta em um bloco se aplica a todos os blocos abaixo dele, em qualquer profundidade — uma etiqueta no primeiro bloco de uma página corresponde à página inteira. Só as etiquetas adicionadas a um bloco são herdadas; um chip de etiqueta @ no meio do texto dele não é.',
+  'tagFilter.includeInheritedInfoLabel': 'Sobre blocos aninhados',
   'tagFilter.includingInherited': '(incluindo blocos aninhados)',
   'tagFilter.composer.show': 'Avançado',
   'tagFilter.composer.hide': 'Simples',
@@ -518,7 +522,6 @@ export const properties: Record<string, string> = {
   'property.repeatHelpFromCompletion': 'Reagenda a partir do momento da conclusão.',
   'property.repeatHelpExample':
     'Exemplo: `++1d` repete diariamente, recuperando o atraso; `.+1w` espera uma semana a partir de quando você a marcou como concluída.',
-  'property.repeatHelpPopoverLabel': 'Ajuda da sintaxe de repetição',
   'filter.operatorContains': 'contém',
   'filter.operatorStartsWith': 'começa com',
   'filter.isSet': 'está definida',

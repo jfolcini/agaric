@@ -11,13 +11,13 @@
  *  - a11y audit (axe) on a representative render.
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
-import { truncateId } from '@/lib/format'
+import { formatTimestamp, truncateId } from '@/lib/format'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useSyncStore } from '@/stores/sync'
@@ -282,7 +282,7 @@ describe('HistoryItemCore', () => {
 
   it('hides the diff-toggle button when onToggleDiff is not supplied', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: t('history.diffButton') })).not.toBeInTheDocument()
   })
 
   it('renders the diff-toggle button for edit_block when onToggleDiff is supplied', () => {
@@ -293,9 +293,7 @@ describe('HistoryItemCore', () => {
         onToggleDiff={onToggleDiff}
       />,
     )
-    // There should be exactly one button (the diff toggle).
-    const buttons = screen.getAllByRole('button')
-    expect(buttons.length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('button', { name: t('history.diffButton') })).toBeInTheDocument()
   })
 
   it('does not render the diff-toggle button for non-edit_block ops', () => {
@@ -306,7 +304,7 @@ describe('HistoryItemCore', () => {
         onToggleDiff={onToggleDiff}
       />,
     )
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: t('history.diffButton') })).not.toBeInTheDocument()
   })
 
   it('calls onToggleDiff when the diff-toggle button is clicked', async () => {
@@ -314,7 +312,7 @@ describe('HistoryItemCore', () => {
     const onToggleDiff = vi.fn()
     const entry = makeEntry(1, 'edit_block', { to_text: 'hi' })
     renderCore(<HistoryItemCore entry={entry} onToggleDiff={onToggleDiff} />)
-    await user.click(screen.getByRole('button'))
+    await user.click(screen.getByRole('button', { name: t('history.diffButton') }))
     expect(onToggleDiff).toHaveBeenCalledWith(entry)
   })
 
@@ -336,6 +334,34 @@ describe('HistoryItemCore', () => {
       />,
     )
     expect(screen.getByTestId('history-foreign-badge')).toBeInTheDocument()
+  })
+
+  it('swaps the relative time to the exact date and time on a tap', async () => {
+    const user = userEvent.setup()
+    const entry = makeEntry(1, 'edit_block', { to_text: 'hi' })
+    renderCore(<HistoryItemCore entry={entry} />)
+    const time = document.querySelector('.history-item-time') as HTMLElement
+    expect(time).not.toHaveTextContent(formatTimestamp(entry.created_at, 'full'))
+
+    await user.click(time)
+
+    expect(time).toHaveTextContent(formatTimestamp(entry.created_at, 'full'))
+  })
+
+  it("explains a synced op behind the foreign badge's ⓘ", async () => {
+    const user = userEvent.setup()
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'edit_block', { to_text: 'hi' }, undefined, undefined, true)}
+      />,
+    )
+    const badge = screen.getByTestId('history-foreign-badge')
+
+    await user.click(within(badge).getByRole('button', { name: t('history.foreignOpInfoLabel') }))
+
+    expect(
+      await screen.findByRole('dialog', { name: t('history.foreignOpInfoLabel') }),
+    ).toHaveTextContent(t('history.foreignOp'))
   })
 
   it('does not render the foreign-op indicator for a local entry', () => {

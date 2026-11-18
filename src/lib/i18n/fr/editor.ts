@@ -223,6 +223,10 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkRemoveAction': '(retirer le lien rompu)',
   'editor.brokenLinkUndoStale':
     'La page a changé après le retrait, qui ne peut donc plus être annulé ici',
+  'editor.brokenLinkExplanation':
+    'Ce lien est rompu\u00A0: la page vers laquelle il pointait a été supprimée ou se trouve dans un autre espace.',
+  'editor.brokenLinkRemove': 'Retirer le lien',
+  'editor.brokenLinkState': '(lien rompu)',
   'editor.brokenRefTooltip': 'Référence rompue — bloc cible supprimé',
   'editor.footnoteLink': 'Note de bas de page {{number}}',
   'editor.footnoteMissing': 'Aucun bloc de cette page ne définit cette note de bas de page',
@@ -321,8 +325,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Retirer',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Afficher ou masquer la barre de redimensionnement',
-  'attachment.resizeHint':
-    'Redimensionner l’image — survolez-la ou placez le focus dessus pour ouvrir la barre d’outils',
   'attachment.resizeHandle': 'Faire glisser pour redimensionner l’image',
   'imageResize.saveFailed': 'Impossible d’enregistrer la taille de l’image',
   'imageCaption.placeholder': 'Ajouter une légende…',

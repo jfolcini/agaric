@@ -251,9 +251,11 @@ export const references: Record<string, string> = {
   'graph.local.exit': 'Exit focus',
   'graph.local.active': 'Showing neighbors of "{{page}}"',
   'graph.local.back': 'Back to "{{page}}"',
-  // Translators: Tooltip on the disabled toggle, and toast from the Command palette "Show this page
-  // in graph" command.
+  // Translators: Why the toggle is disabled, shown from the (i) button beside it, and toast from
+  // the Command palette "Show this page in graph" command; noPageInfo = that (i) button's
+  // screen-reader label.
   'graph.local.noPage': 'Open a page to focus the graph on it',
+  'graph.local.noPageInfo': 'Why focus is unavailable',
   // Translators: Empty-state message over the graph in local mode; {{page}} = page title.
   'graph.local.seedHidden': '"{{page}}" is hidden by the active filters',
   'graph.local.seedIsTag': '"{{page}}" is a tag, and the graph shows only pages',

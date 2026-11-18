@@ -76,6 +76,7 @@ export const common: Record<string, string> = {
     'Mova ou exclua as páginas deste espaço primeiro para permitir a exclusão.',
   'space.deleteLastTooltipDisabled':
     'Você precisa manter pelo menos um espaço — não é possível excluir o último espaço restante.',
+  'space.deleteDisabledInfo': 'Por que este espaço não pode ser excluído',
   'space.deleteConfirmTitle': "Excluir o espaço '{{name}}'?",
   'space.deleteConfirmDescription':
     'Este espaço já precisa estar vazio. Isso não pode ser desfeito.',

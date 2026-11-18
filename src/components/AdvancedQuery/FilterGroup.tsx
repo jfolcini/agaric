@@ -24,6 +24,7 @@ import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -77,31 +78,47 @@ function OpToggle({
     {
       value: 'And',
       label: t('advancedQuery.builder.op.and'),
-      title: t('advancedQuery.builder.op.andTitle'),
+      help: t('advancedQuery.builder.op.andTitle'),
     },
     {
       value: 'Or',
       label: t('advancedQuery.builder.op.or'),
-      title: t('advancedQuery.builder.op.orTitle'),
+      help: t('advancedQuery.builder.op.orTitle'),
     },
   ] as const
   return (
-    <ToggleGroup
-      type="single"
-      value={op}
-      onValueChange={(value) => {
-        // Radix reports re-clicking the active segment as '' (deselect); a group
-        // always has a combinator, so only And / Or are forwarded.
-        if (value === 'And' || value === 'Or') onSetGroupOp(path, value)
-      }}
-      aria-label={t('advancedQuery.builder.opLabel')}
-    >
-      {options.map(({ value, label, title }) => (
-        <ToggleGroupItem key={value} value={value} aria-label={label} title={title}>
-          {label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
+    <>
+      <ToggleGroup
+        type="single"
+        value={op}
+        onValueChange={(value) => {
+          // Radix reports re-clicking the active segment as '' (deselect); a group
+          // always has a combinator, so only And / Or are forwarded.
+          if (value === 'And' || value === 'Or') onSetGroupOp(path, value)
+        }}
+        aria-label={t('advancedQuery.builder.opLabel')}
+      >
+        {options.map(({ value, label }) => (
+          <ToggleGroupItem key={value} value={value} aria-label={label}>
+            {label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <InfoPopover
+        variant="icon"
+        ariaLabel={t('advancedQuery.builder.opInfoLabel')}
+        content={
+          <dl className="space-y-1">
+            {options.map(({ value, label, help }) => (
+              <div key={value}>
+                <dt className="inline font-medium">{label}: </dt>
+                <dd className="inline">{help}</dd>
+              </div>
+            ))}
+          </dl>
+        }
+      />
+    </>
   )
 }
 
@@ -141,7 +158,7 @@ function LeafChip({
   const kind = t('advancedQuery.builder.kindLeaf')
   return (
     <li className="inline-flex items-center gap-1" data-testid="filter-group-leaf">
-      <NegateToggle negated={node.negated} kind={kind} onClick={() => onToggleNegate(path)} />
+      <NegateToggle negated={node.negated} onClick={() => onToggleNegate(path)} />
       <FilterPill
         label={label}
         onRemove={() => onRemoveNode(path)}
@@ -155,11 +172,9 @@ function LeafChip({
 /** The NOT toggle shared by leaves and groups. */
 function NegateToggle({
   negated,
-  kind,
   onClick,
 }: {
   negated: boolean
-  kind: string
   onClick: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -168,11 +183,6 @@ function NegateToggle({
       type="button"
       aria-pressed={negated}
       aria-label={t('advancedQuery.builder.negate')}
-      title={
-        negated
-          ? t('advancedQuery.builder.negateOnTitle', { kind })
-          : t('advancedQuery.builder.negateTitle', { kind })
-      }
       onClick={onClick}
       className={cn(
         'h-7 rounded-md border px-1.5 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 font-semibold uppercase leading-none focus-ring-visible',
@@ -216,7 +226,12 @@ export function FilterGroup({
     >
       {/* Group header — combinator + NOT (+ remove for non-root). */}
       <div className="flex flex-wrap items-center gap-2">
-        <NegateToggle negated={node.negated} kind={kind} onClick={() => onToggleNegate(path)} />
+        <NegateToggle negated={node.negated} onClick={() => onToggleNegate(path)} />
+        <InfoPopover
+          variant="icon"
+          ariaLabel={t('advancedQuery.builder.negateInfoLabel')}
+          content={t('advancedQuery.builder.negateHelp')}
+        />
         <OpToggle op={node.op} onSetGroupOp={onSetGroupOp} path={path} />
         {!isRoot && (
           <Button

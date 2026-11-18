@@ -158,14 +158,16 @@ export const common: Record<string, string> = {
   'space.accentSwatchLabel': 'Use {{color}} accent',
 
   // Translators: Settings › Spaces, delete (trash-can) button of a space: screen-reader label,
-  // tooltips and a hint explaining why it is disabled, its ConfirmDialog ({{name}} = the space
-  // name), and an error toast.
+  // the reasons and a hint explaining why it is disabled, the screen-reader label of the (i)
+  // button beside it that shows the reason, its ConfirmDialog ({{name}} = the space name), and
+  // an error toast.
   'space.deleteSpaceLabel': 'Delete space',
   'space.deleteSpaceTooltipDisabled':
     'Delete every page in this space first — spaces can only be deleted when empty.',
   'space.deleteSpaceInlineHint': 'Move or delete the pages in this space first to enable deletion.',
   'space.deleteLastTooltipDisabled':
     'You must keep at least one space — delete is disabled on the last remaining space.',
+  'space.deleteDisabledInfo': 'Why this space cannot be deleted',
   'space.deleteConfirmTitle': "Delete space '{{name}}'?",
   'space.deleteConfirmDescription': 'This space must already be empty. This cannot be undone.',
   'space.deleteFailed': 'Failed to delete space',

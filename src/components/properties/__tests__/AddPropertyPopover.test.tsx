@@ -34,6 +34,7 @@ vi.mock('lucide-react', () => ({
   Check: () => <svg data-testid="check-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   Clock: () => <svg data-testid="clock-icon" />,
+  Info: () => <svg data-testid="info-icon" />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
@@ -395,6 +396,28 @@ describe('AddPropertyPopover', () => {
     expect(optionValues).toEqual(
       expect.arrayContaining(['text', 'number', 'date', 'select', 'ref', 'boolean']),
     )
+  })
+
+  it('a disabled Add says why behind an ⓘ beside it (#6895)', async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        disabled
+        disabledTooltip="Properties loading…"
+      />,
+    )
+    expect(screen.getByRole('button', { name: t('pageProperty.addPropertyLabel') })).toBeDisabled()
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(
+      screen.getByRole('button', { name: t('pageProperty.addPropertyDisabledInfo') }),
+    )
+
+    expect(
+      await screen.findByRole('dialog', { name: t('pageProperty.addPropertyDisabledInfo') }),
+    ).toHaveTextContent('Properties loading…')
   })
 
   // Extra a11y audit covering the create-definition surface (which

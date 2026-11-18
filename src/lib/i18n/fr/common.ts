@@ -77,6 +77,7 @@ export const common: Record<string, string> = {
     'Déplacez ou supprimez d’abord les pages de cet espace pour pouvoir le supprimer.',
   'space.deleteLastTooltipDisabled':
     'Vous devez conserver au moins un espace — la suppression est désactivée pour le dernier espace restant.',
+  'space.deleteDisabledInfo': 'Pourquoi cet espace ne peut pas être supprimé',
   'space.deleteConfirmTitle': "Supprimer l’espace '{{name}}'\u00A0?",
   'space.deleteConfirmDescription':
     'Cet espace doit déjà être vide. Cette action est irréversible.',

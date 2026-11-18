@@ -79,6 +79,7 @@ export const pages: Record<string, string> = {
   'pageHeader.inheritedTag': 'Étiquette héritée {{name}}',
   'pageHeader.inheritedTagHint':
     'Héritée d’un bloc parent. La vue Étiquettes ne la trouve que si "Inclure les blocs imbriqués" est activé.',
+  'pageHeader.inheritedTagInfo': 'À propos des étiquettes héritées',
   'pageHeader.searchTags': 'Rechercher ou créer une étiquette...',
   'pageHeader.searchTagsLabel': 'Rechercher des étiquettes',
   'pageHeader.tagPicker': 'Sélecteur d’étiquettes',
@@ -113,6 +114,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintLabel': 'Espaces réservés\u00A0:',
   'templates.variablesHintIntro':
     'Saisissez-les n’importe où dans un modèle\u00A0; chacun est remplacé lors de l’insertion du modèle.',
+  'templates.variablesHintInfoLabel': 'À propos des espaces réservés',
   'templates.variableToday': 'Date du jour (YYYY-MM-DD)',
   'templates.variableTime': 'Heure actuelle (HH:MM)',
   'templates.variableDatetime': 'Date et heure actuelles',
@@ -229,6 +231,7 @@ export const pages: Record<string, string> = {
   'pageMode.codeCopyFailed': 'Impossible de copier le code',
   'pageMode.blocked.overCap':
     'Le mode page ouvre les pages de {{cap}} blocs au maximum\u00A0; celle-ci en a {{blocks}}.',
+  'pageMode.blockedInfo': 'Pourquoi le mode page n’est pas disponible',
   'pageSource.preview': 'Aperçu',
   'pageSource.changes': 'Modifications',
   'pageSource.saveChanges_one': 'Enregistrer ({{count}} modification)',
@@ -419,6 +422,7 @@ export const pages: Record<string, string> = {
   'pageProperty.propertiesButton': 'Propriétés',
   'pageProperty.addPropertyLabel': 'Ajouter une propriété',
   'pageProperty.addPropertyButton': 'Ajouter une propriété',
+  'pageProperty.addPropertyDisabledInfo': 'Pourquoi on ne peut pas encore ajouter de propriétés',
   'pageProperty.pickerLabel': 'Sélecteur de propriétés',
   'pageProperty.searchPlaceholder': 'Rechercher des définitions...',
   'pageProperty.searchLabel': 'Rechercher des définitions',

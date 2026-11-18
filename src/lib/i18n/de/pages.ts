@@ -80,6 +80,7 @@ export const pages: Record<string, string> = {
   'pageHeader.inheritedTag': 'Geerbter Tag {{name}}',
   'pageHeader.inheritedTagHint':
     'Von einem übergeordneten Block geerbt. Die Tags-Ansicht findet ihn nur, wenn "Verschachtelte Blöcke einbeziehen" aktiviert ist.',
+  'pageHeader.inheritedTagInfo': 'Über geerbte Tags',
   'pageHeader.searchTags': 'Tag suchen oder erstellen...',
   'pageHeader.searchTagsLabel': 'Tags durchsuchen',
   'pageHeader.tagPicker': 'Tag-Auswahl',
@@ -115,6 +116,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintLabel': 'Platzhalter:',
   'templates.variablesHintIntro':
     'Schreibe diese an beliebiger Stelle in eine Vorlage; jeder wird beim Einfügen der Vorlage ausgefüllt.',
+  'templates.variablesHintInfoLabel': 'Über Platzhalter',
   'templates.variableToday': 'Aktuelles Datum (YYYY-MM-DD)',
   'templates.variableTime': 'Aktuelle Uhrzeit (HH:MM)',
   'templates.variableDatetime': 'Aktuelles Datum und Uhrzeit',
@@ -230,6 +232,7 @@ export const pages: Record<string, string> = {
   'pageMode.codeCopyFailed': 'Der Code konnte nicht kopiert werden',
   'pageMode.blocked.overCap':
     'Der Seitenmodus öffnet Seiten mit bis zu {{cap}} Blöcken; diese hat {{blocks}}.',
+  'pageMode.blockedInfo': 'Warum der Seitenmodus nicht verfügbar ist',
   'pageSource.preview': 'Vorschau',
   'pageSource.changes': 'Änderungen',
   'pageSource.saveChanges_one': 'Speichern ({{count}} Änderung)',
@@ -422,6 +425,8 @@ export const pages: Record<string, string> = {
   'pageProperty.propertiesButton': 'Eigenschaften',
   'pageProperty.addPropertyLabel': 'Eigenschaft hinzufügen',
   'pageProperty.addPropertyButton': 'Eigenschaft hinzufügen',
+  'pageProperty.addPropertyDisabledInfo':
+    'Warum noch keine Eigenschaften hinzugefügt werden können',
   'pageProperty.pickerLabel': 'Eigenschaftsauswahl',
   'pageProperty.searchPlaceholder': 'Definitionen durchsuchen...',
   'pageProperty.searchLabel': 'Definitionen durchsuchen',

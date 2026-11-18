@@ -230,7 +230,6 @@ describe('AttachmentRenderer', () => {
     // Decorative cue: hidden from the a11y tree (the focusable group + toolbar
     // carry the real semantics) and never intercepts the image/lightbox click.
     expect(hint.getAttribute('aria-hidden')).toBe('true')
-    expect(hint.getAttribute('title')).toBe('Resize image — hover or focus to open the toolbar')
     expect(hint.className).toContain('pointer-events-none')
   })
 

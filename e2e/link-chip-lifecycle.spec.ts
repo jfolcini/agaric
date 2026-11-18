@@ -27,8 +27,9 @@ import {
  * `[[Quick Notes]]`; Quick Notes' QN_1 links `[[Getting Started]]`; today's
  * journal page holds "Morning standup notes go here".
  *
- * A broken chip removes itself when clicked (#5736), from a static block, the
- * block's editor and page mode; the mock shows each write failing to land.
+ * A broken chip is removed (#5736): from a static block through the Remove in
+ * the popover a tap on it opens (#6895), from the block's editor and page mode
+ * by a click on it; the mock shows each write failing to land.
  */
 
 const PAGE_GETTING_STARTED = '00000000000000000000PAGE01'
@@ -42,8 +43,8 @@ const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 const QN_1_TEXT = `These notes complement the [[${PAGE_GETTING_STARTED}]] guide.`
 const QN_1_UNLINKED = 'These notes complement the  guide.'
-/** A broken chip's name: its label, then what activating it does. */
-const brokenName = (label: string) => `${label} (remove broken link)`
+/** A broken static chip's name: its label, then that it is broken. */
+const brokenName = (label: string) => `${label} (broken link)`
 const MOVED_LABEL = `[[${PAGE_GETTING_STARTED.slice(0, 8)}...]]`
 
 type Page = import('@playwright/test').Page
@@ -288,7 +289,7 @@ test.describe('link chips follow their target @editor @pages', () => {
   })
 })
 
-test.describe('a broken chip removes itself when clicked (#5736) @editor @pages', () => {
+test.describe('a broken chip is removed (#5736) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await createSpace(page, 'Work')
@@ -301,11 +302,23 @@ test.describe('a broken chip removes itself when clicked (#5736) @editor @pages'
   }) => {
     const block = page.locator(`[data-testid="block-static"][data-block-id="${BLOCK_QN_1}"]`)
     const chip = chipIn(page, BLOCK_QN_1, 'block-link-chip')
-    await chip.hover()
-    await expect(
-      page.getByRole('tooltip', { name: 'Broken link or in another space — click to remove' }),
-    ).toBeVisible()
+    const removeVia = async () => {
+      await chip.click()
+      const explanation = page.getByRole('dialog', { name: brokenName(MOVED_LABEL) })
+      await expect(explanation).toContainText('the page it pointed to was deleted')
+      await explanation.getByRole('button', { name: 'Remove link', exact: true }).click()
+    }
     await page.getByRole('button', { name: brokenName(MOVED_LABEL), exact: true }).click()
+    // A tap only explains: the link stays until Remove.
+    await expect(
+      page.getByRole('dialog', { name: brokenName(MOVED_LABEL) }).getByRole('button', {
+        name: 'Remove link',
+        exact: true,
+      }),
+    ).toBeVisible()
+    await page.keyboard.press('Escape')
+    expect(await qn1Content(page)).toBe(QN_1_TEXT)
+    await removeVia()
     await expect(removedToast(page)).toBeVisible()
     await expect(chip).toHaveCount(0)
     await expect(
@@ -324,7 +337,7 @@ test.describe('a broken chip removes itself when clicked (#5736) @editor @pages'
     await expect(chip).toHaveAccessibleName(brokenName(MOVED_LABEL))
     expect(await qn1Content(page)).toBe(QN_1_TEXT)
 
-    await chip.click()
+    await removeVia()
     await expect(chip).toHaveCount(0)
     await removedToast(page).getByRole('button', { name: 'Undo', exact: true }).click()
     await expect(chip).toHaveCount(1)

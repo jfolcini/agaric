@@ -30,14 +30,15 @@ import type * as React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { RelativeTime } from '@/components/common/RelativeTime'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import type { HistoryEntry } from '@/lib/bindings'
-import { formatTimestamp, truncateId } from '@/lib/format'
+import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { getPayloadDisplayContent, getPropertyPayload, opTypeLabel } from '@/lib/history-utils'
 import { formatPropertyName } from '@/lib/property-utils'
@@ -162,6 +163,10 @@ export interface HistoryItemCoreProps {
   isExpanded?: boolean
   isLoadingDiff?: boolean
   onToggleDiff?: (entry: HistoryEntry) => void
+  /** The row around it is itself a button (Block History's restorable row), so
+   *  the time and the synced mark render as text: a control cannot nest in a
+   *  button. */
+  inRowButton?: boolean
 }
 
 export function HistoryItemCore({
@@ -169,6 +174,7 @@ export function HistoryItemCore({
   isExpanded,
   isLoadingDiff,
   onToggleDiff,
+  inRowButton = false,
 }: HistoryItemCoreProps): React.ReactElement {
   const { t } = useTranslation()
   const rawContent = getPayloadDisplayContent(entry)
@@ -247,16 +253,13 @@ export function HistoryItemCore({
             })()}
             {opTypeLabel(entry.op_type, t)}
           </Badge>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="history-item-time text-xs text-muted-foreground w-fit">
-                {formatRelativeTime(entry.created_at, t)}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{formatTimestamp(entry.created_at, 'full')}</p>
-            </TooltipContent>
-          </Tooltip>
+          {inRowButton ? (
+            <span className="history-item-time text-xs text-muted-foreground tabular-nums w-fit">
+              {formatRelativeTime(entry.created_at, t)}
+            </span>
+          ) : (
+            <RelativeTime value={entry.created_at} className="history-item-time" />
+          )}
           {entry.agent != null && (
             <Badge
               tone="outline"
@@ -273,24 +276,21 @@ export function HistoryItemCore({
           {/* #2481: a foreign op replicated from another device (audit-only,
               not revertible here). */}
           {entry.is_replicated && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className="history-item-foreign inline-flex items-center text-muted-foreground"
-                  data-testid="history-foreign-badge"
-                >
-                  <ArrowLeftRight className="h-3 w-3" aria-hidden="true" />
-                  {/* Accessible name via sr-only text (avoids aria-label on a
-                      roleless span — axe — and a `role` attribute — oxlint
-                      prefer-tag-over-role). The tooltip carries the visible
-                      hint. */}
-                  <span className="sr-only">{t('history.foreignOp')}</span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('history.foreignOp')}</p>
-              </TooltipContent>
-            </Tooltip>
+            <span
+              className="history-item-foreign inline-flex items-center gap-0.5 text-muted-foreground"
+              data-testid="history-foreign-badge"
+            >
+              <ArrowLeftRight className="h-3 w-3" aria-hidden="true" />
+              {inRowButton ? (
+                <span className="sr-only">{t('history.foreignOp')}</span>
+              ) : (
+                <InfoPopover
+                  variant="icon"
+                  ariaLabel={t('history.foreignOpInfoLabel')}
+                  content={t('history.foreignOp')}
+                />
+              )}
+            </span>
           )}
         </div>
         {/* Its own grid cell, not part of the meta line: beside it on a wide
