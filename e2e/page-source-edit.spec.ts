@@ -1260,69 +1260,74 @@ test.describe('Edit as Markdown, as the backend reads it back (#6926) @editor @p
  * Only the real backend writes names in the buffer and reads them back on save
  * (`get_page_buffer` / `apply_page_source`); the mock's buffer keeps raw ids.
  */
-test.describe('Edit as Markdown writes refs and labels by name (#6277, #5160 D9) @editor @markdown @real-only', () => {
-  test.beforeEach(async ({ page }) => {
-    await waitForBoot(page)
-  })
+test.describe(
+  'Edit as Markdown writes refs and labels by name (#6277, #5160 D9) @editor @markdown',
+  { tag: '@real-only' },
+  () => {
+    test.beforeEach(async ({ page }) => {
+      await waitForBoot(page)
+    })
 
-  test('a labelled link reads as [[Page|label]], and an edited label is stored', async ({
-    page,
-  }) => {
-    const [block] = await seedOpenPage(page, 'Labelled', [
-      `see [[${SEED_IDS.PAGE_QUICK_NOTES}|the notes]]`,
-    ])
-    const editor = await openSourceMode(page, 'see')
-    await expect(editor).toContainText('see [[Quick Notes|the notes]]')
-    await selectLine(editor, 'see [[Quick Notes|the notes]]')
-    await page.keyboard.type('see [[Quick Notes|my notes]]')
-    await saveSource(page, editor)
+    test('a labelled link reads as [[Page|label]], and an edited label is stored', async ({
+      page,
+    }) => {
+      const [block] = await seedOpenPage(page, 'Labelled', [
+        `see [[${SEED_IDS.PAGE_QUICK_NOTES}|the notes]]`,
+      ])
+      const editor = await openSourceMode(page, 'see')
+      await expect(editor).toContainText('see [[Quick Notes|the notes]]')
+      await selectLine(editor, 'see [[Quick Notes|the notes]]')
+      await page.keyboard.type('see [[Quick Notes|my notes]]')
+      await saveSource(page, editor)
 
-    await reopenPage(page, 'Labelled')
-    const chip = staticBlock(page, block as string).getByTestId('block-link-chip')
-    await expect(chip).toHaveText('my notes')
-    await expect(chip).toHaveAttribute('title', 'Quick Notes')
-  })
+      await reopenPage(page, 'Labelled')
+      const chip = staticBlock(page, block as string).getByTestId('block-link-chip')
+      await expect(chip).toHaveText('my notes')
+      await expect(chip).toHaveAttribute('title', 'Quick Notes')
+    })
 
-  test('a ref to a block of another page reads as [[Title#^id]], and saves back as that ref', async ({
-    page,
-  }) => {
-    const [target] = await seedOpenPage(page, 'Ref target page', ['Target block'])
-    const [ref] = await seedOpenPage(page, 'Ref source', [`Ref line ((${target}))`])
-    const link = `[[Ref target page#^${target}]]`
-    const editor = await openSourceMode(page, 'Ref line')
-    await expect(editor).toContainText(`Ref line ${link}`)
-    await caretAtEnd(page, editor, 'Ref line')
-    await page.keyboard.type(' edited')
-    await saveSource(page, editor)
+    test('a ref to a block of another page reads as [[Title#^id]], and saves back as that ref', async ({
+      page,
+    }) => {
+      const [target] = await seedOpenPage(page, 'Ref target page', ['Target block'])
+      const [ref] = await seedOpenPage(page, 'Ref source', [`Ref line ((${target}))`])
+      const link = `[[Ref target page#^${target}]]`
+      const editor = await openSourceMode(page, 'Ref line')
+      await expect(editor).toContainText(`Ref line ${link}`)
+      await caretAtEnd(page, editor, 'Ref line')
+      await page.keyboard.type(' edited')
+      await saveSource(page, editor)
 
-    await reopenPage(page, 'Ref source')
-    await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
-    expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
-      `Ref line ((${target})) edited`,
-    )
-  })
+      await reopenPage(page, 'Ref source')
+      await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
+      expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
+        `Ref line ((${target})) edited`,
+      )
+    })
 
-  test('a ref to a unique heading reads as [[Title#Heading]], saves back, and exports the heading bare', async ({
-    page,
-  }) => {
-    const [heading] = await seedOpenPage(page, 'Heading page', ['## Unique heading'])
-    const headingPage = (await ipc<{ parent_id: string }>(page, 'get_block', { blockId: heading }))
-      .parent_id
-    const [ref] = await seedOpenPage(page, 'Heading ref', [`Heading ref ((${heading}))`])
-    const link = '[[Heading page#Unique heading]]'
-    const editor = await openSourceMode(page, 'Heading ref')
-    await expect(editor).toContainText(`Heading ref ${link}`)
-    await caretAtEnd(page, editor, 'Heading ref')
-    await page.keyboard.type(' edited')
-    await saveSource(page, editor)
+    test('a ref to a unique heading reads as [[Title#Heading]], saves back, and exports the heading bare', async ({
+      page,
+    }) => {
+      const [heading] = await seedOpenPage(page, 'Heading page', ['## Unique heading'])
+      const headingPage = (
+        await ipc<{ parent_id: string }>(page, 'get_block', { blockId: heading })
+      ).parent_id
+      const [ref] = await seedOpenPage(page, 'Heading ref', [`Heading ref ((${heading}))`])
+      const link = '[[Heading page#Unique heading]]'
+      const editor = await openSourceMode(page, 'Heading ref')
+      await expect(editor).toContainText(`Heading ref ${link}`)
+      await caretAtEnd(page, editor, 'Heading ref')
+      await page.keyboard.type(' edited')
+      await saveSource(page, editor)
 
-    await reopenPage(page, 'Heading ref')
-    await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
-    expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
-      `Heading ref ((${heading})) edited`,
-    )
-    // The export, which Obsidian reads, names the heading by its text: no block id on its line.
-    const exported = await ipc<string>(page, 'export_page_markdown', { pageId: headingPage })
-    expect(exported.split('\n')).toContain('## Unique heading')
-  })
-})
+      await reopenPage(page, 'Heading ref')
+      await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
+      expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
+        `Heading ref ((${heading})) edited`,
+      )
+      // The export, which Obsidian reads, names the heading by its text: no block id on its line.
+      const exported = await ipc<string>(page, 'export_page_markdown', { pageId: headingPage })
+      expect(exported.split('\n')).toContain('## Unique heading')
+    })
+  },
+)
