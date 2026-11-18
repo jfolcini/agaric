@@ -48,9 +48,10 @@ const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
  * Run the action's script against stubbed `sudo`, `apt-get`, `sleep` and the
  * lock tools, all first on PATH. `apt-get update` exits `updateStatus`; `apt-get
  * install` fails `failures` times with `errors` on stderr and exit 100 (what
- * apt exits when a download or a lookup fails), then succeeds.
+ * apt exits when a download or a lookup fails), then succeeds. `cacheHit` is
+ * the restore step's output.
  */
-function runAction({ failures, errors, updateStatus = 0 }) {
+function runAction({ failures, errors, updateStatus = 0, cacheHit = '' }) {
   const dir = mkdtempSync(join(tmpdir(), 'apt-install-action-'))
   try {
     const installs = join(dir, 'installs')
@@ -94,6 +95,7 @@ function runAction({ failures, errors, updateStatus = 0 }) {
         RUNNER_TEMP: dir,
         GITHUB_STEP_SUMMARY: join(dir, 'summary'),
         GITHUB_OUTPUT: output,
+        APT_CACHE_HIT: cacheHit,
       },
     })
     const lines = (file) => readFileSync(file, 'utf8').split('\n').filter(Boolean)
@@ -120,35 +122,46 @@ void test('a download the mirror cannot serve twice is an infra failure, exit 75
   assert.equal(run.sleeps, 1)
 })
 
-void test('a failed first attempt refreshes the index, retries, and is not cached', () => {
+void test('a download that fails once is retried and the step passes', () => {
   const run = runAction({ failures: 1, errors: FETCH_ERRORS })
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 2)
   assert.equal(run.updates, 1)
-  assert.equal(run.output, '')
 })
 
-void test('a package apt cannot find even after a refresh fails with apt’s own status', () => {
+void test('a package apt cannot find fails at once with apt’s own status', () => {
   const run = runAction({ failures: Infinity, errors: MISSING_PACKAGE_ERRORS })
   assert.equal(run.status, 100, run.stdout + run.stderr)
   assert.doesNotMatch(run.stdout, /AGARIC_APT_INFRA/)
-  assert.equal(run.installs, 2)
-  assert.equal(run.updates, 1)
+  assert.equal(run.installs, 1)
   assert.equal(run.sleeps, 0)
 })
 
-void test('a refresh that never completes before a failed retry is an infra failure, exit 75', () => {
+void test('a refresh that never completes before a failed install is an infra failure, exit 75', () => {
   const run = runAction({ failures: Infinity, errors: MISSING_PACKAGE_ERRORS, updateStatus: 124 })
   assert.equal(run.status, 75, run.stdout + run.stderr)
   assert.match(run.stdout, /AGARIC_APT_INFRA/)
   assert.equal(run.updates, 2)
 })
 
-void test('an install that works the first time touches no index and is cacheable', () => {
+void test('without a cache hit the index is refreshed first, and the install is cacheable', () => {
   const run = runAction({ failures: 0, errors: [] })
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(run.installs, 1)
-  assert.equal(run.updates, 0)
-  assert.equal(run.sleeps, 0)
+  assert.equal(run.updates, 1)
   assert.equal(run.output, 'cacheable=true\n')
+})
+
+void test('on a cache hit the install touches no index', () => {
+  const run = runAction({ failures: 0, errors: [], cacheHit: 'true' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.installs, 1)
+  assert.equal(run.updates, 0)
+})
+
+void test('on a cache hit a failed install refreshes the index once before its retry', () => {
+  const run = runAction({ failures: 1, errors: MISSING_PACKAGE_ERRORS, cacheHit: 'true' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.equal(run.installs, 2)
+  assert.equal(run.updates, 1)
 })

@@ -1,14 +1,14 @@
 name: apt install (mirror-tolerant, cached)
 description: >-
   Install apt packages on a GitHub-hosted runner without letting an unhealthy
-  Ubuntu mirror red the PR as a code failure. With `cache: 'true'` the .debs
-  come from an `actions/cache` entry keyed on exactly the files the runner
-  image's own package lists resolve to, and on a hit the install runs with no
-  `apt-get update` and no network. The first attempt never refreshes the
-  index; only a failed attempt runs a bounded `apt-get update` before the
-  retry, and an update that does not finish is a WARNING. An install that runs
-  out its bound twice, or cannot download its packages twice, exits 75 (not 1)
-  so "this job could not run" is distinguishable from "this job failed".
+  Ubuntu mirror red the PR as a code failure. With `cache: 'true'` the .debs,
+  and the package lists they were resolved from, come from an `actions/cache`
+  entry keyed on exactly the files the runner image's own lists resolve to; on
+  a hit the install runs with no `apt-get update` and no network. Otherwise a
+  bounded `apt-get update` runs first, and one that does not finish is a
+  WARNING. An install that runs out its bound on its last attempt, or cannot
+  download its packages twice, exits 75 (not 1) so "this job could not run" is
+  distinguishable from "this job failed".
 inputs:
   packages:
     description: >-
@@ -18,8 +18,8 @@ inputs:
     required: true
   cache:
     description: >-
-      'true' restores the .debs from the Actions cache, and saves them on a
-      miss from `main` or a `workflow_dispatch` (a PR's save is readable by
+      'true' restores the .debs and lists from the Actions cache, and saves
+      them on a miss from `main` or a `workflow_dispatch` (a PR's save is readable by
       nothing else, #5853). Off by default: a job that signs or publishes
       restores no cache (#3542).
     required: false
@@ -64,8 +64,10 @@ runs:
         # `--print-uris` reads only the local lists; the empty archive dir makes
         # it list every file, cached or not. URIs are dropped because the mirror
         # host differs per runner region; name, size and checksum identify a .deb.
+        # The restore writes, and the save reads, as the runner user. Here and
+        # not only in prepare-apt: cargo-coverage's lcov runs without it.
         sudo install -d -m 0777 /var/cache/apt/archives/partial
-        sudo chmod 0777 /var/cache/apt/archives
+        sudo chmod 0777 /var/cache/apt/archives /var/lib/apt/lists
         empty="$(mktemp -d)"
         mkdir -p "${empty}/partial"
         set -f
@@ -77,16 +79,18 @@ runs:
           echo "No .debs to fetch, or the image's lists cannot resolve the packages: no cache."
         fi
 
-    - name: Restore the .debs
+    - name: Restore the .debs and the lists they were resolved from
       id: restore
       if: steps.plan.outputs.key != ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: /var/cache/apt/archives/*.deb
+        path: |
+          /var/cache/apt/archives/*.deb
+          /var/lib/apt/lists/*_*
         key: ${{ steps.plan.outputs.key }}
         lookup-only: ${{ inputs.warm-only }}
 
-    - name: apt-get install (update only on a failed attempt)
+    - name: apt-get install (no index refresh on a cache hit)
       id: install
       if: inputs.warm-only != 'true' || steps.restore.outputs.cache-hit != 'true'
       shell: bash
@@ -96,17 +100,17 @@ runs:
         APT_PACKAGES: ${{ inputs.packages }}
         APT_UPDATE_TIMEOUT: ${{ inputs.update-timeout }}
         APT_INSTALL_TIMEOUT: ${{ inputs.install-timeout }}
+        APT_CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
       run: |
         set -uo pipefail
 
-        # The first attempt installs against the package lists the runner image
-        # ships, with no `apt-get update`: those lists are what the cache key above
-        # was computed from, so on a hit every .deb is already local and apt opens
-        # no connection at all. Only a failed attempt refreshes the index before
-        # the retry: the image's lists can name a .deb the archive has since
-        # dropped (it keeps one superseded version), or a package the image's
-        # lists predate. An update that does not finish is not fatal (#4163: the
-        # 300s cap, not the mirror, produced those reds); the retry decides.
+        # On a cache hit the lists and every .deb they resolve to are local, so
+        # the first attempt runs with no `apt-get update` and apt opens no
+        # connection; only a failed attempt refreshes the index before the retry.
+        # Otherwise the index is refreshed first: the image's lists can name a
+        # .deb the archive has since dropped (it keeps one superseded version).
+        # An update that does not finish is not fatal (#4163: the 300s cap, not
+        # the mirror, produced those reds); the install decides.
 
         set -f  # no globbing while the package list is word-split
         # shellcheck disable=SC2206
@@ -191,9 +195,11 @@ runs:
 
         update_status=0
         install_status=0
+        refreshed=false
         for attempt in 1 2; do
-          if [ "${attempt}" -eq 2 ]; then
+          if [ "${refreshed}" = false ] && { [ "${APT_CACHE_HIT}" != true ] || [ "${attempt}" -eq 2 ]; }; then
             apt_update
+            refreshed=true
           fi
           install_status=0
           : >"${apt_log}"
@@ -206,10 +212,8 @@ runs:
           cat "${apt_err}" >&2
 
           if [ "${install_status}" -eq 0 ]; then
-            # Only a first attempt installed exactly the files the key names.
-            if [ "${attempt}" -eq 1 ]; then
-              echo "cacheable=true" >>"${GITHUB_OUTPUT}"
-            fi
+            # The archive dir now holds every .deb the lists resolved to.
+            echo "cacheable=true" >>"${GITHUB_OUTPUT}"
             exit 0
           fi
           print_apt_log
@@ -226,8 +230,11 @@ runs:
                 if [ "${attempt}" -eq 1 ] && grep -qE 'Temporary failure resolving|Could not resolve' "${apt_err}"; then
                   sleep 60
                 fi
+              elif [ "${refreshed}" = true ]; then
+                # apt said no against fresh lists: a retry would say the same.
+                break
               else
-                echo "::warning::apt-get install attempt ${attempt} failed (exit ${install_status})"
+                echo "::warning::apt-get install attempt ${attempt} failed (exit ${install_status}); refreshing the cached lists"
               fi
               ;;
           esac
@@ -258,7 +265,7 @@ runs:
         # reported with apt's own status.
         exit "${install_status}"
 
-    - name: Save the .debs
+    - name: Save the .debs and the lists they were resolved from
       # Main saves for every PR to read; a branch dispatch saves too, readable
       # by that branch's next dispatch.
       if: >-
@@ -268,5 +275,7 @@ runs:
         && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: /var/cache/apt/archives/*.deb
+        path: |
+          /var/cache/apt/archives/*.deb
+          /var/lib/apt/lists/*_*
         key: ${{ steps.plan.outputs.key }}
