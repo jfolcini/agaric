@@ -26,7 +26,7 @@ const LIST_VIEWS: { view: TopLevelView; header: boolean }[] = [
   { view: 'Search', header: true },
   { view: 'Tags', header: false },
   { view: 'Templates', header: false },
-  { view: 'Advanced Query', header: false },
+  { view: 'Advanced query', header: false },
   { view: 'Trash', header: false },
   { view: 'History', header: true },
 ]

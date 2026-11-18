@@ -86,13 +86,13 @@ async function settled(surface: Locator): Promise<void> {
 
 // Top-level views, keyed by the label `navigateToView` takes (the i18n
 // `sidebar.*` label). The drawer lists only `SIDEBAR_VIEWS`. `query`'s label
-// is "Advanced Query"; Status is the Settings › App health tab.
+// is "Advanced query"; Status is the Settings › App health tab.
 const SIDEBAR_VIEWS = ['Journal', 'Pages', 'Search', 'Tags', 'Settings'] as const
 const VIEWS = [
   ...SIDEBAR_VIEWS,
   'Graph',
   'Templates',
-  'Advanced Query',
+  'Advanced query',
   'Status',
   'History',
   'Trash',

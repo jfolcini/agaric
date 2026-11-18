@@ -120,10 +120,13 @@ function FilterFeedback({
     >
       {resultCount > 0 && (
         <>
-          {t('tagFilter.blockMatch', { count: resultCount })}
-          {flat &&
-            selectedCount > 0 &&
-            ` ${t('tagFilter.selectedTags', { count: selectedCount, mode: t(MODE_LABEL_KEY[mode]) })}`}
+          {flat && selectedCount > 0
+            ? t('tagFilter.blockMatchTags', {
+                count: resultCount,
+                tags: t('tagFilter.tagCount', { count: selectedCount }),
+                mode: t(MODE_LABEL_KEY[mode]),
+              })
+            : t('tagFilter.blockMatch', { count: resultCount })}
           {includeInherited && !stale && <> {t('tagFilter.includingInherited')}</>}
         </>
       )}

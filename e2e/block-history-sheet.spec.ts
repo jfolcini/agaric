@@ -44,7 +44,7 @@ test("Ctrl+Shift+Y lists the focused block's edits and none of another block's @
   await focusBlockById(page, GS_1)
   await page.keyboard.press('Control+Shift+Y')
 
-  const sheet = page.getByRole('dialog', { name: 'Block History' })
+  const sheet = page.getByRole('dialog', { name: 'Block history' })
   const rows = sheet.locator('[data-testid^="block-history-item-"]')
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('Alpha second edit')
@@ -88,7 +88,7 @@ test.describe('the device label at phone width @editor', () => {
     await page.keyboard.press('Control+Shift+Y')
 
     const row = page
-      .getByRole('dialog', { name: 'Block History' })
+      .getByRole('dialog', { name: 'Block history' })
       .locator('[data-testid^="block-history-item-"]')
     await expect(row).toHaveCount(1)
     const overflow = await row.evaluate((el) => el.scrollWidth - el.clientWidth)

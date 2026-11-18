@@ -104,7 +104,7 @@ describe('useUnlinkedReferences', () => {
 
   // The counter must not move `countIdentity`: a bump invalidates the query but
   // the header keeps the count it knows until the new answer lands, else every
-  // typing burst on the page flashes "No Unlinked References" (#3733/#3735).
+  // typing burst on the page flashes "No unlinked references" (#3733/#3735).
   it('keeps the carried count while a structure-triggered refetch is in flight', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],

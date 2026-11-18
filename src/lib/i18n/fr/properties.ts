@@ -465,8 +465,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vide)',
   'tagFilter.loadingMessage': 'Chargement...',
   'tagFilter.loadMoreButton': 'Charger plus',
-  'tagFilter.selectedTags_one': 'à {{count}} étiquette ({{mode}})',
-  'tagFilter.selectedTags_other': 'à {{count}} étiquettes ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} bloc correspond à {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} blocs correspondent à {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} étiquette',
+  'tagFilter.tagCount_other': '{{count}} étiquettes',
   'tagFilter.addPrefixButton': 'Commence par',
   'tagFilter.addPrefixLabel':
     'Commence par le texte saisi\u00A0: inclure toutes les étiquettes qui commencent par celui-ci',

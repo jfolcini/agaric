@@ -7,7 +7,7 @@
 // `Not(Or(<every state or level>))` (AddFilterRow.tsx). The backend compiles
 // `Not` as `NOT COALESCE((inner), 0)` (backlink/filters.rs), so a block whose
 // column is NULL joins the complement instead of dropping out; the mock
-// evaluates `Not` in JS, so only this lane shows the SQL. Created Date sends
+// evaluates `Not` in JS, so only this lane shows the SQL. Created date sends
 // `CreatedInRange`, which the backend compares against the time in each
 // block's ULID id, a bound being that day's UTC midnight, and which the mock
 // does not model at all. Contains reads the FTS index, which ignored a term
@@ -153,9 +153,9 @@ async function setDateInput(label: string, value: string): Promise<void> {
   expect(await $(selector).getValue()).toBe(value)
 }
 
-/** Add a Created Date filter; an omitted bound stays open. */
+/** Add a Created date filter; an omitted bound stays open. */
 async function addCreatedFilter(range: { after?: string; before?: string }): Promise<void> {
-  await addFilterWith('Created Date', async () => {
+  await addFilterWith('Created date', async () => {
     if (range.after) await setDateInput('Date after', range.after)
     if (range.before) await setDateInput('Date before', range.before)
   })
@@ -168,7 +168,7 @@ async function clearFilters(): Promise<void> {
   await waitForListed(ALL, '', 'after Clear all')
 }
 
-describe('Agaric real-backend References Status / Priority / Created Date / Contains filters (#5736) @pages @search', () => {
+describe('Agaric real-backend References Status / Priority / Created date / Contains filters (#5736) @pages @search', () => {
   it('lists exactly the sources each Status, Priority and none filter selects', async () => {
     await waitForAppReady()
     const markdown = Object.values(SOURCES)
@@ -197,7 +197,7 @@ describe('Agaric real-backend References Status / Priority / Created Date / Cont
   })
 
   // Reads the sources the first `it` imported, all created during this run.
-  it('lists the sources created inside a Created Date range and none outside it', async () => {
+  it('lists the sources created inside a Created date range and none outside it', async () => {
     await openTarget()
     await addCreatedFilter({ after: utcDay(-2), before: utcDay(2) })
     await waitForListed(ALL, 'Showing 5 of 5 backlinks', 'Created from two days ago to two ahead')

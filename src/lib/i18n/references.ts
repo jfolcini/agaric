@@ -10,8 +10,8 @@ export const references: Record<string, string> = {
   // Translators: References panel under a page (PageEditor) or a journal day: collapsible header of
   // the list of blocks that link to this page. {{count}} = number of linking blocks (2 or more; one
   // has its own key).
-  'references.headerOne': '1 Reference',
-  'references.header': '{{count}} References',
+  'references.headerOne': '1 reference',
+  'references.header': '{{count}} references',
 
   // Translators: References panel (also the Outgoing links panel): "Load more" button under the
   // list; "Loading..." replaces its text while the next batch loads.
@@ -180,9 +180,9 @@ export const references: Record<string, string> = {
   // Translators: Unlinked references panel under a page (PageEditor): blocks that mention this
   // page's title as plain text, without a [[link]]. Header; {{count}} = number of such blocks (2 or
   // more).
-  'unlinkedRefs.headerNone': 'No Unlinked References',
-  'unlinkedRefs.headerOne': '1 Unlinked Reference',
-  'unlinkedRefs.header': '{{count}} Unlinked References',
+  'unlinkedRefs.headerNone': 'No unlinked references',
+  'unlinkedRefs.headerOne': '1 unlinked reference',
+  'unlinkedRefs.header': '{{count}} unlinked references',
 
   // Translators: Button on each Unlinked references row that turns the mention into a [[link]].
   // Short verb phrase.
@@ -227,7 +227,7 @@ export const references: Record<string, string> = {
   // Translators: Graph view: screen-reader name of the graph canvas and its screen-reader-only
   // usage hint (Tab, Arrow, Space, Enter, Escape are keyboard keys); "selected" is a live
   // announcement, {{page}} = page title.
-  'graph.title': 'Page Relationships',
+  'graph.title': 'Page relationships',
   'graph.keyboardHint':
     'Use Tab to enter the graph, then Arrow keys or typing a name to move between nodes. Space or a click selects a node; Enter or a second click opens its page; Escape clears the selection.',
   'graph.selected': 'Selected "{{page}}"',
@@ -397,16 +397,16 @@ export const references: Record<string, string> = {
   'backlink.addFilterLabel': 'Add filter',
   'backlink.filterCategoryLabel': 'Filter category',
   'backlink.selectFilter': 'Select filter...',
-  'backlink.typeOption': 'Block Type',
+  'backlink.typeOption': 'Block type',
   'backlink.statusOption': 'Status',
   'backlink.priorityOption': 'Priority',
   'backlink.containsOption': 'Contains',
   'backlink.propertyOption': 'Property',
-  'backlink.createdDateOption': 'Created Date',
-  'backlink.propertyIsSetOption': 'Property Is Set',
-  'backlink.propertyIsEmptyOption': 'Property Is Empty',
-  'backlink.hasTagOption': 'Has Tag',
-  'backlink.tagPrefixOption': 'Tag Prefix',
+  'backlink.createdDateOption': 'Created date',
+  'backlink.propertyIsSetOption': 'Property is set',
+  'backlink.propertyIsEmptyOption': 'Property is empty',
+  'backlink.hasTagOption': 'Has tag',
+  'backlink.tagPrefixOption': 'Tag prefix',
 
   // Translators: Add filter row, Block Type form: dropdown aria-label and options; "Content" = an
   // ordinary text block (not a page or a tag).
@@ -613,10 +613,12 @@ export const references: Record<string, string> = {
   // Translators: Search query errors for an invalid filter chip, inserted as {{error}} after the
   // chip text and a colon, so they start lowercase. tag:, under:, #tag, OR, NOT, not-, key=value
   // and YYYY-MM-DD are literal query syntax: keep them as written. {{prefix}} = a filter prefix
-  // such as "path:" or "prop" (literal); {{noun}} = "state" or "priority" (English); {{value}} =
-  // what the user typed; {{op}} = an operator such as ">="; {{rest}} = the text after it.
+  // such as "path:" or "prop" (literal); {{value}} = what the user typed (unknownState after
+  // state:, unknownPriority after priority:); {{op}} = an operator such as ">="; {{rest}} = the
+  // text after it.
   'searchQuery.valueRequired': '{{prefix}} value required',
-  'searchQuery.unknownValue': "unknown {{noun}} '{{value}}'",
+  'searchQuery.unknownState': "unknown state '{{value}}'",
+  'searchQuery.unknownPriority': "unknown priority '{{value}}'",
   'searchQuery.dateExpectedAfterOperator': "expected YYYY-MM-DD after '{{op}}', got '{{rest}}'",
   'searchQuery.unknownDate': "unknown date '{{value}}'",
   'searchQuery.propKeyValueRequired': '{{prefix}}: key=value required',
@@ -753,7 +755,7 @@ export const references: Record<string, string> = {
   'search.searchButton': 'Search',
 
   // Translators: Tags view: button beside the new tag name field.
-  'tag.addTag': 'Add Tag',
+  'tag.addTag': 'Add tag',
 
   // Translators: Batch toolbar (Pages view, Trash, History) when rows are multi-selected: badge and
   // screen-reader label; {{count}} = selected rows.

@@ -53,7 +53,7 @@ export const common: Record<string, string> = {
   'sidebar.pages': 'Pages',
   'sidebar.journal': 'Journal',
   // Translators: button at the top of the Sidebar that creates a new page.
-  'sidebar.newPage': 'New Page',
+  'sidebar.newPage': 'New page',
   // Translators: screen-reader label of the Sidebar footer icon button that syncs now with the
   // user's other paired devices (an action).
   'sidebar.sync': 'Sync',
@@ -63,7 +63,7 @@ export const common: Record<string, string> = {
   'sidebar.history': 'History',
   'sidebar.templates': 'Templates',
   'sidebar.graph': 'Graph',
-  'sidebar.query': 'Advanced Query',
+  'sidebar.query': 'Advanced query',
 
   // Translators: Sidebar header icon button (tooltip and screen-reader label) that shrinks the
   // Sidebar to an icon strip or widens it again; on phones it closes the navigation drawer.
@@ -72,7 +72,7 @@ export const common: Record<string, string> = {
 
   // Translators: screen-reader label and tooltip of the controls that show or hide the Sidebar,
   // including its thin draggable edge.
-  'sidebar.toggleSidebar': 'Toggle Sidebar',
+  'sidebar.toggleSidebar': 'Toggle sidebar',
 
   // Translators: screen-reader label of the ☰ button in the phone header that opens the
   // navigation drawer.
@@ -89,7 +89,7 @@ export const common: Record<string, string> = {
 
   // Translators: tooltip of the "New Page" button when the Sidebar is shrunk to icons; keep the
   // keyboard shortcut "(Ctrl+N)" as is.
-  'sidebar.newPageTooltip': 'New Page (Ctrl+N)',
+  'sidebar.newPageTooltip': 'New page (Ctrl+N)',
 
   // Translators: Sidebar footer sync button: label and tooltip when the device has no network
   // ("Offline", adjective), its default tooltip, and its tooltip while a sync runs.
@@ -396,8 +396,8 @@ export const common: Record<string, string> = {
   // Collapse / Expand hide / show the nested children; "History" lists this block's past edits.
   'contextMenu.indent': 'Indent',
   'contextMenu.dedent': 'Dedent',
-  'contextMenu.moveUp': 'Move Up',
-  'contextMenu.moveDown': 'Move Down',
+  'contextMenu.moveUp': 'Move up',
+  'contextMenu.moveDown': 'Move down',
   'contextMenu.merge': 'Merge with previous',
   'contextMenu.moveArrange': 'Move & arrange',
   'contextMenu.collapse': 'Collapse',
@@ -481,7 +481,7 @@ export const common: Record<string, string> = {
 
   // Translators: title of the keyboard-shortcut reference panel (opened with "?"), and the heading
   // of its section on Markdown text syntax.
-  'shortcuts.title': 'Quick Reference',
+  'shortcuts.title': 'Quick reference',
   'shortcuts.syntaxSection': 'Syntax',
 
   // Translators: "No" answer button of a yes/no question dialog.
@@ -568,7 +568,7 @@ export const common: Record<string, string> = {
   'welcome.importNotes': 'Import notes',
   'welcome.pairDevice': 'Pair a device',
   'welcome.pairComputer': 'Pair with your computer',
-  'welcome.getStarted': 'Get Started',
+  'welcome.getStarted': 'Get started',
   'welcome.createSamplePages': 'Create sample pages',
 
   // Translators: toasts after "Create sample pages" succeeds or fails (the failure has a Retry

@@ -135,8 +135,9 @@ export const editor: Record<string, string> = {
   'meeting.summaryFileLabel': 'Summary file',
   'meeting.create': 'Create meeting',
   'meeting.creating': 'Creating…',
-  // Translators: {{title}} = the new page's name, like "Meeting 2026-11-18".
-  'meeting.created': 'Meeting {{title}} created',
+  // Translators: Toast after creating a meeting; {{title}} = the new page's name, like
+  // "Meeting 2026-11-18".
+  'meeting.created': 'Created "{{title}}"',
   'meeting.createFailed': 'Could not create the meeting',
   // Translators: shown when the toast's Undo button fails to remove the new meeting.
   'meeting.undoFailed': 'Could not undo the meeting',
@@ -602,7 +603,7 @@ export const editor: Record<string, string> = {
   'emojiPicker.grid': 'Emoji',
   'emojiPicker.recents': 'Recents',
   'emojiPicker.recentsRow': 'Recently used emoji',
-  'emojiPicker.frequentlyUsed': 'Frequently Used',
+  'emojiPicker.frequentlyUsed': 'Frequently used',
   'emojiPicker.frequentlyUsedRow': 'Frequently used emoji',
   'emojiPicker.categories': 'Emoji categories',
   'emojiPicker.frequentlyUsedCategory': 'Frequently used',
@@ -631,11 +632,11 @@ export const editor: Record<string, string> = {
   // text; `EmojiPicker.tsx`'s `GROUP_ICONS`/`GROUP_LABEL_KEYS` keep using the
   // raw English CLDR strings as the lookup identity (`bucket.group`), since
   // that's what the generated dataset emits.
-  'emojiPicker.group.smileysEmotion': 'Smileys & Emotion',
-  'emojiPicker.group.peopleBody': 'People & Body',
-  'emojiPicker.group.animalsNature': 'Animals & Nature',
-  'emojiPicker.group.foodDrink': 'Food & Drink',
-  'emojiPicker.group.travelPlaces': 'Travel & Places',
+  'emojiPicker.group.smileysEmotion': 'Smileys & emotion',
+  'emojiPicker.group.peopleBody': 'People & body',
+  'emojiPicker.group.animalsNature': 'Animals & nature',
+  'emojiPicker.group.foodDrink': 'Food & drink',
+  'emojiPicker.group.travelPlaces': 'Travel & places',
   'emojiPicker.group.activities': 'Activities',
   'emojiPicker.group.objects': 'Objects',
   'emojiPicker.group.symbols': 'Symbols',

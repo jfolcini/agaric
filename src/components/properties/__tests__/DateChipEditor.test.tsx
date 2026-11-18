@@ -2,14 +2,14 @@
  * Tests for DateChipEditor component (F-22).
  *
  * Validates:
- *  1. Renders quick date options (Today, Tomorrow, Next Week, Clear)
+ *  1. Renders quick date options (Today, Tomorrow, Next week, Clear)
  *  2. Clicking "Today" calls setDueDate with today's date
  *  3. Clicking "Clear" calls setDueDate with null
  *  4. Natural language input works (typing + Enter)
  *  5. axe(container) a11y audit
  *  6. Popover opens and closes correctly (integration with Popover wrapper)
  *  7. Clicking "Tomorrow" calls setDueDate with tomorrow's date
- *  8. Clicking "Next Week" calls setDueDate with date +7 days
+ *  8. Clicking "Next week" calls setDueDate with date +7 days
  *  9. Uses setScheduledDate when dateType is 'scheduled'
  * 10. Shows toast on success and error
  */
@@ -93,12 +93,12 @@ describe('DateChipEditor', () => {
   })
 
   // 1. Renders quick date options
-  it('renders quick date options (Today, Tomorrow, Next Week, Clear)', () => {
+  it('renders quick date options (Today, Tomorrow, Next week, Clear)', () => {
     render(<DateChipEditor blockId="B1" dateType="due" currentDate="2025-06-15" />)
 
     expect(screen.getByTestId('quick-today')).toHaveTextContent('Today')
     expect(screen.getByTestId('quick-tomorrow')).toHaveTextContent('Tomorrow')
-    expect(screen.getByTestId('quick-next-week')).toHaveTextContent('Next Week')
+    expect(screen.getByTestId('quick-next-week')).toHaveTextContent('Next week')
     expect(screen.getByTestId('quick-clear')).toHaveTextContent('Clear')
   })
 
@@ -291,8 +291,8 @@ describe('DateChipEditor', () => {
     })
   })
 
-  // 8. Clicking "Next Week" calls setDueDate with +7 days
-  it('clicking "Next Week" calls setDueDate with date +7 days', async () => {
+  // 8. Clicking "Next week" calls setDueDate with +7 days
+  it('clicking "Next week" calls setDueDate with date +7 days', async () => {
     const user = userEvent.setup()
 
     render(<DateChipEditor blockId="B1" dateType="due" currentDate="2025-01-01" />)

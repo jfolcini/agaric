@@ -308,7 +308,8 @@ export const references: Record<string, string> = {
   'search.invalidFilterWithError': 'Filtro no válido: {{label}} — {{error}}',
   'search.invalidFilterError': '{{label}}: {{error}}',
   'searchQuery.valueRequired': '{{prefix}} necesita un valor',
-  'searchQuery.unknownValue': "valor de {{noun}} desconocido: '{{value}}'",
+  'searchQuery.unknownState': "estado desconocido: '{{value}}'",
+  'searchQuery.unknownPriority': "prioridad desconocida: '{{value}}'",
   'searchQuery.dateExpectedAfterOperator':
     "se esperaba YYYY-MM-DD tras '{{op}}', pero se ha recibido '{{rest}}'",
   'searchQuery.unknownDate': "fecha desconocida: '{{value}}'",

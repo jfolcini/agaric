@@ -73,7 +73,7 @@ export const editor: Record<string, string> = {
   'meeting.summaryFileLabel': 'Fichier du résumé',
   'meeting.create': 'Créer la réunion',
   'meeting.creating': 'Création…',
-  'meeting.created': 'Réunion {{title}} créée',
+  'meeting.created': '"{{title}}" créée',
   'meeting.createFailed': 'Impossible de créer la réunion',
   'meeting.undoFailed': 'Impossible d’annuler la création de la réunion',
   'editor.image.loadButton': 'Charger',

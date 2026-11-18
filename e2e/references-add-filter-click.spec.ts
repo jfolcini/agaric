@@ -102,7 +102,7 @@ const CONTROLS: Control[] = [
   },
   {
     name: 'the References header',
-    locate: (page) => references(page).getByRole('button', { name: /1 Reference$/ }),
+    locate: (page) => references(page).getByRole('button', { name: /1 reference$/ }),
     expectLanded: (_page, control) => expect(control).toHaveAttribute('aria-expanded', 'false'),
   },
   {

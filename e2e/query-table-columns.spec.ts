@@ -27,7 +27,7 @@ test('picked query table columns keep their order after navigating away and back
     'Content',
     'Status',
     'Priority',
-    'Due Date',
+    'Due date',
     'Scheduled',
     'context',
     'project',
@@ -35,7 +35,7 @@ test('picked query table columns keep their order after navigating away and back
   ])
 
   const picker = queryResult.getByRole('button', { name: 'Choose columns' })
-  for (const column of ['Status', 'Priority', 'Due Date', 'Scheduled']) {
+  for (const column of ['Status', 'Priority', 'Due date', 'Scheduled']) {
     await picker.click()
     await page.getByRole('checkbox', { name: column, exact: true }).click()
     await page.keyboard.press('Escape')

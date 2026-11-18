@@ -463,8 +463,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(leer)',
   'tagFilter.loadingMessage': 'Wird geladen...',
   'tagFilter.loadMoreButton': 'Mehr laden',
-  'tagFilter.selectedTags_one': 'zu {{count}} Tag ({{mode}})',
-  'tagFilter.selectedTags_other': 'zu {{count}} Tags ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} Block passt zu {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} Blöcke passen zu {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} Tag',
+  'tagFilter.tagCount_other': '{{count}} Tags',
   'tagFilter.addPrefixButton': 'Beginnt mit',
   'tagFilter.addPrefixLabel':
     'Beginnt mit dem eingegebenen Text: alle Tags finden, die damit beginnen',

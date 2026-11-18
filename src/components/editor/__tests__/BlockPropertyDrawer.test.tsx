@@ -2,7 +2,7 @@
  * Tests for BlockPropertyDrawer component.
  *
  * Validates:
- *  - Renders "Block Properties" title when open
+ *  - Renders "Block properties" title when open
  *  - Shows loading state initially
  *  - Shows property list after loading
  *  - Delete button calls deleteProperty
@@ -125,11 +125,11 @@ beforeEach(() => {
 })
 
 describe('BlockPropertyDrawer', () => {
-  it('renders "Block Properties" title when open', async () => {
+  it('renders "Block properties" title when open', async () => {
     setupMock()
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('Block Properties')).toBeInTheDocument()
+    expect(screen.getByText('Block properties')).toBeInTheDocument()
   })
 
   it('shows LoadingSkeleton initially (sub-fix 3)', () => {
@@ -218,7 +218,7 @@ describe('BlockPropertyDrawer', () => {
       <BlockPropertyDrawer blockId="BLOCK_1" open={false} onOpenChange={vi.fn()} />,
     )
 
-    expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
+    expect(screen.queryByText('Block properties')).not.toBeInTheDocument()
   })
 
   // The SheetContent takes the default sheet width (75% of a phone, capped at

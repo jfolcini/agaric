@@ -109,7 +109,7 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
     await expect(dialog.getByTestId('expression-preview')).toHaveText(
       '#[000000000000000000000TAG01] state:TODO OR state:DONE',
     )
-    await dialog.getByRole('button', { name: 'Update Query' }).click()
+    await dialog.getByRole('button', { name: 'Update query' }).click()
     await expect(items).toHaveText(expected)
   })
 
@@ -156,7 +156,7 @@ test.describe('Query blocks in the search syntax @editor @search', () => {
     await expect(dialog.getByTestId('expression-preview')).toHaveText(
       'state:TODO #[000000000000000000000TAG01]',
     )
-    await dialog.getByRole('button', { name: 'Insert Query' }).click()
+    await dialog.getByRole('button', { name: 'Insert query' }).click()
 
     const result = page
       .locator('[data-testid="sortable-block"]')

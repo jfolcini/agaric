@@ -55,7 +55,7 @@ const REF_HOME = runScopedMarker('wdio-ref-home')
 const REF_BLOCK = runScopedMarker('wdio-ref-block')
 const REF_TARGET = runScopedMarker('wdio-ref-target')
 
-const DRAWER = '[role="dialog"]*=Block Properties'
+const DRAWER = '[role="dialog"]*=Block properties'
 
 /** Block `id`'s row, static or holding the editor (coming back to a page can refocus its block). */
 const blockRow = (id: string) => $(`[data-testid="sortable-block"][data-block-id="${id}"]`)

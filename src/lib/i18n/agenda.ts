@@ -140,7 +140,7 @@ export const agenda: Record<string, string> = {
   'dateChip.inputLabel': 'Type a date',
   'dateChip.today': 'Today',
   'dateChip.tomorrow': 'Tomorrow',
-  'dateChip.nextWeek': 'Next Week',
+  'dateChip.nextWeek': 'Next week',
   'dateChip.clear': 'Clear',
   'dateChip.dateUpdated': 'Date updated',
   'dateChip.dateCleared': 'Date cleared',
@@ -237,8 +237,7 @@ export const agenda: Record<string, string> = {
 
   // Translators: DuePanel filter buttons (short, a count may follow in parentheses) and their
   // tooltips. "Due" = has a deadline; "Scheduled" = has a planned start day; "Properties" = matches
-  // a custom field. "Due", "Scheduled" and "Properties" also follow a number in the panel heading,
-  // e.g. "3 Due · 2 Scheduled".
+  // a custom field.
   'duePanel.filterAll': 'All',
   'duePanel.filterDue': 'Due',
   'duePanel.filterScheduled': 'Scheduled',
@@ -247,6 +246,16 @@ export const agenda: Record<string, string> = {
   'duePanel.filterDueTooltip': 'Hard due date — overdue if past',
   'duePanel.filterScheduledTooltip': 'Soft scheduled start — not overdue if past',
   'duePanel.filterPropertiesTooltip': 'Filter by block properties (effort, assignee, etc.)',
+
+  // Translators: DuePanel heading when the day's tasks come from more than one source, joined by
+  // " · " as in "3 due · 2 scheduled · 1 by property". {{count}} = tasks from that source: a due
+  // date, a scheduled date, or a matching property filter.
+  'duePanel.countDue_one': '{{count}} due',
+  'duePanel.countDue_other': '{{count}} due',
+  'duePanel.countScheduled_one': '{{count}} scheduled',
+  'duePanel.countScheduled_other': '{{count}} scheduled',
+  'duePanel.countProperties_one': '{{count}} by property',
+  'duePanel.countProperties_other': '{{count}} by property',
 
   // Translators: DuePanel: shown in place of the text of a task that has no text.
   'duePanel.emptyContent': '(empty)',
@@ -295,7 +304,7 @@ export const agenda: Record<string, string> = {
   // from previous days that are not done: heading, screen-reader name, empty state, and group
   // headings by age. "→" separates a page title from the task (keep an arrow pointing in your
   // reading direction); "Untitled" = name shown for a page with no title.
-  'unfinished.title': 'Unfinished Tasks',
+  'unfinished.title': 'Unfinished tasks',
   'unfinished.sectionLabel': 'Unfinished tasks from previous days',
   'unfinished.empty': 'No unfinished tasks — you\u2019re all caught up!',
   'unfinished.yesterday': 'Yesterday',

@@ -18,7 +18,7 @@
  *      (`DateChip` → opens a Popover containing `DateChipEditor`).
  *   2. The popover exposes:
  *        - A natural-language `Input` (`today`, `+3d`, `Apr 15`, …)
- *        - Quick-action `Button`s (Today, Tomorrow, Next Week, Clear)
+ *        - Quick-action `Button`s (Today, Tomorrow, Next week, Clear)
  *      All controls are reachable with Tab / Enter / Space.
  *   3. Pressing Enter on the input or activating any quick action calls
  *      `setDueDate` / `setScheduledDate` — the same backend command this

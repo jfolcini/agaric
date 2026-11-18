@@ -247,7 +247,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
           >
             {t('diff.hunkCounter', {
               current: currentHunk + 1,
-              total: hunkStarts.length,
+              count: hunkStarts.length,
             })}
           </span>
           <Button

@@ -106,10 +106,10 @@ test.describe('Always-visible toolbar buttons (#1170) @editor', () => {
   test('Properties button opens the properties drawer', async ({ page }) => {
     await focusBlock(page)
     await page.getByRole('button', { name: 'Properties', exact: true }).click()
-    // BlockPropertyDrawer is a Sheet titled "Block Properties".
+    // BlockPropertyDrawer is a Sheet titled "Block properties".
     const sheet = activeSheet(page)
     await expect(sheet).toBeVisible()
-    await expect(sheet.getByText('Block Properties')).toBeVisible()
+    await expect(sheet.getByText('Block properties')).toBeVisible()
   })
 
   test('the toolbar has no Discard: Ctrl+Z takes back typing, saved or not (#6541)', async ({

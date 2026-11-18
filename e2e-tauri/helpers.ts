@@ -53,7 +53,7 @@
 //     no page. In the week and stream views that sentence is for screen
 //     readers only: read it from `textContent`, which `getText()` leaves out.
 //   - `#new-page-name`                      the New page dialog's title field
-//     (NewPageDialog.tsx), opened by the sidebar's "New Page" button
+//     (NewPageDialog.tsx), opened by the sidebar's "New page" button
 //     (`openNewPageDialog`); Enter in it creates the page.
 //   - `[data-testid="view-transition-wrapper"]` App.tsx's pane, which
 //     `navigateTo` waits on to finish fading in.
@@ -149,7 +149,7 @@ export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Search' | 'Settings'
  * heading or a QuickAccessBar chip. See the selector-policy header for the full
  * rationale behind not using `aria/<label>` here.
  */
-function sidebarNavButton(label: NavLabel | 'New Page') {
+function sidebarNavButton(label: NavLabel | 'New page') {
   const sidebar = $('[data-slot="sidebar"]')
   return sidebar.$(`.//button[@aria-label="${label}" or .//span[normalize-space(.)="${label}"]]`)
 }
@@ -180,7 +180,7 @@ export async function waitForAppReady(): Promise<void> {
  * Radix Dialog — it aria-hides the whole app root and intercepts pointer
  * events, which broke every block-create flow in live run 30052635297 (the
  * two specs that passed only did so because a stray overlay click dismissed
- * it). Dismiss it deterministically via its "Get Started" button
+ * it). Dismiss it deterministically via its "Get started" button
  * (welcome.getStarted, common.ts:291), which also persists the onboarding
  * flag so it cannot re-open mid-session.
  */
@@ -195,7 +195,7 @@ export async function dismissWelcomeModalIfPresent(): Promise<void> {
     () => false,
   )
   if (!appeared) return
-  const getStarted = modal.$('button*=Get Started')
+  const getStarted = modal.$('button*=Get started')
   await getStarted.waitForClickable({ timeout: NAV_TIMEOUT })
   await getStarted.click()
   await modal.waitForExist({ reverse: true, timeout: NAV_TIMEOUT })
@@ -624,12 +624,12 @@ export async function openPropertyDrawer(id: string): Promise<void> {
   const item = $('[role="menuitem"]*=Properties')
   await item.waitForClickable({ timeout: ACTION_TIMEOUT })
   await item.click()
-  const drawer = $('[role="dialog"]*=Block Properties')
+  const drawer = $('[role="dialog"]*=Block properties')
   await drawer.waitForDisplayed({ timeout: ACTION_TIMEOUT })
   const sheet = await drawer.getElement()
   await browser.waitUntil(
     () => browser.execute((el: HTMLElement) => el.getAnimations().length === 0, sheet),
-    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the Block Properties sheet never finished sliding in' },
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the Block properties sheet never finished sliding in' },
   )
 }
 
@@ -757,12 +757,12 @@ export async function expectAbsent(selector: string, what: string): Promise<void
 }
 
 /**
- * Click the sidebar's "New Page" ACTION button (not a nav destination), which
+ * Click the sidebar's "New page" ACTION button (not a nav destination), which
  * opens the New page dialog (#5637), and wait for the dialog's title field,
  * which takes focus.
  */
 export async function openNewPageDialog(): Promise<void> {
-  const button = sidebarNavButton('New Page')
+  const button = sidebarNavButton('New page')
   await button.waitForClickable({ timeout: NAV_TIMEOUT })
   await button.click()
   await $('#new-page-name').waitForDisplayed({ timeout: NAV_TIMEOUT })

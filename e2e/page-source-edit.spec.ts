@@ -687,7 +687,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await toolbarButton(page, 'Block actions').click()
     const menu = activeMenu(page)
     await menu.getByRole('menuitem', { name: /^Move & arrange/ }).click()
-    await menu.getByRole('menuitem', { name: /^Move Up/ }).click()
+    await menu.getByRole('menuitem', { name: /^Move up/ }).click()
 
     await expect(menu).toHaveCount(0)
     await expect(editor).toBeFocused()

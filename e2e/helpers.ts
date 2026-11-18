@@ -696,7 +696,7 @@ export async function navigateMobile(page: Page, view: string) {
  */
 const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
   Graph: 'Graph',
-  'Advanced Query': 'Advanced Query',
+  'Advanced query': 'Advanced query',
   Templates: 'Templates',
   Trash: /^Trash/,
 }
@@ -711,7 +711,7 @@ const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
 export async function createPageFromPagesView(page: Page, title: string): Promise<void> {
   await page
     .locator('.page-browser-header')
-    .getByRole('button', { name: 'New Page', exact: true })
+    .getByRole('button', { name: 'New page', exact: true })
     .click()
   // A dialog on desktop, a bottom sheet on a phone: both carry this id.
   const input = page.getByTestId('new-page-dialog').getByRole('textbox', { name: 'New page title' })
@@ -786,7 +786,7 @@ export const VIEW_HEADING = {
   Settings: 'Settings',
   Graph: 'Graph',
   Templates: 'Templates',
-  'Advanced Query': 'Advanced Query',
+  'Advanced query': 'Advanced query',
   Status: 'Settings',
   History: 'History',
   Trash: 'Trash',

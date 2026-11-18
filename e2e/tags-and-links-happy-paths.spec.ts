@@ -106,11 +106,11 @@ test.describe('Linked references link kind @editor @pages', () => {
     await expect(rows).toHaveText([/^Block ref note/, /^These notes complement/])
 
     await kind('Page links').click()
-    await expect(header).toHaveText('1 Reference')
+    await expect(header).toHaveText('1 reference')
     await expect(rows).toHaveText([/^These notes complement/])
 
     await kind('Block refs').click()
-    await expect(header).toHaveText('1 Reference')
+    await expect(header).toHaveText('1 reference')
     await expect(rows).toHaveText([/^Block ref note/])
 
     await kind('All').click()

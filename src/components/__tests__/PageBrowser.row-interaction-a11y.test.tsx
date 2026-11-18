@@ -361,13 +361,13 @@ describe('PageBrowser', () => {
       stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => emptyPage })
       const { container } = render(<PageBrowser />)
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /New page/i })).toBeInTheDocument()
       })
       // The old sticky wrapper is gone.
       const sticky = container.querySelector('.sticky.top-0')
       expect(sticky).toBeNull()
       // The new page form is still rendered inline (via ViewHeader fallback).
-      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /New page/i })).toBeInTheDocument()
     })
   })
 })
