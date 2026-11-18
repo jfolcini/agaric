@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
@@ -27,7 +28,7 @@ import {
  *     Inline                    idea, typed as #idea
  */
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 
 function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
   return page.evaluate(

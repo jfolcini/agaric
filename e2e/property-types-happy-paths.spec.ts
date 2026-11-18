@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeMenu,
   activePopover,
@@ -107,7 +108,7 @@ test.describe('Number property @editor', () => {
   test('sorts the References panel numerically', async ({ page }) => {
     // Set-up, not under test: the definition and the two referrers.
     await ipc(page, 'create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'estimate',
       valueType: 'number',
       options: null,

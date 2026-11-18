@@ -284,7 +284,7 @@ describe('#5272 — a caret split is one split_block, all or nothing (#6531)', (
   /** Getting Started loaded off the real mock, the caret inside GS_1 right before the link. */
   async function mountGettingStarted() {
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     useUndoStore.setState({ pages: new Map() })
     dispatch('edit_block', { blockId: BLOCK_GS_1, toText: PRE_SPLIT })
     routeToMock([])
@@ -412,7 +412,7 @@ describe('a block chord pressed while Enter is creating acts on the block Enter 
   /** Enter on GS_2, `chord` while the create is in flight, then let the create land. */
   async function enterThen(chord: Chord, { nested }: { nested: boolean }): Promise<string> {
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     useUndoStore.setState({ pages: new Map() })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
     const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)

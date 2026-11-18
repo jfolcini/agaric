@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
 
 /**
@@ -20,7 +21,7 @@ import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
  *     Inherited two
  */
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 
 function createPage(page: Page, title: string): Promise<string> {
   return ipc<string>(page, 'create_page_in_space', {

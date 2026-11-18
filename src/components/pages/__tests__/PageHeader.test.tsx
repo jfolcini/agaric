@@ -176,10 +176,10 @@ beforeEach(() => {
   // Phase 2 — seed two spaces so the "Move to space" sub-menu
   // (which filters out the current space) has a non-empty target list.
   useSpaceStore.setState({
-    currentSpaceId: 'SPACE_PERSONAL',
+    currentSpaceId: SEED_IDS.SPACE_PERSONAL,
     availableSpaces: [
-      { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
-      { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+      { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null },
+      { id: SEED_IDS.SPACE_WORK, name: 'Work', accent_color: null },
     ],
     isReady: true,
   })
@@ -660,7 +660,7 @@ describe('PageHeader tag management', () => {
         content: 'newtag',
         parentId: null,
         index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
         // #2849 PR2 — tag creation supplies no client id; the binding sends null.
         blockId: null,
       })
@@ -687,7 +687,7 @@ describe('PageHeader tag management', () => {
         content: 'deep-work',
         parentId: null,
         index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
         blockId: null,
       })
     })
@@ -2063,7 +2063,7 @@ describe('PageHeader show in graph', () => {
     await choosePageAction(user, /^show in graph/i)
 
     expect(useNavigationStore.getState().currentView).toBe('graph')
-    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_PERSONAL').active).toBe(true)
+    expect(readPreference(PREFERENCES.graphLocal, SEED_IDS.SPACE_PERSONAL).active).toBe(true)
   })
 
   it('Ctrl+Shift+G does the same from anywhere on the page', () => {
@@ -2074,7 +2074,7 @@ describe('PageHeader show in graph', () => {
     )
 
     expect(useNavigationStore.getState().currentView).toBe('graph')
-    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_PERSONAL').active).toBe(true)
+    expect(readPreference(PREFERENCES.graphLocal, SEED_IDS.SPACE_PERSONAL).active).toBe(true)
   })
 })
 
@@ -2327,7 +2327,7 @@ describe('PageHeader star button', () => {
   })
 
   it('shows filled star when page is starred', async () => {
-    seedBookmarks('SPACE_PERSONAL', new Map([['PAGE_1', 1]]))
+    seedBookmarks(SEED_IDS.SPACE_PERSONAL, new Map([['PAGE_1', 1]]))
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
@@ -2526,7 +2526,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     const user = userEvent.setup()
     setupPage()
     useSpaceStore.setState({
-      availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+      availableSpaces: [{ id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null }],
     })
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
@@ -2552,7 +2552,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
         blockIds: ['PAGE_1'],
-        spaceId: 'SPACE_WORK',
+        spaceId: SEED_IDS.SPACE_WORK,
         acknowledgedLoss: null,
       })
     })
@@ -2631,7 +2631,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
         kind: 'removed',
         entity: 'page',
         id: 'PAGE_1',
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     } finally {
       unsubscribe()

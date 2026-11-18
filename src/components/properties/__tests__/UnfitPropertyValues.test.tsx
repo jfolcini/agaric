@@ -24,7 +24,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
-const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }
+const PERSONAL = { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null }
 const MTG_1 = SEED_IDS.BLOCK_MTG_1
 const MTG_2 = SEED_IDS.BLOCK_MTG_2
 

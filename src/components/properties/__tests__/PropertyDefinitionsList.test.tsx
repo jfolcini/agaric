@@ -25,6 +25,7 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
@@ -75,8 +76,8 @@ function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
   return { items, next_cursor: null, has_more: false, total_count: null }
 }
 
-const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }
-const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: null }
+const PERSONAL = { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null }
+const WORK = { id: SEED_IDS.SPACE_WORK, name: 'Work', accent_color: null }
 
 beforeEach(() => {
   vi.clearAllMocks()

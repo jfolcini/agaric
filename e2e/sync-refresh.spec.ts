@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } from './helpers'
 
 /**
@@ -15,7 +16,7 @@ import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } f
  * Seed ids: src/lib/tauri-mock/seed.ts `SEED_IDS`.
  */
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const PAGE_PROJECTS = '00000000000000000000PAGE04'
 const PAGE_MEETINGS = '00000000000000000000PAGE05'
 /** "Fix login bug" — DOING, due today, on Projects. */

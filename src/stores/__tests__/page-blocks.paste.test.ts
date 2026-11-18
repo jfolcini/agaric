@@ -46,7 +46,7 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
 
   it('lands a pasted outline after the anchor in ONE command and records ONE undo entry of exactly the returned refs', async () => {
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     let returnedRefs: OpRef[] = []
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const resp = dispatch(cmd, args)

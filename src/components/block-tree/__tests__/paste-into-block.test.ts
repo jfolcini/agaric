@@ -119,7 +119,7 @@ describe('pasteIntoBlock (#5160 D4)', () => {
     seedBlocks()
     vi.clearAllMocks()
     useUndoStore.setState({ pages: new Map() })
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
     dispatch('edit_block', { blockId: ANCHOR, toText: 'Hello world' })
     const view = render(createElement(Provider, { pageId: PAGE }))

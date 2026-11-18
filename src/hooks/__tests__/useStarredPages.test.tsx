@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
     dispatch(cmd, args),
   )
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
 })
 
 describe('useStarredPages', () => {
@@ -157,10 +157,10 @@ describe('useStarredPages', () => {
 
   it('a space switch lists the other space bookmarks', async () => {
     const WORK_PAGE = '00000000000000000WORKPAGE1'
-    blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
+    blocks.set(SEED_IDS.SPACE_WORK, makeBlock(SEED_IDS.SPACE_WORK, 'page', 'Work', null, 1))
     blocks.set(WORK_PAGE, {
       ...makeBlock(WORK_PAGE, 'page', 'Plans', null, 2),
-      space_id: 'SPACE_WORK',
+      space_id: SEED_IDS.SPACE_WORK,
     })
     seedBookmark(WORK_PAGE, { num: 1 })
     seedBookmark(QN, { num: 1 })
@@ -168,7 +168,7 @@ describe('useStarredPages', () => {
     await waitFor(() => expect([...result.current.starredIds]).toEqual([QN]))
 
     act(() => {
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK })
     })
 
     await waitFor(() => expect([...result.current.starredIds]).toEqual([WORK_PAGE]))

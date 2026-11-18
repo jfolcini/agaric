@@ -9,6 +9,7 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlockById,
@@ -19,7 +20,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 /** Today's seeded daily page and its five blocks (`SEED_IDS` in `src/lib/tauri-mock/seed.ts`). */
 const TODAY_PAGE = '00000000000000000000PAGE03'
 /** The seeded *Meeting Notes Template* page, its first block `## Attendees`. */

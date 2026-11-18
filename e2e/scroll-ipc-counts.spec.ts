@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot } from './helpers'
 
 /**
@@ -18,7 +19,7 @@ const ROW_FETCHES = ['get_batch_properties', 'list_attachments_batch', 'batch_re
 /** A 300-row page whose rows each reference a block nothing else has resolved yet. */
 async function seedPage(page: Page): Promise<void> {
   await page.evaluate(
-    async ({ rows, title }) => {
+    async ({ rows, title, spaceId }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -26,7 +27,7 @@ async function seedPage(page: Page): Promise<void> {
       const targetsPage = await invoke('create_page_in_space', {
         parentId: null,
         content: `${title} targets`,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId,
       })
       const targets = (await invoke('create_blocks_batch', {
         specs: Array.from({ length: rows }, (_, i) => ({
@@ -39,7 +40,7 @@ async function seedPage(page: Page): Promise<void> {
       const big = await invoke('create_page_in_space', {
         parentId: null,
         content: title,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId,
       })
       await invoke('create_blocks_batch', {
         specs: targets.blocks.map((t, i) => ({
@@ -50,7 +51,7 @@ async function seedPage(page: Page): Promise<void> {
         })),
       })
     },
-    { rows: ROWS, title: TITLE },
+    { rows: ROWS, title: TITLE, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
 }
 

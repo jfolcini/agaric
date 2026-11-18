@@ -19,9 +19,10 @@ import type { PagesViewTuple } from '@/lib/saved-pages-views'
 import { encodeSavedView, saveView } from '@/lib/saved-views'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 
 const BASE_TUPLE: PagesViewTuple = {
   sort: 'alphabetical',

@@ -8,9 +8,10 @@
 import type { Locator, Page } from '@playwright/test'
 import { devices } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, focusBlockById, ipc, openPageMobile, test, waitForBoot } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const PAGE_EDITOR = '[data-testid="page-mode-editor"]'
 
 type Mode = 'Blocks' | 'Page'

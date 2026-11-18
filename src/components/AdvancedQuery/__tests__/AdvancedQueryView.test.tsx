@@ -13,6 +13,7 @@ import { queryClient } from '@/lib/query-client'
 import { loadSavedViews } from '@/lib/saved-views'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useAdvancedQueryStore } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -747,7 +748,7 @@ describe('AdvancedQueryView', () => {
 
   // ── #6542 — the board. ─────────────────────────────────────────────────────
   describe('board view (#6542)', () => {
-    const SEEDED_SPACE = 'SPACE_PERSONAL'
+    const SEEDED_SPACE = SEED_IDS.SPACE_PERSONAL
     /** The mock backend and its seeded tasks, so each column's filter really runs. */
     function serveMockBackend(): void {
       seedBlocks()
@@ -994,7 +995,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
   beforeEach(() => {
     localStorage.setItem('__mockWorkSpace', 'true')
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
       cmd === 'run_advanced_query' ? makeResponse() : dispatch(cmd, args),
     )
@@ -1025,7 +1026,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
     const rows = await screen.findAllByTestId('saved-view-row')
     expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual(['My saved query'])
     // The stored spec is the serialized filter + controls (no pagination).
-    const [view] = await loadSavedViews('SPACE_PERSONAL')
+    const [view] = await loadSavedViews(SEED_IDS.SPACE_PERSONAL)
     expect(view?.payload).toEqual({
       kind: 'query',
       spec: {
@@ -1047,7 +1048,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
         t('advancedQuery.savedViews.nameTaken', { name: 'Projects' }),
       ),
     )
-    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+    expect(await loadSavedViews(SEED_IDS.SPACE_PERSONAL)).toEqual([])
   })
 
   it('refuses a name shaped like a date, telling the user why, and stamps nothing', async () => {
@@ -1059,7 +1060,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
         t('advancedQuery.savedViews.nameIsDate', { name: '2031-04-05' }),
       ),
     )
-    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+    expect(await loadSavedViews(SEED_IDS.SPACE_PERSONAL)).toEqual([])
   })
 
   it('reports a save the backend refuses', async () => {
@@ -1076,7 +1077,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
     await waitFor(() =>
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('advancedQuery.savedViews.saveError')),
     )
-    expect(await loadSavedViews('SPACE_PERSONAL')).toEqual([])
+    expect(await loadSavedViews(SEED_IDS.SPACE_PERSONAL)).toEqual([])
   })
 
   it("does not list another space's views", async () => {
@@ -1085,7 +1086,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
     await screen.findByText('Personal view')
     unmount()
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK })
     render(<AdvancedQueryView />)
     expect(await screen.findByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
   })

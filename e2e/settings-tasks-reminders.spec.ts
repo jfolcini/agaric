@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
 
 /**
@@ -20,7 +21,7 @@ const IN_FIVE_DAYS = 'Task due in five days'
 /** Create a TODO on Projects due `days` after today. */
 async function seedTask(page: Page, content: string, days: number): Promise<void> {
   await page.evaluate(
-    async ({ text, offset, parentId }) => {
+    async ({ text, offset, parentId, spaceId }) => {
       const invoke = (
         window as unknown as {
           __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
@@ -35,13 +36,13 @@ async function seedTask(page: Page, content: string, days: number): Promise<void
         content: text,
         parentId,
         index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: spaceId },
         blockId: null,
       })) as { id: string }
       await invoke('set_todo_state', { blockId: block.id, state: 'TODO' })
       await invoke('set_due_date', { blockId: block.id, date })
     },
-    { text: content, offset: days, parentId: PAGE_PROJECTS },
+    { text: content, offset: days, parentId: PAGE_PROJECTS, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
 }
 

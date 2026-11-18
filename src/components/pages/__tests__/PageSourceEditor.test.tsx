@@ -99,7 +99,7 @@ function stubSource(applyPageSource: () => unknown = () => report()): void {
 /** Every IPC goes to the real tauri-mock; returns the seeded page's buffer. */
 function routeToMockBackend(): PageBuffer {
   seedBlocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   return pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)
 }

@@ -8,9 +8,10 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, test, waitForBoot } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TITLE = 'Seamless switch'
 
 /** Mixed shapes, long enough to scroll: headings, tasks, nested rows, a long paragraph. */

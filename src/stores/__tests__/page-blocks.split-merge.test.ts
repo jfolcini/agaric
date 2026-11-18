@@ -66,7 +66,7 @@ describe('splitOff and mergeInto (#6531)', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     await answerInvokeFromMock(mockedInvoke)
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     useUndoStore.setState({ pages: new Map() })
     page = await loadedPage()
     firstText = page.getState().blocksById.get(FIRST)?.content ?? ''
@@ -199,7 +199,7 @@ describe('splitOff and mergeInto (#6531)', () => {
     })
 
     it('moves the merged-away block’s children under the target, after its own', async () => {
-      const scope = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+      const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
       const child = (parentId: string, content: string, blockId: string) =>
         dispatch('create_block', { blockType: 'content', content, parentId, scope, blockId })
       await child(FIRST, 'own child', '01CHD000000000000000000001')

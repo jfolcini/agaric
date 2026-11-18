@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   blurEditors,
   emitMockEvent,
@@ -31,7 +32,7 @@ import {
  * Seed ids: src/lib/tauri-mock/seed.ts `SEED_IDS`.
  */
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const PAGE_GS = '00000000000000000000PAGE01'
 const GS1 = '0000000000000000000B10CK01'
 const GS2 = '0000000000000000000B10CK02'

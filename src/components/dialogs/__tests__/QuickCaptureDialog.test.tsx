@@ -65,8 +65,8 @@ beforeEach(() => {
   // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
   // a fixed space so the IPC arg shape is deterministic.
   useSpaceStore.setState({
-    currentSpaceId: 'SPACE_PERSONAL',
-    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+    currentSpaceId: SEED_IDS.SPACE_PERSONAL,
+    availableSpaces: [{ id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null }],
     isReady: true,
   })
   // A capture reloads the views it touched, so route IPC through the in-memory
@@ -118,7 +118,7 @@ describe('QuickCaptureDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
         content: 'captured',
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -141,7 +141,7 @@ describe('QuickCaptureDialog', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
         content: 'hotkey-submit',
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -255,7 +255,7 @@ describe('QuickCaptureDialog', () => {
         blockType: 'content',
         content: 'written elsewhere',
         parentId: SEED_IDS.PAGE_DAILY,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       })
       const epoch = renderHook(() => useCalendarPageDatesEpoch())
       const epochBefore = epoch.result.current
@@ -365,7 +365,7 @@ describe('QuickCaptureDialog — text from a capture link', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
         content: LINK_TEXT,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)

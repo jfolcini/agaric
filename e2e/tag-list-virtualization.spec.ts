@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
@@ -10,21 +11,24 @@ const TAGS = 200
 
 test('Tab walks the tag list past its initial window @pages', async ({ page }) => {
   await waitForBoot(page)
-  await page.evaluate(async (count) => {
-    const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
-      invoke: (cmd: string, args: unknown) => Promise<unknown>
-    }
-    for (let i = 0; i < count; i++) {
-      await internals.invoke('create_block', {
-        blockType: 'tag',
-        content: `kb-tag-${String(i).padStart(3, '0')}`,
-        parentId: null,
-        index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-        blockId: null,
-      })
-    }
-  }, TAGS)
+  await page.evaluate(
+    async ({ count, spaceId }) => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      for (let i = 0; i < count; i++) {
+        await internals.invoke('create_block', {
+          blockType: 'tag',
+          content: `kb-tag-${String(i).padStart(3, '0')}`,
+          parentId: null,
+          index: null,
+          scope: { kind: 'active', space_id: spaceId },
+          blockId: null,
+        })
+      }
+    },
+    { count: TAGS, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
   await navigateToView(page, 'Tags')
 
   const first = page.getByTestId('tag-item-kb-tag-000')

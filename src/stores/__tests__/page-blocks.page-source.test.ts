@@ -62,7 +62,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
 
   it('saves an edit and a delete in ONE command, reloads the page and records ONE undo entry of exactly the returned refs', async () => {
     seedBlocks()
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     let returnedRefs: OpRef[] = []
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const resp = dispatch(cmd, args)
