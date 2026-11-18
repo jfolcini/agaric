@@ -8,6 +8,7 @@ import {
   buildVex,
   isAffected,
   justificationOf,
+  osvFetch,
   parseDenyIgnores,
   parseNsprc,
 } from './generate-vex.mjs'
@@ -267,6 +268,33 @@ void describe('generate-vex', () => {
       true,
     )
     assert.equal(isAffected({ versions: ['1.2.3'] }, '1.2.3'), true)
+  })
+
+  void it('retries a 5xx, a 429 and a network error, but not another 4xx', async () => {
+    const replies = (list) => {
+      const calls = []
+      const fetchImpl = (url) => {
+        calls.push(url)
+        const r = list.shift()
+        return r instanceof Error ? Promise.reject(r) : Promise.resolve(r)
+      }
+      return { calls, fetchImpl }
+    }
+    const ok = { ok: true, status: 200, json: () => Promise.resolve({ id: 'X' }) }
+    const flaky = replies([
+      { ok: false, status: 503 },
+      new Error('reset'),
+      { ok: false, status: 429 },
+      ok,
+    ])
+    assert.deepEqual(await osvFetch('X', { fetchImpl: flaky.fetchImpl, delayMs: 0 }), { id: 'X' })
+    assert.equal(flaky.calls.length, 4)
+    const missing = replies([{ ok: false, status: 404 }, ok])
+    await assert.rejects(osvFetch('X', { fetchImpl: missing.fetchImpl, delayMs: 0 }), /HTTP 404/)
+    assert.equal(missing.calls.length, 1)
+    const down = replies([1, 2, 3, 4].map(() => ({ ok: false, status: 502 })))
+    await assert.rejects(osvFetch('X', { fetchImpl: down.fetchImpl, delayMs: 0 }), /HTTP 502/)
+    assert.equal(down.calls.length, 4)
   })
 
   void it('validates the [vex:] tag and parses the real waiver files', () => {

@@ -29,7 +29,8 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
-        node-version-file: .nvmrc
+        # Only without an explicit version: both set makes setup-node warn.
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
         cache: ${{ inputs.cache }}
         package-manager-cache: ${{ inputs.package-manager-cache }}
 
