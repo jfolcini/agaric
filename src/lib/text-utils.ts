@@ -15,3 +15,13 @@ export function truncateContent(
     .replace(/[#*_~`]/g, '')
   return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
+
+/**
+ * Cut `text` to at most `max` characters, ending in `…` when cut, so a name or
+ * path fits a fixed-size toast. Counts code points, so it never splits a
+ * surrogate pair (an emoji) in half.
+ */
+export function clampText(text: string, max: number): string {
+  const chars = Array.from(text)
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
+}

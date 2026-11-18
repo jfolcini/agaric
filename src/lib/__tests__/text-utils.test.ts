@@ -1,10 +1,10 @@
 /**
- * Tests for src/lib/text-utils.ts — truncateContent.
+ * Tests for src/lib/text-utils.ts — truncateContent, clampText.
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { truncateContent } from '@/lib/text-utils'
+import { clampText, truncateContent } from '@/lib/text-utils'
 
 describe('truncateContent', () => {
   it('returns emptyFallback for null input', () => {
@@ -68,5 +68,19 @@ describe('truncateContent', () => {
   it('handles content that is exactly at max length (no truncation)', () => {
     const exact = 'c'.repeat(120)
     expect(truncateContent(exact)).toBe(exact)
+  })
+})
+
+describe('clampText', () => {
+  it('keeps text at or under the limit as it is', () => {
+    expect(clampText('Groceries', 9)).toBe('Groceries')
+  })
+
+  it('cuts longer text to the limit, ellipsis included', () => {
+    expect(clampText('Quarterly planning notes', 10)).toBe('Quarterly…')
+  })
+
+  it('counts an emoji as one character and never splits it', () => {
+    expect(clampText('🍄🍄🍄 mushrooms', 4)).toBe('🍄🍄🍄…')
   })
 })

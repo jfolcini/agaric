@@ -217,30 +217,13 @@ export const sync: Record<string, string> = {
   'qrScanner.cameraNotFound': 'No camera was found on this device.',
   'device.syncComplete': 'Sync complete',
   'device.syncFailed': 'Sync failed',
-  'sync.failedForDevice': 'Sync failed for device {{deviceId}}...',
-  // #4305 — driven by `SyncEvent::Complete.changed_blocks`, the count of blocks
-  // a session actually changed. It replaced `sync.opsReceived`, which was fed
-  // `ops_received`: the number of protocol messages, one per registered space,
-  // sent whether or not that space had a delta. On the reporting user's
-  // two-space pair that read "Synced 2 changes from device" every 60 s forever,
-  // with no edits on either device. A count in a sentence has to be a count of
-  // the thing the sentence names.
-  //
-  // `_one` / `_other` only: `count` is never 0 here — a zero-change sync raises
-  // no toast at all (see `useSyncEvents`), which is the point of #4305.
-  'sync.changesApplied_one': 'Synced {{count}} change from device',
-  'sync.changesApplied_other': 'Synced {{count}} changes from device',
-  // #4305 — the whole-space snapshot catch-up reimports an entire space, so it
-  // has no meaningful block count to report. Rather than invent one (the old
-  // code's failure) or stay silent (which would hide a whole-space reimport),
-  // it says the true thing it can say and claims no number.
-  'sync.changesAppliedUnknownCount': 'Synced changes from device',
+  'sync.failedForDevice': 'Sync with {{name}} failed',
   'sync.failed': 'Sync failed: {{message}}',
-  // `titles` is each kept page's title in quotes, comma-separated.
+  // One kept page is named; several are counted, and the toast opens the Trash.
   'sync.localTextKept_one':
-    'Another device deleted or moved {{titles}}. The blocks you added under it here that had not synced yet are in the Trash.',
+    'Another device deleted or moved “{{title}}”. The blocks you added under it here that had not synced yet are in the Trash.',
   'sync.localTextKept_other':
-    'Another device deleted or moved {{count}} pages: {{titles}}. The blocks you added under them here that had not synced yet are in the Trash.',
+    'Another device deleted or moved {{count}} pages. The blocks you added under them here that had not synced yet are in the Trash.',
   // #5728 — the peer runs another engine format (`SyncErrorCode`); updating the
   // older device fixes it, and `peer_is_older` says which one that is (#6523).
   // The unnamed form is for a peer this device has no name for.
@@ -269,7 +252,6 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'The other device holds changes this device made and no longer has, as after restoring an older backup here, so the two cannot merge. Export the notes from this device, set Agaric up fresh on it, pair it again, then import them.',
   'sync.retryAction': 'Retry sync',
-  'sync.backOnline': 'Back online. Syncing\u2026',
   'sync.noPeersTitle': 'No devices paired',
   'sync.noPeersBody': 'Sync needs at least one paired device. Pair one now to start syncing.',
   'sync.noPeersCta': 'Pair a device',

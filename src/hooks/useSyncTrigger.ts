@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { mapBackendState } from '@/hooks/useSyncEvents'
+import { mapBackendState, pressedSyncPeers } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -9,7 +9,7 @@ import { i18n } from '@/lib/i18n'
 import { startSync } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { peerName } from '@/lib/peer-display-name'
+import { peerDisplayName, peerName } from '@/lib/peer-display-name'
 import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 // #3715 — moved down to `lib` when the pairing mutation queue became its
 // second caller; a lib module may not import a hook (tier layering).
@@ -82,34 +82,6 @@ export function computeNextSyncDelay(current: number, hadFailure: boolean): numb
 }
 
 /**
- * #4305 — peers whose failure the user has already been told about in the
- * current streak.
- *
- * This trigger re-runs every `BASE_INTERVAL_MS` (60 s, backing off to 10 min),
- * and `syncOnePeerWithToast`'s failure text does not vary with the cause: it is
- * `sync.failedForDevice` with the peer id. So a peer that is simply switched
- * off produced a red toast on every tick for as long as the app ran — the same
- * shape `record_initiator_failure` fixes on the Rust side, reached by a second
- * route, and one that would have survived that fix untouched.
- *
- * Membership is dropped the moment that peer syncs successfully, so a failure
- * that resolves and later recurs is reported again. It is module-scoped rather
- * than a ref because `syncOnePeerWithToast` is a module function shared by the
- * scheduled chain and the manual button, and both must consult one memory.
- */
-const peersWithReportedFailure = new Set<string>()
-
-/**
- * Test seam: forget every reported-failure marker.
- *
- * The set outlives a component, which is what makes it correct in production
- * and leaky across tests in one module registry.
- */
-export function resetReportedSyncFailures(): void {
-  peersWithReportedFailure.clear()
-}
-
-/**
  * How a session started by `start_sync` ended, read off its channel's terminal
  * update. `reported` is a failure `sync:error` already answered, or the user's
  * own cancel: `useSyncEvents` set the store to `error` / `idle` first.
@@ -117,8 +89,13 @@ export function resetReportedSyncFailures(): void {
 type SessionEnd = 'complete' | 'failed' | 'reported'
 
 /**
- * Syncs a single peer with a timeout guard. Shows a toast on the FIRST failure
- * of a streak. Returns `true` on success, `false` on failure.
+ * Syncs a single peer with a timeout guard. Returns `true` on success, `false`
+ * on failure.
+ *
+ * #6870: only a pressed sync answers with a toast. While it runs the peer is in
+ * `pressedSyncPeers`, so a failure the backend reports on `sync:error` is
+ * toasted there; one it does not report is toasted here. A scheduled tick says
+ * nothing: the Sync button's dot, icon and description carry its outcome.
  *
  * #6551: `start_sync` resolves once the daemon is woken, before any session
  * ran, and resolves just the same with the peer switched off. With
@@ -143,10 +120,12 @@ type SessionEnd = 'complete' | 'failed' | 'reported'
  * spurious toast. Defaults to always toasting.
  */
 async function syncOnePeerWithToast(
-  peerId: string,
+  peer: PeerRef,
   shouldToast: () => boolean = () => true,
   pressed = false,
 ): Promise<boolean> {
+  const peerId = peer.peer_id
+  if (pressed) pressedSyncPeers.add(peerId)
   try {
     const store = useSyncStore.getState()
     let endSession: (ending: SessionEnd) => void = () => {}
@@ -177,34 +156,27 @@ async function syncOnePeerWithToast(
     const ending = await runWithTimeout(run(), SYNC_TIMEOUT_MS, new Error('Sync timeout'))
     if (ending === 'reported') return false
     if (ending === 'failed') throw new Error('Sync session failed')
-    // #4305 — a peer that just worked is news again if it later stops.
-    peersWithReportedFailure.delete(peerId)
     return true
   } catch {
     // #748: a superseded (resume-invalidated) run swallows its toast but
     // still reports failure so the caller's backoff bookkeeping is honest.
-    if (!shouldToast()) return false
-    // #4305 — and so does a peer whose unchanged failure the user has already
-    // seen. The sidebar status dot and the peer row carry the ongoing state;
-    // this toast's job is to announce the transition into it, once. Marked
-    // before the `notify.error` so a throwing notifier cannot re-arm the toast.
-    if (peersWithReportedFailure.has(peerId)) return false
-    peersWithReportedFailure.add(peerId)
-    notify.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
-      // Per-peer dedup: a single failing peer should not stack multiple
-      // toasts on retry-loop iterations. Different peers still surface
-      // their own toast because the id is scoped by peerId.
+    if (!pressed || !shouldToast()) return false
+    notify.error(i18n.t('sync.failedForDevice', { name: peerDisplayName(peer) }), {
+      // One toast per peer: a second press on a peer that still fails
+      // updates it rather than stacking another.
       id: `sync-peer-error:${peerId}`,
       duration: 5000,
       action: {
         label: i18n.t('sync.retryAction'),
         onClick: () => {
           // Fire-and-forget — a fresh toast surfaces on subsequent failure.
-          void syncOnePeerWithToast(peerId, undefined, true)
+          void syncOnePeerWithToast(peer, undefined, true)
         },
       },
     })
     return false
+  } finally {
+    if (pressed) pressedSyncPeers.delete(peerId)
   }
 }
 
@@ -217,12 +189,12 @@ async function syncOnePeerWithToast(
  * be running and refuse its `start_sync` as already in progress.
  */
 async function syncAllPeers(
-  peers: ReadonlyArray<{ peer_id: string }>,
+  peers: ReadonlyArray<PeerRef>,
   shouldToast: () => boolean,
   pressed: boolean,
 ): Promise<boolean> {
   const results = await Promise.all(
-    peers.map((peer) => syncOnePeerWithToast(peer.peer_id, shouldToast, pressed)),
+    peers.map((peer) => syncOnePeerWithToast(peer, shouldToast, pressed)),
   )
   return results.includes(false)
 }
@@ -263,12 +235,10 @@ export function useSyncTrigger() {
   const syncGenerationRef = useRef(0)
   const setState = useSyncStore((s) => s.setState)
 
-  // #4305 — `syncAll` is BOTH the 60 s scheduled tick and the user pressing
-  // "Sync now" / "Sync All". Only the second one is a question that deserves an
-  // answer: a scheduled tick that succeeded changes nothing the user asked
-  // about, and answering it anyway put a second "Sync complete" toast on screen
-  // every minute alongside the "Synced 2 changes from device" one. The status
-  // dot and "last synced" already say the tick happened.
+  // #4305, #6870 — `syncAll` is BOTH the 60 s scheduled tick and the user
+  // pressing Sync. Only the press is a question that deserves an answer, so only
+  // it raises a toast, success or failure. The tick's outcome is the Sync
+  // button's dot, icon and "last synced" line.
   const syncAll = useCallback(
     async (options?: { userInitiated?: boolean }) => {
       const userInitiated = options?.userInitiated === true
@@ -332,13 +302,12 @@ export function useSyncTrigger() {
           // run owns the user-facing state/toast.
           if (shouldToast()) {
             setState('error', 'Sync failed')
-            // This arm is the run-level throw (`listPeerRefs` failed), not a
-            // per-peer failure — those are handled, and #4305-deduped, inside
-            // `syncOnePeerWithToast`. It keeps its toast because a run that could
-            // not even enumerate peers is a different, rarer fault; the shared
-            // `id` collapses concurrent duplicates.
-            notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
-            announce(i18n.t('announce.syncFailed'))
+            // The run-level throw (`listPeerRefs` failed); per-peer failures
+            // are `syncOnePeerWithToast`'s. Only a press is answered.
+            if (userInitiated) {
+              notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
+              announce(i18n.t('announce.syncFailed'))
+            }
           }
         }
       } finally {
@@ -361,7 +330,7 @@ export function useSyncTrigger() {
       // `.then(scheduleNext)` resolves.
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
-        // `syncAll` catches and toasts its own failure; never rejects.
+        // `syncAll` catches its own failure; never rejects.
         void syncAll().then(() => {
           if (mountedRef.current) scheduleNext()
         })
@@ -380,7 +349,7 @@ export function useSyncTrigger() {
     // letting it fire and arm a SECOND concurrent chain alongside the
     // resume-armed one.
     timerRef.current = setTimeout(() => {
-      // `syncAll` catches and toasts its own failure; never rejects.
+      // `syncAll` catches its own failure; never rejects.
       void syncAll().then(() => {
         if (mountedRef.current) scheduleNext()
       })
@@ -392,16 +361,11 @@ export function useSyncTrigger() {
     }
   }, [syncAll, scheduleNext])
 
-  // Trigger immediate sync when coming back online (#667).
-  // Surface a `notify.info` when transitioning offline → online,
-  // gated by the prior `offline` sync-store state so we don't fire on
-  // benign repeats (some browsers dispatch multiple `online` events).
+  // Trigger immediate sync when coming back online (#667). The Sync button
+  // says the network is back; no toast (#6870).
   useEffect(() => {
     const handleOnline = () => {
-      if (useSyncStore.getState().state === 'offline') {
-        notify.info(i18n.t('sync.backOnline'), { id: 'sync-back-online' })
-      }
-      // `syncAll` catches and toasts its own failure; never rejects.
+      // `syncAll` catches its own failure; never rejects.
       void syncAll()
     }
     window.addEventListener('online', handleOnline)
