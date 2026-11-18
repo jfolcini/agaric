@@ -1,5 +1,6 @@
 import { devices } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blockRow } from './domain'
 import {
   expect,
@@ -47,12 +48,12 @@ async function editingBlockId(page: Page): Promise<string> {
 /** A page of `blocks`, in order, made over IPC. */
 async function seedPage(page: Page, title: string, blocks: string[]): Promise<void> {
   await page.evaluate(
-    async ({ title: content, blocks: texts }) => {
+    async ({ title: content, blocks: texts, spaceId }) => {
       const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
       const pageId = (await invoke('create_page_in_space', {
         parentId: null,
         content,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId,
       })) as string
       await invoke('create_blocks_batch', {
         specs: texts.map((text) => ({
@@ -63,7 +64,7 @@ async function seedPage(page: Page, title: string, blocks: string[]): Promise<vo
         })),
       })
     },
-    { title, blocks },
+    { title, blocks, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
 }
 

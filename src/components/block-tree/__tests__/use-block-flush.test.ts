@@ -37,6 +37,7 @@ import {
   properties as mockProperties,
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -315,8 +316,11 @@ describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
     seedBlocks()
     // A block of the seeded Personal space, the active one: its definitions
     // apply (#5841).
-    mockBlocks.set(BLK, { ...makeMockBlock(BLK, 'block', '', null, 0), space_id: 'SPACE_PERSONAL' })
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    mockBlocks.set(BLK, {
+      ...makeMockBlock(BLK, 'block', '', null, 0),
+      space_id: SEED_IDS.SPACE_PERSONAL,
+    })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     // Mirror the block into the page store so `edit()` has a row to update.
     pageStore.setState({ blocks: [makeBlock({ id: BLK, content: '', todo_state: null })] })
   })

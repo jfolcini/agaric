@@ -5,9 +5,10 @@
  * contrast is measured.
  */
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, openPage, runAxe, test, waitForBoot, waitForStableBlockRows } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TITLE = 'Closed task contrast'
 
 test.describe('closed tasks in block mode @editor @journal', () => {

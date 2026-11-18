@@ -30,8 +30,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, opLog, seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 
 /** Seed with `count` extra "Bulk Page NNN" fixtures, off `__mockFacetFixture`. */
 function seedWithBulkPages(count: number): void {

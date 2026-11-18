@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, test, waitForBoot } from './helpers'
 
 /**
@@ -20,13 +21,12 @@ interface Seeded {
 /** A host page holding a heading linking the target page, and a block referring to a block on it, its ref property naming the page. */
 async function seed(page: Page): Promise<Seeded> {
   return page.evaluate(
-    async ({ host, target, refTitle }) => {
+    async ({ host, target, refTitle, spaceId }) => {
       const { invoke } = (
         window as unknown as {
           __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
         }
       ).__TAURI_INTERNALS__
-      const spaceId = 'SPACE_PERSONAL'
       const targetId = (await invoke('create_page_in_space', {
         parentId: null,
         content: target,
@@ -56,7 +56,7 @@ async function seed(page: Page): Promise<Seeded> {
       })
       return { targetId, refId }
     },
-    { host: HOST, target: TARGET, refTitle: REF_TITLE },
+    { host: HOST, target: TARGET, refTitle: REF_TITLE, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
 }
 

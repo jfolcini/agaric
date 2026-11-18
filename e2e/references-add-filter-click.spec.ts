@@ -9,6 +9,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
@@ -24,34 +25,37 @@ const TYPED = 'saved on the press'
 
 /** An empty page, a block on Projects linking to it, and one naming it in plain text. */
 function seed(page: Page): Promise<void> {
-  return page.evaluate(async (target) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    const targetId = (await invoke('create_page_in_space', {
-      parentId: null,
-      content: target,
-      spaceId: 'SPACE_PERSONAL',
-    })) as string
-    await invoke('create_blocks_batch', {
-      specs: [
-        {
-          blockType: 'content',
-          content: `See [[${targetId}]]`,
-          parentId: '00000000000000000000PAGE04',
-          position: null,
-        },
-        {
-          blockType: 'content',
-          content: `Mentions ${target} in passing`,
-          parentId: '00000000000000000000PAGE04',
-          position: null,
-        },
-      ],
-    })
-  }, TARGET)
+  return page.evaluate(
+    async ({ target, spaceId }) => {
+      const { invoke } = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const targetId = (await invoke('create_page_in_space', {
+        parentId: null,
+        content: target,
+        spaceId,
+      })) as string
+      await invoke('create_blocks_batch', {
+        specs: [
+          {
+            blockType: 'content',
+            content: `See [[${targetId}]]`,
+            parentId: '00000000000000000000PAGE04',
+            position: null,
+          },
+          {
+            blockType: 'content',
+            content: `Mentions ${target} in passing`,
+            parentId: '00000000000000000000PAGE04',
+            position: null,
+          },
+        ],
+      })
+    },
+    { target: TARGET, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 }
 
 const editor = (page: Page) => page.locator('[data-testid="block-editor"] [contenteditable="true"]')

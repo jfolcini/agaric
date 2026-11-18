@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlockById,
@@ -20,7 +21,7 @@ import {
 
 const PAGE = 'Getting Started'
 const GS1 = '0000000000000000000B10CK01'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 interface Row {
   id: string

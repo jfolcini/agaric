@@ -1,5 +1,6 @@
 import { devices, type Locator } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlock,
@@ -42,7 +43,7 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     const id = (await ipc(page, 'create_page_in_space', {
       parentId: null,
       content: 'Quarterly plan draft',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })) as string
     await navigateToView(page, 'Pages')
     const row = page.locator(`#page-row-${id}`)
@@ -122,7 +123,7 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
       await ipc(page, 'create_page_in_space', {
         parentId: null,
         content: `Scroll page ${i}`,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
       })
     }
     await navigateToView(page, 'Pages')

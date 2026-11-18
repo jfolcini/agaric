@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test'
 import { devices } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   activeDialog,
@@ -707,7 +708,7 @@ test.describe('Edit as Markdown writes a page line by line (#5691) @editor @page
     const pageId = await ipc<string>(page, 'create_page_in_space', {
       parentId: null,
       content: title,
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const [heading, bullet, numbered, task, plain] = await seedSearchBlocks(page, [
       { content: '## Plan', parentId: pageId },
@@ -772,7 +773,7 @@ test.describe('Edit as Markdown writes a page line by line (#5691) @editor @page
     const pageId = await ipc<string>(page, 'create_page_in_space', {
       parentId: null,
       content: title,
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const [parent] = await seedSearchBlocks(page, [{ content: 'Parent note', parentId: pageId }])
     const [child] = await seedSearchBlocks(page, [

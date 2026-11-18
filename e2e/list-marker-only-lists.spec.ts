@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlock,
@@ -23,7 +24,7 @@ import {
  * Seed: "Getting Started" has 5 blocks.
  */
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const EDITOR = '[data-testid="page-mode-editor"]'
 const BULLET = {
   value_text: 'bullet',

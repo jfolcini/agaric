@@ -13,6 +13,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeMenu,
   expect,
@@ -24,7 +25,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const EDITOR = '[data-testid="page-mode-editor"]'
 /** The space between a task's checkbox and its text column (`gap-1`), and the text box's own inset (`px-3`). */
 const GAP = 4

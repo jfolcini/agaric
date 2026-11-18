@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   chooseSelectOption,
   expect,
@@ -56,7 +57,7 @@ async function seedLinkingPage(page: Page, title: string, linkTo: string): Promi
   const id = (await ipc(page, 'create_page_in_space', {
     parentId: null,
     content: title,
-    spaceId: 'SPACE_PERSONAL',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
   })) as string
   await ipc(page, 'create_blocks_batch', {
     specs: [{ blockType: 'content', content: `see [[${linkTo}]]`, parentId: id, position: null }],

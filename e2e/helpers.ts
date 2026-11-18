@@ -3,6 +3,7 @@ import { basename, relative } from 'node:path'
 
 import { test as baseTest, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { BRIDGE_BINARY, type Bridge, startBridge } from './bridge'
 
 // ---------------------------------------------------------------------------
@@ -1091,42 +1092,45 @@ export interface SearchSeed {
 
 /** Create each block through the mock IPC; returns their ids in order. */
 export function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<string[]> {
-  return page.evaluate(async (list) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+  return page.evaluate(
+    async ({ list, spaceId }) => {
+      const { invoke } = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const isoDate = (d: string | number): string => {
+        if (typeof d === 'string') return d
+        const t = new Date()
+        t.setDate(t.getDate() + d)
+        return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
       }
-    ).__TAURI_INTERNALS__
-    const isoDate = (d: string | number): string => {
-      if (typeof d === 'string') return d
-      const t = new Date()
-      t.setDate(t.getDate() + d)
-      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
-    }
-    const ids: string[] = []
-    for (const s of list) {
-      const { id } = (await invoke('create_block', {
-        blockType: 'content',
-        content: s.content,
-        parentId: s.parentId ?? '00000000000000000000PAGE04',
-        index: null,
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-        blockId: null,
-      })) as { id: string }
-      if (s.todo) await invoke('set_todo_state', { blockId: id, state: s.todo })
-      if (s.priority) await invoke('set_priority', { blockId: id, level: s.priority })
-      if (s.due !== undefined) await invoke('set_due_date', { blockId: id, date: isoDate(s.due) })
-      if (s.scheduled !== undefined) {
-        await invoke('set_scheduled_date', { blockId: id, date: isoDate(s.scheduled) })
+      const ids: string[] = []
+      for (const s of list) {
+        const { id } = (await invoke('create_block', {
+          blockType: 'content',
+          content: s.content,
+          parentId: s.parentId ?? '00000000000000000000PAGE04',
+          index: null,
+          scope: { kind: 'active', space_id: spaceId },
+          blockId: null,
+        })) as { id: string }
+        if (s.todo) await invoke('set_todo_state', { blockId: id, state: s.todo })
+        if (s.priority) await invoke('set_priority', { blockId: id, level: s.priority })
+        if (s.due !== undefined) await invoke('set_due_date', { blockId: id, date: isoDate(s.due) })
+        if (s.scheduled !== undefined) {
+          await invoke('set_scheduled_date', { blockId: id, date: isoDate(s.scheduled) })
+        }
+        for (const [key, value] of Object.entries(s.props ?? {})) {
+          await invoke('set_property', { blockId: id, key, value: { value_text: value } })
+        }
+        for (const tagId of s.tagIds ?? []) await invoke('add_tag', { blockId: id, tagId })
+        ids.push(id)
       }
-      for (const [key, value] of Object.entries(s.props ?? {})) {
-        await invoke('set_property', { blockId: id, key, value: { value_text: value } })
-      }
-      for (const tagId of s.tagIds ?? []) await invoke('add_tag', { blockId: id, tagId })
-      ids.push(id)
-    }
-    return ids
-  }, seeds)
+      return ids
+    },
+    { list: seeds, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 }
 
 /** Type `query` into the Search view and submit it. */

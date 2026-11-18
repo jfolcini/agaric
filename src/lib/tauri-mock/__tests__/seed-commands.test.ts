@@ -14,9 +14,10 @@ import {
   properties,
   spacePropertyDefs,
 } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { seedCommands } from '@/lib/tauri-mock/seed-commands'
 
-const SPACE = 'SPACE_PERSONAL'
+const SPACE = SEED_IDS.SPACE_PERSONAL
 const BLOCK_FIELDS = [
   'block_type',
   'content',

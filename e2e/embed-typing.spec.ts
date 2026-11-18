@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeSuggestionList,
   blurEditors,
@@ -25,7 +26,7 @@ import {
 const GETTING_STARTED = '00000000000000000000PAGE01'
 const EMBED = `{{embed [[${GETTING_STARTED}]]}}`
 const WELCOME = 'Welcome to Agaric!'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 /** Type `![[Getting` in the focused editor and pick "Getting Started" from the `[[` picker. */
 async function embedGettingStarted(page: Page): Promise<void> {

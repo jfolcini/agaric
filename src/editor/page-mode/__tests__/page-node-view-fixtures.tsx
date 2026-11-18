@@ -25,10 +25,11 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
 import type { ListStyle } from '@/lib/list-style'
 import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 
-export const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
+export const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } as const
 
 const NEXT_STATE: Record<string, string | null> = { TODO: 'DOING', DOING: 'DONE', DONE: null }
 const NEXT_PRIORITY: Record<string, string | null> = { '1': '2', '2': '3', '3': null }

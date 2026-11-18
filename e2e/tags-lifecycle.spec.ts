@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   activePopover,
@@ -28,7 +29,7 @@ import {
  *  - #5244: an applied tag outside the space's 50 oldest still gets its chip.
  */
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 const GETTING_STARTED = '00000000000000000000PAGE01'
 const GS1 = '0000000000000000000B10CK01'
 const TAG_REF = /#\[([0-9A-Z]{26})\]/

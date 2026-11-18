@@ -1,6 +1,7 @@
 import { devices } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   activeSuggestionPopup,
@@ -27,7 +28,7 @@ import {
  * and a journal week or stream view, one tree per day, shows exactly one.
  */
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const TEXTS = ['alpha one', 'bravo two', 'charlie three', 'delta four', 'echo five']
 
 const toolbar = (page: Page): Locator => page.getByTestId('formatting-toolbar')

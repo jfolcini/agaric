@@ -13,6 +13,7 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -98,7 +99,7 @@ describe('InlinePropertyChip', () => {
     // #5862 — the boot preload leaves out blocks, other spaces' pages and evicted entries.
     it('asks for the title of a target the resolve cache does not hold', async () => {
       seedBlocks()
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
         dispatch(cmd, args),
       )
@@ -112,11 +113,11 @@ describe('InlinePropertyChip', () => {
     })
 
     it('asks nothing for a target the resolve cache holds', () => {
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       useResolveStore.setState({
         cache: new Map([
           [
-            keyFor('SPACE_PERSONAL', TARGET),
+            keyFor(SEED_IDS.SPACE_PERSONAL, TARGET),
             { title: 'Quick Notes', deleted: false, resolved: true },
           ],
         ]),
@@ -127,7 +128,7 @@ describe('InlinePropertyChip', () => {
     })
 
     it('keeps the id and logs when asking for the title fails', async () => {
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
       vi.mocked(invoke).mockImplementation(
         mockInvokeCommands({ batch_resolve: () => Promise.reject(new Error('resolve failed')) }),
       )

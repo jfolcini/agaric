@@ -181,7 +181,7 @@ function contentOf(blockId: string): unknown {
 beforeEach(() => {
   vi.clearAllMocks()
   seedBlocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   useUndoStore.setState({ pages: new Map() })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
 })

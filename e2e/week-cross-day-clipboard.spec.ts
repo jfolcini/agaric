@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blurEditors, expect, readClipboard, test, waitForBoot } from './helpers'
 
 /**
@@ -42,7 +43,7 @@ async function children(
 ): Promise<{ id: string; content: string | null }[]> {
   const resp = await ipc<{ items: { id: string; content: string | null }[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   return resp.items
 }
