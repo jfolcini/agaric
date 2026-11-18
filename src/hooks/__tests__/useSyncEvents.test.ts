@@ -200,6 +200,12 @@ import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 
 const mockedToastSuccess = vi.mocked(toast.success)
+/** The options every changes toast carries: one id, and a reset when it closes (#6870). */
+const CHANGES_TOAST = {
+  id: 'sync-changes',
+  onDismiss: expect.any(Function),
+  onAutoClose: expect.any(Function),
+}
 const mockedToastError = vi.mocked(toast.error)
 const mockedAnnounce = vi.mocked(announce)
 
@@ -430,7 +436,7 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 3 changes from device')
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 3 changes from device', CHANGES_TOAST)
 
       unmount()
     })
@@ -453,7 +459,7 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 1 change from device')
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced 1 change from device', CHANGES_TOAST)
 
       unmount()
     })
@@ -779,7 +785,7 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device', CHANGES_TOAST)
       expect(mockLoad).toHaveBeenCalled()
       expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, undefined)
 
@@ -805,9 +811,98 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device', CHANGES_TOAST)
       expect(mockLoad).toHaveBeenCalled()
 
+      unmount()
+    })
+  })
+
+  // #6870 — a peer that keeps editing syncs a round every couple of seconds.
+  // The rounds share one toast that adds them up until it closes.
+  describe('sync rounds while the changes toast is up (#6870)', () => {
+    async function mount(): Promise<() => void> {
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      return unmount
+    }
+
+    function round(changed_blocks: number | null): void {
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 1,
+          ops_sent: 0,
+          changed_blocks,
+        },
+      })
+    }
+
+    /** Close the toast the way sonner does, through the last call's own callbacks. */
+    function closeToast(how: 'onAutoClose' | 'onDismiss'): void {
+      const opts = mockedToastSuccess.mock.lastCall?.[1] as Record<typeof how, () => void>
+      opts[how]()
+    }
+
+    it('updates one toast and adds the rounds up', async () => {
+      const unmount = await mount()
+
+      round(2)
+      round(3)
+
+      expect(mockedToastSuccess.mock.calls).toEqual([
+        ['Synced 2 changes from device', CHANGES_TOAST],
+        ['Synced 5 changes from device', CHANGES_TOAST],
+      ])
+      unmount()
+    })
+
+    it('counts afresh once the toast closes on its own', async () => {
+      const unmount = await mount()
+
+      round(2)
+      closeToast('onAutoClose')
+      round(3)
+
+      expect(mockedToastSuccess).toHaveBeenLastCalledWith(
+        'Synced 3 changes from device',
+        CHANGES_TOAST,
+      )
+      unmount()
+    })
+
+    it('counts afresh once the user closes the toast', async () => {
+      const unmount = await mount()
+
+      round(2)
+      closeToast('onDismiss')
+      round(3)
+
+      expect(mockedToastSuccess).toHaveBeenLastCalledWith(
+        'Synced 3 changes from device',
+        CHANGES_TOAST,
+      )
+      unmount()
+    })
+
+    it('claims no number once a round could not count, until the toast closes', async () => {
+      const unmount = await mount()
+
+      round(2)
+      round(null)
+      round(3)
+      closeToast('onAutoClose')
+      round(4)
+
+      expect(mockedToastSuccess.mock.calls.map(([message]) => message)).toEqual([
+        'Synced 2 changes from device',
+        'Synced changes from device',
+        'Synced changes from device',
+        'Synced 4 changes from device',
+      ])
       unmount()
     })
   })

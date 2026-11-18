@@ -28,8 +28,11 @@ export function useMirrorIngestEvents(): void {
     if (op_refs.length > 0) notifyUndoNewAction(page_id, op_refs, undefined, { merge: false })
     const [first] = report.warnings
     if (first !== undefined) {
+      // An external editor that autosaves re-reads the file on every save:
+      // each file keeps one toast, updated in place (#6870).
       notify.warning(
         t('data.mirrorIngestedWarnings', { path, first, count: report.warnings.length }),
+        { id: `mirror-ingest-warnings:${path}` },
       )
     }
   })

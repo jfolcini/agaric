@@ -1151,7 +1151,9 @@ describe('useSyncTrigger', () => {
     })
 
     // Assert: toast.info fired with the expected key value.
-    expect(toast.info).toHaveBeenCalledWith('Back online. Syncing\u2026')
+    expect(toast.info).toHaveBeenCalledWith('Back online. Syncing\u2026', {
+      id: 'sync-back-online',
+    })
   })
 
   it('does NOT show "back online" toast when state was not offline', async () => {

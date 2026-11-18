@@ -1,6 +1,6 @@
 /**
- * Tests for useSyncLocalTextKept (#6561): each title in a
- * `sync:local_text_kept` report gets a toast that stays until dismissed.
+ * Tests for useSyncLocalTextKept (#6561): one toast that stays until dismissed
+ * names every page a `sync:local_text_kept` report kept (#6870).
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
@@ -41,25 +41,61 @@ afterEach(() => {
 })
 
 describe('useSyncLocalTextKept', () => {
-  it('shows one lasting toast per kept page, naming it', async () => {
+  async function subscribed(): Promise<(titles: string[]) => void> {
     renderHook(() => useSyncLocalTextKept())
     await waitFor(() => {
       expect(mockListen).toHaveBeenCalledTimes(1)
     })
     expect(mockListen.mock.calls[0]?.[0]).toBe('sync:local_text_kept')
     const handler = mockListen.mock.calls[0]?.[1] as (event: { payload: unknown }) => void
+    return (titles) => handler({ payload: { type: 'local_text_kept', page_titles: titles } })
+  }
 
-    handler({ payload: { type: 'local_text_kept', page_titles: ['Trip notes', 'Groceries'] } })
+  const LASTING = {
+    id: 'sync-local-text-kept',
+    duration: Number.POSITIVE_INFINITY,
+    onDismiss: expect.any(Function),
+  }
+
+  it('names a single kept page in one lasting toast', async () => {
+    const report = await subscribed()
+
+    report(['Trip notes'])
 
     expect(vi.mocked(notify.warning).mock.calls).toEqual([
       [
         'Another device deleted or moved “Trip notes”. The blocks you added under it here that had not synced yet are in the Trash.',
-        { duration: Number.POSITIVE_INFINITY },
+        LASTING,
       ],
+    ])
+  })
+
+  it('names every kept page of a report in one toast', async () => {
+    const report = await subscribed()
+
+    report(['Trip notes', 'Groceries'])
+
+    expect(vi.mocked(notify.warning).mock.calls).toEqual([
       [
-        'Another device deleted or moved “Groceries”. The blocks you added under it here that had not synced yet are in the Trash.',
-        { duration: Number.POSITIVE_INFINITY },
+        'Another device deleted or moved 2 pages: “Trip notes”, “Groceries”. The blocks you added under them here that had not synced yet are in the Trash.',
+        LASTING,
       ],
+    ])
+  })
+
+  it('adds a later report to the toast while it is up, and starts over once dismissed', async () => {
+    const report = await subscribed()
+
+    report(['Trip notes'])
+    report(['Groceries'])
+    const opts = vi.mocked(notify.warning).mock.lastCall?.[1] as { onDismiss: () => void }
+    opts.onDismiss()
+    report(['Recipes'])
+
+    expect(vi.mocked(notify.warning).mock.calls.map(([message]) => message)).toEqual([
+      'Another device deleted or moved “Trip notes”. The blocks you added under it here that had not synced yet are in the Trash.',
+      'Another device deleted or moved 2 pages: “Trip notes”, “Groceries”. The blocks you added under them here that had not synced yet are in the Trash.',
+      'Another device deleted or moved “Recipes”. The blocks you added under it here that had not synced yet are in the Trash.',
     ])
   })
 

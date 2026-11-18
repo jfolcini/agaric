@@ -74,5 +74,9 @@ describe('useMirrorIngestEvents', () => {
     expect(useUndoStore.getState().pages.get(PAGE)).toBeUndefined()
     expect(notify.warning).toHaveBeenCalledTimes(1)
     expect(vi.mocked(notify.warning).mock.calls[0]?.[0]).toContain('kept twice')
+    // #6870 — one toast per file, so an autosaving editor updates it in place.
+    expect(vi.mocked(notify.warning).mock.calls[0]?.[1]).toEqual({
+      id: 'mirror-ingest-warnings:S/A.md',
+    })
   })
 })

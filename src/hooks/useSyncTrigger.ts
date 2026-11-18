@@ -399,7 +399,7 @@ export function useSyncTrigger() {
   useEffect(() => {
     const handleOnline = () => {
       if (useSyncStore.getState().state === 'offline') {
-        notify.info(i18n.t('sync.backOnline'))
+        notify.info(i18n.t('sync.backOnline'), { id: 'sync-back-online' })
       }
       // `syncAll` catches and toasts its own failure; never rejects.
       void syncAll()

@@ -20,6 +20,8 @@
  * Resolves issues #276, #386, #378.
  */
 
+import { useRef } from 'react'
+
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
@@ -48,6 +50,21 @@ import { useUndoStore } from '@/stores/undo'
 // `BlocksChangedEvent`, `sync_events.rs`), where each field is documented.
 type SyncComplete = Extract<SyncEvent_Serialize, { type: 'complete' }>
 type SyncError = Extract<SyncEvent_Serialize, { type: 'error' }>
+
+/**
+ * #6870 — a peer that keeps editing syncs a round every couple of seconds, and
+ * each round that changed something lands here. The rounds share one toast that
+ * adds them up while it is on screen, so a burst is one toast that closes on its
+ * own after the last round, not a stack of them.
+ */
+const SYNC_CHANGES_TOAST_ID = 'sync-changes'
+
+/** The count the toast shows after another round: `null` once a round could not count. */
+function addRound(shown: number | null | undefined, round: number | null): number | null {
+  if (shown === undefined) return round
+  if (shown === null || round === null) return null
+  return shown + round
+}
 
 /** i18n keys for a coded failure's sentence: with the peer's name, and without. */
 function codedSyncErrorKeys(payload: SyncError): [named: string, unnamed: string] | null {
@@ -189,6 +206,22 @@ export function useSyncEvents(): void {
   // registration entirely.
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+  // What the changes toast shows; `undefined` while it is not up.
+  const shownChanges = useRef<number | null | undefined>(undefined)
+  const toastChanges = (round: number | null): void => {
+    const total = addRound(shownChanges.current, round)
+    shownChanges.current = total
+    const closed = () => {
+      shownChanges.current = undefined
+    }
+    notify.success(
+      total === null
+        ? i18n.t('sync.changesAppliedUnknownCount')
+        : i18n.t('sync.changesApplied', { count: total }),
+      { id: SYNC_CHANGES_TOAST_ID, onDismiss: closed, onAutoClose: closed },
+    )
+  }
+
   // Phase 2 — `sync:progress` listener removed. The
   // Channel<SyncProgressUpdate> opened by `startSync` is now the
   // canonical source for per-state-transition progress; see
@@ -222,12 +255,12 @@ export function useSyncEvents(): void {
 
         // Something changed. Count it if the backend could count it; say so
         // without a number if it could not (whole-space snapshot catch-up).
-        if (typeof changed_blocks === 'number') {
-          notify.success(i18n.t('sync.changesApplied', { count: changed_blocks }))
-          announce(i18n.t('announce.syncChangesApplied', { count: changed_blocks }))
-        } else {
-          notify.success(i18n.t('sync.changesAppliedUnknownCount'))
+        const round = typeof changed_blocks === 'number' ? changed_blocks : null
+        toastChanges(round)
+        if (round === null) {
           announce(i18n.t('announce.syncChangesAppliedUnknownCount'))
+        } else {
+          announce(i18n.t('announce.syncChangesApplied', { count: round }))
         }
 
         // #1071 — TARGETED invalidation via the shared `reloadChangedPageStores`

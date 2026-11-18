@@ -99,6 +99,48 @@ test.describe('sync events (#2683) @sync', () => {
   })
 })
 
+// #6870 — a peer that keeps editing syncs a round every couple of seconds. The
+// rounds share one toast that adds them up and closes on its own after the last.
+// The clock is paused after boot, so the toast's lifetime passes only when the
+// spec runs it: a slow runner cannot close it between two assertions.
+test.describe('sync rounds share one toast (#6870) @sync', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.install()
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
+  })
+
+  test('the toast adds up while it is up, closes on its own, then counts afresh', async ({
+    page,
+  }) => {
+    const syncToasts = page.locator('[data-sonner-toast]', { hasText: 'from device' })
+    const round = async (changedBlocks: number) => {
+      await emitMockEvent(page, 'sync:complete', {
+        type: 'complete',
+        remote_device_id: 'device-b',
+        ops_received: 1,
+        ops_sent: 0,
+        changed_blocks: changedBlocks,
+      })
+      // sonner mounts and updates a toast on `setTimeout(0)`.
+      await page.clock.runFor(100)
+    }
+
+    await round(2)
+    await expect(syncToasts).toHaveText(['Synced 2 changes from device'])
+    await round(3)
+    await expect(syncToasts).toHaveText(['Synced 5 changes from device'])
+
+    // Past sonner's 4 s lifetime, which the last round restarted, and its exit.
+    await page.clock.runFor(5000)
+    await expect(syncToasts).toHaveCount(0)
+
+    await round(1)
+    await expect(syncToasts).toHaveText(['Synced 1 change from device'])
+  })
+})
+
 /**
  * Pair one device in the mock and return its id: `confirm_pairing` arms a
  * reveal, and the peer appears on the third `list_peer_refs` read after it.

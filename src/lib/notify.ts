@@ -17,8 +17,13 @@
  * same arity — `opts` is spread, never explicitly passed as
  * `undefined`).
  *
- * Future cross-cutting concerns (i18n fallback, dedup, provider swap,
- * durations) land here in one place. A prek hook bans `from 'sonner'`
+ * A toast the user did not just ask for (a sync round, a file read back,
+ * the network coming back) passes a fixed `id` per source, so a burst
+ * updates one toast in place instead of stacking (#6870). A toast that
+ * answers the user's own action passes none.
+ *
+ * Future cross-cutting concerns (i18n fallback, provider swap, durations)
+ * land here in one place. A prek hook bans `from 'sonner'`
  * outside this file + the `Toaster` UI primitive + test scaffolding so
  * the chokepoint stays durable.
  */
