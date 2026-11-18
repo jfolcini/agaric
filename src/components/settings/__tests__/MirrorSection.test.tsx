@@ -256,6 +256,34 @@ describe('MirrorSection', () => {
     expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
   })
 
+  it('with the mirror off, the stored reading back shows and goes with the folder chosen', async () => {
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    expect(await screen.findByText(PICKED)).toBeInTheDocument()
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', {
+      path: PICKED,
+      readBack: false,
+    })
+    expect((await storedStatus()).read_back).toBe(false)
+  })
+
+  it('Turn off keeps reading back as it was', async () => {
+    folder = PICKED
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorTurnOffButton') }))
+
+    expect(await screen.findByText(t('data.mirrorOff'))).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+  })
+
   it('choosing a folder while mirroring with reading back off keeps it off', async () => {
     folder = PICKED
     readBack = false

@@ -6,11 +6,14 @@
  * separate commands, so a cancelled OS dialog changes nothing. A file edited
  * outside Agaric is never overwritten; the backend lists it under `diverged`.
  *
- * Reading changes back is chosen with the folder and changeable later. While
- * it is off, the backend lists the files turning it on would read in under
- * `pending`; turning it on with any asks first, and the confirm sends the
- * files the dialog listed, so the backend refuses it when another file
- * changed since: nothing is read in that the user was not shown.
+ * Reading changes back is a stored switch, kept while the mirror is off and
+ * sent with the folder chosen next. While it is off, the backend lists the
+ * files turning it on would read in under `pending`; turning it on with any
+ * asks first, and the confirm sends the files the dialog listed, so the
+ * backend refuses it when another file changed since: nothing is read in that
+ * the user was not shown. A folder chosen again holding files changed while
+ * the mirror was off turns the mirror on with reading back off, for the same
+ * question.
  *
  * Copying attachments into the folder is a stored switch of its own, off by
  * default; a copy changed in the folder is kept, and listed under `diverged`.
@@ -53,8 +56,6 @@ export function MirrorSection(): React.ReactElement | null {
   const copyFilesId = useId()
   const [status, setStatus] = useState<MirrorStatus | null>(null)
   const [pending, setPending] = useState<Action | null>(null)
-  // Reading back for the next folder chosen, while the mirror is off.
-  const [readBackChoice, setReadBackChoice] = useState(true)
   const [askToReadPending, setAskToReadPending] = useState(false)
 
   const load = useCallback(async () => {
@@ -82,7 +83,7 @@ export function MirrorSection(): React.ReactElement | null {
         const path = action === 'choose' ? unwrap(await commands.pickMirrorFolder()) : null
         if (action === 'choose' && path === null) return
         // The backend takes it only when the mirror turns on.
-        setStatus(unwrap(await commands.setMirrorFolder(path, readBackChoice)))
+        setStatus(unwrap(await commands.setMirrorFolder(path, status?.read_back ?? false)))
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))
@@ -90,7 +91,7 @@ export function MirrorSection(): React.ReactElement | null {
         setPending(null)
       }
     },
-    [t, readBackChoice],
+    [t, status],
   )
 
   const setReadBack = useCallback(
@@ -140,9 +141,7 @@ export function MirrorSection(): React.ReactElement | null {
   )
 
   const onReadBackChange = (on: boolean): void => {
-    if (status?.folder == null) {
-      setReadBackChoice(on)
-    } else if (on && status.pending.length > 0) {
+    if (on && status !== null && status.pending.length > 0) {
       setAskToReadPending(true)
     } else {
       void setReadBack(on, [])
@@ -223,7 +222,7 @@ export function MirrorSection(): React.ReactElement | null {
           <Switch
             id={readBackId}
             aria-describedby={settingDescriptionId(readBackId)}
-            checked={on ? status.read_back : readBackChoice}
+            checked={status.read_back}
             disabled={pending !== null}
             onCheckedChange={onReadBackChange}
           />
