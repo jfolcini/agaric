@@ -389,7 +389,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // `set_due_date` / `set_scheduled_date` OPS, which is what a query step over
   // a materialized table needs.
   list_projected_agenda:
-    'mock handler is a stub; covered by `e2e-tauri/agenda-projected-repeat.e2e.ts`',
+    'mock handler is a stub; covered by `e2e/agenda-projected-repeat.spec.ts` on the bridge',
   // #4886 — same clock, one level up: the report CARRIES `today`, the local
   // date the projected-agenda rebuild is pinned to, so a backend-authored
   // `expected` binds the day it was generated on. And the subject is the
