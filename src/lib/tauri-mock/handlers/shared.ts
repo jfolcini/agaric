@@ -576,7 +576,8 @@ export function assertValidSetPropertyValue(
  * (`block_ops.rs`): a list has an item, none of them blank; a definition that
  * holds a list takes one, and so does an undeclared key the app does not keep
  * for itself; and each item is held to the definition's type as a single
- * value is.
+ * value is. A tag's `tag_properties` (#6755) takes a list of keys a user can
+ * set: neither a built-in nor one the app keeps for itself.
  */
 export function assertValidListValue(
   key: string,
@@ -587,6 +588,7 @@ export function assertValidListValue(
   if (list.some((item) => typeof item === 'string' && item.replace(RUST_TRIM, '') === '')) {
     throw validationRejection('set_property.value_list.item_empty')
   }
+  if (key === 'tag_properties') return assertTagPropertiesList(list)
   if (def === undefined && !INTERNAL_PROPERTY_KEYS.has(key)) return
   if (def?.['multiple'] !== true) {
     throw validationRejection(`Property '${key}' holds one value, not a list.`)
@@ -611,6 +613,22 @@ export function assertValidListValue(
     if (options !== null && typeof item === 'string' && !options.includes(item)) {
       throw validationRejection(
         `Property '${key}' value '${item}' is not in allowed options: ${options.join(', ')}`,
+      )
+    }
+  }
+}
+
+/** `validate_tag_properties` (`block_ops.rs`, #6755): each item a key a user can set. */
+function assertTagPropertiesList(list: readonly unknown[]): void {
+  for (const item of list) {
+    const fits =
+      typeof item === 'string' &&
+      /^[A-Za-z0-9_-]{1,64}$/.test(item) &&
+      !INTERNAL_PROPERTY_KEYS.has(item) &&
+      !BUILTIN_PROPERTY_DEFS.some((d) => d.key === item)
+    if (!fits) {
+      throw validationRejection(
+        `Property 'tag_properties' lists property keys a user can set, got the item ${JSON.stringify(item)}.`,
       )
     }
   }

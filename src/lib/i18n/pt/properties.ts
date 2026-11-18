@@ -561,4 +561,30 @@ export const properties: Record<string, string> = {
   'filter.dimension.tag.description': 'Corresponde a blocos com uma etiqueta específica (#tag)',
   'filter.dimension.property.description':
     'Corresponde a um par chave/valor de propriedade personalizada',
+
+  'property.suggestedFrom': 'de #{{tag}}',
+  'tagProperties.title': 'Propriedades para blocos etiquetados',
+  'tagProperties.description':
+    'Os blocos com esta etiqueta recebem estas propriedades como linhas vazias.',
+  'tagProperties.removeKey': 'Remover {{key}}',
+  'tagProperties.keyAdded': 'Os blocos com esta etiqueta agora recebem {{key}}',
+  'tagProperties.keyRemoved': 'Os blocos com esta etiqueta já não recebem {{key}}',
+  'tagProperties.loadFailed': 'Falha ao carregar as propriedades para blocos etiquetados',
+  'tagProperties.saveFailed': 'Falha ao guardar as propriedades para blocos etiquetados',
+  'tagProperties.setTitle': 'Definir nos blocos etiquetados',
+  'tagProperties.keyLabel': 'Propriedade a definir',
+  'tagProperties.includeNested': 'Também blocos com etiquetas aninhadas',
+  'tagProperties.overwrite': 'Substituir valores existentes',
+  'tagProperties.setButton': 'Definir nos blocos etiquetados…',
+  'tagProperties.valueNeeded': 'Introduza primeiro um valor',
+  'tagProperties.nothingToSet': 'Nenhum bloco etiquetado precisa de {{key}}',
+  'tagProperties.confirmTitle': 'Definir {{key}} nos blocos etiquetados?',
+  'tagProperties.confirmDescription': 'Blocos que o vão receber: {{added}}.',
+  'tagProperties.confirmWithOverwrite':
+    'Blocos que o vão receber: {{added}}. Valores que vão mudar: {{changed}}.',
+  'tagProperties.confirmButton': 'Definir',
+  'tagProperties.setDone': '{{key}} definido em blocos etiquetados: {{n}}',
+  'tagProperties.countsChanged':
+    'Os blocos etiquetados mudaram entretanto; verifique as novas contagens',
+  'tagProperties.setFailed': 'Falha ao definir a propriedade nos blocos etiquetados',
 }

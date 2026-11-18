@@ -13,6 +13,7 @@ import type {
   PropertyMergeCounts,
   PropertyTypeChangeCounts,
   PropertyUnfitCounts,
+  TaggedWriteCounts,
   UnfitMoveCounts,
   UnfitValueReplacement,
 } from '@/lib/bindings'
@@ -23,7 +24,7 @@ import {
   SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
-import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { emitEvent } from '@/lib/tauri-mock/events'
 import { blocksHandlers, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
 import {
@@ -45,6 +46,8 @@ import {
   returnEmptyPage,
   validationRejection,
   readActiveSpaceScope,
+  refInclusiveTags,
+  tagAndNestedIds,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
@@ -53,6 +56,7 @@ import {
   parsePropertyDefOptions,
   previewPropertyMerge,
   refuseBuiltinKey,
+  refuseInternalKey,
   renamePropertyKey,
   renamePropertyOption,
   validatePropertyDefShape,
@@ -87,7 +91,7 @@ import {
   spacePropertyDefs,
   todayDate,
 } from '@/lib/tauri-mock/seed'
-import { leaveForSpace, rankArrivals } from '@/lib/tauri-mock/space-move'
+import { MAX_REVERT_OPS, leaveForSpace, rankArrivals } from '@/lib/tauri-mock/space-move'
 
 /** A block id as it is stored: `BlockId::from_string(s)` answering `s` itself. */
 const CANONICAL_ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
@@ -466,7 +470,7 @@ function checkedListValue(
 ): unknown[] | null {
   const listDef = propertyDefinition(defSpace, key)
   if (valueList === null) {
-    if (valueCount === 1 && listDef?.['multiple'] === true) {
+    if (valueCount === 1 && (listDef?.['multiple'] === true || key === 'tag_properties')) {
       throw validationRejection(`Property '${key}' holds a list; set it with value_list.`)
     }
     return null
@@ -502,6 +506,127 @@ function writeTypedPropertyRow(
   })
   const b = blocks.get(blockId)
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+}
+
+/**
+ * #6755 — the tag page's set (`tagged_rows`, `commands/tag_properties.rs`):
+ * live pages and content blocks of the tag's space carrying it (or, with
+ * `includeNested`, a tag named under it) attached or inline, neither under a
+ * template page nor a saved view.
+ */
+function taggedBlockIds(tagId: string, includeNested: boolean): string[] {
+  const tag = blocks.get(tagId)
+  const tagIds = includeNested ? tagAndNestedIds(tagId) : new Set([tagId])
+  return [...blocks.values()]
+    .filter((b) => {
+      const id = b['id'] as string
+      return (
+        (b['block_type'] === 'page' || b['block_type'] === 'content') &&
+        b['deleted_at'] == null &&
+        tag !== undefined &&
+        ownerSpaceOf(b) === ownerSpaceOf(tag) &&
+        !properties.get(b['page_id'] as string)?.has('template') &&
+        !properties.get(id)?.has('saved_view') &&
+        [...refInclusiveTags(id)].some((t) => tagIds.has(t))
+      )
+    })
+    .map((b) => b['id'] as string)
+    .toSorted(compareUtf8Bytes)
+}
+
+/** Whether `blockId`'s row under `key` holds exactly the typed values `v`. */
+function holdsValue(blockId: string, key: string, v: SetPropertyValues): boolean {
+  const row = properties.get(blockId)?.get(key)
+  if (!row) return false
+  const bool = v.valueBool === null ? null : v.valueBool ? 1 : 0
+  return (
+    (row['value_text'] ?? null) === v.valueText &&
+    (row['value_num'] ?? null) === v.valueNum &&
+    (row['value_date'] ?? null) === v.valueDate &&
+    (row['value_ref'] ?? null) === v.valueRef &&
+    (row['value_bool'] ?? null) === bool &&
+    JSON.stringify(row['value_list'] ?? null) === JSON.stringify(v.valueList)
+  )
+}
+
+/** `plan` (`commands/tag_properties.rs`): the checked value and the blocks it writes. */
+function planTaggedWrite(write: Record<string, unknown>) {
+  const tagId = write['tag_id'] as string
+  const key = write['key'] as string
+  refuseBuiltinKey(key)
+  refuseInternalKey(key)
+  const tag = blocks.get(tagId)
+  if (tag?.['block_type'] !== 'tag' || tag['deleted_at'] != null) {
+    throw notFoundRejection(`tag '${tagId}' does not exist`)
+  }
+  const defSpace = ownerSpaceOf(tag)
+  const v = readSetPropertyValues(write['value'] as Record<string, unknown> | undefined)
+  assertValidSetPropertyValue(defSpace, key, v.valueText)
+  const valueCount = Object.values(v).filter((x) => x !== null).length
+  if (valueCount !== 1) {
+    throw validationRejection(
+      `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
+    )
+  }
+  v.valueList = checkedListValue(defSpace, tagId, key, v.valueList, valueCount)
+  if (v.valueDate !== null) assertValidDateFormat(v.valueDate)
+  const counts = { added: 0, changed: 0 }
+  const targets: string[] = []
+  for (const id of taggedBlockIds(tagId, write['include_nested'] === true)) {
+    if (!properties.get(id)?.has(key)) counts.added += 1
+    else if (write['overwrite'] === true && !holdsValue(id, key, v)) counts.changed += 1
+    else continue
+    targets.push(id)
+  }
+  return { key, v, counts, targets }
+}
+
+/** The keys `list_suggested_properties_inner` offers `blockId`, each once. */
+function suggestedProperties(blockId: string): Record<string, string>[] {
+  const block = blocks.get(blockId)
+  if (
+    !block ||
+    block['deleted_at'] != null ||
+    properties.get(block['page_id'] as string)?.has('template') ||
+    properties.get(blockId)?.has('saved_view')
+  ) {
+    return []
+  }
+  const direct = [...refInclusiveTags(blockId)]
+    .map((id) => blocks.get(id))
+    .filter((t) => t?.['block_type'] === 'tag' && t['deleted_at'] == null)
+  const givers = [...blocks.values()].filter(
+    (g) =>
+      g['block_type'] === 'tag' &&
+      g['deleted_at'] == null &&
+      direct.some(
+        (d) =>
+          d !== undefined &&
+          ownerSpaceOf(g) === ownerSpaceOf(d) &&
+          (g['id'] === d['id'] ||
+            foldAsciiUppercase(d['content'] as string).startsWith(
+              foldAsciiUppercase(`${g['content'] as string}/`),
+            )),
+      ),
+  )
+  givers.sort(
+    (a, b) =>
+      compareUtf8Bytes(
+        foldAsciiUppercase(a['content'] as string),
+        foldAsciiUppercase(b['content'] as string),
+      ) || compareUtf8Bytes(a['id'] as string, b['id'] as string),
+  )
+  const seen = new Set<string>()
+  const rows: Record<string, string>[] = []
+  for (const g of givers) {
+    const list = properties.get(g['id'] as string)?.get('tag_properties')?.['value_list']
+    for (const key of Array.isArray(list) ? list : []) {
+      if (typeof key !== 'string' || seen.has(key) || properties.get(blockId)?.has(key)) continue
+      seen.add(key)
+      rows.push({ key, tag_id: g['id'] as string, tag_name: g['content'] as string })
+    }
+  }
+  return rows
 }
 
 export const propertiesHandlers = {
@@ -1312,6 +1437,43 @@ export const propertiesHandlers = {
     )
   },
 
+  // #6755 — `commands/tag_properties.rs`.
+  list_suggested_properties: (args) =>
+    suggestedProperties((args as Record<string, unknown>)['blockId'] as string),
+
+  preview_set_property_on_tagged_blocks: (args) =>
+    planTaggedWrite((args as Record<string, unknown>)['write'] as Record<string, unknown>).counts,
+
+  set_property_on_tagged_blocks: (args) => {
+    const a = args as Record<string, unknown>
+    const { key, v, counts, targets } = planTaggedWrite(a['write'] as Record<string, unknown>)
+    const acknowledged = a['acknowledged'] as TaggedWriteCounts
+    if (counts.added !== acknowledged.added || counts.changed !== acknowledged.changed) {
+      throw appErrorRejection({
+        kind: 'validation',
+        code: 'UnacknowledgedPropertyLoss',
+        message: `${counts.added} block(s) would now get '${key}' and ${counts.changed} value(s) would change; look again`,
+      })
+    }
+    if (targets.length > MAX_REVERT_OPS) {
+      throw validationRejection(
+        `setting '${key}' on ${targets.length} blocks is more than one undo can take back (maximum is ${MAX_REVERT_OPS})`,
+      )
+    }
+    const opRefs = targets.map((id) => {
+      const op = writePropertyRow(id, key, {
+        value_text: v.valueText,
+        value_num: v.valueNum,
+        value_date: v.valueDate,
+        value_ref: v.valueRef,
+        value_bool: v.valueBool === null ? null : v.valueBool ? 1 : 0,
+        ...listField({ value_list: v.valueList }),
+      })
+      return { device_id: op.device_id, seq: op.seq }
+    })
+    return { ...counts, op_refs: opRefs }
+  },
+
   // ---------------------------------------------------------------------------
   // Peer name update
   // ---------------------------------------------------------------------------
@@ -1411,6 +1573,9 @@ export const propertiesHandlers = {
   | 'convert_unfit_property_values'
   | 'preview_unfit_property_move'
   | 'move_unfit_property_values'
+  | 'list_suggested_properties'
+  | 'preview_set_property_on_tagged_blocks'
+  | 'set_property_on_tagged_blocks'
   | 'list_projected_agenda'
   | 'notify_task'
   | 'get_reminder_settings'

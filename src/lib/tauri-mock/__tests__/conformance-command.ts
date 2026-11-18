@@ -154,6 +154,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
   },
   add_unfit_values_to_options: { idKey: 'key', attrs: PROPERTY_DEF_ATTRS, lists: [] },
+  // #6755 — a set on a tag's blocks answers how many got the value and how many changed.
+  set_property_on_tagged_blocks: { idKey: HEADED_ID_KEY, attrs: ['added', 'changed'], lists: [] },
   // #5057 — the draft writers answer with `()`, so their whole record is the
   // refusal declaration plus a head naming which one ran. `flush_all_drafts`
   // adds the one field a caller can see: how many rows it CONSUMED, which

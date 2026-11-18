@@ -188,6 +188,10 @@ async fn expand_op_args(
             }
         }
     }
+    // `set_property_on_tagged_blocks`'s one `write` object (#6755).
+    if let Some(Value::Object(write)) = out.get_mut("write") {
+        resolve_key(write, "tag_id", created_ids);
+    }
     // `set_property`'s value bundle: only a `value_ref` names a block. A
     // `value_list` item is sent as written, so a list of refs spells its ids.
     if let Some(Value::Object(value)) = out.get_mut("value") {

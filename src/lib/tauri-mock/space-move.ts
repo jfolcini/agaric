@@ -24,7 +24,7 @@ import { setPageGroupSpace } from '@/lib/tauri-mock/revert'
 import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
 /** `MAX_REVERT_OPS` (`commands/history.rs`): the ops one undo reverts. */
-const MAX_REVERT_OPS = 1000
+export const MAX_REVERT_OPS = 1000
 
 /** One value a move drops, shaped as `list_property_loss_values` answers it. */
 export type LossValue = Record<string, unknown> & { block_id: string; key: string }

@@ -217,6 +217,10 @@ macro_rules! agaric_commands {
             $crate::commands::property_unfit::convert_unfit_property_values,
             $crate::commands::property_unfit::preview_unfit_property_move,
             $crate::commands::property_unfit::move_unfit_property_values,
+            // #6755: a tag's suggested properties, and a value set on its blocks, one undo.
+            $crate::commands::tag_properties::list_suggested_properties,
+            $crate::commands::tag_properties::preview_set_property_on_tagged_blocks,
+            $crate::commands::tag_properties::set_property_on_tagged_blocks,
             // Sync
             $crate::commands::sync_cmds::list_peer_refs,
             $crate::commands::sync_cmds::delete_peer_ref,

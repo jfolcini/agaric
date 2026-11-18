@@ -160,6 +160,10 @@ vi.mock('@/components/pages/PagesTreeSection', () => ({
   },
 }))
 
+vi.mock('@/components/pages/TagPropertiesSection', () => ({
+  TagPropertiesSection: () => <div data-testid="tag-properties" />,
+}))
+
 vi.mock('@/components/pages/TaggedItemsSection', () => ({
   TaggedItemsSection: (props: { tagId: string }) => (
     <div data-testid="tagged-items" data-tag-id={props.tagId} />

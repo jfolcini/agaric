@@ -416,6 +416,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
+/** The one-object args that name blocks: `add_meeting`'s `input`, the tagged write's `write`. */
+function expandObjectArgs(out: Record<string, unknown>, createdIds: readonly string[]): void {
+  if (isPlainObject(out['input'])) out['input'] = expandMeetingInput(out['input'], createdIds)
+  if (isPlainObject(out['write'])) out['write'] = expandTaggedWrite(out['write'], createdIds)
+}
+
+/** #6755 — `set_property_on_tagged_blocks`'s one `write` object names its tag. */
+function expandTaggedWrite(
+  write: Record<string, unknown>,
+  createdIds: readonly string[],
+): Record<string, unknown> {
+  const tagId = write['tag_id']
+  return typeof tagId === 'string' ? { ...write, tag_id: resolveOpArgId(tagId, createdIds) } : write
+}
+
 /**
  * #5364 — `add_meeting` takes one `input` object: its space and its two block
  * ids are labels, as the scalar keys are.
@@ -498,7 +513,7 @@ export function expandOpArgs(
       }
     }
   }
-  if (isPlainObject(out['input'])) out['input'] = expandMeetingInput(out['input'], createdIds)
+  expandObjectArgs(out, createdIds)
   if (isPlainObject(out['request'])) {
     out['request'] = expandSplitMergeRequest(out['request'], createdIds)
   }

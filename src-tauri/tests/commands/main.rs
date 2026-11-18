@@ -68,5 +68,6 @@ mod split_merge_cmd_tests;
 mod status_cmd_tests;
 mod sync_cmd_tests;
 mod tag_cmd_tests;
+mod tag_properties_cmd_tests;
 mod toggle_filter_tests;
 mod undo_redo_tests;

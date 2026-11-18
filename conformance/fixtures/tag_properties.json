@@ -1,0 +1,490 @@
+{
+  "description": "#6755 — a tag's `tag_properties`: a list of keys a user can set (a built-in is refused), offered on the blocks directly tagged with the tag or with one its name nests under, minus the keys a block holds (`list_suggested_properties`); `set_property_on_tagged_blocks` sets a value on the tag's blocks (nested tags included, held values overwritten) as one `set_property` per block, refused when the acknowledged counts are stale (`UnacknowledgedPropertyLoss`), leaving the Trash be, and one `undo_ops` of its ops puts every block back. Seed: page S1 holds S2 tagged `book` (S5), S3 tagged `book` holding `stage` = draft after O6, S4 tagged `book/novel` (S6), and S7 tagged `book`, trashed by O5. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B5"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B5"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B7",
+        "tag_id": "B5"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Shelf",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "held",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "nested",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "book",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "book/novel",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 14,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "tag_properties",
+          "op_type": "set_property"
+        },
+        {
+          "key": "tag_properties",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "stage",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "tag_properties",
+        "value": ["stage", "isbn"],
+        "value_type": "List"
+      },
+      {
+        "block_id": "B6",
+        "key": "tag_properties",
+        "value": ["pages"],
+        "value_type": "List"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_builtin_key_is_refused",
+      "returns": []
+    },
+    {
+      "code": "UnacknowledgedPropertyLoss",
+      "error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "set_final_on_tagged_blocks",
+      "returns": ["set_property_on_tagged_blocks#added=2#changed=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_set",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false",
+        "undo_ops#reversed_op_type=set_property#new_op_type=set_property#is_redo=false",
+        "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "bare_block_is_offered_books_keys",
+      "rows": ["stage#tag_id=B5#tag_name=book", "isbn#tag_id=B5#tag_name=book"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "held_key_is_not_offered",
+      "rows": ["isbn#tag_id=B5#tag_name=book"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "nested_tag_offers_its_parents_keys",
+      "rows": [
+        "stage#tag_id=B5#tag_name=book",
+        "isbn#tag_id=B5#tag_name=book",
+        "pages#tag_id=B6#tag_name=book/novel"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "counts_after_the_undo",
+      "rows": ["tagged_write_counts#added=2#changed=1"],
+      "total_count": null
+    }
+  ],
+  "name": "tag_properties",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "delete_block",
+      "comment": "O5 — a trashed block is left be (O1–O4 are the seed's tags)."
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "stage",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property",
+      "comment": "O6"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "tag_properties",
+        "value": {
+          "value_list": ["stage", "isbn"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O7 — `book` offers `stage` and `isbn`."
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "tag_properties",
+        "value": {
+          "value_list": ["pages"]
+        }
+      },
+      "command": "set_property",
+      "comment": "O8 — `book/novel` offers `pages`, and `book`'s keys through its name."
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "tag_properties",
+        "value": {
+          "value_list": ["due_date"]
+        }
+      },
+      "command": "set_property",
+      "comment": "A built-in is not a key a tag offers.",
+      "expect_error": "validation",
+      "name": "a_builtin_key_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "added": 1,
+          "changed": 0
+        },
+        "write": {
+          "include_nested": true,
+          "key": "stage",
+          "overwrite": true,
+          "tag_id": "S5",
+          "value": {
+            "value_text": "final"
+          }
+        }
+      },
+      "command": "set_property_on_tagged_blocks",
+      "comment": "S2 and S4 lack `stage`, S3 holds another value.",
+      "expect_code": "UnacknowledgedPropertyLoss",
+      "expect_error": "validation",
+      "name": "a_stale_acknowledgement_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "acknowledged": {
+          "added": 2,
+          "changed": 1
+        },
+        "write": {
+          "include_nested": true,
+          "key": "stage",
+          "overwrite": true,
+          "tag_id": "S5",
+          "value": {
+            "value_text": "final"
+          }
+        }
+      },
+      "command": "set_property_on_tagged_blocks",
+      "comment": "O9–O11 — `final` on S2, S3 and S4; the trashed S7 is left be.",
+      "name": "set_final_on_tagged_blocks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O9", "O10", "O11"]
+      },
+      "command": "undo_ops",
+      "comment": "O12–O14 — one undo: S2 and S4 lose `stage`, S3 has `draft` back.",
+      "name": "undo_the_set",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_suggested_properties",
+      "comment": "`book`'s keys.",
+      "name": "bare_block_is_offered_books_keys"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "list_suggested_properties",
+      "comment": "`stage` is held.",
+      "name": "held_key_is_not_offered"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "list_suggested_properties",
+      "comment": "`book`'s keys pass on to `book/novel`, then its own.",
+      "name": "nested_tag_offers_its_parents_keys"
+    },
+    {
+      "args": {
+        "write": {
+          "include_nested": true,
+          "key": "stage",
+          "overwrite": true,
+          "tag_id": "S5",
+          "value": {
+            "value_text": "final"
+          }
+        }
+      },
+      "command": "preview_set_property_on_tagged_blocks",
+      "comment": "After the undo the counts are the first set's again.",
+      "name": "counts_after_the_undo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Shelf",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "bare",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "held",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "nested",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "tag",
+        "content": "book",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "book/novel",
+        "id": "S6",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "trashed",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"draft\",\"final\"]",
+        "value_type": "select"
+      }
+    ],
+    "tags": [
+      {
+        "block_id": "S2",
+        "tag_id": "S5"
+      },
+      {
+        "block_id": "S3",
+        "tag_id": "S5"
+      },
+      {
+        "block_id": "S4",
+        "tag_id": "S6"
+      },
+      {
+        "block_id": "S7",
+        "tag_id": "S5"
+      }
+    ]
+  }
+}

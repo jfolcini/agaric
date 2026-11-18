@@ -569,4 +569,30 @@ export const properties: Record<string, string> = {
   'filter.dimension.createdDate.description': 'Date de création du bloc',
   'filter.dimension.tag.description': 'Trouve les blocs portant une étiquette (#tag) précise',
   'filter.dimension.property.description': 'Trouve une paire clé/valeur de propriété personnalisée',
+
+  'property.suggestedFrom': 'de #{{tag}}',
+  'tagProperties.title': 'Propriétés des blocs étiquetés',
+  'tagProperties.description':
+    'Ces propriétés sont proposées, en lignes vides, aux blocs portant cette étiquette.',
+  'tagProperties.removeKey': 'Retirer {{key}}',
+  'tagProperties.keyAdded': '{{key}} est désormais proposée aux blocs portant cette étiquette',
+  'tagProperties.keyRemoved': '{{key}} n’est plus proposée aux blocs portant cette étiquette',
+  'tagProperties.loadFailed': 'Échec du chargement des propriétés des blocs étiquetés',
+  'tagProperties.saveFailed': 'Échec de l’enregistrement des propriétés des blocs étiquetés',
+  'tagProperties.setTitle': 'Définir sur les blocs étiquetés',
+  'tagProperties.keyLabel': 'Propriété à définir',
+  'tagProperties.includeNested': 'Aussi les blocs portant des étiquettes imbriquées',
+  'tagProperties.overwrite': 'Écraser les valeurs existantes',
+  'tagProperties.setButton': 'Définir sur les blocs étiquetés…',
+  'tagProperties.valueNeeded': 'Saisissez d’abord une valeur',
+  'tagProperties.nothingToSet': 'Aucun bloc étiqueté n’a besoin de {{key}}',
+  'tagProperties.confirmTitle': 'Définir {{key}} sur les blocs étiquetés ?',
+  'tagProperties.confirmDescription': 'Blocs qui la recevront : {{added}}.',
+  'tagProperties.confirmWithOverwrite':
+    'Blocs qui la recevront : {{added}}. Valeurs qui changeront : {{changed}}.',
+  'tagProperties.confirmButton': 'Définir',
+  'tagProperties.setDone': '{{key}} défini sur les blocs étiquetés : {{n}}',
+  'tagProperties.countsChanged':
+    'Les blocs étiquetés ont changé entre-temps ; vérifiez les nouveaux décomptes',
+  'tagProperties.setFailed': 'Échec de la définition de la propriété sur les blocs étiquetés',
 }

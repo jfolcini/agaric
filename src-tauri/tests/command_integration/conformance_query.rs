@@ -1742,6 +1742,43 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 &|row| row_token(row, "block_id", &["page_id", "deleted", "value", "form"]),
             )
         }
+        // ── A tag's suggested properties (#6755) ──
+        //
+        // `key#tag_id=<id>#tag_name=<name>` per key the block is offered, in
+        // the order offered.
+        "list_suggested_properties" => {
+            let rows = list_suggested_properties_inner(pool, arg_req(args, "blockId")).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<SuggestedProperty>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| row_token(r, "key", &["tag_id", "tag_name"]))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        // One headed row, `tagged_write_counts#added=<n>#changed=<n>`.
+        "preview_set_property_on_tagged_blocks" => {
+            let counts =
+                preview_set_property_on_tagged_blocks_inner(pool, arg_req(args, "write")).await?;
+            let v = serde_json::to_value(counts).expect("serialize TaggedWriteCounts");
+            RawResult {
+                rows: vec![format!(
+                    "tagged_write_counts#added={}#changed={}",
+                    attr_value("added", v.get("added")),
+                    attr_value("changed", v.get("changed")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // Grouped by the value as shown and paged by it, each with its live
         // and trashed counts.
         "list_distinct_unfit_property_values" => {
@@ -3273,7 +3310,13 @@ mod reader_delegation_tests {
     // (`commands/queries.rs`) and one `query!` SELECT over `block_links`,
     // `block_links_unresolved` and `blocks` behind `PageRequest::new`
     // (`agaric-store/src/pagination/links.rs`). Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 72;
+    // #6755 wired `list_suggested_properties` and
+    // `preview_set_property_on_tagged_blocks`: one `query_as!` SELECT each
+    // over `blocks`, `block_tags`, `block_tag_refs` and `block_properties`
+    // (`commands/tag_properties.rs`), the preview after a `blocks` and a
+    // `property_definitions` lookup. The write it previews is
+    // `set_property_on_tagged_blocks`, not a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 74;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

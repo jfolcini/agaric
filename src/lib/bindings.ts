@@ -593,6 +593,15 @@ export const commands = {
 	 *  carries the op ref.
 	 */
 	moveUnfitPropertyValues: (spaceId: SpaceId, key: string, intoKey: string, acknowledged: UnfitMoveCounts) => typedError<WithOps<UnfitMoveCounts>, AppError>(__TAURI_INVOKE("move_unfit_property_values", { spaceId, key, intoKey, acknowledged })),
+	/**  Tauri command: [`list_suggested_properties_inner`]. */
+	listSuggestedProperties: (blockId: BlockId) => typedError<SuggestedProperty[], AppError>(__TAURI_INVOKE("list_suggested_properties", { blockId })),
+	/**  Tauri command: [`preview_set_property_on_tagged_blocks_inner`]. */
+	previewSetPropertyOnTaggedBlocks: (write: TaggedBlocksWrite) => typedError<TaggedWriteCounts, AppError>(__TAURI_INVOKE("preview_set_property_on_tagged_blocks", { write })),
+	/**
+	 *  Tauri command: [`set_property_on_tagged_blocks_inner`], with the refs of
+	 *  the ops it appended for the toast's Undo.
+	 */
+	setPropertyOnTaggedBlocks: (write: TaggedBlocksWrite, acknowledged: TaggedWriteCounts) => typedError<WithOps<TaggedWriteCounts>, AppError>(__TAURI_INVOKE("set_property_on_tagged_blocks", { write, acknowledged })),
 	/**  Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`]. */
 	listPeerRefs: () => typedError<PeerRef[], AppError>(__TAURI_INVOKE("list_peer_refs")),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
@@ -5371,6 +5380,16 @@ export type StatusInfo = {
 	audit_ingest_last_stall: AuditIngestStall | null,
 };
 
+/**
+ *  A key a block is offered because a tag it carries lists it: `tag_id` is the
+ *  tag that lists it, the block's own or one its name nests under.
+ */
+export type SuggestedProperty = {
+	key: string,
+	tag_id: string,
+	tag_name: string,
+};
+
 /**  A [`SyncEvent::Error`] the frontend explains in its own words (#5728). */
 export type SyncErrorCode = 
 /**
@@ -5862,6 +5881,29 @@ export type TagFilterExpr = {
 export type TagResponse = {
 	block_id: string,
 	tag_id: string,
+};
+
+/**
+ *  A value to set on the blocks tagged with `tag_id`: those tagged with a tag
+ *  nested under it too when `include_nested`, and over the values they hold
+ *  when `overwrite`.
+ */
+export type TaggedBlocksWrite = {
+	tag_id: BlockId,
+	key: string,
+	value: SetPropertyArgs,
+	include_nested?: boolean,
+	overwrite?: boolean,
+};
+
+/**
+ *  What a [`TaggedBlocksWrite`] does: `added` blocks get the value, which they
+ *  lack; `changed` blocks hold another value, which it replaces (none without
+ *  `overwrite`).
+ */
+export type TaggedWriteCounts = {
+	added: number,
+	changed: number,
 };
 
 /**

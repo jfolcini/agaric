@@ -894,10 +894,10 @@ pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 15] = [
 /// the template markers, the image layout, a migration marker,
 /// `attachments`, the key a file writes a block's files under (#6277
 /// decision 9), `bookmark`, a page's place in the sidebar's bookmarks,
-/// and `saved_view`, which makes a page a saved view (#6544). With
-/// [`PDF_PLACE_KEYS`], mirrored by `INTERNAL_PROPERTY_KEYS` in
-/// `src/lib/block-utils.ts`.
-pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
+/// `saved_view`, which makes a page a saved view (#6544), and
+/// [`TAG_PROPERTIES_KEY`]. With [`PDF_PLACE_KEYS`], mirrored by
+/// `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`.
+pub const INTERNAL_PROPERTY_KEYS: [&str; 18] = [
     "repeat",
     "created_at",
     "completed_at",
@@ -915,7 +915,12 @@ pub const INTERNAL_PROPERTY_KEYS: [&str; 17] = [
     "attachments",
     "bookmark",
     "saved_view",
+    "tag_properties",
 ];
+
+/// The keys a tag's blocks are offered as empty rows (#6755): a list of user
+/// property keys on the tag block, the one internal key that holds a list.
+pub const TAG_PROPERTIES_KEY: &str = "tag_properties";
 
 /// A PDF highlight's or comment's place in its file (#6629), internal keys too.
 pub const PDF_PLACE_KEYS: [&str; 3] = ["pdf_attachment", "pdf_page", "pdf_boxes"];
@@ -937,6 +942,15 @@ pub fn builtin_property_def(key: &str) -> Option<&'static BuiltinPropertyDef> {
 /// intentionally **not** built in — users must be able to remove them.
 pub fn is_builtin_property_key(key: &str) -> bool {
     builtin_property_def(key).is_some()
+}
+
+/// Whether `key` is 1–64 characters of `[A-Za-z0-9_-]`, the property key
+/// alphabet.
+pub fn is_valid_property_key(key: &str) -> bool {
+    (1..=64).contains(&key.len())
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The schema allows multiple value columns (text, num, date, ref) but the
@@ -968,11 +982,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::
             p.key.len()
         )));
     }
-    if !p
-        .key
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !is_valid_property_key(&p.key) {
         return Err(agaric_core::error::AppError::validation(format!(
             "property key must contain only alphanumeric characters, hyphens, and underscores, got '{}'",
             p.key
@@ -2922,6 +2932,7 @@ mod tests {
             "bookmark",
             "saved_view",
             "pdf_page",
+            "tag_properties",
         ] {
             assert!(is_internal_property_key(key), "'{key}' is the app's own");
         }

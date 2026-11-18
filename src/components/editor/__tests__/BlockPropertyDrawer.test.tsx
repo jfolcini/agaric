@@ -99,6 +99,7 @@ function setupMock(
 ) {
   stubInvoke(mockedInvoke, {
     get_properties: () => props,
+    list_suggested_properties: () => [],
     list_property_defs: () => ({
       items: defs,
       next_cursor: null,
@@ -1727,5 +1728,36 @@ describe('BlockPropertyDrawer offers the user-set built-ins', () => {
 
     expect(await screen.findByText('Meeting Date')).toBeInTheDocument()
     expect(screen.queryByText('Repeat Until')).not.toBeInTheDocument()
+  })
+
+  // #6755 — a key the block's tag lists is an empty row labelled with the tag,
+  // written only once filled.
+  describe('suggested by a tag, against the real mock', () => {
+    const blockId = SEED_IDS.BLOCK_MTG_1
+
+    beforeEach(async () => {
+      seedBlocks()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      await dispatch('set_property', {
+        blockId: SEED_IDS.TAG_WORK,
+        key: 'tag_properties',
+        value: { value_list: ['isbn'] },
+      })
+    })
+
+    it('offers the key from its tag and writes it once filled', async () => {
+      const user = userEvent.setup()
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      expect(
+        await screen.findByText(t('property.suggestedFrom', { tag: 'work' })),
+      ).toBeInTheDocument()
+      expect(properties.get(blockId)?.has('isbn') ?? false).toBe(false)
+
+      await user.type(screen.getByLabelText(t('pageProperty.valueLabel', { key: 'isbn' })), '978')
+      await user.tab()
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('isbn')?.['value_text']).toBe('978')
+      })
+    })
   })
 })

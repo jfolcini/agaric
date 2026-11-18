@@ -59,6 +59,7 @@ beforeEach(() => {
       list_inherited_tags_for_block: () => [],
       list_all_tags_in_space: () => [],
       get_properties: () => [],
+      list_suggested_properties: () => [],
       list_property_defs: () => EMPTY_PAGE,
       get_page_aliases: () => [],
       query_by_property: () => EMPTY_PAGE,
