@@ -35,9 +35,26 @@ fn only_a_folder_with_more_unconfirmed_files_than_the_limit_is_a_mass_change() {
         .chain(files("B", MASS_CHANGE))
         .collect();
     assert_eq!(
-        mass_changed(&changed, &HashSet::new()),
+        mass_changed(&changed, &HashSet::new(), false),
         BTreeMap::from([("A", MASS_CHANGE + 1)])
     );
     let confirmed = HashSet::from(["A/0.md".to_owned()]);
-    assert_eq!(mass_changed(&changed, &confirmed), BTreeMap::new());
+    assert_eq!(mass_changed(&changed, &confirmed, false), BTreeMap::new());
+}
+
+#[test]
+fn in_an_adopted_folder_every_changed_file_counts_toward_the_folder_itself() {
+    // Three notes at the top and three in a subfolder: no subfolder passes
+    // the limit, but the adopted folder, one space's, does.
+    let changed: Vec<String> = ["a.md", "b.md", "c.md", "Sub/d.md", "Sub/e.md", "Sub/f.md"]
+        .map(str::to_owned)
+        .into();
+    assert_eq!(
+        mass_changed(&changed, &HashSet::new(), true),
+        BTreeMap::from([(".", MASS_CHANGE + 1)])
+    );
+    assert_eq!(
+        mass_changed(&changed, &HashSet::new(), false),
+        BTreeMap::new()
+    );
 }

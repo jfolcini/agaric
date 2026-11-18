@@ -1,6 +1,7 @@
 //! The outbound Markdown mirror (#5363 slice 1): every live page of every
 //! space written to a folder the user picks, as `<space>/<title>.md`, in the
-//! form [`get_page_file_inner`] renders, on desktop.
+//! form [`get_page_file_inner`] renders, on desktop; in a folder of notes
+//! adopted in place, one space's pages directly below it ([`adopt`]).
 //!
 //! One task polls every `TICK`. It writes the pages this device's own ops
 //! touched since its watermark, an `op_log` `seq` (never a timestamp: a
@@ -29,6 +30,7 @@
 //! outside every space's folder is never read, and holds its page when it is
 //! that page's file moved there (`Mirror::hold_outside_file`).
 
+pub mod adopt;
 pub mod assets;
 pub mod ingest;
 pub mod paths;
@@ -122,6 +124,9 @@ pub struct MirrorStatus {
     pub held: Vec<String>,
     /// The spaces not mirrored; every other one is, a new one included.
     pub unmirrored_spaces: Vec<String>,
+    /// The space whose folder the mirror's is, when a folder of notes was
+    /// adopted in place ([`adopt`]); `None` for a folder of space folders.
+    pub adopted_space: Option<String>,
 }
 
 /// Whether `root` holds nothing but hidden entries, as the mirror's marker.
@@ -173,6 +178,9 @@ struct Inner {
     /// The files the user chose to read in, which hold nothing while they
     /// stay changed.
     confirmed: HashSet<String>,
+    /// The folder's states were written outside the task, by an adoption:
+    /// the next tick loads them.
+    reload: bool,
 }
 
 impl MirrorState {
@@ -232,6 +240,17 @@ impl MirrorState {
         self.lock().start_fresh = false;
     }
 
+    /// Load the folder's states on the next tick, as [`adopt::adopt`] wrote
+    /// them, and start over there.
+    pub fn reload(&self) {
+        self.lock().reload = true;
+        self.restart();
+    }
+
+    fn take_reload(&self) -> bool {
+        std::mem::take(&mut self.lock().reload)
+    }
+
     /// Start over in a new folder: forget the old one's diverged and failed
     /// files, and whether it held reading back, and run a full pass on the
     /// next tick.
@@ -258,23 +277,24 @@ impl MirrorState {
     /// as when reading back was turned off. Whatever is about to act on files
     /// changed outside Agaric asks here first, once a tick, with all of them;
     /// none while the user chose not to be asked.
-    pub fn hold_mass_change(&self, changed: &[String]) -> bool {
+    pub fn hold_mass_change(&self, changed: &[String], adopted: bool) -> bool {
         let mut inner = self.lock();
         let now: HashSet<&str> = changed.iter().map(String::as_str).collect();
         // A choice lasts while its file stays changed.
         inner.confirmed.retain(|path| now.contains(path.as_str()));
-        let held: BTreeMap<String, String> = read_back::mass_changed(changed, &inner.confirmed)
-            .into_iter()
-            .map(|(folder, count)| {
-                let why = format!(
-                    "{count} of its files changed or vanished outside Agaric at once, more \
+        let held: BTreeMap<String, String> =
+            read_back::mass_changed(changed, &inner.confirmed, adopted)
+                .into_iter()
+                .map(|(folder, count)| {
+                    let why = format!(
+                        "{count} of its files changed or vanished outside Agaric at once, more \
                      than {}: nothing is read back until you turn reading changes back on and \
                      read them in, or turn off asking before reading in many changes",
-                    read_back::MASS_CHANGE
-                );
-                (folder.to_owned(), why)
-            })
-            .collect();
+                        read_back::MASS_CHANGE
+                    );
+                    (folder.to_owned(), why)
+                })
+                .collect();
         if inner.held.is_empty() && !held.is_empty() {
             tracing::warn!(?held, "the Markdown mirror holds reading back");
         }
@@ -310,6 +330,7 @@ impl MirrorState {
             ask_mass_change,
             unmirrored,
             restored: _,
+            adopted,
         } = settings;
         let on = folder.is_some();
         MirrorStatus {
@@ -369,6 +390,7 @@ impl MirrorState {
             ask_mass_change,
             held: inner.held.keys().filter(|_| on).cloned().collect(),
             unmirrored_spaces: unmirrored,
+            adopted_space: adopted.map(|adoption| adoption.space_id),
         }
     }
 
@@ -616,6 +638,8 @@ pub struct Mirror {
     copy_failed: BTreeMap<String, String>,
     /// The spaces neither written nor read, as of this tick.
     unmirrored: HashSet<String>,
+    /// The folder's adoption as one space's, as of this tick.
+    adoption: Option<store::Adoption>,
     /// What the mirror learned of the folder it writes, forgotten for another.
     seen: Seen,
     #[cfg(test)]
@@ -784,6 +808,7 @@ impl Mirror {
             unrendered: false,
             copy_failed: BTreeMap::new(),
             unmirrored: HashSet::new(),
+            adoption: None,
             #[cfg(test)]
             races: Races::default(),
         })
@@ -919,10 +944,13 @@ impl Mirror {
             return Ok(Vec::new());
         }
         let spaces = self.space_folders().await?;
+        // An adopted folder is one space's: every file below it is mirrored.
         let mirrored = |path: &str| {
-            path.split_once('/')
-                .and_then(|(folder, _)| spaces.get(folder))
-                .is_some_and(|space| !self.unmirrored.contains(space))
+            self.adoption.is_some()
+                || path
+                    .split_once('/')
+                    .and_then(|(folder, _)| spaces.get(folder))
+                    .is_some_and(|space| !self.unmirrored.contains(space))
         };
         Ok(files
             .into_iter()
@@ -943,7 +971,9 @@ impl Mirror {
         } else {
             Vec::new()
         };
-        Ok(self.state.hold_mass_change(&changed))
+        Ok(self
+            .state
+            .hold_mass_change(&changed, self.adoption.is_some()))
     }
 
     /// Each space's id, mirrored or not, by its folder below the mirror's.
@@ -959,6 +989,29 @@ impl Mirror {
             .collect())
     }
 
+    /// Take this tick's `settings`: whether files are read back and copied,
+    /// the adoption, and the spaces not mirrored, which are taken out.
+    fn follow(&mut self, settings: &mut store::Settings) {
+        self.read_back = settings.read_back;
+        // An adopted folder is the user's own: no copy folders are made in it.
+        let copy_files = settings.copy_files && settings.adopted.is_none();
+        if copy_files != self.copy_files {
+            // Every page's links change, and the copies go or come.
+            self.copy_files = copy_files;
+            self.full_due = true;
+        }
+        self.adoption = settings.adopted.take();
+        let unmirrored: HashSet<String> = std::mem::take(&mut settings.unmirrored)
+            .into_iter()
+            .collect();
+        if unmirrored != self.unmirrored {
+            // A file refused because its space was off is read again.
+            self.seen.refused_new.clear();
+            self.seen.refused_renames.clear();
+            self.unmirrored = unmirrored;
+        }
+    }
+
     /// Write what changed since the last tick, or every page when a full pass
     /// is due; nothing while the mirror is off or paused.
     ///
@@ -970,20 +1023,8 @@ impl Mirror {
     pub async fn tick(&mut self) -> Result<(), AppError> {
         // Off or paused, the watermark stays put: the pass that resumes is a
         // full one.
-        let settings = store::settings(&self.pool).await?;
-        self.read_back = settings.read_back;
-        if settings.copy_files != self.copy_files {
-            // Every page's links change, and the copies go or come.
-            self.copy_files = settings.copy_files;
-            self.full_due = true;
-        }
-        let unmirrored: HashSet<String> = settings.unmirrored.into_iter().collect();
-        if unmirrored != self.unmirrored {
-            // A file refused because its space was off is read again.
-            self.seen.refused_new.clear();
-            self.seen.refused_renames.clear();
-            self.unmirrored = unmirrored;
-        }
+        let mut settings = store::settings(&self.pool).await?;
+        self.follow(&mut settings);
         let Some(folder) = settings.folder else {
             self.state.set_paused(None);
             self.full_due = true;
@@ -1002,7 +1043,8 @@ impl Mirror {
             self.forget_lost_copies().await?;
             self.state.started_fresh();
         }
-        if self.store.bind(&folder)? || fresh {
+        let reload = self.state.take_reload();
+        if self.store.bind(&folder)? || fresh || reload {
             self.forget_folder();
             self.pages = self.store.load()?;
         }
@@ -1107,10 +1149,15 @@ impl Mirror {
             return Ok(());
         }
         let by_folder = self.space_folders().await?;
+        let adopted = self.adoption.as_ref().map(|a| a.space_id.clone());
         for path in new {
-            let in_space = path
-                .split_once('/')
-                .and_then(|(folder, below)| Some((by_folder.get(folder)?, below)));
+            // An adopted folder is one space's: every file below it is its.
+            let in_space = match &adopted {
+                Some(space_id) => Some((space_id.clone(), path.as_str())),
+                None => path
+                    .split_once('/')
+                    .and_then(|(folder, below)| Some((by_folder.get(folder)?.clone(), below))),
+            };
             let Some((space_id, below)) = in_space else {
                 self.hold_outside_file(root, &path);
                 continue;
@@ -1120,7 +1167,7 @@ impl Mirror {
                 continue;
             }
             if !self
-                .read_new_file(root, &ingest, space_id, &title, &path)
+                .read_new_file(root, &ingest, &space_id, &title, &path)
                 .await?
             {
                 return Ok(());
@@ -1173,7 +1220,8 @@ impl Mirror {
         let Ok(Some(bytes)) = read else {
             return Ok(true);
         };
-        if !self.seen.new_file_settled(path, &bytes) {
+        let left_alone = (self.adoption.as_ref()).is_some_and(|a| a.leaves_alone(path, &bytes));
+        if left_alone || !self.seen.new_file_settled(path, &bytes) {
             return Ok(true);
         }
         if let Some(why) = pause_reason(root, &self.device_id) {
@@ -1466,11 +1514,12 @@ impl Mirror {
             .into_iter()
             .map(|space| (space.id, space.name))
             .collect();
+        let adopted = self.adoption.as_ref().map(|a| a.space_id.as_str());
         let mut pages = Vec::new();
-        for (space_id, _) in spaces
-            .iter()
-            .filter(|(id, _)| !self.unmirrored.contains(id))
-        {
+        for (space_id, _) in spaces.iter().filter(|(id, _)| match adopted {
+            Some(adopted) => id == adopted,
+            None => !self.unmirrored.contains(id),
+        }) {
             let listed =
                 crate::commands::pages::list_all_pages_in_space_inner(&self.pool, space_id, None)
                     .await?;
@@ -1480,7 +1529,15 @@ impl Mirror {
                 title: page.content.unwrap_or_default(),
             }));
         }
-        let mut paths = paths::layout(&spaces, &pages);
+        let mut paths = if adopted.is_some() {
+            let pinned = pages
+                .iter()
+                .filter_map(|page| Some((page.id.clone(), self.pages.get(&page.id)?.pin.clone()?)))
+                .collect();
+            paths::adopted_layout(&pages, &pinned)
+        } else {
+            paths::layout(&spaces, &pages)
+        };
         Ok(pages
             .into_iter()
             .filter_map(|page| Some((page.id.clone(), (paths.remove(&page.id)?, page.title))))
@@ -1560,6 +1617,9 @@ impl Mirror {
                     frozen.insert(id.clone());
                     continue;
                 }
+                // An adopted file is the user's own note: one whose page is
+                // gone goes to the OS trash, its folders kept.
+                Ok(Some(_)) if target.is_none() && state.pin.is_some() => to_os_trash(&old),
                 Ok(Some(_)) => remove_with_empty_folders(root, &old),
                 Ok(None) => Ok(()),
                 Err(e) => Err(e),
@@ -1676,6 +1736,9 @@ impl Mirror {
             Err(AppError::NotFound(_)) => return Ok(Wrote::Done),
             Err(e) => return Err(e),
         };
+        if self.adopted_unchanged(root, page_id, path, &file.buffer)? {
+            return Ok(Wrote::Done);
+        }
         // Each attachment linked to its copy while copying is on.
         let rendered = assets::linked(&file.text);
         let file = self
@@ -1758,6 +1821,33 @@ impl Mirror {
         }
     }
 
+    /// Whether the page was adopted with its file (#6540), or with none, and
+    /// neither has changed since: the page's buffer is `buffer`, as it was
+    /// then, and its file is still what was adopted, or still missing. Nothing
+    /// is written for such a page, so adopting a folder rewrites no file and
+    /// adds none.
+    fn adopted_unchanged(
+        &self,
+        root: &Path,
+        page_id: &str,
+        path: &str,
+        buffer: &str,
+    ) -> std::io::Result<bool> {
+        let Some(state) = self.pages.get(page_id) else {
+            return Ok(false);
+        };
+        if state.adopted_buffer.as_deref() != Some(buffer) {
+            return Ok(false);
+        }
+        Ok(match state.newest() {
+            Some(adopted) if state.path == path => {
+                store::read_optional(&root.join(path))?.as_deref() == Some(adopted.text.as_bytes())
+            }
+            Some(_) => false,
+            None => !root.join(path).exists(),
+        })
+    }
+
     /// How the file at `path` links `ids`' copies while copying is on, the
     /// copies written first; not at all while it is off. A copy that cannot
     /// be written leaves its link as rendered, and is listed as failed. Only
@@ -1834,7 +1924,11 @@ impl Mirror {
         if let Some(why) = pause_reason(root, &self.device_id).or_else(|| self.emptied(root)) {
             return Some(Ok(Wrote::Paused(why)));
         }
-        let space_folder = path.split_once('/').map(|(folder, _)| root.join(folder));
+        let space_folder = if self.adoption.is_some() {
+            Some(root.to_path_buf())
+        } else {
+            path.split_once('/').map(|(folder, _)| root.join(folder))
+        };
         if !space_folder.is_some_and(|folder| folder.is_dir()) {
             return None;
         }
@@ -1863,7 +1957,7 @@ impl Mirror {
             .cloned()
             .unwrap_or_else(|| PageState {
                 path: path.to_owned(),
-                shadows: Vec::new(),
+                ..PageState::default()
             });
         if state.path == path && state.newest() == Some(&shadow) {
             return Ok(Wrote::Done);
@@ -2028,6 +2122,15 @@ fn create_folders_below(root: &Path, path: &str) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Move `file` to the OS trash (#6540). The mirror runs on desktop only;
+/// elsewhere there is no trash, and nothing calls this.
+fn to_os_trash(file: &Path) -> std::io::Result<()> {
+    #[cfg(desktop)]
+    return trash::delete(file).map_err(std::io::Error::other);
+    #[cfg(not(desktop))]
+    return std::fs::remove_file(file);
 }
 
 /// Remove `file`, then each folder above it that it leaves empty, up to

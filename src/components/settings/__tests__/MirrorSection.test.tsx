@@ -94,6 +94,7 @@ function status(): MirrorStatus {
     ask_mass_change: askMassChange,
     held,
     unmirrored_spaces: unmirrored,
+    adopted_space: null,
     ...extra,
   }
 }

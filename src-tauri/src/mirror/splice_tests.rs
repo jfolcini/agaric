@@ -48,6 +48,16 @@ fn a_block_that_reads_otherwise_keeps_its_bytes_while_its_render_is_unchanged() 
 }
 
 #[test]
+fn a_kept_block_at_another_depth_than_its_render_writes_the_render() {
+    // `two` reads at the top level in the file, under `one` in the render:
+    // keeping its line would move the block, so the render is written.
+    let old = [("* one", Some(1)), ("* two", Some(2))];
+    let base = [("- one", Some(1)), ("  - two", Some(2))];
+    let new = [("- ONE", Some(1)), ("  - two", Some(2))];
+    assert_eq!(spliced_over(&old, &base, &new), "- ONE\n  - two");
+}
+
+#[test]
 fn front_matter_that_reads_otherwise_keeps_its_bytes_while_its_render_is_unchanged() {
     // Agaric writes no front matter for the page; the file keeps its own.
     let old = [

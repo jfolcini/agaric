@@ -458,6 +458,10 @@ rfd = { version = "0.17", default-features = false, features = [
     "gtk3",
     "common-controls-v6",
 ] }
+# #6540 — the Markdown mirror moves the file of a page trashed in Agaric to
+# the OS trash when the file was adopted in place, the user's own note,
+# rather than deleting it. Desktop-only, as the mirror is.
+trash = "5.4"
 
 [profile.release]
 lto = "thin"

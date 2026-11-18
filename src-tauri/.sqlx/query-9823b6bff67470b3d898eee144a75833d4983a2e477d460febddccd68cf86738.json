@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?)",
+  "query": "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?)",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 7
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "1213f2617906d1326b84373e61174ee6d8fe8a5a97d35f7224c31973de44e294"
+  "hash": "9823b6bff67470b3d898eee144a75833d4983a2e477d460febddccd68cf86738"
 }

@@ -48,7 +48,7 @@ pub enum IngestKind {
     Created,
     /// The page followed its file's rename or move ([`rename`]).
     Renamed,
-    /// The page moved to the Trash, its file deleted ([`trash`]).
+    /// The page moved to the Trash, its file deleted ([`trash()`]).
     Trashed,
 }
 
