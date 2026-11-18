@@ -29,6 +29,7 @@ import { render, screen } from '@testing-library/react'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { axe } from '@/__tests__/helpers/axe'
 import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { t } from '@/lib/i18n'
 
@@ -139,6 +140,11 @@ describe('FormatMenu', () => {
   // #3276 f3 — the touch-reachable link affordance lives in
   // SelectionBubbleMenu instead; FormatMenu must never expose it, matching
   // FormattingToolbar.test.tsx's contract.
+  it('has no a11y violations', async () => {
+    const { container } = render(<FormatMenu editor={makeEditor()} />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('does not render an External Link button', () => {
     render(<FormatMenu editor={makeEditor()} />)
     expect(screen.queryByRole('button', { name: t('toolbar.link') })).toBeNull()

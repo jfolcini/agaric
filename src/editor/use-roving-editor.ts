@@ -620,7 +620,7 @@ const ParagraphTableCell = TableCell.extend({ content: 'paragraph+' })
 export interface ContentExtensionOptions {
   resolveTagName: (id: string) => string
   resolveBlockTitle: (id: string) => string
-  /** A `'deleted'` page link is broken, and clicking it removes it. */
+  /** A `'deleted'` page link is broken: a press opens its explanation, with Remove inside. */
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
   /** A `'deleted'` tag is broken; the Markdown reveal then draws no `#` beside it. */
   resolveTagStatus: (id: string) => 'active' | 'deleted'

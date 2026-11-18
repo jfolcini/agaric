@@ -18,7 +18,6 @@ import {
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { DEFAULT_LONG_PRESS_DELAY } from '@/hooks/useLongPress'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
@@ -47,19 +46,18 @@ export function toolbarShortcut(label: string): { shortcut?: string } {
   return keys ? { shortcut: keys } : {}
 }
 
-/** When each button's current finger press began, for its release. */
-const touchPressStart = new WeakMap<Element, number>()
-
 /**
  * Pointer + keyboard activation handlers for toolbar/menu buttons. Every
  * primary press is `preventDefault`ed on `pointerdown`, so the editor keeps its
  * focus and selection through it; right/middle click stay inert.
  *
  * - A mouse acts on `pointerdown`.
- * - A finger acts on the release of a short tap. A press held past the
- *   long-press delay shows the button's name (`IconButton`) and its release
- *   does nothing, so learning a button's name never applies it (#6895). A
- *   press the browser takes for a scroll is cancelled and does nothing either.
+ * - A finger acts on its release, unless the press showed the button's name:
+ *   an `IconButton` held past the long-press delay opens its tooltip, which
+ *   Radix marks on the trigger (`data-state="…-open"`), and that release does
+ *   nothing, so learning a name never applies it (#6895). A control with no
+ *   name to show acts however long the press. A press the browser takes for a
+ *   scroll is cancelled and does nothing.
  * - The `click` fallback acts only for keyboard-generated clicks (Enter/Space
  *   dispatch one with `detail === 0`), so a pointer press never double-fires.
  */
@@ -73,18 +71,12 @@ export function toolbarPressHandlers(
     onPointerDown: (e) => {
       if (e.button !== 0) return
       e.preventDefault()
-      if (e.pointerType === 'touch') {
-        touchPressStart.set(e.currentTarget, performance.now())
-        return
-      }
-      action(e.currentTarget)
+      if (e.pointerType !== 'touch') action(e.currentTarget)
     },
     onPointerUp: (e) => {
       if (e.pointerType !== 'touch') return
-      const start = touchPressStart.get(e.currentTarget)
-      touchPressStart.delete(e.currentTarget)
-      if (start !== undefined && performance.now() - start < DEFAULT_LONG_PRESS_DELAY)
-        action(e.currentTarget)
+      if (e.currentTarget.dataset['state']?.endsWith('open')) return
+      action(e.currentTarget)
     },
     onClick: (e) => {
       if (e.detail === 0) action(e.currentTarget)

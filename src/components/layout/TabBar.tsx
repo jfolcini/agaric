@@ -113,6 +113,7 @@ interface SortableTabProps {
   id: string
   isActive: boolean
   state: 'inactive' | 'editing' | 'elsewhere'
+  fullPath: string
   label: string
   buttonRef: (el: HTMLButtonElement | null) => void
   onClick: (e: React.MouseEvent) => void
@@ -128,6 +129,7 @@ function SortableTab({
   id,
   isActive,
   state,
+  fullPath,
   label,
   buttonRef,
   onClick,
@@ -163,7 +165,7 @@ function SortableTab({
         if (!isDragging && !e.defaultPrevented) onKeyDown(e)
       }}
     >
-      <TruncatedText>{label}</TruncatedText>
+      <TruncatedText text={fullPath}>{label}</TruncatedText>
       <span
         data-tab-close=""
         className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
@@ -178,8 +180,8 @@ function SortableTab({
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
   // #1448 — DISPLAY-ONLY journal-tab title formatting. `fullPath`/`tab.label`
-  // remain the canonical ISO identity (used for switching and close
-  // announcements); only the visible leaf label is reformatted.
+  // remain the canonical ISO identity (used for the hover, switching and
+  // close announcements); only the visible leaf label is reformatted.
   const { journalDateFormat } = useJournalDateFormat()
   const displayLabel = (fullPath: string): string => {
     const leaf = getPageDisplayName(fullPath, 'leaf').label
@@ -313,8 +315,8 @@ export function TabBar(): React.ReactElement | null {
               {tabs.map((tab, i) => {
                 // Bug 1: tabs are space-constrained (`max-w-[120px]
                 // md:max-w-[200px]`) — full namespaced paths overflow fast.
-                // Display the LEAF only; the tab switcher shows the full path.
-                // The empty-label fallback to "Untitled" is preserved.
+                // Display the LEAF only, with the full path on hover. The
+                // empty-label fallback to "Untitled" is preserved.
                 const fullPath = tab.label || t('tabs.untitled')
                 return (
                   <SortableTab
@@ -322,6 +324,7 @@ export function TabBar(): React.ReactElement | null {
                     id={tab.id}
                     isActive={i === activeTabIndex}
                     state={tabState(i)}
+                    fullPath={fullPath}
                     label={displayLabel(fullPath)}
                     buttonRef={(el) => {
                       tabRefs.current[i] = el

@@ -11,8 +11,9 @@
  * group requires a selection to be meaningful, so a contextual hover bar is
  * the right surface and frees the always-visible toolbar from these 6 buttons.
  *
- * Buttons act on `pointerdown` with preventDefault, so a press never takes focus
- * from the editor, and on a keyboard click (`toolbarPressHandlers`); active marks
+ * Buttons act through `toolbarPressHandlers`: a press is `preventDefault`ed on
+ * `pointerdown`, so it never takes focus from the editor; a mouse acts on the
+ * press, a finger on its release, a keyboard on its click. Active marks
  * get `aria-pressed="true"` + `bg-accent`.
  */
 

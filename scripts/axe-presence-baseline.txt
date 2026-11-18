@@ -21,7 +21,6 @@ src/components/common/__tests__/VirtualizedBlockList.styleCache.test.tsx
 src/components/common/__tests__/render-keyboard-shortcut.test.tsx
 src/components/dialogs/__tests__/HistoryRestoreDialog.test.tsx
 src/components/dialogs/__tests__/HistoryRevertDialog.test.tsx
-src/components/editor-toolbar/__tests__/FormatMenu.test.tsx
 src/components/editor/__tests__/BlockListRendererDragRerender.test.tsx
 src/components/editor/__tests__/BlockListRendererFocusRerender.test.tsx
 src/components/editor/__tests__/BlockListRendererMarkerIdentity.test.tsx

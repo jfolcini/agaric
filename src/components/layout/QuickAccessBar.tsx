@@ -183,7 +183,7 @@ export function QuickAccessBar(): React.ReactElement | null {
                     className="justify-start"
                     onClick={(e) => handleRecentClick(ref, e)}
                   >
-                    <TruncatedText>{displayTitle}</TruncatedText>
+                    <TruncatedText text={fullTitle}>{displayTitle}</TruncatedText>
                   </RecentPageChip>
                 </NewTabTarget>
               )

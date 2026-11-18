@@ -32,7 +32,7 @@ import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSe
 import { ImageBubbleMenu } from '@/components/editor-toolbar/ImageBubbleMenu'
 import { TableHandles } from '@/components/editor-toolbar/TableHandles'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
-import { bubbleMenuClass, withShortcutHint } from '@/components/FormattingToolbar/toolbar-config'
+import { bubbleMenuClass } from '@/components/FormattingToolbar/toolbar-config'
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -40,6 +40,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { TruncatedText } from '@/components/ui/truncated-text'
 import { writeText } from '@/lib/clipboard'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
@@ -177,7 +178,8 @@ function PageLinkBubble({ editor }: { editor: Editor }): React.ReactElement {
           <IconButton
             variant="ghost"
             size="icon-xs"
-            tooltip={withShortcutHint(t('toolbar.link'), 'linkPopover')}
+            tooltip={t('toolbar.link')}
+            shortcut={getShortcutKeys('linkPopover')}
             ariaLabel={t('toolbar.link')}
             {...toolbarPressHandlers(() => {
               // Ctrl+K's event: `SelectionBubbleMenu` opens its link popover on it.

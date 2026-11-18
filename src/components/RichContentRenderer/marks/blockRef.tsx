@@ -1,7 +1,6 @@
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
-import { TruncatedText } from '@/components/ui/truncated-text'
 import type { BlockRefNode } from '@/editor/types'
 import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
 import { cn } from '@/lib/utils'
@@ -137,7 +136,8 @@ export function renderBlockRef(
           `inline-flex` and `text-overflow` only applies to a block container
           (see `.block-ref-chip-label` in `src/index.css`). The child is the
           one that is cut, so it carries the reveal of the full title. */}
-      <TruncatedText className="block-ref-chip-label">{title}</TruncatedText>
+      {/* No hover title: the chip's peek shows the whole block on hover. */}
+      <span className="block-ref-chip-label">{title}</span>
       {/* #4551 — the deleted marker is a visually-hidden CHILD, not an
           `aria-label` override: the accessible name of a control must contain
           its visible label (WCAG 2.5.3), and an override that reformats the

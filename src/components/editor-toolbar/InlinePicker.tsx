@@ -21,9 +21,10 @@
  *  - `PickerRow` — a ghost button row with the shared toolbar styling, an optional
  *    leading icon, a current-value check, and a keyboard-focused highlight.
  *
- * Rows act on `pointerdown` with preventDefault (`toolbarPressHandlers`) so focus
- * stays in the editor and the focus-keyed block command bus still targets the
- * focused block, and on a keyboard click, so a row without a filter box above it
+ * Rows act through `toolbarPressHandlers`: every press is `preventDefault`ed on
+ * `pointerdown` so focus stays in the editor and the focus-keyed block command
+ * bus still targets the focused block; a mouse acts on the press, a finger on
+ * its release, and a keyboard on its click, so a row without a filter box above it
  * (the callout picker) is still reachable by Tab + Enter.
  */
 

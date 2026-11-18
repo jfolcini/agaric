@@ -78,7 +78,7 @@
     // text of a truncated line goes through `TruncatedText`, an explanation through `InfoPopover`
     // (#6895).
     // The same for a component that forwards `title` to the DOM. Listed: components whose `title`
-    // is text they show.
+    // prop never reaches a DOM title (shown text, screen-reader text or data).
     "react/forbid-component-props": [
       "error",
       {
