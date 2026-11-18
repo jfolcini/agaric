@@ -12,8 +12,9 @@
  * asks first, and the confirm sends the files the dialog listed, so the
  * backend refuses it when another file changed since: nothing is read in that
  * the user was not shown. A folder chosen again holding files changed while
- * the mirror was off or writing elsewhere turns it on with reading back off,
- * for the same question.
+ * the mirror was off or writing elsewhere, or chosen again to start fresh,
+ * turns it on with reading back off, and the same question is asked at once
+ * when reading back was on.
  *
  * Copying attachments into the folder is a stored switch of its own, off by
  * default; a copy changed in the folder is kept, and listed under `diverged`.
@@ -83,7 +84,11 @@ export function MirrorSection(): React.ReactElement | null {
         const path = action === 'choose' ? unwrap(await commands.pickMirrorFolder()) : null
         if (action === 'choose' && path === null) return
         // The backend takes it only when the mirror turns on.
-        setStatus(unwrap(await commands.setMirrorFolder(path, status?.read_back ?? false)))
+        const readBack = status?.read_back ?? false
+        const next = unwrap(await commands.setMirrorFolder(path, readBack))
+        setStatus(next)
+        // Held off for files changed in the folder: asked about now.
+        if (readBack && !next.read_back && next.pending.length > 0) setAskToReadPending(true)
       } catch (err) {
         logger.error(MODULE, 'failed to change the mirror folder', undefined, err)
         notify.error(t('data.mirrorFailed', { reason: formatErrorForDisplay(err) }))

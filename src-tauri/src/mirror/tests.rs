@@ -1185,6 +1185,81 @@ async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_copy() {
     assert_eq!(copy(&held).as_deref(), Some(&b"drawn over"[..]));
 }
 
+/// A fresh start that fails part way, its states dropped but its copies not
+/// yet forgotten, is made again on the next tick: the states still in memory,
+/// with no head left to tell the vault older, would roll the folder back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fresh_start_that_fails_part_way_is_made_again() {
+    let (mut fx, folder) = Fx::restored().await;
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    // The record of copies cannot be saved, for one tick.
+    let copies = fx.data.join("mirror/copies.json");
+    assert!(!copies.exists(), "the fixture: no copy is recorded");
+    std::fs::create_dir(&copies).unwrap();
+    settle(&fx.mat).await;
+    assert!(fx.mirror.tick().await.is_err(), "the fixture: it fails");
+    std::fs::remove_dir(&copies).unwrap();
+
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+}
+
+/// The folder chosen again reads in no file the vault lacks unasked: with no
+/// state left, such a file is no page's, read onto a new page while reading
+/// back is on. It is turned off, and the file listed from the moment the
+/// folder is chosen, for the user to read in or not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_for_a_restored_vault_reads_in_nothing_unasked() {
+    let (mut fx, _) = Fx::restored().await;
+    let ingest = Ingest {
+        pool: fx.pool.clone(),
+        materializer: fx.mat.clone(),
+        notify: Arc::new(|_| {}),
+    };
+    fx.mirror = Mirror::open(fx.pool.clone(), DEV.to_owned(), fx.state.clone())
+        .await
+        .unwrap()
+        .with_ingest(ingest);
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    let chosen =
+        set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+            .await
+            .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    let betas: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks
+          WHERE block_type = 'page' AND content = 'Beta' AND deleted_at IS NULL",
+    )
+    .fetch_one(&fx.pool)
+    .await
+    .unwrap();
+    assert_eq!(betas, 0, "Beta's file is read onto no page");
+    assert!(
+        chosen.pending.contains(&BETA.to_owned()),
+        "{:?}",
+        chosen.pending
+    );
+    let status = fx.status().await;
+    assert!(!status.read_back);
+    assert!(
+        status.pending.contains(&BETA.to_owned()),
+        "{:?}",
+        status.pending
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_vault_given_its_old_folder_pauses_the_mirror_and_removes_no_file() {
     let mut fx = Fx::new().await;

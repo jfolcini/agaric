@@ -189,8 +189,13 @@ impl MirrorState {
         self.lock().paused.as_deref() == Some(BEHIND)
     }
 
-    fn take_start_fresh(&self) -> bool {
-        std::mem::take(&mut self.lock().start_fresh)
+    /// Whether [`MirrorState::start_fresh`] is yet to drop the states.
+    pub fn start_fresh_due(&self) -> bool {
+        self.lock().start_fresh
+    }
+
+    fn started_fresh(&self) {
+        self.lock().start_fresh = false;
     }
 
     /// Start over in a new folder: forget the old one's diverged and failed
@@ -798,10 +803,13 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         };
-        let fresh = self.state.take_start_fresh();
+        // Due until done: a tick failing part way would leave the states in
+        // memory, their head gone, for the next pass to roll the folder back.
+        let fresh = self.state.start_fresh_due();
         if fresh {
             self.store.forget(&folder)?;
             self.forget_lost_copies().await?;
+            self.state.started_fresh();
         }
         if self.store.bind(&folder)? || fresh {
             self.forget_folder();
