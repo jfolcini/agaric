@@ -11,7 +11,22 @@
  * are fully exercised below.
  */
 
-import { expect, openSearchView, test } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import {
+  blurEditors,
+  expect,
+  focusBlockById,
+  ipc,
+  navigateToView,
+  openPage,
+  openSearchView,
+  replaceEditorText,
+  seedSearchBlocks,
+  submitSearch,
+  test,
+} from './helpers'
+
+const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** Run a query from the search view and wait for the result region. */
 async function runSearch(page: import('@playwright/test').Page, query: string) {
@@ -254,4 +269,150 @@ test.describe('Search alias-match card (E2E-9) @search', () => {
       page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
     ).toBeVisible()
   })
+})
+
+/**
+ * Search as the backend's FTS index answers it. The index is written in the background after a
+ * block's commit, so each check submits again until the listed rows match.
+ */
+test.describe('Search on the backend’s index (#6926) @search', () => {
+  test.beforeEach(async ({ page }) => {
+    await openSearchView(page)
+  })
+
+  /** Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. */
+  async function expectListed(
+    page: import('@playwright/test').Page,
+    query: string,
+    ids: string[],
+    ordered = false,
+  ): Promise<void> {
+    const want = ordered ? ids : ids.toSorted(byCode)
+    await expect(async () => {
+      await submitSearch(page, query)
+      await expect
+        .poll(
+          async () => {
+            const shown = await page
+              .locator('[data-testid^="search-result-row-"]')
+              .evaluateAll((rows) =>
+                rows.map(
+                  (r) => r.getAttribute('data-testid')?.replace('search-result-row-', '') ?? '',
+                ),
+              )
+            return ordered ? shown : shown.toSorted(byCode)
+          },
+          { timeout: 2_000 },
+        )
+        .toEqual(want)
+    }).toPass()
+  }
+
+  test('a two-character term is found alone and beside a longer word (#6752)', async ({ page }) => {
+    const [term, both] = await seedSearchBlocks(page, [
+      { content: 'ink qz pod' },
+      { content: 'owl qz hen' },
+      { content: 'owl fig hen' },
+    ])
+    await expectListed(page, 'qz', [term as string, both as string])
+    await expectListed(page, 'owl qz', [both as string])
+  })
+
+  test('an edited block is found by its new word and not by its old one (#5366)', async ({
+    page,
+  }) => {
+    const [kept, edited] = await seedSearchBlocks(page, [
+      { content: 'kept quartzite' },
+      { content: 'edited quartzite' },
+    ])
+    await expectListed(page, 'quartzite', [kept as string, edited as string])
+
+    await openPage(page, 'Projects')
+    await focusBlockById(page, edited as string)
+    await replaceEditorText(page, 'edited violetite')
+    await blurEditors(page)
+    await expect(
+      page.locator(`[data-testid="block-static"][data-block-id="${edited}"]`),
+    ).toHaveText('edited violetite')
+
+    await navigateToView(page, 'Search')
+    await expectListed(page, 'violetite', [edited as string])
+    await expectListed(page, 'quartzite', [kept as string])
+  })
+
+  // `@real-only`: the mock ranks by its own rule, not bm25.
+  test(
+    'results are ordered by bm25, not by how often the term occurs (#4671)',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      const [sparse, dense] = await seedSearchBlocks(page, [
+        { content: 'zap of ink' },
+        { content: 'zap fig zap owl zap bun zap kit zap hen jam pod ivy' },
+      ])
+      await expectListed(page, 'zap', [dense as string, sparse as string], true)
+    },
+  )
+
+  // `@real-only`: the mock answers every match in one page, so only the backend's cursor pages.
+  test(
+    'Load more pages through every match and lists each block once (#5738)',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      const seqs = Array.from({ length: 60 }, (_, i) => String(i + 1).padStart(2, '0'))
+      await ipc(page, 'create_blocks_batch', {
+        specs: seqs.map((seq) => ({
+          blockType: 'content',
+          content: `pagedword seq-${seq}`,
+          parentId: SEED_IDS.PAGE_PROJECTS,
+          position: null,
+        })),
+      })
+      const summary = page.getByTestId('search-result-count-summary')
+      const loadMore = page.locator('.search-load-more').getByRole('button')
+      // The index is written in the background, and the view keeps its answer for a query it has
+      // run: search only once the backend's index holds every block.
+      await expect
+        .poll(
+          async () =>
+            (
+              await ipc<{ items: unknown[] }>(page, 'search_blocks', {
+                query: 'pagedword',
+                cursor: null,
+                limit: 100,
+                filter: { scope: { kind: 'spaces', space_ids: [SEED_IDS.SPACE_PERSONAL] } },
+              })
+            ).items.length,
+        )
+        .toBe(60)
+      await submitSearch(page, 'pagedword')
+      await expect(summary).toHaveText(/^50 matches/)
+      await expect(loadMore).toBeVisible()
+      await loadMore.click()
+      await expect(summary).toHaveText(/^60 matches/)
+      await expect(loadMore).toHaveCount(0)
+
+      // Every row of the virtualized list, read by scrolling it end to end.
+      const listed = await page
+        .getByTestId('search-result-region')
+        .getByRole('listbox')
+        .evaluate(async (list) => {
+          const seen = new Map<number, string>()
+          list.scrollTop = 0
+          for (let step = 0; step < 500; step++) {
+            await new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            )
+            for (const row of list.querySelectorAll('[data-index]')) {
+              seen.set(Number(row.getAttribute('data-index')), row.textContent ?? '')
+            }
+            if (list.scrollTop + list.clientHeight >= list.scrollHeight - 1) break
+            list.scrollTop += Math.max(1, list.clientHeight / 2)
+          }
+          return [...seen.entries()].toSorted(([a], [b]) => a - b).map(([, text]) => text)
+        })
+      expect(listed.map((text) => /seq-(\d{2})/.exec(text)?.[1] ?? text).toSorted(byCode)).toEqual(
+        seqs,
+      )
+    },
+  )
 })

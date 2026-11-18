@@ -49,7 +49,7 @@ const LATE_TASK = runScopedMarker('wdio-peer-late-task')
 const TAGGED = runScopedMarker('wdio-peer-tagged')
 const DAY_ENTRY = runScopedMarker('wdio-peer-day-entry')
 const LATE_BLOCK = runScopedMarker('wdio-peer-late-block')
-// Not run-scoped: every spec file boots its own vault (see search-bm25-order).
+// Not run-scoped: every spec file boots its own vault.
 // Titles are matched whole, and the tag is typed, so it doubles no letter.
 const TASKS_PAGE = 'peer tasks'
 const LATE_PAGE = 'peer late tasks'
