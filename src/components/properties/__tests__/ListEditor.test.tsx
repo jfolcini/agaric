@@ -269,6 +269,42 @@ describe('ListEditor', () => {
     }
   })
 
+  it('the datetime add fields keep the focus while the item is written, then clear for the next', async () => {
+    vi.stubEnv('TZ', 'Europe/Berlin')
+    try {
+      // A worker that ignores `TZ` (Stryker's threads) skips.
+      if (new Date(Date.UTC(2026, 10, 14, 8, 30)).getHours() !== 9) return
+      const user = userEvent.setup()
+      let finish = (): void => {}
+      stubInvoke({
+        set_property: () =>
+          new Promise((resolve) => {
+            finish = () => resolve(written)
+          }),
+      })
+      renderList(listDef('datetime'), ['2026-11-14T08:30Z'])
+      const label = t('property.addListItem', { key: 'tags' })
+      const date = screen.getByLabelText(t('property.datetimeDateLabel', { label }))
+      const time = screen.getByLabelText(t('property.datetimeTimeLabel', { label }))
+
+      await user.type(date, '2026-11-20')
+      await user.click(time)
+      fireEvent.change(time, { target: { value: '18:05' } })
+      fireEvent.keyDown(time, { key: 'Enter' })
+      await waitFor(() => expect(writtenList()).toEqual(['2026-11-14T08:30Z', '2026-11-20T17:05Z']))
+
+      // A disabled or remounted field loses the focus, and the query table's cell closes on it (#6912).
+      expect(time).toBeEnabled()
+      expect(time).toHaveFocus()
+      finish()
+      await waitFor(() => expect(time).toHaveValue(''))
+      expect(date).toHaveValue('')
+      expect(time).toHaveFocus()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('a select list offers only the options not yet in it, and adds the one picked', async () => {
     const user = userEvent.setup()
     stubInvoke({ set_property: () => written })

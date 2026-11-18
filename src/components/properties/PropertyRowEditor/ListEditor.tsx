@@ -177,16 +177,7 @@ function AddItemControl(props: AddItemControlProps): React.ReactElement {
       return <AddDateItem ariaLabel={ariaLabel} busy={disabled} onAdd={onAdd} />
     }
     case 'datetime': {
-      return (
-        <DatetimeInput
-          // A new control once an item is added, cleared for the next.
-          key={items.length}
-          value={null}
-          ariaLabel={ariaLabel}
-          disabled={disabled}
-          onCommit={(canonical) => void onAdd(canonical)}
-        />
-      )
+      return <DatetimeInput value={null} ariaLabel={ariaLabel} busy={disabled} onCommit={onAdd} />
     }
     default: {
       return (

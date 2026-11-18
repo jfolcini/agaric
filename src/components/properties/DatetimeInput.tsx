@@ -21,8 +21,10 @@ export interface DatetimeInputProps {
   value: string | null
   /** The value's name; each input's label adds which part it is. */
   ariaLabel: string
-  onCommit: (canonical: string) => void
-  disabled?: boolean | undefined
+  /** A promise resolving `true` clears both fields, for the next value. */
+  onCommit: (canonical: string) => void | Promise<boolean>
+  /** A write is running: the fields turn read-only, not disabled, so they keep the focus (#6912). */
+  busy?: boolean | undefined
 }
 
 /** The day a date input's text names, or null. */
@@ -36,7 +38,7 @@ export function DatetimeInput({
   value,
   ariaLabel,
   onCommit,
-  disabled,
+  busy,
 }: DatetimeInputProps): React.ReactElement {
   const { t } = useTranslation()
   const parts = value === null ? { date: '', time: '' } : datetimeToLocalParts(value)
@@ -49,9 +51,14 @@ export function DatetimeInput({
   const commit = (day: string | null, at: string): void => {
     if (day === null) return
     const canonical = localPartsToDatetime(day, at)
-    if (canonical !== null && canonical !== value) onCommit(canonical)
+    if (canonical === null || canonical === value) return
+    void onCommit(canonical)?.then((written) => {
+      if (!written) return
+      setDateInput('')
+      setTime('')
+    })
   }
-  const { dateInput, datePreview, handleChange, handleBlur } = useDateInput({
+  const { dateInput, setDateInput, datePreview, handleChange, handleBlur } = useDateInput({
     initialValue: parts.date,
     onSave: (day) => commit(day === '' ? null : day, time),
   })
@@ -69,7 +76,7 @@ export function DatetimeInput({
           type="text"
           value={dateInput}
           placeholder={t('property.datePlaceholder')}
-          disabled={disabled}
+          readOnly={busy}
           onChange={handleChange}
           onBlur={handleBlur}
           onKeyDown={(e) => onEnter(e, handleBlur)}
@@ -79,7 +86,7 @@ export function DatetimeInput({
           className="h-7 w-auto shrink-0 text-xs"
           type="time"
           value={time}
-          disabled={disabled}
+          readOnly={busy}
           onChange={(e) => setTime(e.target.value)}
           onBlur={() => commit(dayOf(dateInput), time)}
           onKeyDown={(e) => onEnter(e, () => commit(dayOf(dateInput), time))}
