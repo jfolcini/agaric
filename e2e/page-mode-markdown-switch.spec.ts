@@ -3,7 +3,7 @@
  * editing" and back: page mode's footer opens the buffer, and the buffer's Page link (or Ctrl+E)
  * saves what changed and opens page mode on it, from block mode too. Plain text only: the
  * Document buffer's list markers, checkboxes and property lines are pinned by the conformance
- * fixture `apply_page_source_document.json` and by `e2e-tauri/page-source-document.e2e.ts`.
+ * fixture `apply_page_source_document.json` and by `page-source-edit.spec.ts`, on the bridge.
  */
 
 import type { Locator, Page } from '@playwright/test'

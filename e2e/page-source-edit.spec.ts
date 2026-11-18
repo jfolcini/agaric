@@ -15,6 +15,7 @@ import {
   ipc,
   openPage,
   openPageMobile,
+  pasteText,
   reopenPage,
   seedSearchBlocks,
   test,
@@ -32,10 +33,9 @@ import {
  * own paragraph, a blank line between blocks, so a paragraph is moved with the
  * blank line after it. Every edit is typed, cut or pasted with the keyboard,
  * or dragged with the mouse, and every assertion reads the block tree the save
- * reloaded from the mock. The Rust tests own the grammar; the real-backend
- * twins are `e2e-tauri/page-source-edit.e2e.ts`,
- * `e2e-tauri/page-source-merge.e2e.ts`, `e2e-tauri/page-source-paste.e2e.ts`
- * and `e2e-tauri/page-source-document.e2e.ts`.
+ * reloaded. The Rust tests own the grammar. The file runs on the mock and on
+ * the real backend through the bridge; the names the buffer writes for refs
+ * and labels are the backend's alone (`@real-only`).
  */
 
 const PAGE = 'Getting Started'
@@ -358,6 +358,13 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await expect(pageActions(page)).toBeFocused()
     await expect(staticBlock(page, GS1)).toContainText('Hello, Agaric!')
     await expect(staticBlock(page, GS3)).toContainText(elsewhere)
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
+
+    // Both edits are stored, once each.
+    await reopenPage(page, PAGE)
+    await expect(staticBlock(page, GS1)).toContainText('Hello, Agaric!')
+    await expect(staticBlock(page, GS3)).toHaveText(elsewhere)
+    await expect(page.getByText(CREATE)).toHaveCount(0)
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
   })
 
@@ -946,5 +953,376 @@ test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobi
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(staticBlock(page, GS1)).not.toContainText('Not kept.')
+  })
+})
+
+/** A page titled `title` holding `contents` as top-level blocks, opened; resolves their ids. */
+async function seedOpenPage(page: Page, title: string, contents: string[]): Promise<string[]> {
+  const pageId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: title,
+    spaceId: SEED_IDS.SPACE_PERSONAL,
+  })
+  const ids = await seedSearchBlocks(
+    page,
+    contents.map((content) => ({ content, parentId: pageId })),
+  )
+  await openPage(page, title)
+  await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(contents.length)
+  return ids
+}
+
+/** Select from the start of buffer line `from` to the start of line `to`, as a drag would. */
+async function selectLines(page: Page, from: number, to: number): Promise<void> {
+  await page.evaluate(
+    ({ first, last }) => {
+      const dom = document.querySelector('[data-testid="page-source-editor"]') as HTMLElement & {
+        editor: {
+          state: { doc: { forEach: (f: (node: unknown, offset: number) => void) => void } }
+          commands: { setTextSelection: (range: { from: number; to: number }) => boolean }
+        }
+      }
+      const starts: number[] = []
+      dom.editor.state.doc.forEach((_node, offset) => starts.push(offset + 1))
+      dom.editor.commands.setTextSelection({ from: starts[first] ?? 0, to: starts[last] ?? 0 })
+    },
+    { first: from, last: to },
+  )
+}
+
+/** The index of the buffer line whose text is `text`. */
+async function lineIndex(editor: Locator, text: string): Promise<number> {
+  const index = (await bufferLines(editor)).findIndex(([line]) => line === text)
+  if (index === -1) throw new Error(`no buffer line reads ${text}`)
+  return index
+}
+
+/** Save with Ctrl+S and wait for the buffer to close. */
+async function saveSource(page: Page, editor: Locator): Promise<void> {
+  await editor.press('ControlOrMeta+s')
+  await expect(sourceEditor(page)).toHaveCount(0)
+}
+
+test.describe('Edit as Markdown, as the backend reads it back (#6926) @editor @pages @markdown', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await waitForBoot(page)
+  })
+
+  test('a paragraph cut and pasted elsewhere moves its block with its child', async ({ page }) => {
+    const [first, second, third] = await seedOpenPage(page, 'Cut move', [
+      'First para',
+      'Second para',
+      'Third para',
+    ])
+    const [child] = await seedSearchBlocks(page, [
+      { content: 'Child para', parentId: first as string },
+    ])
+    await reopenPage(page, 'Cut move')
+    await expect.poll(() => blockIds(page)).toEqual([first, child, second, third])
+
+    const editor = await openSourceMode(page, 'Child para')
+    // The first paragraph and its child's lines, to where the second starts.
+    await selectLines(
+      page,
+      await lineIndex(editor, 'First para'),
+      await lineIndex(editor, 'Second para'),
+    )
+    await page.keyboard.press('ControlOrMeta+x')
+    await selectLine(editor, 'Third para')
+    await moveSelection(page, 'ArrowLeft')
+    await page.keyboard.press('ControlOrMeta+v')
+    await saveSource(page, editor)
+
+    await reopenPage(page, 'Cut move')
+    await expect.poll(() => blockIds(page)).toEqual([second, first, child, third])
+    await expect(
+      page.locator(`li[aria-level="2"] [data-testid="sortable-block"][data-block-id="${child}"]`),
+    ).toHaveCount(1)
+  })
+
+  test('a paragraph copied and pasted saves as a new block beside the original', async ({
+    page,
+  }) => {
+    const [first, second] = await seedOpenPage(page, 'Copy paste', ['Copied para', 'Last para'])
+    const editor = await openSourceMode(page, 'Last para')
+    const copied = await lineIndex(editor, 'Copied para')
+    await selectLines(page, copied, copied + 2)
+    await page.keyboard.press('ControlOrMeta+c')
+    await selectLine(editor, 'Last para')
+    await moveSelection(page, 'ArrowLeft')
+    await page.keyboard.press('ControlOrMeta+v')
+    await saveSource(page, editor)
+
+    await reopenPage(page, 'Copy paste')
+    await expect.poll(async () => (await blockIds(page)).length).toBe(3)
+    const [original, copy, last] = await blockIds(page)
+    expect([original, last]).toEqual([first, second])
+    expect([first, second]).not.toContain(copy)
+    await expect(staticBlock(page, copy as string)).toHaveText('Copied para')
+  })
+
+  test('a property line sets, edits and, left empty, deletes the property', async ({ page }) => {
+    const [block] = await seedOpenPage(page, 'Property lines', ['Prop marker'])
+    const chip = (value: string) => page.getByTestId('property-chip').filter({ hasText: value })
+
+    let editor = await openSourceMode(page, 'Prop marker')
+    await caretAtEnd(page, editor, 'Prop marker')
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.type('  srckey:: first value')
+    await saveSource(page, editor)
+    await reopenPage(page, 'Property lines')
+    await expect(chip('first value')).toBeVisible()
+    await expect(staticBlock(page, block as string)).toHaveText('Prop marker')
+
+    editor = await openSourceMode(page, 'srckey:: first value')
+    await selectLine(editor, 'srckey:: first value')
+    await page.keyboard.type('  srckey:: second value')
+    await saveSource(page, editor)
+    await reopenPage(page, 'Property lines')
+    await expect(chip('second value')).toBeVisible()
+    await expect(chip('first value')).toHaveCount(0)
+
+    editor = await openSourceMode(page, 'srckey:: second value')
+    await selectLine(editor, 'srckey:: second value')
+    await page.keyboard.type('  srckey::')
+    await saveSource(page, editor)
+    await reopenPage(page, 'Property lines')
+    await expect(staticBlock(page, block as string)).toHaveText('Prop marker')
+    await expect(chip('second value')).toHaveCount(0)
+    // The buffer re-reads the page: a property still stored, or the emptied line kept as text,
+    // would be a line of it.
+    editor = await openSourceMode(page, 'Prop marker')
+    await expect(editor).not.toContainText('srckey')
+  })
+
+  test('a refused repeat rule blocks the save, names its line and writes nothing', async ({
+    page,
+  }) => {
+    const [block] = await seedOpenPage(page, 'Refused rule', ['Rule marker'])
+    let editor = await openSourceMode(page, 'Rule marker')
+    // The same save edits the text too, so a save that wrote part of itself before refusing shows.
+    await caretAtEnd(page, editor, 'Rule marker')
+    await page.keyboard.type(' edited')
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.type('  repeat:: every tuesday')
+    await editor.press('ControlOrMeta+s')
+
+    const refusal = page.locator('p[role="alert"]').filter({ hasText: 'repeat:: every tuesday' })
+    await expect(refusal).toHaveText(/^line \d+: /)
+    await expect(sourceEditor(page)).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await activeAlertDialog(page).getByRole('button', { name: 'Discard', exact: true }).click()
+    await expect(sourceEditor(page)).toHaveCount(0)
+
+    await reopenPage(page, 'Refused rule')
+    await expect(staticBlock(page, block as string)).toHaveText('Rule marker')
+    editor = await openSourceMode(page, 'Rule marker')
+    await expect(editor).not.toContainText('repeat::')
+  })
+
+  test('a page of every kind of block saves back unchanged, and a `-` restyled `1.` saves numbered', async ({
+    page,
+  }) => {
+    const LONE = 'lone bullet'
+    const KINDS = [
+      '## Plan',
+      '',
+      'Intro line one',
+      'intro line two',
+      '',
+      '- bullet item',
+      '  + plain child',
+      `- ${LONE}`,
+      '1. first step',
+      '2. second step',
+      '- [ ] call the bank',
+      '  priority:: 1',
+      '- [x] done already',
+      '',
+      '> a quote',
+      '',
+      '```sh',
+      'echo hi',
+      '```',
+      '',
+      'parent paragraph',
+      '',
+      '  child paragraph',
+    ]
+    const [marker] = await seedOpenPage(page, 'Every kind', ['Kinds marker'])
+    const pageId = (await ipc<{ parent_id: string }>(page, 'get_block', { blockId: marker }))
+      .parent_id
+    let editor = await openSourceMode(page, 'Kinds marker')
+    await caretAtEnd(page, editor, 'Kinds marker')
+    await page.keyboard.press('Enter')
+    await pasteText(editor, KINDS.join('\n'))
+    await saveSource(page, editor)
+
+    interface Row {
+      id: string
+      parent_id: string | null
+      position: number | null
+      content: string | null
+      todo_state: string | null
+      priority: string | null
+    }
+    /** The page's blocks depth-first: depth, text, list style, task and priority, as stored. */
+    const storedKinds = async () => {
+      const { blocks } = await ipc<{ blocks: Row[] }>(page, 'load_page_subtree', {
+        rootBlockId: pageId,
+        scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+      })
+      const props = await ipc<Record<string, Array<{ key: string; value_text: string | null }>>>(
+        page,
+        'get_batch_properties',
+        { blockIds: blocks.map((b) => b.id) },
+      )
+      const out: unknown[] = []
+      const walk = (parentId: string, depth: number): void => {
+        const children = blocks
+          .filter((b) => b.parent_id === parentId)
+          .toSorted((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        for (const b of children) {
+          const style = props[b.id]?.find((row) => row.key === 'listStyle')?.value_text ?? null
+          out.push([depth, b.content, style, b.todo_state, b.priority])
+          walk(b.id, depth + 1)
+        }
+      }
+      walk(pageId, 0)
+      return out
+    }
+    const history = async () =>
+      (
+        await ipc<{ items: unknown[] }>(page, 'list_page_history', {
+          pageId,
+          opTypeFilter: null,
+          scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+          cursor: null,
+          limit: 50,
+        })
+      ).items
+
+    const built = [
+      [0, 'Kinds marker', null, null, null],
+      [0, '## Plan', null, null, null],
+      [0, 'Intro line one\nintro line two', null, null, null],
+      [0, 'bullet item', 'bullet', null, null],
+      [1, 'plain child', null, null, null],
+      [0, LONE, 'bullet', null, null],
+      [0, 'first step', 'ordered', null, null],
+      [0, 'second step', 'ordered', null, null],
+      [0, 'call the bank', null, 'TODO', '1'],
+      [0, 'done already', null, 'DONE', null],
+      [0, '> a quote', null, null, null],
+      [0, '```sh\necho hi\n```', null, null, null],
+      [0, 'parent paragraph', null, null, null],
+      [1, 'child paragraph', null, null, null],
+    ]
+    await expect.poll(storedKinds).toEqual(built)
+
+    // Nothing the page holds changes, one more blank line under the heading: the backend reads
+    // back the tree it wrote, so the save appends no op.
+    await reopenPage(page, 'Every kind')
+    const before = await history()
+    editor = await openSourceMode(page, LONE)
+    const heading = await lineIndex(editor, '## Plan')
+    await editor
+      .locator('[data-source-line]')
+      .nth(heading + 1)
+      .click()
+    await page.keyboard.press('Shift+Enter')
+    await saveSource(page, editor)
+    await reopenPage(page, 'Every kind')
+    expect(await storedKinds()).toEqual(built)
+    expect(await history()).toEqual(before)
+
+    // One restyle: the lone bullet's `-` becomes `1.`, and joins the numbered run after it.
+    editor = await openSourceMode(page, LONE)
+    await selectLine(editor, `- ${LONE}`)
+    await page.keyboard.type(`1. ${LONE}`)
+    await saveSource(page, editor)
+    await reopenPage(page, 'Every kind')
+    await expect
+      .poll(storedKinds)
+      .toEqual(built.map((kind) => (kind[1] === LONE ? [0, LONE, 'ordered', null, null] : kind)))
+    editor = await openSourceMode(page, LONE)
+    const lone = await lineIndex(editor, `1. ${LONE}`)
+    expect((await bufferLines(editor)).slice(lone, lone + 3).map(([text]) => text)).toEqual([
+      `1. ${LONE}`,
+      '2. first step',
+      '3. second step',
+    ])
+  })
+})
+
+/**
+ * Only the real backend writes names in the buffer and reads them back on save
+ * (`get_page_buffer` / `apply_page_source`); the mock's buffer keeps raw ids.
+ */
+test.describe('Edit as Markdown writes refs and labels by name (#6277, #5160 D9) @editor @markdown @real-only', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a labelled link reads as [[Page|label]], and an edited label is stored', async ({
+    page,
+  }) => {
+    const [block] = await seedOpenPage(page, 'Labelled', [
+      `see [[${SEED_IDS.PAGE_QUICK_NOTES}|the notes]]`,
+    ])
+    const editor = await openSourceMode(page, 'see')
+    await expect(editor).toContainText('see [[Quick Notes|the notes]]')
+    await selectLine(editor, 'see [[Quick Notes|the notes]]')
+    await page.keyboard.type('see [[Quick Notes|my notes]]')
+    await saveSource(page, editor)
+
+    await reopenPage(page, 'Labelled')
+    const chip = staticBlock(page, block as string).getByTestId('block-link-chip')
+    await expect(chip).toHaveText('my notes')
+    await expect(chip).toHaveAttribute('title', 'Quick Notes')
+  })
+
+  test('a ref to a block of another page reads as [[Title#^id]], and saves back as that ref', async ({
+    page,
+  }) => {
+    const [target] = await seedOpenPage(page, 'Ref target page', ['Target block'])
+    const [ref] = await seedOpenPage(page, 'Ref source', [`Ref line ((${target}))`])
+    const link = `[[Ref target page#^${target}]]`
+    const editor = await openSourceMode(page, 'Ref line')
+    await expect(editor).toContainText(`Ref line ${link}`)
+    await caretAtEnd(page, editor, 'Ref line')
+    await page.keyboard.type(' edited')
+    await saveSource(page, editor)
+
+    await reopenPage(page, 'Ref source')
+    await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
+    expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
+      `Ref line ((${target})) edited`,
+    )
+  })
+
+  test('a ref to a unique heading reads as [[Title#Heading]], saves back, and exports the heading bare', async ({
+    page,
+  }) => {
+    const [heading] = await seedOpenPage(page, 'Heading page', ['## Unique heading'])
+    const headingPage = (await ipc<{ parent_id: string }>(page, 'get_block', { blockId: heading }))
+      .parent_id
+    const [ref] = await seedOpenPage(page, 'Heading ref', [`Heading ref ((${heading}))`])
+    const link = '[[Heading page#Unique heading]]'
+    const editor = await openSourceMode(page, 'Heading ref')
+    await expect(editor).toContainText(`Heading ref ${link}`)
+    await caretAtEnd(page, editor, 'Heading ref')
+    await page.keyboard.type(' edited')
+    await saveSource(page, editor)
+
+    await reopenPage(page, 'Heading ref')
+    await expect(staticBlock(page, ref as string).getByTestId('block-ref-chip')).toBeVisible()
+    expect((await ipc<{ content: string }>(page, 'get_block', { blockId: ref })).content).toBe(
+      `Heading ref ((${heading})) edited`,
+    )
+    // The export, which Obsidian reads, names the heading by its text: no block id on its line.
+    const exported = await ipc<string>(page, 'export_page_markdown', { pageId: headingPage })
+    expect(exported.split('\n')).toContain('## Unique heading')
   })
 })

@@ -41,8 +41,10 @@ const REAL_BACKEND_SPECS = [
   'history-page-scope.spec.ts',
   'history-revert.spec.ts',
   'in-page-replace.spec.ts',
+  'keyboard-chords-page.spec.ts',
   'navigation-history.spec.ts',
   'page-alias-add.spec.ts',
+  'page-source-edit.spec.ts',
   'pages-header-routes.spec.ts',
   'phone-views.spec.ts',
   'query-block-text.spec.ts',
@@ -78,6 +80,7 @@ const REAL_BACKEND_SPECS = [
   'trash-deleted-time.spec.ts',
   'trash-page-cascade.spec.ts',
   'trashed-page-recents.spec.ts',
+  'typed-anchor-links-6033.spec.ts',
   'unlinked-references.spec.ts',
 ]
 
