@@ -369,3 +369,34 @@ fn the_mirror_writes_a_page_into_the_chosen_folder() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// A spec seeds, `settle`s, then opens a view: a `blocks:changed` for its seed
+/// arriving after that would refetch the view behind the spec's back.
+#[test]
+fn settle_answers_once_the_change_feed_has_sent_everything() {
+    let root = tempfile::TempDir::new().unwrap();
+    let mut bridge = Bridge::start(root.path()).expect("start the bridge");
+    let mut events = bridge.events();
+    call(
+        &mut bridge,
+        json!({ "op": "listen", "event": "blocks:changed" }),
+    )
+    .expect("listen");
+    for i in 0..20 {
+        create_page(&mut bridge, &format!("seeded {i}"));
+    }
+
+    call(&mut bridge, json!({ "op": "settle" })).expect("settle");
+    let mut before = 0;
+    while events.try_recv().is_ok() {
+        before += 1;
+    }
+    assert!(
+        before > 0,
+        "the seed's events were sent before settle answered"
+    );
+    // Past the lifecycle rebuild's debounce, the longest a pending event waits.
+    std::thread::sleep(Duration::from_secs(4));
+    let late: Vec<String> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+    assert!(late.is_empty(), "events after settle answered: {late:?}");
+}

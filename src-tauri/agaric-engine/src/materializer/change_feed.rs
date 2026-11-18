@@ -51,6 +51,9 @@ struct State {
     /// Calls to [`ChangeFeed::record`] so far.
     writes: u64,
     pending: PendingChanges,
+    /// Changes [`ChangeFeed::take_if_quiet`] handed over that
+    /// [`ChangeFeed::emitted`] has not yet confirmed sent.
+    in_flight: bool,
 }
 
 #[derive(Default)]
@@ -108,13 +111,42 @@ impl ChangeFeed {
     /// that just finished, and its event must follow them.
     pub fn take_if_quiet(&self, seen: u64) -> Option<PendingChanges> {
         let mut state = self.state();
-        (state.writes == seen).then(|| std::mem::take(&mut state.pending))
+        if state.writes != seen {
+            return None;
+        }
+        let taken = std::mem::take(&mut state.pending);
+        state.in_flight = !taken.is_empty();
+        Some(taken)
+    }
+
+    /// The changes last taken have been sent.
+    pub fn emitted(&self) {
+        self.state().in_flight = false;
+    }
+
+    /// Whether every commit recorded so far has been taken and sent.
+    pub fn is_idle(&self) -> bool {
+        let state = self.state();
+        state.pending.is_empty() && !state.in_flight
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ChangeDomain, ChangeFeed};
+
+    #[test]
+    fn taken_changes_keep_the_feed_busy_until_emitted() {
+        let feed = ChangeFeed::default();
+        assert!(feed.is_idle(), "a new feed has nothing to send");
+        feed.record([(&[ChangeDomain::Structure][..], Some("A"))]);
+        assert!(!feed.is_idle(), "a recorded commit is pending");
+
+        assert!(feed.take_if_quiet(feed.writes()).is_some());
+        assert!(!feed.is_idle(), "taken but not yet sent");
+        feed.emitted();
+        assert!(feed.is_idle(), "sent");
+    }
 
     #[test]
     fn commits_merge_into_one_pending_set_that_a_take_clears() {

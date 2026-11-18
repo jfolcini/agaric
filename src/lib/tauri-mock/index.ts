@@ -128,6 +128,9 @@ export function setupMock(): void {
   // etc. — receives `{ event, payload }`, matching what a real Tauri
   // backend event delivers. The bridge defines it too.
   w['__emitMockEvent'] = (event: string, payload?: unknown): Promise<void> => emit(event, payload)
+  // Resolves once every write so far has had its `blocks:changed` sent: the
+  // mock's change feed sends it on the next task. The bridge defines it too.
+  w['__settleBackend'] = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
   // The rest are the mock's alone: a Playwright fixture that asked for the
   // bridge's surface gets none of them, as the bridge has none.

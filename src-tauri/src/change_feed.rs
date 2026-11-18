@@ -61,6 +61,7 @@ pub async fn run(
             domains: Some(pending.domains.into_iter().collect()),
             local_command: true,
         });
+        materializer.change_feed().emitted();
     }
 }
 
