@@ -62,7 +62,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
   // #6755 — keys the page's tags offer it, shown as empty rows.
-  const suggestions = useSuggestedProperties(pageId)
+  // Read once the table opens, not on every page open (#5445 pins that IPC).
+  const suggestions = useSuggestedProperties(expanded ? pageId : null)
   const loading = isPending || definitionsLoading
 
   useEffect(() => {
@@ -347,7 +348,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const propertyCount = properties.length
 
-  if (!loading && properties.length === 0 && suggestions.length === 0 && !forceExpanded) {
+  if (!loading && properties.length === 0 && !expanded && !forceExpanded) {
     return null
   }
 
