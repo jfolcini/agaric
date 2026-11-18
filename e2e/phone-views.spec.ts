@@ -65,6 +65,13 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
 
   test("History's touch pill is a small pill at the list's right edge", async ({ page }) => {
     await waitForBoot(page)
+    // The newest entry must be an edit, which has a diff: on the real backend
+    // the seed's newest op is a property write, which has none.
+    await ipc(page, 'edit_block', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      toText: 'Edited for the History layout',
+      baseText: null,
+    })
     await navigateToView(page, 'History')
     const pill = page.getByTestId('history-touch-nav')
     await expect(pill).toBeVisible()
