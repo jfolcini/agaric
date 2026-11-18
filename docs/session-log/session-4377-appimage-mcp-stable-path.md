@@ -1,4 +1,4 @@
-# Session 4373 — a stable, current agaric-mcp for the AppImage
+# Session 4377 — a stable, current agaric-mcp for the AppImage
 
 #6980: from an AppImage the bridge lived only inside the versioned AppImage file, so a copied agent config named that file and broke on update or move, and scripts found no `agaric-mcp` on the PATH; a hand-copied one went stale silently.
 
