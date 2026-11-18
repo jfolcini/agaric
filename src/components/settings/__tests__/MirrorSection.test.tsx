@@ -84,8 +84,11 @@ beforeEach(() => {
     set_mirror_folder: (args) => {
       const wasOn = folder !== null
       folder = args['path'] as string | null
-      // Taken only when the mirror turns on, as the backend takes it.
-      if (folder !== null && !wasOn) readBack = args['readBack'] as boolean
+      // Taken only when the mirror turns on, as the backend takes it, which
+      // holds it off while the folder holds changed files.
+      if (folder !== null && !wasOn) {
+        readBack = (args['readBack'] as boolean) && pendingFiles.length === 0
+      }
       return status()
     },
     set_mirror_space: (args) => {
@@ -253,6 +256,61 @@ describe('MirrorSection', () => {
     const stored = await storedStatus()
     expect(stored.folder).toBe(PICKED)
     expect(stored.read_back).toBe(false)
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+  })
+
+  it('with the mirror off, the stored reading back shows and goes with the folder chosen', async () => {
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+    expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    expect(await screen.findByText(PICKED)).toBeInTheDocument()
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith('set_mirror_folder', {
+      path: PICKED,
+      readBack: false,
+    })
+    expect((await storedStatus()).read_back).toBe(false)
+  })
+
+  it('a folder chosen holding changed files asks before reading them in', async () => {
+    pendingFiles = ['Personal/Projects.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Personal/Projects.md')
+    expect((await storedStatus()).read_back).toBe(false)
+    await user.click(screen.getByRole('button', { name: t('data.mirrorReadPendingConfirm') }))
+    await waitFor(async () => {
+      expect((await storedStatus()).read_back).toBe(true)
+    })
+  })
+
+  it('a folder chosen holding changed files with reading back off asks nothing', async () => {
+    readBack = false
+    pendingFiles = ['Personal/Projects.md']
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorChooseButton') }))
+
+    expect(await screen.findByText(PICKED)).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('Turn off keeps reading back as it was', async () => {
+    folder = PICKED
+    readBack = false
+    const user = userEvent.setup()
+    await renderLoaded()
+
+    await user.click(screen.getByRole('button', { name: t('data.mirrorTurnOffButton') }))
+
+    expect(await screen.findByText(t('data.mirrorOff'))).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: t('data.mirrorReadBackLabel') })).not.toBeChecked()
   })
 
