@@ -19,7 +19,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,10 +29,6 @@ import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
-import {
-  __resetCalendarPageDatesForTests,
-  useCalendarPageDates,
-} from '@/hooks/useCalendarPageDates'
 import type { AppError } from '@/lib/app-error'
 import {
   _resetGraphStructureEventsForTest,
@@ -40,8 +36,6 @@ import {
 } from '@/lib/graph-structure-events'
 import { MAX_BATCH_BLOCK_IDS } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import type { NameChange } from '@/lib/name-change-bus'
-import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -115,19 +109,6 @@ function listTrashWithUnloadedTail(args: Readonly<Record<string, unknown>>) {
  * Helper: mock invoke to return items on list_trash and empty [] on batch_resolve.
  * Returns the page so callers can reference it.
  */
-/** Range fetches one fresh journal mount makes: 0 while its page map is cached, 1 once dropped. */
-async function journalFetchesOnMount(): Promise<number> {
-  const fetches = () =>
-    mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_pages_in_range').length
-  const before = fetches()
-  const { result, unmount } = renderHook(() =>
-    useCalendarPageDates({ startDate: '2025-01-01', endDate: '2025-01-31' }),
-  )
-  await waitFor(() => expect(result.current.loading).toBe(false))
-  unmount()
-  return fetches() - before
-}
-
 function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = false) {
   // #4668 — `PageResponse` always carries `total_count`; this literal omitted it.
   const page = {
@@ -147,7 +128,6 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
 beforeEach(() => {
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
-  __resetCalendarPageDatesForTests()
   // `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
   // Pin a deterministic test space so the `cache.get` assertions below
   // can compose the same prefix.
@@ -584,42 +564,10 @@ describe('TrashView', () => {
     })
   })
 
-  // #4007 — restoring a page/tag is the mirror of the delete the picker name
-  // caches already listen for: the page is offerable again, and those caches
-  // are filled once per space, so nothing else would ever put it back. The
-  // restored row's shape can't be folded in (an empty cache means "not
-  // fetched yet"), so the caches are dropped instead.
-  it('invalidates the picker name caches after restoring a page (#4007)', async () => {
-    const user = userEvent.setup()
-    const block = makeBlock({
-      id: 'B1',
-      content: 'restored page',
-      block_type: 'page',
-      deleted_at: 1736899200000,
-    })
-    stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
-      batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1, op_refs: [] }),
-      trash_descendant_counts: () => ({}),
-    })
-
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    try {
-      render(<TrashView />)
-      await user.click(await screen.findByTestId('trash-restore-btn'))
-
-      await waitFor(() => expect(changes).toEqual([{ kind: 'invalidated' }]))
-    } finally {
-      unsubscribe()
-    }
-  })
-
   // #5295 — a block trashed before its page lists as its own row, and its
   // restore brings the page back too (the #1884 ancestor walk). The page's row
-  // must leave the list, and the pickers must offer the page again.
-  it('restoring a block that brings its page back drops the page row and the picker name caches (#5295)', async () => {
+  // must leave the list.
+  it('restoring a block that brings its page back drops the page row (#5295)', async () => {
     const user = userEvent.setup()
     const block = makeBlock({
       id: 'B1',
@@ -649,24 +597,17 @@ describe('TrashView', () => {
       trash_descendant_counts: () => ({}),
     })
 
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    try {
-      render(<TrashView />)
-      expect(await screen.findByText('Page P')).toBeInTheDocument()
-      await user.click(screen.getAllByTestId('trash-restore-btn')[0] as HTMLElement)
+    render(<TrashView />)
+    expect(await screen.findByText('Page P')).toBeInTheDocument()
+    await user.click(screen.getAllByTestId('trash-restore-btn')[0] as HTMLElement)
 
-      await waitFor(() => {
-        expect(screen.queryByText('Page P')).not.toBeInTheDocument()
-      })
-      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
-        blockId: 'B1',
-        deletedAtRef: 1736899200000,
-      })
-      expect(changes).toEqual([{ kind: 'invalidated' }])
-    } finally {
-      unsubscribe()
-    }
+    await waitFor(() => {
+      expect(screen.queryByText('Page P')).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+      blockId: 'B1',
+      deletedAtRef: 1736899200000,
+    })
   })
 
   // #4963 — a restore puts a node and its `[[links]]` back in the graph, so
@@ -1095,30 +1036,6 @@ describe('TrashView', () => {
 
     // #4963 — the restored blocks are graph nodes/edges again.
     await waitFor(() => expect(getGraphStructureKey()).toBe(1))
-  })
-
-  // #5295 — a content block's restore can bring its trashed page back too.
-  it('batch restore of a content block drops the picker name caches (#5295)', async () => {
-    const user = userEvent.setup()
-    const block = makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-    stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
-      batch_resolve: () => [],
-      restore_blocks_by_ids: () => ({ affected_count: 1 }),
-      trash_descendant_counts: () => ({}),
-    })
-
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    try {
-      render(<TrashView />)
-      await user.click(await screen.findByTestId('trash-item-checkbox'))
-      await user.click(screen.getByRole('button', { name: /Restore selected/i }))
-
-      await waitFor(() => expect(changes).toEqual([{ kind: 'invalidated' }]))
-    } finally {
-      unsubscribe()
-    }
   })
 
   // #3860 — `trash.batchRestored` had the same missing-plural defect; pins
@@ -2314,12 +2231,12 @@ describe('TrashView', () => {
   // #4967 follow-up — `restoreAllDeletedInSpace` chunks the drain and each
   // chunk is its own committed transaction, so a later chunk failing leaves the
   // earlier chunk's rows restored. The failure toast is still the right toast,
-  // but the picker name caches and the graph both have to learn about the rows
+  // but the chips and the prefetch expiry both have to learn about the rows
   // that ARE back, or they keep hiding pages that are no longer in the trash.
   // And the toast has to say so too: "Failed to restore all items" over a
   // thousand rows that DID come back is the same understatement
   // `trash.emptyTrashPartial` exists to stop on the purge side.
-  it('invalidates the name caches and the graph when an early restore-all chunk committed before a later one failed', async () => {
+  it('refreshes the chips and the graph counter when an early restore-all chunk committed before a later one failed', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -2337,38 +2254,28 @@ describe('TrashView', () => {
         throw new Error('db error on second chunk')
       },
       trash_descendant_counts: () => ({}),
-      list_journal_pages_in_range: () => [],
     })
-    // #5246 / #5247 — the committed chunk's chips and journal pages are back too.
+    // #5246 — the committed chunk's chips are back too.
     useResolveStore.getState().set('B1', 'item 1', true)
-    expect(await journalFetchesOnMount()).toBe(1)
 
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    try {
-      render(<TrashView />)
+    render(<TrashView />)
 
-      await screen.findByText('item 1')
-      await user.click(screen.getByTestId('trash-restore-all-btn'))
-      const dialog = screen.getByRole('alertdialog')
-      await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
 
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith(
-          `Restored ${MAX_BATCH_BLOCK_IDS} items before an error interrupted restoring all`,
-        )
-      })
-      expect(mockedAnnounce).not.toHaveBeenCalled()
-      expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
-      expect(restoreCalls).toBe(2)
-      // The two invalidations the failure path used to skip.
-      await waitFor(() => expect(getGraphStructureKey()).toBe(1))
-      expect(changes).toEqual([{ kind: 'invalidated' }])
-      await waitFor(() => expect(useResolveStore.getState().resolveStatus('B1')).toBe('active'))
-      expect(await journalFetchesOnMount()).toBe(1)
-    } finally {
-      unsubscribe()
-    }
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        `Restored ${MAX_BATCH_BLOCK_IDS} items before an error interrupted restoring all`,
+      )
+    })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to restore all items')
+    expect(restoreCalls).toBe(2)
+    // What the failure path used to skip.
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+    await waitFor(() => expect(useResolveStore.getState().resolveStatus('B1')).toBe('active'))
   })
 
   it('relabeled batch buttons say Restore Selected / Purge Selected', async () => {
@@ -3152,9 +3059,8 @@ describe('TrashView  batch restore threshold tooltip', () => {
 })
 
 // #5246 — a chip whose target the restore brought back (the row itself or a
-// descendant its cascade restored) goes live; #5247 — a journal page restored
-// here must reappear in the journal and calendar, whose page map is cached.
-describe('TrashView restores — chips and the journal page map', () => {
+// descendant its cascade restored) goes live.
+describe('TrashView restores — chips', () => {
   /** The row restored, plus a chip-cached child of it the listing never shows. */
   function stubRestore(handlers: Readonly<TypedInvokeHandlers>) {
     stubInvoke({
@@ -3169,48 +3075,43 @@ describe('TrashView restores — chips and the journal page map', () => {
         ((args['ids'] as string[] | undefined) ?? [])
           .filter((id) => id === 'R1' || id === 'R1_CHILD')
           .map((id) => ({ id, title: id, block_type: 'content', deleted: false })),
-      list_journal_pages_in_range: () => [],
       ...handlers,
     })
     useResolveStore.getState().set('R1', 'R1', true)
     useResolveStore.getState().set('R1_CHILD', 'R1_CHILD', true)
   }
 
-  async function expectChipsLiveAndJournalRefetched() {
+  async function expectChipsLive() {
     await waitFor(() => {
       expect(useResolveStore.getState().resolveStatus('R1_CHILD')).toBe('active')
     })
     expect(useResolveStore.getState().resolveStatus('R1')).toBe('active')
-    expect(await journalFetchesOnMount()).toBe(1)
   }
 
   it('single restore', async () => {
     const user = userEvent.setup()
     stubRestore({ restore_block: () => ({ block_id: 'R1', restored_count: 2, op_refs: [] }) })
-    expect(await journalFetchesOnMount()).toBe(1)
     render(<TrashView />)
 
     await user.click(await screen.findByTestId('trash-restore-btn'))
 
-    await expectChipsLiveAndJournalRefetched()
+    await expectChipsLive()
   })
 
   it('batch restore', async () => {
     const user = userEvent.setup()
     stubRestore({ restore_blocks_by_ids: () => ({ affected_count: 2 }) })
-    expect(await journalFetchesOnMount()).toBe(1)
     render(<TrashView />)
 
     await user.click(await screen.findByTestId('trash-item-checkbox'))
     await user.click(screen.getByRole('button', { name: /Restore selected/i }))
 
-    await expectChipsLiveAndJournalRefetched()
+    await expectChipsLive()
   })
 
   it('Restore all', async () => {
     const user = userEvent.setup()
     stubRestore({ restore_blocks_by_ids: () => ({ affected_count: 2 }) })
-    expect(await journalFetchesOnMount()).toBe(1)
     render(<TrashView />)
 
     await screen.findByText('restorable')
@@ -3219,20 +3120,18 @@ describe('TrashView restores — chips and the journal page map', () => {
       within(screen.getByRole('alertdialog')).getByRole('button', { name: /^Restore$/i }),
     )
 
-    await expectChipsLiveAndJournalRefetched()
+    await expectChipsLive()
   })
 
-  it('a failed restore leaves the chips deleted and the page map alone', async () => {
+  it('a failed restore leaves the chips deleted', async () => {
     const user = userEvent.setup()
     stubRestore({ restore_block: () => Promise.reject(new Error('restore failed')) })
-    expect(await journalFetchesOnMount()).toBe(1)
     render(<TrashView />)
 
     await user.click(await screen.findByTestId('trash-restore-btn'))
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to restore block'))
     expect(useResolveStore.getState().resolveStatus('R1_CHILD')).toBe('deleted')
-    expect(await journalFetchesOnMount()).toBe(0)
   })
 
   // #5281/#6051 — the backend refuses to revive a tag whose name a live tag now

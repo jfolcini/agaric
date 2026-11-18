@@ -20,9 +20,9 @@ import { useTabsStore } from '@/stores/tabs'
  * `spaceId` is the space the caller had before its awaits, required so a new
  * call site cannot silently emit a mislabelled event (#4391). Reading it here
  * would be a fresh read at emit time. `null` skips the bus notification but
- * still updates the three copies, none of which is space-scoped; why that and
- * `invalidateNameCaches()` are interchangeable is in "When the caller has NO
- * active space" in `src/lib/name-change-bus.ts`.
+ * still updates the three copies, none of which is space-scoped; why the skip
+ * loses nothing is in "When the caller has NO active space" in
+ * `src/lib/name-change-bus.ts`.
  */
 export function renamePage(pageId: string, title: string, spaceId: string | null): void {
   useTabsStore.getState().renamePage(pageId, title)

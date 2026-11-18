@@ -73,30 +73,12 @@
  * The publishers take `spaceId: string` (required); the one shared fan-out
  * that sits in front of them (`src/stores/page-rename.ts`'s `renamePage`)
  * takes `string | null`, because "no active space" is a real state a caller
- * can be in. Both of the responses in the tree are CORRECT and
- * interchangeable, and this is the one place that says so, so a new call
- * site does not have to infer a policy from whichever precedent it happens
- * to read first:
- *
- *  - SKIP the notification. Cheapest, and what
- *    `renamePage` in `src/stores/page-rename.ts` and `src/components/TagList.tsx:156` do.
- *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
- *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
- *    `usePageDeleteAction`'s `handleConfirm`, and — since #4524, through the
- *    shared {@link notifyPagesRemoved} rather than a copy of the branch —
- *    `PageBrowserBatchToolbar`'s `handleTrash` and `handleMoveToSpace` plus
- *    `useBlockMultiSelect`'s `handleBatchDelete` do.
- *
- * They are equivalent because with no active space both name caches are
- * provably EMPTY: `useBlockResolve`'s space-switch subscriber clears both on
- * any `currentSpaceId` transition INCLUDING a transition to `null`, and both
- * lazy fills short-circuit to `[]` while the space is `null`
- * (`searchPagesViaCache`, and `searchTags`'s inline fill). So the
- * invalidation has nothing to drop and the skip loses nothing. Prefer the
- * skip in new code — it is the same outcome without the wasted fan-out — but
- * do not "fix" an existing invalidate to match; the divergence is cosmetic,
- * not a bug, and churning it would only make the next reader wonder which
- * one changed behaviour.
+ * can be in. Such a caller SKIPS the notification, as `renamePage`, the Tags
+ * view and {@link notifyPagesRemoved} do. That loses nothing: with no active
+ * space both name caches are provably EMPTY. `useBlockResolve`'s space-switch
+ * subscriber clears both on any `currentSpaceId` transition INCLUDING a
+ * transition to `null`, and both lazy fills short-circuit to `[]` while the
+ * space is `null` (`searchPagesViaCache`, and `searchTags`'s inline fill).
  *
  * NOTE this reasoning is about the picker's NAME caches only. A null-space
  * caller must still run its non-space-scoped fan-out (tabs, recents, the
@@ -129,7 +111,8 @@
  *
  * {@link invalidateNameCaches} remains the escape hatch for a mutation that
  * ADDS rows back but CANNOT describe them one at a time — a restore-from-
- * trash, or an out-of-band write (sync / MCP). The empty-cache latch is not
+ * trash (through the change feed's `names` domain), or an out-of-band write
+ * (sync / MCP). The empty-cache latch is not
  * what rules an insert out there, the caller's ignorance is: a restore
  * cascades to descendants and the bulk paths report only a count, so the
  * caller does not know the full set of rows that reappeared, and emitting
@@ -330,7 +313,8 @@ export function notifyTagRemoved(tagId: string, spaceId: string): void {
 
 /**
  * Drop every cached name list. For mutations that put rows BACK but cannot
- * enumerate them (restore from trash, an inbound sync or MCP write): the bus
+ * enumerate them (the change feed's `names` domain, which covers a restore
+ * from trash, and an inbound sync or MCP write): the bus
  * DOES have an 'added' event (#4338), but it describes exactly one row, and
  * these callers do not know the full set — a restore cascades to descendants
  * and the bulk paths report only a count. See the module docblock.
@@ -345,8 +329,9 @@ export function invalidateNameCaches(): void {
  * mounted `useBlockResolve` rebuilds its whole cached pages list with `filter`
  * per event, so the cost is `ids x mounted BlockTrees x pages in space`
  * element copies on the UI thread, with no yield in between. Above this many
- * ids a bulk publisher emits ONE {@link invalidateNameCaches} instead, which
- * is O(listeners) and costs a single re-fetch on the next picker read.
+ * ids a bulk publisher emits nothing and leaves the caches to the write's
+ * change-feed event, ONE {@link invalidateNameCaches}, which is O(listeners)
+ * and costs a single re-fetch on the next picker read.
  *
  * 25 is measured, not chosen for roundness. Timing the exact production shape
  * (N per-listener lists of `{id, title}` rows, one `filter` per listener per
@@ -380,7 +365,7 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
  * files that happen to overlap in behaviour, so the asymmetry had no place to
  * show up. A call to this function is a thing a reviewer can notice missing.
  *
- * The three decisions it settles, each of which a copy of the recipe could
+ * The two decisions it settles, each of which a copy of the recipe could
  * get individually wrong:
  *
  *  - **De-duplication.** `pageIds` is collapsed into a `Set` before both the
@@ -391,28 +376,13 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
  *  - **The budget is measured on what will ACTUALLY be emitted** — the
  *    de-duplicated cohort — not on the caller's selection. #4480 made the
  *    emitted set larger than the selection, so 20 selected roots that cascade
- *    to 30 pages must collapse to one invalidation, and a check against
- *    `ids.length` would wave 30 synchronous events through under a cap of 25.
- *  - **An EMPTY cohort publishes nothing**, not an invalidation. This guard
- *    only ever changes behaviour on the `spaceId == null` branch below: with
- *    a live `spaceId` the per-id loop already emits zero events for an empty
- *    cohort regardless (there is nothing to iterate), so removing the guard
- *    would be a no-op there. On the null-space branch it stops what would
- *    otherwise be an unconditional {@link invalidateNameCaches} for a delete
- *    that removed nothing. That is NOT rescuing a warm cache — see "When the
- *    caller has NO active space" above: with no active space both picker
- *    caches are provably already empty, so there is no warm cache there for
- *    it to drop. The value is smaller and still real: a synchronous fan-out
- *    to every mounted `useBlockResolve`, for a removal that never happened,
- *    is worth skipping on its own terms, and the guard costs nothing. Keep
- *    it for that reason, and revisit only if the empty-cache invariant
- *    itself ever stops holding.
+ *    to 30 pages must publish nothing, and a check against `ids.length`
+ *    would wave 30 synchronous events through under a cap of 25.
  *
  * `spaceId` is the space the pages are LEAVING, captured when the publisher
  * decided to act (see the module docblock — for a move that is the ORIGIN,
- * never the destination). `null` falls back to a full invalidation, the
- * conservative half of the "When the caller has NO active space" section
- * above; it is what both toolbar handlers already did.
+ * never the destination). `null` publishes nothing, as "When the caller has
+ * NO active space" above settles.
  *
  * `everywhereIds` (#4558) is the sub-cohort whose space the caller does NOT
  * know — see {@link notifyPageRemoved}'s `spaceId: null` section for why one
@@ -452,15 +422,10 @@ export function notifyPagesRemoved(
   // cohort does not publish them twice under two different scopes.
   const everywhere = new Set(everywhereIds)
   for (const id of scoped) everywhere.delete(id)
-  const total = scoped.size + everywhere.size
-  if (total === 0) return
   // The budget is measured over BOTH cohorts: they are one synchronous
   // fan-out to the same listeners, and a per-cohort check would wave through
   // twice the cap.
-  if (spaceId == null || total > NAME_CACHE_FANOUT_MAX_IDS) {
-    invalidateNameCaches()
-    return
-  }
+  if (spaceId == null || scoped.size + everywhere.size > NAME_CACHE_FANOUT_MAX_IDS) return
   for (const id of scoped) notifyPageRemoved(id, spaceId)
   for (const id of everywhere) notifyPageRemoved(id, null)
 }

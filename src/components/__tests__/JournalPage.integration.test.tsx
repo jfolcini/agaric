@@ -112,6 +112,7 @@ vi.mock('@/components/backlinks/LinkedReferences', () => ({
 }))
 
 import { JournalControls, JournalPage } from '@/components/JournalPage'
+import { invalidateDomains } from '@/hooks/derived-caches'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { DEFAULT_JOURNAL_DATE_FORMAT } from '@/hooks/useJournalDateFormat'
 import { unwrap } from '@/lib/app-error'
@@ -335,6 +336,16 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     )
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
+    // The mock sends no change feed: once the delete commits, send the `names`
+    // event a delete's feed carries, which drops the journal's page map.
+    await waitFor(async () => {
+      expect(
+        unwrap(
+          await commands.getJournalPageByDate(todayStr, { kind: 'active', space_id: PERSONAL }),
+        ),
+      ).toBeNull()
+    })
+    act(() => invalidateDomains(['names']))
   }
 
   async function expectTodayEmpty(mode: JournalMode): Promise<void> {

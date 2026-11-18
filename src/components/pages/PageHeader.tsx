@@ -42,7 +42,6 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isAndroid } from '@/lib/platform'
 import type { EditMode } from '@/lib/preferences'
@@ -485,9 +484,6 @@ export function PageHeader({
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.
         renamePage(pageId, newTitle, spaceId)
-        // #5287 — `renamePage` announces a page rename; the tag lists (the
-        // header's tag chips, the `#` picker) only reload on `invalidated`.
-        if (resp.block_type === 'tag') invalidateNameCaches()
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)

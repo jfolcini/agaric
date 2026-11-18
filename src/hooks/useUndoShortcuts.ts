@@ -47,10 +47,10 @@ import { useUndoStore } from '@/stores/undo'
  * #4534 — this is also where an undo/redo pays back the picker's name caches.
  * Every EVICTING publisher on the bus owes a RESTORE signal to whatever can
  * reverse it, and the reverse of a delete is not a rename: it puts rows BACK.
- * The pairing is already explicit on the two other delete surfaces —
- * `PageBrowserBatchToolbar.handleUndoTrash` and
- * `usePageDeleteAction.handleUndo` both call `invalidateNameCaches()` next to
- * their `restore_blocks_by_ids` — and #4524 added a third evicting publisher
+ * The two other delete surfaces' undos (`PageBrowserBatchToolbar.handleUndoTrash`
+ * and `usePageDeleteAction.handleUndo`) pay it back through their restore's
+ * change-feed event, whose `names` domain drops the caches; and #4524 added a
+ * third evicting publisher
  * (`useBlockMultiSelect.handleBatchDelete`) whose only advertised escape
  * hatch is the Ctrl+Z that lands HERE. Without this call the block tree's
  * batch delete leaves the page restored in the DB and back in the tree, yet
@@ -61,8 +61,7 @@ import { useUndoStore } from '@/stores/undo'
  * Why a blanket invalidation and not a targeted re-add: the undo store is
  * ref-addressed and reports only `reversed_op_type` — it cannot say WHICH
  * pages (if any) came back, and a delete cascades to nested pages nobody
- * named. That is exactly `usePageDeleteAction.handleUndo`'s reasoning: an
- * EMPTY cache means "not fetched for this space yet", so re-adding the one id
+ * named. An EMPTY cache means "not fetched for this space yet", so re-adding the one id
  * we could name would latch a partial list as the whole space. Drop both
  * caches and let the next picker read re-fetch. Unconditional on purpose —
  * `invalidated` needs no space to compare against (see the name-change-bus

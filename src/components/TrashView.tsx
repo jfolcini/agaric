@@ -30,7 +30,6 @@ import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
@@ -50,7 +49,6 @@ import {
   restoreAllDeletedInSpace,
 } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -244,15 +242,8 @@ export function TrashView(): React.ReactElement {
             .getState()
             .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
         }
-        // #4007 — a restored page/tag is offerable again, and the picker
-        // caches DROPPED it when it was trashed (or never saw it at all).
-        // They are filled once per space, so nothing else re-adds it: drop
-        // them and let the next picker read re-fetch. Unconditional (#5295):
-        // a content block's restore can bring its trashed page back too.
-        invalidateNameCaches()
-        // #5246 — chips into the restored subtree go live; #5247 — a journal page is back.
+        // #5246 — chips into the restored subtree go live.
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
-        invalidateCalendarPageDates()
         notify.success(t('trash.blockRestored'))
       } catch (err) {
         logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
@@ -311,10 +302,7 @@ export function TrashView(): React.ReactElement {
             .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
         }
       }
-      // #4007 / #5295 — same as the single-row restore above.
-      invalidateNameCaches()
       void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
-      invalidateCalendarPageDates() // #5247
     } catch (err) {
       // Surface the failure (matching the single-item path) and KEEP the
       // selection so the user can retry — clearing it here would silently
@@ -476,14 +464,9 @@ export function TrashView(): React.ReactElement {
       clearSelection()
       setConfirmRestoreAll(false)
       if (result.affected_count > 0) {
-        // #4007 — "restore all" can bring back any number of pages/tags and
-        // reports only a count, so the picker caches cannot be patched; drop
-        // them and let the next picker read re-fetch.
-        invalidateNameCaches()
         // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
-        invalidateCalendarPageDates() // #5247
         notify.success(t('trash.allRestored', { count: result.affected_count }))
       } else if (blocks.length > 0) {
         logger.warn('TrashView', 'restore all changed nothing', {
@@ -495,13 +478,11 @@ export function TrashView(): React.ReactElement {
     } catch (err) {
       logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
       // Each chunk commits on its own, so a rejection can still have put rows
-      // back; the pickers and the graph must hear about those even on failure.
+      // back; the chips and the prefetched subtrees must hear about those even on failure.
       if (err instanceof PartialPurgeError && err.affectedCount > 0) {
-        invalidateNameCaches()
         // Now, not at the change feed: expires subtrees prefetched before this write.
         recordGraphStructureChange()
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
-        invalidateCalendarPageDates()
         reload()
         clearSelection()
         setConfirmRestoreAll(false)
