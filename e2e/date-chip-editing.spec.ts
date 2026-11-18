@@ -1,10 +1,12 @@
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   activePopover,
   expect,
   focusBlockById,
+  ipc,
   navigateToView,
   openPage,
   reopenPage,
@@ -27,14 +29,12 @@ import {
  * lives in `e2e/`.
  *
  * The clock is pinned to Wednesday 2026-03-11 so every parsed date is fixed:
- * `+3d` is Mar 14, `next monday` Mar 16, `Apr 15` this year's Apr 15. The seed
- * (`src/lib/tauri-mock/seed.ts`) dates its blocks from that clock: "Submit
- * report" (BLOCK_OVERDUE_1) is due yesterday, Mar 10.
+ * `+3d` is Mar 14, `next monday` Mar 16, `Apr 15` this year's Apr 15. The
+ * clock is the browser's only, so each Agenda test dates "Submit report"
+ * (BLOCK_OVERDUE_1) itself: due yesterday, Mar 10.
  */
 
 const PINNED_NOW = new Date('2026-03-11T12:00:00')
-// SEED_IDS.BLOCK_GS_1 in src/lib/tauri-mock/seed.ts: first "Getting Started" block, no dates.
-const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
 test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: PINNED_NOW })
@@ -73,6 +73,14 @@ async function leaveAndReturnToAgenda(page: Page): Promise<void> {
 }
 
 test.describe('Agenda due-date chip editor @editor @journal', () => {
+  test.beforeEach(async ({ page }) => {
+    await ipc(page, 'set_property', {
+      blockId: SEED_IDS.BLOCK_OVERDUE_1,
+      key: 'due_date',
+      value: { value_date: '2026-03-10' },
+    })
+  })
+
   for (const { input, parsed, chip } of [
     { input: '+3d', parsed: '2026-03-14', chip: 'Mar 14' },
     { input: 'next monday', parsed: '2026-03-16', chip: 'Mar 16' },
@@ -110,7 +118,7 @@ test('toolbar Set scheduled date: the picked day becomes a scheduled chip that p
   page,
 }) => {
   await openPage(page, 'Getting Started')
-  await focusBlockById(page, BLOCK_GS_1)
+  await focusBlockById(page, SEED_IDS.BLOCK_GS_1)
   await page.getByRole('button', { name: 'Set scheduled date' }).click()
 
   const picker = activeDialog(page)
