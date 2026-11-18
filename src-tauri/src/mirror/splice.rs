@@ -144,8 +144,16 @@ impl<'a> Laid<'a> {
     }
 }
 
+/// Whether two texts' front matter reads the same, its keys in any order: a
+/// property has no place among the others, and an editor may write them in
+/// its own.
 fn same_front(a: &ParseOutput, b: &ParseOutput) -> bool {
-    a.frontmatter == b.frontmatter
+    let sorted = |text: &ParseOutput| {
+        let mut keys = text.frontmatter.clone();
+        keys.sort_unstable();
+        keys
+    };
+    sorted(a) == sorted(b)
         && a.frontmatter_list_items == b.frontmatter_list_items
         && a.frontmatter_refusal.is_none()
         && b.frontmatter_refusal.is_none()

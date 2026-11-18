@@ -119,6 +119,28 @@ fn front_matter_that_reads_the_same_keeps_its_bytes() {
 }
 
 #[test]
+fn front_matter_in_another_key_order_keeps_its_bytes() {
+    let old = [
+        ("---", None),
+        ("tags: [work]", None),
+        ("status: done", None),
+        ("---", None),
+        ("* one", Some(1)),
+    ];
+    let new = [
+        ("---", None),
+        ("status: done", None),
+        ("tags: [work]", None),
+        ("---", None),
+        ("- ONE", Some(1)),
+    ];
+    assert_eq!(
+        spliced(&old, &new),
+        "---\ntags: [work]\nstatus: done\n---\n- ONE"
+    );
+}
+
+#[test]
 fn ids_that_are_not_one_per_line_write_the_render() {
     let (new, new_ids) = text(&[("- one", Some(1))]);
     let out = splice("* one\n", &[Some(id(1))], &new, &new_ids);

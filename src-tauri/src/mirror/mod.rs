@@ -1488,12 +1488,7 @@ impl Mirror {
             .get(page_id)
             .filter(|state| state.path == path)
             .and_then(PageState::newest);
-        let (text, line_ids) = match newest {
-            Some(shadow) => {
-                splice::splice(&shadow.text, &shadow.line_ids, &file.text, &file.line_ids)
-            }
-            None => (file.text.clone(), file.line_ids.clone()),
-        };
+        let (text, line_ids) = self.spliced(page_id, &file);
         let mut shadow = Shadow {
             text,
             line_ids,
@@ -1544,6 +1539,16 @@ impl Mirror {
             }
         }
         self.record(page_id, path, shadow)
+    }
+
+    /// `file`, the page's render, written over the text last written for the
+    /// page, keeping the lines of every block it did not change ([`splice`]),
+    /// wherever that text was: a page whose file moves keeps its own lines.
+    fn spliced(&self, page_id: &str, file: &PageFile) -> (String, Vec<Option<String>>) {
+        match self.pages.get(page_id).and_then(PageState::newest) {
+            Some(last) => splice::splice(&last.text, &last.line_ids, &file.text, &file.line_ids),
+            None => (file.text.clone(), file.line_ids.clone()),
+        }
     }
 
     /// How the file at `path` links `ids`' copies while copying is on, the
