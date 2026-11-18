@@ -51,8 +51,14 @@ test('clicking a result opens its page with the block in view and focused @searc
     ...Array.from({ length: 20 }, (_, i) => ({ content: `tail row ${i}` })),
   ])
   const target = ids[60] as string
-  await submitSearch(page, MARK)
-  await page.getByRole('option', { name: `${MARK} far down` }).click()
+  const result = page.getByRole('option', { name: `${MARK} far down` })
+  // The real backend indexes the blocks in the background, so a search sent
+  // right after them can find nothing yet: send it again until the row shows.
+  await expect(async () => {
+    await submitSearch(page, MARK)
+    await expect(result).toBeVisible({ timeout: 1_000 })
+  }).toPass()
+  await result.click()
 
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Projects')
   const row = page.locator(`[data-testid="sortable-block"][data-block-id="${target}"]`)
