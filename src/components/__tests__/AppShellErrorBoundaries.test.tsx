@@ -109,6 +109,9 @@ beforeEach(() => {
         makeBlockRow({ id: 'NEW_BLOCK', content: (args['content'] as string | null) ?? null }),
       ),
     create_page_in_space: () => JOURNAL_PAGE_ID,
+    // The journal focuses the empty block it opens a new day with; a click
+    // that lands once it has focus blurs it, which discards its empty draft.
+    delete_draft: () => null,
     first_child_for_blocks: () => ({}),
     flush_all_drafts: () => ({ flushed: 0 }),
     flush_draft: () => null,
