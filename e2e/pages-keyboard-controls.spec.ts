@@ -1,7 +1,14 @@
 import type { Page } from '@playwright/test'
 
 import { pageRow } from './domain'
-import { activeAlertDialog, expect, navigateToView, test, waitForBoot } from './helpers'
+import {
+  activeAlertDialog,
+  expect,
+  navigateToView,
+  seedBulkPages,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const pageTitle = (page: Page) => page.locator('[aria-label="Page title"]')
 
@@ -121,8 +128,8 @@ test.describe('Enter and Space press the focused control in the Pages view @page
  * stays mounted, so focus stays on the star instead of falling to <body>.
  */
 test('a star keeps focus when its toggle moves the page out of view @pages', async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockExtraPages', '120'))
   await waitForBoot(page)
+  await seedBulkPages(page, 120)
   await navigateToView(page, 'Pages')
   const grid = page.getByRole('grid')
   await expect(grid.locator('[data-page-item]').first()).toBeVisible()

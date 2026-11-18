@@ -7,6 +7,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   navigateToView,
+  seedBulkPages,
   test,
   waitForBoot,
 } from './helpers'
@@ -54,8 +55,8 @@ async function returnToPages(page: Page): Promise<void> {
 }
 
 test('returning to Pages after only reading sends no list call @pages', async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockExtraPages', '120'))
   await waitForBoot(page)
+  await seedBulkPages(page, 120)
   await installIpcRecorder(page)
   await navigateToView(page, 'Pages')
   // Load every page of the list: 120 bulk pages + the seed is three of 50.
