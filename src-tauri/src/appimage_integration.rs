@@ -185,7 +185,12 @@ fn refresh_caches(data_home: &Path) {
 }
 
 fn run_cache_tool(tool: &mut Command, host_env: &[(OsString, Option<OsString>)]) {
-    apply_env(tool, host_env);
+    for (name, value) in host_env {
+        match value {
+            Some(value) => tool.env(name, value),
+            None => tool.env_remove(name),
+        };
+    }
     let name = tool.get_program().to_string_lossy().into_owned();
     match tool.status() {
         Ok(status) if status.success() => {}
@@ -217,16 +222,6 @@ fn host_env() -> Vec<(OsString, Option<OsString>)> {
             host_env_from(std::env::vars_os(), Path::new(&appdir))
         }
         _ => Vec::new(),
-    }
-}
-
-/// Sets or removes each variable [`host_env`] lists on `command`.
-fn apply_env(command: &mut Command, host_env: &[(OsString, Option<OsString>)]) {
-    for (name, value) in host_env {
-        match value {
-            Some(value) => command.env(name, value),
-            None => command.env_remove(name),
-        };
     }
 }
 
@@ -571,28 +566,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn apply_env_sets_and_removes_on_the_command() {
-        let mut command = Command::new("true");
-        command.env("LD_LIBRARY_PATH", "/tmp/.mount_AgaricX/usr/lib");
-        apply_env(
-            &mut command,
-            &[
-                (OsString::from("LD_LIBRARY_PATH"), None),
-                (OsString::from("PATH"), Some(OsString::from("/usr/bin"))),
-            ],
-        );
-        let mut envs: Vec<_> = command.get_envs().collect();
-        envs.sort();
-        assert_eq!(
-            envs,
-            vec![
-                (OsStr::new("LD_LIBRARY_PATH"), None),
-                (OsStr::new("PATH"), Some(OsStr::new("/usr/bin"))),
-            ]
-        );
-    }
-
     /// Captures what this thread logs at `info` and above.
     #[derive(Clone, Default)]
     struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
@@ -648,5 +621,31 @@ mod tests {
 
         let ok = logged_while(|| run_cache_tool(Command::new("sh").args(["-c", "exit 0"]), &[]));
         assert_eq!(ok, "", "a tool that succeeds logs nothing");
+    }
+
+    /// The tool exits non-zero, and so logs a warning, unless it got the
+    /// variable the bundle set removed, the one it rewrote replaced, and any
+    /// other inherited.
+    #[test]
+    fn run_cache_tool_gives_the_tool_the_host_env_6871() {
+        let mut tool = Command::new("sh");
+        tool.args([
+            "-c",
+            r#"test -z "${LD_LIBRARY_PATH+x}" && test "$XDG_DATA_DIRS" = /usr/share && test "$KEPT" = inherited"#,
+        ])
+        .env("LD_LIBRARY_PATH", "/tmp/.mount_AgaricX/usr/lib")
+        .env("XDG_DATA_DIRS", "/tmp/.mount_AgaricX/usr/share:/usr/share")
+        .env("KEPT", "inherited");
+        let host_env = [
+            (OsString::from("LD_LIBRARY_PATH"), None),
+            (
+                OsString::from("XDG_DATA_DIRS"),
+                Some(OsString::from("/usr/share")),
+            ),
+        ];
+
+        let logged = logged_while(|| run_cache_tool(&mut tool, &host_env));
+
+        assert_eq!(logged, "", "the tool ran with the host env");
     }
 }
