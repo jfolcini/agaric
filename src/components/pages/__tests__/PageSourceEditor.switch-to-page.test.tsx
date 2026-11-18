@@ -150,7 +150,8 @@ describe('PageSourceEditor link to page mode', () => {
     const { container } = renderEditor()
     await loadedEditor()
 
-    expect(pageLink().parentElement).toBe(
+    // The link sits in its own box (with its ⓘ when blocked) in the Cancel/Save row.
+    expect(pageLink().parentElement?.parentElement).toBe(
       screen.getByRole('button', { name: t('action.cancel') }).parentElement,
     )
     await user.hover(pageLink())
@@ -176,6 +177,29 @@ describe('PageSourceEditor link to page mode', () => {
 
     expect(onSwitchToPage).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps focus on the link when a reason arrives while it is focused', async () => {
+    const { rerender } = renderEditor()
+    await loadedEditor()
+    const link = pageLink()
+    link.focus()
+
+    const store = createPageBlockStore(PAGE)
+    rerender(
+      <PageBlockContext.Provider value={store}>
+        <PageSourceEditor
+          pageId={PAGE}
+          onClose={() => {}}
+          onSwitchToPage={() => {}}
+          pageModeBlocked={BLOCKED}
+        />
+      </PageBlockContext.Provider>,
+    )
+
+    expect(pageLink()).toBe(link)
+    expect(link).toHaveFocus()
+    expect(link).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('with the buffer as loaded, switches without a save', async () => {

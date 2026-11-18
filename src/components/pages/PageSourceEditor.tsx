@@ -52,7 +52,6 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { cn } from '@/lib/utils'
 import { usePageBlockStore } from '@/stores/page-blocks'
 import { latestUndoEntry } from '@/stores/undo'
 
@@ -142,38 +141,29 @@ function PageModeLink({
   onClick: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const link = (
-    <Button
-      variant="link"
-      className={cn(
-        'px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50',
-        !blocked && 'mr-auto',
-      )}
-      aria-disabled={blocked ? true : undefined}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      {t('pageMode.page')}
-    </Button>
-  )
-  if (blocked) {
-    return (
-      <>
-        {link}
-        <InfoPopover
-          variant="icon"
-          className="mr-auto"
-          ariaLabel={t('pageMode.blockedInfo')}
-          content={blocked}
-        />
-      </>
-    )
-  }
+  // One shape whether or not Page is blocked, so a reason that arrives while
+  // the link has focus does not remount it and drop the focus. The box keeps
+  // the link and its ⓘ together on the left of the Cancel/Save row.
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{link}</TooltipTrigger>
-      <TooltipContent>{`${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}</TooltipContent>
-    </Tooltip>
+    <span className="mr-auto inline-flex items-center gap-1">
+      <Tooltip {...(blocked ? { open: false } : {})}>
+        <TooltipTrigger asChild>
+          <Button
+            variant="link"
+            className="px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            aria-disabled={blocked ? true : undefined}
+            onClick={onClick}
+            disabled={disabled}
+          >
+            {t('pageMode.page')}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{`${t('pageMode.pageHint')} (${getShortcutKeys('togglePageMode')})`}</TooltipContent>
+      </Tooltip>
+      {blocked && (
+        <InfoPopover variant="icon" ariaLabel={t('pageMode.blockedInfo')} content={blocked} />
+      )}
+    </span>
   )
 }
 

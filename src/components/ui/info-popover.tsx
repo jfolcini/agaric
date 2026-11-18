@@ -27,7 +27,6 @@ import { useId } from 'react'
 import type * as React from 'react'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/lib/utils'
 
 const triggerVariants = cva('bg-transparent p-0 touch-hit-area focus-ring-visible', {
   variants: {
@@ -41,8 +40,6 @@ const triggerVariants = cva('bg-transparent p-0 touch-hit-area focus-ring-visibl
 interface InfoPopoverBaseProps {
   /** The explanation. */
   content: React.ReactNode
-  /** Forwarded to the trigger button. */
-  className?: string
   /** Forwarded to the trigger button, for specs that measure it. */
   'data-testid'?: string
 }
@@ -72,7 +69,7 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
           type="button"
           data-slot="info-popover-trigger"
           data-testid={props['data-testid']}
-          className={cn(triggerVariants({ variant }), props.className)}
+          className={triggerVariants({ variant })}
           {...(props.variant === 'icon' ? { 'aria-label': props.ariaLabel } : {})}
           onClick={(e) => e.stopPropagation()}
         >
