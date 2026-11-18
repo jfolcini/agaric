@@ -1,4 +1,4 @@
-# Session 4374 — review notes batch 4 (#6959, #6968, #6974, #6979, #6981, #6982)
+# Session 4375 — review notes batch 4 (#6959, #6968, #6974, #6979, #6981, #6982)
 
 One follow-up PR for seven non-blocking notes on merged PRs.
 
