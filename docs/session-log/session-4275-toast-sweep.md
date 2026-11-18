@@ -1,4 +1,4 @@
-# Session 4274 — toasts only for what the user did or must know
+# Session 4275 — toasts only for what the user did or must know
 
 Follow-up to #6878 (#6870). The maintainer asked for the rest of the toast review: drop success toasts that repeat what the screen already shows, move a tip and two form messages out of toasts, and stop screen readers hearing a toast twice. The rule now lives in `docs/UX.md` § Toasts and § Announcer; `notify.ts` points there.
 
