@@ -2350,3 +2350,113 @@ test.describe('page mode, as the backend’s own views read it (#6926) @editor @
     expect((await shown(page))[1]).toEqual(kept)
   })
 })
+
+test.describe('page mode, as the backend’s derived views read it (#6926) @editor @pages @search', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a ((ref)) to a block split, typed into and indented in page mode still resolves to it', async ({
+    page,
+  }) => {
+    // Page mode keeps a block's id on its text through every edit: Enter at its start moves the
+    // id down with the text, so the new block above is the new one and the ref still resolves.
+    const { ids } = await seedRows(page, 'Ref target edits', [
+      [0, 'ref line'],
+      [0, 'target text'],
+    ])
+    const target = ids[1] as string
+    await ipc(page, 'edit_block', { blockId: ids[0], toText: `ref line ((${target}))` })
+    await openInPageMode(page, 'Ref target edits', 2)
+
+    await caret(page, 1, 0)
+    await page.keyboard.press('Enter')
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await caret(page, 1, 0)
+    await page.keyboard.type('x')
+    await caret(page, 2, 'end')
+    await page.keyboard.type(' edited')
+    await page.keyboard.press('Tab')
+    await expect
+      .poll(async () => (await shown(page))[2])
+      .toEqual({
+        id: target,
+        depth: 1,
+        text: 'target text edited',
+      })
+    await modeSwitch(page, 'Blocks').click()
+    // Block mode puts its editor on the cursor's block a moment after it shows; the palette's
+    // Ctrl+K must not reach that editor.
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeFocused()
+    await blurEditors(page)
+
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Ref target edits')
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${target}"]`),
+    ).toContainText('target text edited')
+    const chip = page.locator(
+      `[data-testid="sortable-block"][data-block-id="${ids[0]}"] [data-testid="block-ref-chip"]`,
+    )
+    await expect(chip).toHaveText('target text edited')
+    await expect(chip).not.toHaveClass(/block-ref-deleted/)
+  })
+
+  test('a word typed in page mode is found by search, and the word it replaced is not', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Search page mode', [
+      [0, 'kept zephyrine'],
+      [0, 'edited zephyrine'],
+    ])
+    const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+    const found = async (word: string) =>
+      (
+        await ipc<{ items: Array<{ id: string }> }>(page, 'search_blocks', {
+          query: word,
+          cursor: null,
+          limit: 10,
+          filter: { scope: { kind: 'spaces', space_ids: [SCOPE.space_id] } },
+        })
+      ).items
+        .map((row) => row.id)
+        .toSorted(byCode)
+    // The search index is kept in the background: a block is found once it is indexed.
+    await expect
+      .poll(() => found('zephyrine'))
+      .toEqual([ids[0] as string, ids[1] as string].toSorted(byCode))
+
+    await openInPageMode(page, 'Search page mode', 2)
+    await caret(page, 1, 'end')
+    for (let i = 0; i < 'zephyrine'.length; i += 1) await page.keyboard.press('Backspace')
+    await page.keyboard.type('quillonite')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('edited quillonite')
+
+    await expect.poll(() => found('quillonite')).toEqual([ids[1]])
+    await expect.poll(() => found('zephyrine')).toEqual([ids[0]])
+  })
+
+  test('a [[link]] typed in page mode lists its block under the linked page', async ({ page }) => {
+    await seedRows(page, 'Linked from page mode', [[0, 'target body']])
+    const { pageId, ids } = await seedRows(page, 'Linking page mode', [[0, 'linking']])
+    await openInPageMode(page, 'Linking page mode', 1)
+    await caret(page, 0, 'end')
+    await page.keyboard.type(' [[Linked from page')
+    await expect(activeSuggestionList(page).getByRole('option').first()).toContainText(
+      'Linked from page mode',
+    )
+    await page.keyboard.press('Enter')
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] [data-testid="block-link-chip"]`),
+    ).toBeVisible()
+    await expect
+      .poll(async () => (await backend(page, pageId))[0]?.text)
+      .toMatch(/^linking \[\[[0-9A-Z]{26}\]\]/)
+
+    // The linked page's references read the link index, which the backend keeps.
+    await openViaPalette(page, 'Linked from page mode')
+    await expect(page.locator(`[data-backlink-item="${ids[0]}"]`)).toBeVisible()
+  })
+})
