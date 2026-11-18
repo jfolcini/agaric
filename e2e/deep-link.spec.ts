@@ -81,15 +81,6 @@ test.describe('deep-link routing (#2683) @boot @spaces', () => {
 const PAGE_GETTING_STARTED = '00000000000000000000PAGE01'
 const SWITCH_SPACE = 'Switch space'
 
-/** Open the SpaceSwitcher dropdown and select an option by its accessible name. */
-async function selectSwitcherOption(page: import('@playwright/test').Page, name: string) {
-  await page.getByRole('combobox', { name: SWITCH_SPACE, exact: true }).click()
-  // Move off the trigger so its hover tooltip cannot sit over the option list
-  // (see e2e/spaces-management.spec.ts for the observed flake).
-  await page.mouse.move(0, 0)
-  await page.getByRole('option', { name, exact: true }).click()
-}
-
 test.describe('deep-link routing across spaces (#5415) @boot @spaces', () => {
   test('a link to a page in another space switches to that space and opens it', async ({
     page,
@@ -97,15 +88,7 @@ test.describe('deep-link routing across spaces (#5415) @boot @spaces', () => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
 
-    // Create "Work" and move Getting Started into it; the active space stays Personal.
-    await selectSwitcherOption(page, 'Manage spaces…')
-    const panel = page.getByTestId('settings-panel-spaces')
-    await expect(panel).toBeVisible()
-    await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await panel.getByPlaceholder('New space name').fill('Work')
-    await panel.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(panel.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
-
+    // Move Getting Started into the seeded Work; the active space stays Personal.
     await emitMockEvent(page, 'deeplink:navigate-to-page', { id: PAGE_GETTING_STARTED })
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
     await page.getByRole('button', { name: 'Page actions', exact: true }).click()

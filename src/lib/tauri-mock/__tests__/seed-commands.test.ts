@@ -62,12 +62,13 @@ function vault(): unknown {
   }
 }
 
-it('the commands rebuild the seed in a vault that holds only its space', () => {
+// A first boot's vault: the two spaces, which the commands leave alone.
+it('the commands rebuild the seed in a vault that holds only its spaces', () => {
   const commands = seedCommands(SPACE)
   const seeded = vault()
 
   for (const id of blocks.keys()) {
-    if (id === SPACE) continue
+    if (id === SPACE || id === SEED_IDS.SPACE_WORK) continue
     blocks.delete(id)
     properties.delete(id)
   }
@@ -76,7 +77,7 @@ it('the commands rebuild the seed in a vault that holds only its space', () => {
   const defaults = new Set(DEFAULT_PROPERTY_DEFS.map(([key]) => key))
   const definitions = spacePropertyDefs(SPACE)
   for (const key of definitions.keys()) if (!defaults.has(key)) definitions.delete(key)
-  expect(blocks.size).toBe(1)
+  expect(blocks.size).toBe(2)
 
   for (const { cmd, args } of commands) dispatch(cmd, args)
   expect(vault()).toEqual(seeded)

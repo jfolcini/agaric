@@ -106,11 +106,15 @@ async function createSpaceInSettings(
   await panel.getByPlaceholder('New space name').fill(name)
   await panel.getByRole('button', { name: 'Create', exact: true }).click()
   // The new row's name lives inside an `<input value=…>` (SpaceNameEditor),
-  // not a text node — `getByText` never matches it. Assert via the input's
-  // value instead. `.last()` assumes `name` sorts alphabetically AFTER
-  // "Personal" (rows render in `list_spaces`'s alphabetical order, #2684)
-  // — true for every caller in this file ("Work", "Work Renamed").
-  await expect(panel.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
+  // not a text node — `getByText` never matches it. Assert via the inputs'
+  // values instead.
+  await expect
+    .poll(() =>
+      panel
+        .getByRole('textbox', { name: 'Rename space' })
+        .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value)),
+    )
+    .toContain(name)
   return panel
 }
 
@@ -128,14 +132,14 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
       page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
     ).toBeVisible()
 
-    await createSpaceInSettings(page, 'Work')
+    await createSpaceInSettings(page, 'Side project')
 
-    // The switcher trigger now lists Work as a selectable option.
+    // The switcher trigger now lists the new space as a selectable option.
     await page.getByRole('combobox', { name: SWITCH_SPACE, exact: true }).click()
-    await expect(page.getByRole('option', { name: 'Work', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Side project', exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
 
-    await switchToSpace(page, 'Work')
+    await switchToSpace(page, 'Side project')
 
     // Top accent stripe now reflects the new active space, not the seed.
     await expect(page.getByTestId('space-top-stripe')).not.toHaveAttribute(
@@ -143,8 +147,8 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
       SEED_IDS.SPACE_PERSONAL,
     )
 
-    // Content isolation: Work is a brand-new space, so the Personal-only
-    // seed pages are gone from its Pages list. Work has ZERO pages at
+    // Content isolation: Side project is a brand-new space, so the Personal-only
+    // seed pages are gone from its Pages list. It has ZERO pages at
     // this point, so the grid itself is hidden behind an empty-state
     // placeholder — use the plain nav click, not `openPagesView`.
     await clickPagesNav(page)
@@ -153,14 +157,14 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     ).toHaveCount(0)
     await expect(page.locator('[data-page-item]').filter({ hasText: 'Quick Notes' })).toHaveCount(0)
 
-    // A page created while Work is active lands in Work, not Personal.
+    // A page created while Side project is active lands there, not in Personal.
     await page.getByRole('button', { name: 'Journal', exact: true }).click()
     await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
     const todayStr = await page.evaluate(() => {
       const d = new Date()
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     })
-    // Work's only page is that journal page, hidden by the default chip, so
+    // Its only page is that journal page, hidden by the default chip, so
     // the grid only renders once the chip is removed.
     await clickPagesNav(page)
     await expect(page.getByText('No pages outside the journal yet.')).toBeVisible()
@@ -169,7 +173,7 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
       page.locator('[data-page-item]').filter({ hasText: new RegExp(todayStr) }),
     ).toBeVisible()
 
-    // Switching back to Personal hides Work's journal page and restores
+    // Switching back to Personal hides that journal page and restores
     // Personal's seed pages — isolation holds in both directions.
     await switchToSpace(page, 'Personal')
     await openPagesView(page)
@@ -207,8 +211,9 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     await waitForBoot(page)
     const yesterdayText = (await dateDisplay.textContent()) ?? ''
 
-    // Work's journal auto-creates today's page on first visit.
-    await createSpaceInSettings(page, 'Work')
+    // The seeded Work holds no pages; its journal auto-creates today's page on
+    // first visit. Leave the journal first, so that visit mounts it fresh.
+    await openSpacesSettings(page)
     await switchToSpace(page, 'Work')
     await page.getByRole('button', { name: 'Journal', exact: true }).click()
     await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
@@ -244,8 +249,6 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
   })
 
   test('Alt+2 switches to the second space by alphabetical index', async ({ page }) => {
-    await createSpaceInSettings(page, 'Work')
-
     // "Personal" < "Work" alphabetically, so Personal is Alt+1 (current
     // space, no-op — see keyboard-collisions.spec.ts) and Work is Alt+2.
     await page.keyboard.press('Alt+2')
@@ -265,10 +268,10 @@ test.describe('Spaces — rename, recolour, delete @spaces', () => {
     await waitForBoot(page)
   })
 
-  test('renaming and recolouring a newly created space updates the switcher and the top accent stripe', async ({
+  test('renaming and recolouring a space updates the switcher and the top accent stripe', async ({
     page,
   }) => {
-    const panel = await createSpaceInSettings(page, 'Work')
+    const panel = await openSpacesSettings(page)
 
     // Rows render alphabetically (list_spaces sorts by name, #2684):
     // Personal (0), Work (1).
@@ -303,31 +306,31 @@ test.describe('Spaces — rename, recolour, delete @spaces', () => {
     await expect(page.getByTestId('space-top-stripe')).toHaveAttribute('style', /accent-rose/)
   })
 
-  test('delete is blocked for the sole space and for a space holding pages, and deletes an empty one', async ({
+  test('delete is blocked for a space holding pages and for the sole space, and deletes an empty one', async ({
     page,
   }) => {
-    // Sole space: the last-space guard disables Delete outright.
     const panel = await openSpacesSettings(page)
-    await expect(panel.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
-
-    await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await panel.getByPlaceholder('New space name').fill('Empty Space')
-    await panel.getByRole('button', { name: 'Create', exact: true }).click()
-    // Rows render alphabetically (#2684): "Empty Space" < "Personal", so
-    // the new row is first.
+    // Rows render alphabetically (#2684): Personal (0), the seeded empty Work (1).
     const rows = panel.locator('[data-slot="space-manage-row"]')
-    const newRow = rows.first()
-    const personalRow = rows.nth(1)
-    await expect(newRow.getByRole('textbox', { name: 'Rename space' })).toHaveValue('Empty Space')
+    const personalRow = rows.first()
+    const workRow = rows.nth(1)
+    await expect(workRow.getByRole('textbox', { name: 'Rename space' })).toHaveValue('Work')
     // Personal holds the seeded pages, so the emptiness probe blocks it.
     await expect(
       personalRow.getByRole('button', { name: 'Delete space', exact: true }),
     ).toBeDisabled()
     await expect(personalRow.getByTestId('space-delete-blocked-hint')).toBeVisible()
 
-    await newRow.getByRole('button', { name: 'Delete space', exact: true }).click()
+    await workRow.getByRole('button', { name: 'Delete space', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(rows).toHaveCount(1)
+
+    // Sole space: the last-space guard disables Delete and wins over the
+    // emptiness probe, so Personal's pages-held hint goes away.
+    await expect(
+      personalRow.getByRole('button', { name: 'Delete space', exact: true }),
+    ).toBeDisabled()
+    await expect(personalRow.getByTestId('space-delete-blocked-hint')).toHaveCount(0)
 
     // Re-read from the store, not the row the delete left behind.
     await navigateToView(page, 'Journal')
@@ -341,11 +344,10 @@ test.describe('Spaces — rename, recolour, delete @spaces', () => {
 })
 
 // #5362 — "Open on launch" is a device preference read by the first space
-// reconcile after boot. A reload re-seeds the mock, so the second space comes
-// from the `__mockWorkSpace` opt-in seed, not from the create form.
+// reconcile after boot. A reload re-seeds the mock, so the second space is the
+// seeded Work, not one made with the create form.
 test.describe('Spaces — open on launch @spaces', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
     await waitForBoot(page)
   })
 
@@ -380,8 +382,6 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
   test('Move to space relocates a page — it disappears from the origin space and appears in the destination', async ({
     page,
   }) => {
-    await createSpaceInSettings(page, 'Work')
-
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Page actions', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
@@ -415,7 +415,6 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
   test('Move to space refuses a page whose title the destination already holds', async ({
     page,
   }) => {
-    await createSpaceInSettings(page, 'Work')
     await switchToSpace(page, 'Work')
     await clickPagesNav(page)
     await createPageFromPagesView(page, 'Getting Started')
@@ -474,8 +473,6 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
   test('moving a page opened from a parent page pops back to the parent within the tab (#2803)', async ({
     page,
   }) => {
-    await createSpaceInSettings(page, 'Work')
-
     // Stack depth 2: Quick Notes underneath, Getting Started opened on top
     // of it (the `openPage` helper always navigates via the Pages view, so
     // each call pushes one entry onto the active tab's stack via
@@ -513,8 +510,6 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
   test('moving a page that is the only entry on the tab stack lands on the Pages view (#2803)', async ({
     page,
   }) => {
-    await createSpaceInSettings(page, 'Work')
-
     // Stack depth 1: a single `openPage` call from a fresh boot makes the
     // moved page the tab's ONLY stack entry.
     await openPage(page, 'Getting Started')
@@ -545,8 +540,6 @@ test.describe('Spaces — move a page between spaces @spaces', () => {
   test('following a stale old-space reference to a moved page heals with a soft notice, not the raw error toast (#2802)', async ({
     page,
   }) => {
-    await createSpaceInSettings(page, 'Work')
-
     // Land on Quick Notes first so the tab stack has a sane page underneath,
     // then open Getting Started on top of it: stack = [Quick Notes,
     // Getting Started], and Getting Started enters the recents MRU.

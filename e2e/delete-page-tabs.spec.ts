@@ -95,16 +95,7 @@ test.describe('moving a page open in several tabs to another space @pages @space
   })
 
   test('the page-header move closes it in the other tab too', async ({ page }) => {
-    // A second space to move into.
-    await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-    await page.mouse.move(0, 0)
-    await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-    const spaces = page.getByTestId('settings-panel-spaces')
-    await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await spaces.getByPlaceholder('New space name').fill('Work')
-    await spaces.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
-
+    // The seeded Work is the second space to move into.
     await openPage(page, 'Getting Started')
     await page.keyboard.press('Control+t')
     await expect(tabs(page)).toHaveCount(2)

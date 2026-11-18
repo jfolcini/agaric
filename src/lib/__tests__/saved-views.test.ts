@@ -79,7 +79,6 @@ function setRawValue(id: string, valueText: string): void {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
-  localStorage.setItem('__mockWorkSpace', 'true')
   seedBlocks()
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
     dispatch(cmd, args),

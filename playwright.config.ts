@@ -28,6 +28,7 @@ const REAL_BACKEND_SPECS = [
   'advanced-query-happy-paths.spec.ts',
   'advanced-query-saved-views.spec.ts',
   'block-history-sheet.spec.ts',
+  'delete-page-tabs.spec.ts',
   'graph-happy-paths.spec.ts',
   'graph-restore.spec.ts',
   'graph-view.spec.ts',
@@ -61,6 +62,8 @@ const REAL_BACKEND_SPECS = [
   'space-move-property-loss.spec.ts',
   'spaces-coverage.spec.ts',
   'spaces-happy-paths.spec.ts',
+  'spaces-management.spec.ts',
+  'tags-lifecycle.spec.ts',
   'tooltip-pointer-events.spec.ts',
 ]
 

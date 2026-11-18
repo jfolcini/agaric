@@ -19,13 +19,12 @@ import {
  * active space. Each is frontend state over the mock's `list_spaces`, so the
  * mock-backed build can show each failing.
  *
- * The second space is the mock's opt-in `SPACE_WORK` seed ("Work", no accent
- * colour; `src/lib/tauri-mock/seed.ts`), next to the seeded `SPACE_PERSONAL`
- * ("Personal", `accent-emerald`).
+ * The second space is the seeded `SPACE_WORK` ("Work", `accent-blue`;
+ * `src/lib/tauri-mock/seed.ts`), next to `SPACE_PERSONAL` ("Personal",
+ * `accent-emerald`), as the backend's first boot makes them.
  */
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
   await waitForBoot(page)
 })
 
@@ -179,7 +178,7 @@ test('in the collapsed sidebar, the space badge switches to the next space @spac
     .getByRole('button', { name: 'Personal space — click to switch', exact: true })
     .click()
 
-  // Work has no accent of its own, so it shows the default (`DEFAULT_ACCENT_TOKEN`).
+  // Work's seeded accent is `accent-blue`, as the backend's first boot gives it.
   await expect.poll(stripeColour).toBe(await tokenColour('accent-blue'))
   await expect(stripe).toHaveAttribute('data-space-id', SEED_IDS.SPACE_WORK)
   await expect(

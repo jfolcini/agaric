@@ -41,6 +41,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 const PERSONAL = SEED_IDS.SPACE_PERSONAL
+const workId = SEED_IDS.SPACE_WORK
 const LAST_USED = '__last_used__'
 
 const nonEmptyPage = {
@@ -63,13 +64,10 @@ function listedSpaces(): SpaceRow[] {
   return dispatch('list_spaces', undefined) as SpaceRow[]
 }
 
-let workId: string
-
 beforeEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
   seedBlocks()
-  workId = dispatch('create_space', { name: 'Work', accentColor: null }) as string
   mockedInvoke.mockImplementation(backend())
   useSpaceStore.setState({ currentSpaceId: PERSONAL, availableSpaces: [], isReady: true })
   await useSpaceStore.getState().refreshAvailableSpaces()

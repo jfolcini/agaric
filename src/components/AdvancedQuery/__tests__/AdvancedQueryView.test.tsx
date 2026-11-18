@@ -993,15 +993,12 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
   // Saved views are view pages (#6544): every IPC but the query itself goes
   // to the real tauri-mock `dispatch`, so the assertions re-read the store.
   beforeEach(() => {
-    localStorage.setItem('__mockWorkSpace', 'true')
     seedBlocks()
     useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
       cmd === 'run_advanced_query' ? makeResponse() : dispatch(cmd, args),
     )
   })
-
-  afterEach(() => localStorage.removeItem('__mockWorkSpace'))
 
   async function saveViewNamed(name: string): Promise<void> {
     const user = userEvent.setup()
