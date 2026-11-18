@@ -37,7 +37,7 @@
 - Tool versions and download digests live in `pins.txt`, which Dependabot cannot track: workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh`. Never write a version or sha256 into a workflow; bump with `just pin-bump`. actionlint is pinned by SHA in `prek.toml`.
 - Every checkout sets `persist-credentials: false`. Each workflow's top-level `permissions` are read-only, and a job widens only what it needs.
 - A job that runs `npm ci` uses the `./.github/actions/setup-node` composite, which installs the npm `package.json` pins (`engine-strict` refuses an older one); a job that only runs `node scripts/…` keeps the upstream `actions/setup-node` with `package-manager-cache: false`.
-- apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed after a retry and an index refresh; it is infra, not the diff: rerun the job.
+- apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed after a retry and an index refresh, or the runner's apt holds no index for the release pocket; it is infra, not the diff: rerun the job.
 - `workflow-watchdog.yml` watches every workflow with a cron, plus `ci.yml`'s post-merge run on `main`. `WATCHED` in `scripts/check-workflow-liveness.mjs` lists them keyed by filename, so adding a cron or renaming a workflow means updating it.
 
 ## Console output
