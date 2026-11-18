@@ -65,6 +65,8 @@ test.describe('Tag query composer @editor @pages', () => {
       await popover.getByRole('textbox', { name: 'Search tags to add' }).fill(name)
       await popover.getByRole('button', { name: new RegExp(`^${name}`) }).click()
       await expect(page.getByRole('button', { name: `Negate ${name} (NOT)` })).toBeVisible()
+      // Closing plays an exit animation; until it ends, `activePopover` can be this one.
+      await expect(page.locator('[data-slot="popover-content"]')).toHaveCount(0)
     }
 
     await page.getByRole('button', { name: 'Advanced', exact: true }).click()

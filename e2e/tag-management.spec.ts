@@ -1,4 +1,14 @@
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  activePopover,
+  expect,
+  focusBlock,
+  ipc,
+  navigateToView,
+  openPage,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for tag management flows.
@@ -9,6 +19,7 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
  *  3. Tag deletion with confirmation dialog
  *  4. Tag filter panel: prefix search, add to filter, verify results
  *  5. Tag insertion via @ picker in the block editor
+ *  6. A tag colour kept by the tag's synced `color` property (#6544)
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   Tags: work, personal, idea
@@ -393,5 +404,32 @@ test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {
     await expect(editor.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })).toBeVisible({
       timeout: 5000,
     })
+  })
+})
+
+test.describe('Tag colour from the synced property (#6544) @pages', () => {
+  test('keeps a tag colour with localStorage cleared, after leaving the view', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToTags(page)
+    const row = page
+      .locator('[data-slot="list-item"]')
+      .filter({ has: page.getByTestId('tag-item-idea') })
+    const badge = page.getByTestId('tag-item-idea').locator('[data-slot="badge"]')
+    const colour = () => badge.evaluate((el) => el.style.getPropertyValue('--tag-color'))
+    const rose = 'var(--accent-rose, var(--accent-current))'
+
+    await row.hover()
+    await row.getByRole('button', { name: 'Set tag color' }).click()
+    await activePopover(page).getByRole('button', { name: 'Rose' }).click()
+    await expect.poll(colour).toBe(rose)
+
+    // Only the property can keep the colour now.
+    await page.evaluate(() => localStorage.removeItem('tag-colors'))
+    await navigateToView(page, 'Journal')
+    await navigateToTags(page)
+    await expect.poll(colour).toBe(rose)
+    expect(await ipc<string[]>(page, 'list_property_values', { key: 'color' })).toContain(
+      'accent-rose',
+    )
   })
 })

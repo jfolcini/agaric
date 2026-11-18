@@ -6,7 +6,9 @@ import {
   activePopover,
   activeSuggestionPopup,
   blurEditors,
+  chooseSelectOption,
   expect,
+  focusBlock,
   focusBlockById,
   ipc,
   navigateToView,
@@ -27,9 +29,13 @@ import {
  *  - #5236: a tag created from the page header is the one a later `#name` in
  *    a block applies, not a second tag of the same name.
  *  - #5244: an applied tag outside the space's 50 oldest still gets its chip.
+ *  - #5366: a rename relabels the list, its count and the chips in blocks.
+ *  - #4671: an `@` picker create lists the tag in its own space only, and
+ *    the Pages batch toolbar tags every selected page.
  */
 
 const PERSONAL = SEED_IDS.SPACE_PERSONAL
+const WORK = SEED_IDS.SPACE_WORK
 const GETTING_STARTED = '00000000000000000000PAGE01'
 const GS1 = '0000000000000000000B10CK01'
 const TAG_REF = /#\[([0-9A-Z]{26})\]/
@@ -61,6 +67,36 @@ function tagRow(page: Page, name: string) {
   return page
     .locator('[data-slot="list-item"]')
     .filter({ has: page.getByTestId(`tag-item-${name}`) })
+}
+
+/** A page titled `title` in `spaceId` holding one block `content`; returns the page id. */
+async function seedPage(
+  page: Page,
+  spaceId: string,
+  title: string,
+  content: string,
+): Promise<string> {
+  const pageId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: title,
+    spaceId,
+  })
+  await ipc(page, 'create_blocks_batch', {
+    specs: [{ blockType: 'content', content, parentId: pageId, position: null }],
+  })
+  return pageId
+}
+
+/** The usage count the Tags list shows for `name`, after leaving the view and coming back. */
+async function expectListedCount(page: Page, name: string, count: string): Promise<void> {
+  // The count is `tags_cache`, which the materializer writes after the change.
+  await expect(async () => {
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Tags')
+    await expect(
+      page.getByTestId(`tag-item-${name}`).locator('[data-slot="badge"] > span:last-child'),
+    ).toHaveText(count, { timeout: 2_000 })
+  }).toPass()
 }
 
 async function createTagInList(page: Page, name: string): Promise<void> {
@@ -195,5 +231,97 @@ test.describe('Page-header tags (#5236, #5244) @pages @spaces', () => {
     await openPage(page, 'Getting Started')
 
     await expect(removeChip(page, 'bulk-50')).toBeVisible()
+  })
+})
+
+test.describe('A tag across pages and spaces (#5366, #4671) @pages @spaces', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a rename relabels the list, keeps its count, and relabels the chip in a block', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Tags')
+    await createTagInList(page, 'usagetag')
+    await expectListedCount(page, 'usagetag', '0')
+    const tag = (await tagsInSpace(page, PERSONAL)).find((t) => t.name === 'usagetag')
+    await seedPage(page, PERSONAL, 'Usage page', `tagged line #[${tag?.tag_id}]`)
+    await expectListedCount(page, 'usagetag', '1')
+
+    const row = tagRow(page, 'usagetag')
+    await row.hover()
+    await row.getByRole('button', { name: 'Rename tag' }).click()
+    const dialog = activeDialog(page)
+    await dialog.getByLabel('New tag name').fill('renamedtag')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByText('Tag renamed successfully.')).toBeVisible()
+
+    await expectListedCount(page, 'renamedtag', '1')
+    await expect(page.getByTestId('tag-item-usagetag')).toHaveCount(0)
+    await openPage(page, 'Usage page')
+    await expect(
+      page
+        .getByTestId('block-static')
+        .filter({ hasText: 'tagged line' })
+        .getByTestId('tag-ref-chip'),
+    ).toHaveText(['renamedtag'])
+  })
+
+  test('a tag created from the @ picker is listed in its own space only', async ({ page }) => {
+    await switchToSpace(page, 'Work')
+    await seedPage(page, WORK, 'Work notes', 'scoped')
+    await openPage(page, 'Work notes')
+    const editor = await focusBlock(page)
+    await editor.press('End')
+    await page.keyboard.type(' @scopedtag', { delay: 30 })
+    // The picker answers after each key: Enter waits for the full term's Create item.
+    const first = activeSuggestionPopup(page).getByTestId('suggestion-item').first()
+    await expect(first).toHaveText(/Create.*scopedtag/)
+    await page.keyboard.press('Enter')
+    await expect(editor.getByTestId('tag-ref-chip')).toHaveText(['scopedtag'])
+    await saveBlock(page)
+
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-scopedtag')).toBeVisible()
+    await expect
+      .poll(async () => (await tagsInSpace(page, WORK)).map((t) => t.name))
+      .toContain('scopedtag')
+    expect((await tagsInSpace(page, PERSONAL)).map((t) => t.name)).not.toContain('scopedtag')
+
+    await switchToSpace(page, 'Personal')
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-idea')).toBeVisible()
+    await expect(page.getByTestId('tag-item-scopedtag')).toHaveCount(0)
+
+    await switchToSpace(page, 'Work')
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Tags')
+    await expect(page.getByTestId('tag-item-scopedtag')).toBeVisible()
+  })
+
+  test('the Pages batch toolbar tags every selected page', async ({ page }) => {
+    const titles = ['Batch one', 'Batch two', 'Batch six']
+    const ids = await Promise.all(titles.map((title) => seedPage(page, PERSONAL, title, 'body')))
+    await navigateToView(page, 'Pages')
+    for (const id of ids) {
+      await page.getByTestId(`page-select-${id}`).click({ modifiers: ['ControlOrMeta'] })
+    }
+    const toolbar = page.getByRole('toolbar', { name: '3 selected', exact: true })
+    await toolbar.getByRole('button', { name: 'Add tag', exact: true }).click()
+    await chooseSelectOption(page, 'Choose a tag…', 'idea')
+    await toolbar.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByText('Tagged 3 pages')).toBeVisible()
+
+    await navigateToView(page, 'Journal')
+    for (const title of titles) {
+      await openPage(page, title)
+      await expect(removeChip(page, 'idea')).toBeVisible()
+    }
+    for (const blockId of ids) {
+      expect(await ipc<string[]>(page, 'list_tags_for_block', { blockId })).toEqual([
+        SEED_IDS.TAG_IDEA,
+      ])
+    }
   })
 })

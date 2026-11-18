@@ -58,8 +58,7 @@ describe('parseWaitFailure', () => {
   })
 
   it('carries `clickable` through instead of flattening it to `displayed`', () => {
-    // tag-roundtrip.e2e.ts:58 — `$('button*=Add Tag').waitForClickable(...)`,
-    // in the very spec this diagnostic was written for.
+    // `$('button*=Add Tag').waitForClickable(...)`, the wait this diagnostic was written for.
     expect(
       parseWaitFailure('element ("button*=Add Tag") still not clickable after 30000ms'),
     ).toEqual({ selector: 'button*=Add Tag', waitedFor: 'clickable' })
