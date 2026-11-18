@@ -394,9 +394,10 @@ test.describe('Inline controls — gutter (#1170) @editor', () => {
 // an image attachment whose bytes have been read into an object URL, and only
 // while the image wrapper is hovered/focused. The attachment's bytes are zeros,
 // not a PNG, but `URL.createObjectURL` still yields a valid URL, so the
-// `image-resize-wrapper` mounts (the <img> simply won't decode). A width/alignment preset updates StaticBlock state, which re-renders
-// the toolbar with `aria-pressed=true` on the chosen button — the assertion we
-// use here (it does not depend on the image decoding). The byte read is also
+// `image-resize-wrapper` mounts (the <img> simply won't decode). A width/alignment
+// preset updates StaticBlock state, which re-renders the toolbar with
+// `aria-pressed=true` on the chosen button — the assertion we use here (it does
+// not depend on the image decoding). The byte read is also
 // gated by an IntersectionObserver, and GS_1 is the first block (in view), so
 // the wrapper should mount. If this group proves flaky in a real run it can be
 // skipped; it is the most harness-dependent of the five.
