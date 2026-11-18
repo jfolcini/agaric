@@ -42,3 +42,19 @@
 - It goes red on the bridge, at the TODO group, when the picker writes another date than the one it shows.
 
 **Ran:** each spec on the bridge at three workers, 15 of 15 (`due-date-agenda`) and 3 of 3 (`agenda-count-after-write`), and on the mock.
+
+**agenda-projected-repeat**, now `e2e/agenda-projected-repeat.spec.ts`:
+- Tasks are seeded through IPC, then the backend is settled, so the projection is current before a view mounts. The WebdriverIO original remounted the view until the projection's cache caught up; nothing here waits on a timer.
+- The four projection tests (repeat-count and repeat-until bounds, weekly, Agenda mode, the phone row's chip touch area) are `@real-only`, since the mock's `list_projected_agenda` is a stub. The `/repeat` modes and the drawer tests run on both.
+- The next occurrence's due date and the row counts are read back through `list_blocks`.
+- A checkbox clicked while a completed repeating task's page reload is in flight is drawn back to its old state (#6972, filed). The spec waits for each completion's next occurrence before the next click.
+
+**Shown red, on the bridge:**
+- Ignoring `repeat-count` in `project_block_dates` reddens the bounds test (day +4 still projects "count three") and the Agenda test (six dates, not three).
+- Ignoring `repeat-until` there reddens both at the until rows.
+- A week shifted as eight days reddens the weekly test: day +7 projects nothing.
+- `/repeat`'s catch-up commands written as from-completion redden the modes test at both catch-up dates.
+- The drawer saving each number one higher reddens the drawer test at `repeat-count` and the row count.
+- The projected row's text clipped with `truncate` reddens the chips test: the points above and below each chip hit the row.
+
+**`settle` and the main thread:** a comment beside `emitted()` now says why the event has reached the bridge before `settle` answers (its app never runs, so the main-thread emit ran inline; its socket sends events before replies). The reviewer asked twice.

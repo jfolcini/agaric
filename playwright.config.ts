@@ -32,6 +32,7 @@ const REAL_BACKEND_SPECS = [
   'agenda-advanced.spec.ts',
   'agenda-count-after-write.spec.ts',
   'agenda-filter-builder.spec.ts',
+  'agenda-projected-repeat.spec.ts',
   'backend-error-language.spec.ts',
   'block-duplicate.spec.ts',
   'block-history-sheet.spec.ts',
