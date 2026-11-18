@@ -18,13 +18,17 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { isValidation } from '@/lib/app-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, properties, seedBlocks, spacePropertyDefs } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
 const BLOCK = '0000000000000000000000000A'
 
 /** A block of the seeded Personal space, whose definitions apply (#5841). */
 function reset(): void {
   seedBlocks()
-  blocks.set(BLOCK, { ...makeBlock(BLOCK, 'block', 'a', null, 0), space_id: 'SPACE_PERSONAL' })
+  blocks.set(BLOCK, {
+    ...makeBlock(BLOCK, 'block', 'a', null, 0),
+    space_id: SEED_IDS.SPACE_PERSONAL,
+  })
 }
 
 /** Run a `set_property` dispatch and return the thrown value (or undefined). */
@@ -94,7 +98,7 @@ describe('tauri-mock set_property validation (#2656)', () => {
     // The real backend (`block_ops.rs`) skips the membership check when the
     // options column is NULL, keeping custom select keys flexible. The mock
     // must not be stricter, or it is a false gate.
-    spacePropertyDefs('SPACE_PERSONAL').set('stage', {
+    spacePropertyDefs(SEED_IDS.SPACE_PERSONAL).set('stage', {
       key: 'stage',
       value_type: 'select',
       options: null,

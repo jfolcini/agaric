@@ -56,7 +56,7 @@ describe('migrateDeviceBookmarks', () => {
     seedBookmark(GS, 7)
     storeDeviceList([QN, PROJ])
 
-    await migrateDeviceBookmarks(['SPACE_PERSONAL'])
+    await migrateDeviceBookmarks([SEED_IDS.SPACE_PERSONAL])
 
     expect(storedOrder(QN)).toBe(8)
     expect(storedOrder(PROJ)).toBe(9)
@@ -70,7 +70,7 @@ describe('migrateDeviceBookmarks', () => {
     if (trashed) trashed['deleted_at'] = '2026-11-01T00:00:00Z'
     storeDeviceList([PURGED, PROJ, MEET, QN])
 
-    await migrateDeviceBookmarks(['SPACE_PERSONAL'])
+    await migrateDeviceBookmarks([SEED_IDS.SPACE_PERSONAL])
 
     expect(storedOrder(PROJ)).toBe(3)
     expect(properties.get(MEET)?.has('bookmark') ?? false).toBe(false)
@@ -89,12 +89,12 @@ describe('migrateDeviceBookmarks', () => {
       return Promise.resolve(dispatch(cmd, args))
     })
 
-    await migrateDeviceBookmarks(['SPACE_PERSONAL'])
+    await migrateDeviceBookmarks([SEED_IDS.SPACE_PERSONAL])
 
     expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([QN, PROJ]))
     expect(storedOrder(QN)).toBe(1)
 
-    await migrateDeviceBookmarks(['SPACE_PERSONAL'])
+    await migrateDeviceBookmarks([SEED_IDS.SPACE_PERSONAL])
 
     expect(storedOrder(QN)).toBe(1)
     expect(storedOrder(PROJ)).toBe(2)
@@ -102,7 +102,7 @@ describe('migrateDeviceBookmarks', () => {
   })
 
   it('sends nothing when the device holds no list', async () => {
-    await migrateDeviceBookmarks(['SPACE_PERSONAL'])
+    await migrateDeviceBookmarks([SEED_IDS.SPACE_PERSONAL])
 
     expect(vi.mocked(invoke)).not.toHaveBeenCalled()
   })

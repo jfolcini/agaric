@@ -1,3 +1,4 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   activeRoleDialog,
@@ -334,7 +335,7 @@ test.describe('Journal template toggle @editor @pages', () => {
 // ===========================================================================
 
 test.describe('Journal template button @editor @pages', () => {
-  const SPACE_SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+  const SPACE_SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
   const BLOCK_TMPL_ATTENDEES = '0000000000000000000B10CK20'
   const NESTED = 'Nested under attendees'
 
@@ -356,7 +357,7 @@ test.describe('Journal template button @editor @pages', () => {
       content: NESTED,
       parentId: BLOCK_TMPL_ATTENDEES,
       index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
       blockId: null,
     })
 
@@ -403,7 +404,7 @@ test.describe('The recording placeholder @editor @pages', () => {
   })
 
   test('/template leaves out a `<% recording %>` block', async ({ page }) => {
-    const scope = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
     await ipc(page, 'create_block', {
       blockType: 'content',
       content: '<% recording %>',
@@ -433,7 +434,7 @@ test.describe('The recording placeholder @editor @pages', () => {
 })
 
 test.describe('The recording placeholder in a journal day @editor @pages @journal', () => {
-  const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+  const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
   const UNDER = 'Under the placeholder'
 
   interface Row {

@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import JSZip from 'jszip'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   getInvokeCalls,
@@ -684,20 +685,23 @@ test.describe('Round-trip fidelity @markdown', () => {
     // Import some markdown content
     const originalContent = '# Round Trip Test\n\n- Alpha block\n- Beta block\n- Gamma block\n'
 
-    const importResult = (await page.evaluate((content) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+    const importResult = (await page.evaluate(
+      ({ content, spaceId }) => {
+        const invoke = (
+          window as unknown as {
+            __TAURI_INTERNALS__: {
+              invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown>
+            }
           }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke('import_markdown', {
-        content,
-        filename: 'round-trip.md',
-        spaceId: 'SPACE_PERSONAL',
-      })
-    }, originalContent)) as { page_title: string; blocks_created: number }
+        ).__TAURI_INTERNALS__.invoke
+        return invoke('import_markdown', {
+          content,
+          filename: 'round-trip.md',
+          spaceId,
+        })
+      },
+      { content: originalContent, spaceId: SEED_IDS.SPACE_PERSONAL },
+    )) as { page_title: string; blocks_created: number }
 
     // Title is filename-derived (#1919): 'round-trip.md' -> 'round-trip'.
     expect(importResult.page_title).toBe('round-trip')
@@ -707,7 +711,7 @@ test.describe('Round-trip fidelity @markdown', () => {
 
     // Now find the imported page and export it
     // We need to find the page ID by listing all pages
-    const pages = (await page.evaluate(() => {
+    const pages = (await page.evaluate((spaceId) => {
       const invoke = (
         window as unknown as {
           __TAURI_INTERNALS__: {
@@ -716,7 +720,7 @@ test.describe('Round-trip fidelity @markdown', () => {
         }
       ).__TAURI_INTERNALS__.invoke
       return invoke('list_blocks', {
-        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        scope: { kind: 'active', space_id: spaceId },
         blockType: 'page',
         parentId: null,
         showDeleted: null,
@@ -726,7 +730,7 @@ test.describe('Round-trip fidelity @markdown', () => {
         cursor: null,
         limit: null,
       })
-    })) as { items: Array<{ id: string; content: string }> }
+    }, SEED_IDS.SPACE_PERSONAL)) as { items: Array<{ id: string; content: string }> }
 
     const importedPage = pages.items.find((p) => p.content === 'round-trip')
     expect(importedPage).toBeTruthy()

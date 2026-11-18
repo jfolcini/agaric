@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   deleteBlockViaContextMenu,
   expect,
@@ -33,7 +34,7 @@ const BLOCK_QN_2 = '0000000000000000000B10CK09'
 const BLOCK_MTG_1 = '0000000000000000000B10CK17'
 const BLOCK_MTG_2 = '0000000000000000000B10CK18'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
   return page.evaluate(

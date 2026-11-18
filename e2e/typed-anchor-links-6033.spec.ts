@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blurEditors, expect, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -13,7 +14,7 @@ import { blurEditors, expect, ipc, openPage, reopenPage, test, waitForBoot } fro
  * "Quick Notes" (seed) hosts the block-mode edits; "Target" hosts its own `[[#Second]]`.
  */
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 /** Make a page titled `title` holding `contents`, one block each; returns the block ids. */
 async function makePage(

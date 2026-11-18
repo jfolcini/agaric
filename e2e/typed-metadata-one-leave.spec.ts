@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, focusBlock, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -79,7 +80,7 @@ test('a task marker, a property line and a tag typed in a block all commit on on
   expect(stored.todo_state).toBe('TODO')
   const [, tagId] = TAG_REF.exec(stored.content) as RegExpExecArray
   const tags = await ipc<TagRow[]>(page, 'list_all_tags_in_space', {
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   expect(tags.find((tag) => tag.tag_id === tagId)?.name).toBe('work')
   const properties = await ipc<PropertyRow[]>(page, 'get_properties', { blockId })

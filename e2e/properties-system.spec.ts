@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   activeMenu,
@@ -49,7 +50,7 @@ function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
 }
 
 function storedDefinition(page: Page, key: string): Promise<unknown> {
-  return ipc(page, 'get_property_def', { spaceId: 'SPACE_PERSONAL', key })
+  return ipc(page, 'get_property_def', { spaceId: SEED_IDS.SPACE_PERSONAL, key })
 }
 
 // ===========================================================================
@@ -494,14 +495,14 @@ test.describe('Property definitions view @editor', () => {
     const projectRow = settingsPanel.locator('ul > li', { hasText: 'project' })
     await expect(projectRow.getByTestId('builtin-lock-project')).toHaveCount(0)
 
-    const refusal = await page.evaluate(async () => {
+    const refusal = await page.evaluate(async (spaceId) => {
       try {
         await (
           window as unknown as {
             __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
           }
         ).__TAURI_INTERNALS__.invoke('update_property_def_options', {
-          spaceId: 'SPACE_PERSONAL',
+          spaceId,
           key: 'priority',
           options: '["P0","1","2","3"]',
         })
@@ -510,7 +511,7 @@ test.describe('Property definitions view @editor', () => {
         const e = err as { kind?: string; code?: string }
         return { kind: e.kind, code: e.code }
       }
-    })
+    }, SEED_IDS.SPACE_PERSONAL)
     expect(refusal).toEqual({ kind: 'validation', code: 'BuiltinPropertyLocked' })
     await expect
       .poll(() => storedDefinition(page, 'priority'))

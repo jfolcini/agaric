@@ -8,6 +8,7 @@
  */
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   expect,
@@ -19,7 +20,7 @@ import {
   test,
 } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 async function seedPage(page: Page, title: string, contents: string[]): Promise<string> {
   const pageId = await ipc<string>(page, 'create_page_in_space', {

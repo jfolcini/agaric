@@ -29,6 +29,7 @@
  * entry's own behaviour, so no other spec's assumptions change.
  */
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   clearConsoleErrors,
   createPageFromPagesView,
@@ -139,7 +140,7 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     // Top accent stripe now reflects the new active space, not the seed.
     await expect(page.getByTestId('space-top-stripe')).not.toHaveAttribute(
       'data-space-id',
-      'SPACE_PERSONAL',
+      SEED_IDS.SPACE_PERSONAL,
     )
 
     // Content isolation: Work is a brand-new space, so the Personal-only
@@ -199,7 +200,7 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     await page.addInitScript(
       (blob) => localStorage.setItem('agaric:journal', blob),
       JSON.stringify({
-        state: { currentDateBySpace: { SPACE_PERSONAL: yesterdayStr }, modeBySpace: {} },
+        state: { currentDateBySpace: { [SEED_IDS.SPACE_PERSONAL]: yesterdayStr }, modeBySpace: {} },
         version: 1,
       }),
     )
@@ -254,7 +255,7 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     )
     await expect(page.getByTestId('space-top-stripe')).not.toHaveAttribute(
       'data-space-id',
-      'SPACE_PERSONAL',
+      SEED_IDS.SPACE_PERSONAL,
     )
   })
 })
@@ -365,7 +366,7 @@ test.describe('Spaces — open on launch @spaces', () => {
 
     await expect(page.getByTestId('space-top-stripe')).toHaveAttribute(
       'data-space-id',
-      'SPACE_WORK',
+      SEED_IDS.SPACE_WORK,
     )
     await expect(switcher).toContainText('Work')
   })

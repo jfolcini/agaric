@@ -42,6 +42,7 @@ export const LOCALES = {
   es: { nativeName: 'Español' },
   fr: { nativeName: 'Français' },
   pt: { nativeName: 'Português' },
+  'en-XA': { nativeName: 'Pseudo-locale (en-XA)' },
 } as const satisfies Record<string, { readonly nativeName: string }>
 
 export type SupportedLocale = keyof typeof LOCALES
@@ -51,6 +52,14 @@ export const SUPPORTED_LOCALES = Object.keys(LOCALES) as readonly SupportedLocal
 
 /** The statically-bundled locale, and i18next's `fallbackLng`. */
 export const DEFAULT_LOCALE = 'en' satisfies SupportedLocale
+
+/**
+ * A variant of `en` generated from it (`./en-XA/index.ts`) to check layouts,
+ * not a language: Settings offers it only in debug mode. `XA` is the
+ * private-use region of Android's developer pseudo-locale, so a device set
+ * to that resolves to it.
+ */
+export const PSEUDO_LOCALE = 'en-XA' satisfies SupportedLocale
 
 /**
  * The stored preference: a concrete locale, or `'system'` to follow the

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlock,
@@ -29,7 +30,7 @@ import {
  *   On home        area/home      (no tag is named `area`)
  */
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 
 async function seedNestedTags(page: Page): Promise<Record<string, string>> {
   const pageId = await ipc<string>(page, 'create_page_in_space', {

@@ -26,6 +26,7 @@ import { logger } from '@/lib/logger'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/logger', () => ({
@@ -39,7 +40,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 const LAST_USED = '__last_used__'
 
 const nonEmptyPage = {

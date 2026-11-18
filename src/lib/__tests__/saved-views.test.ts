@@ -27,8 +27,8 @@ import {
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
-const PERSONAL = 'SPACE_PERSONAL'
-const WORK = 'SPACE_WORK'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
+const WORK = SEED_IDS.SPACE_WORK
 const ORPHANS: SavedViewPayload = {
   kind: 'pages',
   sort: 'most-content',
@@ -269,7 +269,9 @@ describe('migrateDeviceSavedViews', () => {
 
     expect(storedViews(WORK)).toEqual([{ title: 'Q', payload: { kind: 'query', spec: SPEC } }])
     expect(storedViews(PERSONAL)).toEqual([])
-    expect(localStorage.getItem('agaric:advancedQuery:savedViews:SPACE_WORK')).toBeNull()
+    expect(
+      localStorage.getItem(`agaric:advancedQuery:savedViews:${SEED_IDS.SPACE_WORK}`),
+    ).toBeNull()
     expect(localStorage.getItem('agaric:advancedQuery:savedViews:SPACE_DELETED')).not.toBeNull()
   })
 
@@ -343,21 +345,25 @@ describe('migrateDeviceSavedViews', () => {
 
   it('moves the well-formed entries of a device query list and leaves a corrupt one alone', async () => {
     localStorage.setItem(
-      'agaric:advancedQuery:savedViews:SPACE_WORK',
+      `agaric:advancedQuery:savedViews:${SEED_IDS.SPACE_WORK}`,
       JSON.stringify([
         { id: 'q1', name: 'Q', spec: JSON.stringify(SPEC) },
         { id: 'q2', name: 7, spec: JSON.stringify({ ...SPEC, fulltext: 'y' }) },
         7,
       ]),
     )
-    localStorage.setItem('agaric:advancedQuery:savedViews:SPACE_PERSONAL', '{not json')
+    localStorage.setItem(`agaric:advancedQuery:savedViews:${SEED_IDS.SPACE_PERSONAL}`, '{not json')
 
     await migrateDeviceSavedViews([PERSONAL, WORK])
 
     expect(storedViews(WORK)).toEqual([{ title: 'Q', payload: { kind: 'query', spec: SPEC } }])
-    expect(localStorage.getItem('agaric:advancedQuery:savedViews:SPACE_WORK')).toBeNull()
+    expect(
+      localStorage.getItem(`agaric:advancedQuery:savedViews:${SEED_IDS.SPACE_WORK}`),
+    ).toBeNull()
     expect(storedViews(PERSONAL)).toEqual([])
-    expect(localStorage.getItem('agaric:advancedQuery:savedViews:SPACE_PERSONAL')).toBe('{not json')
+    expect(localStorage.getItem(`agaric:advancedQuery:savedViews:${SEED_IDS.SPACE_PERSONAL}`)).toBe(
+      '{not json',
+    )
   })
 
   it('sends nothing when the device holds no saved views', async () => {

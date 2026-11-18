@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { emitMockEvent, expect, test } from './helpers'
 
 const TITLE = 'Scroll restore long page'
@@ -28,26 +29,29 @@ async function topRow(page: Page) {
 test('coming back to a long page restores the row the user left @pages', async ({ page }) => {
   await page.goto('/')
   await page.locator('[data-testid="block-static"]').first().waitFor()
-  const pageId = await page.evaluate(async (title) => {
-    const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
-      invoke: (cmd: string, args: unknown) => Promise<unknown>
-    }
-    const parentId = (await internals.invoke('create_page_in_space', {
-      parentId: null,
-      content: title,
-      spaceId: 'SPACE_PERSONAL',
-    })) as string
-    await internals.invoke('create_blocks_batch', {
-      specs: Array.from({ length: 500 }, (_, i) => ({
-        blockType: 'content',
-        // Wrapped paragraphs, so a row's real height is well past the estimate.
-        content: `row ${i} ${'lorem ipsum '.repeat(20)}`,
-        parentId,
-        position: null,
-      })),
-    })
-    return parentId
-  }, TITLE)
+  const pageId = await page.evaluate(
+    async ({ title, spaceId }) => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      const parentId = (await internals.invoke('create_page_in_space', {
+        parentId: null,
+        content: title,
+        spaceId,
+      })) as string
+      await internals.invoke('create_blocks_batch', {
+        specs: Array.from({ length: 500 }, (_, i) => ({
+          blockType: 'content',
+          // Wrapped paragraphs, so a row's real height is well past the estimate.
+          content: `row ${i} ${'lorem ipsum '.repeat(20)}`,
+          parentId,
+          position: null,
+        })),
+      })
+      return parentId
+    },
+    { title: TITLE, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 
   await emitMockEvent(page, 'deeplink:navigate-to-page', { id: pageId })
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(TITLE)

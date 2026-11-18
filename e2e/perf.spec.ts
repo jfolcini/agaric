@@ -53,6 +53,7 @@ import { writeFileSync } from 'node:fs'
 
 import type { Browser, CDPSession, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
@@ -327,7 +328,7 @@ function makeMeasure(page: Page, cdp: CDPSession, rows: Row[]) {
  */
 async function seedVault(page: Page): Promise<void> {
   const pageIds = await page.evaluate(
-    async ({ pages, tags }) => {
+    async ({ pages, tags, spaceId }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -347,7 +348,7 @@ async function seedVault(page: Page): Promise<void> {
           content: `perf-tag-${String(t).padStart(2, '0')}`,
           parentId: null,
           index: null,
-          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          scope: { kind: 'active', space_id: spaceId },
           blockId: null,
         })) as { id: string }
         tagIds.push(tag.id)
@@ -358,7 +359,7 @@ async function seedVault(page: Page): Promise<void> {
         const id = (await invoke('create_page_in_space', {
           parentId: null,
           content: title,
-          spaceId: 'SPACE_PERSONAL',
+          spaceId,
         })) as string
         const link = ids.length > 0 ? ` [[${ids.at(-1)}]]` : ''
         ids.push(id)
@@ -380,7 +381,7 @@ async function seedVault(page: Page): Promise<void> {
       }
       return ids
     },
-    { pages: PAGES, tags: TAGS },
+    { pages: PAGES, tags: TAGS, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
   await seedBigPage(page, pageIds)
 }
@@ -402,7 +403,15 @@ async function seedBigPage(
   tasks = false,
 ): Promise<void> {
   await page.evaluate(
-    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks, png, embedded }) => {
+    async ({
+      bigBlocks,
+      bigTitle,
+      linkTargets: targets,
+      tasks: allTasks,
+      png,
+      embedded,
+      spaceId,
+    }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -413,7 +422,7 @@ async function seedBigPage(
       const big = await invoke('create_page_in_space', {
         parentId: null,
         content: bigTitle,
-        spaceId: 'SPACE_PERSONAL',
+        spaceId,
       })
       const created = (await invoke('create_blocks_batch', {
         specs: Array.from({ length: bigBlocks }, (_, i) => {
@@ -491,6 +500,7 @@ async function seedBigPage(
       png: PNG_1X1,
       // The mock's first block of Getting Started (`src/lib/tauri-mock/seed.ts`).
       embedded: '0000000000000000000B10CK01',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     },
   )
 }
@@ -1274,7 +1284,7 @@ const LIST_VIEWS: ListView[] = [
         indices.map((i) => ({
           parentId: null,
           content: `Perf page ${i}`,
-          spaceId: 'SPACE_PERSONAL',
+          spaceId: SEED_IDS.SPACE_PERSONAL,
         })),
       ),
     open: (page) => navigateToView(page, 'Pages'),
@@ -1293,7 +1303,7 @@ const LIST_VIEWS: ListView[] = [
           content: `perf-tag-${i}`,
           parentId: null,
           index: null,
-          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
           blockId: null,
         })),
       ),

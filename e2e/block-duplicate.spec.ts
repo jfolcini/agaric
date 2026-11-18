@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blurEditors, expect, focusBlockById, ipc, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -31,7 +32,7 @@ interface Row {
 async function childrenOf(page: Page, parentId: string): Promise<Row[]> {
   const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   return resp.items
 }
@@ -48,7 +49,7 @@ async function addChild(page: Page, parentId: string, content: string): Promise<
     content,
     parentId,
     index: null,
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     blockId: null,
   })
   return row.id

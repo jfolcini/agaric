@@ -8,12 +8,13 @@
 
 import { devices } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blurEditors, expect, ipc, test, waitForBoot } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
 // Seed: today's journal page.
 const TODAY_PAGE = '00000000000000000000PAGE03'
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 test.describe('Week view on a phone @journal @editor @mobile', () => {
   test.use({

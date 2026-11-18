@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, focusBlockById, ipc, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
@@ -25,7 +26,7 @@ async function storedContent(page: Page): Promise<string> {
 
 async function tagNames(page: Page): Promise<Map<string, string>> {
   const rows = await ipc<TagRow[]>(page, 'list_all_tags_in_space', {
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   return new Map(rows.map((row) => [row.tag_id, row.name]))
 }

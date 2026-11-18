@@ -21,6 +21,7 @@ import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { loadSavedViews } from '@/lib/saved-views'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
@@ -51,8 +52,10 @@ beforeEach(() => {
   )
 
   useSpaceStore.setState({
-    currentSpaceId: 'SPACE_PERSONAL',
-    availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
+    currentSpaceId: SEED_IDS.SPACE_PERSONAL,
+    availableSpaces: [
+      { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
+    ],
     isReady: true,
   })
   // #2944 — the title now also reflects the active view/page, so pin
@@ -65,7 +68,7 @@ beforeEach(() => {
   // leaking into these space/title assertions.
   useNavigationStore.setState({
     currentView: 'journal',
-    currentViewBySpace: { SPACE_PERSONAL: 'journal', SPACE_WORK: 'journal' },
+    currentViewBySpace: { [SEED_IDS.SPACE_PERSONAL]: 'journal', [SEED_IDS.SPACE_WORK]: 'journal' },
   })
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -85,7 +88,7 @@ describe('useAppSpaceLifecycle — preload', () => {
   it('calls preload(currentSpaceId) on mount', () => {
     const preload = vi.spyOn(useResolveStore.getState(), 'preload')
     renderHook(() => useAppSpaceLifecycle())
-    expect(preload).toHaveBeenCalledWith('SPACE_PERSONAL')
+    expect(preload).toHaveBeenCalledWith(SEED_IDS.SPACE_PERSONAL)
   })
 })
 
@@ -93,16 +96,16 @@ describe('useAppSpaceLifecycle — retitle on switch (#5277)', () => {
   it('retitles the incoming space’s tabs and recents with a rename made while it was inactive', async () => {
     const held = [{ pageId: 'PAGE_A', title: 'Alpha' }]
     useTabsStore.setState({
-      tabsBySpace: { SPACE_WORK: [{ id: '1', pageStack: held, label: 'Alpha' }] },
-      activeTabIndexBySpace: { SPACE_WORK: 0 },
+      tabsBySpace: { [SEED_IDS.SPACE_WORK]: [{ id: '1', pageStack: held, label: 'Alpha' }] },
+      activeTabIndexBySpace: { [SEED_IDS.SPACE_WORK]: 0 },
     })
-    useRecentPagesStore.setState({ recentPagesBySpace: { SPACE_WORK: held } })
+    useRecentPagesStore.setState({ recentPagesBySpace: { [SEED_IDS.SPACE_WORK]: held } })
     // A peer or an MCP agent renamed it to "Beta" while Personal was active.
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
         list_all_pages_in_space: (args) => {
           const scope = args['scope'] as { space_id?: string } | undefined
-          return scope?.space_id === 'SPACE_WORK'
+          return scope?.space_id === SEED_IDS.SPACE_WORK
             ? [makePageHeading({ id: 'PAGE_A', content: 'Beta' })]
             : []
         },
@@ -111,16 +114,16 @@ describe('useAppSpaceLifecycle — retitle on switch (#5277)', () => {
     )
     const { rerender } = renderHook(() => useAppSpaceLifecycle())
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK })
     rerender()
 
     await waitFor(() => {
-      expect(useTabsStore.getState().tabsBySpace['SPACE_WORK']?.[0]).toMatchObject({
+      expect(useTabsStore.getState().tabsBySpace[SEED_IDS.SPACE_WORK]?.[0]).toMatchObject({
         pageStack: [{ pageId: 'PAGE_A', title: 'Beta' }],
         label: 'Beta',
       })
     })
-    expect(selectRecentPagesForSpace(useRecentPagesStore.getState(), 'SPACE_WORK')).toEqual([
+    expect(selectRecentPagesForSpace(useRecentPagesStore.getState(), SEED_IDS.SPACE_WORK)).toEqual([
       { pageId: 'PAGE_A', title: 'Beta' },
     ])
   })
@@ -135,11 +138,11 @@ describe('useAppSpaceLifecycle — cross-space link enforcement', () => {
 
     // Switch to a different space — the effect should observe the
     // change and flush the previous prefix.
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK })
     rerender()
 
     await waitFor(() => {
-      expect(clearAllForSpace).toHaveBeenCalledWith('SPACE_PERSONAL')
+      expect(clearAllForSpace).toHaveBeenCalledWith(SEED_IDS.SPACE_PERSONAL)
     })
   })
 })
@@ -194,7 +197,7 @@ describe('useAppSpaceLifecycle — visual identity', () => {
       act(() => {
         useSpaceStore.setState({
           availableSpaces: [
-            { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+            { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
           ],
         })
       })
@@ -217,8 +220,8 @@ describe('useAppSpaceLifecycle — visual identity', () => {
   it('re-stamps the title and accent when the active space changes', async () => {
     useSpaceStore.setState({
       availableSpaces: [
-        { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
-        { id: 'SPACE_WORK', name: 'Work', accent_color: 'accent-blue' },
+        { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
+        { id: SEED_IDS.SPACE_WORK, name: 'Work', accent_color: 'accent-blue' },
       ],
     })
 
@@ -230,7 +233,7 @@ describe('useAppSpaceLifecycle — visual identity', () => {
     })
     vi.mocked(setWindowTitle).mockClear()
 
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK })
     rerender()
 
     await waitFor(() => {
@@ -284,7 +287,7 @@ describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () =
       dispatch(cmd, args),
     )
     unwrap(
-      await commands.setProperty('SPACE_PERSONAL', 'journal_template', {
+      await commands.setProperty(SEED_IDS.SPACE_PERSONAL, 'journal_template', {
         value_text: 'Notes',
         value_num: null,
         value_date: null,
@@ -300,7 +303,7 @@ describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () =
     act(() => {
       useSpaceStore.setState({
         availableSpaces: [
-          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+          { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
         ],
       })
     })
@@ -308,7 +311,9 @@ describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () =
     await waitFor(() => {
       expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(true)
     })
-    expect(unwrap(await commands.getProperty('SPACE_PERSONAL', 'journal_template'))).toBeNull()
+    expect(
+      unwrap(await commands.getProperty(SEED_IDS.SPACE_PERSONAL, 'journal_template')),
+    ).toBeNull()
   })
 
   it('deletes once when the space list is replaced while the deletion is in flight', async () => {
@@ -316,7 +321,7 @@ describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () =
     act(() => {
       useSpaceStore.setState({
         availableSpaces: [
-          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+          { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
         ],
       })
     })
@@ -355,12 +360,12 @@ describe('useAppSpaceLifecycle — device saved views (#6544)', () => {
     act(() => {
       useSpaceStore.setState({
         availableSpaces: [
-          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+          { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: 'accent-emerald' },
         ],
       })
     })
 
     await waitFor(() => expect(localStorage.getItem('agaric:pages:savedViews:v1')).toBeNull())
-    expect((await loadSavedViews('SPACE_PERSONAL')).map((v) => v.name)).toEqual(['Orphans'])
+    expect((await loadSavedViews(SEED_IDS.SPACE_PERSONAL)).map((v) => v.name)).toEqual(['Orphans'])
   })
 })

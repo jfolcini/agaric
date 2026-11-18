@@ -60,7 +60,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   if (!ipcHandler) throw new Error('setupMock() was not called — no IPC handler captured')
   const scoped =
     args['scope'] === undefined
-      ? { ...args, scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } }
+      ? { ...args, scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } }
       : args
   if (cmd === 'search_blocks' || cmd === 'search_blocks_partitioned') {
     const filter = (scoped['filter'] as Record<string, unknown> | undefined) ?? {}
@@ -199,7 +199,7 @@ describe('get_block', () => {
       scheduled_date: null,
       // #3081 — seed pages are stamped with their `blocks.space_id` (the
       // backend's sole space-membership source of truth).
-      space_id: 'SPACE_PERSONAL',
+      space_id: SEED_IDS.SPACE_PERSONAL,
     })
   })
 
@@ -360,7 +360,7 @@ describe('list_blocks with parentId', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_tags_by_prefix', () => {
-  const scope = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
+  const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } as const
 
   it('returns all tags when prefix is empty', () => {
     const result = invoke('list_tags_by_prefix', { prefix: '', scope }) as Array<
@@ -427,7 +427,7 @@ describe('list_tags_by_prefix', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_all_tags_in_space (#3081)', () => {
-  const activeScope = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
+  const activeScope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL } as const
 
   it('returns the space-scoped seed tags', () => {
     const rows = invoke('list_all_tags_in_space', { scope: activeScope }) as Array<
@@ -1075,7 +1075,7 @@ describe('set_property and delete_property on the space key', () => {
         message: `space_id '${gone}' does not refer to a live space block (is_space = 'true')`,
       }),
     )
-    expect(pagesIn('SPACE_PERSONAL')).toContain(page)
+    expect(pagesIn(SEED_IDS.SPACE_PERSONAL)).toContain(page)
   })
 
   it('clears the space with delete_property, and its undo puts the page back', () => {
@@ -1088,7 +1088,7 @@ describe('set_property and delete_property on the space key', () => {
     }
     expect(cleared.op_refs).toHaveLength(1)
     expect(pagesIn(work)).toEqual([])
-    expect(pagesIn('SPACE_PERSONAL')).not.toContain(page)
+    expect(pagesIn(SEED_IDS.SPACE_PERSONAL)).not.toContain(page)
 
     // A space the block no longer holds appends nothing to delete.
     expect(invoke('delete_property', { blockId: page, key: 'space' })).toMatchObject({
@@ -1959,7 +1959,7 @@ describe('list_trash', () => {
   it('includes deleted blocks', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     const result = invoke('list_trash', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as {
       items: Record<string, unknown>[]
     }
@@ -1987,14 +1987,14 @@ describe('list_trash', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     invoke('delete_blocks_by_ids', { blockIds: [SEED_IDS.BLOCK_GS_2] })
     const result = invoke('list_trash', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Record<string, unknown>[] }
     expect(result.items.map((b) => b['id'])).toEqual([SEED_IDS.BLOCK_GS_2, SEED_IDS.BLOCK_GS_1])
   })
 
   it('returns empty when nothing is deleted', () => {
     const result = invoke('list_trash', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as {
       items: Record<string, unknown>[]
     }
@@ -2894,7 +2894,7 @@ describe('property definition commands', () => {
   // `PageResponse<PropertyDefinition>` envelope; tests destructure
   // `.items` and ignore the cursor (mock fixture is single-page).
   it('list_property_defs returns seed definitions', () => {
-    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
+    const page = invoke('list_property_defs', { spaceId: SEED_IDS.SPACE_PERSONAL }) as {
       items: Array<Record<string, unknown>>
       next_cursor: string | null
       has_more: boolean
@@ -2910,7 +2910,7 @@ describe('property definition commands', () => {
 
   it('create_property_def adds a new definition', () => {
     const def = invoke('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'estimate',
       valueType: 'number',
       options: null,
@@ -2918,7 +2918,7 @@ describe('property definition commands', () => {
     expect(def['key']).toBe('estimate')
     expect(def['value_type']).toBe('number')
 
-    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
+    const page = invoke('list_property_defs', { spaceId: SEED_IDS.SPACE_PERSONAL }) as {
       items: Array<Record<string, unknown>>
     }
     expect(page.items.some((d) => d['key'] === 'estimate')).toBe(true)
@@ -2926,13 +2926,13 @@ describe('property definition commands', () => {
 
   it('update_property_def_options updates options', () => {
     invoke('create_property_def', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'status',
       valueType: 'select',
       options: JSON.stringify(['open', 'closed']),
     })
     const updated = invoke('update_property_def_options', {
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
       key: 'status',
       options: JSON.stringify(['open', 'in-progress', 'closed']),
     }) as Record<string, unknown>
@@ -2952,7 +2952,7 @@ describe('property definition commands', () => {
     // and `update_options_unknown_key_rejects` (not_found).
     expect(() =>
       invoke('update_property_def_options', {
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
         key: 'nonexistent',
         options: '["a"]',
       }),
@@ -2960,9 +2960,13 @@ describe('property definition commands', () => {
   })
 
   it('delete_property_def removes a definition', () => {
-    invoke('create_property_def', { spaceId: 'SPACE_PERSONAL', key: 'temp', valueType: 'text' })
-    invoke('delete_property_def', { spaceId: 'SPACE_PERSONAL', key: 'temp' })
-    const page = invoke('list_property_defs', { spaceId: 'SPACE_PERSONAL' }) as {
+    invoke('create_property_def', {
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+      key: 'temp',
+      valueType: 'text',
+    })
+    invoke('delete_property_def', { spaceId: SEED_IDS.SPACE_PERSONAL, key: 'temp' })
+    const page = invoke('list_property_defs', { spaceId: SEED_IDS.SPACE_PERSONAL }) as {
       items: Array<Record<string, unknown>>
     }
     expect(page.items.some((d) => d['key'] === 'temp')).toBe(false)
@@ -3094,7 +3098,11 @@ describe('export_page_markdown', () => {
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     })
     const md = invoke('export_page_markdown', { pageId: SEED_IDS.PAGE_GETTING_STARTED }) as string
-    invoke('import_markdown', { content: md, filename: 'reimported.md', spaceId: 'SPACE_PERSONAL' })
+    invoke('import_markdown', {
+      content: md,
+      filename: 'reimported.md',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
     const pageId = (
       (
         invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }
@@ -3118,7 +3126,7 @@ describe('export_page_markdown', () => {
     const { page_id } = invoke('import_markdown', {
       content: zipped,
       filename: 'Plan.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as { page_id: string }
     const children = (
       invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
@@ -3135,7 +3143,7 @@ describe('export_page_markdown', () => {
     const { page_id } = invoke('import_markdown', {
       content: `\uFEFF${md}`,
       filename: 'Saved.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as { page_id: string }
     const children = (
       invoke('list_blocks', { parentId: page_id }) as { items: Record<string, unknown>[] }
@@ -3634,7 +3642,7 @@ describe('import_markdown', () => {
     const emptyPage = (id: string, title: string) => {
       blocks.set(id, {
         ...makeBlock(id, 'page', title, null, blocks.size),
-        space_id: 'SPACE_PERSONAL',
+        space_id: SEED_IDS.SPACE_PERSONAL,
       })
     }
     emptyPage('PAGE_ROADMAP', 'Roadmap')
@@ -3652,12 +3660,12 @@ describe('import_markdown', () => {
     invoke('import_markdown', {
       content: 'Plan body',
       filename: 'Plan.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     invoke('import_markdown', {
       content: 'Notes body',
       filename: 'Notes.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
 
     expect(childrenOf('PAGE_ROADMAP')).toEqual([])
@@ -3695,7 +3703,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '# titled \r\n\r\nBody',
       filename: 'titled.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
     expect(result['page_title']).toBe('titled')
     expect(result['blocks_created']).toBe(1)
@@ -3717,7 +3725,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '# titled\n\n---\nseason: spring\n---\n\n- a\n- b\n',
       filename: 'titled.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
     expect(result['blocks_created']).toBe(2)
   })
@@ -3728,7 +3736,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '---\nseason: spring\n---\n\n# titled\n\n- a\n- b\n',
       filename: 'titled.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
     expect(result['blocks_created']).toBe(2)
   })
@@ -3763,7 +3771,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '- Item one\n- Item two\n* Item three\n+ Item four\n1. Item five',
       filename: 'list.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
     expect(result['blocks_created']).toBe(5)
 
@@ -3784,7 +3792,7 @@ describe('import_markdown', () => {
     invoke('import_markdown', {
       content: '- [ ] open\n- [/] wip\n* [x] done\n- [X] loud\n1. [-] gone\n- [?] kept',
       filename: 'tasks.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const pageId = (
       (
@@ -3816,7 +3824,7 @@ describe('import_markdown', () => {
     invoke('import_markdown', {
       content: 'Test block content',
       filename: 'Unique Import Test.md',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const pages = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
@@ -3842,7 +3850,7 @@ describe('import_markdown', () => {
         'status:: done\nstatus:: open\npriority:: high\npriority:: A\nmood:: open\nplain line',
       filename: 'props.md',
       // The space's definitions decide (#5841).
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
     expect(result['properties_set']).toBe(3)
   })
@@ -4040,14 +4048,14 @@ describe('MCP agents', () => {
     const planner = invoke('create_mcp_agent', {
       name: ' Planner ',
       mode: 'read_write',
-      spaceIds: ['space_personal'],
+      spaceIds: [SEED_IDS.SPACE_PERSONAL.toLowerCase()],
     }) as McpAgent
     invoke('create_mcp_agent', { name: 'agenda', mode: 'read_only', spaceIds: null })
 
     expect(planner).toMatchObject({
       name: 'Planner',
       mode: 'read_write',
-      space_ids: ['SPACE_PERSONAL'],
+      space_ids: [SEED_IDS.SPACE_PERSONAL],
       last_used_ms: null,
     })
     expect(planner.token).toMatch(/^agt_[0-9a-f]{32}$/)
@@ -4068,7 +4076,7 @@ describe('MCP agents', () => {
       ['x'.repeat(129), null, 'InvalidAgentName'],
       ['PLANNER', null, 'DuplicateAgentName'],
       ['Other', [], undefined],
-      ['Other', ['SPACE_PERSONAL', 'NOPE'], undefined],
+      ['Other', [SEED_IDS.SPACE_PERSONAL, 'NOPE'], undefined],
     ]
     for (const [name, spaceIds, code] of refused) {
       let thrown: unknown
@@ -4215,7 +4223,7 @@ describe('quick_capture_block', () => {
   it("creates a content block under the space's daily page and pushes a create_block op", () => {
     const result = invoke('quick_capture_block', {
       content: 'hi',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as Record<string, unknown>
 
     expect(result['content']).toBe('hi')
@@ -4337,7 +4345,7 @@ describe('scope-filter parity', () => {
     expect(foreignResult.map((r) => r['id'])).toEqual([foreignPageId])
     const activeResult = invoke('batch_resolve', {
       ids,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as Array<Record<string, unknown>>
     const activeIds = activeResult.map((r) => r['id'])
     expect(activeIds).toContain(SEED_IDS.PAGE_GETTING_STARTED)
@@ -4353,7 +4361,7 @@ describe('scope-filter parity', () => {
     })
     const activeResult = invoke('get_backlinks', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     expect(activeResult.items.map((b) => b['id'])).not.toContain(foreignBlockId)
     // Sanity: its own space still sees it.
@@ -4373,7 +4381,7 @@ describe('scope-filter parity', () => {
     })
     const result = invoke('list_backlinks_grouped', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { groups: Array<{ page_id: string; blocks: Array<Record<string, unknown>> }> }
     const allBlockIds = result.groups.flatMap((g) => g.blocks.map((b) => b['id']))
     expect(allBlockIds).not.toContain(foreignBlockId)
@@ -4391,7 +4399,7 @@ describe('scope-filter parity', () => {
     })
     const result = invoke('list_unlinked_references', {
       pageId: SEED_IDS.PAGE_QUICK_NOTES,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { groups: Array<{ blocks: Array<Record<string, unknown>> }> }
     const ids = result.groups.flatMap((g) => g.blocks.map((b) => b['id']))
     expect(ids).not.toContain(foreignBlockId)
@@ -4407,7 +4415,7 @@ describe('scope-filter parity', () => {
     const result = invoke('query_by_property', {
       key: 'todo_state',
       valueText: 'TODO',
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
   })
@@ -4419,7 +4427,7 @@ describe('scope-filter parity', () => {
     const { blockId: foreignBlockId } = seedForeignFixture({ tagId: SEED_IDS.TAG_WORK })
     const result = invoke('query_by_tags', {
       tagIds: [SEED_IDS.TAG_WORK],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
   })
@@ -4434,7 +4442,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'todo_state', valueText: 'TODO' }],
       tagFilters: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
   })
@@ -4480,7 +4488,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'owner', valueText: 'alice', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     const ids = new Set(result.items.map((b) => b['id']))
 
@@ -4530,7 +4538,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'reviewed', valueDate: '2026-01-01', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     const ids = new Set(result.items.map((b) => b['id']))
 
@@ -4549,7 +4557,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'todo_state', valueText: 'DONE', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
 
     expect(result.items.map((b) => b['id'])).not.toContain(noStatus['id'])
@@ -4565,7 +4573,7 @@ describe('scope-filter parity', () => {
     const result = invoke('list_unfinished_tasks', {
       beforeDate: '2026-04-15',
       todoStates: ['TODO'],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as
       | { items: Array<Record<string, unknown>> }
       | Promise<{
@@ -4583,7 +4591,7 @@ describe('scope-filter parity', () => {
       asTask: { todo_state: 'TODO' },
     })
     const result = invoke('list_undated_tasks', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
   })
@@ -4599,10 +4607,10 @@ describe('scope-filter parity', () => {
           scope: { kind: 'active', space_id: spaceId },
         }) as Record<string, Record<string, number>>
       )['2026-04-21']?.['column:due_date'] ?? 0
-    const activeBefore = dueCount('SPACE_PERSONAL')
+    const activeBefore = dueCount(SEED_IDS.SPACE_PERSONAL)
     seedForeignFixture({ asTask: { todo_state: 'TODO', due_date: '2026-04-21' } })
     expect(dueCount(SPACE_OTHER)).toBe(1)
-    expect(dueCount('SPACE_PERSONAL')).toBe(activeBefore)
+    expect(dueCount(SEED_IDS.SPACE_PERSONAL)).toBe(activeBefore)
   })
 
   // -------------------------------------------------------------------------
@@ -4611,7 +4619,7 @@ describe('scope-filter parity', () => {
   it('list_page_history honours active scope', () => {
     const { blockId: foreignBlockId } = seedForeignFixture({})
     const result = invoke('list_page_history', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as { items: Array<Record<string, unknown>> }
     // The foreign create_block op should be filtered out — none of the
     // returned op payloads should reference the foreign block.
@@ -4633,7 +4641,7 @@ describe('scope-filter parity', () => {
     // envelope; the mock world never caps, so `total` mirrors the edge
     // count and `truncated` is always false.
     const result = invoke('list_page_links', {
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as {
       edges: Array<{ source_id: string; target_id: string }>
       total: number
@@ -4656,13 +4664,13 @@ describe('scope-filter parity', () => {
       blockType: 'page',
       content: 'Scoped New Page',
       parentId: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as Record<string, unknown>
     // The new page should resolve via the alias / batch_resolve under
     // SPACE_PERSONAL — proves its space was stamped.
     const resolved = invoke('batch_resolve', {
       ids: [newPage['id'] as string],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as Array<Record<string, unknown>>
     expect(resolved.map((r) => r['id'])).toContain(newPage['id'])
     // And NOT under a different space.
@@ -4687,7 +4695,7 @@ describe('scope-filter parity', () => {
     invoke('set_page_aliases', { pageId: foreignPageId, aliases: ['foreign-alias'] })
     const counts = invoke('count_backlinks_batch', {
       pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     }) as Record<string, number>
     const countsForeign = invoke('count_backlinks_batch', {
       pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
@@ -4703,7 +4711,7 @@ describe('scope-filter parity', () => {
     // Alias resolution under active scope returns null (foreign alias).
     const resolved = invoke('resolve_page_by_alias', {
       alias: 'foreign-alias',
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     })
     expect(resolved).toBeNull()
     // Reference the foreign block to keep the linter happy (unused-var).
@@ -4727,7 +4735,7 @@ interface MetaPageResp {
 
 function listPages(filters: Array<Record<string, unknown>>, sort = 'alphabetical'): MetaPageResp {
   return invoke('list_pages_with_metadata', {
-    filter: { spaceId: 'SPACE_PERSONAL', sort, filters },
+    filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort, filters },
     cursor: null,
     limit: 100,
   }) as MetaPageResp
@@ -4811,7 +4819,7 @@ describe('list_pages_with_metadata — compound filters', () => {
       {
         type: 'HasProperty',
         key: 'space',
-        predicate: { type: 'Eq', value: { type: 'Ref', value: 'SPACE_PERSONAL' } },
+        predicate: { type: 'Eq', value: { type: 'Ref', value: SEED_IDS.SPACE_PERSONAL } },
       },
     ])
     expect(refHit.total_count).toBe(all.total_count)
@@ -4878,7 +4886,7 @@ describe('list_pages_with_metadata — compound filters', () => {
     // page (cursor == null); subsequent cursor pages return null and the
     // frontend (`PageBrowser`'s `displayTotalCount`) retains the first value.
     const first = invoke('list_pages_with_metadata', {
-      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'alphabetical', filters: [] },
       cursor: null,
       limit: 2,
     }) as MetaPageResp
@@ -4889,7 +4897,7 @@ describe('list_pages_with_metadata — compound filters', () => {
     const fullTotal = first.total_count
 
     const second = invoke('list_pages_with_metadata', {
-      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'alphabetical', filters: [] },
       cursor: first.next_cursor,
       limit: 2,
     }) as MetaPageResp
@@ -4911,7 +4919,7 @@ describe('list_pages_with_metadata — compound filters', () => {
     // code) that the frontend's `withCursorRecovery` recognises
     // (drop cursor → refetch).
     const first = invoke('list_pages_with_metadata', {
-      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'alphabetical', filters: [] },
       cursor: null,
       limit: 2,
     }) as MetaPageResp
@@ -4921,7 +4929,7 @@ describe('list_pages_with_metadata — compound filters', () => {
     try {
       invoke('list_pages_with_metadata', {
         // Same cursor, DIFFERENT sort → discriminator mismatch.
-        filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-linked', filters: [] },
+        filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'most-linked', filters: [] },
         cursor: first.next_cursor,
         limit: 2,
       })
@@ -4936,13 +4944,13 @@ describe('list_pages_with_metadata — compound filters', () => {
     // The complement of the cross-sort rejection: a cursor reused under the
     // identical sort must page cleanly (the discriminator matches).
     const first = invoke('list_pages_with_metadata', {
-      filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-content', filters: [] },
+      filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'most-content', filters: [] },
       cursor: null,
       limit: 2,
     }) as MetaPageResp
     expect(first.next_cursor).not.toBeNull()
     const second = invoke('list_pages_with_metadata', {
-      filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-content', filters: [] },
+      filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort: 'most-content', filters: [] },
       cursor: first.next_cursor,
       limit: 2,
     }) as MetaPageResp
@@ -4975,7 +4983,7 @@ describe('list_pages_with_metadata — sort ordering (#1886)', () => {
   const allPages = (sort: string): Row[] =>
     (
       invoke('list_pages_with_metadata', {
-        filter: { spaceId: 'SPACE_PERSONAL', sort, filters: [] },
+        filter: { spaceId: SEED_IDS.SPACE_PERSONAL, sort, filters: [] },
         cursor: null,
         limit: 100,
       }) as MetaPageResp

@@ -11,6 +11,7 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, openPage, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 const GETTING_STARTED = '00000000000000000000PAGE01'
@@ -72,18 +73,18 @@ test.describe('References sort @pages', () => {
   })
 
   test('never offers bookkeeping keys or unordered property types', async ({ page }) => {
-    await page.evaluate(async () => {
+    await page.evaluate(async (personalSpaceId) => {
       const { invoke } = (
         window as unknown as {
           __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
         }
       ).__TAURI_INTERNALS__
       await invoke('set_property', {
-        blockId: 'SPACE_PERSONAL',
+        blockId: personalSpaceId,
         key: 'personal_to_work_migration_v1',
         value: { value_text: 'true' },
       })
-    })
+    }, SEED_IDS.SPACE_PERSONAL)
     const references = await openReferences(page)
 
     await references.getByRole('combobox', { name: 'Sort by' }).click()

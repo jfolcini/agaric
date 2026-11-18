@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, ipc, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 /**
@@ -23,7 +24,7 @@ async function seedDay(page: Page, day: string): Promise<void> {
   const journalId = await ipc<string>(page, 'create_page_in_space', {
     parentId: null,
     content: day,
-    spaceId: 'SPACE_PERSONAL',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
   })
   await seedSearchBlocks(page, [
     { content: `Note for ${day}`, parentId: journalId },

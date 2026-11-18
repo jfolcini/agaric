@@ -63,13 +63,13 @@ function blockOnDay(day: string): string {
   const pageId = dispatch('create_page_in_space', {
     parentId: null,
     content: day,
-    spaceId: 'SPACE_PERSONAL',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
   }) as string
   const created = dispatch('create_block', {
     blockType: 'content',
     content: 'Standup',
     parentId: pageId,
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   }) as { id: string }
   return created.id
 }
@@ -86,7 +86,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   seedBlocks()
-  useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+  useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
 })
 
@@ -241,7 +241,7 @@ describe('MeetingDialog', () => {
     dispatch('create_page_in_space', {
       parentId: null,
       content: 'Meeting 2031-03-14',
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const onClose = vi.fn()
     render(<Harness blockId={blockId} onClose={onClose} />)
@@ -311,7 +311,7 @@ describe('MeetingDialog — the palette’s New meeting and the remembered templ
 
   it('makes the meeting with no template when the remembered one is no longer a template', async () => {
     const user = userEvent.setup()
-    writePreference(PREFERENCES.meetingTemplate, SEED_IDS.BLOCK_GS_1, 'SPACE_PERSONAL')
+    writePreference(PREFERENCES.meetingTemplate, SEED_IDS.BLOCK_GS_1, SEED_IDS.SPACE_PERSONAL)
     const onClose = vi.fn()
     const { container } = render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
     await templateSelect(container)
@@ -351,7 +351,7 @@ describe('MeetingDialog — mutation triage (#5364)', () => {
     const id = dispatch('create_page_in_space', {
       parentId: null,
       content: title,
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     }) as string
     dispatch('set_property', {
       blockId: id,
@@ -408,7 +408,7 @@ describe('MeetingDialog — mutation triage (#5364)', () => {
   it('opens on the remembered template among several, and remembers no template too', async () => {
     const user = userEvent.setup()
     const other = templatePage('Retro Template')
-    writePreference(PREFERENCES.meetingTemplate, other, 'SPACE_PERSONAL')
+    writePreference(PREFERENCES.meetingTemplate, other, SEED_IDS.SPACE_PERSONAL)
     const onClose = vi.fn()
     const first = render(<Harness blockId={blockOnDay('2031-03-14')} onClose={onClose} />)
     const select = first.container.ownerDocument.querySelector('select')
@@ -694,19 +694,19 @@ describe('MeetingDialog — mutation triage (#6435)', () => {
   })
 
   it('lists the templates of the space it is in, not of the one it left', async () => {
-    const work = templateIn('SPACE_WORK', 'Work Template')
+    const work = templateIn(SEED_IDS.SPACE_WORK, 'Work Template')
     let release = (): void => {}
     const held = new Promise<void>((resolve) => {
       release = resolve
     })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const scope = (args as { scope?: { space_id?: string } } | undefined)?.scope
-      if (cmd === 'query_by_property' && scope?.space_id === 'SPACE_PERSONAL') await held
+      if (cmd === 'query_by_property' && scope?.space_id === SEED_IDS.SPACE_PERSONAL) await held
       return dispatch(cmd, args)
     })
     render(<MeetingDialog onClose={vi.fn()} onCreated={vi.fn()} />)
 
-    await act(() => useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' }))
+    await act(() => useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_WORK }))
     await waitFor(() => expect(templateOptions()).toEqual(['none', work]))
     await act(async () => {
       release()

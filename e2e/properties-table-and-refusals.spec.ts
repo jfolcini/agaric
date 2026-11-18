@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeAlertDialog,
   activePopover,
@@ -51,7 +52,7 @@ async function storedProperties(page: Page, blockId: string): Promise<Record<str
 
 async function storedOptions(page: Page, key: string): Promise<unknown> {
   const def = await ipc<PropertyDef | null>(page, 'get_property_def', {
-    spaceId: 'SPACE_PERSONAL',
+    spaceId: SEED_IDS.SPACE_PERSONAL,
     key,
   })
   return def?.options == null ? null : JSON.parse(def.options)
@@ -217,7 +218,7 @@ test.describe('Page Properties table @editor', () => {
       .toEqual({ reviewer: 'Ana', budget: '1200' })
     expect(
       await ipc<PropertyDef | null>(page, 'get_property_def', {
-        spaceId: 'SPACE_PERSONAL',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
         key: 'budget',
       }),
     ).toMatchObject({ key: 'budget', value_type: 'text' })

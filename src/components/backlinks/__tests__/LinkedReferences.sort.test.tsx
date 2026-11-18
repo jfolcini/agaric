@@ -28,7 +28,7 @@ import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
-const PERSONAL = 'SPACE_PERSONAL'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
 const TARGET = SEED_IDS.PAGE_GETTING_STARTED
 
 async function seedNote(label: string, due: string | null): Promise<void> {

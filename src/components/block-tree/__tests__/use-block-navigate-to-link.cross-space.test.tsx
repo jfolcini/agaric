@@ -43,7 +43,7 @@ import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-const ACTIVE_SPACE = 'SPACE_PERSONAL'
+const ACTIVE_SPACE = SEED_IDS.SPACE_PERSONAL
 const FOREIGN_SPACE = 'SPACE_WORK_CROSS'
 
 interface HarnessParams {

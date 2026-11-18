@@ -30,6 +30,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { i18n } from '@/lib/i18n'
+import { ENGLISH_IN_EVERY_LOCALE } from '@/lib/i18n/english-in-every-locale'
 import {
   baseLocale,
   DEFAULT_LOCALE,
@@ -53,29 +54,6 @@ const OPTIONAL_PLURAL_CATEGORIES: Partial<Record<SupportedLocale, readonly strin
   fr: ['many'],
   pt: ['many'],
 }
-
-/**
- * Keys every locale must keep in English, so this suite fails a translation
- * of one.
- */
-const ENGLISH_IN_EVERY_LOCALE: readonly string[] = [
-  // `aria-keyshortcuts` values: assistive tech parses the key names.
-  'block.reorderKeyshortcuts',
-  'block.collapseKeyshortcuts',
-  // Example input for `parse-date.ts`, which reads English words only.
-  'dateChip.placeholder',
-  'property.datePlaceholder',
-  // Literal examples, notation, and names.
-  'search.filterHelper.pathPlaceholder',
-  'linkEdit.urlPlaceholder',
-  'advancedQuery.aggregate.contributingCount',
-  'agentAccess.agents.namePlaceholder',
-  'data.importEnexLabel',
-  'data.importJexLabel',
-  'referenceSheet.markdown.title',
-  'settings.themeDracula',
-  'settings.themeOneDarkPro',
-]
 
 /** Per locale, keys whose value is a word the language spells as English does. */
 const SAME_AS_ENGLISH: Partial<Record<SupportedLocale, readonly string[]>> = {

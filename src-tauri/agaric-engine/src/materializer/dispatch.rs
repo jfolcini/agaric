@@ -3,7 +3,7 @@
 use super::coordinator::{
     INBOUND_REBUILD_DEBOUNCE, INBOUND_REBUILD_MAX_WAIT, InboundRebuildDebounce, Materializer,
 };
-use super::{CreateBlockHint, MaterializeTask, TagOpHint};
+use super::{ChangeDomain, CreateBlockHint, MaterializeTask, TagOpHint};
 use agaric_core::error::AppError;
 use agaric_store::op::{OpType, SPACE_PROPERTY_KEY};
 use agaric_store::op_log::OpRecord;
@@ -568,6 +568,19 @@ impl Materializer {
         self.enqueue_background_tasks(record, None, None)
     }
 
+    /// Tell the change feed what `ops` can have staled (#6545). Called after
+    /// their tasks are enqueued: the feed's emitter settles the queue before
+    /// it takes what is recorded, so a recorded op's tasks must already be
+    /// in the queue.
+    fn record_changes(&self, ops: &[CommitOp<'_>]) {
+        self.change_feed.record(ops.iter().map(|op| {
+            (
+                domains_for_op(op.record, op.block_type),
+                op.record.block_id.as_deref(),
+            )
+        }));
+    }
+
     /// Dispatch background cache rebuild tasks for `record`, logging a `warn`
     /// on failure instead of propagating the error.
     ///
@@ -1100,6 +1113,10 @@ impl Materializer {
                 } else {
                     st.first_request = st.last_request;
                 }
+                drop(st);
+                // #6545: the change feed holds a lifecycle op's event until
+                // this fire, rather than forcing it from its settle.
+                mat.change_feed.wake();
             } else {
                 // Wait out the remaining window; wake early on a fresh arm
                 // so the next iteration recomputes `fire_at`.
@@ -1234,6 +1251,7 @@ impl Materializer {
         if let Err(e) = enqueued {
             tracing::warn!(error = %e, "failed to enqueue a commit's background cache tasks");
         }
+        self.record_changes(ops);
     }
 
     /// Push the tasks `record` enqueues now onto `tasks`, in enqueue order.
@@ -1506,6 +1524,74 @@ pub fn invalidations_for_op(
         OpType::RenamePropertyOption => {}
     }
     Ok(tasks)
+}
+
+/// Every domain: what an op this build cannot read may have staled.
+const ALL_DOMAINS: &[ChangeDomain] = &[
+    ChangeDomain::Structure,
+    ChangeDomain::Properties,
+    ChangeDomain::PropertyDefs,
+    ChangeDomain::Names,
+    ChangeDomain::Attachments,
+];
+
+/// The frontend cache groups `record` can stale (#6545), for the change feed.
+///
+/// Matched exhaustively like [`invalidations_for_op`], so a new op type names
+/// its domains before it compiles. `block_type_hint` is the block's type where
+/// the command proved it, as in [`CommitOp`]; a create reads its own payload.
+/// A page or tag block carries a name, so an op on one, or on a block of
+/// unknown type, also changes `Names`.
+pub(super) fn domains_for_op(
+    record: &OpRecord,
+    block_type_hint: Option<&str>,
+) -> &'static [ChangeDomain] {
+    use ChangeDomain::{Attachments, Names, Properties, PropertyDefs, Structure};
+    let Ok(op_type) = OpType::from_str(&record.op_type) else {
+        return ALL_DOMAINS;
+    };
+    match op_type {
+        OpType::CreateBlock => match serde_json::from_str::<CreateBlockHint>(&record.payload) {
+            Ok(hint) if hint.block_type == "content" => &[Structure],
+            _ => &[Structure, Names],
+        },
+        OpType::EditBlock => match block_type_hint {
+            Some("content") => &[Structure],
+            Some("page") => &[Structure, Names],
+            // A `date/…` tag's name is an agenda date (#2658).
+            _ => &[Structure, Properties, Names],
+        },
+        // These carry the block's descendants, with their dates, names and
+        // attachments, whatever the block's own type.
+        OpType::DeleteBlock | OpType::RestoreBlock | OpType::PurgeBlock => {
+            &[Structure, Properties, Names, Attachments]
+        }
+        OpType::MoveBlock => &[Structure],
+        // A tag filters the graph and query blocks, a `date/…` tag is an
+        // agenda date, and tag lists show a usage count.
+        OpType::AddTag | OpType::RemoveTag => &[Structure, Properties, Names],
+        // `space` moves a page group into another space's lists, and
+        // `template` takes a page out of the graph and the tag counts, as
+        // their arms in `invalidations_for_op` rebuild.
+        OpType::SetProperty | OpType::DeleteProperty => {
+            match serde_json::from_str::<PropertyOpHint>(&record.payload) {
+                Ok(hint) if hint.key != SPACE_PROPERTY_KEY && hint.key != "template" => {
+                    &[Properties]
+                }
+                _ => &[Structure, Properties, Names],
+            }
+        }
+        OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {
+            &[Attachments]
+        }
+        // Unlinked References match on aliases (#5249).
+        OpType::AddPageAlias | OpType::RemovePageAlias => &[Structure, Names],
+        // Each rewrites or re-types the values blocks hold under the key.
+        OpType::SetPropertyDef
+        | OpType::RenamePropertyKey
+        | OpType::RewriteProperties
+        | OpType::RenamePropertyOption => &[Properties, PropertyDefs],
+    }
 }
 
 /// `SetPropertyDef` invalidations (#5841). `agenda_cache` reads `value_date`,

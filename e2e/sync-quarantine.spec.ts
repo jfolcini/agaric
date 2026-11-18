@@ -7,6 +7,7 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
 
 interface QuarantineWindow {
@@ -16,14 +17,17 @@ interface QuarantineWindow {
 const HOUR = 60 * 60 * 1000
 
 async function seedQuarantinedSlot(page: Page): Promise<void> {
-  await page.evaluate((hour) => {
-    ;(window as unknown as QuarantineWindow).__addMockQuarantinedSlot({
-      space_id: 'SPACE_PERSONAL',
-      byte_len: 2048,
-      last_reason: 'replay failed: truncated blob',
-      first_seen_at_ms: Date.now() - 2 * hour,
-    })
-  }, HOUR)
+  await page.evaluate(
+    ({ hour, spaceId }) => {
+      ;(window as unknown as QuarantineWindow).__addMockQuarantinedSlot({
+        space_id: spaceId,
+        byte_len: 2048,
+        last_reason: 'replay failed: truncated blob',
+        first_seen_at_ms: Date.now() - 2 * hour,
+      })
+    },
+    { hour: HOUR, spaceId: SEED_IDS.SPACE_PERSONAL },
+  )
 }
 
 async function openSyncSettings(page: Page): Promise<void> {

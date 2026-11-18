@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   activeSuggestionList,
@@ -57,7 +58,7 @@ async function meetingPage(page: Page, title: string) {
     agendaSource: null,
     cursor: null,
     limit: 100,
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
   })
   const row = pages.items.find((p) => p.content === title)
   if (row === undefined) return null
@@ -169,13 +170,13 @@ test.describe('/meeting on a journal day dates the meeting that day and lays out
     const dayId = await ipc<string>(page, 'create_page_in_space', {
       parentId: null,
       content: day,
-      spaceId: 'SPACE_PERSONAL',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
     })
     const { id: blockId } = await ipc<{ id: string }>(page, 'create_block', {
       blockType: 'content',
       content: 'Standup notes',
       parentId: dayId,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+      scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
     })
     await page
       .locator('[data-slot="sidebar"]')

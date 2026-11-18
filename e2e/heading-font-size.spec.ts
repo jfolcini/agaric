@@ -7,9 +7,10 @@
 
 import type { Locator, Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, focusBlockById, ipc, test, waitForBoot } from './helpers'
 
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const LEVELS = [1, 2, 3, 4, 5, 6] as const
 
 async function seed(page: Page, title: string): Promise<Record<number, string>> {

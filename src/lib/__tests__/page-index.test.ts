@@ -19,8 +19,8 @@ import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
-const PERSONAL = 'SPACE_PERSONAL'
-const WORK = 'SPACE_WORK'
+const PERSONAL = SEED_IDS.SPACE_PERSONAL
+const WORK = SEED_IDS.SPACE_WORK
 
 let listings: string[]
 

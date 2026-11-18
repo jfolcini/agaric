@@ -609,3 +609,106 @@ async fn dispatch_background_delete() {
         "at least one background task should have been processed"
     );
 }
+
+/// #6545: the change feed's domains, one representative op for each.
+#[test]
+fn domains_for_op_names_what_each_kind_of_op_can_stale() {
+    use crate::materializer::ChangeDomain::{
+        Attachments, Names, Properties, PropertyDefs, Structure,
+    };
+    let create = |block_type: &str| {
+        fake_op_record(
+            "create_block",
+            &format!(r#"{{"block_id":"B","block_type":"{block_type}"}}"#),
+        )
+    };
+    let op = |op_type: &str| fake_op_record(op_type, "{}");
+    let property = |op_type: &str, key: &str| {
+        fake_op_record(op_type, &format!(r#"{{"block_id":"B","key":"{key}"}}"#))
+    };
+    for (what, record, block_type, domains) in [
+        (
+            "a content create",
+            create("content"),
+            None,
+            &[Structure][..],
+        ),
+        ("a page create", create("page"), None, &[Structure, Names]),
+        ("a tag create", create("tag"), None, &[Structure, Names]),
+        (
+            "a content edit",
+            op("edit_block"),
+            Some("content"),
+            &[Structure],
+        ),
+        (
+            "a page rename",
+            op("edit_block"),
+            Some("page"),
+            &[Structure, Names],
+        ),
+        (
+            "a tag rename",
+            op("edit_block"),
+            Some("tag"),
+            &[Structure, Properties, Names],
+        ),
+        (
+            "an edit of a block of unknown type",
+            op("edit_block"),
+            None,
+            &[Structure, Properties, Names],
+        ),
+        (
+            "a delete",
+            op("delete_block"),
+            Some("content"),
+            &[Structure, Properties, Names, Attachments],
+        ),
+        ("a move", op("move_block"), None, &[Structure]),
+        (
+            "a tag",
+            op("add_tag"),
+            None,
+            &[Structure, Properties, Names],
+        ),
+        (
+            "a property write",
+            property("set_property", "status"),
+            None,
+            &[Properties],
+        ),
+        (
+            "a move to another space",
+            property("set_property", "space"),
+            None,
+            &[Structure, Properties, Names],
+        ),
+        (
+            "a page made an ordinary page again",
+            property("delete_property", "template"),
+            None,
+            &[Structure, Properties, Names],
+        ),
+        ("an attachment", op("add_attachment"), None, &[Attachments]),
+        ("an alias", op("add_page_alias"), None, &[Structure, Names]),
+        (
+            "a property definition",
+            op("set_property_def"),
+            None,
+            &[Properties, PropertyDefs],
+        ),
+        (
+            "an op type this build does not know",
+            op("from_a_later_version"),
+            None,
+            &[Structure, Properties, PropertyDefs, Names, Attachments],
+        ),
+    ] {
+        assert_eq!(
+            crate::materializer::dispatch::domains_for_op(&record, block_type),
+            domains,
+            "{what}"
+        );
+    }
+}
