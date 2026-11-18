@@ -27,6 +27,43 @@ const VIEW = 'Work blocks'
 const RENAMED = 'Work items'
 
 test.beforeEach(async ({ page }) => {
+  // PROBE (throwaway, never merged): who receives the pointer events and when a dialog mounts.
+  page.on('console', (m) => {
+    if (m.text().startsWith('PROBE')) console.log(m.text())
+  })
+  await page.addInitScript(() => {
+    const ids = new WeakMap<object, number>()
+    let next = 1
+    const id = (n: EventTarget | null): string => {
+      if (!(n instanceof Element)) return String(n)
+      if (!ids.has(n)) ids.set(n, next++)
+      return `${n.tagName.toLowerCase()}#${ids.get(n)}[${n.getAttribute('aria-label') ?? n.textContent?.slice(0, 20) ?? ''}]${n.isConnected ? '' : '(detached)'}`
+    }
+    const t0 = performance.now()
+    const log = (what: string) =>
+      console.log(`PROBE ${(performance.now() - t0).toFixed(0)} ${what}`)
+    for (const type of ['pointerdown', 'pointerup', 'click', 'focusin', 'focusout']) {
+      document.addEventListener(type, (e) => log(`${type} ${id(e.target)}`), true)
+    }
+    new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.addedNodes)
+          if (
+            n instanceof Element &&
+            (n.matches('[role=dialog]') || n.querySelector('[role=dialog]'))
+          )
+            log('dialog+')
+        for (const n of r.removedNodes)
+          if (
+            n instanceof Element &&
+            (n.matches('[role=dialog]') || n.querySelector('[role=dialog]'))
+          )
+            log('dialog-')
+        if (r.target instanceof Element && r.target.closest('[data-testid="saved-views-list"]'))
+          log(`savedViews mutation ${r.type} +${r.addedNodes.length} -${r.removedNodes.length}`)
+      }
+    }).observe(document, { childList: true, subtree: true })
+  })
   await waitForBoot(page)
 })
 
@@ -53,73 +90,76 @@ async function reopenAdvancedQuery(page: Page): Promise<void> {
 /** The tag `work` leaf keeps exactly the three seeded blocks tagged `work`. */
 const WORK_ROWS = [/Weekly standup notes/, /Fix login bug/, /Ship v2\.0 release/]
 
-test('a saved view is listed after leaving, loads, renames, deletes to the Trash, and stays in its space @search @spaces @pages', async ({
-  page,
-}) => {
-  await navigateToView(page, 'Advanced query')
-  const root = page.getByRole('group', { name: 'Filter', exact: true })
-  await root.getByRole('button', { name: 'Add filter', exact: true }).click()
-  const pop = activePopover(page)
-  await pop.getByRole('button', { name: /^Tag/ }).click()
-  await pop.getByRole('button', { name: 'work', exact: true }).click()
-  await expect(tagLeaf(page)).toBeVisible()
-  await expect(resultRows(page)).toHaveText(WORK_ROWS)
+for (const run of Array.from({ length: 30 }, (_, i) => i))
+  test(`a saved view is listed after leaving, loads, renames, deletes to the Trash, and stays in its space, run ${run} @search @spaces @pages`, async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Advanced query')
+    const root = page.getByRole('group', { name: 'Filter', exact: true })
+    await root.getByRole('button', { name: 'Add filter', exact: true }).click()
+    const pop = activePopover(page)
+    await pop.getByRole('button', { name: /^Tag/ }).click()
+    await pop.getByRole('button', { name: 'work', exact: true }).click()
+    await expect(tagLeaf(page)).toBeVisible()
+    await expect(resultRows(page)).toHaveText(WORK_ROWS)
 
-  await page.getByRole('button', { name: 'Save the current query as a named view' }).click()
-  const saveDialog = page.getByRole('dialog')
-  await saveDialog.getByRole('textbox').fill(VIEW)
-  await saveDialog.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByRole('button', { name: 'Save the current query as a named view' }).click()
+    const saveDialog = page.getByRole('dialog')
+    await saveDialog.getByRole('textbox').fill(VIEW)
+    await saveDialog.getByRole('button', { name: 'Save', exact: true }).click()
 
-  // Clear the builder so only Load can bring the leaf back.
-  await page.getByRole('button', { name: 'Clear all', exact: true }).click()
-  await expect(tagLeaf(page)).toHaveCount(0)
+    // Clear the builder so only Load can bring the leaf back.
+    await page.getByRole('button', { name: 'Clear all', exact: true }).click()
+    await expect(tagLeaf(page)).toHaveCount(0)
 
-  await reopenAdvancedQuery(page)
-  await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(VIEW)])
-  await expect(tagLeaf(page)).toHaveCount(0)
+    await reopenAdvancedQuery(page)
+    await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(VIEW)])
+    await expect(tagLeaf(page)).toHaveCount(0)
 
-  // The view's page is in no page list: not in the Pages view, not offered by `[[`.
-  await navigateToView(page, 'Pages')
-  await expect(page.getByRole('grid').getByText('Quick Notes', { exact: true })).toBeVisible()
-  await expect(page.getByRole('grid').getByText(VIEW, { exact: true })).toHaveCount(0)
-  await openPage(page, 'Getting Started')
-  await focusBlock(page)
-  await page.keyboard.press('End')
-  await page.keyboard.type(' [[Work bl', { delay: 30 })
-  await expect(activeSuggestionList(page).getByTestId('suggestion-item')).toHaveText([
-    /^Create\s*Work bl$/,
-  ])
-  await page.keyboard.press('Escape')
-  await navigateToView(page, 'Advanced query')
-  await savedViews(page)
-    .getByRole('button', { name: `Load "${VIEW}"` })
-    .click()
-  await expect(tagLeaf(page)).toBeVisible()
-  await expect(resultRows(page)).toHaveText(WORK_ROWS)
+    // The view's page is in no page list: not in the Pages view, not offered by `[[`.
+    await navigateToView(page, 'Pages')
+    await expect(page.getByRole('grid').getByText('Quick Notes', { exact: true })).toBeVisible()
+    await expect(page.getByRole('grid').getByText(VIEW, { exact: true })).toHaveCount(0)
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' [[Work bl', { delay: 30 })
+    await expect(activeSuggestionList(page).getByTestId('suggestion-item')).toHaveText([
+      /^Create\s*Work bl$/,
+    ])
+    await page.keyboard.press('Escape')
+    await navigateToView(page, 'Advanced query')
+    await savedViews(page)
+      .getByRole('button', { name: `Load "${VIEW}"` })
+      .click()
+    await expect(tagLeaf(page)).toBeVisible()
+    await expect(resultRows(page)).toHaveText(WORK_ROWS)
 
-  await savedViews(page)
-    .getByRole('button', { name: `Rename "${VIEW}"` })
-    .click()
-  const renameDialog = page.getByRole('dialog')
-  await renameDialog.getByRole('textbox').fill(RENAMED)
-  await renameDialog.getByRole('button', { name: 'Save', exact: true }).click()
-  await reopenAdvancedQuery(page)
-  await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
+    console.log('PROBE --- rename click')
+    await savedViews(page)
+      .getByRole('button', { name: `Rename "${VIEW}"` })
+      .click()
+    console.log('PROBE --- rename click returned')
+    const renameDialog = page.getByRole('dialog')
+    await renameDialog.getByRole('textbox').fill(RENAMED)
+    await renameDialog.getByRole('button', { name: 'Save', exact: true }).click()
+    await reopenAdvancedQuery(page)
+    await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
 
-  await switchToSpace(page, 'Work')
-  await navigateToView(page, 'Advanced query')
-  await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
-  await switchToSpace(page, 'Personal')
-  await navigateToView(page, 'Advanced query')
-  await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
+    await switchToSpace(page, 'Work')
+    await navigateToView(page, 'Advanced query')
+    await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
+    await switchToSpace(page, 'Personal')
+    await navigateToView(page, 'Advanced query')
+    await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
 
-  await savedViews(page)
-    .getByRole('button', { name: `Delete "${RENAMED}"` })
-    .click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
-  await reopenAdvancedQuery(page)
-  await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
+    await savedViews(page)
+      .getByRole('button', { name: `Delete "${RENAMED}"` })
+      .click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
+    await reopenAdvancedQuery(page)
+    await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
 
-  await navigateToView(page, 'Trash')
-  await expect(page.getByTestId('trash-item').filter({ hasText: RENAMED })).toHaveCount(1)
-})
+    await navigateToView(page, 'Trash')
+    await expect(page.getByTestId('trash-item').filter({ hasText: RENAMED })).toHaveCount(1)
+  })
