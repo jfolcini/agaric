@@ -2134,12 +2134,11 @@ async fn record_session_success(
     let peer_id = &peer.device_id;
     ctx.scheduler.clear_peer_backoff(peer_id);
     cache_peer_address(ctx, peer).await;
-    //
     // `bind_endpoint_id` touches only its own column, so re-binding preserves
     // this peer's version vectors and sync state — a device that merely
-    // re-paired must not be reset.
-    // A peer paired before the session only has its row bound, never created, so
-    // one the user unpaired while the session ran stays unpaired.
+    // re-paired must not be reset. A peer paired before the session only has
+    // its row bound, never created, so one the user unpaired while the session
+    // ran stays unpaired.
     if pinned.is_none() {
         let bound = if orch.peer_paired_at_start() {
             peer_refs::bind_endpoint_id_if_paired(ctx.pool, peer_id, announced_key).await
