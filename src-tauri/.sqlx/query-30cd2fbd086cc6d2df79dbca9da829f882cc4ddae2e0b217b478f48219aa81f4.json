@@ -1,0 +1,112 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT o.device_id AS \"own_device!: String\", o.seq AS \"own_seq!: i64\",\n                  ob.id AS \"own_block!: String\", pb.id AS \"partner_block!: String\",\n                  p.device_id AS \"device_id!: String\", p.seq AS \"seq!: i64\",\n                  ob.block_type AS \"own_type!: String\",\n                  json_extract(o.payload, '$.to_text') AS \"own_text?: String\",\n                  json_extract(p.payload, '$.to_text') AS \"partner_text?: String\"\n           FROM json_each(?1) je\n           JOIN op_log o ON o.device_id = json_extract(je.value, '$[0]')\n                        AND o.seq = json_extract(je.value, '$[1]')\n           JOIN op_log p ON p.device_id = o.device_id AND p.seq IN (o.seq - 1, o.seq + 1)\n           JOIN blocks ob ON ob.id = o.block_id\n           JOIN blocks pb ON pb.id = p.block_id\n           WHERE o.op_type = 'edit_block' AND p.op_type = 'edit_block'\n             AND p.is_undo = o.is_undo\n             AND ob.space_id = pb.space_id\n             AND ((ob.block_type = 'tag' AND pb.block_type = 'page')\n               OR (ob.block_type = 'page' AND pb.block_type = 'tag'))",
+  "describe": {
+    "columns": [
+      {
+        "name": "own_device!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "own_seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "own_block!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "partner_block!: String",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "device_id!: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "own_type!: String",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      },
+      {
+        "name": "own_text?: String",
+        "ordinal": 7,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "partner_text?: String",
+        "ordinal": 8,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false,
+      null,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "30cd2fbd086cc6d2df79dbca9da829f882cc4ddae2e0b217b478f48219aa81f4"
+}

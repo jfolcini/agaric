@@ -126,6 +126,7 @@ const REAL_BACKEND_SPECS = [
   'spaces-management.spec.ts',
   'tag-management.spec.ts',
   'tag-name-whitespace.spec.ts',
+  'tag-page-notes.spec.ts',
   'tag-page-tagged-items.spec.ts',
   'tags-and-links-happy-paths.spec.ts',
   'tags-lifecycle.spec.ts',

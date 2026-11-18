@@ -17,6 +17,7 @@ import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-m
 import {
   type TypedHandlers,
   applyUndoForTarget,
+  pairedRenameOf,
   notFoundRejection,
   ownerSpaceOf,
   pageRequestLimit,
@@ -441,6 +442,7 @@ export const historyHandlers = {
         new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
         new_op_type: reverseOpType,
         is_redo: false,
+        ...pairedRenameOf(target),
       })
     }
 
@@ -581,6 +583,7 @@ export const historyHandlers = {
       new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
       new_op_type: redoOpType,
       is_redo: true,
+      ...pairedRenameOf(undoOp),
     }
   },
 
@@ -590,11 +593,17 @@ export const historyHandlers = {
   // `applyUndoForTarget` (shared with `undo_ops`), which delegate to the
   // mock op-log's reversal core (`applyRevertForOp`) and enforce the
   // foreign / undo-op / already-reversed reject rules.
-  undo_op: (args) => {
+  undo_op: allOrNothing((args) => {
     const a = args as Record<string, unknown>
     const opRef = a['opRef'] as { device_id: string; seq: number }
-    return applyUndoForTarget(resolveUndoTarget(opRef))
-  },
+    const target = resolveUndoTarget(opRef)
+    // #6755 — its partner goes too; the answer is the named op's.
+    const results = withTagPathPartners([target]).map((t) => applyUndoForTarget(t))
+    return results.find((r) => {
+      const reversed = r['reversed_op'] as { seq: number }
+      return reversed.seq === target.seq
+    }) as Record<string, unknown>
+  }),
 
   // #2468 — ref-addressed group undo (`undo_page_group` successor) with
   // ATOMIC-ABORT semantics: every ref is validated (same reject rules as

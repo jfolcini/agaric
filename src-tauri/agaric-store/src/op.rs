@@ -647,6 +647,11 @@ pub struct UndoResult {
     pub new_op_type: String,
     /// Whether this was a redo (true) or undo (false).
     pub is_redo: bool,
+    /// #6755 — on the reverse of one half of a tag and page rename, the tag
+    /// or page that half renamed: a page's undo counts only its own half
+    /// toward its positional depth (#6971). Null otherwise.
+    #[specta(optional)]
+    pub paired_rename_of: Option<BlockId>,
 }
 
 // ---------------------------------------------------------------------------

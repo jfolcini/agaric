@@ -11885,3 +11885,46 @@ async fn undo_of_a_rename_onto_a_taken_name_is_refused_6051() {
     }
     mat.shutdown();
 }
+
+/// #6976 — a page's undo reads through its own transaction: with the other
+/// writer of a two-writer pool held, it completes instead of waiting out the
+/// pool's acquire timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_needs_no_second_writer_6976() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, children) = create_page_with_children(&pool, &mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        children[0].clone().into(),
+        "edited".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let writers = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_with(agaric_store::db::base_connect_options(
+            &dir.path().join("test.db"),
+        ))
+        .await
+        .unwrap();
+    let _held = writers.acquire().await.unwrap();
+
+    let undone = undo_page_group_inner(&writers, DEV, &mat, page, 0, 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(undone.len(), 1);
+    let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(&children[0])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(content, "child one");
+}

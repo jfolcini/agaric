@@ -327,10 +327,10 @@ async fn run_reverse_scenario(sketches: Vec<OpKind>) {
         |env: Arc<ArmEnv>| {
             Box::pin(async move {
                 let refs = local_op_refs(&env.pool).await;
-                let records = get_op_records_batch(&env.pool, &refs)
+                let records = get_op_records_batch(&mut env.pool.acquire().await.unwrap(), &refs)
                     .await
                     .expect("get_op_records_batch");
-                compute_reverse_batch(&env.pool, &records)
+                compute_reverse_batch(&mut env.pool.acquire().await.unwrap(), &records)
                     .await
                     .expect("compute_reverse_batch")
                     .iter()

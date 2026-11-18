@@ -2863,12 +2863,29 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
 export function withTagPathPartners(entries: MockOpLogEntry[]): MockOpLogEntry[] {
   const all = [...entries]
   for (const entry of entries) {
-    for (const seq of [entry.seq - 1, entry.seq + 1]) {
-      const partner = opLog.find((o) => o.device_id === entry.device_id && o.seq === seq)
-      if (partner && !all.includes(partner) && isTagPathPair(entry, partner)) all.push(partner)
-    }
+    const partner = tagPathPartnerOf(entry)
+    if (partner && !all.includes(partner)) all.push(partner)
   }
   return all.toSorted((x, y) => y.seq - x.seq)
+}
+
+function tagPathPartnerOf(entry: MockOpLogEntry): MockOpLogEntry | undefined {
+  return opLog.find(
+    (o) =>
+      o.device_id === entry.device_id &&
+      (o.seq === entry.seq - 1 || o.seq === entry.seq + 1) &&
+      isTagPathPair(entry, o),
+  )
+}
+
+/**
+ * `UndoResult.paired_rename_of` (#6971): the tag or page `entry` renamed when
+ * it is one half of a tag and page rename, spread into a result.
+ */
+export function pairedRenameOf(entry: MockOpLogEntry): { paired_rename_of?: string } {
+  if (tagPathPartnerOf(entry) === undefined) return {}
+  const blockId = payloadBlockId(JSON.parse(entry.payload) as Record<string, unknown>)
+  return typeof blockId === 'string' ? { paired_rename_of: blockId } : {}
 }
 
 function isTagPathPair(a: MockOpLogEntry, b: MockOpLogEntry): boolean {
@@ -2878,8 +2895,11 @@ function isTagPathPair(a: MockOpLogEntry, b: MockOpLogEntry): boolean {
   const typeOf = (o: MockOpLogEntry) =>
     blocks.get(payloadBlockId(payloadOf(o)) as string)?.['block_type']
   const textOf = (o: MockOpLogEntry) => (payloadOf(o)['to_text'] as string | undefined) ?? ''
+  const spaceOf = (o: MockOpLogEntry) =>
+    blocks.get(payloadBlockId(payloadOf(o)) as string)?.['space_id']
   const [tag, page] = typeOf(a) === 'tag' ? [a, b] : [b, a]
   if (typeOf(tag) !== 'tag' || typeOf(page) !== 'page') return false
+  if (spaceOf(tag) !== spaceOf(page)) return false
   const name = tagOfPageTitle(textOf(page))
   return name !== null && nameKey(name) === nameKey(textOf(tag))
 }
@@ -2902,6 +2922,7 @@ export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, un
     new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
     new_op_type: reverseOpType,
     is_redo: false,
+    ...pairedRenameOf(effective),
   }
 }
 
