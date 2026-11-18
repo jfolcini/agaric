@@ -37,7 +37,6 @@ import type {
 } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { buildPropertyParams, type SetPropertyParams } from '@/lib/property-save-utils'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
@@ -130,10 +129,8 @@ export function SetOnTaggedBlocks({
     try {
       const done = unwrap(await commands.setPropertyOnTaggedBlocks(write, acknowledged))
       setCounts(null)
-      const changed = () => {
-        invalidatePropertyCaches()
-        reloadChangedPageStores()
-      }
+      // The change feed drops the property caches; open pages' blocks reload here.
+      const changed = () => reloadChangedPageStores()
       notifyDefinitionWrite(
         t('tagProperties.setDone', { n: done.added + done.changed, key }),
         done.op_refs,
