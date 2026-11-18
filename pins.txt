@@ -1,0 +1,106 @@
+# Every tool, toolchain and download the build fetches from outside the repo,
+# in one place (AGENTS.md § Supply-chain pinning). Workflows, composite
+# actions and the setup scripts read this file through scripts/pins.sh; the
+# lockfiles, Actions SHAs, `.nvmrc`, `rust-toolchain.toml` and the Gradle
+# verification file pin the rest.
+#
+#   version <name> <version> <upstream>
+#   asset   <name> <platform> <sha256> <url>    `{version}` expands to the version
+#
+# Bump with `just pin-bump <name> <version>`: it rewrites the version and
+# recomputes every asset's sha256. `just pins-stale` lists pins behind their
+# upstream (weekly in scheduled-deep-checks). Upstreams:
+#   taiki:<tool>     the manifest of the taiki-e/install-action SHA CI uses
+#                    (CI installs it from there, checksummed)
+#   github:<repo>[@<tag-prefix>]   newest GitHub release
+#   crate:<name>     newest stable version on crates.io
+#   lock:<crate>     the version of <crate> in src-tauri/Cargo.lock
+#   temurin:<major>  newest Temurin JDK release of that major
+#   android-emulator newest stable-channel emulator build
+#   rust-nightly     today's nightly; flagged once the pin is 28 days old
+#   -                not checked: the version is fixed by another tool (Tauri)
+#                    or upstream publishes no usable release line
+# Platforms: linux-x86_64 linux-aarch64 darwin-x86_64 darwin-arm64 windows-x86_64
+
+# --- Hook and CI tools (taiki-e/install-action in CI, setup-hooks.sh locally) ---
+version prek          0.5.10   taiki:prek
+version zizmor        1.32.0   taiki:zizmor
+version taplo-cli     0.10.0   taiki:taplo-cli
+version typos-cli     1.52.0   taiki:typos-cli
+version cargo-deny    0.20.2   taiki:cargo-deny
+version cargo-machete 0.9.2    taiki:cargo-machete
+version cargo-audit   0.22.2   taiki:cargo-audit
+version cargo-mutants 27.1.0   taiki:cargo-mutants
+version cargo-auditable 0.7.7  taiki:cargo-auditable
+version just          1.59.0   crate:just
+version sqlx-cli      0.9.0    lock:sqlx
+version tauri-driver  2.1.0    crate:tauri-driver
+version cargo-fuzz    0.13.2   crate:cargo-fuzz
+
+version cargo-nextest 0.9.151  taiki:cargo-nextest
+asset   cargo-nextest linux-x86_64   1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4 https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{version}/cargo-nextest-{version}-x86_64-unknown-linux-gnu.tar.gz
+asset   cargo-nextest linux-aarch64  3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{version}/cargo-nextest-{version}-aarch64-unknown-linux-gnu.tar.gz
+asset   cargo-nextest darwin-x86_64  d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{version}/cargo-nextest-{version}-universal-apple-darwin.tar.gz
+asset   cargo-nextest darwin-arm64   d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{version}/cargo-nextest-{version}-universal-apple-darwin.tar.gz
+
+version shellcheck    0.11.0   taiki:shellcheck
+asset   shellcheck linux-x86_64   8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.linux.x86_64.tar.xz
+asset   shellcheck linux-aarch64  12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588 https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.linux.aarch64.tar.xz
+asset   shellcheck darwin-x86_64  3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6 https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.darwin.x86_64.tar.xz
+asset   shellcheck darwin-arm64   56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79 https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.darwin.aarch64.tar.xz
+
+version shfmt         3.14.1   taiki:shfmt
+asset   shfmt linux-x86_64   76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf https://github.com/mvdan/sh/releases/download/v{version}/shfmt_v{version}_linux_amd64
+asset   shfmt linux-aarch64  5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489 https://github.com/mvdan/sh/releases/download/v{version}/shfmt_v{version}_linux_arm64
+asset   shfmt darwin-x86_64  d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6 https://github.com/mvdan/sh/releases/download/v{version}/shfmt_v{version}_darwin_amd64
+asset   shfmt darwin-arm64   b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5 https://github.com/mvdan/sh/releases/download/v{version}/shfmt_v{version}_darwin_arm64
+
+version sqruff        0.44.0   github:quarylabs/sqruff@v
+asset   sqruff linux-x86_64  3d0dd223770e99fb17199c16327bdf15bf238261a001815aa172f140817d7e9a https://github.com/quarylabs/sqruff/releases/download/v{version}/sqruff-linux-x86_64-musl.tar.gz
+asset   sqruff darwin-arm64  a4246a192080b9d9d6ef3a747fce3cba4daed42da3c80a097670cd4ed4c4fa41 https://github.com/quarylabs/sqruff/releases/download/v{version}/sqruff-darwin-aarch64.tar.gz
+
+version lychee        0.24.2   github:lycheeverse/lychee@lychee-v
+asset   lychee linux-x86_64   1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a https://github.com/lycheeverse/lychee/releases/download/lychee-v{version}/lychee-x86_64-unknown-linux-gnu.tar.gz
+asset   lychee linux-aarch64  91a7bd65685da41b90ccb9bc867a3d649a7818042dae04ff405e55a25bddee4c https://github.com/lycheeverse/lychee/releases/download/lychee-v{version}/lychee-aarch64-unknown-linux-gnu.tar.gz
+asset   lychee darwin-x86_64  887503a9cff667d322b8d0892b40bf49976eb9507af8483220a3706cdad55978 https://github.com/lycheeverse/lychee/releases/download/lychee-v{version}/lychee-x86_64-apple-darwin.tar.gz
+asset   lychee darwin-arm64   c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db84ac333631c4977 https://github.com/lycheeverse/lychee/releases/download/lychee-v{version}/lychee-aarch64-apple-darwin.tar.gz
+
+asset   taplo-cli linux-x86_64   8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156 https://github.com/tamasfe/taplo/releases/download/{version}/taplo-linux-x86_64.gz
+asset   taplo-cli linux-aarch64  033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3 https://github.com/tamasfe/taplo/releases/download/{version}/taplo-linux-aarch64.gz
+
+version cargo-binstall 1.20.1  github:cargo-bins/cargo-binstall@v
+asset   cargo-binstall linux-x86_64   f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-x86_64-unknown-linux-musl.tgz
+asset   cargo-binstall linux-aarch64  23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288 https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-aarch64-unknown-linux-musl.tgz
+
+version uv            0.8.17   github:astral-sh/uv
+asset   uv linux-x86_64   4057052999a210fe78d93599d2165da9e24c8bbb23370cdd26b66a98ab479203 https://github.com/astral-sh/uv/releases/download/{version}/uv-x86_64-unknown-linux-musl.tar.gz
+asset   uv linux-aarch64  bd141b7e263935d14f5725f2a5c1c942fd89642e37683cb904f1984ce7e365f4 https://github.com/astral-sh/uv/releases/download/{version}/uv-aarch64-unknown-linux-musl.tar.gz
+asset   uv darwin-arm64   e4d4859d7726298daa4c12e114f269ff282b2cfc2b415dc0b2ca44ae2dbd358e https://github.com/astral-sh/uv/releases/download/{version}/uv-aarch64-apple-darwin.tar.gz
+asset   uv darwin-x86_64  31ed353cfd8e6c962e7c60617bd8a9d6b97b704c1ecb5b5eceaff8c6121b54ac https://github.com/astral-sh/uv/releases/download/{version}/uv-x86_64-apple-darwin.tar.gz
+
+version nvm           0.39.7   github:nvm-sh/nvm@v
+asset   nvm any  a42d1695e0ca1861e41083937129e6eb9402404f817ac1e352b74287c44449c1 https://raw.githubusercontent.com/nvm-sh/nvm/v{version}/nvm.sh
+
+# --- Release path ---
+version minisign      0.12     github:jedisct1/minisign
+asset   minisign linux-x86_64  9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73 https://github.com/jedisct1/minisign/releases/download/{version}/minisign-{version}-linux.tar.gz
+
+version syft          1.54.0   github:anchore/syft@v
+asset   syft linux-x86_64    54a87372498168b2d033e876fd41fa4e8035b872699e525a57046e1f2f09c860 https://github.com/anchore/syft/releases/download/v{version}/syft_{version}_linux_amd64.tar.gz
+asset   syft darwin-arm64    7e0bdad94c569fc6d5785c9a657bbae3d4c4e140ccb5eace3d0b5b6bc2b6dbcf https://github.com/anchore/syft/releases/download/v{version}/syft_{version}_darwin_arm64.tar.gz
+asset   syft windows-x86_64  77f4b472779058e819eec9a054753a5071a996aaa40db31a290f8b256748593f https://github.com/anchore/syft/releases/download/v{version}/syft_{version}_windows_amd64.zip
+
+# tauri-bundler's AppImage tools. The first two versions are fixed by the
+# Tauri CLI (`prepare_tools` in tauri-bundler's linux/appimage/linuxdeploy.rs);
+# the plugin's only release line besides the rolling `continuous` is tagged.
+version apprun        old      -
+asset   apprun linux-x86_64  f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f https://github.com/tauri-apps/binary-releases/releases/download/apprun-{version}/AppRun-x86_64
+version linuxdeploy   07333c6  -
+asset   linuxdeploy linux-x86_64  36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62 https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-{version}/linuxdeploy-x86_64.AppImage
+version linuxdeploy-plugin-appimage 1-alpha-20250213-1 -
+asset   linuxdeploy-plugin-appimage linux-x86_64  992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/{version}/linuxdeploy-plugin-appimage-x86_64.AppImage
+
+# --- Toolchains whose installers take no hash (exact version is the pin) ---
+version temurin       17.0.21+9   temurin:17
+version android-emulator 16740729 android-emulator
+version rust-nightly  2026-11-10  rust-nightly

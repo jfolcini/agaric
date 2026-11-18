@@ -217,3 +217,33 @@ ipc-check: gen-bindings _require-npm
 [group('codegen')]
 gen-sqlx:
     cd src-tauri && cargo sqlx prepare --workspace -- --workspace --tests
+
+# --- Supply-chain pins (AGENTS.md § Supply-chain pinning) -----------------
+
+# Print the sha256 of each URL, to paste beside a pinned download when bumping it. Downloads to a temp dir; runs nothing.
+[group('pins')]
+pin-sha256 +urls:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    for url in {{ urls }}; do
+      curl -fsSL --proto '=https' --retry 3 -o "$tmp/file" "$url"
+      if command -v sha256sum >/dev/null; then sum="$(sha256sum "$tmp/file")"; else sum="$(shasum -a 256 "$tmp/file")"; fi
+      echo "${sum%% *}  $url"
+    done
+
+# Move a pin in pins.txt to <version> and recompute its sha256s from the new downloads (`node` bumps .nvmrc). Review the diff.
+[group('pins')]
+pin-bump name version:
+    node scripts/pins.mjs bump {{ name }} {{ version }}
+
+# List pins behind their upstream (the weekly scheduled-deep-checks lane runs the same).
+[group('pins')]
+pins-stale:
+    node scripts/pins.mjs stale
+
+# Regenerate src-tauri/gen/android/gradle/verification-metadata.xml after a Tauri, plugin or Android toolchain bump.
+[group('pins')]
+update-gradle-verification:
+    bash scripts/update-gradle-verification.sh

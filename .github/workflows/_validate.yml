@@ -558,6 +558,8 @@ jobs:
           scripts/check-baseline-paths.test.mjs
           scripts/ci-capacity-report.test.mjs
           scripts/session-log-guards.test.mjs
+          scripts/pins.test.mjs
+          scripts/sbom.test.mjs
           scripts/e2e-related.test.mjs
           scripts/android-launch-smoke.test.mjs
           scripts/render-mutation-summary.test.mjs
@@ -596,38 +598,18 @@ jobs:
       # typos-cli (typo check), and sqruff (SQL-migration lint). None invoke
       # cargo (sqruff/typos/taplo run standalone binaries), and all must run on
       # every non-docs PR — so they are installed regardless of the backend flag.
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          # sqruff pinned: unpinned resolves to latest via cargo-binstall's
-          # from-source fallback, which reds the whole lint job the moment a
-          # sqruff release needs a newer rustc than rust-toolchain.toml pins.
-          # Check its `rust-version` on crates.io when bumping either.
-          #
-          # zizmor pinned (#3476): unpinned, CI floated to whatever was latest
-          # while a dev box kept whatever `cargo install` last fetched, so the
-          # two ran different AUDIT SETS — #3475 reddened every open PR with
-          # findings from an audit that did not exist locally, unreproducible
-          # by construction. Must match `ZIZMOR_PINNED_VERSION` in
-          # scripts/zizmor-hook.sh (the wrapper fails this job if it does not)
-          # and the same pin in scheduled-deep-checks.yml.
-          #
-          # prek/taplo-cli/typos-cli pinned (#3742): same failure shape, hit
-          # live via prek itself. `.github/zizmor.yml` went red on `check
-          # yaml` with a comment-count parser limit that prek 0.4.11
-          # (whatever CI happened to resolve) enforces and prek 0.3.8
-          # (whatever was installed locally) does not — a green tree turned
-          # red with no repo change, and the "fix" that passed locally still
-          # failed in CI. Must match `pinned_version_for` in
-          # scripts/setup-hooks.sh (which installs these versions locally,
-          # replacing any different one already on PATH) and the same pins
-          # in the two scheduled-deep-checks.yml install steps. Verified by
-          # scripts/check-tool-pins.mjs.
-          #
-          # shellcheck/shfmt pinned (#6762): the shellcheck hook used to find
-          # whatever copy the runner image carried, and actionlint runs that
-          # same binary over `run:` blocks. Same pins as setup-hooks.sh.
-          tool: prek@0.5.10,zizmor@1.32.0,taplo-cli@0.10.0,typos-cli@1.52.0,sqruff@0.44.0,shellcheck@0.11.0,shfmt@3.14.1
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: prek@${{ steps.pins.outputs.prek }},zizmor@${{ steps.pins.outputs.zizmor }},taplo-cli@${{ steps.pins.outputs.taplo_cli }},typos-cli@${{ steps.pins.outputs.typos_cli }},shellcheck@${{ steps.pins.outputs.shellcheck }},shfmt@${{ steps.pins.outputs.shfmt }}
+
+      - name: Install sqruff (sha256-checked)
+        uses: ./.github/actions/install-sqruff
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
@@ -645,7 +627,8 @@ jobs:
         # lint/audit set.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny,cargo-machete,cargo-audit
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-deny@${{ steps.pins.outputs.cargo_deny }},cargo-machete@${{ steps.pins.outputs.cargo_machete }},cargo-audit@${{ steps.pins.outputs.cargo_audit }}
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # ci/path-conditional-jobs: sqlx-cli compiles from source and is used
@@ -657,7 +640,8 @@ jobs:
         # Cached across runs via Swatinem/rust-cache's cache-bin: 'true';
         # only recompiles when Cargo.lock invalidates that cache.
         run: |
-          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+          v="$(bash scripts/pins.sh version sqlx-cli)"
+          if ! cargo sqlx --version 2>/dev/null | grep -qx "sqlx-cli-sqlx $v"; then cargo install --locked --force sqlx-cli --version "$v" --no-default-features --features rustls,sqlite; fi
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` pre-commit hook (prek.toml `[[repos.hooks]] id = "lychee"`)
@@ -670,23 +654,11 @@ jobs:
         # slow `cargo install` compile.
         run: |
           set -euo pipefail
-          VERSION=lychee-v0.24.2
-          DIR=lychee-x86_64-unknown-linux-gnu
-          TARBALL="${DIR}.tar.gz"
-          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
-          # published release checksum (the sibling `${TARBALL}.sha256` asset),
-          # independently reproducible with `sha256sum`. GitHub release assets
-          # are mutable under a tag, so the version pin alone does not prevent
-          # asset replacement; this is the only unverified-binary gap in an
-          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
-          # bumps VERSION or the `sha256sum -c` below fails the job.
-          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
-          curl -fsSL -o /tmp/lychee.tar.gz \
-            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
-          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c --quiet -
+          # Checked against pins.txt before anything is extracted.
+          bash scripts/pins.sh fetch lychee linux-x86_64 /tmp/lychee.tar.gz
           mkdir -p "${HOME}/.local/bin"
-          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
-          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp lychee-x86_64-unknown-linux-gnu/lychee
+          install -m 0755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           "${HOME}/.local/bin/lychee" --version >/dev/null
 
@@ -1049,7 +1021,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1058,38 +1029,29 @@ jobs:
         # node_modules, so `npm ci` is required.
         run: npm ci
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install prek + typos via prebuilt binaries
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          # prek/typos-cli pinned (#3742) — must match `pinned_version_for`
-          # in scripts/setup-hooks.sh and the other tool: lists in this repo.
-          tool: prek@0.5.10,typos-cli@1.52.0
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: prek@${{ steps.pins.outputs.prek }},typos-cli@${{ steps.pins.outputs.typos_cli }}
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` prek hook is a `local` hook calling the system
         # binary; install it the same way the full `lint` job does.
         run: |
           set -euo pipefail
-          VERSION=lychee-v0.24.2
-          DIR=lychee-x86_64-unknown-linux-gnu
-          TARBALL="${DIR}.tar.gz"
-          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
-          # published release checksum (the sibling `${TARBALL}.sha256` asset),
-          # independently reproducible with `sha256sum`. GitHub release assets
-          # are mutable under a tag, so the version pin alone does not prevent
-          # asset replacement; this is the only unverified-binary gap in an
-          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
-          # bumps VERSION or the `sha256sum -c` below fails the job.
-          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
-          curl -fsSL -o /tmp/lychee.tar.gz \
-            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
-          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c --quiet -
+          # Checked against pins.txt before anything is extracted.
+          bash scripts/pins.sh fetch lychee linux-x86_64 /tmp/lychee.tar.gz
           mkdir -p "${HOME}/.local/bin"
-          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
-          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp lychee-x86_64-unknown-linux-gnu/lychee
+          install -m 0755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           "${HOME}/.local/bin/lychee" --version >/dev/null
 
@@ -1175,7 +1137,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1269,7 +1230,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1387,7 +1347,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1644,7 +1603,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -1658,6 +1616,10 @@ jobs:
         # build below replaces this placeholder with the real binary.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install cargo-nextest + cargo-llvm-cov via prebuilt binary (PEND-39 C1)
         # `cargo-llvm-cov` wraps LLVM's source-based coverage instrumentation
         # — the gold standard for Rust coverage. It composes with
@@ -1667,7 +1629,8 @@ jobs:
         # a JSON summary the step below renders as a markdown table.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest,cargo-llvm-cov
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }},cargo-llvm-cov
 
       - name: Wait for the disk cleanup
         timeout-minutes: 10
@@ -1840,7 +1803,7 @@ jobs:
         if: hashFiles('coverage.lcov') != ''
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Coverage ratchet (#648, gated via --gate)
@@ -1903,12 +1866,17 @@ jobs:
           # else. See the matching comment in `lint`.
           rust-shared-key: rust-mcp
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-nextest
+          # Versions: pins.txt, read by the "Read pins.txt" step.
+          tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo

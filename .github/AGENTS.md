@@ -34,7 +34,7 @@
 
 - **Every third-party `uses:` is pinned to a full commit SHA with its `# vX.Y.Z` comment.** zizmor checks that the comment matches the SHA, and Dependabot (`dependabot.yml`) bumps both. `actions/rust-toolchain` exists because a tag that moves under a pinned SHA failed that check after every move.
 - The Rust toolchain is an exact version in every workflow except the nightly `fuzz` lane, in lockstep with `rust-toolchain.toml` and `src-tauri/Cargo.toml` `rust-version` (#640); the header of `rust-toolchain.toml` lists the places.
-- zizmor and prek are each pinned in two places that Dependabot cannot track: zizmor in `scripts/zizmor-hook.sh` and the `tool:` lists of `taiki-e/install-action`, prek in `scripts/setup-hooks.sh` and those lists. The `tool-pins` hook keeps each pair equal. actionlint is pinned by SHA in `prek.toml`.
+- Tool versions and download digests live in `pins.txt`, which Dependabot cannot track: workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh`. Never write a version or sha256 into a workflow; bump with `just pin-bump`. actionlint is pinned by SHA in `prek.toml`.
 - Every checkout sets `persist-credentials: false`. Each workflow's top-level `permissions` are read-only, and a job widens only what it needs.
 - A job that runs `npm ci` uses the `./.github/actions/setup-node` composite, which installs the npm `package.json` pins (`engine-strict` refuses an older one); a job that only runs `node scripts/…` keeps the upstream `actions/setup-node` with `package-manager-cache: false`.
 - apt installs go through `actions/prepare-apt` and `actions/apt-install`. Exit 75 with `AGARIC_APT_INFRA` means the mirror failed: rerun the job.

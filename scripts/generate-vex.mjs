@@ -1,269 +1,214 @@
 #!/usr/bin/env node
-// ─────────────────────────────────────────────────────────────────────
-// Generate an OpenVEX 0.2.0 JSON document for the current
-// release from `src-tauri/deny.toml`'s `[advisories].ignore` array.
+// Write the OpenVEX 0.2.0 document for one release SBOM, from the advisories
+// this repo has decided do not affect it: src-tauri/deny.toml
+// `[advisories].ignore` (RustSec) and .nsprc (npm, by GHSA).
 //
-// Why this exists: every release ships per-platform SBOMs (SPDX-JSON +
-// CycloneDX-JSON) attested under SLSA build provenance. External
-// scanners running against the SBOMs flag CVEs that affect transitive
-// deps — even when Agaric's call patterns make the vulnerable code
-// path unreachable. We already have prose rationale for those
-// non-affecting advisories in `src-tauri/deny.toml [advisories].ignore`;
-// this script converts that rationale into a machine-readable
-// OpenVEX 0.2.0 statement set so scanners can suppress the noise
-// automatically.
+//   node scripts/generate-vex.mjs --sbom <cyclonedx.json> --output <openvex.json>
 //
-// Source of truth: `src-tauri/deny.toml` (never written by this script).
-// Schema: https://openvex.dev/ns/v0.2.0
-// Spec:   https://github.com/openvex/spec/blob/main/openvex-specification-v0.2.0.md
+// Each statement names the SBOM's own product purl (scripts/sbom.mjs sets it)
+// and, as subcomponents, the purls of the affected package in that SBOM, so a
+// scanner reading the pair can match it. The affected package comes from the
+// advisory's OSV record. Every waiver is a decision, so every statement is
+// `not_affected`: `component_not_present` when this platform does not ship
+// the package, else the justification a `[vex:<justification>]` tag in the
+// waiver names, or `vulnerable_code_not_in_execute_path`. The waiver text is
+// the impact statement. An advisory OSV cannot resolve fails the run: a VEX
+// that silently drops a waiver is the defect this replaces.
 //
-// Usage:
-//   node scripts/generate-vex.mjs                       # → stdout
-//   node scripts/generate-vex.mjs --output FILE         # → FILE
-//   node scripts/generate-vex.mjs --version 0.1.32      # override pkg version
-//
-// Zero external deps — uses an inline regex parser over the
-// `[advisories].ignore = [ { id = "...", reason = "..." }, ... ]`
-// array. Same approach as `scripts/sync-audit-from-deny.mjs`; if
-// deny.toml's schema ever changes, the assertions below fail loudly.
-// ─────────────────────────────────────────────────────────────────────
-import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+// Source of truth: deny.toml and .nsprc (never written here). Run by
+// .github/actions/syft-sbom right after the SBOM it describes.
 
-const __dirname = import.meta.dirname
-const REPO_ROOT = resolve(__dirname, '..')
-const DENY_PATH = resolve(REPO_ROOT, 'src-tauri/deny.toml')
-const PKG_PATH = resolve(REPO_ROOT, 'package.json')
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 
-const OPENVEX_CONTEXT = 'https://openvex.dev/ns/v0.2.0'
-const AUTHOR = 'Agaric maintainers <jfolcini86@gmail.com>'
-
-// Rationale-substring → OpenVEX (status, justification) mapping.
-// Tested case-insensitively. First match wins. An entry that matches
-// nothing falls through to `under_investigation` and prints a warning
-// To stderr — does not fail the build (spec).
-const STATUS_MAP = [
-  // Transitive / binding-only dependencies — vulnerable code is reachable
-  // in principle but not from Agaric's call graph because the dep ships
-  // only as a binding/glue layer or is gated behind a feature we don't
-  // enable.
-  {
-    match: /transitive dep/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /transitive unmaintained/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /binding/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  // Explicit "this code path is never invoked" rationale.
-  {
-    match: /code path is in/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /never invoked/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /never reaches/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /not exercised/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  // RNG-specific carve-outs — Agaric uses OsRng, the deprecated thread_rng
-  // path that triggers the advisory is not exercised by our code.
-  {
-    match: /uses OsRng/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
-  {
-    match: /deprecated thread_rng path/i,
-    status: 'not_affected',
-    justification: 'vulnerable_code_not_in_execute_path',
-  },
+const ROOT = resolve(import.meta.dirname, '..')
+const CONTEXT = 'https://openvex.dev/ns/v0.2.0'
+const AUTHOR = 'Agaric maintainers'
+export const JUSTIFICATIONS = [
+  'component_not_present',
+  'vulnerable_code_not_present',
+  'vulnerable_code_not_in_execute_path',
+  'vulnerable_code_cannot_be_controlled_by_adversary',
+  'inline_mitigations_already_exist',
 ]
+const DEFAULT_JUSTIFICATION = 'vulnerable_code_not_in_execute_path'
+const ECOSYSTEM_PURL = { 'crates.io': 'pkg:cargo/', npm: 'pkg:npm/' }
 
-/**
- * Parse the `[advisories].ignore = [ ... ]` array from deny.toml.
- * Walks only the lines between `ignore = [` and the matching closing
- * `]`. Skips blank lines and `#`-prefixed comment lines. Returns an
- * array of `{ id, reason }` records in source order.
- */
-function parseIgnoreEntries(denyTomlText) {
-  const lines = denyTomlText.split('\n')
-  let inArray = false
+/** `{ id, reason }` for every deny.toml `[advisories].ignore` entry. */
+export function parseDenyIgnores(text) {
   const entries = []
-  // Matches `{ id = "RUSTSEC-XXXX-YYYY", reason = "free text" }`.
-  // The reason field allows any character except an unescaped `"` (we
-  // don't currently emit `\"` in deny.toml; if that ever changes the
-  // assertion in main() flags it).
-  const entryRegex = /\{\s*id\s*=\s*"(?<id>[^"]+)"\s*,\s*reason\s*=\s*"(?<reason>[^"]*)"\s*\}/
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
+  let inArray = false
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
     if (!inArray) {
-      // Trigger on the *exact* `ignore = [` opener inside [advisories].
-      // The parser is naive about which section it's in, but deny.toml
-      // only has one `ignore = [` array (under [advisories]). If a
-      // second array with the same name is ever added, this matcher
-      // would need a [advisories] header check; for now the simpler
-      // form is fine and matches sync-audit-from-deny.mjs.
-      if (/^ignore\s*=\s*\[/.test(line)) {
-        inArray = true
-      }
+      inArray = /^ignore\s*=\s*\[/.test(line)
       continue
     }
-    if (line === ']') {
-      break
-    }
-    if (line === '' || line.startsWith('#')) {
-      continue
-    }
-    const match = line.match(entryRegex)
-    if (!match?.groups) {
-      // A non-comment, non-blank line that isn't a recognised entry
-      // is a hard error — better to fail loudly than silently drop a
-      // waived advisory from the VEX document.
-      throw new Error(`Unrecognised entry in deny.toml [advisories].ignore: ${rawLine}`)
-    }
-    entries.push({ id: match.groups.id, reason: match.groups.reason })
+    if (line === ']') break
+    if (line === '' || line.startsWith('#')) continue
+    const m = line.match(/^\{\s*id\s*=\s*"([^"]+)"\s*,\s*reason\s*=\s*"([^"]*)"\s*\},?$/)
+    if (!m) throw new Error(`deny.toml [advisories].ignore: unrecognised entry: ${raw}`)
+    entries.push({ id: m[1], reason: m[2] })
   }
-
-  if (entries.length === 0) {
-    throw new Error('deny.toml [advisories].ignore parsed to 0 entries')
-  }
+  if (entries.length === 0) throw new Error('deny.toml [advisories].ignore parsed to 0 entries')
   return entries
 }
 
-/** Map a `reason` string to an OpenVEX `(status, justification)`. */
-function classify(reason) {
-  for (const rule of STATUS_MAP) {
-    if (rule.match.test(reason)) {
-      return { status: rule.status, justification: rule.justification }
-    }
+/** `{ id: GHSA, reason }` for every active .nsprc waiver, one per GHSA. */
+export function parseNsprc(json) {
+  const byId = new Map()
+  for (const [key, entry] of Object.entries(json)) {
+    if (entry.active === false) continue
+    const ghsa = entry.notes?.match(/GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}/)?.[0]
+    if (!ghsa) throw new Error(`.nsprc ${key}: notes name no GHSA id`)
+    byId.set(ghsa, { id: ghsa, reason: entry.notes })
   }
-  return { status: 'under_investigation' }
+  return [...byId.values()]
 }
 
-/** Build the OpenVEX 0.2.0 document for `version`. */
-function buildDocument(entries, version) {
-  const productId = `pkg:cargo/agaric@${version}`
-  const statements = entries.map(({ id, reason }) => {
-    const { status, justification } = classify(reason)
-    if (status === 'under_investigation') {
-      process.stderr.write(
-        `warning: ${id} reason text did not match any rule, emitting status=under_investigation (reason="${reason}")\n`,
-      )
+/** Split an optional `[vex:<justification>]` tag off a waiver reason. */
+export function justificationOf(reason) {
+  const m = reason.match(/\[vex:([a-z_]+)\]/)
+  if (!m) return { justification: DEFAULT_JUSTIFICATION, impact: reason.trim() }
+  if (!JUSTIFICATIONS.includes(m[1]))
+    throw new Error(`unknown OpenVEX justification "${m[1]}" in: ${reason}`)
+  return { justification: m[1], impact: reason.replace(m[0], '').trim() }
+}
+
+/** Numeric comparison of dotted versions; prerelease tags are ignored. */
+export function compareVersions(a, b) {
+  const pa = String(a).split(/[-+]/)[0].split('.').map(Number)
+  const pb = String(b).split(/[-+]/)[0].split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d !== 0) return Math.sign(d)
+  }
+  return 0
+}
+
+/** Whether `version` falls in an OSV `affected` entry (versions list or ranges). */
+export function isAffected(affected, version) {
+  if (affected.versions?.includes(version)) return true
+  for (const range of affected.ranges ?? []) {
+    if (range.type !== 'SEMVER' && range.type !== 'ECOSYSTEM') continue
+    let introduced = null
+    for (const event of range.events ?? []) {
+      if ('introduced' in event) introduced = event.introduced
+      const end = event.fixed ?? event.last_affected
+      if (end !== undefined && introduced !== null) {
+        const below =
+          event.fixed !== undefined
+            ? compareVersions(version, end) < 0
+            : compareVersions(version, end) <= 0
+        if (compareVersions(version, introduced) >= 0 && below) return true
+        introduced = null
+      }
     }
+    if (introduced !== null && compareVersions(version, introduced) >= 0) return true
+  }
+  return false
+}
+
+const advisoryUrl = (id) =>
+  id.startsWith('RUSTSEC-')
+    ? `https://rustsec.org/advisories/${id}.html`
+    : `https://github.com/advisories/${id}`
+
+/**
+ * Build the document. `osv(id)` returns the advisory's OSV record; `sbom` is
+ * the platform's CycloneDX document.
+ */
+export async function buildVex({ waivers, sbom, osv, timestamp = new Date().toISOString() }) {
+  const product = sbom.metadata?.component?.purl
+  if (!product)
+    throw new Error('the SBOM has no metadata.component.purl; run scripts/sbom.mjs augment first')
+  const purls = (sbom.components ?? []).map((c) => c.purl).filter(Boolean)
+  const statements = []
+  for (const { id, reason } of waivers) {
+    const record = await osv(id)
+    const affected = (record.affected ?? []).filter((a) => ECOSYSTEM_PURL[a.package?.ecosystem])
+    if (affected.length === 0) throw new Error(`${id}: OSV names no crates.io or npm package`)
+    const subcomponents = purls.filter((p) =>
+      affected.some((a) => {
+        const prefix = `${ECOSYSTEM_PURL[a.package.ecosystem]}${a.package.name.replace(/^@/, '%40')}@`
+        return p.startsWith(prefix) && isAffected(a, p.slice(prefix.length))
+      }),
+    )
+    const { justification, impact } = justificationOf(reason)
     const statement = {
       vulnerability: {
         name: id,
-        '@id': `https://rustsec.org/advisories/${id}.html`,
+        '@id': advisoryUrl(id),
+        ...(record.aliases?.length ? { aliases: record.aliases } : {}),
       },
-      products: [{ '@id': productId }],
-      status,
+      products: [
+        {
+          '@id': product,
+          ...(subcomponents.length > 0
+            ? { subcomponents: subcomponents.map((p) => ({ '@id': p })) }
+            : {}),
+        },
+      ],
+      status: 'not_affected',
+      justification: subcomponents.length > 0 ? justification : 'component_not_present',
+      impact_statement: impact,
     }
-    // OpenVEX requires `justification` for `not_affected`; `fixed`
-    // statements omit it (the fix itself is the justification);
-    // `under_investigation` is a transitional state with no
-    // justification yet. The mapping table never emits `affected`.
-    if (justification) {
-      statement.justification = justification
-    }
-    return statement
-  })
-
+    statements.push(statement)
+  }
   return {
-    '@context': OPENVEX_CONTEXT,
-    '@id': `https://openvex.dev/docs/agaric-${version}`,
+    '@context': CONTEXT,
+    '@id': `https://openvex.dev/docs/${product.replace(/^pkg:/, '').replaceAll('/', '-')}`,
     author: AUTHOR,
-    timestamp: new Date().toISOString(),
+    timestamp,
     version: 1,
     statements,
   }
 }
 
-function readPackageVersion() {
-  const pkg = JSON.parse(readFileSync(PKG_PATH, 'utf8'))
-  if (typeof pkg.version !== 'string' || pkg.version.length === 0) {
-    throw new Error('package.json is missing a string `version` field')
-  }
-  return pkg.version
-}
-
-function parseArgs(argv) {
-  /** @type {{ output: string | null, version: string | null }} */
-  const args = { output: null, version: null }
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg === '--output' || arg === '-o') {
-      args.output = argv[++i] ?? null
-      if (!args.output) throw new Error('--output requires a path argument')
-    } else if (arg === '--version' || arg === '-v') {
-      args.version = argv[++i] ?? null
-      if (!args.version) throw new Error('--version requires a value')
-    } else if (arg === '--help' || arg === '-h') {
-      process.stdout.write(
-        'Usage: node scripts/generate-vex.mjs [--output FILE] [--version SEMVER]\n',
-      )
-      process.exit(0)
-    } else {
-      throw new Error(`Unknown argument: ${arg}`)
+// A brief osv.dev outage or rate limit should not red a pull request's build;
+// a lasting one, or a 4xx that retrying cannot fix, still fails the run.
+export async function osvFetch(id, { fetchImpl = fetch, attempts = 4, delayMs = 2000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    let res
+    try {
+      res = await fetchImpl(`https://api.osv.dev/v1/vulns/${id}`)
+    } catch (e) {
+      if (attempt >= attempts) throw new Error(`OSV ${id}: ${e.message}`, { cause: e })
     }
-  }
-  return args
-}
-
-function main() {
-  const args = parseArgs(process.argv.slice(2))
-  const version = args.version ?? readPackageVersion()
-  const denyText = readFileSync(DENY_PATH, 'utf8')
-  const entries = parseIgnoreEntries(denyText)
-  const doc = buildDocument(entries, version)
-
-  // Sanity check: round-trip through JSON to catch any non-serialisable
-  // values, then verify every statement carries the required fields.
-  const roundTripped = JSON.parse(JSON.stringify(doc))
-  for (const stmt of roundTripped.statements) {
-    if (!stmt.vulnerability?.name?.startsWith('RUSTSEC-')) {
-      throw new Error(
-        `statement has malformed vulnerability.name: ${JSON.stringify(stmt.vulnerability)}`,
-      )
-    }
-    if (stmt.status === 'fixed') {
-      // fixed needs no justification
-      continue
-    }
-    if (!stmt.justification && stmt.status !== 'under_investigation') {
-      throw new Error(
-        `statement for ${stmt.vulnerability.name} has status=${stmt.status} but no justification`,
-      )
-    }
-  }
-
-  const serialised = `${JSON.stringify(doc, null, 2)}\n`
-  if (args.output) {
-    writeFileSync(args.output, serialised)
-    process.stderr.write(
-      `wrote ${args.output} (${doc.statements.length} statements, version=${version})\n`,
-    )
-  } else {
-    process.stdout.write(serialised)
+    if (res?.ok) return res.json()
+    if (res && res.status !== 429 && res.status < 500)
+      throw new Error(`OSV ${id}: HTTP ${res.status}`)
+    if (res && attempt >= attempts) throw new Error(`OSV ${id}: HTTP ${res.status}`)
+    await new Promise((done) => setTimeout(done, delayMs * 2 ** (attempt - 1)))
   }
 }
 
-main()
+async function main(argv) {
+  const get = (name) => {
+    const i = argv.indexOf(name)
+    if (i === -1 || !argv[i + 1])
+      throw new Error(`usage: generate-vex.mjs --sbom <cyclonedx.json> --output <file>`)
+    return argv[i + 1]
+  }
+  const waivers = [
+    ...parseDenyIgnores(readFileSync(join(ROOT, 'src-tauri/deny.toml'), 'utf8')),
+    ...parseNsprc(JSON.parse(readFileSync(join(ROOT, '.nsprc'), 'utf8'))),
+  ]
+  const sbom = JSON.parse(readFileSync(get('--sbom'), 'utf8'))
+  const doc = await buildVex({ waivers, sbom, osv: osvFetch })
+  writeFileSync(get('--output'), `${JSON.stringify(doc, null, 2)}\n`)
+  console.log(`openvex: ${doc.statements.length} statements for ${sbom.metadata.component.purl}`)
+  return 0
+}
+
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+if (isMainModule) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (e) => {
+      console.error(`generate-vex.mjs: ${e.message}`)
+      process.exit(1)
+    },
+  )
+}

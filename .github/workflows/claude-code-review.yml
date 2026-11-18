@@ -25,7 +25,7 @@ jobs:
     if: >-
       github.event.pull_request.draft == false &&
       (github.event.action != 'labeled' || github.event.label.name == 're-review')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A parser/serializer diff took the review past 30 minutes three times
     # (#5167, #5169) and it posted nothing.
     timeout-minutes: 60

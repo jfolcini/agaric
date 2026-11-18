@@ -25,7 +25,7 @@
 | Unit of addressing | The file; a block only once it carries `^id` | Every block has a ULID; nesting is capped (`MAX_BLOCK_DEPTH` in `src-tauri/agaric-store/src/block_descendants.rs`) | Better |
 | Rename safety | Links are names; Obsidian rewrites them on a rename made inside the app (a setting, on by default) | Links are ids; a rename touches no other block | Better |
 | Multiple vaults | Any number of folders, each its own window and settings | Spaces inside one database, each with its own journal, tabs, recents and property definitions (`docs/features/spaces.md`); a page moves between spaces after a list of the property values the target defines differently, with one undo (#6081) | Design choice |
-| Exit | Nothing to export | Per-page copy or save as Markdown, **Export this space** / **Export all spaces** ZIPs with `assets/` and `.agaric/space.json` for property definitions (`docs/features/import-export.md`, #6277). On Android both ZIP rows and *Save as Markdown file* are off, because the WebView cannot save a file (#6538). History, trash, saved queries and device-local state are not exported | Partial |
+| Exit | Nothing to export | Per-page copy or save as Markdown, **Export this space** / **Export all spaces** ZIPs with `assets/` and `.agaric/space.json` for property definitions (`docs/features/import-export.md`, #6277). On Android the ZIPs and *Save as Markdown file* save to Downloads (#6546). History, trash, saved queries and device-local state are not exported | Partial |
 | Non-note file types | `.base`, `.canvas`, images, audio, video, PDF open in the app | Attachments on blocks; images, audio and PDF render; no canvas or base file | Partial |
 
 ## 2. Editor
@@ -101,7 +101,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Engine | In-app search over notes and canvases; relevance sort and accent-insensitive matching since 1.15.1 | SQLite FTS5 trigram with bm25 relevance and keyset pagination, over text as the editor shows it (escapes decoded, code raw, a `((ref))` as its target's first line, #6330); a term shorter than `TRIGRAM_MIN_LEN` (`src-tauri/agaric-store/src/fts/search/sanitizer.rs`) is found by a scan of the same text (`docs/SEARCH.md`, #6752); **matching is not accent-insensitive** | Partial |
-| Operators | `file:`, `path:`, `content:`, `match-case:`, `ignore-case:`, `tag:`, `line:`, `block:`, `section:`, `task:`, `task-todo:`, `task-done:`, `[property:value]`, `OR`, `-`, parentheses | `tag:`, `under:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:` (`src/lib/search-query/register.ts`); FTS5 `AND` / `OR` / `NOT` on text terms. Filter tokens combine by fixed rules, not by parentheses | Partial |
+| Operators | `file:`, `path:`, `content:`, `match-case:`, `ignore-case:`, `tag:`, `line:`, `block:`, `section:`, `task:`, `task-todo:`, `task-done:`, `[property:value]`, `OR`, `-`, parentheses | `tag:`, `under:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:` (`src/lib/search-query/register.ts`); FTS5 `AND` / `OR` / `NOT` on text terms; `OR` and parentheses also join filters (`state:TODO (tag:#work OR tag:#home)`, #6742), but `NOT` takes no filter or group (`docs/SEARCH.md`) | Partial |
 | Scope of a match | File, or `line:` / `block:` / `section:` when asked | Always the block | Design choice |
 | Regex | `/pattern/`, JavaScript flavour, combinable with operators | A regex toggle in find-across-pages and in `Ctrl+F` | Done |
 | Property comparison | `[duration:<5]` | `prop:key=value` equality in search; comparison, range and existence operators in the query builder (`ALL_PROPERTY_OPS` in `src/components/PageBrowser/add-filter/vocab.ts`) | Partial |
@@ -140,7 +140,7 @@
 | Views | One note at a time; the community Calendar plugin adds a month sidebar | Daily, Weekly, Monthly, Stream, Agenda (`JournalMode` in `src/stores/journal.ts`); the Daily day opens as a page does, in blocks or page mode, while Weekly and Stream edit in blocks (#6077) | Better |
 | Date format and location | Configurable Moment format; subfolders from the format | A fixed ISO identity (`YYYY-MM-DD`: stored, matched, sorted) with a display-format allowlist (`JOURNAL_DATE_FORMATS` in `src/lib/preferences.ts`) that names the day in the journal, pickers, Agenda, search and references (#6592). No folder to choose: a day is a row, not a file | Partial |
 | Periodic notes (week, month) | Plugins | Views over days, not notes of their own | Design choice |
-| Quick capture to today | Mobile Quick Capture (iOS 1.14; Android listed as active), CLI, URI | A global hotkey (`Ctrl+Alt+N`) and an `agaric://capture?text=` link on desktop, and MCP `capture` (`docs/features/agent-access.md`). No Android deep link, widget or share target on `main` (#6555) | Partial |
+| Quick capture to today | Mobile Quick Capture (iOS 1.14; Android listed as active), CLI, URI | A global hotkey (`Ctrl+Alt+N`) and an `agaric://capture?text=` link on desktop, and MCP `capture` (`docs/features/agent-access.md`). On Android, text shared from another app opens Quick Capture (#6555); no Android deep link or widget | Partial |
 
 ## 10. Templates
 
@@ -185,7 +185,7 @@
 | Slash commands | Core plugin; runs any command | Built in, with sub-options and a recents band | Done |
 | Vim mode | A setting ("Vim key bindings", help, *Settings*) | **None.** Only `j` / `k` in the History list | Gap |
 | CLI | Obsidian CLI (1.12): "Anything you can do in Obsidian can be done from the command line"; the app must be running | `agaric-mcp call <tool> <json>` runs one MCP tool and exits, with an agent's token (`docs/features/agent-access.md`, `src-tauri/src/bin/agaric-mcp.rs`); the app must be running; desktop only; nothing beyond the MCP tools (§23) | Partial |
-| URI scheme | `obsidian://open`, `new`, `search`, and more | `agaric://page/<id>`, `agaric://block/<id>`, `agaric://settings/<tab>`, `agaric://settings/safe-mode` and `agaric://capture?text=`, which opens Quick Capture and saves nothing until *Capture*; the page menu's *Copy app link* copies a page's link (#6645); desktop only, Android registers no handler (#6555) (`docs/features/agent-access.md`, `src-tauri/src/deeplink/mod.rs`) | Partial |
+| URI scheme | `obsidian://open`, `new`, `search`, and more | `agaric://page/<id>`, `agaric://block/<id>`, `agaric://settings/<tab>`, `agaric://settings/safe-mode` and `agaric://capture?text=`, which opens Quick Capture and saves nothing until *Capture*; the page menu's *Copy app link* copies a page's link (#6645); desktop only, Android registers no handler (`docs/features/agent-access.md`) (`docs/features/agent-access.md`, `src-tauri/src/deeplink/mod.rs`) | Partial |
 
 ## 14. Themes and CSS
 
@@ -211,7 +211,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | iOS | App Store; widgets, Siri and Shortcuts, a Share Sheet, Quick Capture and voice capture (help, roadmap) | **None**, and none planned (#6739) | Gap |
-| Android | Google Play or direct APK; widgets (open note, new note, search, daily note) and a Quick Settings tile; Android Quick Capture is active on the roadmap | Signed APK, arm64 only, API 30+, **sideload only**; kept out of Android backup and device transfer, so a new phone is set up by pairing and an uninstall deletes the phone's notes (`README.md`) | Partial |
+| Android | Google Play or direct APK; widgets (open note, new note, search, daily note) and a Quick Settings tile; Android Quick Capture is active on the roadmap | Signed APK, arm64 only, API 30+, **sideload only**; kept out of Android backup and device transfer, so a new phone is set up by pairing and an uninstall deletes the phone's notes (`README.md`); in the share sheet for text (#6555); no widget or Quick Settings tile | Partial |
 | Plugins on mobile | Yes (mobile page) | Not applicable | Gap |
 | Phone UI | Tabs, palette, a customisable toolbar | Bottom sheets and 44 px targets (`docs/FEATURE-MAP.md`), a toolbar above the keyboard on touch (`docs/features/editor.md`). An emulator launches a release APK at each release and nightly, not per PR (`.github/workflows/android-launch-smoke.yml`); no physical device in CI | Done |
 | Background sync | Not yet: "Background Sync on mobile" is active on the roadmap | Not yet: foreground only (`docs/architecture/sync-and-network.md`, #6740) | Tie |
@@ -237,7 +237,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Publish to the web | **Obsidian Publish**: a paid subscription per site, with a site password, custom domain, graph, full-text search and invited collaborators | **None** | Gap |
-| Share one note | Publish, or send the file | Page menu: *Export as Markdown* (copy), *Save as Markdown file* (`<title>.md`, not on Android), *Print…* (not on Android); *Copy app link* copies an `agaric://page/<id>` link, which works only on a device with Agaric | Partial |
+| Share one note | Publish, or send the file | Page menu: *Export as Markdown* (copy), *Save as Markdown file* (`<title>.md`; to Downloads on Android, #6546), *Print…* (not on Android); *Copy app link* copies an `agaric://page/<id>` link, which works only on a device with Agaric | Partial |
 | Export to PDF | Desktop, and mobile since 1.15 | *Print…* in the page menu (not on Android) prints the page alone on the light palette through the system dialog; whether that dialog offers PDF is unchecked on macOS and Windows (`docs/features/appearance.md`, #6514, #6515) | Partial |
 | Real-time collaboration | Not yet: "Multiplayer" is planned | Out of scope by the threat model (`AGENTS.md` § Threat Model) | Design choice |
 
@@ -246,7 +246,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Web clipper | Official, free, open-source extension for Chrome and Chromium browsers, Firefox (desktop and mobile), Safari and Edge; highlights, templates with logic | **No extension** (#6753). A bookmarklet sends a page's title and address to Quick Capture through `agaric://capture?text=` on desktop (`docs/features/agent-access.md`). Pasted HTML converts to blocks (`src/editor/html-to-blocks.ts`) | Gap |
-| Mobile share target | iOS Share Sheet (roadmap: July 2026) | None on `main`; text shared into Quick Capture on Android is built in an open pull request (#6555) | Gap |
+| Mobile share target | iOS Share Sheet (roadmap: July 2026) | Android only, text only: text shared from another app opens Quick Capture holding it, and nothing is saved until *Capture*; images and files are not accepted (`docs/features/agent-access.md`, #6555). No iOS | Partial |
 | Widgets | Widgets on iOS and Android (help) | None | Gap |
 | Global hotkey capture | Through the CLI or URI | Quick Capture hotkey on desktop | Done |
 
@@ -255,9 +255,9 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Importers | **Importer** (official plugin): Notion, Airtable, OneNote, Evernote, Apple Notes, Apple Journal, Google Keep, Bear, Craft, Roam, Logseq, Samsung Notes, Tomboy, and HTML, CSV, Markdown and Textbundle files | Markdown files and folders, **Obsidian vault**, Logseq graph, Org, Notion export, Evernote `.enex`, Joplin `.jex`, BibTeX / CSL-JSON (`docs/features/import-export.md`) | Partial |
-| Obsidian vault fidelity | N/A | Wikilinks, aliases, heading and block anchors, `![[…]]` embeds, image sizes, Tasks-plugin fields, callout types and attachments are mapped. **Lost or flattened:** list properties, `.canvas` and `.base` files, Dataview and Templater code, `%%comments%%` inside a sentence (a comment block becomes a comment callout), plugin data, folder structure (it becomes title namespaces) | Partial |
+| Obsidian vault fidelity | N/A | Wikilinks, aliases, heading and block anchors, `![[…]]` embeds, image sizes, Tasks-plugin fields, callout types and attachments are mapped. **Lost or flattened:** a YAML list under a key defined to hold one value (its items joined by a comma; elsewhere a list imports item for item, #6741), `.canvas` and `.base` files, Dataview and Templater code, `%%comments%%` inside a sentence (a comment block becomes a comment callout), plugin data, folder structure (it becomes title namespaces) | Partial |
 | Re-import | N/A | A file, a folder's note, an Evernote or Joplin note, or a Logseq or Org file whose title names a page with content updates that page in place after a listed confirmation; Undo on the page reverts it (#6277, `docs/features/import-export.md`) | Done |
-| Export | The vault is the export; PDF per note | Per page: copy, or save `<title>.md`. A Markdown ZIP per space or for all spaces (not on Android, #6546), restoring templates, done dates, attachments and property definitions on a folder import (#6277), and every space from an unzipped all-spaces ZIP (#6554); on desktop the Markdown mirror (§1) keeps a live `.md` file per page; *Print…* for paper; no HTML or structured JSON | Partial |
+| Export | The vault is the export; PDF per note | Per page: copy, or save `<title>.md`. A Markdown ZIP per space or for all spaces (to Downloads on Android, #6546), restoring templates, done dates, attachments and property definitions on a folder import (#6277), and every space from an unzipped all-spaces ZIP (#6554); on desktop the Markdown mirror (§1) keeps a live `.md` file per page; *Print…* for paper; no HTML or structured JSON | Partial |
 
 ## 21. Attachments, PDF, History and Recovery
 
@@ -277,7 +277,7 @@
 | --- | --- | --- | --- |
 | Local encryption | None: "Obsidian doesn't encrypt your local vault" | None; rely on full-disk encryption (`README.md`) | Tie |
 | Sync encryption | End-to-end by default (§17) | Transport only; no third party holds data unless the relay fallback is on, and the relay forwards ciphertext | Design choice |
-| Telemetry | "no telemetry data is collected" (security page) | No telemetry or analytics. The desktop app asks GitHub at most once a day for a newer release, and a web link is fetched from its own site for a preview, which a setting turns off for hover (`README.md`) | Tie |
+| Telemetry | "no telemetry data is collected" (security page) | No telemetry or analytics. The app asks GitHub at most once a day for a newer release (on Android since #6546), and a web link is fetched from its own site for a preview, which a setting turns off for hover (`README.md`) | Tie |
 | Account | None for the app; one for Sync and Publish | None | Tie |
 
 ## 23. AI and Agents
@@ -305,9 +305,9 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Desktop | Windows, macOS (universal), Linux x86-64 and ARM64 | Linux x86-64, Windows x64, macOS x86-64 and aarch64 (`README.md`); no Linux ARM64 | Partial |
-| Packages | exe, dmg, AppImage, deb, Snap, Flatpak (community) | deb, rpm, AppImage, NSIS `-setup.exe`, MSI, dmg; a winget manifest and a Flathub draft are in the repository, neither submitted (#6660) | Done |
+| Packages | exe, dmg, AppImage, deb, Snap, Flatpak (community) | deb, rpm, AppImage, NSIS `-setup.exe`, MSI, dmg; a winget manifest and a Flathub manifest that builds from source are in the repository, neither submitted (#6660) | Done |
 | Code signing | Not checked (**unverified**) | **Unsigned** desktop bundles: Gatekeeper and SmartScreen warn (`README.md`) | Gap |
-| Auto-update | Desktop in-app, with periodic installer updates; mobile through stores | Desktop in-app, minisign-verified (`tauri-plugin-updater` in `src-tauri/Cargo.toml`); Android by manual APK | Partial |
+| Auto-update | Desktop in-app, with periodic installer updates; mobile through stores | Desktop in-app, minisign-verified (`tauri-plugin-updater` in `src-tauri/Cargo.toml`); on Android a newer release is announced once a day with a link to the releases page and installed by hand (#6546) | Partial |
 | Runtime | Electron | Tauri 2 with the system webview (WebKitGTK, WKWebView, WebView2) | Design choice |
 
 ## 26. Licence, Governance and Longevity

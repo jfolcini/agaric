@@ -214,7 +214,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -223,7 +222,7 @@ jobs:
       - name: Install tauri-driver
         # A cargo binary with no prebuilt release; the shards run this build of
         # it from the artifact below.
-        run: cargo install tauri-driver --locked
+        run: cargo install tauri-driver --version "$(bash scripts/pins.sh version tauri-driver)" --locked
 
       - name: Build the app, the sync peer and the agaric-mcp bridge
         # One compile. The CLI runs `cargo build --bins --features
@@ -282,7 +281,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies

@@ -114,6 +114,26 @@ jobs:
           bundle-deps: 'true'
           rust-shared-key: rust-release
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
+      - name: Install cargo-auditable
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-auditable@${{ steps.pins.outputs.cargo_auditable }}
+
+      # The Rust build after this embeds its exact crate list in the binary
+      # (cargo auditable), as release.yml does; the SBOM step below reads it
+      # back, so a release whose SBOM would come out empty reds here first.
+      - name: Embed the crate list in the binaries (cargo auditable)
+        run: |
+          echo "RUSTC_WORKSPACE_WRAPPER=$(command -v cargo-auditable)" >> "$GITHUB_ENV"
+          echo 'CARGO_AUDITABLE_ORIG_ARGS={"offline":false,"locked":true,"frozen":false,"config":[]}' >> "$GITHUB_ENV"
+
+      - name: Seed the AppImage tools (sha256-checked)
+        uses: ./.github/actions/tauri-appimage-tools
+
       - name: Build Tauri app
         # `-v` raises tauri-bundler's log level so the real stdout/stderr
         # of linuxdeploy / candle / light / codesign is captured in CI
@@ -175,6 +195,21 @@ jobs:
           deb="${debs[0]}"
           echo "Inspecting $deb"
           dpkg-deb -c "$deb" | grep -E '(^|/)agaric-mcp( |$)'
+
+      - name: SBOMs and OpenVEX (the release.yml step, as a gate)
+        uses: ./.github/actions/syft-sbom
+        with:
+          source: dir:src-tauri/target/release/bundle
+          binaries: src-tauri/target/release/agaric*
+          output-prefix: ${{ runner.temp }}/agaric-linux
+
+      - name: Upload Linux SBOMs and OpenVEX
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-linux
+          path: ${{ runner.temp }}/agaric-linux.*.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Linux bundles
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -255,11 +290,20 @@ jobs:
           shared-key: rust-android
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
+      - name: Install cargo-auditable
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-auditable@${{ steps.pins.outputs.cargo_auditable }}
+
       - name: Set up JDK 17
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
-          java-version: 17
+          java-version: ${{ steps.pins.outputs.temurin }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -274,7 +318,6 @@ jobs:
       - name: Install Node.js
         uses: ./.github/actions/setup-node
         with:
-          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
@@ -338,9 +381,41 @@ jobs:
         run: bash scripts/patch-android-build.sh
 
       - name: Build Android APK (x86_64 debug)
-        run: npm run tauri -- android build --target x86_64 --debug
+        id: android-debug
+        run: |
+          set -o pipefail
+          npm run tauri -- android build --target x86_64 --debug 2>&1 | tee "$RUNNER_TEMP/android-debug.log"
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Regenerate Gradle verification metadata (verification failed)
+        # A Tauri, plugin or Android toolchain bump changes the Gradle
+        # dependencies, and Gradle refuses every artifact
+        # gradle/verification-metadata.xml does not list. Regenerate it here,
+        # under this job's read-only token, and upload it; the
+        # gradle-verification-commit workflow commits it to the PR branch
+        # without running PR code. This job stays red: the new hashes are
+        # trusted on first use, so a person reviews that diff first.
+        id: regen
+        if: failure() && github.event_name == 'pull_request' && steps.android-debug.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          if ! grep -q 'Dependency verification failed' "$RUNNER_TEMP/android-debug.log"; then
+            echo "The Android build failed for another reason; nothing to regenerate."
+            exit 0
+          fi
+          bash scripts/update-gradle-verification.sh
+          echo "regenerated=true" >> "$GITHUB_OUTPUT"
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      - name: Upload regenerated Gradle verification metadata
+        if: failure() && steps.regen.outputs.regenerated == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gradle-verification-metadata
+          path: src-tauri/gen/android/gradle/verification-metadata.xml
+          retention-days: 7
 
       # #4425 — the 0.9.9 release APK shipped with 4 KB-aligned ELF LOAD
       # segments, so the app cannot start on a device booted with a 16 KB page
@@ -383,6 +458,14 @@ jobs:
                exit 1 ;;
           esac
 
+      # The Rust build after this embeds its exact crate list in the binary
+      # (cargo auditable), as release.yml does; the SBOM step below reads it
+      # back, so a release whose SBOM would come out empty reds here first.
+      - name: Embed the crate list in the binaries (cargo auditable)
+        run: |
+          echo "RUSTC_WORKSPACE_WRAPPER=$(command -v cargo-auditable)" >> "$GITHUB_ENV"
+          echo 'CARGO_AUDITABLE_ORIG_ARGS={"offline":false,"locked":true,"frozen":false,"config":[]}' >> "$GITHUB_ENV"
+
       - name: Build Android APK (aarch64 release, unsigned)
         run: npm run tauri -- android build --target aarch64
         env:
@@ -407,6 +490,13 @@ jobs:
             *) echo "::error::The 16 KB alignment guard itself exited $rc, which its contract never emits (1 is node's crash code). Nothing was verified — do not read this as a misalignment."
                exit 1 ;;
           esac
+
+      - name: SBOMs and OpenVEX, Android (the release.yml step, as a gate)
+        uses: ./.github/actions/syft-sbom
+        with:
+          source: file:src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+          binaries: src-tauri/target/aarch64-linux-android/release/libagaric_lib.so
+          output-prefix: ${{ runner.temp }}/agaric-android-aarch64
 
       - name: Upload Android release APK (aarch64, unsigned)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

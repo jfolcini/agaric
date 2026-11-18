@@ -10,7 +10,7 @@ inputs:
   toolchain:
     description: >-
       Exact toolchain, kept in lockstep with rust-toolchain.toml and
-      src-tauri/Cargo.toml `rust-version` (#640), or `nightly`.
+      src-tauri/Cargo.toml `rust-version` (#640), or a dated `nightly-YYYY-MM-DD`.
     required: true
   components:
     description: Comma-separated rustup components, e.g. `clippy,rustfmt`.
@@ -41,9 +41,9 @@ runs:
         rustup -q default "$TOOLCHAIN" >/dev/null
         # The repo's rust-toolchain.toml lists components this install did not
         # add; rustup would fetch them, with `info:` lines, on the first cargo
-        # call. Doing it here keeps that quiet. `nightly` is not the pin and
+        # call. Doing it here keeps that quiet. A nightly is not the pin and
         # would only trigger an install of the pinned toolchain.
-        [ "$TOOLCHAIN" = nightly ] || rustup -q show active-toolchain >/dev/null
+        case "$TOOLCHAIN" in nightly*) ;; *) rustup -q show active-toolchain >/dev/null ;; esac
         # The replaced action's environment: no incremental artefacts in the
         # rust-cache entries, coloured cargo logs. A workflow's own value wins.
         [ -n "${CARGO_INCREMENTAL+set}" ] || echo CARGO_INCREMENTAL=0 >> "$GITHUB_ENV"

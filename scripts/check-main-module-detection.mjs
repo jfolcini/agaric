@@ -42,7 +42,7 @@
 //
 // NOT `import.meta.main`. Note the original reason no longer applies: it is
 // `Added in: v24.2.0, v22.18.0`, and now that `engines.node` is the derived
-// `^22.22.2 || ^24.15.0 || >=26.0.0`, every permitted Node has it (both line
+// `^22.23.4 || ^24.22.1 || >=26.12.1`, every permitted Node has it (both line
 // floors sit above those versions). The guard stands on its OTHER rationale
 // — symlink-safe entry-point detection (#3373): `import.meta.main` compares
 // the specifier as spelled, so a script invoked through a symlink (the

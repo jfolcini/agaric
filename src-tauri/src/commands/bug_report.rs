@@ -3,7 +3,7 @@
 //! Provides two read-only commands consumed by the in-app bug-report dialog:
 //!
 //! - `collect_bug_report_metadata` — gathers app version, OS, arch, device ID,
-//!   and the last `RECENT_ERRORS_CAP` error/warn lines from the recent
+//!   and the last `RECENT_ERRORS_CAP` distinct error/warn lines from the recent
 //!   daily log files (#4216 — the newest days back to
 //!   `MAX_ROLLED_AGE_DAYS`, not just the current UTC day's).
 //!   #609: the recent-error lines are ALWAYS redacted (same pipeline as the
@@ -35,6 +35,7 @@
 //! `plain_log_outranks_dated`. Neither can exfiltrate — the open re-decides —
 //! but both can suppress. Each says so where it stands.
 
+use std::collections::{HashMap, hash_map::Entry};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -345,8 +346,9 @@ pub struct BugReport {
     pub os: String,
     pub arch: String,
     pub device_id: String,
-    /// Last `RECENT_ERRORS_CAP` error/warn lines from the recent
-    /// `agaric.log.YYYY-MM-DD` files, newest last.
+    /// Last `RECENT_ERRORS_CAP` distinct error/warn lines from the recent
+    /// `agaric.log.YYYY-MM-DD` files, newest last. Lines that differ only in
+    /// their timestamp appear once, at the newest, prefixed `[logged N×]`.
     ///
     /// #4216: this is a recency window, not a calendar-day one — the walk
     /// crosses UTC day boundaries backwards until the cap is full or the
@@ -463,7 +465,7 @@ const MAX_LINE_BYTES: usize = 8 * 1024;
 /// user something was omitted instead of silently truncating.
 const MAX_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
 
-/// Cap on the number of recent error/warn lines surfaced in
+/// Cap on the number of distinct recent error/warn lines surfaced in
 /// [`collect_bug_report_metadata`]. Short enough to render cleanly in the
 /// dialog preview; long enough to capture a crash + a few surrounding hints.
 const RECENT_ERRORS_CAP: usize = 20;
@@ -545,28 +547,77 @@ fn is_error_or_warn_line(line: &str) -> bool {
         || json_prefix.contains(r#""level": "WARN""#)
 }
 
-/// Pure helper: extract up to [`RECENT_ERRORS_CAP`] most-recent `ERROR` or
-/// `WARN` lines from an iterator of log lines. Preserves order.
-fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<String> {
-    let mut matches: Vec<String> = Vec::new();
-    for line in lines {
-        if is_error_or_warn_line(line) {
-            matches.push(line.to_string());
-        }
-    }
-    if matches.len() > RECENT_ERRORS_CAP {
-        let start = matches.len() - RECENT_ERRORS_CAP;
-        matches.drain(..start);
-    }
-    matches
+/// One distinct `ERROR`/`WARN` line: its newest occurrence, and how many
+/// times it was logged in the lines read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecentError {
+    line: String,
+    repeats: usize,
 }
 
-/// Read the most recent `ERROR`/`WARN` lines from the app's daily log
-/// files, newest last.
+/// A line without its timestamp: two lines with the same key are one error
+/// logged twice. A warning repeated every tick would otherwise take every
+/// slot of [`RECENT_ERRORS_CAP`] and push out each other line (#6764).
+fn repeat_key(line: &str) -> String {
+    if let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str(line) {
+        fields.remove("timestamp");
+        return serde_json::Value::Object(fields).to_string();
+    }
+    // Text format: the timestamp is the first token.
+    line.split_once(char::is_whitespace)
+        .map_or(line, |(_, rest)| rest)
+        .to_string()
+}
+
+/// Fold lines with the same [`repeat_key`] into one entry at the newest
+/// one's position, summing their counts. Order is otherwise kept.
+fn collapse_repeats(entries: Vec<RecentError>) -> Vec<RecentError> {
+    let mut slot_of_key: HashMap<String, usize> = HashMap::new();
+    let mut newest_first: Vec<RecentError> = Vec::new();
+    for entry in entries.into_iter().rev() {
+        match slot_of_key.entry(repeat_key(&entry.line)) {
+            Entry::Occupied(slot) => {
+                newest_first[*slot.get()].repeats += entry.repeats;
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(newest_first.len());
+                newest_first.push(entry);
+            }
+        }
+    }
+    newest_first.reverse();
+    newest_first
+}
+
+/// Drop the oldest entries past [`RECENT_ERRORS_CAP`].
+fn keep_newest(entries: &mut Vec<RecentError>) {
+    if entries.len() > RECENT_ERRORS_CAP {
+        entries.drain(..entries.len() - RECENT_ERRORS_CAP);
+    }
+}
+
+/// Pure helper: extract up to [`RECENT_ERRORS_CAP`] most-recent distinct
+/// `ERROR` or `WARN` lines from an iterator of log lines. Preserves order.
+fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<RecentError> {
+    let matches = lines
+        .filter(|line| is_error_or_warn_line(line))
+        .map(|line| RecentError {
+            line: line.to_string(),
+            repeats: 1,
+        })
+        .collect();
+    let mut distinct = collapse_repeats(matches);
+    keep_newest(&mut distinct);
+    distinct
+}
+
+/// Read the most recent distinct `ERROR`/`WARN` lines from the app's daily
+/// log files, newest last.
 ///
 /// Walks the rolled `agaric.log.YYYY-MM-DD` family from the newest day
-/// backwards, stopping as soon as [`RECENT_ERRORS_CAP`] lines have been
-/// collected. #4216 — reading only the current UTC day made this field
+/// backwards, stopping as soon as [`RECENT_ERRORS_CAP`] distinct lines have
+/// been collected; an older day's repeat of a newer line adds to its count.
+/// #4216 — reading only the current UTC day made this field
 /// blind by the calendar rather than by recency: a report filed at 00:10
 /// UTC saw nothing from the incident twenty minutes earlier, because the
 /// appender had already rolled to a near-empty current-day file and the
@@ -574,7 +625,7 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
 /// report bundle (`should_include_log_file` accepts them); they just never
 /// reached the summary field a triager reads first.
 ///
-/// The cap is by line count, not by file, so a day boundary is no longer a
+/// The cap is by distinct-line count, not by file, so a day boundary is no longer a
 /// cliff. Two bounds, both taken from constants this module already
 /// enforces rather than invented for this walk:
 ///
@@ -633,7 +684,7 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
 /// read — a bug report without recent errors is still useful, and boot-time
 /// failures (no log dir, permission denied) should not also break the
 /// report surface.
-fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
+fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<RecentError> {
     recent_errors_from_log_dir_at(log_dir, chrono::Utc::now().date_naive())
 }
 
@@ -646,7 +697,7 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
 /// "today" cannot disagree — neither because the real calendar moved nor
 /// because the test straddled a UTC midnight between building the fixture
 /// and calling the function.
-fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Vec<String> {
+fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Vec<RecentError> {
     // #4127 — `build_log_file_appender` (`lib.rs`) configures
     // `tracing_appender`'s `RollingFileAppender` with `Rotation::DAILY` and
     // `filename_prefix("agaric.log")` and no suffix. `RollingWriter::join_date`
@@ -728,21 +779,15 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
     // `out` accumulates newest-day-first-collected lines in CHRONOLOGICAL
     // order (newest last, matching `BugReport::recent_errors`): each older
     // day's tail is prepended to what the newer days already contributed.
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<RecentError> = Vec::new();
     for (_, path) in days {
-        // `room` is > 0 here: the loop breaks as soon as the cap is full.
-        let room = RECENT_ERRORS_CAP - out.len();
         let mut older = read_errors_from_path(&path);
-        if older.len() > room {
-            // Keep this day's NEWEST `room` lines — the same
-            // keep-the-tail rule `extract_recent_errors` applies within a
-            // single file, extended across the day boundary.
-            let start = older.len() - room;
-            older.drain(..start);
-        }
         older.extend(out);
-        out = older;
+        // Collapsed before the cap, so an older day's repeat of a newer line
+        // folds into it instead of taking a slot.
+        out = collapse_repeats(older);
         if out.len() >= RECENT_ERRORS_CAP {
+            keep_newest(&mut out);
             break;
         }
     }
@@ -826,7 +871,7 @@ fn plain_log_outranks_dated(plain_path: &Path, days: &[(chrono::NaiveDate, PathB
     plain_mtime > newest_dated
 }
 
-fn read_errors_from_path(path: &Path) -> Vec<String> {
+fn read_errors_from_path(path: &Path) -> Vec<RecentError> {
     // Cap the read at [`MAX_FILE_BYTES`] using the same helper
     // as `read_logs_for_report_inner`. On oversized files the helper
     // prepends a `…[truncated …]` marker line; that marker contains
@@ -905,7 +950,16 @@ pub fn collect_bug_report_metadata_inner(
         // `recent_errors_from_log_dir` reads only `agaric.log`(`.YYYY-MM-DD`),
         // never an OTel signal file, so the format is `TracingLog` by
         // provenance — same as the ZIP bundle's `agaric.log` block.
-        .map(|line| redact_line_with_redactor(line, &redactor, LineFormat::TracingLog))
+        .map(|error| {
+            let line = redact_line_with_redactor(&error.line, &redactor, LineFormat::TracingLog);
+            // The count goes on after redaction: a prefix would stop the JSON
+            // line parsing there and send it down the text path instead.
+            if error.repeats > 1 {
+                format!("[logged {}×] {line}", error.repeats)
+            } else {
+                line
+            }
+        })
         .collect();
 
     Ok(BugReport {
@@ -2751,7 +2805,7 @@ mod tests {
 
     #[test]
     fn extract_recent_errors_empty_input_returns_empty() {
-        let out = extract_recent_errors(std::iter::empty());
+        let out = lines(extract_recent_errors(std::iter::empty()));
         assert_eq!(out.len(), 0);
     }
 
@@ -2763,7 +2817,7 @@ mod tests {
             "2025-01-01 DEBUG [agaric] chatter",
             "2025-01-01 WARN [agaric] sluggish",
         ];
-        let out = extract_recent_errors(input.into_iter());
+        let out = lines(extract_recent_errors(input.into_iter()));
         assert_eq!(out.len(), 2);
         assert!(out[0].contains("ERROR"));
         assert!(out[1].contains("WARN"));
@@ -2776,12 +2830,80 @@ mod tests {
             input.push(format!("2025-01-01 ERROR [agaric] error #{i}"));
         }
         let borrowed: Vec<&str> = input.iter().map(String::as_str).collect();
-        let out = extract_recent_errors(borrowed.into_iter());
+        let out = lines(extract_recent_errors(borrowed.into_iter()));
         assert_eq!(out.len(), 20);
         // Newest (#29) must be last.
         assert!(out[19].contains("error #29"));
         // Oldest kept is #10 (dropped the first 10).
         assert!(out[0].contains("error #10"));
+    }
+
+    /// The walk's lines without their counts, for tests about which lines it picks.
+    fn lines(errors: Vec<RecentError>) -> Vec<String> {
+        errors.into_iter().map(|error| error.line).collect()
+    }
+
+    /// #6764: one warning logged every tick filled every slot, so the issue
+    /// body carried it twenty times and nothing else.
+    #[test]
+    fn extract_recent_errors_folds_a_repeated_json_warning_into_one_counted_line() {
+        let warn = |peer: &str, ts: &str| {
+            format!(
+                r#"{{"timestamp":"{ts}","level":"WARN","fields":{{"message":"paired peer resolved to no dialable address","peer_id":"{peer}"}},"target":"agaric_sync::sync_daemon::discovery"}}"#
+            )
+        };
+        let mut input = vec![
+            r#"{"timestamp":"2026-11-14T01:50:00Z","level":"ERROR","fields":{"message":"pairing failed"},"target":"agaric_sync"}"#.to_string(),
+            warn("P2", "2026-11-14T01:51:00Z"),
+        ];
+        for i in 0..RECENT_ERRORS_CAP + 5 {
+            input.push(warn("P1", &format!("2026-11-14T01:53:{i:02}Z")));
+        }
+        let newest_p1 = input.last().unwrap().clone();
+
+        let out = extract_recent_errors(input.iter().map(String::as_str));
+
+        assert_eq!(
+            out,
+            vec![
+                RecentError {
+                    line: input[0].clone(),
+                    repeats: 1,
+                },
+                RecentError {
+                    line: input[1].clone(),
+                    repeats: 1,
+                },
+                RecentError {
+                    line: newest_p1,
+                    repeats: RECENT_ERRORS_CAP + 5,
+                },
+            ],
+            "the repeated warning is one line, at its newest, with its count; another \
+             peer's warning and the older error keep their own slots"
+        );
+    }
+
+    #[test]
+    fn extract_recent_errors_folds_text_lines_that_differ_only_in_timestamp() {
+        let input = [
+            "2025-01-01T00:00:01Z  WARN agaric::sync: peer unreachable",
+            "2025-01-01T00:00:02Z  WARN agaric::sync: peer unreachable",
+            "2025-01-01T00:00:03Z  WARN agaric::sync: peer gone",
+        ];
+        assert_eq!(
+            extract_recent_errors(input.into_iter()),
+            vec![
+                RecentError {
+                    line: input[1].to_string(),
+                    repeats: 2,
+                },
+                RecentError {
+                    line: input[2].to_string(),
+                    repeats: 1,
+                },
+            ]
+        );
     }
 
     // -- is_error_or_warn_line ------------------------------------
@@ -2959,7 +3081,7 @@ mod tests {
             "premise broken: tracing-appender must write agaric.log.YYYY-MM-DD"
         );
 
-        let errors = recent_errors_from_log_dir(&log_dir);
+        let errors = lines(recent_errors_from_log_dir(&log_dir));
 
         assert!(
             errors.iter().any(|l| l.contains("M4127_MARKER")),
@@ -3053,7 +3175,7 @@ mod tests {
         );
         write_day_log(&log_dir, today, "2025-03-10T09:00:00Z INFO [agaric] boot\n");
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4216_YESTERDAY")),
@@ -3095,7 +3217,7 @@ mod tests {
              2025-03-10T00:09:00Z ERROR [agaric] M4216_AFTER_MIDNIGHT\n",
         );
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         let before = errors
             .iter()
@@ -3169,7 +3291,7 @@ mod tests {
         );
         write_day_log(&log_dir, today, "2025-03-10T09:00:00Z INFO [agaric] boot\n");
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4216_IN_WINDOW")),
@@ -3179,6 +3301,47 @@ mod tests {
             !errors.iter().any(|l| l.contains("M4216_OUT_OF_WINDOW")),
             "a day older than MAX_ROLLED_AGE_DAYS must NOT be read — the \
              summary must not out-reach the bundle, got: {errors:?}"
+        );
+    }
+
+    /// #6764 — an older day's repeat of a newer line adds to its count
+    /// instead of taking a second slot.
+    #[test]
+    fn recent_errors_folds_a_repeat_across_the_day_boundary() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "2025-03-09T22:00:00Z ERROR [agaric] M6764_YESTERDAY_ONLY\n\
+             2025-03-09T23:00:00Z WARN [agaric] M6764_EVERY_DAY\n\
+             2025-03-09T23:30:00Z WARN [agaric] M6764_EVERY_DAY\n",
+        );
+        write_day_log(
+            &log_dir,
+            today,
+            "2025-03-10T01:00:00Z WARN [agaric] M6764_EVERY_DAY\n\
+             2025-03-10T02:00:00Z ERROR [agaric] M6764_TODAY_ONLY\n",
+        );
+
+        assert_eq!(
+            recent_errors_from_log_dir_at(&log_dir, today),
+            vec![
+                RecentError {
+                    line: "2025-03-09T22:00:00Z ERROR [agaric] M6764_YESTERDAY_ONLY".into(),
+                    repeats: 1,
+                },
+                RecentError {
+                    line: "2025-03-10T01:00:00Z WARN [agaric] M6764_EVERY_DAY".into(),
+                    repeats: 3,
+                },
+                RecentError {
+                    line: "2025-03-10T02:00:00Z ERROR [agaric] M6764_TODAY_ONLY".into(),
+                    repeats: 1,
+                },
+            ]
         );
     }
 
@@ -3213,7 +3376,7 @@ mod tests {
         }
         write_day_log(&log_dir, today, &today_log);
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert_eq!(
             errors.len(),
@@ -3313,7 +3476,7 @@ mod tests {
             "x ERROR [agaric] M4216_GOOD_DAY\n",
         );
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4216_GOOD_DAY")),
@@ -3437,7 +3600,7 @@ mod tests {
              absence assertion below is about the fix and not about a broken fixture"
         );
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             !errors
@@ -3493,7 +3656,7 @@ mod tests {
             "fixture control: the planted link must resolve to the secret"
         );
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             !errors
@@ -3554,7 +3717,7 @@ mod tests {
         set_mtime(&secret, t4290(9_000));
         std::os::unix::fs::symlink(&secret, day_log_path(&log_dir, today)).unwrap();
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4283_LEGITIMATE_LOG")),
@@ -3937,7 +4100,7 @@ mod tests {
         }
         write_day_log(&log_dir, today, &newest);
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert_eq!(
             errors.len(),
@@ -4005,7 +4168,7 @@ mod tests {
         );
         write_day_log(&log_dir, today, "x ERROR [agaric] M4216_DATED_TODAY\n");
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert_eq!(
             errors.len(),
@@ -4043,7 +4206,7 @@ mod tests {
         )
         .unwrap();
 
-        let fallback = recent_errors_from_log_dir_at(&log_dir2, today);
+        let fallback = lines(recent_errors_from_log_dir_at(&log_dir2, today));
         assert!(
             fallback.iter().any(|l| l.contains("M4216_PLAIN_FALLBACK")),
             "with no in-window dated file the plain fallback must still \
@@ -4093,7 +4256,7 @@ mod tests {
         set_mtime(&day_log_path(&log_dir, today), t4290(2_000));
         set_mtime(&log_dir.join("agaric.log"), t4290(3_000));
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4290_LIVE_PLAIN")),
@@ -4145,7 +4308,7 @@ mod tests {
         set_mtime(&day_log_path(&log_dir, day_before(today, 1)), t4290(2_000));
         set_mtime(&day_log_path(&log_dir, today), t4290(3_000));
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             !errors.iter().any(|l| l.contains("M4290_STALE_PLAIN")),
@@ -4193,7 +4356,7 @@ mod tests {
         set_mtime(&log_dir.join("agaric.log"), same_instant);
         set_mtime(&day_log_path(&log_dir, today), same_instant);
 
-        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+        let errors = lines(recent_errors_from_log_dir_at(&log_dir, today));
 
         assert!(
             errors.iter().any(|l| l.contains("M4290_TIED_DATED")),
@@ -4400,6 +4563,50 @@ mod tests {
         assert!(
             line.contains("2026-04-28T10:23:45.123456Z") && line.contains("agaric::sync"),
             "safe tokens (timestamp, target) must survive, got: {line}"
+        );
+    }
+
+    /// #6764 — the count is prefixed after redaction, so a repeated JSON line
+    /// still takes the deny-list path.
+    #[test]
+    fn collect_metadata_prefixes_a_repeated_line_with_its_count_after_redaction() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        let repeated = |ts: &str| {
+            format!(
+                r#"{{"timestamp":"{ts}","level":"WARN","fields":{{"message":"failed for user Bob Smith"}},"target":"agaric::sync"}}"#
+            )
+        };
+        let other = r#"{"timestamp":"2026-04-28T10:00:03Z","level":"ERROR","fields":{"message":"other"},"target":"agaric::sync"}"#;
+        fs::write(
+            log_dir.join("agaric.log"),
+            format!(
+                "{}\n{}\n{other}\n{}\n",
+                repeated("2026-04-28T10:00:01Z"),
+                repeated("2026-04-28T10:00:02Z"),
+                repeated("2026-04-28T10:00:04Z"),
+            ),
+        )
+        .unwrap();
+
+        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, &[], None, None)
+            .unwrap();
+
+        assert_eq!(md.recent_errors.len(), 2, "got: {:?}", md.recent_errors);
+        assert!(
+            !md.recent_errors[0].starts_with("[logged"),
+            "a line logged once carries no count, got: {}",
+            md.recent_errors[0]
+        );
+        let line = &md.recent_errors[1];
+        assert!(
+            line.starts_with("[logged 3×] {") && line.contains("2026-04-28T10:00:04Z"),
+            "the repeated line is its newest occurrence behind its count, got: {line}"
+        );
+        assert!(
+            !line.contains("Bob Smith"),
+            "the deny-list must still run on the JSON line, got: {line}"
         );
     }
 

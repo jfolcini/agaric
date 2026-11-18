@@ -936,7 +936,7 @@ stages = ["manual"]
 #       realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 # (`fs.realpathSync` equally accepted). NOT `import.meta.main`: its old
 # version-floor rationale is now moot (engines.node is the derived
-# `^22.22.2 || ^24.15.0 || >=26.0.0`, and both line floors are above its
+# `^22.23.4 || ^24.22.1 || >=26.12.1`, and both line floors are above its
 # "Added in: v24.2.0, v22.18.0"), but it remains banned because it compares
 # the specifier AS SPELLED and so misjudges a script reached through a
 # symlink (#3373). The guard scans scripts/ INCLUDING ITSELF, with no
@@ -1835,8 +1835,8 @@ stages = ["pre-commit"]
 # minor stylistic preferences; we still catch real bugs and probable
 # bugs. Out of scope: the inline `bash -c '...'` strings inside this
 # file (shellcheck cannot parse TOML-embedded bash).
-# scripts/setup-hooks.sh installs the version pinned there and in CI's
-# `tool:` lists (`tool-pins` checks they agree).
+# scripts/setup-hooks.sh and CI's `tool:` lists install the version in
+# pins.txt.
 # WHY: shell bugs that only fire on a branch no test takes — #3637
 [[repos]]
 repo = "local"
@@ -1987,22 +1987,6 @@ pass_filenames = false
 # against the real tree, or a widening that reddens the repo lands green.
 files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|spaces)/tests\\.rs|src-tauri/agaric-sync/src/snapshot/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
 stages = ["manual"]
-
-# tool-pins: CI installs prek, zizmor, taplo-cli, typos-cli, sqruff, shellcheck
-# and shfmt from the workflows' `tool:` lists, a dev box from
-# scripts/setup-hooks.sh and scripts/zizmor-hook.sh. Dependabot tracks none of
-# those copies.
-# WHY: CI floated to a newer prek than the dev boxes and a green tree went red with no repo change — #3742 (#3523)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "tool-pins"
-name = "tool pins agree (setup-hooks.sh, zizmor-hook.sh, workflow tool: lists)"
-entry = "node scripts/check-tool-pins.mjs"
-language = "system"
-pass_filenames = false
-files = "^(scripts/(setup-hooks\\.sh|zizmor-hook\\.sh|check-tool-pins\\.mjs)|\\.github/workflows/.*\\.ya?ml)$"
-stages = ["pre-commit"]
 
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
