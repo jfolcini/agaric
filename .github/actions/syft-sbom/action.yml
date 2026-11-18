@@ -1,28 +1,34 @@
-name: SBOM (syft)
+name: SBOM and OpenVEX
 description: >-
-  Writes `<output-prefix>.spdx.json` and `<output-prefix>.cyclonedx.json` for a
-  directory or file with syft, the same `syft scan` call anchore/sbom-action
-  makes. syft is the upstream release for this runner, checked against
-  pins.txt; sbom-action instead runs syft's `install.sh`, which checks the
-  download only against a checksum file from the same release.
+  Writes `<output-prefix>.spdx.json`, `<output-prefix>.cyclonedx.json` and
+  `<output-prefix>.openvex.json` for one release artifact. syft (checked
+  against pins.txt) scans the bundle for the installer and bundled OS
+  libraries; scripts/sbom.mjs adds the Rust crates compiled for `target` and
+  the frontend's npm packages, which a compiled binary hides from syft, and
+  fails an SBOM missing either; scripts/generate-vex.mjs then writes the
+  OpenVEX for that same SBOM. Needs node and cargo on PATH.
 
 inputs:
   source:
     description: A syft source, e.g. `dir:path/to/bundle` or `file:app.apk`.
     required: true
   output-prefix:
-    description: Path the two SBOM files are written under, without extension.
+    description: Path the SBOM and OpenVEX files are written under, without extension.
+    required: true
+  target:
+    description: The Rust target triple the artifact was compiled for.
     required: true
 
 runs:
   using: composite
   steps:
-    - name: Install syft and write the SBOMs
+    - name: Write the SBOMs and the OpenVEX
       shell: bash
       env:
         SYFT_CHECK_FOR_APP_UPDATE: 'false'
         SOURCE: ${{ inputs.source }}
         OUT: ${{ inputs.output-prefix }}
+        TARGET: ${{ inputs.target }}
       run: |
         set -euo pipefail
         platform="$(bash scripts/pins.sh platform)"
@@ -38,3 +44,6 @@ runs:
           syft="$dir/syft"
         fi
         "$syft" scan "$SOURCE" -o "spdx-json=$OUT.spdx.json" -o "cyclonedx-json=$OUT.cyclonedx.json"
+        node scripts/sbom.mjs augment --target "$TARGET" --cyclonedx "$OUT.cyclonedx.json" --spdx "$OUT.spdx.json"
+        node scripts/sbom.mjs check --cyclonedx "$OUT.cyclonedx.json"
+        node scripts/generate-vex.mjs --sbom "$OUT.cyclonedx.json" --output "$OUT.openvex.json"
