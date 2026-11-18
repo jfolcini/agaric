@@ -1,4 +1,4 @@
-# Session 4248 — links open from the AppImage on a newer host
+# Session 4254 — links open from the AppImage on a newer host
 
 #6871: links did not open from the 0.24.0 AppImage on Fedora 44 (Bluefin), and the maintainer could not reproduce it on Ubuntu 24.04.
 
