@@ -39,7 +39,6 @@ import { unwrap, validationCode } from '@/lib/app-error'
 import type { ListSeparator, PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { selectOptionsJson, VALUE_TYPES, valueTypeLabel } from '@/lib/property-utils'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
@@ -159,11 +158,6 @@ export function ChangePropertyType({
 
   if (definition.builtin || INTERNAL_PROPERTY_KEYS.has(key)) return null
 
-  const changed = (): void => {
-    onChanged()
-    invalidatePropertyCaches()
-  }
-
   /** Take `patch` into the draft and preview what it asks for, typed options after a pause. */
   const update = (patch: Partial<Draft>, typed = false): void => {
     const next = { ...draft, ...patch }
@@ -211,9 +205,9 @@ export function ChangePropertyType({
           type: valueTypeLabel({ value_type: target.valueType, multiple: target.multiple }, t),
         }),
         result.op_refs,
-        changed,
+        onChanged,
       )
-      changed()
+      onChanged()
     } catch (error) {
       if (validationCode(error) === ValidationCode.UnacknowledgedPropertyLoss) {
         setAskedAgain(true)

@@ -6,7 +6,8 @@
  * Refetches on mount, on a `block:properties-changed` event for this page (an
  * event for any other block, such as a TODO toggle on a child, is ignored),
  * and on `invalidatePageProperties()`, which `invalidatePropertyCaches()` calls
- * for the writes that emit no event (sync, MCP, undo, import; #5287).
+ * for the writes that emit no such event: a local command, through the change
+ * feed, and an out-of-band write (sync, MCP, import; #5287).
  */
 
 import { useQuery } from '@tanstack/react-query'

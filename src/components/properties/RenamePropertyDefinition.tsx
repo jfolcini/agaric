@@ -18,7 +18,6 @@ import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
@@ -44,11 +43,6 @@ export function RenamePropertyDefinition({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const { key } = definition
 
-  const changed = (): void => {
-    onChanged()
-    invalidatePropertyCaches()
-  }
-
   const validate = (name: string): string | null => {
     if (INTERNAL_PROPERTY_KEYS.has(name) || NON_DELETABLE_PROPERTIES.has(name)) {
       return t('propertiesView.reservedKey', { key: name })
@@ -66,9 +60,9 @@ export function RenamePropertyDefinition({
       notifyDefinitionWrite(
         t('propertiesView.renamed', { from: key, to: newKey }),
         op_refs,
-        changed,
+        onChanged,
       )
-      changed()
+      onChanged()
     } catch (error) {
       // The reason names what is in the way, e.g. blocks already holding the new key.
       reportIpcErrorWithReason(

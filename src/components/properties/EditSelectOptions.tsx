@@ -21,7 +21,6 @@ import { useSelectOptionsDraft } from '@/hooks/useSelectOptionsDraft'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 export interface EditSelectOptionsProps {
@@ -40,26 +39,21 @@ export function EditSelectOptions({
   const { key } = definition
   const saved = useMemo(() => parseSelectOptions(definition), [definition])
 
-  const changed = (): void => {
-    onChanged()
-    invalidatePropertyCaches()
-  }
-
   const state = useSelectOptionsDraft(saved, {
     save: async (next) => {
       try {
         const { op_refs } = unwrap(
           await commands.updatePropertyDefOptions(spaceId, key, JSON.stringify(next)),
         )
-        notifyDefinitionWrite(t('propertiesView.optionsSaved'), op_refs, changed)
-        changed()
+        notifyDefinitionWrite(t('propertiesView.optionsSaved'), op_refs, onChanged)
+        onChanged()
         return true
       } catch (error) {
         reportIpcErrorWithReason('EditSelectOptions', 'property.errorUpdate', error, t, { key })
         return false
       }
     },
-    rename: (from, to) => renameSelectOption(spaceId, key, from, to, changed),
+    rename: (from, to) => renameSelectOption(spaceId, key, from, to, onChanged),
   })
 
   return (

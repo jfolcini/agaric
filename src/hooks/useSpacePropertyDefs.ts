@@ -2,8 +2,8 @@
  * useSpacePropertyDefs — the active space's property definitions by key, the
  * built-ins' included (#6206), read once per space and shared by every mark on
  * a value that doesn't fit its key. Read again on `invalidatePropertyCaches()`,
- * which every definition write and every write that reached the backend
- * without a page store calls. Unread, or failed to read, it answers
+ * which the change feed calls after a definition write, as every out-of-band
+ * write does. Unread, or failed to read, it answers
  * `undefined`, and no value is marked.
  */
 

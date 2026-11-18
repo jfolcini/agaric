@@ -23,7 +23,6 @@ import { clearListStyle, contentShowsListMarker } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { requireActiveScope } from '@/lib/space-scope'
 import { buildIndexById, type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 import {
@@ -1103,7 +1102,6 @@ export function createReducers({
       )
       notifyUndoNewAction(rootParentId, resp.op_refs)
       announceCreatedNames(resp.names_created, spaceId)
-      invalidatePropertyCaches()
       await get().load()
       return resp
     },
