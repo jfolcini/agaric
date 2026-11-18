@@ -17,7 +17,7 @@ interface PropertyChipProps {
   valueAriaLabel?: string | undefined
   className?: string
   onClick?: (() => void) | undefined
-  onKeyClick?: () => void
+  onKeyClick?: (() => void) | undefined
   /** The value doesn't fit its key's definition (#6206): the chip carries a mark. */
   unfit?: boolean | undefined
 }

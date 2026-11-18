@@ -17,8 +17,10 @@ const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CL
 // `real-backend` project: these specs on the real commands (`e2e/bridge.ts`),
 // minus every test tagged `@mock-only`, which drives a hook only the mock has.
 // A spec joins the list once it passes there; the nightly `full-suite` lane of
-// `scheduled-deep-checks.yml` runs it. Unset, the run is the mock's and this
-// list is not read.
+// `scheduled-deep-checks.yml` runs it. Unset, the run is the mock's, and a
+// listed test not tagged `@mock-only` runs on a mock that withholds its
+// `window.__*` hooks, as the bridge does (`realBackend` in `e2e/helpers.ts`),
+// so a PR that adds a hook call to a listed spec goes red before the nightly.
 const REAL_BACKEND = process.env['AGARIC_E2E_BRIDGE'] !== undefined
 const REAL_BACKEND_SPECS = [
   'advanced-query-saved-views.spec.ts',
@@ -34,7 +36,7 @@ const REAL_BACKEND_SPECS = [
   'search-results.spec.ts',
   'search-sheet-mobile.spec.ts',
   'search-view-mobile.spec.ts',
-].map((spec) => `**/${spec}`)
+]
 
 export default defineConfig({
   testDir: './e2e',
@@ -123,7 +125,10 @@ export default defineConfig({
   projects: [
     {
       name: REAL_BACKEND ? 'real-backend' : 'chromium',
-      ...(REAL_BACKEND ? { testMatch: REAL_BACKEND_SPECS, grepInvert: /@mock-only/ } : {}),
+      ...(REAL_BACKEND
+        ? { testMatch: REAL_BACKEND_SPECS.map((spec) => `**/${spec}`), grepInvert: /@mock-only/ }
+        : {}),
+      metadata: { realBackendSpecs: REAL_BACKEND_SPECS },
       use: {
         ...devices['Desktop Chrome'],
         ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),

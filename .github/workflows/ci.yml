@@ -200,7 +200,7 @@ jobs:
         uses: ./.github/actions/syft-sbom
         with:
           source: dir:src-tauri/target/release/bundle
-          binaries: src-tauri/target/release/agaric*
+          binaries: src-tauri/target/release/agaric src-tauri/target/release/agaric-mcp
           output-prefix: ${{ runner.temp }}/agaric-linux
 
       - name: Upload Linux SBOMs and OpenVEX
