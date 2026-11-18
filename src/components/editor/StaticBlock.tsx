@@ -107,7 +107,9 @@ function StaticBlockInner({
   const batchAttachments = useBatchAttachments()
   const attachments = batchAttachments?.get(blockId) ?? []
   const attachmentsLoading = useBatchAttachmentsLoading()
-  const hasAttachments = !attachmentsLoading && attachments.length > 0
+  // Rows already held stay up while the batch refetches: any attachment write
+  // anywhere refetches it, and unmounting would flash every image (#6545).
+  const hasAttachments = attachments.length > 0
 
   // The outer wrapper is a passive container — no role, no
   // tabIndex, no keyboard handler. Inner controls (rich-content link/tag
