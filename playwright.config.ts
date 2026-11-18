@@ -44,6 +44,7 @@ const REAL_BACKEND_SPECS = [
   'embed-render-states.spec.ts',
   'embed-task-tick.spec.ts',
   'embed-typing.spec.ts',
+  'enter-delete-new-user.spec.ts',
   'graph-happy-paths.spec.ts',
   'graph-restore.spec.ts',
   'graph-view.spec.ts',

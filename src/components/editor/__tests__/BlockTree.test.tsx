@@ -5367,6 +5367,63 @@ describe('BlockTree Enter creates new sibling block', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to create block')
   })
 
+  // #6977 — Backspace on the new block before its create answers: the delete
+  // waits for the create, and focus has already left the block, so the
+  // focus-leave cleanup must not send a second `delete_block` for it.
+  it('Backspace before the create answers deletes the new block once, without a toast', async () => {
+    const { toast } = await import('sonner')
+    pageStore.setState({ blocks: [makeBlock({ id: 'A', content: 'First block' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'A' })
+    const createAnswer = deferred<void>()
+    const deleted = new Set<string>()
+    stubBlockTree({
+      create_block: async (args) => {
+        await createAnswer.promise
+        return withOps(makeBlockRow({ id: argBlockId(args), content: '' }))
+      },
+      // As the backend does: a second delete of the same block is refused.
+      delete_block: (args) => {
+        const id = argBlockId(args)
+        if (deleted.has(id)) throw new Error(`block ${id} is already deleted`)
+        deleted.add(id)
+        return deleteResp(id)
+      },
+    })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onEnterSave']).toBeDefined()
+    })
+    act(() => {
+      ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
+    })
+    const newId = pageStore.getState().blocks.find((b) => b.id !== 'A')?.id as string
+    expect(useBlockStore.getState().focusedBlockId).toBe(newId)
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts as { onDeleteBlock: () => void }).onDeleteBlock()
+    })
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    // Let the cleanup's probes answer while the create is still in flight.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      createAnswer.resolve()
+    })
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['A'])
+    })
+    await waitFor(() => {
+      expect(deleted).toEqual(new Set([newId]))
+    })
+    expect(
+      mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block').map(([, args]) => args),
+    ).toEqual([{ blockId: newId }])
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith('Failed to delete block')
+  })
+
   it('empty just-created block is deleted when focus changes', async () => {
     const tree = [makeBlock({ id: 'A', content: 'First block' })]
     pageStore.setState({ blocks: tree, loading: false })

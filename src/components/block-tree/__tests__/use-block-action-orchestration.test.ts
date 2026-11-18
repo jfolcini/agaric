@@ -1767,6 +1767,45 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       })
     })
 
+    // #6977 — Enter, Tab, Enter: the Tab waits for the first create, by when
+    // the editor is on the second new block, where the user is typing.
+    it('a Tab before a second Enter indents the first new block and leaves the editor be', async () => {
+      const held = heldCreate()
+      vi.mocked(newBlockId).mockReturnValueOnce('NEW_1').mockReturnValueOnce('NEW_2')
+      const params = makeDefaultParams({ createBelow: held.createBelow })
+      const { result, rerender } = renderHook(() => useBlockActionOrchestration(params))
+      /** What BlockTree does on the focus change: the editor mounts on `id`. */
+      const editorOn = (id: string) => {
+        params.rovingEditor.activeBlockId = id
+        params.focusedBlockId = id
+        rerender()
+      }
+
+      let first: Promise<void> = Promise.resolve()
+      act(() => {
+        first = result.current.handleEnterSave()
+      })
+      editorOn('NEW_1')
+      act(() => {
+        result.current.handleIndent()
+      })
+      let second: Promise<void> = Promise.resolve()
+      act(() => {
+        second = result.current.handleEnterSave()
+      })
+      editorOn('NEW_2')
+      vi.mocked(params.handleFlush).mockClear()
+      await act(async () => {
+        held.answer('NEW')
+        await Promise.all([first, second])
+      })
+
+      expect(params.indent).toHaveBeenCalledExactlyOnceWith('NEW_1')
+      expect(params.handleFlush).not.toHaveBeenCalled()
+      expect(params.rovingEditor.mount).not.toHaveBeenCalled()
+      expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockIndented')
+    })
+
     it('a create that fails after the user moved on leaves the focus where it is', async () => {
       const held = heldCreate()
       const params = makeDefaultParams({ createBelow: held.createBelow })

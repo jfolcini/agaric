@@ -409,8 +409,14 @@ describe('a block chord pressed while Enter is creating acts on the block Enter 
 
   type Chord = 'handleIndent' | 'handleDedent' | 'handleMoveUp' | 'handleMoveDown'
 
-  /** Enter on GS_2, `chord` while the create is in flight, then let the create land. */
-  async function enterThen(chord: Chord, { nested }: { nested: boolean }): Promise<string> {
+  /**
+   * Enter on GS_2, `chord` while the create is in flight, then let the create
+   * land. `thenEscape` leaves the block, as a fast Escape does, before it lands.
+   */
+  async function enterThen(
+    chord: Chord,
+    { nested, thenEscape = false }: { nested: boolean; thenEscape?: boolean },
+  ): Promise<string> {
     seedBlocks()
     useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
     useUndoStore.setState({ pages: new Map() })
@@ -455,6 +461,7 @@ describe('a block chord pressed while Enter is creating acts on the block Enter 
     await act(async () => {
       const enter = result.current.handleEnterSave()
       result.current[chord]()
+      if (thenEscape) useBlockStore.getState().setFocused(null)
       release()
       await enter
     })
@@ -466,6 +473,11 @@ describe('a block chord pressed while Enter is creating acts on the block Enter 
     const created = await enterThen('handleIndent', { nested: false })
     await waitFor(() => expect(childrenOf(BLOCK_GS_2)).toEqual([created]))
     expect(childrenOf(BLOCK_GS_1)).toEqual([])
+  })
+
+  it('Tab still indents the new block when Escape leaves it before the create lands', async () => {
+    const created = await enterThen('handleIndent', { nested: false, thenEscape: true })
+    await waitFor(() => expect(childrenOf(BLOCK_GS_2)).toEqual([created]))
   })
 
   it('Shift+Tab dedents the new block and leaves the one Enter left nested', async () => {
