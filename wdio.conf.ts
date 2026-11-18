@@ -1037,10 +1037,7 @@ async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
  * without being asked again, which a view that read before the rebuild and
  * never after fails (#6567).
  */
-const SPECS_WITH_A_SLOW_MATERIALIZER = new Set([
-  'agenda-count-after-write.e2e.ts',
-  'link-it-linked-refs.e2e.ts',
-])
+const SPECS_WITH_A_SLOW_MATERIALIZER = new Set(['link-it-linked-refs.e2e.ts'])
 
 /**
  * Specs whose app starts the way an AppImage starts it (#6871): `APPDIR` set,
