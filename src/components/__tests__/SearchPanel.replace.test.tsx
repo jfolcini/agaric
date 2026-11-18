@@ -482,6 +482,22 @@ describe('SearchPanel replace across pages', () => {
     expect(callsOf('edit_blocks_batch')).toEqual([])
   })
 
+  // #6895: an IconButton, so a press-and-hold names it on touch; the binding is in the tooltip.
+  it('the replace toggle shows its name and Ctrl+H on hover', async () => {
+    stubVault()
+    const user = userEvent.setup()
+    render(<SearchPanel />)
+    const toggle = screen.getByRole('button', { name: t('search.replace.toggle') })
+    expect(toggle).toHaveAttribute('data-slot', 'icon-button')
+    expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Control+H')
+
+    await user.hover(toggle)
+
+    const tip = (await screen.findAllByRole('tooltip'))[0]
+    expect(tip).toHaveTextContent(t('search.replace.toggle'))
+    expect(tip).toHaveTextContent('Ctrl + H')
+  })
+
   it('Ctrl+H in the panel opens and closes the replace row', async () => {
     stubVault()
     const user = userEvent.setup()

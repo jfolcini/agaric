@@ -89,6 +89,15 @@ describe('AttachmentList', () => {
     expect(screen.getByText('photo.png')).toBeInTheDocument()
   })
 
+  it('renders a filename as TruncatedText carrying the full name', async () => {
+    const filename = 'a-rather-long-meeting-recording-from-the-quarterly-review.m4a'
+    stubAttachments({ list_attachments: () => [makeAttachment('a1', filename)] })
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText(filename)).toHaveAttribute('data-slot', 'truncated-text')
+  })
+
   it('shows loading state', () => {
     // Parked promise keeps the loading state up.
     const pending = deferred<CommandReturns['list_attachments']>()

@@ -235,14 +235,14 @@ describe('QuickAccessBar', () => {
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 
-    it('renders a title attribute on long titles', () => {
+    it('renders a long title as TruncatedText with the full text', () => {
       const longTitle = 'A very long page title that will likely truncate in the chip'
       useRecentPagesStore.getState().recordVisit({ pageId: 'LONG', title: longTitle })
 
       render(<QuickAccessBar />)
 
       const chip = screen.getByRole('button', { name: longTitle })
-      expect(chip).toHaveAttribute('title', longTitle)
+      expect(within(chip).getByText(longTitle)).toHaveAttribute('data-slot', 'truncated-text')
     })
 
     it('falls back to "Untitled" when the title is empty', () => {
@@ -251,8 +251,7 @@ describe('QuickAccessBar', () => {
       render(<QuickAccessBar />)
 
       const chip = screen.getByRole('button', { name: 'Untitled' })
-      expect(chip).toBeInTheDocument()
-      expect(chip).toHaveAttribute('title', 'Untitled')
+      expect(chip).toHaveTextContent('Untitled')
     })
 
     it('chips carry the focus-tint class for keyboard discoverability', () => {

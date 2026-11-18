@@ -222,9 +222,8 @@ describe('TagList', () => {
       '1 Été',
       '2 x7',
     ])
-    // The full name stays on the tag's button and tooltip; the parent name has no button.
-    expect(screen.getByTestId('tag-item-projects/web/site')).toBeInTheDocument()
-    expect(screen.getByTitle('projects/web/site')).toHaveTextContent('site')
+    // The full name stays on the tag's button, its leaf on the badge; the parent name has no button.
+    expect(screen.getByTestId('tag-item-projects/web/site')).toHaveTextContent('site')
     expect(within(rows[4] as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
     expect(
       within(rows[1] as HTMLElement).getByRole('button', { name: /rename tag/i }),
@@ -977,10 +976,8 @@ describe('TagList', () => {
 
       render(<TagList />)
 
-      const badge = await screen.findByText(longName)
-      expect(badge).toBeInTheDocument()
-      expect(badge).toHaveClass('truncate')
-      expect(badge).toHaveAttribute('title', longName)
+      const label = await screen.findByText(longName)
+      expect(label).toHaveAttribute('data-slot', 'truncated-text')
     })
   })
 

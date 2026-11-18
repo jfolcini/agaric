@@ -94,10 +94,6 @@ export function SearchToggleRow({
             type="button"
             aria-pressed={pressed}
             aria-label={label}
-            // Native title gives pointer users the full name on hover.
-            // This is NOT the Radix tooltip the old design relied on —
-            // the visible abbreviation below is the touch-safe affordance.
-            title={label}
             disabled={disabled}
             data-testid={testId}
             data-state={pressed ? 'on' : 'off'}

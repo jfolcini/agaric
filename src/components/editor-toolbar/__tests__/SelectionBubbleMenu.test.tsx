@@ -429,8 +429,7 @@ describe('SelectionBubbleMenu', () => {
 
     it('#216 C2 — mark buttons expose canonical aria-keyshortcuts', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
-      // Bold/Italic are TipTap built-ins (fixed bindings); the rest derive
-      // from the keyboard config, normalised to ARIA token form.
+      // Derived from the keyboard config, normalised to ARIA token form.
       expect(screen.getByRole('button', { name: t('toolbar.bold') })).toHaveAttribute(
         'aria-keyshortcuts',
         'Control+B',
@@ -860,11 +859,11 @@ describe('SelectionBubbleMenu', () => {
       return screen.getAllByTestId('tooltip-content').map((el) => el.textContent ?? '')
     }
 
-    it("Bold button's tooltip contains the bold keyboard shortcut binding", () => {
+    it("Bold button's tooltip appends the bold keyboard binding", () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       const boldTooltip = tooltipTexts().find((text) => /^Bold\b/.test(text))
       expect(boldTooltip).toBeDefined()
-      expect(boldTooltip).toMatch(/Ctrl\+B|⌘B/i)
+      expect(boldTooltip).toMatch(/Ctrl\s*\+\s*B\)/i)
     })
 
     it("Code button's tooltip appends the inlineCode keyboard binding", () => {

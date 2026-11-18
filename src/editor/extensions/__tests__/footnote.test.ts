@@ -187,7 +187,8 @@ describe('the footnote reference node (#6033)', () => {
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith('DEF_A')
     expect(b).toHaveTextContent('1')
     expect(b).toHaveClass('footnote-ref-missing')
-    expect(b).toHaveAttribute('title', t('editor.footnoteMissing'))
+    expect(b).not.toHaveAttribute('title')
+    expect(b).toHaveTextContent(`1 ${t('editor.footnoteMissing')}`)
     b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     expect(onNavigate).toHaveBeenCalledOnce()
   })
@@ -202,14 +203,16 @@ describe('the footnote reference node (#6033)', () => {
       ],
       onNavigate,
     )
-    expect(refs(ed).map((el) => el.textContent)).toEqual(['1', '2', '2'])
+    // The number, without a missing reference's screen-reader text.
+    const numbers = () => refs(ed).map((el) => el.firstChild?.textContent)
+    expect(numbers()).toEqual(['1', '2', '2'])
     ;(refs(ed)[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith(blockId(3))
     expect(refs(ed)[0]).toHaveClass('footnote-ref-missing')
 
     caret(ed, 0, 5)
     typeText(ed, ' [^a]')
-    expect(refs(ed).map((el) => el.textContent)).toEqual(['1', '2', '1', '1'])
+    expect(numbers()).toEqual(['1', '2', '1', '1'])
   })
 })
 

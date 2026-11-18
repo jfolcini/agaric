@@ -13,8 +13,10 @@ import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import type { SearchReplace, SearchReplaceMode } from '@/components/SearchPanel/useSearchReplace'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 
 /** The toggle beside the search modes that opens the replace row. */
 export function SearchReplaceToggle({
@@ -25,19 +27,21 @@ export function SearchReplaceToggle({
   onToggle: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
+  const keys = getShortcutKeys('replaceInPage')
   return (
-    <Button
+    <IconButton
       type="button"
       variant={open ? 'secondary' : 'outline'}
-      size="icon"
       aria-expanded={open}
-      aria-label={t('search.replace.toggle')}
-      title={t('search.replace.toggle')}
+      ariaLabel={t('search.replace.toggle')}
+      tooltip={t('search.replace.toggle')}
+      shortcut={keys}
+      aria-keyshortcuts={toAriaKeyshortcuts(keys)}
       data-testid="search-replace-toggle"
       onClick={onToggle}
     >
       <Replace aria-hidden="true" />
-    </Button>
+    </IconButton>
   )
 }
 

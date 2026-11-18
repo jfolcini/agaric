@@ -206,13 +206,14 @@ export const pages: Record<string, string> = {
   // its title so a journal template is distinguishable from a regular page
   // template before opening it. Journal templates keep `journalIndicator`;
   // all other templates show `pageIndicator`.
-  // Translators: Templates view list: badge on a regular page template and its tooltip;
-  // screen-reader labels of a row's open and remove buttons ("template status" = being marked as a
-  // template); the empty state when the search matches nothing; the create form at the top (button,
-  // placeholder, label) and its error toasts. {{name}} = a template's page title; {{total}} =
-  // number of templates.
+  // Translators: Templates view list: badge on a regular page template and the explanation behind
+  // the ⓘ beside it, with that ⓘ's screen-reader label; screen-reader labels of a row's open and
+  // remove buttons ("template status" = being marked as a template); the empty state when the
+  // search matches nothing; the create form at the top (button, placeholder, label) and its error
+  // toasts. {{name}} = a template's page title; {{total}} = number of templates.
   'templates.pageIndicator': 'Page template',
   'templates.pageTooltip': 'A page template — inserting it creates a new page from this content.',
+  'templates.scopeInfoLabel': 'About the template type of {{name}}',
   'templates.navigateLabel': 'Open template {{name}}',
   'templates.removeTemplateLabel': 'Remove template status from {{name}}',
   'templates.noSearchResults': 'No templates match your search.',
@@ -378,12 +379,10 @@ export const pages: Record<string, string> = {
   'pageMode.editAsBlocks': 'Edit as blocks',
   'pageMode.editorLabel': 'Page text',
 
-  // Translators: Page mode: tooltip of the drag handle left of each block ("·" separates two
-  // hints); tooltip of the task button in the toolbar (TODO is the task marker); an error toast;
-  // the placeholder of an empty page ([[, @ and (( are characters the user types, keep them); and
-  // the two links in the footer under the page, read as "Supports Markdown. Type / for commands",
-  // each opening a reference side sheet.
-  'pageMode.gripTip': 'Drag to move · Click for the block menu',
+  // Translators: Page mode: tooltip of the task button in the toolbar (TODO is the task marker); an
+  // error toast; the placeholder of an empty page ([[, @ and (( are characters the user types, keep
+  // them); and the two links in the footer under the page, read as "Supports Markdown. Type / for
+  // commands", each opening a reference side sheet.
   'pageMode.todoToggleTip': 'Set or clear TODO',
   'pageMode.saveFailed':
     'Some changes to this page could not be saved yet; they are tried again with your next edit.',
@@ -814,7 +813,7 @@ export const pages: Record<string, string> = {
   // page named like "Projects/Work").
   'pageHeader.breadcrumbLabel': 'Page breadcrumb',
 
-  // Translators: Templates view: tooltip of the "Journal template" badge.
+  // Translators: Templates view: explanation behind the ⓘ beside the "Journal template" badge.
   'templates.journalTooltip':
     'This template is automatically applied when creating new journal entries',
 
@@ -922,6 +921,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.appliedFiltersLabel': 'Active filters',
   'pageBrowser.filter.filterGroup': 'Filter: {{label}}',
   'pageBrowser.filter.removeFilter': 'Remove filter {{label}}',
+  'pageBrowser.filter.aboutFilter': 'About the {{label}} filter',
   'pageBrowser.filter.manyFiltersWarning': 'Many filters can slow the view.',
 
   // Clear-all control on the chip row.

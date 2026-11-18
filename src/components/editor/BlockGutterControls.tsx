@@ -53,14 +53,6 @@ interface GutterButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement
   ariaLabel: string
   testId?: string
   ref?: React.Ref<HTMLButtonElement>
-  /**
-   * Hover-delay override (#1094). The gutter deliberately uses a longer 500ms
-   * dwell than the 300ms app baseline so the drag tip doesn't flicker while the
-   * pointer simply travels across rows. Passed down from `BlockGutterControls`
-   * so the override stays explicit now that the per-surface
-   * `<TooltipProvider delayDuration={500}>` is gone.
-   */
-  delayDuration?: number | undefined
 }
 
 /**
@@ -76,15 +68,11 @@ export const GutterButton = ({
   ariaLabel,
   testId,
   className,
-  delayDuration,
   ...buttonProps
 }: GutterButtonProps) => (
-  // Spread the override only when set so we never pass `delayDuration={undefined}`
-  // (rejected under exactOptionalPropertyTypes) — an unset value must inherit
-  // the app-level baseline, not override it with undefined.
   // #1735: `openOnLongPress` surfaces the gutter button's label on a touch
   // press-and-hold, since Radix hover tooltips never open on a coarse-pointer tap.
-  <Tooltip openOnLongPress {...(delayDuration === undefined ? {} : { delayDuration })}>
+  <Tooltip openOnLongPress>
     <TooltipTrigger asChild>
       <button
         ref={ref}
@@ -116,13 +104,6 @@ interface BlockGutterControlsProps {
   isSelected?: boolean | undefined
   /** Toggle this block's membership in the multi-selection (B1, #217). */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
-  /**
-   * Hover-delay override for the gutter tooltip (#1094). Forwarded by
-   * `SortableBlock` (500ms) so the gutter keeps its deliberately-longer dwell
-   * after the per-surface `<TooltipProvider>` was removed in favour of the
-   * single app-level baseline.
-   */
-  tooltipDelayDuration?: number | undefined
 }
 
 export const BlockGutterControls = React.memo(
@@ -132,7 +113,6 @@ export const BlockGutterControls = React.memo(
     dragListeners,
     isSelected,
     onSelect,
-    tooltipDelayDuration,
   }: BlockGutterControlsProps): React.ReactElement => {
     const { t } = useTranslation()
     const isTouch = useIsTouch()
@@ -164,9 +144,7 @@ export const BlockGutterControls = React.memo(
     // the checkbox is suppressed there (long-press context menu owns touch ops).
     const selectCheckbox =
       onSelect && (isSelected || hasSelection) ? (
-        <Tooltip
-          {...(tooltipDelayDuration === undefined ? {} : { delayDuration: tooltipDelayDuration })}
-        >
+        <Tooltip>
           <TooltipTrigger asChild>
             <input
               type="checkbox"
@@ -203,7 +181,6 @@ export const BlockGutterControls = React.memo(
         label={t('block.reorderTip')}
         ariaLabel={t('block.reorder')}
         testId="drag-handle"
-        delayDuration={tooltipDelayDuration}
         // #370: the drag handle must follow the same per-block hover contract as
         // every other gutter control — hidden at rest (`opacity-0` from
         // GUTTER_BUTTON_BASE) and revealed only on `group-hover` /

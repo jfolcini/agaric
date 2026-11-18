@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useTagColors } from '@/hooks/useTagColors'
 import { isConflict, unwrap, validationCode } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
@@ -407,15 +408,16 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       className="touch-hit-area cursor-pointer border-none bg-transparent p-0"
                       onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
                       data-testid={`tag-item-${tag.name || 'Unnamed'}`}
+                      // The name sits inside the badge's TruncatedText, past what the lint can see.
+                      aria-label={`${label} ${tag.usage_count}`}
                     >
                       <Badge
                         tone={color ? undefined : 'secondary'}
-                        className={cn('truncate max-w-[150px]', color && 'border-transparent')}
+                        className={cn('max-w-[150px]', color && 'border-transparent')}
                         style={tagColorStyle(color)}
-                        title={tag.name || 'Unnamed'}
                       >
-                        {label}
-                        <span className={cn('ml-1.5', !color && 'text-muted-foreground')}>
+                        <TruncatedText>{label}</TruncatedText>
+                        <span className={cn('ml-1.5 shrink-0', !color && 'text-muted-foreground')}>
                           {tag.usage_count}
                         </span>
                       </Badge>

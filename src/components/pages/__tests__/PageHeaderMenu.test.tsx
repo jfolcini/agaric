@@ -579,6 +579,8 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     // Expand the sub-menu and pick a target.
     await user.click(within(topMenu).getByText(/move to/i))
     const subMenu = screen.getByRole('menu', { name: /move to/i })
+    // A long space name is cut to the menu's width, as TruncatedText.
+    expect(within(subMenu).getByText('Space One')).toHaveAttribute('data-slot', 'truncated-text')
     await user.click(within(subMenu).getByText('Space One'))
     expect(onMoveToSpace).toHaveBeenCalledWith('sp-1')
   })

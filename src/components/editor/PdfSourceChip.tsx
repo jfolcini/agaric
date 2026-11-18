@@ -13,6 +13,7 @@ import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Spinner } from '@/components/ui/spinner'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { unwrap } from '@/lib/app-error'
 import { bytesToBlob } from '@/lib/attachment-utils'
@@ -80,13 +81,12 @@ export function PdfSourceChip({ attachmentId, page }: PdfSourceChipProps): React
         type="button"
         className="pdf-source-chip touch-hit-area focus-ring-visible flex min-w-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5"
         aria-label={label}
-        title={label}
         // #1498: keep the editor focused, its caret where it was, through the click.
         onMouseDown={(e) => e.preventDefault()}
         onClick={(e) => void open(e)}
       >
         <FileText className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
-        <span className="max-w-64 truncate">{text}</span>
+        <TruncatedText className="max-w-64">{text}</TruncatedText>
       </button>
       {reader && (
         <Suspense fallback={<Spinner />}>

@@ -15,7 +15,6 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { IconButton } from '@/components/ui/icon-button'
-import { Kbd } from '@/components/ui/kbd'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
@@ -42,14 +41,8 @@ export function HistoryNavButtons(): React.ReactElement {
         size="icon-xs"
         ariaLabel={t('nav.back')}
         aria-keyshortcuts={toAriaKeyshortcuts(backKeys)}
-        tooltip={
-          <>
-            {t('nav.back')}{' '}
-            <Kbd className="ml-1" aria-hidden="true">
-              {backKeys}
-            </Kbd>
-          </>
-        }
+        tooltip={t('nav.back')}
+        shortcut={backKeys}
         disabled={!canStep(history, -1)}
         onClick={navigateBack}
       >
@@ -60,14 +53,8 @@ export function HistoryNavButtons(): React.ReactElement {
         size="icon-xs"
         ariaLabel={t('nav.forward')}
         aria-keyshortcuts={toAriaKeyshortcuts(forwardKeys)}
-        tooltip={
-          <>
-            {t('nav.forward')}{' '}
-            <Kbd className="ml-1" aria-hidden="true">
-              {forwardKeys}
-            </Kbd>
-          </>
-        }
+        tooltip={t('nav.forward')}
+        shortcut={forwardKeys}
         disabled={!canStep(history, 1)}
         onClick={navigateForward}
       >

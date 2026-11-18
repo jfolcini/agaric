@@ -296,22 +296,6 @@ describe('BlockLink NodeView', () => {
   })
 })
 
-// -- Cross-space (foreign-target) chip rendering -------------------
-
-/**
- * When the active space is A and the document still
- * contains `[[ULID_OF_PAGE_IN_B]]`, the resolve store has marked the
- * ULID as a deleted placeholder (this is what
- * BlockTree.fetchAndCacheLinks does for every id the backend's
- * space-scoped batch_resolve did not return). The BlockLink NodeView
- * must:
- *   1. Render with the `block-link-deleted` class.
- *   2. Surface the broken-link tooltip ("Broken link or in another space — click to remove").
- *   3. Delete itself on click (undoable via TipTap's transaction history).
- *   4. NOT call onNavigate — broken chips are removable artifacts, not
- *      teleporters that auto-switch space.
- */
-
 // -- TagRef NodeView ----------------------------------------------------------
 
 describe('TagRef NodeView', () => {

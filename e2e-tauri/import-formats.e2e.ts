@@ -25,11 +25,12 @@ import path from 'node:path'
 
 import {
   ACTION_TIMEOUT,
-  NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
   expectImageRendered,
   importFolder,
+  linkChipTarget,
+  NAV_TIMEOUT,
   navigateTo,
   openDataTab,
   openPageTitled,
@@ -215,8 +216,8 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
 
     await navigateTo('Journal')
     await navigateTo('Pages')
-    await $(`span[title="export/${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    expect(await $$(`span[title="export/${title}"]`).length).toBe(1)
+    await $(`span[data-page-title="export/${title}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await $$(`span[data-page-title="export/${title}"]`).length).toBe(1)
     await openPageTitled(`export/${title}`)
     for (const block of ['first', 'second', 'item']) {
       await blockStaticByMarker(`${marker}-${block}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -496,7 +497,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await navigateTo('Pages')
     await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(
-      `span[title="export/${marker}-TCP/IP"]`,
+      `span[data-page-title="export/${marker}-TCP/IP"]`,
       'the page IP under the namespace TCP',
     )
     await openPageTitled(title)
@@ -538,7 +539,7 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await link.waitForDisplayed({ timeout: NAV_TIMEOUT })
     const id = await link.getAttribute('data-block-id')
     const chip = $(`li[data-block-id="${id}"] [data-testid="block-link-chip"]`)
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === title, {
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === title, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: `the link to the note never resolved to the page ${title}`,
     })

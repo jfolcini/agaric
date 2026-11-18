@@ -317,7 +317,6 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
       tabIndex={-1}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
-      title={t('sidebar.toggleSidebar')}
       className={cn(
         // The rail is a drag-to-resize handle and is only meaningful on
         // fine-pointer (mouse) input. On touch, the sidebar is a Sheet
@@ -617,12 +616,7 @@ const SidebarMenuButton = ({
   }
 
   return (
-    // #1094: the collapsed-sidebar nav labels intentionally appear instantly
-    // (0ms) — they're the icon-rail's only labels, not supplementary hints, so
-    // any dwell would feel laggy. The override now rides on the Tooltip itself,
-    // since the per-surface `<TooltipProvider delayDuration={0}>` was removed in
-    // favour of the single app-level baseline.
-    <Tooltip delayDuration={0}>
+    <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent
         side="right"

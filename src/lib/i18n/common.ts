@@ -189,7 +189,6 @@ export const common: Record<string, string> = {
   // icons; a click switches to the next space. Screen-reader label, then tooltip;
   // {{name}} = the space name.
   'space.accentBadge': '{{name}} space — click to switch',
-  'space.accentBadgeTitle': '{{name}} — click to switch',
 
   // Translators: generic action labels reused across the app (buttons in dialogs, toolbars, toasts
   // and error screens); keep them short. "Add block" appends an empty block to a page.
@@ -1137,13 +1136,13 @@ export const common: Record<string, string> = {
   'findInPage.inputLabel': 'Find in page',
 
   // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label). Keep the
-  // glyphs in parentheses (Aa, Ab|, .*) and the key names (Shift+F3, F3, Esc).
+  // glyphs in parentheses (Aa, Ab|, .*).
   'findInPage.toggleCaseSensitive': 'Match case (Aa)',
   'findInPage.toggleWholeWord': 'Match whole word (Ab|)',
   'findInPage.toggleRegex': 'Regular expression (.*)',
-  'findInPage.previousMatch': 'Previous match (Shift+F3)',
-  'findInPage.nextMatch': 'Next match (F3)',
-  'findInPage.close': 'Close (Esc)',
+  'findInPage.previousMatch': 'Previous match',
+  'findInPage.nextMatch': 'Next match',
+  'findInPage.close': 'Close',
 
   // Translators: in-page find match counter, must stay short; {{current}} = number of the current
   // match, {{total}} = number of matches.
@@ -1162,15 +1161,12 @@ export const common: Record<string, string> = {
   'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
 
   // Translators: in-page find, Replace row: the toggle button, the replacement field (also in the
-  // Search view), Replace / Replace all buttons with tooltips, and a spinner's screen-reader label.
-  // Keep the key names (Ctrl+H, Enter, Ctrl+Alt+Enter).
-  'findInPage.toggleReplace': 'Replace (Ctrl+H)',
+  // Search view), Replace / Replace all buttons, and a spinner's screen-reader label.
+  'findInPage.toggleReplace': 'Replace',
   'findInPage.replaceInputLabel': 'Replace with',
   'findInPage.replacePlaceholder': 'Replace with\u2026',
   'findInPage.replaceOne': 'Replace',
-  'findInPage.replaceOneHint': 'Replace this match, then go to the next (Enter)',
   'findInPage.replaceAll': 'Replace all',
-  'findInPage.replaceAllHint': 'Replace every match in the page (Ctrl+Alt+Enter)',
   'findInPage.replacing': 'Replacing',
 
   // Translators: status text of the Replace row (also in the Search view's replace bar);

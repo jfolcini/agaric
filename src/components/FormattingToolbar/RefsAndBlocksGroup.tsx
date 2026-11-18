@@ -14,10 +14,11 @@ import type React from 'react'
 import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
-import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { type RenderMode, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import type { ListStyle } from '@/lib/list-style'
 
@@ -70,18 +71,17 @@ export function renderFormatButton({
         <span>{t('toolbar.format')}</span>
       </Button>
     ) : (
-      <Tip label={t('toolbar.formatTip')}>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('toolbar.format')}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
-        >
-          <Type />
-        </Button>
-      </Tip>
+      <IconButton
+        variant="ghost"
+        size="icon-xs"
+        tooltip={t('toolbar.formatTip')}
+        ariaLabel={t('toolbar.format')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
+      >
+        <Type />
+      </IconButton>
     )
 
   return (
@@ -165,18 +165,17 @@ export function renderTurnIntoButton({
         <span>{t('toolbar.turnInto')}</span>
       </Button>
     ) : (
-      <Tip label={t('toolbar.turnIntoTip')}>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('toolbar.turnInto')}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
-        >
-          <Pilcrow />
-        </Button>
-      </Tip>
+      <IconButton
+        variant="ghost"
+        size="icon-xs"
+        tooltip={t('toolbar.turnIntoTip')}
+        ariaLabel={t('toolbar.turnInto')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
+      >
+        <Pilcrow />
+      </IconButton>
     )
 
   return (
@@ -259,18 +258,17 @@ export function renderTableOpsButton({
         <span>{t('toolbar.tableOps')}</span>
       </Button>
     ) : (
-      <Tip label={t('toolbar.tableOpsTip')}>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={t('toolbar.tableOps')}
-          className="h-7 gap-1 px-1.5 text-xs"
-          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
-        >
-          <Table2 />
-          <span className="font-medium">{t('toolbar.tableOps')}</span>
-        </Button>
-      </Tip>
+      // Its name is on it, so it needs no tooltip.
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={t('toolbar.tableOps')}
+        className="h-7 gap-1 px-1.5 text-xs"
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
+      >
+        <Table2 />
+        <span className="font-medium">{t('toolbar.tableOps')}</span>
+      </Button>
     )
 
   return (
@@ -341,16 +339,15 @@ export function renderTablePickerButton({
         <span>{t('toolbar.insertTable')}</span>
       </Button>
     ) : (
-      <Tip label={t('toolbar.insertTableTip')}>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('toolbar.insertTable')}
-          {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
-        >
-          <Table />
-        </Button>
-      </Tip>
+      <IconButton
+        variant="ghost"
+        size="icon-xs"
+        tooltip={t('toolbar.insertTableTip')}
+        ariaLabel={t('toolbar.insertTable')}
+        {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
+      >
+        <Table />
+      </IconButton>
     )
 
   return (

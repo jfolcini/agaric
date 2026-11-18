@@ -109,6 +109,11 @@ describe('PdfSourceChip (#6629)', () => {
 
     const chip = await screen.findByRole('button', { name: chipName })
     expect(chip).toHaveTextContent(t('pdfViewer.source', { filename: 'report.pdf', page: 12 }))
+    // The name is the button's aria-label; a cut filename reveals itself.
+    expect(chip).not.toHaveAttribute('title')
+    expect(chip.querySelector('[data-slot="truncated-text"]')).toHaveTextContent(
+      t('pdfViewer.source', { filename: 'report.pdf', page: 12 }),
+    )
   })
 
   it('opens the reader on its page, with the PDF and the block that owns it', async () => {

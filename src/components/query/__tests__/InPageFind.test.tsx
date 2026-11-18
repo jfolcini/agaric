@@ -311,3 +311,32 @@ describe('InPageFind — close + a11y', () => {
     expect(results).toHaveNoViolations()
   })
 })
+
+// #6895: icon-only controls are IconButtons, so a press-and-hold names them on touch, and
+// the binding sits in the tooltip after the name.
+describe('InPageFind — icon button tooltips', () => {
+  it.each([
+    ['in-page-find-toggle-replace', 'Replace', 'Ctrl + H'],
+    ['in-page-find-toggle-case', 'Match case (Aa)', null],
+    ['in-page-find-toggle-word', 'Match whole word (Ab|)', null],
+    ['in-page-find-toggle-regex', 'Regular expression (.*)', null],
+    ['in-page-find-previous', 'Previous match', 'Shift + F3'],
+    ['in-page-find-next', 'Next match', 'F3'],
+    ['in-page-find-close', 'Close', 'Esc'],
+  ])('%s shows %s and its shortcut on hover', async (testId, name, shortcut) => {
+    const user = userEvent.setup()
+    render(<InPageFind />)
+    openToolbar('alpha')
+    await waitFor(() => {
+      expect(screen.getByTestId('in-page-find-counter').textContent).toMatch(/of 4$/)
+    })
+    const button = screen.getByTestId(testId)
+    expect(button).toHaveAttribute('data-slot', 'icon-button')
+
+    await user.hover(button)
+
+    const tip = (await screen.findAllByRole('tooltip'))[0]
+    expect(tip).toHaveTextContent(name)
+    if (shortcut !== null) expect(tip).toHaveTextContent(shortcut)
+  })
+})

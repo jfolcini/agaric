@@ -656,6 +656,7 @@ export function GraphView(): React.ReactElement {
             onClick={zoomIn}
             tooltip={t('graph.zoomIn')}
             ariaLabel={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
+            shortcut={getShortcutKeys('graphZoomIn')}
           >
             <Plus className="h-4 w-4" />
           </IconButton>
@@ -664,6 +665,7 @@ export function GraphView(): React.ReactElement {
             onClick={zoomOut}
             tooltip={t('graph.zoomOut')}
             ariaLabel={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
+            shortcut={getShortcutKeys('graphZoomOut')}
           >
             <Minus className="h-4 w-4" />
           </IconButton>
@@ -672,6 +674,7 @@ export function GraphView(): React.ReactElement {
             onClick={fitToView}
             tooltip={t('graph.zoomReset')}
             ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
+            shortcut={getShortcutKeys('graphZoomReset')}
           >
             <Maximize2 className="h-4 w-4" />
           </IconButton>

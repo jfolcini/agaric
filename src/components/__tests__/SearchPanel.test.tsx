@@ -577,6 +577,20 @@ describe('SearchPanel', () => {
     expect(screen.getByText(t('search.help.section.filterSyntax'))).toBeInTheDocument()
   })
 
+  // #6895: an IconButton, so a press-and-hold names it on touch.
+  it('the ? button shows its name on hover', async () => {
+    const user = userEvent.setup()
+    render(<SearchPanel />)
+    const help = screen.getByTestId('search-help-button')
+    expect(help).toHaveAttribute('data-slot', 'icon-button')
+
+    await user.hover(help)
+
+    expect((await screen.findAllByRole('tooltip'))[0]).toHaveTextContent(
+      t('search.helpButtonLabel'),
+    )
+  })
+
   it('does not search for whitespace-only input', () => {
     render(<SearchPanel />)
 

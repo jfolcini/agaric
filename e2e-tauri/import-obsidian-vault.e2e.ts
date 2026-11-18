@@ -30,12 +30,13 @@
 // ---------------------------------------------------------------------------
 
 import {
-  NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
   expectImageRendered,
   exportOpenPage,
   importFolder,
+  linkChipTarget,
+  NAV_TIMEOUT,
   navigateTo,
   openPageTitled,
   pageEntryTitled,
@@ -101,10 +102,13 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled(topic).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${vault}/${topic}"]`, "a page titled with the vault's name")
+    await expectAbsent(
+      `span[data-page-title="${vault}/${topic}"]`,
+      "a page titled with the vault's name",
+    )
     await pageEntryTitled('Über').waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent('span[title="über"]', 'a page titled über')
-    await expectAbsent('span[title="pic.png"]', 'a page made of the image')
+    await expectAbsent('span[data-page-title="über"]', 'a page titled über')
+    await expectAbsent('span[data-page-title="pic.png"]', 'a page made of the image')
 
     await openPageTitled(home)
     const links = await blockId(`${marker}-links`)
@@ -162,7 +166,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
     const umlaut = $(
       `li[data-block-id="${await blockId(`${marker}-umlaut`)}"] [data-testid="block-link-chip"]`,
     )
-    await browser.waitUntil(async () => (await umlaut.getAttribute('title')) === 'Über', {
+    await browser.waitUntil(async () => (await linkChipTarget(umlaut)) === 'Über', {
       timeout: NAV_TIMEOUT,
       timeoutMsg: '[[über]] never resolved to Über.md',
     })
@@ -188,7 +192,7 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       links,
     )
     const chip = $(`li[data-block-id="${links}"] [data-testid="block-link-chip"]`)
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === topic, {
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === topic, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the wikilink never resolved to the vault note it names',
     })

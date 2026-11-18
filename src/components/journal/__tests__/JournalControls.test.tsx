@@ -146,6 +146,23 @@ describe('JournalControls', () => {
     )
   })
 
+  // #6895: the binding is IconButton's `shortcut`, after the name in the tooltip.
+  it.each([
+    [/previous day/i, 'Previous day', 'Alt + ←'],
+    [/next day/i, 'Next day', 'Alt + →'],
+  ])('%s shows its name and binding on hover', async (role, name, keys) => {
+    const user = userEvent.setup()
+    render(<JournalControls />)
+    const button = screen.getByRole('button', { name: role })
+    expect(button).toHaveAttribute('data-slot', 'icon-button')
+
+    await user.hover(button)
+
+    const tip = (await screen.findAllByRole('tooltip'))[0]
+    expect(tip).toHaveTextContent(name)
+    expect(tip?.querySelector('kbd')).toHaveTextContent(keys)
+  })
+
   it('renders the calendar trigger', () => {
     render(<JournalControls />)
     expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()

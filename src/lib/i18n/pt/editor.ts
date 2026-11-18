@@ -217,9 +217,7 @@ export const editor: Record<string, string> = {
   'block.swipe.deleted': 'Bloco excluído',
   'editor.unknownNodeType':
     'Algum conteúdo (tipo: {{type}}) não pôde ser salvo como Markdown e foi descartado.',
-  'editor.brokenLinkTooltip': 'Link quebrado ou em outro espaço — clique para remover',
   'editor.brokenLinkRemoved': 'Link quebrado removido',
-  'editor.brokenLinkRemoveAction': '(remover link quebrado)',
   'editor.brokenLinkUndoStale':
     'A página mudou depois da remoção, então não é mais possível desfazer aqui',
   'editor.brokenLinkExplanation':
@@ -324,7 +322,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Remover',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Mostrar ou ocultar a barra de redimensionamento',
-  'attachment.resizeHandle': 'Arraste para redimensionar a imagem',
   'imageResize.saveFailed': 'Não foi possível salvar o tamanho da imagem',
   'imageCaption.placeholder': 'Adicionar uma legenda…',
   'imageCaption.label': 'Legenda da imagem',

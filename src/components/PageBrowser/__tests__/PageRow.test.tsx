@@ -82,6 +82,13 @@ describe('PageRow', () => {
     expect(screen.getByText('Project Alpha')).toBeInTheDocument()
   })
 
+  it('cuts a long title, keeping its full text for the hover when cut (#6895)', () => {
+    render(<PageRow {...baseProps()} />)
+    expect(
+      screen.getByText('Project Alpha').closest('[data-slot="truncated-text"]'),
+    ).toHaveAttribute('data-page-title', 'Project Alpha')
+  })
+
   it('falls back to the localised "Untitled" when title is null', () => {
     render(<PageRow {...baseProps({ title: null })} />)
     expect(screen.getByText('Untitled')).toBeInTheDocument()

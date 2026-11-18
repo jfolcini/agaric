@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next'
 import type { StoreApi } from 'zustand'
 
 import { Button } from '@/components/ui/button'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
@@ -563,8 +564,8 @@ export function PdfViewerDialog({
     <Root open={open} onOpenChange={onOpenChange}>
       <Content className={contentClassName}>
         <Header>
-          <Title className="truncate pr-6" title={filename}>
-            {filename}
+          <Title className="pr-6">
+            <TruncatedText className="block">{filename}</TruncatedText>
           </Title>
           <Description className="sr-only">{t('pdfViewer.description', { filename })}</Description>
         </Header>

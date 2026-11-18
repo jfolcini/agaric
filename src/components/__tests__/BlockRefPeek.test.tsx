@@ -301,30 +301,6 @@ describe('BlockRefPeek', () => {
     expect(caret).toHaveFocus()
   })
 
-  it('parks the chip title while open and puts it back on close', async () => {
-    const user = userEvent.setup()
-    render(<Chips ids={[TARGET]} />)
-
-    const chip = chipFor(TARGET)
-    const originalTitle = chip.getAttribute('title')
-    expect(originalTitle).not.toBeNull()
-
-    await hoverOpen(user, TARGET)
-    expect(chip.hasAttribute('title')).toBe(false)
-    // The marker the editor NodeView reads so its next `update()` does not
-    // put the native tooltip back over the open popover.
-    expect(chip.hasAttribute('data-peek-title-parked')).toBe(true)
-    expect(chip.getAttribute('aria-expanded')).toBe('true')
-
-    await user.unhover(chip)
-    await waitFor(() => {
-      expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
-    })
-    expect(chip.getAttribute('title')).toBe(originalTitle)
-    expect(chip.hasAttribute('data-peek-title-parked')).toBe(false)
-    expect(chip.getAttribute('aria-expanded')).toBe('false')
-  })
-
   // The first commit is the spinner. A peek placed below a chip near the
   // bottom of the window while 40 px tall grows past the viewport when the
   // payload lands, so the placement has to run again with the full box.
@@ -599,6 +575,23 @@ describe('BlockRefPeek', () => {
       } finally {
         vi.mocked(computePosition).mockResolvedValue({ x: 50, y: 120 } as never)
       }
+    })
+
+    it('parks the chip title while open and puts it back on close', async () => {
+      const user = userEvent.setup()
+      render(<PageLink />)
+
+      const chip = screen.getByTestId('block-link-chip')
+      expect(chip).toHaveAttribute('title', 'Design Notes')
+      await ctrlHover(user)
+      expect(chip).not.toHaveAttribute('title')
+
+      await user.keyboard('{/Control}')
+      await user.unhover(chip)
+      await waitFor(() => {
+        expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
+      })
+      expect(chip).toHaveAttribute('title', 'Design Notes')
     })
 
     it('does not open on a plain hover', async () => {

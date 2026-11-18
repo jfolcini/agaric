@@ -59,7 +59,6 @@ export function HighlightColorPicker({
             variant="ghost"
             size="icon-xs"
             aria-label={t(label)}
-            title={t(label)}
             aria-pressed={pressed}
             className={cn(pressed && toolbarActiveClass)}
             {...toolbarPressHandlers(() => {

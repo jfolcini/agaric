@@ -106,10 +106,21 @@ vi.mock('@/components/ui/separator', () => ({
 }))
 
 // Mock Tooltip primitives — Radix portals tooltip content lazily; render
-// The label inline so tests can assert on tooltip text.
+// The label inline so tests can assert on tooltip text, and whether a
+// press-and-hold opens it (`PopoverAnchor` overrides a trigger's `data-slot`).
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({
+    children,
+    openOnLongPress,
+  }: {
+    children: React.ReactNode
+    openOnLongPress?: boolean
+  }) => (
+    <span data-testid="tooltip" data-open-on-long-press={openOnLongPress ? 'true' : undefined}>
+      {children}
+    </span>
+  ),
   TooltipTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => (
     <>{children}</>
   ),
@@ -673,6 +684,17 @@ describe('FormattingToolbar', () => {
     })
   })
 
+  // #6895 — an IconButton, so a touch press-and-hold shows its name.
+  it('the block-menu button is an IconButton with its tooltip', () => {
+    render(<FormattingToolbar editor={makeEditor()} blockMenu={{ open: false, onOpen: vi.fn() }} />)
+    const btn = screen.getByRole('button', { name: t('contextMenu.blockActions') })
+    expect(btn).toHaveAttribute('data-slot', 'icon-button')
+    const tooltip = btn.closest('[data-testid="tooltip"]') as HTMLElement
+    expect(within(tooltip).getByTestId('tooltip-content')).toHaveTextContent(
+      t('pageSource.blockMenuTip'),
+    )
+  })
+
   // ── #46: aria-controls linking ────────────────────────────────────────
 
   describe('aria-controls', () => {
@@ -848,6 +870,22 @@ describe('FormattingToolbar', () => {
         expect(moreBtn).toHaveAttribute('aria-haspopup', 'dialog')
         expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
         expect(moreBtn).toHaveAttribute('aria-controls')
+      } finally {
+        restore()
+      }
+    })
+
+    // #6895 — an IconButton, so a touch press-and-hold shows its name.
+    it('the More trigger is an IconButton with its tooltip', async () => {
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        const moreBtn = await screen.findByRole('button', { name: t('toolbar.more') })
+        const tooltip = moreBtn.closest('[data-testid="tooltip"]') as HTMLElement
+        expect(tooltip).toHaveAttribute('data-open-on-long-press', 'true')
+        expect(within(tooltip).getByTestId('tooltip-content')).toHaveTextContent(
+          t('toolbar.moreTip'),
+        )
       } finally {
         restore()
       }
@@ -1037,38 +1075,44 @@ describe('FormattingToolbar', () => {
       resetAllShortcuts()
     })
 
-    it('maps the same mark actions to the same catalog ids the bubble menu uses', () => {
-      // Mirror of SelectionBubbleMenu's BUBBLE_MENU_SHORTCUT_IDS. Bold/Italic
-      // are intentionally absent (TipTap StarterKit defaults, not catalogued).
+    it('maps the mark actions to the catalog ids the bubble menu uses, and the rest to theirs', () => {
       expect(TOOLBAR_SHORTCUT_IDS).toEqual({
+        'toolbar.bold': 'bold',
+        'toolbar.italic': 'italic',
+        'toolbar.underline': 'underline',
         'toolbar.code': 'inlineCode',
         'toolbar.strikethrough': 'strikethrough',
         'toolbar.highlight': 'highlight',
+        'toolbar.newLine': 'insertLineBreak',
+        'toolbar.insertDate': 'openDatePicker',
+        'toolbar.todoToggle': 'cycleTaskState',
+        'toolbar.properties': 'openPropertiesDrawer',
+        'toolbar.undo': 'undoLastPageOp',
+        'toolbar.redo': 'redoLastUndoneOp',
       })
     })
 
     it('renders the LIVE catalog chord (not a frozen i18n string) for a mapped button', () => {
       // 'toolbar.code' → 'inlineCode' (catalog default 'Ctrl + Shift + K').
       const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
-      // Label + live chord, sourced from the catalog — NOT the tip string.
-      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + Shift + K)`)
+      // Name + live chord (IconButton's shortcut chip), sourced from the catalog.
+      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl + Shift + K`)
     })
 
     it('updates the tooltip when the shortcut is rebound (proves it derives from the catalog)', () => {
       setCustomShortcut('inlineCode', 'Ctrl + Shift + E')
       const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
-      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + Shift + E)`)
+      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl + Shift + E`)
       // And it is NOT the old hardcoded i18n chord.
       expect(tooltip).not.toContain('Ctrl+E')
     })
 
-    it('never doubles the chord — the tip string carries no parenthesised chord', () => {
-      const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
-      // Exactly one "(...)" group; the i18n tip no longer embeds a chord.
-      expect(tooltip.match(/\(/g) ?? []).toHaveLength(1)
+    it('never doubles the chord — the tip string carries no chord', () => {
+      const tooltip = renderButton(makeConfig('toolbar.bold', 'toolbar.boldTip'))
+      expect(tooltip).toBe(`${t('toolbar.boldTip')}Ctrl + B`)
+      expect(t('toolbar.boldTip')).toBe('Bold')
       expect(t('toolbar.codeTip')).toBe('Inline code')
-      expect(t('toolbar.strikethroughTip')).toBe('Strikethrough')
-      expect(t('toolbar.highlightTip')).toBe('Highlight')
+      expect(t('toolbar.undoTip')).toBe('Undo')
     })
 
     it('keeps the plain tip for a button without a rebindable shortcut', () => {

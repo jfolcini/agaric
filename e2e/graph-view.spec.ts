@@ -107,7 +107,7 @@ test.describe('Graph view @graph', () => {
 
     await dot.click({ modifiers: ['ControlOrMeta'] })
 
-    const tab = page.locator('[role="tab"][title="Getting Started"]')
+    const tab = page.getByRole('tab', { name: 'Getting Started', exact: true })
     await expect(tab).toBeVisible()
     await expect(tab).toHaveAttribute('aria-selected', 'false')
     await expect(page.getByTestId('graph-svg')).toBeVisible()

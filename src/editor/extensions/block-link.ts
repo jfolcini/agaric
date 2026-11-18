@@ -8,9 +8,11 @@
  * Atomic inline node. Attrs: id (ULID), label (#5160 D9; null when none, and
  * never the target's own title, which `setBlockLinkLabel` drops).
  *
- * Uses a NodeView (addNodeView) so we can attach a click handler: it
- * navigates, or removes a broken link (`resolveStatus` says `'deleted'`).
- * renderHTML is kept for copy-paste / serialization.
+ * Uses a NodeView (addNodeView) so we can attach a click handler that
+ * navigates. A broken link (`resolveStatus` says `'deleted'`) renders the
+ * static renderer's `BrokenBlockLink` through `ReactRenderer` instead: a tap
+ * explains it, and its Remove button removes it (#6895). renderHTML is kept
+ * for copy-paste / serialization.
  *
  * A page dragged in from a list (`page-drag.ts`) lands as a link where it is
  * dropped, in block mode and page mode alike.
@@ -20,9 +22,13 @@ import { type Editor, mergeAttributes, Node } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Plugin, TextSelection } from '@tiptap/pm/state'
+import { ReactRenderer } from '@tiptap/react'
+import type { ComponentProps } from 'react'
 
+import { BrokenBlockLink } from '@/components/RichContentRenderer/marks/blockLink'
 import { storableLinkLabel } from '@/editor/markdown-common'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { droppedPageId } from '@/lib/page-drag'
 
@@ -31,7 +37,7 @@ export interface BlockLinkOptions {
   resolveTitle: (id: string) => string
   /** Called when the user clicks a block link chip. Navigates to the target page/block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** A `'deleted'` link is broken: clicking it removes it instead of navigating. */
+  /** A `'deleted'` link is broken: clicking it explains it, with a Remove button, instead of navigating. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
@@ -39,16 +45,23 @@ export interface BlockLinkOptions {
  * Replace the chip at `pos` with its label as plain text, or drop it when it
  * has none: the label is the block's own text, the title the target's. One
  * transaction, a history step of its own even right after typing, so the
- * editor's undo restores the link and only the link.
+ * editor's undo restores the link and only the link. Remove is pressed while
+ * the popover shows, so the chip may be gone, or no longer broken, by then:
+ * `pos` is resolved at the press, and a chip that no longer holds a broken
+ * link is left alone.
  */
-function removeBrokenLink(editor: Editor, pos: number): void {
-  const chip = editor.state.doc.nodeAt(pos)
-  if (chip?.type.name !== 'block_link') return
+function removeBrokenLink(editor: Editor, pos: number | undefined, broken: boolean): void {
+  const chip = editor.isDestroyed || pos === undefined ? null : editor.state.doc.nodeAt(pos)
+  if (pos === undefined || chip?.type.name !== 'block_link' || !broken) {
+    logger.warn('BlockLink', 'broken link changed before Remove was pressed; left alone')
+    return
+  }
   const label = chip.attrs['label'] as string | null
   const tr = editor.state.tr
   if (label === null) tr.delete(pos, pos + chip.nodeSize)
   else tr.replaceWith(pos, pos + chip.nodeSize, editor.schema.text(label, chip.marks))
   editor.view.dispatch(closeHistory(tr))
+  editor.commands.focus()
   notify.success(t('editor.brokenLinkRemoved'))
 }
 
@@ -119,53 +132,77 @@ export const BlockLink = Node.create<BlockLinkOptions>({
     const { options } = this
     return ({ node, editor, getPos }) => {
       const dom = document.createElement('span')
+      dom.setAttribute('contenteditable', 'false')
       let currentId = node.attrs['id'] as string
       const isBroken = (id: string) => options.resolveStatus?.(id) === 'deleted'
+      let brokenChip: ReactRenderer<unknown, ComponentProps<typeof BrokenBlockLink>> | null = null
+
+      function renderBroken(blockId: string, label: string | null) {
+        // The static block's broken chip, so both read and act alike.
+        const props = {
+          node: {
+            type: 'block_link' as const,
+            attrs: label === null ? { id: blockId } : { id: blockId, label },
+          },
+          label: label ?? options.resolveTitle(blockId),
+          anchored: false,
+          remove: () => removeBrokenLink(editor, getPos(), isBroken(currentId)),
+          focusEditor: () => {
+            if (!editor.isDestroyed) editor.commands.focus()
+          },
+        }
+        if (brokenChip !== null) {
+          brokenChip.updateProps(props)
+          return
+        }
+        for (const attr of ['class', 'data-type', 'data-id', 'data-testid', 'data-label', 'title'])
+          dom.removeAttribute(attr)
+        dom.textContent = ''
+        brokenChip = new ReactRenderer(BrokenBlockLink, { editor, props, as: 'span' })
+        dom.append(brokenChip.element)
+      }
 
       function render(blockId: string, label: string | null) {
         currentId = blockId
+        if (isBroken(blockId)) {
+          renderBroken(blockId, label)
+          return
+        }
+        brokenChip?.destroy()
+        brokenChip = null
         const title = options.resolveTitle(blockId)
-        const broken = isBroken(blockId)
-
         // A label stands in for the title (#5160 D9), which the tooltip
-        // then keeps reachable.
+        // then keeps reachable: shortened text, the native title's second
+        // sanctioned case; a chip showing its full title carries none (#6895).
         dom.textContent = label ?? title
-        dom.className = broken
-          ? 'block-link-chip block-link-deleted cursor-pointer'
-          : 'block-link-chip cursor-pointer'
+        dom.className = 'block-link-chip cursor-pointer'
         dom.setAttribute('data-type', 'block-link')
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-link-chip')
-        dom.setAttribute('contenteditable', 'false')
-        if (label === null) dom.removeAttribute('data-label')
-        else dom.setAttribute('data-label', label)
-        if (broken) dom.setAttribute('title', t('editor.brokenLinkTooltip'))
-        else if (label === null) dom.removeAttribute('title')
-        else dom.setAttribute('title', title)
-        // The static chip's name: what it shows, then what a click does. A click
-        // removes it, so it is a button; ARIA allows no aria-label on a bare span.
-        if (broken) {
-          dom.setAttribute('role', 'button')
-          dom.setAttribute('aria-label', `${label ?? title} ${t('editor.brokenLinkRemoveAction')}`)
+        if (label === null) {
+          dom.removeAttribute('data-label')
+          dom.removeAttribute('title')
         } else {
-          dom.removeAttribute('role')
-          dom.removeAttribute('aria-label')
+          dom.setAttribute('data-label', label)
+          dom.setAttribute('title', title)
         }
       }
 
       render(currentId, (node.attrs['label'] as string | null) ?? null)
 
       const clickHandler = (e: MouseEvent) => {
+        if (brokenChip !== null) return
         e.preventDefault()
         e.stopPropagation()
-        const pos = getPos()
-        if (isBroken(currentId) && typeof pos === 'number') removeBrokenLink(editor, pos)
-        else options.onNavigate?.(currentId)
+        options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)
 
       return {
         dom,
+        // The broken chip's button and its keys are its own: ProseMirror would
+        // select the node on the press and split the block on Enter.
+        stopEvent: () => brokenChip !== null,
         update(updatedNode) {
           if (updatedNode.type.name !== 'block_link') return false
           render(
@@ -176,6 +213,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
         },
         destroy() {
           dom.removeEventListener('click', clickHandler)
+          brokenChip?.destroy()
         },
       }
     }

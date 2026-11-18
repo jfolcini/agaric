@@ -15,8 +15,8 @@ import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { usePinToolbar } from '@/components/FormattingToolbar/pinned-toolbar'
-import { type RenderMode, Tip } from '@/components/FormattingToolbar/shared'
-import { Button } from '@/components/ui/button'
+import { type RenderMode, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
@@ -120,22 +120,18 @@ export function ToolbarFrame({
       {overflowed.length > 0 && (
         <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
           <PopoverAnchor asChild>
-            <Tip label={t('toolbar.moreTip')}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('toolbar.more')}
-                aria-haspopup="dialog"
-                aria-expanded={overflowPopoverOpen}
-                aria-controls={overflowMenuId}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  setOverflowPopoverOpen((prev) => !prev)
-                }}
-              >
-                <MoreHorizontal />
-              </Button>
-            </Tip>
+            <IconButton
+              variant="ghost"
+              size="icon-xs"
+              tooltip={t('toolbar.moreTip')}
+              ariaLabel={t('toolbar.more')}
+              aria-haspopup="dialog"
+              aria-expanded={overflowPopoverOpen}
+              aria-controls={overflowMenuId}
+              {...toolbarPressHandlers(() => setOverflowPopoverOpen((prev) => !prev))}
+            >
+              <MoreHorizontal />
+            </IconButton>
           </PopoverAnchor>
           <MenuPopoverContent
             id={overflowMenuId}

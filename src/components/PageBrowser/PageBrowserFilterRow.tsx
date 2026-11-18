@@ -21,6 +21,7 @@ import { PROPERTY_OP_CHIP } from '@/components/PageBrowser/add-filter/vocab'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
@@ -225,12 +226,12 @@ function createdSummary(
 }
 
 /**
- * Per-facet long-form description for the boolean Pages facets, surfaced as the
- * chip's `title` tooltip so the (necessarily terse) chip label can be expanded
- * on hover. Mirrors the descriptions shown in the Add-Filter popover. Returns
+ * Per-facet long-form description for the boolean Pages facets, opened from an
+ * ⓘ beside the chip so the (necessarily terse) chip label can be explained on a
+ * tap (#6895). Mirrors the descriptions shown in the Add-Filter popover. Returns
  * `undefined` for value-bearing facets whose chip label already self-describes.
  */
-export function pageFilterChipTitle(filter: FilterPrimitive, t: TFunction): string | undefined {
+export function pageFilterChipInfo(filter: FilterPrimitive, t: TFunction): string | undefined {
   switch (filter.type) {
     case 'Orphan': {
       return t('pageBrowser.filter.facetOrphanDesc')
@@ -389,18 +390,22 @@ export function PageBrowserFilterRow({
         >
           {filters.map((filter, index) => {
             const label = pageFilterSummary(filter, t, tagResolver)
-            const title = pageFilterChipTitle(filter, t)
+            const info = pageFilterChipInfo(filter, t)
             return (
               <li key={filter._addId} className="contents">
                 <FilterPill
                   label={label}
-                  // `exactOptionalPropertyTypes`: only set `title` when present
-                  // so we don't pass `string | undefined` to a `title?: string`.
-                  {...(title !== undefined ? { title } : {})}
                   onRemove={() => onRemoveFilter(index)}
                   removeAriaLabel={t('pageBrowser.filter.removeFilter', { label })}
                   groupAriaLabel={t('pageBrowser.filter.filterGroup', { label })}
                 />
+                {info !== undefined && (
+                  <InfoPopover
+                    variant="icon"
+                    ariaLabel={t('pageBrowser.filter.aboutFilter', { label })}
+                    content={info}
+                  />
+                )}
               </li>
             )
           })}

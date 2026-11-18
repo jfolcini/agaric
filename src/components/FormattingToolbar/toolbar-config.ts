@@ -170,12 +170,13 @@ export function createMarkToggles(editor: Editor): ToolbarButtonConfig[] {
 
 /**
  * Mark-toggle button label key → keyboard-config shortcut id. Shared by
- * `FormatMenu` and `SelectionBubbleMenu` so the two mark-toggle surfaces can
- * never surface divergent shortcut hints. Bold/Italic are intentionally
- * absent — they use TipTap StarterKit defaults, already encoded in their tip
- * strings.
+ * `FormatMenu`, `SelectionBubbleMenu` and the toolbar (`TOOLBAR_SHORTCUT_IDS`)
+ * so the mark-toggle surfaces can never surface divergent shortcut hints.
  */
 export const MARK_TOGGLE_SHORTCUT_IDS: Record<string, string> = {
+  'toolbar.bold': 'bold',
+  'toolbar.italic': 'italic',
+  'toolbar.underline': 'underline',
   'toolbar.code': 'inlineCode',
   'toolbar.strikethrough': 'strikethrough',
   'toolbar.highlight': 'highlight',

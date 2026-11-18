@@ -7,6 +7,7 @@
  * all.
  */
 
+import { render, screen } from '@testing-library/react'
 import { type AnyExtension, Editor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
@@ -20,6 +21,8 @@ import Strike from '@tiptap/extension-strike'
 import Text from '@tiptap/extension-text'
 import { undoDepth } from '@tiptap/pm/history'
 import { NodeSelection } from '@tiptap/pm/state'
+import { EditorContent } from '@tiptap/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
@@ -41,6 +44,7 @@ import {
   unresolvedBlockRefLabel,
   unresolvedTagLabel,
 } from '@/lib/block-title'
+import { t } from '@/lib/i18n'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 const editors: Array<{ editor: Editor; host: HTMLElement }> = []
@@ -1349,21 +1353,28 @@ describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
     expect(shown(ed)).toBe('a work Plan ((A block)) b')
   })
 
-  it('draws no syntax around a broken chip, whose label already is in it', () => {
+  it('draws no syntax around a broken chip, whose label already is in it', async () => {
     const broken = () => 'deleted' as const
     const ed = createEditor(`${SOURCE} [[${PAGE}|Plan]]`, [
       TagRef.configure({ resolveName: unresolvedTagLabel, resolveStatus: broken }),
       BlockLink.configure({ resolveTitle: unresolvedBlockLabel, resolveStatus: broken }),
       BlockRef.configure({ resolveContent: unresolvedBlockRefLabel, resolveStatus: broken }),
     ])
-    const plain = 'a #01ARZ3ND... [[01ARZ3ND...]] (( 01ARZ3ND... )) b Plan'
+    // A broken page link is React (`BrokenBlockLink`), which `EditorContent`
+    // hosts; its name ends in the visually hidden state.
+    render(createElement(EditorContent, { editor: ed }))
+    const state = ` ${t('editor.brokenLinkState')}`
+    await screen.findByRole('button', { name: `Plan${state}` })
+    // Mounting moved the editor's DOM, and its focus with it.
+    ed.view.focus()
+    const plain = `a #01ARZ3ND... [[01ARZ3ND...]]${state} (( 01ARZ3ND... )) b Plan${state}`
     for (const chip of [3, 5, 7]) {
       ed.commands.setNodeSelection(chip)
       expect(shown(ed)).toBe(plain)
     }
     // A label stands in for the unresolved title, so its syntax is drawn.
     ed.commands.setNodeSelection(11)
-    expect(shown(ed)).toBe(`${plain.slice(0, -4)}[[Plan]]`)
+    expect(shown(ed)).toBe(`${plain.slice(0, -`Plan${state}`.length)}[[Plan${state}]]`)
   })
 
   it('draws the syntax around a chip whose target is not resolved yet', () => {

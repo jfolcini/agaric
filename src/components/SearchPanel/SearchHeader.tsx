@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 
@@ -117,17 +118,16 @@ export function SearchHeader({
             {t('search.searchButton')}
           </Button>
           {onHelpClick ? (
-            <Button
+            <IconButton
               type="button"
               variant="ghost"
-              size="icon"
               onClick={onHelpClick}
-              aria-label={t('search.helpButtonLabel')}
-              title={t('search.helpButtonLabel')}
+              ariaLabel={t('search.helpButtonLabel')}
+              tooltip={t('search.helpButtonLabel')}
               data-testid="search-help-button"
             >
               <HelpCircle className="h-4 w-4" aria-hidden="true" />
-            </Button>
+            </IconButton>
           ) : null}
           {searchLoading ? (
             <span

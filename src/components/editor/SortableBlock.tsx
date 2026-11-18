@@ -356,11 +356,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             dragListeners={listeners}
             isSelected={isSelected}
             onSelect={onSelect}
-            // #1094: the gutter keeps its deliberate 500ms hover delay (longer
-            // than the 300ms app baseline) so tips don't flicker as the
-            // pointer crosses rows. The per-surface TooltipProvider that set
-            // this is gone; the override now rides on each gutter Tooltip.
-            tooltipDelayDuration={500}
           />
           <BlockCollapseControl
             blockId={blockId}

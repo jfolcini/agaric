@@ -222,17 +222,13 @@ describe('createMarkToggles', () => {
 describe('MARK_TOGGLE_SHORTCUT_IDS', () => {
   it('maps the configurable mark toggles to their shortcut ids', () => {
     expect(MARK_TOGGLE_SHORTCUT_IDS).toEqual({
+      'toolbar.bold': 'bold',
+      'toolbar.italic': 'italic',
+      'toolbar.underline': 'underline',
       'toolbar.code': 'inlineCode',
       'toolbar.strikethrough': 'strikethrough',
       'toolbar.highlight': 'highlight',
     })
-  })
-
-  // Bold/Italic use TipTap StarterKit defaults (not in the rebindable catalog),
-  // so they are intentionally absent from the map.
-  it('omits bold and italic (StarterKit defaults)', () => {
-    expect(MARK_TOGGLE_SHORTCUT_IDS['toolbar.bold']).toBeUndefined()
-    expect(MARK_TOGGLE_SHORTCUT_IDS['toolbar.italic']).toBeUndefined()
   })
 
   // Every configurable mark in the map must correspond to a real button

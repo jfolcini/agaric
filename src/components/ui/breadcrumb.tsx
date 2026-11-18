@@ -66,6 +66,7 @@ import { Fragment, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { cn } from '@/lib/utils'
 
 /** Items above this count collapse middle crumbs into the overflow popover. */
@@ -117,12 +118,10 @@ export interface BreadcrumbProps {
 // hover-bg, no focus ring). See the file's top doc comment for the rationale
 // behind the focus-style deviation from AGENTS.md.
 const itemButtonClass = cn(
-  'inline-flex max-w-[160px] items-center truncate text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
+  'inline-flex max-w-[160px] items-center text-muted-foreground transition-colors hover:underline focus-visible:underline focus-visible:outline-hidden',
 )
 
-const itemActiveClass = cn(
-  'inline-flex max-w-[280px] items-center truncate font-medium text-foreground',
-)
+const itemActiveClass = cn('inline-flex max-w-[280px] items-center font-medium text-foreground')
 
 // Icon-only triggers (Home, overflow `…`) get the standard 3 px form-control
 // focus ring + a subtle hover-chip — see the file's top doc comment for the
@@ -216,9 +215,8 @@ export function BreadcrumbItem({
           {...(testId !== undefined ? { 'data-breadcrumb-crumb': testId } : {})}
           {...(dataAttributes ?? {})}
           className={cn(itemActiveClass, className)}
-          title={label}
         >
-          {label}
+          <TruncatedText>{label}</TruncatedText>
         </span>
       </div>
     )
@@ -231,9 +229,8 @@ export function BreadcrumbItem({
         {...(dataAttributes ?? {})}
         className={cn(itemButtonClass, className)}
         onClick={onSelect}
-        title={label}
       >
-        {label}
+        <TruncatedText>{label}</TruncatedText>
       </button>
     </div>
   )
@@ -366,14 +363,13 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
                 tabIndex={-1}
                 data-breadcrumb-overflow-item={item.testId ?? item.id}
                 className={cn(
-                  'flex w-full items-center truncate rounded-sm px-2 py-1 text-left text-xs',
+                  'flex w-full items-center rounded-sm px-2 py-1 text-left text-xs',
                   'text-muted-foreground transition-colors',
                   'hover:bg-accent hover:text-accent-foreground',
                   'focus-ring-visible',
                 )}
-                title={item.label}
               >
-                {item.label}
+                <TruncatedText>{item.label}</TruncatedText>
               </button>
             ))}
           </div>

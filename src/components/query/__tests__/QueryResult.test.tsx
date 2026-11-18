@@ -265,7 +265,7 @@ describe('QueryResult', () => {
     await screen.findByText(/Result/)
 
     // Click header to collapse
-    const header = screen.getByTitle('type:tag expr:test').closest('button') as HTMLElement
+    const header = screen.getByText('expr: test').closest('button') as HTMLElement
     await user.click(header)
 
     expect(screen.queryByText(/Result/)).not.toBeInTheDocument()
@@ -1777,7 +1777,7 @@ describe('QueryResult – expression pills', () => {
     })
   })
 
-  it('raw expression is visible on hover via title attribute', async () => {
+  it('shows the expression as pills, with no native title repeating it', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
         return { items: [], next_cursor: null, has_more: false, total_count: null }
@@ -1787,10 +1787,8 @@ describe('QueryResult – expression pills', () => {
 
     render(<QueryResult expression="type:tag expr:project" />)
 
-    await waitFor(() => {
-      const pillContainer = screen.getByTitle('type:tag expr:project')
-      expect(pillContainer).toBeInTheDocument()
-    })
+    const pill = await screen.findByText('expr: project')
+    expect(pill.parentElement).not.toHaveAttribute('title')
   })
 
   it('axe a11y audit with expression pills', async () => {

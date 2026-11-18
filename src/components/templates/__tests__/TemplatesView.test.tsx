@@ -583,7 +583,7 @@ describe('TemplatesView', () => {
     expect(journalLimit).toBe(100)
   })
 
-  it('shows tooltip on journal template badge hover', async () => {
+  it("explains a journal template's scope from the ⓘ beside its badge", async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
@@ -614,17 +614,14 @@ describe('TemplatesView', () => {
 
     render(<TemplatesView />)
 
-    // Wait for the journal badge to appear
-    const badge = await screen.findByText('Journal template')
-    await user.hover(badge)
+    await screen.findByText('Journal template')
+    await user.click(
+      screen.getByRole('button', {
+        name: t('templates.scopeInfoLabel', { name: 'Daily Journal' }),
+      }),
+    )
 
-    // Tooltip text should appear (Radix renders it in multiple DOM nodes)
-    await waitFor(() => {
-      const tooltipElements = screen.getAllByText(
-        'This template is automatically applied when creating new journal entries',
-      )
-      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
-    })
+    expect(await screen.findByRole('dialog')).toHaveTextContent(t('templates.journalTooltip'))
   })
 
   it('shows a page-template scope badge for non-journal templates', async () => {
@@ -666,7 +663,7 @@ describe('TemplatesView', () => {
     expect(screen.getByText('Journal template')).toBeInTheDocument()
   })
 
-  it('shows tooltip on page-template badge hover', async () => {
+  it("explains a page template's scope from the ⓘ beside its badge", async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
@@ -686,15 +683,14 @@ describe('TemplatesView', () => {
 
     render(<TemplatesView />)
 
-    const badge = await screen.findByText('Page template')
-    await user.hover(badge)
+    await screen.findByText('Page template')
+    await user.click(
+      screen.getByRole('button', {
+        name: t('templates.scopeInfoLabel', { name: 'Meeting Notes' }),
+      }),
+    )
 
-    await waitFor(() => {
-      const tooltipElements = screen.getAllByText(
-        'A page template — inserting it creates a new page from this content.',
-      )
-      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
-    })
+    expect(await screen.findByRole('dialog')).toHaveTextContent(t('templates.pageTooltip'))
   })
 
   it('has no a11y violations', async () => {

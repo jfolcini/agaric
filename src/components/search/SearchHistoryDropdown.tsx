@@ -178,7 +178,6 @@ export function SearchHistoryDropdown({
               <span
                 aria-hidden="true"
                 data-testid={`search-history-remove-${idx}`}
-                title={t('search.history.removeEntry', { query: entry })}
                 onClick={(e) => {
                   e.stopPropagation()
                   onRemoveEntry(entry)

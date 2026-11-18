@@ -116,3 +116,13 @@ describe('renderCyclePriority activation contract', () => {
     )
   })
 })
+
+// #6895 — an IconButton, so a touch press-and-hold shows its name. No key
+// cycles the priority, so its tooltip carries no shortcut.
+it('the inline button is an IconButton whose tooltip names it, with no shortcut', () => {
+  const { btn } = renderPriority('inline')
+  expect(btn).toHaveAttribute('data-slot', 'icon-button')
+  const tip = screen.getByTestId('tooltip-content')
+  expect(tip).toHaveTextContent(t('toolbar.cyclePriority'))
+  expect(tip.querySelector('kbd')).toBeNull()
+})

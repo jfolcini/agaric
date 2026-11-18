@@ -26,7 +26,7 @@ export function pageRow(page: Page, title: string): Locator {
   return page
     .getByRole('grid')
     .locator('[data-page-item]')
-    .filter({ has: page.locator(`.page-browser-item-title[title="${title}"]`) })
+    .filter({ has: page.locator(`.page-browser-item-title[data-page-title="${title}"]`) })
 }
 
 /** Open the page titled `pageTitle` and put block `blockId` in edit mode; returns its editor. */

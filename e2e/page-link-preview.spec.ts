@@ -106,7 +106,7 @@ test.describe('Page-link preview @editor @pages', () => {
     await page.keyboard.up('Control')
 
     await expect(tabs).toHaveCount(2)
-    await expect(tabs.nth(1)).toHaveAttribute('title', 'Getting Started')
+    await expect(tabs.nth(1)).toHaveText('Getting Started')
     await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'false')
     await expect(title).toHaveText(current ?? '')
     await expect(peek).toHaveCount(0)

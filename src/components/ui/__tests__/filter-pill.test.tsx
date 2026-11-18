@@ -130,21 +130,11 @@ describe('FilterPill', () => {
     expect(labelSpan.className).toContain('truncate')
   })
 
-  it('E6: falls back the title tooltip to the label so the truncated value is recoverable', () => {
+  it('E6: the label is a TruncatedText carrying the full value', () => {
     const longLabel = `tag: ${'verylongtag'.repeat(8)}`
-    const { container } = render(<FilterPill {...defaultProps} label={longLabel} />)
+    render(<FilterPill {...defaultProps} label={longLabel} />)
 
-    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
-    expect(badge).toHaveAttribute('title', longLabel)
-  })
-
-  it('E6: an explicit title overrides the label fallback', () => {
-    const { container } = render(
-      <FilterPill {...defaultProps} label="Orphan" title="Fully isolated page" />,
-    )
-
-    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
-    expect(badge).toHaveAttribute('title', 'Fully isolated page')
+    expect(screen.getByText(longLabel)).toHaveAttribute('data-slot', 'truncated-text')
   })
 
   it('E6: the remove button stays shrink-0 so only the label clips', () => {

@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 
 import { KbdChord } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { cn } from '@/lib/utils'
@@ -260,16 +261,13 @@ export const SuggestionList = ({
     const Icon = item.icon
     const labelNode = item.breadcrumb ? (
       <span className="flex min-w-0 flex-col">
-        <span className="truncate" title={item.label}>
-          {item.label}
-        </span>
-        <span
-          className="text-xs text-muted-foreground truncate"
+        <TruncatedText>{item.label}</TruncatedText>
+        <TruncatedText
+          className="text-xs text-muted-foreground"
           data-testid="suggestion-breadcrumb"
-          title={item.breadcrumb}
         >
           {item.breadcrumb}
-        </span>
+        </TruncatedText>
       </span>
     ) : (
       item.label
@@ -282,9 +280,7 @@ export const SuggestionList = ({
           <span className="mr-2 text-base leading-none" aria-hidden="true">
             {item.emoji}
           </span>
-          <span className="truncate" title={item.label}>
-            :{item.label}
-          </span>
+          <TruncatedText>{`:${item.label}`}</TruncatedText>
         </span>
       )
     }

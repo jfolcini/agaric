@@ -39,19 +39,23 @@ function blockLinkProps(linkId: string, onNavigate: (id: string) => void): Recor
 
 /**
  * A broken link in content that can be edited: a tap explains it, with a Remove
- * button, so a stray tap removes nothing (#6895). No `data-editor-portal`: the
- * chip renders in a static block, which has no editor for the popover to keep.
+ * button, so a stray tap removes nothing (#6895). In a static block there is no
+ * editor for the popover to keep; in the editor's node view (`block-link.ts`)
+ * `focusEditor` is given, so the popover keeps the editor mounted and closing it
+ * hands the editor its focus back.
  */
-function BrokenBlockLink({
+export function BrokenBlockLink({
   node,
   label,
   anchored,
   remove,
+  focusEditor,
 }: {
   node: BlockLinkNode
   label: string
   anchored: boolean
   remove: (link: BlockLinkNode) => void
+  focusEditor?: (() => void) | undefined
 }): React.ReactElement {
   const chipId = useId()
   const [open, setOpen] = useState(false)
@@ -76,8 +80,14 @@ function BrokenBlockLink({
       <PopoverContent
         aria-labelledby={chipId}
         className="w-auto max-w-xs space-y-2 p-3 text-sm"
+        {...(focusEditor === undefined ? {} : { 'data-editor-portal': '' })}
         // Removing the link moves the focus to the block's row.
-        onCloseAutoFocus={keepFocusThatMovedOn}
+        onCloseAutoFocus={(e) => {
+          keepFocusThatMovedOn(e)
+          if (focusEditor === undefined || e.defaultPrevented) return
+          e.preventDefault()
+          focusEditor()
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <p>{i18n.t('editor.brokenLinkExplanation')}</p>
@@ -146,7 +156,8 @@ export function renderBlockLink(
       data-testid="block-link-chip"
       // The editor's NodeView carries the same pair; `pageLinkIdAt` finds either.
       {...(clickable ? { 'data-type': 'block-link', 'data-id': linkId } : {})}
-      title={title}
+      // oxlint-disable-next-line react/forbid-dom-props -- the rule's second sanctioned case: a chip showing a leaf or a label is shortened text, so its full target stays on hover; one showing its full title carries none (#6895)
+      title={label === title ? undefined : title}
       {...deletedProps}
       {...interactiveProps}
     >

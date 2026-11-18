@@ -10,9 +10,15 @@ import { X } from 'lucide-react'
 import type React from 'react'
 
 import { Badge } from '@/components/ui/badge'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { cn } from '@/lib/utils'
 
-export interface FilterPillProps extends Omit<React.ComponentProps<typeof Badge>, 'children'> {
+// No `title`: a native title never shows on a tap (#6895). An explanation goes in an ⓘ beside
+// the pill; a long label is already a `TruncatedText`.
+export interface FilterPillProps extends Omit<
+  React.ComponentProps<typeof Badge>,
+  'children' | 'title'
+> {
   /** The label to display in the pill. */
   label: string
   /** Called when the remove button is clicked or Delete/Backspace is pressed. */
@@ -21,8 +27,6 @@ export interface FilterPillProps extends Omit<React.ComponentProps<typeof Badge>
   removeAriaLabel: string
   /** Optional className for the Badge wrapper. */
   className?: string
-  /** Optional tooltip text for the Badge. */
-  title?: string
   /** Optional aria-label for the Badge group wrapper. Defaults to `label`. */
   groupAriaLabel?: string
 }
@@ -32,17 +36,13 @@ export function FilterPill({
   onRemove,
   removeAriaLabel,
   className,
-  title,
   groupAriaLabel,
   ...rest
 }: FilterPillProps): React.ReactElement {
   // E6 — a long tag/path/property value must not stretch the pill to an
   // unbounded width (which wraps the chip to its own line and can push
-  // Add-filter / Clear-all off-screen on narrow viewports). Cap the label and
-  // truncate; the full value lives on the `title` tooltip — fall back to the
-  // label itself when the caller didn't supply a longer-form description so the
-  // truncated text is always recoverable on hover.
-  const fullTitle = title ?? label
+  // Add-filter / Clear-all off-screen on narrow viewports). Cap the pill and
+  // truncate the label.
   return (
     <Badge
       data-slot="filter-pill"
@@ -55,9 +55,8 @@ export function FilterPill({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is forwarded to a <Badge> wrapper grouping a label + remove button; <fieldset>/<optgroup> etc. would break the inline pill layout and carry form/list semantics
       role="group"
       aria-label={groupAriaLabel ?? label}
-      title={fullTitle}
     >
-      <span className="min-w-0 truncate">{label}</span>
+      <TruncatedText>{label}</TruncatedText>
       <button
         type="button"
         className="ml-0.5 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"

@@ -670,9 +670,9 @@ describe('SuggestionList', () => {
     expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
   })
 
-  // -- Truncated labels and breadcrumbs expose full text via title -----
+  // -- Truncated labels and breadcrumbs reveal their full text ---------
 
-  it('adds title={item.label} to the label span when the item has a breadcrumb', () => {
+  it('truncates the label of an item with a breadcrumb with its full text', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'work/2024/q1/very-long-name', breadcrumb: 'workspace / personal' },
@@ -681,10 +681,10 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={items} command={command} />)
 
     const labelEl = screen.getByText('work/2024/q1/very-long-name')
-    expect(labelEl).toHaveAttribute('title', 'work/2024/q1/very-long-name')
+    expect(labelEl).toHaveAttribute('data-slot', 'truncated-text')
   })
 
-  it('adds title={item.breadcrumb} to the breadcrumb span', () => {
+  it('truncates the breadcrumb with its full text', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'standup', breadcrumb: 'workspace / team / very / deep / path' },
@@ -693,7 +693,17 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={items} command={command} />)
 
     const breadcrumb = screen.getByTestId('suggestion-breadcrumb')
-    expect(breadcrumb).toHaveAttribute('title', 'workspace / team / very / deep / path')
+    expect(breadcrumb).toHaveAttribute('data-slot', 'truncated-text')
+    expect(breadcrumb).toHaveTextContent('workspace / team / very / deep / path')
+  })
+
+  it("truncates an emoji item's shortcode with its full text", () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [{ id: '1', label: 'grinning_face', emoji: '😀' }]
+
+    render(<SuggestionList items={items} command={command} />)
+
+    expect(screen.getByText(':grinning_face')).toHaveAttribute('data-slot', 'truncated-text')
   })
 
   it('does not add title attribute to items without a breadcrumb', () => {
@@ -703,7 +713,7 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={items} command={command} />)
 
     // The label is rendered inline (no breadcrumb structure). It must not
-    // carry a stray `title` — we only add it when the truncate class is present.
+    // carry a stray `title`.
     const labelEl = screen.getByText('simple label')
     expect(labelEl).not.toHaveAttribute('title')
   })

@@ -180,7 +180,6 @@ export class PageGrip {
     button.className = cn(GUTTER_BUTTON_LOOK, 'drag-handle cursor-grab hover:text-foreground')
     button.setAttribute('aria-label', t('block.reorder'))
     button.setAttribute('aria-haspopup', 'menu')
-    button.title = t('pageMode.gripTip')
     button.setAttribute('data-testid', 'drag-handle')
     button.toggleAttribute(GRIP, true)
     button.append(icon(GRIP_GLYPH, 'size-[1em]'))
@@ -314,7 +313,6 @@ function drawChevron(chevron: HTMLButtonElement, collapsed: boolean): void {
     collapsed ? t('block.expandChildren') : t('block.collapseChildren'),
   )
   chevron.setAttribute('aria-expanded', String(!collapsed))
-  chevron.title = collapsed ? t('block.expandTip') : t('block.collapseTip')
   const size = chevronToggleVariants({ size: 'lg' })
   const slot = { 'data-slot': 'chevron-toggle' }
   chevron.replaceChildren(

@@ -367,15 +367,12 @@ export const editor: Record<string, string> = {
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
 
-  // Translators: a link to a page that was deleted or is in another space. brokenLinkTooltip =
-  // tooltip on it (clicking removes the link); brokenLinkRemoved = toast after removing it;
-  // brokenLinkRemoveAction = screen-reader text read after the link's text (keep the
-  // parentheses); brokenLinkUndoStale = toast when Undo comes too late; brokenLinkExplanation =
-  // shown when the link is tapped, above a button (brokenLinkRemove) that removes it;
-  // brokenLinkState = screen-reader text read after the link's text there (keep the parentheses).
-  'editor.brokenLinkTooltip': 'Broken link or in another space — click to remove',
+  // Translators: a link to a page that was deleted or is in another space. brokenLinkRemoved =
+  // toast after removing it; brokenLinkUndoStale = toast when Undo comes too late;
+  // brokenLinkExplanation = shown when the link is tapped, above a button (brokenLinkRemove) that
+  // removes it; brokenLinkState = screen-reader text read after the link's text (keep the
+  // parentheses).
   'editor.brokenLinkRemoved': 'Broken link removed',
-  'editor.brokenLinkRemoveAction': '(remove broken link)',
   'editor.brokenLinkUndoStale':
     'The page changed after the removal, so it can no longer be undone here',
   'editor.brokenLinkExplanation':
@@ -572,10 +569,9 @@ export const editor: Record<string, string> = {
   'linkEdit.urlPlaceholder': 'https://...',
 
   // Translators: an attached image under a block's text. toggleResizeToolbar = its aria-label
-  // (Enter shows its size toolbar); resizeHandle = tooltip of the corner grip; saveFailed = toast.
+  // (Enter shows its size toolbar); saveFailed = toast.
   'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
   // #294 item 6 — inline drag-to-resize corner handle.
-  'attachment.resizeHandle': 'Drag to resize image',
   'imageResize.saveFailed': 'Could not save image size',
 
   // Translators: caption field under an attached image (it also serves as the image's

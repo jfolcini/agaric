@@ -222,9 +222,7 @@ export const editor: Record<string, string> = {
   'block.swipe.deleted': 'Bloque eliminado',
   'editor.unknownNodeType':
     'Parte del contenido (tipo: {{type}}) no se ha podido guardar como Markdown y se ha descartado.',
-  'editor.brokenLinkTooltip': 'Enlace roto o en otro espacio — haz clic para quitarlo',
   'editor.brokenLinkRemoved': 'Se ha quitado el enlace roto',
-  'editor.brokenLinkRemoveAction': '(quitar enlace roto)',
   'editor.brokenLinkUndoStale':
     'La página ha cambiado después de quitar el enlace, así que ya no se puede deshacer aquí',
   'editor.brokenLinkExplanation':
@@ -329,7 +327,6 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Quitar',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Mostrar u ocultar la barra de cambio de tamaño',
-  'attachment.resizeHandle': 'Arrastra para cambiar el tamaño de la imagen',
   'imageResize.saveFailed': 'No se ha podido guardar el tamaño de la imagen',
   'imageCaption.placeholder': 'Añade un pie de imagen…',
   'imageCaption.label': 'Pie de imagen',

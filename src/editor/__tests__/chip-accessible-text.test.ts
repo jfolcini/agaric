@@ -1,3 +1,4 @@
+import { render, screen } from '@testing-library/react'
 /**
  * #5745 S3 — the roving editor's chips speak the words they show, as the
  * static chips do (`RichContentRenderer/marks/__tests__/accessible-text`), so
@@ -7,11 +8,14 @@ import { Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
+import { EditorContent } from '@tiptap/react'
+import { createElement } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
 import { BlockRef } from '@/editor/extensions/block-ref'
 import { TagRef } from '@/editor/extensions/tag-ref'
+import { t } from '@/lib/i18n'
 
 const PAGE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
@@ -76,9 +80,22 @@ describe('editor chips speak what they show', () => {
     expectSpeaksWhatItShows(mount(link('My label'), { title: () => 'Roadmap' }), 'My label')
   })
 
-  it('a deleted labelled page link reads its label', () => {
-    const chip = mount(link('My label'), { title: () => 'Roadmap', status: () => 'deleted' })
-    expectSpeaksWhatItShows(chip, 'My label')
+  it('a deleted labelled page link reads its label, then that it is broken', async () => {
+    // The broken chip is React, which `EditorContent` hosts.
+    editor = new Editor({
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        BlockLink.configure({ resolveTitle: () => 'Roadmap', resolveStatus: () => 'deleted' }),
+      ],
+      content: { type: 'doc', content: [{ type: 'paragraph', content: [link('My label')] }] },
+    })
+    render(createElement(EditorContent, { editor }))
+    const chip = await screen.findByRole('button', {
+      name: `My label ${t('editor.brokenLinkState')}`,
+    })
+    expect(chip.textContent).not.toMatch(FULL_ULID)
   })
 
   it('an unresolved page link reads the id prefix it shows', () => {

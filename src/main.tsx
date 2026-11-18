@@ -33,10 +33,8 @@ import { queryClient } from '@/lib/query-client'
  * `main()` below is not a component, so it can't call `useTooltipDelay`
  * itself — this thin wrapper resolves the preference (default `300` ms,
  * matching the pre-#2851 constant so nothing changes for existing users)
- * and threads it into the provider. Surfaces with a deliberate deviation
- * still set `delayDuration` on their own `<Tooltip>` (sidebar 0, toolbars
- * 200, gutter 500) so the override stays explicit rather than silently
- * inheriting this baseline.
+ * and threads it into the provider. Every tooltip inherits it: no surface
+ * sets its own `delayDuration` (#6895).
  *
  * `skipDelayDuration` tracks the same value, keeping the "move between
  * adjacent tooltips without re-waiting" window consistent with the chosen

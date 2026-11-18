@@ -81,7 +81,6 @@ export const BlockRef = Node.create<BlockRefOptions>({
         class: 'block-ref-chip',
         'data-testid': 'block-ref-chip',
         contenteditable: 'false',
-        title: content,
       }),
       // The title goes in an addressable child, not straight into the chip:
       // `.block-ref-chip` is `inline-flex`, so a bare text child becomes an
@@ -116,11 +115,6 @@ export const BlockRef = Node.create<BlockRefOptions>({
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
-        // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`,
-        // matching what `renderBlockRef` puts on the read-only chip. Left off
-        // while `useBlockRefPeek` has parked it, or an `update()` mid-peek puts
-        // the native tooltip back over the open popover.
-        if (!dom.hasAttribute('data-peek-title-parked')) dom.setAttribute('title', content)
       }
 
       render(currentId)

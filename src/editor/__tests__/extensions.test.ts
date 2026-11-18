@@ -424,17 +424,14 @@ function callNodeViewFactory(
   return factory({ node: mockNode, editor: {}, getPos: () => 0 })
 }
 
-describe('BlockRef NodeView title attribute (B-67 / #4228)', () => {
+describe('BlockRef NodeView title attribute (B-67 / #4228 / #6895)', () => {
   /**
-   * B-67's original contract was "a `title=` means DELETED" — so an active
-   * ref had to carry none. Phase 4 retired that (`resolveStatus` is a
-   * documented no-op) and #4228 gave the attribute a different, unconditional
-   * job: revealing the tail that `.block-ref-chip`'s `max-width` clips, the
-   * same way `renderBlockLink` does it. So the assertion flips from "absent"
-   * to "present and equal to the rendered title", and the status-independence
-   * is what is pinned here.
+   * B-67's original contract was "a `title=` means DELETED"; Phase 4 retired
+   * it (`resolveStatus` is a documented no-op), #4228 reused the attribute to
+   * reveal what `max-width` clips, and #6895 dropped it: a tap never shows a
+   * native title, and the peek shows the target.
    */
-  it('sets title= to the resolved content regardless of status, and no deleted class', () => {
+  it('carries no title= and shows the resolved content, with no deleted class', () => {
     const ext = BlockRef.configure({
       resolveContent: () => 'Active content',
       resolveStatus: () => 'active',
@@ -443,7 +440,7 @@ describe('BlockRef NodeView title attribute (B-67 / #4228)', () => {
     const mockNode = { attrs: { id: 'ACTIVE_BLOCK_ID' }, type: { name: 'block_ref' } }
     const result = callNodeViewFactory(ext, mockNode)
 
-    expect(result.dom.getAttribute('title')).toBe('Active content')
+    expect(result.dom).not.toHaveAttribute('title')
     expect(result.dom.textContent).toBe('Active content')
     expect(result.dom.classList.contains('block-ref-deleted')).toBe(false)
   })

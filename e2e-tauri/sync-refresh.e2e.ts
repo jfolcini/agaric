@@ -83,7 +83,7 @@ function listedTitles(): Promise<string[]> {
     const rows = [...document.querySelectorAll('[data-page-item]')]
     rows.sort((a, b) => Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index')))
     return rows.map(
-      (row) => row.querySelector('.page-browser-item-title')?.getAttribute('title') ?? '',
+      (row) => row.querySelector('.page-browser-item-title')?.getAttribute('data-page-title') ?? '',
     )
   })
 }

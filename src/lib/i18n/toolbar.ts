@@ -77,12 +77,12 @@ export const toolbar: Record<string, string> = {
   // Translators: Tooltips of the editing-toolbar buttons. The part in parentheses is the keyboard
   // shortcut or the characters you type for the same action ("[[", "((", "{{", "@", "/due" …):
   // keep it exactly as written. "Blockquote" and "Properties" alone are button labels.
-  'toolbar.boldTip': 'Bold (Ctrl+B)',
-  'toolbar.italicTip': 'Italic (Ctrl+I)',
+  'toolbar.boldTip': 'Bold',
+  'toolbar.italicTip': 'Italic',
   'toolbar.codeTip': 'Inline code',
   'toolbar.strikethroughTip': 'Strikethrough',
   'toolbar.highlightTip': 'Highlight',
-  'toolbar.underlineTip': 'Underline (Ctrl+U)',
+  'toolbar.underlineTip': 'Underline',
   'toolbar.pageLinkTip': 'Page link ([[)',
   'toolbar.blockRefTip': 'Block reference (())',
   'toolbar.queryTip': 'Embed a query ({{)',
@@ -92,18 +92,17 @@ export const toolbar: Record<string, string> = {
   'toolbar.priority1Tip': 'Priority 1 — high (Ctrl+Shift+1)',
   'toolbar.priority2Tip': 'Priority 2 — medium (Ctrl+Shift+2)',
   'toolbar.priority3Tip': 'Priority 3 — low (Ctrl+Shift+3)',
-  'toolbar.cyclePriorityTip': 'Cycle priority (Ctrl+Shift+1)',
-  'toolbar.insertDateTip': 'Insert date (Ctrl+Shift+D)',
+  'toolbar.insertDateTip': 'Insert date',
   'toolbar.dueDateTip': 'Due date (/due)',
   'toolbar.scheduledDateTip': 'Scheduled date (/schedule)',
   // Translators: TODO is the task-state keyword, written in English in notes; keep it as is.
-  'toolbar.todoToggleTip': 'TODO cycle (Ctrl+Enter)',
+  'toolbar.todoToggleTip': 'TODO cycle',
   // Translators: Opens the BlockPropertyDrawer, a side panel of the block's fields (due date,
   // assignee …).
   'toolbar.properties': 'Properties',
-  'toolbar.propertiesTip': 'Block properties (Ctrl+Shift+P)',
-  'toolbar.undoTip': 'Undo (Ctrl+Z)',
-  'toolbar.redoTip': 'Redo (Ctrl+Y)',
+  'toolbar.propertiesTip': 'Block properties',
+  'toolbar.undoTip': 'Undo',
+  'toolbar.redoTip': 'Redo',
   // Translators: Tooltip of the Cancel button in "Edit as Markdown" mode.
   'toolbar.discardTip': 'Discard changes',
 
@@ -129,11 +128,10 @@ export const toolbar: Record<string, string> = {
   'toolbar.moreTip': 'More toolbar actions',
 
   // Translators: "Table" button of the FormattingToolbar, shown only while the cursor is in a
-  // table, with its tooltip and the menu it opens (rows, columns, delete the table).
+  // table, and the menu it opens (rows, columns, delete the table).
   // #215 — table row/column operations. The trigger only appears when the
   // selection is inside a table cell.
   'toolbar.tableOps': 'Table',
-  'toolbar.tableOpsTip': 'Table row & column actions',
   'toolbar.tableInsertRowAbove': 'Insert row above',
   'toolbar.tableInsertRowBelow': 'Insert row below',
   'toolbar.tableInsertColumnLeft': 'Insert column left',
@@ -171,7 +169,7 @@ export const toolbar: Record<string, string> = {
   // phone keyboards, which have no Shift+Enter); label and tooltip.
   // #5160 D2 — a line break inside the block (Shift+Enter, for virtual keyboards).
   'toolbar.newLine': 'New line',
-  'toolbar.newLineTip': 'New line (Shift+Enter)',
+  'toolbar.newLineTip': 'New line',
 
   // Translators: FormattingToolbar buttons on phones: move the block one level deeper (Indent)
   // or one level out (Outdent) in the outline; labels and tooltips.

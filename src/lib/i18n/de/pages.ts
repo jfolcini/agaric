@@ -103,6 +103,7 @@ export const pages: Record<string, string> = {
   'templates.pageIndicator': 'Seitenvorlage',
   'templates.pageTooltip':
     'Eine Seitenvorlage – beim Einfügen wird aus diesem Inhalt eine neue Seite erstellt.',
+  'templates.scopeInfoLabel': 'Über den Vorlagentyp von {{name}}',
   'templates.navigateLabel': 'Vorlage {{name}} öffnen',
   'templates.removeTemplateLabel': 'Vorlagenstatus von {{name}} entfernen',
   'templates.noSearchResults': 'Keine Vorlagen entsprechen deiner Suche.',
@@ -204,7 +205,6 @@ export const pages: Record<string, string> = {
   'pageMode.editAsPage': 'Als Seite bearbeiten',
   'pageMode.editAsBlocks': 'Als Blöcke bearbeiten',
   'pageMode.editorLabel': 'Seitentext',
-  'pageMode.gripTip': 'Ziehen zum Verschieben · Klicken für das Blockmenü',
   'pageMode.todoToggleTip': 'TODO setzen oder entfernen',
   'pageMode.saveFailed':
     'Einige Änderungen an dieser Seite konnten noch nicht gespeichert werden; sie werden bei deiner nächsten Bearbeitung erneut versucht.',
@@ -514,6 +514,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.appliedFiltersLabel': 'Aktive Filter',
   'pageBrowser.filter.filterGroup': 'Filter: {{label}}',
   'pageBrowser.filter.removeFilter': 'Filter {{label}} entfernen',
+  'pageBrowser.filter.aboutFilter': 'Über den Filter {{label}}',
   'pageBrowser.filter.manyFiltersWarning': 'Viele Filter können die Ansicht verlangsamen.',
   'pageBrowser.filter.clearAll': 'Alle entfernen',
   'pageBrowser.filter.clearAllLabel': 'Alle Filter entfernen',

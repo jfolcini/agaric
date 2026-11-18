@@ -35,7 +35,7 @@ async function expectBadgeColour(expected: string, when: string): Promise<void> 
       seen = (await browser.execute(
         (selector: string) =>
           document
-            .querySelector<HTMLElement>(`${selector} [title]`)
+            .querySelector<HTMLElement>(`${selector} [data-slot="badge"]`)
             ?.style.getPropertyValue('--tag-color') ?? '',
         tagItem,
       )) as string

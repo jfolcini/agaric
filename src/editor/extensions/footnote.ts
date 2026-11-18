@@ -159,8 +159,13 @@ export const FootnoteRef = Node.create<FootnoteRefOptions, FootnoteRefStorage>({
           definition === undefined
             ? 'footnote-ref footnote-ref-missing'
             : 'footnote-ref cursor-pointer'
-        if (definition === undefined) dom.setAttribute('title', t('editor.footnoteMissing'))
-        else dom.removeAttribute('title')
+        // Said to a screen reader as `renderFootnoteRef` says it: a `<sup>` takes no name.
+        if (definition === undefined) {
+          const missing = document.createElement('span')
+          missing.className = 'sr-only'
+          missing.textContent = ` ${t('editor.footnoteMissing')}`
+          dom.append(missing)
+        }
       }
 
       render()

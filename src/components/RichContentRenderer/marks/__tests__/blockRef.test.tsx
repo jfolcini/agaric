@@ -111,16 +111,17 @@ describe('renderBlockRef — chip label reflects the stored title verbatim', () 
    * the store holds one normalised title that both renderers render verbatim,
    * the floating tooltip would render the chip's own string back at it: a
    * portal plus a hover/focus state machine per chip, per block, for no extra
-   * information. The remaining job — reveal what `max-width` clipped — is a
-   * native `title=`, exactly as the sibling `renderBlockLink` does it.
+   * information. The remaining job — reveal what `max-width` clipped — is the
+   * label's `TruncatedText`, which sets a title only while it is cut (#6895).
    */
-  it('exposes the title as a native title= attribute and no floating tooltip', async () => {
+  it('puts the title in a TruncatedText label and no floating tooltip', async () => {
     const user = userEvent.setup()
     const title = 'shared title'
     render(<>{renderBlockRef(node('BR4'), 'k', baseCtx({ resolveBlockTitle: () => title }))}</>)
     const chip = screen.getByTestId('block-ref-chip')
     expect(chip.textContent).toBe(title)
-    expect(chip.getAttribute('title')).toBe(title)
+    expect(chip).not.toHaveAttribute('title')
+    expect(chip.querySelector('[data-slot="truncated-text"]')).toHaveTextContent(title)
 
     // No duplicated floating copy of the string the chip already shows.
     await user.hover(chip)

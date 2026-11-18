@@ -131,9 +131,6 @@ export function ImportSection(): React.ReactElement {
   // Stable id wires the disabled-button's
   // `aria-describedby` to the visible `t('data.importSpaceNotReady')`
   // hint, so screen-reader users hear WHY the button is unactionable.
-  // The hint also fixes the mobile/touch path: the `title` attribute
-  // alone is invisible on `pointer:coarse` (no hover) and is suppressed
-  // on disabled buttons in most browsers (`pointer-events: none`).
   const importHintId = useId()
 
   const {
@@ -526,7 +523,6 @@ export function ImportSection(): React.ReactElement {
   // when gated, points at the visible + AT-announced not-ready hint.
   const importGated = currentSpaceId == null
   const importDisabled = importing || importGated
-  const importGatedTitle = importGated ? t('data.importSpaceNotReady') : undefined
   const importGatedDescribedBy = importGated ? importHintId : undefined
 
   return (
@@ -559,13 +555,8 @@ export function ImportSection(): React.ReactElement {
               // having an active space so we never call the IPC with
               // an empty string. On the rare first-boot path before
               // hydration, `currentSpaceId` is null and the button
-              // stays disabled. The visible hint below + the `title`
-              // attribute surface WHY (the disabled button itself
-              // can't fire hover events on most browsers because
-              // `disabled:pointer-events-none`, so we don't rely on
-              // the tooltip alone).
+              // stays disabled. The visible hint below says WHY.
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
             >
               <Upload />
@@ -594,7 +585,6 @@ export function ImportSection(): React.ReactElement {
               size="sm"
               onClick={() => folderInputRef.current?.click()}
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
               data-testid="import-folder-button"
             >
@@ -622,7 +612,6 @@ export function ImportSection(): React.ReactElement {
               size="sm"
               onClick={() => obsidianVaultInputRef.current?.click()}
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
               data-testid="import-obsidian-button"
             >
@@ -649,7 +638,6 @@ export function ImportSection(): React.ReactElement {
               size="sm"
               onClick={() => enexInputRef.current?.click()}
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
               data-testid="import-enex-button"
             >
@@ -676,7 +664,6 @@ export function ImportSection(): React.ReactElement {
               size="sm"
               onClick={() => jexInputRef.current?.click()}
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
               data-testid="import-jex-button"
             >
@@ -702,7 +689,6 @@ export function ImportSection(): React.ReactElement {
               size="sm"
               onClick={() => bibInputRef.current?.click()}
               disabled={importDisabled}
-              title={importGatedTitle}
               aria-describedby={importGatedDescribedBy}
               data-testid="import-bib-button"
             >

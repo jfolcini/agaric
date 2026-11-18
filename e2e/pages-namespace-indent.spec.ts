@@ -60,7 +60,9 @@ test.describe('Pages view — namespace indentation @pages', () => {
     const flatContent = flatRow.locator('.page-browser-item')
     const flatTitle = flatRow.locator('.page-browser-item-title')
     const namespaceRoot = page.getByRole('button', { name: 'Toggle work namespace' })
-    const nestedTitle = page.locator(`[data-page-tree-row] span[title="${NAMESPACED_PAGE}"]`)
+    const nestedTitle = page.locator(
+      `[data-page-tree-row] span[data-page-title="${NAMESPACED_PAGE}"]`,
+    )
 
     await expect(flatContent).toBeVisible()
     await expect(namespaceRoot).toBeVisible()
@@ -110,7 +112,9 @@ test.describe('Pages view — namespace indentation on a phone @pages @mobile', 
     const flatContent = flatRow.locator('.page-browser-item')
     const flatTitle = flatRow.locator('.page-browser-item-title')
     const namespaceRoot = page.getByRole('button', { name: 'Toggle work namespace' })
-    const nestedTitle = page.locator(`[data-page-tree-row] span[title="${NAMESPACED_PAGE}"]`)
+    const nestedTitle = page.locator(
+      `[data-page-tree-row] span[data-page-title="${NAMESPACED_PAGE}"]`,
+    )
 
     await expect(flatContent).toBeVisible()
     await expect(namespaceRoot).toBeVisible()

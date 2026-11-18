@@ -22,6 +22,7 @@ import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { listRowVariants } from '@/components/ui/list-item'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -406,13 +407,17 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           >
             <span className="flex items-center gap-3 min-w-0">
               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="page-browser-item-title truncate" title={title}>
+              <TruncatedText
+                text={title}
+                className="page-browser-item-title"
+                data-page-title={title}
+              >
                 <HighlightMatch text={title} filterText={trimmedFilter} />
                 {showAliasBadge && (
                   <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
                 )}
                 {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
-              </span>
+              </TruncatedText>
             </span>
             <span
               data-page-metadata

@@ -42,6 +42,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -95,13 +96,12 @@ function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkP
         <SidebarMenuButton
           ref={setActivatorNodeRef}
           tooltip={fullTitle}
-          title={fullTitle}
           {...attributes}
           {...listeners}
           onClick={() => onOpen(pageId, title)}
         >
           <Bookmark />
-          <span className="truncate">{label}</span>
+          <TruncatedText>{label}</TruncatedText>
         </SidebarMenuButton>
       </NewTabTarget>
       <SidebarMenuAction

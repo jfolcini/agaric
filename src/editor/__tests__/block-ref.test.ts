@@ -216,10 +216,10 @@ describe('BlockRef NodeView — mounted Editor, resolve-store title contract (#4
    * is `inline-flex`, and `text-overflow` applies only to a block container,
    * so a title assigned straight to `dom.textContent` becomes an anonymous
    * flex item that no selector can reach — `max-width` then hard-clips it with
-   * no `…`. The title has to live in a real `.block-ref-chip-label` child, and
-   * the native `title=` is what reveals the clipped tail.
+   * no `…`. The title has to live in a real `.block-ref-chip-label` child. The
+   * chip carries no native `title=` (#6895): the peek shows the target.
    */
-  it('puts the title in a .block-ref-chip-label child and mirrors it into title=', () => {
+  it('puts the title in a .block-ref-chip-label child and no native title=', () => {
     editor = createEditor({
       resolveContent: () => 'a title long enough that max-width would clip it on screen',
       content: docWithRef('LABEL0001'),
@@ -229,9 +229,7 @@ describe('BlockRef NodeView — mounted Editor, resolve-store title contract (#4
     const label = chip?.querySelector('.block-ref-chip-label')
     expect(label).not.toBeNull()
     expect(label?.textContent).toBe('a title long enough that max-width would clip it on screen')
-    expect(chip?.getAttribute('title')).toBe(
-      'a title long enough that max-width would clip it on screen',
-    )
+    expect(chip).not.toHaveAttribute('title')
   })
 
   it('re-fills the single label child on update instead of appending another', () => {
@@ -247,17 +245,14 @@ describe('BlockRef NodeView — mounted Editor, resolve-store title contract (#4
     expect(chip?.textContent).toBe('Title for UPD0002')
   })
 
-  // `useBlockRefPeek` parks the chip's `title` while a peek is open and marks
-  // the chip; `update()` runs on every keystroke in the block, so without the
-  // guard the native tooltip would come back over the open popover.
-  it('an update while the title is parked leaves it off', () => {
+  // `update()` runs on every keystroke in the block; it must not put a native
+  // tooltip on the chip (#6895), which would also come back over an open peek.
+  it('an update re-fills the chip and puts no title on it', () => {
     editor = createEditor({
       resolveContent: (id) => `Title for ${id}`,
       content: docWithRef('PARK0001'),
     })
     const chip = editor.view.dom.querySelector('[data-type="block-ref"]') as HTMLElement
-    chip.removeAttribute('title')
-    chip.setAttribute('data-peek-title-parked', '')
 
     // An in-place attribute change keeps the NodeView instance and drives its
     // `update()`, unlike `setContent`, which rebuilds the view.

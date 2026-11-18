@@ -228,10 +228,24 @@ describe('InPageFind replace row', () => {
     )
   })
 
+  // #6895: the shortcut moved out of a native title into a tooltip; the button's text is its name.
+  it.each([
+    ['Replace', 'Enter'],
+    ['Replace all', 'Ctrl + Alt + Enter'],
+  ])('%s shows %s in its tooltip on hover', async (name, shortcut) => {
+    seed([['A', 'foo']])
+    const { user } = await openReplace('foo', 'bar')
+    const button = screen.getByRole('button', { name })
+
+    await user.hover(button)
+
+    expect((await screen.findAllByRole('tooltip'))[0]).toHaveTextContent(shortcut)
+  })
+
   it('has accessible controls and no a11y violations', async () => {
     seed([['A', 'foo']])
     const { container } = await openReplace('foo', 'bar')
-    expect(screen.getByRole('button', { name: 'Replace (Ctrl+H)' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Replace (Ctrl + H)' })).toHaveAttribute(
       'aria-expanded',
       'true',
     )

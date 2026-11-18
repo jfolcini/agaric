@@ -101,6 +101,7 @@ export const pages: Record<string, string> = {
   'templates.pageIndicator': 'Modelo de página',
   'templates.pageTooltip':
     'Um modelo de página — inseri-lo cria uma nova página a partir deste conteúdo.',
+  'templates.scopeInfoLabel': 'Sobre o tipo de modelo de {{name}}',
   'templates.navigateLabel': 'Abrir modelo {{name}}',
   'templates.removeTemplateLabel': 'Remover status de modelo de {{name}}',
   'templates.noSearchResults': 'Nenhum modelo corresponde à sua pesquisa.',
@@ -202,7 +203,6 @@ export const pages: Record<string, string> = {
   'pageMode.editAsPage': 'Editar como página',
   'pageMode.editAsBlocks': 'Editar como blocos',
   'pageMode.editorLabel': 'Texto da página',
-  'pageMode.gripTip': 'Arraste para mover · Clique para abrir o menu do bloco',
   'pageMode.todoToggleTip': 'Definir ou limpar TODO',
   'pageMode.saveFailed':
     'Algumas alterações desta página ainda não puderam ser salvas; elas serão tentadas novamente na sua próxima edição.',
@@ -508,6 +508,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.appliedFiltersLabel': 'Filtros ativos',
   'pageBrowser.filter.filterGroup': 'Filtro: {{label}}',
   'pageBrowser.filter.removeFilter': 'Remover filtro {{label}}',
+  'pageBrowser.filter.aboutFilter': 'Sobre o filtro {{label}}',
   'pageBrowser.filter.manyFiltersWarning': 'Muitos filtros podem deixar a visualização lenta.',
   'pageBrowser.filter.clearAll': 'Limpar tudo',
   'pageBrowser.filter.clearAllLabel': 'Limpar todos os filtros',

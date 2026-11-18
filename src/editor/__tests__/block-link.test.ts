@@ -2,6 +2,8 @@
  * Tests for the BlockLink extension.
  */
 
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { Editor, type JSONContent } from '@tiptap/core'
 import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
@@ -9,6 +11,8 @@ import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { Slice } from '@tiptap/pm/model'
+import { EditorContent } from '@tiptap/react'
+import { createElement } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,6 +20,7 @@ import { BlockLink } from '@/editor/extensions/block-link'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { setPageDragData } from '@/lib/page-drag'
 
 describe('BlockLink', () => {
@@ -128,23 +133,25 @@ describe('BlockLink Backspace deletes the chip cleanly (#1739)', () => {
   })
 })
 
-describe('BlockLink broken link removal (#5736)', () => {
+describe('BlockLink broken link removal (#5736, #6895)', () => {
   const DEAD = '01DEAD00000000000000000000'
   const LIVE = '01L1VE00000000000000000000'
   let editor: Editor
   const onNavigate = vi.fn()
+  let status: (id: string) => 'active' | 'deleted'
 
   beforeEach(() => {
     vi.clearAllMocks()
+    status = (id) => (id === DEAD ? 'deleted' : 'active')
   })
 
   afterEach(() => {
     editor.destroy()
   })
 
+  /** The editor, mounted through `EditorContent`, which hosts the broken chip's React. */
   function build(content: JSONContent[]): Editor {
     editor = new Editor({
-      element: document.createElement('div'),
       extensions: [
         Document,
         Paragraph,
@@ -152,63 +159,104 @@ describe('BlockLink broken link removal (#5736)', () => {
         History,
         BlockLink.configure({
           resolveTitle: (id) => `Title:${id}`,
-          resolveStatus: (id) => (id === DEAD ? 'deleted' : 'active'),
+          resolveStatus: (id) => status(id),
           onNavigate,
         }),
       ],
       content: { type: 'doc', content: [{ type: 'paragraph', content }] },
     })
+    render(createElement(EditorContent, { editor }))
     return editor
   }
 
-  const chip = (id: string) => editor.view.dom.querySelector(`[data-id="${id}"]`) as HTMLElement
+  const brokenName = (label: string) => `${label} ${t('editor.brokenLinkState')}`
+  const brokenChip = (label = `Title:${DEAD}`) =>
+    screen.findByRole('button', { name: brokenName(label) })
+  const removeButton = () => screen.findByRole('button', { name: t('editor.brokenLinkRemove') })
 
   const markdown = () => serialize(editor.getJSON() as DocNode)
 
-  it('a broken chip is struck through and carries the removal tooltip and name; a live one does not', () => {
+  /** Open the chip's popover and press its Remove. */
+  async function removeVia(user: ReturnType<typeof userEvent.setup>, label?: string) {
+    await user.click(await brokenChip(label))
+    await user.click(await removeButton())
+  }
+
+  it('a broken chip is the static broken chip, named by its text and state, with no title; a live one is not', async () => {
     build([
       { type: 'block_link', attrs: { id: DEAD } },
       { type: 'block_link', attrs: { id: LIVE } },
     ])
-    expect(chip(DEAD).classList.contains('block-link-deleted')).toBe(true)
-    expect(chip(DEAD).getAttribute('title')).toBe(t('editor.brokenLinkTooltip'))
-    expect(chip(DEAD).getAttribute('role')).toBe('button')
-    expect(chip(DEAD).getAttribute('aria-label')).toBe(
-      `Title:${DEAD} ${t('editor.brokenLinkRemoveAction')}`,
-    )
-    expect(chip(LIVE).classList.contains('block-link-deleted')).toBe(false)
-    expect(chip(LIVE).getAttribute('title')).toBeNull()
-    expect(chip(LIVE).hasAttribute('role')).toBe(false)
-    expect(chip(LIVE).hasAttribute('aria-label')).toBe(false)
+    const chip = await brokenChip()
+    expect(chip.classList.contains('block-link-deleted')).toBe(true)
+    expect(chip.closest('[title]')).toBeNull()
+    const live = editor.view.dom.querySelector(`[data-id="${LIVE}"]`) as HTMLElement
+    expect(live.classList.contains('block-link-deleted')).toBe(false)
+    expect(live.getAttribute('title')).toBeNull()
+    expect(live.hasAttribute('role')).toBe(false)
   })
 
-  it('a labelled broken chip is named by its label', () => {
+  it('a labelled broken chip is named by its label', async () => {
     build([{ type: 'block_link', attrs: { id: DEAD, label: 'the plan' } }])
-    expect(chip(DEAD).getAttribute('aria-label')).toBe(
-      `the plan ${t('editor.brokenLinkRemoveAction')}`,
-    )
+    expect(await brokenChip('the plan')).toBeInTheDocument()
   })
 
-  it('a removal right after typing beside the chip is an undo step of its own', () => {
+  it('a click explains the link in a popover that keeps the editor, and removes nothing', async () => {
+    const user = userEvent.setup()
     build([
       { type: 'text', text: 'a ' },
       { type: 'block_link', attrs: { id: DEAD } },
     ])
+    await user.click(await brokenChip())
+    expect(markdown()).toBe(`a [[${DEAD}]]`)
+    const popover = await screen.findByRole('dialog', { name: brokenName(`Title:${DEAD}`) })
+    expect(popover).toHaveTextContent(t('editor.brokenLinkExplanation'))
+    expect(popover.hasAttribute('data-editor-portal')).toBe(true)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('Enter on the chip opens it, and Escape closes it and hands the editor its focus', async () => {
+    const user = userEvent.setup()
+    build([{ type: 'block_link', attrs: { id: DEAD } }])
+    ;(await brokenChip()).focus()
+    await user.keyboard('{Enter}')
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(editor.view.dom)
+    })
+    expect(markdown()).toBe(`[[${DEAD}]]`)
+  })
+
+  it('a removal right after typing before the chip, with its popover open, is an undo step of its own', async () => {
+    const user = userEvent.setup()
+    build([
+      { type: 'text', text: 'a ' },
+      { type: 'block_link', attrs: { id: DEAD } },
+    ])
+    await user.click(await brokenChip())
+    const remove = await removeButton()
+    // Moves the chip: Remove finds it where it is at the press.
     editor.view.dispatch(editor.state.tr.insertText('x', 3))
-    chip(DEAD).click()
+    await user.click(remove)
     expect(markdown()).toBe('a x')
     editor.commands.undo()
     expect(markdown()).toBe(`a x[[${DEAD}]]`)
   })
 
-  it('a click removes exactly that chip, toasts, and undo puts it back', () => {
+  it('Remove removes exactly that chip, toasts, and undo puts it back', async () => {
+    const user = userEvent.setup()
     build([
       { type: 'text', text: 'a ' },
       { type: 'block_link', attrs: { id: DEAD } },
       { type: 'text', text: ' b ' },
       { type: 'block_link', attrs: { id: LIVE } },
     ])
-    chip(DEAD).click()
+    await removeVia(user)
     expect(markdown()).toBe(`a  b [[${LIVE}]]`)
     expect(toast.success).toHaveBeenCalledExactlyOnceWith(t('editor.brokenLinkRemoved'))
     expect(onNavigate).not.toHaveBeenCalled()
@@ -216,18 +264,48 @@ describe('BlockLink broken link removal (#5736)', () => {
     expect(markdown()).toBe(`a [[${DEAD}]] b [[${LIVE}]]`)
   })
 
-  it('a labelled broken chip leaves its label as text', () => {
+  it('a labelled broken chip leaves its label as text', async () => {
+    const user = userEvent.setup()
     build([
       { type: 'text', text: 'see ' },
       { type: 'block_link', attrs: { id: DEAD, label: 'the plan' } },
     ])
-    chip(DEAD).click()
+    await removeVia(user, 'the plan')
     expect(markdown()).toBe('see the plan')
+  })
+
+  it('Remove after the link stopped being broken leaves it and warns', async () => {
+    const warn = vi.spyOn(logger, 'warn')
+    const user = userEvent.setup()
+    build([{ type: 'block_link', attrs: { id: DEAD } }])
+    await user.click(await brokenChip())
+    const remove = await removeButton()
+    status = () => 'active'
+    await user.click(remove)
+    expect(markdown()).toBe(`[[${DEAD}]]`)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('Remove pressed after the chip was deleted, before its popover unmounts, does nothing and warns', async () => {
+    const warn = vi.spyOn(logger, 'warn')
+    const user = userEvent.setup()
+    build([
+      { type: 'text', text: 'a ' },
+      { type: 'block_link', attrs: { id: DEAD } },
+    ])
+    await user.click(await brokenChip())
+    const remove = await removeButton()
+    editor.view.dispatch(editor.state.tr.delete(3, 4))
+    remove.click()
+    expect(markdown()).toBe('a ')
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledOnce()
   })
 
   it('a live chip still navigates and leaves the content alone', () => {
     build([{ type: 'block_link', attrs: { id: LIVE } }])
-    chip(LIVE).click()
+    ;(editor.view.dom.querySelector(`[data-id="${LIVE}"]`) as HTMLElement).click()
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith(LIVE)
     expect(markdown()).toBe(`[[${LIVE}]]`)
     expect(toast.success).not.toHaveBeenCalled()

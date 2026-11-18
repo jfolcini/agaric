@@ -202,9 +202,11 @@ export const agenda: Record<string, string> = {
   'agendaFilter.optionsLabel': '{{label}} options',
   'agendaFilter.editFilter': 'Edit {{label}} filter',
   'agendaFilter.removeFilterLabel': 'Remove {{label}} filter',
-  // Translators: Tooltip on a property chip that has no effect; 'is set' quotes the filter.isSet
-  // choice, keep it matching that label.
+  // Translators: Explanation behind the ⓘ beside a property chip that has no effect; 'is set'
+  // quotes the filter.isSet choice, keep it matching that label. subsumedInfoLabel = that ⓘ
+  // button's screen-reader label; {{label}} = the chip's text such as "effort = 2".
   'agendaFilter.valuedSubsumedByIsSet': "No effect — the property is already filtered as 'is set'",
+  'agendaFilter.subsumedInfoLabel': 'Why the {{label}} filter has no effect',
 
   // Translators: Heading of the DuePanel, the collapsible panel under a Journal day (or a date
   // page) listing the tasks due or scheduled that day; {{count}} = number of tasks, followed by

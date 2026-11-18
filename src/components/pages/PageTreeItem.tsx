@@ -16,6 +16,7 @@ import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import type { PageTreeNode } from '@/lib/page-tree'
 
 export interface PageTreeItemProps {
@@ -55,9 +56,9 @@ export function PageTreeItem({
             onClick={() => onNavigate(leafId, node.fullPath)}
           >
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate" title={node.fullPath}>
+            <TruncatedText text={node.name} data-page-title={node.fullPath}>
               <HighlightMatch text={node.name} filterText={filterText} />
-            </span>
+            </TruncatedText>
           </button>
         </NewTabTarget>
         {node.duplicateTitle && <DuplicateTitleCue pageId={leafId} />}
@@ -143,11 +144,13 @@ export function PageTreeItem({
         <NewTabTarget pageId={hybridId} title={node.fullPath}>
           <button
             type="button"
-            className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-ring-visible"
+            className="min-w-0 flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded focus-ring-visible"
             onClick={() => onNavigate(hybridId, node.fullPath)}
-            title={node.fullPath}
+            data-page-title={node.fullPath}
           >
-            <HighlightMatch text={node.name} filterText={filterText} />
+            <TruncatedText text={node.name} className="block">
+              <HighlightMatch text={node.name} filterText={filterText} />
+            </TruncatedText>
           </button>
         </NewTabTarget>
         {node.duplicateTitle && <DuplicateTitleCue pageId={hybridId} />}

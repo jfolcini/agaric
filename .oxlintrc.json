@@ -103,8 +103,7 @@
               "PageTitleEditor",
               "ReferenceSheet",
               "RenameDialog",
-              "SortableBookmark",
-              "Title"
+              "SortableBookmark"
             ],
             "message": "This component forwards title to a native title, which never shows on a tap (#6895): truncated text uses TruncatedText, an explanation InfoPopover; a title repeating visible text or an aria-label is deleted. A component whose title prop is shown text goes in allowedFor in .oxlintrc.json."
           }

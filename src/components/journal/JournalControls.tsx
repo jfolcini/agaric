@@ -237,14 +237,8 @@ export function JournalControls(): React.ReactElement {
               size="icon-xs"
               ariaLabel={navLabels.prev}
               aria-keyshortcuts={toAriaKeyshortcuts(previousShortcut)}
-              tooltip={
-                <>
-                  {navLabels.prev}{' '}
-                  <Kbd className="ml-1" aria-hidden="true">
-                    {previousShortcut}
-                  </Kbd>
-                </>
-              }
+              tooltip={navLabels.prev}
+              shortcut={previousShortcut}
               onClick={goPrev}
               disabled={!canGoPrev}
             >
@@ -290,14 +284,8 @@ export function JournalControls(): React.ReactElement {
               size="icon-xs"
               ariaLabel={navLabels.next}
               aria-keyshortcuts={toAriaKeyshortcuts(nextShortcut)}
-              tooltip={
-                <>
-                  {navLabels.next}{' '}
-                  <Kbd className="ml-1" aria-hidden="true">
-                    {nextShortcut}
-                  </Kbd>
-                </>
-              }
+              tooltip={navLabels.next}
+              shortcut={nextShortcut}
               onClick={goNext}
               disabled={!canGoNext}
             >

@@ -91,7 +91,7 @@ function treePills(filters: FilterToken[], node: FilterNode, nested = false): Re
 function QueryTextPills({ expression }: { expression: string }): React.ReactElement {
   const { ast } = readQueryText(expression)
   return (
-    <span className="flex flex-1 flex-wrap items-center gap-1" title={expression}>
+    <span className="flex flex-1 flex-wrap items-center gap-1">
       {ast.expr
         ? treePills(ast.filters, ast.expr)
         : ast.filters.map((token) => <QueryTokenPill key={tokenKey(token)} token={token} />)}
@@ -174,11 +174,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
     return <span className="flex-1 text-xs">{expression}</span>
   }
 
-  return (
-    <span className="flex flex-1 flex-wrap items-center gap-1" title={expression}>
-      {pills}
-    </span>
-  )
+  return <span className="flex flex-1 flex-wrap items-center gap-1">{pills}</span>
 }
 
 /**

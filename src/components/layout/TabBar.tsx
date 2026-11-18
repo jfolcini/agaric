@@ -42,6 +42,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
@@ -112,7 +113,6 @@ interface SortableTabProps {
   id: string
   isActive: boolean
   state: 'inactive' | 'editing' | 'elsewhere'
-  fullPath: string
   label: string
   buttonRef: (el: HTMLButtonElement | null) => void
   onClick: (e: React.MouseEvent) => void
@@ -128,7 +128,6 @@ function SortableTab({
   id,
   isActive,
   state,
-  fullPath,
   label,
   buttonRef,
   onClick,
@@ -153,7 +152,6 @@ function SortableTab({
       // dnd-kit marks a dragged button `aria-pressed`, which a tab does not take.
       aria-pressed={undefined}
       aria-selected={isActive}
-      title={fullPath}
       // Along the strip only: it clips anything above or below it.
       style={{ transform: CSS.Translate.toString(transform && { ...transform, y: 0 }), transition }}
       className={cn(tabVariants({ state }), isDragging && 'z-10')}
@@ -165,7 +163,7 @@ function SortableTab({
         if (!isDragging && !e.defaultPrevented) onKeyDown(e)
       }}
     >
-      <span className="truncate">{label}</span>
+      <TruncatedText>{label}</TruncatedText>
       <span
         data-tab-close=""
         className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
@@ -180,8 +178,8 @@ function SortableTab({
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
   // #1448 — DISPLAY-ONLY journal-tab title formatting. `fullPath`/`tab.label`
-  // remain the canonical ISO identity (used for the `title=` tooltip, switching,
-  // and close announcements); only the visible leaf label is reformatted.
+  // remain the canonical ISO identity (used for switching and close
+  // announcements); only the visible leaf label is reformatted.
   const { journalDateFormat } = useJournalDateFormat()
   const displayLabel = (fullPath: string): string => {
     const leaf = getPageDisplayName(fullPath, 'leaf').label
@@ -314,11 +312,9 @@ export function TabBar(): React.ReactElement | null {
             >
               {tabs.map((tab, i) => {
                 // Bug 1: tabs are space-constrained (`max-w-[120px]
-                // md:max-w-[200px]` + `truncate`) — full namespaced paths
-                // overflow fast. Display the LEAF only and surface the full
-                // path via `title=""` for hover. The empty-label fallback to
-                // "Untitled" is preserved verbatim so the existing label test
-                // keeps passing.
+                // md:max-w-[200px]`) — full namespaced paths overflow fast.
+                // Display the LEAF only; the tab switcher shows the full path.
+                // The empty-label fallback to "Untitled" is preserved.
                 const fullPath = tab.label || t('tabs.untitled')
                 return (
                   <SortableTab
@@ -326,7 +322,6 @@ export function TabBar(): React.ReactElement | null {
                     id={tab.id}
                     isActive={i === activeTabIndex}
                     state={tabState(i)}
-                    fullPath={fullPath}
                     label={displayLabel(fullPath)}
                     buttonRef={(el) => {
                       tabRefs.current[i] = el

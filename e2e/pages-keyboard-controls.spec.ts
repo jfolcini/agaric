@@ -142,7 +142,7 @@ test('a star keeps focus when its toggle moves the page out of view @pages', asy
         const box = r.getBoundingClientRect()
         return box.top <= mid && box.bottom > mid
       })
-      return row?.querySelector('.page-browser-item-title')?.getAttribute('title') ?? ''
+      return row?.querySelector('.page-browser-item-title')?.getAttribute('data-page-title') ?? ''
     })
   await expect.poll(midRowTitle).toMatch(/^Bulk Page \d+$/)
   const title = await midRowTitle()

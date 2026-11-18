@@ -237,19 +237,7 @@ describe('PageBrowser', () => {
     expect(options?.action?.label).toBe('Undo')
     expect(options?.action?.onClick).toBeTypeOf('function')
   })
-  it('page name has title attribute for accessibility', async () => {
-    stubPageRowInvoke(mockedInvoke, {
-      list_pages_with_metadata: () =>
-        pageList([
-          makePage({ id: 'P1', content: 'A very long page name that should be truncated' }),
-        ]),
-    })
 
-    render(<PageBrowser />)
-
-    const pageTitle = await screen.findByText('A very long page name that should be truncated')
-    expect(pageTitle).toHaveAttribute('title', 'A very long page name that should be truncated')
-  })
   describe(' aria-activedescendant on keyboard nav', () => {
     it('grid container exposes aria-activedescendant matching the focused row id', async () => {
       stubPageRowInvoke(mockedInvoke, {
