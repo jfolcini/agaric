@@ -18,6 +18,7 @@
 
 mod backlink_integration;
 mod block_integration;
+mod change_feed;
 mod common;
 mod conformance;
 mod conformance_command;

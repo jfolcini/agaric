@@ -4,6 +4,7 @@
 //! [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator)
 //! from Tauri, allowing tests to capture events without an `AppHandle`.
 
+use agaric_engine::materializer::ChangeDomain;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -410,6 +411,11 @@ pub struct PropertyChangedEvent {
 /// cache rebuild after an inbound sync session has drained (#5251). Any future
 /// out-of-band local write path (deep-link-driven mutations, automations)
 /// should funnel through this **one** signal rather than minting a new one.
+///
+/// #6545: the change feed (`change_feed::run` in the app crate) also sends it,
+/// with `local_command`, after local commits of any origin once their
+/// background rebuilds have settled. Those name the `domains` to refetch and
+/// reload no page store.
 pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
 
 /// Payload for [`EVENT_BLOCKS_CHANGED`].
@@ -439,6 +445,14 @@ pub struct BlocksChangedEvent {
     /// out, so `false` keeps the pages' undo and redo. The frontend reads an
     /// absent field as `true`.
     pub local_ops_appended: bool,
+    /// The cache groups the write can have staled. `None` or absent means all
+    /// of them, which is what every producer but the change feed sends.
+    #[serde(default)]
+    pub domains: Option<Vec<ChangeDomain>>,
+    /// Whether this is the change feed's event for local commits (#6545),
+    /// sent once their background rebuilds have settled. Absent means false.
+    #[serde(default)]
+    pub local_command: bool,
 }
 
 // ---------------------------------------------------------------------------

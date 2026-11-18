@@ -1025,6 +1025,32 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    // #6545 — a typing commit sends one; a reload would remount the editor.
+    it("ignores the change feed's event for a local commit", async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('blocks:changed')({
+        payload: {
+          changed_page_ids: ['PAGE_1'],
+          local_ops_appended: true,
+          domains: ['structure'],
+          local_command: true,
+        },
+      })
+
+      expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).not.toHaveBeenCalled()
+      expect(changes).toEqual([])
+
+      unsubscribe()
+      unmount()
+    })
+
     it('refreshes the space list (#5283)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
       await vi.waitFor(() => {
