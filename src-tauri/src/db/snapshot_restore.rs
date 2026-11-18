@@ -30,7 +30,7 @@
 //! with its `-wal` and `-shm`, and the attachment files only it refers to
 //! move to `<db>.pre-restore-<ts>.attachments/`, out of the way of the
 //! cleanup of unreferenced attachment files. [`prune_replaced_vaults`]
-//! deletes both [`KEPT_FOR`] after the restore.
+//! deletes both `KEPT_FOR` after the restore.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -310,7 +310,7 @@ async fn set_aside_attachments(db_path: &Path, kept: &Path) {
     }
 }
 
-/// Delete each vault a restore replaced [`KEPT_FOR`] or longer before `now`
+/// Delete each vault a restore replaced `KEPT_FOR` or longer before `now`
 /// (Unix seconds), with its `-wal`, its `-shm` and its attachment files. Its
 /// age is read from its name: a file's modified time is when the vault was
 /// last written, not when it was replaced.
