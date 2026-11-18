@@ -115,7 +115,7 @@ const GROUP_ICONS: Readonly<Record<string, LucideIcon>> = {
  * exact English group names `EMOJI_GROUPS` emits). `bucket.group` itself
  * stays the raw English string throughout this file — it is the identity
  * used to look up icons and drive the category-jump index — only the
- * *displayed* text (tab aria-label/title, sticky label, header row) goes
+ * *displayed* text (tab aria-label, sticky label, header row) goes
  * through `groupLabel()` below.
  */
 const GROUP_LABEL_KEYS: Readonly<Record<string, string>> = {
@@ -462,7 +462,6 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                   role="tab"
                   aria-selected={active}
                   aria-label={groupLabel(t, group)}
-                  title={groupLabel(t, group)}
                   data-active={active}
                   onClick={() => jumpToCategory(index)}
                   className={cn(
@@ -503,7 +502,6 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                 key={`frequent-${char}`}
                 type="button"
                 aria-label={char}
-                title={char}
                 onClick={() => {
                   push(char)
                   onSelect(char)
@@ -602,7 +600,6 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                               role="gridcell"
                               data-cell={`${vi.index}-${col}`}
                               aria-label={entry.name}
-                              title={`:${entry.name}:`}
                               tabIndex={isFocused ? 0 : -1}
                               onClick={() => handleSelect(entry)}
                               className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
@@ -698,7 +695,6 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
             role="radio"
             aria-checked={value === tone.id}
             aria-label={label}
-            title={label}
             onClick={() => onChange(tone.id)}
             className={cn(
               'grid size-7 place-items-center rounded-md text-base leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',

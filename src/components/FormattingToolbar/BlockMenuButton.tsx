@@ -6,13 +6,12 @@
  */
 
 import { GripVertical } from 'lucide-react'
-import type React from 'react'
-import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { type RenderMode, Tip } from '@/components/FormattingToolbar/shared'
+import { type RenderMode, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 
 /** Its item key on the bar. */
@@ -33,22 +32,10 @@ interface BlockMenuButtonProps {
 
 export function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps) {
   const { t } = useTranslation()
-  // A finger's click comes on its lift, onto whatever the press put under it: the menu's sheet.
-  const byFinger = useRef(false)
-  const press: Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onClick'> = {
-    onPointerDown: (e) => {
-      if (e.button !== 0) return
-      e.preventDefault()
-      byFinger.current = e.pointerType === 'touch'
-      if (!byFinger.current) onOpen(e.currentTarget)
-    },
-    onClick: (e) => {
-      if (e.detail === 0 || byFinger.current) onOpen(e.currentTarget)
-      byFinger.current = false
-    },
-  }
+  // A finger opens the menu on its lift, not its press, so the lift lands on the
+  // button and not on the menu's sheet the press would have put under it.
+  const press = toolbarPressHandlers(onOpen)
   const common = {
-    'aria-label': t('contextMenu.blockActions'),
     'aria-haspopup': 'menu' as const,
     'aria-expanded': open,
     disabled,
@@ -56,17 +43,27 @@ export function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButto
   }
   if (mode === 'overflow') {
     return (
-      <Button variant="ghost" size="sm" className={toolbarMenuRowClass} {...common}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={toolbarMenuRowClass}
+        aria-label={t('contextMenu.blockActions')}
+        {...common}
+      >
         <GripVertical className="mr-2" />
         <span>{t('contextMenu.blockActions')}</span>
       </Button>
     )
   }
   return (
-    <Tip label={t('pageSource.blockMenuTip')}>
-      <Button variant="ghost" size="icon-xs" {...common}>
-        <GripVertical />
-      </Button>
-    </Tip>
+    <IconButton
+      variant="ghost"
+      size="icon-xs"
+      tooltip={t('pageSource.blockMenuTip')}
+      ariaLabel={t('contextMenu.blockActions')}
+      {...common}
+    >
+      <GripVertical />
+    </IconButton>
   )
 }

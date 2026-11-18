@@ -2,7 +2,7 @@
  * Shared primitives for the `FormattingToolbar` decomposition.
  *
  * Extracted from the orchestrator so each per-group renderer file can
- * lean on the same `Tip` wrapper, render-mode union, and config-driven
+ * lean on the same shortcut lookup, render-mode union, and config-driven
  * button renderer without re-exporting types through the orchestrator.
  *
  * Nothing in here owns state; all functions are pure given their args.
@@ -12,11 +12,13 @@ import type React from 'react'
 
 import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
 import {
+  MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
   toolbarMenuRowClass,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { IconButton } from '@/components/ui/icon-button'
+import { DEFAULT_LONG_PRESS_DELAY } from '@/hooks/useLongPress'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
@@ -24,79 +26,68 @@ import { cn } from '@/lib/utils'
 export type RenderMode = 'inline' | 'overflow' | 'sentinel'
 
 /**
- * Map of toolbar button label keys to keyboard-config shortcut ids.
- * Buttons listed here get their tooltip rebuilt as `${label} (${binding})`
- * via `tooltipWithShortcut`, picking up any user customisation. Buttons
- * absent from this map keep their existing `tip` i18n string.
+ * Toolbar button label key → keyboard-config shortcut id. The button's
+ * tooltip shows the binding the catalog holds now, so it follows a user's
+ * rebinding; a button absent here shows its name alone.
  */
 export const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {
-  // Mirror SelectionBubbleMenu's BUBBLE_MENU_SHORTCUT_IDS exactly: the same
-  // mark actions resolve their chord from the rebindable catalog, so the tip
-  // tracks user customisation instead of a frozen i18n string. Bold/Italic are
-  // intentionally absent — they use TipTap StarterKit defaults and are not in
-  // the configurable catalog (matching the bubble menu).
-  'toolbar.code': 'inlineCode',
-  'toolbar.strikethrough': 'strikethrough',
-  'toolbar.highlight': 'highlight',
+  ...MARK_TOGGLE_SHORTCUT_IDS,
+  'toolbar.newLine': 'insertLineBreak',
+  'toolbar.insertDate': 'openDatePicker',
+  'toolbar.todoToggle': 'cycleTaskState',
+  'toolbar.properties': 'openPropertiesDrawer',
+  'toolbar.undo': 'undoLastPageOp',
+  'toolbar.redo': 'redoLastUndoneOp',
 }
 
-/**
- * Append the current keyboard binding for `shortcutId` to `label` so the
- * Tooltip stays in sync with user customisations. Returns the
- * plain label when the id is unknown so we never render an empty `()`
- * for buttons that lack a configurable shortcut.
- */
-export function tooltipWithShortcut(label: string, shortcutId: string): string {
-  const keys = getShortcutKeys(shortcutId)
-  return keys ? `${label} (${keys})` : label
+/** `IconButton`'s `shortcut` for a toolbar button: its current binding, or none. */
+export function toolbarShortcut(label: string): { shortcut?: string } {
+  const id = TOOLBAR_SHORTCUT_IDS[label]
+  const keys = id ? getShortcutKeys(id) : ''
+  return keys ? { shortcut: keys } : {}
 }
 
-export const Tip = ({
-  ref,
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactElement
-  ref?: React.Ref<HTMLButtonElement>
-}) => (
-  // #1094: the formatting toolbar deliberately uses a 200ms hover delay
-  // (snappier than the 300ms app baseline) — the toolbar is a dense strip of
-  // icon buttons sitting right at the edit point, so its tips should appear
-  // quickly. This `Tip` is used only by the FormattingToolbar family, all of
-  // which shared the old per-surface `<TooltipProvider delayDuration={200}>`;
-  // the override now lives on the Tooltip itself so it stays explicit instead
-  // of silently inheriting the app-level default once that provider is gone.
-  <Tooltip delayDuration={200}>
-    <TooltipTrigger asChild ref={ref}>
-      {children}
-    </TooltipTrigger>
-    <TooltipContent side="bottom" sideOffset={6}>
-      {label}
-    </TooltipContent>
-  </Tooltip>
-)
-Tip.displayName = 'Tip'
+/** When each button's current finger press began, for its release. */
+const touchPressStart = new WeakMap<Element, number>()
 
 /**
- * Pointer + keyboard activation handlers for toolbar/menu buttons whose
- * action must run on `pointerdown` (with preventDefault, so the editor keeps
- * focus through the press). Only the primary button activates — right/middle
- * click stay inert — and the `click` fallback runs the action solely for
- * keyboard-generated clicks (Enter/Space dispatch a click with
- * `detail === 0`), so pointer presses never double-fire.
+ * Pointer + keyboard activation handlers for toolbar/menu buttons. Every
+ * primary press is `preventDefault`ed on `pointerdown`, so the editor keeps its
+ * focus and selection through it; right/middle click stay inert.
+ *
+ * - A mouse acts on `pointerdown`.
+ * - A finger acts on the release of a short tap. A press held past the
+ *   long-press delay shows the button's name (`IconButton`) and its release
+ *   does nothing, so learning a button's name never applies it (#6895). A
+ *   press the browser takes for a scroll is cancelled and does nothing either.
+ * - The `click` fallback acts only for keyboard-generated clicks (Enter/Space
+ *   dispatch one with `detail === 0`), so a pointer press never double-fires.
  */
 export function toolbarPressHandlers(
-  action: () => void,
-): Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onPointerDown' | 'onClick'> {
+  action: (button: HTMLButtonElement) => void,
+): Pick<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  'onPointerDown' | 'onPointerUp' | 'onClick'
+> {
   return {
     onPointerDown: (e) => {
       if (e.button !== 0) return
       e.preventDefault()
-      action()
+      if (e.pointerType === 'touch') {
+        touchPressStart.set(e.currentTarget, performance.now())
+        return
+      }
+      action(e.currentTarget)
+    },
+    onPointerUp: (e) => {
+      if (e.pointerType !== 'touch') return
+      const start = touchPressStart.get(e.currentTarget)
+      touchPressStart.delete(e.currentTarget)
+      if (start !== undefined && performance.now() - start < DEFAULT_LONG_PRESS_DELAY)
+        action(e.currentTarget)
     },
     onClick: (e) => {
-      if (e.detail === 0) action()
+      if (e.detail === 0) action(e.currentTarget)
     },
   }
 }
@@ -114,8 +105,6 @@ export function renderConfigButton(
   t: (key: string) => string,
   onAfterAction?: () => void,
 ): React.ReactElement {
-  const shortcutId = TOOLBAR_SHORTCUT_IDS[btn.label]
-  const tooltip = shortcutId ? tooltipWithShortcut(t(btn.label), shortcutId) : t(btn.tip)
   const isActive = btn.activeKey ? (state[btn.activeKey] as boolean) : false
   const disabled = btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined
 
@@ -139,19 +128,30 @@ export function renderConfigButton(
     )
   }
 
-  const button = (
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      aria-label={t(btn.label)}
-      aria-pressed={btn.activeKey ? isActive : undefined}
-      disabled={disabled}
-      className={cn(isActive && toolbarActiveClass)}
-      {...toolbarPressHandlers(btn.action)}
+  const common = {
+    variant: 'ghost',
+    size: 'icon-xs',
+    'aria-pressed': btn.activeKey ? isActive : undefined,
+    disabled,
+    className: cn(isActive && toolbarActiveClass),
+    ...toolbarPressHandlers(btn.action),
+  } as const
+  // The sentinel is only measured, and a tooltip adds no width.
+  if (mode === 'sentinel') {
+    return (
+      <Button {...common} aria-label={t(btn.label)}>
+        <btn.icon />
+      </Button>
+    )
+  }
+  return (
+    <IconButton
+      {...common}
+      tooltip={t(btn.tip)}
+      ariaLabel={t(btn.label)}
+      {...toolbarShortcut(btn.label)}
     >
       <btn.icon />
-    </Button>
+    </IconButton>
   )
-  // The sentinel is only measured, and a tooltip adds no width.
-  return mode === 'sentinel' ? button : <Tip label={tooltip}>{button}</Tip>
 }

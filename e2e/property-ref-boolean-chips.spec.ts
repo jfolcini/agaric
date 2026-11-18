@@ -54,8 +54,8 @@ async function reopenFromPages(page: Page, title: string): Promise<void> {
     .locator('[data-slot="sidebar"]')
     .getByRole('button', { name: 'Pages', exact: true })
     .click()
-  // The row's title span; the recently-visited bar's chip carries the same title, on a button.
-  await page.locator(`span[title="${title}"]`).click()
+  // The row's title span.
+  await page.locator(`span[data-page-title="${title}"]`).click()
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
 }
 

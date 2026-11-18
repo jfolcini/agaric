@@ -830,8 +830,8 @@ export const references: Record<string, string> = {
   'search.toggle.toolbarLabel': 'Search modes',
 
   // Translators: Search view, replace across pages: tooltip and aria-label of the icon button that
-  // shows the replace row (Ctrl+H is the shortcut, keep it).
-  'search.replace.toggle': 'Replace across pages (Ctrl+H)',
+  // shows the replace row.
+  'search.replace.toggle': 'Replace across pages',
 
   // Translators: Inserted as {{blocks}} and {{pages}} in search.replace.run, confirmTitle and done.
   'search.replace.blocks_one': '{{count}} block',
@@ -884,7 +884,6 @@ export const references: Record<string, string> = {
   'search.history.empty': 'No recent searches',
   'search.history.clear': 'Clear history',
   'search.history.entryLabel': 'Run search: {{query}}',
-  'search.history.removeEntry': 'Remove "{{query}}" from recent searches',
   'search.history.disable': 'Disable search history',
   'search.history.enable': 'Enable search history',
   'search.history.disabledNotice': 'Search history is off',

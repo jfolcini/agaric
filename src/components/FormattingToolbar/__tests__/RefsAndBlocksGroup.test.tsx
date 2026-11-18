@@ -12,7 +12,7 @@
  *     onCloseAutoFocus would drop focus onto `document.body`.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useState } from 'react'
@@ -60,7 +60,19 @@ vi.mock('@/components/editor-toolbar/TablePicker', () => ({
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  // Says whether a press-and-hold opens it: `PopoverAnchor` overrides a
+  // trigger's `data-slot`, so that is how these show they are IconButtons.
+  Tooltip: ({
+    children,
+    openOnLongPress,
+  }: {
+    children: React.ReactNode
+    openOnLongPress?: boolean
+  }) => (
+    <span data-testid="tooltip" data-open-on-long-press={openOnLongPress ? 'true' : undefined}>
+      {children}
+    </span>
+  ),
   TooltipTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => (
     <>{children}</>
   ),
@@ -168,6 +180,28 @@ describe('RefsAndBlocksGroup popover triggers', () => {
       })
     },
   )
+
+  // #6895 — the icon-only triggers are IconButtons, so a touch press-and-hold
+  // shows the tooltip; Table ops names itself on its face and has no tooltip.
+  it.each([
+    ['toolbar.turnInto', 'toolbar.turnIntoTip', renderTurnIntoButton],
+    ['toolbar.insertTable', 'toolbar.insertTableTip', renderTablePickerButton],
+    ['toolbar.format', 'toolbar.formatTip', renderFormatButton],
+  ] as const)('the %s trigger is an IconButton with its tooltip', (label, tip, renderButton) => {
+    render(<Harness renderButton={(props) => renderButton(props)} />)
+    const tooltip = screen.getByTestId('tooltip')
+    expect(tooltip).toHaveAttribute('data-open-on-long-press', 'true')
+    expect(within(tooltip).getByRole('button', { name: t(label) })).toBeInTheDocument()
+    expect(within(tooltip).getByTestId('tooltip-content')).toHaveTextContent(t(tip))
+  })
+
+  it('the Table ops trigger, which shows its name, has no tooltip', () => {
+    render(<Harness renderButton={(props) => renderTableOpsButton(props)} />)
+    expect(screen.getByRole('button', { name: t('toolbar.tableOps') })).toHaveTextContent(
+      t('toolbar.tableOps'),
+    )
+    expect(screen.queryByTestId('tooltip')).not.toBeInTheDocument()
+  })
 
   describe.each(surfaces)(
     '$name focus preservation (#1958 guards)',

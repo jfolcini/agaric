@@ -296,24 +296,27 @@ export function TemplatesView(): React.ReactElement {
                         indicator so a journal template is distinguishable from
                         a regular page template at a glance. Journal templates
                         keep the `secondary` tone; page templates use the calmer
-                        `outline` tone so the journal flag stays the louder one. */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Badge
-                          tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
-                          className="shrink-0 text-xs"
-                        >
-                          {tpl.isJournalTemplate
-                            ? t('templates.journalIndicator')
-                            : t('templates.pageIndicator')}
-                        </Badge>
-                      </TooltipTrigger>
-                      <TooltipContent>
+                        `outline` tone so the journal flag stays the louder one.
+                        The ⓘ beside it says what the scope does (#6895). */}
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <Badge
+                        tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
+                        className="text-xs"
+                      >
                         {tpl.isJournalTemplate
-                          ? t('templates.journalTooltip')
-                          : t('templates.pageTooltip')}
-                      </TooltipContent>
-                    </Tooltip>
+                          ? t('templates.journalIndicator')
+                          : t('templates.pageIndicator')}
+                      </Badge>
+                      <InfoPopover
+                        variant="icon"
+                        ariaLabel={t('templates.scopeInfoLabel', { name: tpl.content })}
+                        content={
+                          tpl.isJournalTemplate
+                            ? t('templates.journalTooltip')
+                            : t('templates.pageTooltip')
+                        }
+                      />
+                    </span>
                     <Button
                       variant="ghost"
                       size="icon-xs"

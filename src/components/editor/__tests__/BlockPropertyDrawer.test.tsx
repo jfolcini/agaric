@@ -315,7 +315,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
     const dateInput = screen.getByDisplayValue('2026-06-15')
     expect(dateInput).toBeInTheDocument()
@@ -345,7 +345,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+      expect(screen.getByText('Scheduled')).toBeInTheDocument()
     })
     const dateInput = screen.getByDisplayValue('2026-07-01')
     expect(dateInput).toBeInTheDocument()
@@ -375,7 +375,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
     expect(screen.queryByText('No properties set')).not.toBeInTheDocument()
   })
@@ -405,7 +405,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
 
     const clearBtn = screen.getByRole('button', { name: 'Clear due date' })
@@ -444,7 +444,7 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
     })
-    expect(screen.queryByTitle('Due')).not.toBeInTheDocument()
+    expect(screen.queryByText('Due')).not.toBeInTheDocument()
 
     // Simulate toolbar setting a due date
     pageStore.setState((s) => ({
@@ -452,7 +452,7 @@ describe('BlockPropertyDrawer', () => {
     }))
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
     expect(screen.getByDisplayValue('2026-08-20')).toBeInTheDocument()
   })
@@ -597,8 +597,8 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
     })
 
-    // Badge should have the formatted name as title
-    const badge = screen.getByTitle('Created At')
+    // Badge shows the formatted name
+    const badge = screen.getByText('Created At').closest('[data-slot="badge"]') as HTMLElement
     expect(badge).toBeInTheDocument()
 
     // Badge should have icon styling (flex items-center gap-1) and NOT font-mono
@@ -620,7 +620,7 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Effort')).toBeInTheDocument()
     })
 
-    const badge = screen.getByTitle('Effort')
+    const badge = screen.getByText('Effort').closest('[data-slot="badge"]') as HTMLElement
     expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
     expect(badge).not.toHaveClass('font-mono')
 
@@ -639,7 +639,7 @@ describe('BlockPropertyDrawer', () => {
     })
 
     // Custom properties keep font-mono and raw key as title
-    const badge = screen.getByTitle('my_custom')
+    const badge = screen.getByText('my_custom').closest('[data-slot="badge"]') as HTMLElement
     expect(badge).toHaveClass('font-mono')
 
     // No icon for custom properties
@@ -854,7 +854,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
 
     const clearBtn = screen.getByRole('button', { name: 'Clear due date' })
@@ -892,7 +892,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+      expect(screen.getByText('Scheduled')).toBeInTheDocument()
     })
 
     const clearBtn = screen.getByRole('button', { name: 'Clear scheduled date' })
@@ -928,7 +928,7 @@ describe('BlockPropertyDrawer', () => {
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByTitle('Due')).toBeInTheDocument()
+      expect(screen.getByText('Due')).toBeInTheDocument()
     })
 
     const dateInput = screen.getByDisplayValue('2026-06-15')
@@ -1535,8 +1535,8 @@ describe('PropertyField', () => {
       <PropertyField label="Status" value="active" ariaLabel="Status value" onSave={vi.fn()} />,
     )
 
-    expect(screen.getByTitle('Status')).toBeInTheDocument()
-    expect(screen.getByText('Status')).toBeInTheDocument()
+    // The label truncates to the badge's width, as TruncatedText.
+    expect(screen.getByText('Status')).toHaveAttribute('data-slot', 'truncated-text')
     expect(screen.getByDisplayValue('active')).toBeInTheDocument()
   })
 
@@ -1668,7 +1668,7 @@ describe('PropertyField', () => {
       />,
     )
 
-    const badge = screen.getByTitle('Due Date')
+    const badge = screen.getByText('Due Date').closest('[data-slot="badge"]') as HTMLElement
     expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
     expect(badge).not.toHaveClass('font-mono')
     expect(badge.querySelector('svg')).toBeInTheDocument()
@@ -1684,7 +1684,7 @@ describe('PropertyField', () => {
       />,
     )
 
-    const badge = screen.getByTitle('custom_key')
+    const badge = screen.getByText('custom_key').closest('[data-slot="badge"]') as HTMLElement
     expect(badge).toHaveClass('font-mono')
     expect(badge.querySelector('svg')).not.toBeInTheDocument()
   })

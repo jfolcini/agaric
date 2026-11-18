@@ -92,5 +92,5 @@ test('a tag colour outlives its localStorage entry through the tag property @edi
   await expectPainted(workChip(staticBlock), paint)
 
   await navigateToView(page, 'Tags')
-  await expectPainted(page.getByTestId('tag-item-work').locator('[title]'), paint)
+  await expectPainted(page.getByTestId('tag-item-work').locator('[data-slot="badge"]'), paint)
 })

@@ -31,7 +31,6 @@
  */
 
 import type React from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { formatTimestamp, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -43,7 +42,6 @@ export function DuplicateTitleCue({
   pageId: string
   className?: string
 }): React.ReactElement | null {
-  const { t } = useTranslation()
   const created = ulidToDate(pageId)
   if (created === null) return null
   const label = formatTimestamp(created.getTime(), 'full')
@@ -51,7 +49,6 @@ export function DuplicateTitleCue({
     <span
       data-duplicate-title-cue
       className={cn('shrink-0 text-xs text-muted-foreground', className)}
-      title={t('metadata.created', { date: label })}
     >
       {label}
     </span>

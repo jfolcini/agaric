@@ -35,6 +35,7 @@ import { useTranslation } from 'react-i18next'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { getPageDisplayName } from '@/lib/page-display'
@@ -166,11 +167,9 @@ export function QuickAccessBar(): React.ReactElement | null {
           <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
             {visible.map((ref, idx) => {
               // Bug 1: recent chips are space-constrained
-              // (`max-w-[160px]`) and full namespaced paths overflow fast.
-              // Render the LEAF only and surface the full path via `title=""`
-              // for hover. The empty-title fallback to "Untitled" stays —
-              // `getPageDisplayName` treats it as non-namespaced and returns
-              // the same label, so the fallback test keeps passing.
+              // (`max-w-[160px]`) and full namespaced paths overflow fast, so
+              // a chip shows the LEAF only; the command palette's recent pages
+              // list shows the full path.
               const fullTitle = ref.title || t('recent.untitled')
               const displayTitle = getPageDisplayName(fullTitle, 'leaf').label
               return (
@@ -181,11 +180,10 @@ export function QuickAccessBar(): React.ReactElement | null {
                       else buttonRefs.current.delete(idx)
                     }}
                     tabIndex={idx === focusedIndex ? 0 : -1}
-                    className="truncate justify-start"
-                    title={fullTitle}
+                    className="justify-start"
                     onClick={(e) => handleRecentClick(ref, e)}
                   >
-                    <span className="truncate">{displayTitle}</span>
+                    <TruncatedText>{displayTitle}</TruncatedText>
                   </RecentPageChip>
                 </NewTabTarget>
               )

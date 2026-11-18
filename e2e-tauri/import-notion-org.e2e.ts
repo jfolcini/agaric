@@ -19,10 +19,11 @@
 
 import {
   ACTION_TIMEOUT,
-  NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
   importFolder,
+  linkChipTarget,
+  NAV_TIMEOUT,
   navigateTo,
   openPageTitled,
   pageEntryTitled,
@@ -87,12 +88,15 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     for (const title of ['Notes', orgTitle, 'reading']) {
       await pageEntryTitled(title).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
-    await expectAbsent(`span[title="Plan ${PLAN_ID}"]`, 'a page titled with its id')
-    await expectAbsent(`span[title="${folder}/Plan"]`, "a page titled with the folder's name")
+    await expectAbsent(`span[data-page-title="Plan ${PLAN_ID}"]`, 'a page titled with its id')
+    await expectAbsent(
+      `span[data-page-title="${folder}/Plan"]`,
+      "a page titled with the folder's name",
+    )
 
     await openPageTitled('Plan')
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === 'Notes', {
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === 'Notes', {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the link to Notes%20<id>.md never resolved to the page Notes',
     })
@@ -156,7 +160,7 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled('links').waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent('span[title="*Budget"]', 'a page made of a heading link')
+    await expectAbsent('span[data-page-title="*Budget"]', 'a page made of a heading link')
 
     await openPageTitled(roamTitle)
     await expectTaskState(`${marker}-next`, 'TODO')
@@ -165,14 +169,14 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     expect(await tag.getText()).toBe('orgtag')
 
     await openPageTitled('links')
-    // A reference chip's title is its target's text; an unresolved one reads otherwise.
+    // A reference chip shows its target's text; an unresolved one reads otherwise.
     const ref = (await rowOf(`${marker}-ref`)).$('[data-testid="block-ref-chip"]')
-    await browser.waitUntil(async () => (await ref.getAttribute('title')) === `${marker}-target`, {
+    await browser.waitUntil(async () => (await ref.getText()) === `${marker}-target`, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the id: link never resolved to the headline it names',
     })
     const page = (await rowOf(`${marker}-back`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(async () => (await page.getAttribute('title')) === roamTitle, {
+    await browser.waitUntil(async () => (await linkChipTarget(page)) === roamTitle, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the file id: link never resolved to its page',
     })
@@ -197,13 +201,10 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await navigateTo('Pages')
     await openPageTitled(`${marker}-a`)
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(
-      async () => (await chip.getAttribute('title')) === `${marker}-reading`,
-      {
-        timeout: NAV_TIMEOUT,
-        timeoutMsg: 'the link to reading.txt never resolved to the page reading',
-      },
-    )
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === `${marker}-reading`, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the link to reading.txt never resolved to the page reading',
+    })
   })
 
   it('links an Org `file:` link to an Org file of the pick to the page its `#+TITLE` names', async () => {
@@ -224,11 +225,14 @@ describe('Agaric real-backend Notion, Org and text folder import (#6032) @markdo
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled(alphaTitle).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${marker}-a"]`, "a page named after the linked file's name")
+    await expectAbsent(
+      `span[data-page-title="${marker}-a"]`,
+      "a page named after the linked file's name",
+    )
 
     await openPageTitled(`${marker}-b`)
     const chip = (await rowOf(`${marker}-link`)).$('[data-testid="block-link-chip"]')
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === alphaTitle, {
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === alphaTitle, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the file: link never resolved to the page its #+TITLE names',
     })

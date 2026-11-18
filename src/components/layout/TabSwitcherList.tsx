@@ -18,6 +18,8 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
+import { TruncatedText } from '@/components/ui/truncated-text'
+import { getPageDisplayName } from '@/lib/page-display'
 import type { Tab } from '@/stores/tabs'
 
 export interface TabSwitcherListProps {
@@ -42,7 +44,9 @@ export function TabSwitcherList({
     const fullPath = tab.label || t('tabs.untitled')
     const title = displayLabel(fullPath)
     const matches = title.toLowerCase().includes(needle) || fullPath.toLowerCase().includes(needle)
-    return matches ? [{ tab, index, fullPath, title }] : []
+    // A tab shows only its leaf, so the switcher names the parents too.
+    const parentPath = getPageDisplayName(fullPath, 'leaf-with-breadcrumb').breadcrumb
+    return matches ? [{ tab, index, title, parentPath }] : []
   })
 
   return (
@@ -62,11 +66,10 @@ export function TabSwitcherList({
       />
       <CommandList>
         <CommandEmpty>{t('tabs.switcherNoMatch')}</CommandEmpty>
-        {rows.map(({ tab, index, fullPath, title }) => (
+        {rows.map(({ tab, index, title, parentPath }) => (
           <CommandItem
             key={tab.id}
             value={tab.id}
-            title={fullPath}
             className="gap-2"
             onSelect={() => onActivate(index)}
           >
@@ -78,7 +81,14 @@ export function TabSwitcherList({
                 </>
               ) : null}
             </span>
-            <span className="flex-1 truncate">{title}</span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <TruncatedText>{title}</TruncatedText>
+              {parentPath !== undefined && (
+                <TruncatedText className="text-xs text-muted-foreground">
+                  {parentPath}
+                </TruncatedText>
+              )}
+            </span>
             {/* Mouse close, as on the strip: a widget inside an option is a
                 nested-interactive violation. The menu stays open so several
                 tabs can be pruned in a row; at one tab the bar unmounts. */}

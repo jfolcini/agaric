@@ -53,7 +53,7 @@ async function stored(page: Page, pageId: string): Promise<string[]> {
 /** Search `find` with the replace row open and `replacement` typed. */
 async function previewReplace(page: Page, find: string, replacement: string) {
   await submitSearch(page, find)
-  const toggle = page.getByRole('button', { name: 'Replace across pages (Ctrl+H)' })
+  const toggle = page.getByRole('button', { name: 'Replace across pages' })
   if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
   await page.getByRole('textbox', { name: 'Replace with' }).fill(replacement)
 }

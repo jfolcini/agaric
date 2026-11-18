@@ -89,7 +89,6 @@ function BrokenImage({ alt, src }: { alt: string; src: string }): React.ReactEle
       className="image-broken inline-flex items-center gap-1 rounded border border-dashed border-input bg-muted px-1 text-sm text-muted-foreground align-middle"
       data-testid="image-broken"
       aria-label={alt.length > 0 ? alt : src}
-      title={src}
     >
       <span aria-hidden="true">🖼️</span>
       <span>{alt.length > 0 ? alt : src}</span>
@@ -199,7 +198,6 @@ export function GatedImage({
       // Announce as the external image with its domain so the placeholder has
       // context for assistive tech (mirrors the broken-image aria-label).
       aria-label={t('editor.image.externalBlockedAria', { domain: domainLabel })}
-      title={src}
     >
       <span aria-hidden="true">🖼️</span>
       {link?.(<span>{alt.length > 0 ? alt : src}</span>)}

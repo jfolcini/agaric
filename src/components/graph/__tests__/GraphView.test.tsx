@@ -14,6 +14,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { drag } from 'd3-drag'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
@@ -899,6 +900,25 @@ describe('GraphView', () => {
 
       const button = screen.getByRole('button', { name: /Fit to view/ })
       expect(button).toHaveAccessibleName(`${t('graph.zoomReset')} (0)`)
+    })
+
+    // #6895: the binding reaches the tooltip too, not only the accessible name.
+    it.each([
+      [/Zoom in/, 'graph.zoomIn', '+ / ='],
+      [/Zoom out/, 'graph.zoomOut', '-'],
+      [/Fit to view/, 'graph.zoomReset', '0'],
+    ])('%s shows its name and binding on hover', async (name, key, keys) => {
+      const user = userEvent.setup()
+      mockGraphData()
+      render(<GraphView />)
+      const button = await screen.findByRole('button', { name })
+      expect(button).toHaveAttribute('data-slot', 'icon-button')
+
+      await user.hover(button)
+
+      const tip = (await screen.findAllByRole('tooltip'))[0]
+      expect(tip).toHaveTextContent(t(key))
+      expect(tip?.querySelector('kbd')).toHaveTextContent(keys)
     })
 
     it('respects user-customised binding via getShortcutKeys', async () => {

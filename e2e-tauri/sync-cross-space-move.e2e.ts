@@ -93,7 +93,7 @@ function listedPages(): Promise<ListedPage[]> {
     const rows = [...document.querySelectorAll('[data-page-item]')]
     rows.sort((a, b) => Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index')))
     return rows.map((row) => ({
-      title: row.querySelector('.page-browser-item-title')?.getAttribute('title') ?? '',
+      title: row.querySelector('.page-browser-item-title')?.getAttribute('data-page-title') ?? '',
       inbound: row.querySelector('[data-metadata-inbound] [aria-hidden="true"]')?.textContent ?? '',
     }))
   })

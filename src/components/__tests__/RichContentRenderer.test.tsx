@@ -406,6 +406,20 @@ describe('RichContentRenderer', () => {
     expect(chip).toHaveAttribute('title', 'Team/My Page')
   })
 
+  it('a block_link showing a namespaced leaf keeps the full title on hover (#6895)', () => {
+    render(renderRichContent(`[[${BLOCK_ID}]]`, { resolveBlockTitle: () => 'Team/My Page' }))
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip.textContent).toBe('My Page')
+    expect(chip).toHaveAttribute('title', 'Team/My Page')
+  })
+
+  it('a block_link showing its full title carries no title (#6895)', () => {
+    render(renderRichContent(`[[${BLOCK_ID}]]`, { resolveBlockTitle: () => 'My Page' }))
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip.textContent).toBe('My Page')
+    expect(chip).not.toHaveAttribute('title')
+  })
+
   it('block_link click calls onNavigate', async () => {
     const onNavigate = vi.fn()
     const user = userEvent.setup()

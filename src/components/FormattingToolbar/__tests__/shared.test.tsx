@@ -12,7 +12,7 @@
  *  - pointer presses never double-fire through the click fallback.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -81,6 +81,45 @@ describe('renderConfigButton activation contract', () => {
       expect(config.action).toHaveBeenCalledTimes(1)
     })
 
+    // #6895 — a finger acts on the release of a short tap, and a press held long
+    // enough to show the button's name does nothing when it lifts. Its press is
+    // still prevented, so the editor keeps its selection either way.
+    it('a short finger tap acts on release, its press prevented, and once only', () => {
+      const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+      const config = makeConfig()
+      render(renderConfigButton(config, {}, mode, t))
+      const btn = screen.getByRole('button', { name: t('toolbar.divider') })
+
+      const down = new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        pointerType: 'touch',
+      })
+      expect(btn.dispatchEvent(down)).toBe(false)
+      expect(config.action).not.toHaveBeenCalled()
+
+      now.mockReturnValue(1150)
+      fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
+      fireEvent.click(btn, { detail: 1 })
+      expect(config.action).toHaveBeenCalledTimes(1)
+      now.mockRestore()
+    })
+
+    it('a finger held past the long-press delay does nothing on release', () => {
+      const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+      const config = makeConfig()
+      render(renderConfigButton(config, {}, mode, t))
+      const btn = screen.getByRole('button', { name: t('toolbar.divider') })
+
+      fireEvent.pointerDown(btn, { button: 0, pointerType: 'touch' })
+      now.mockReturnValue(1600)
+      fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
+      fireEvent.click(btn, { detail: 1 })
+      expect(config.action).not.toHaveBeenCalled()
+      now.mockRestore()
+    })
+
     it('does not double-fire on a pointer press (pointerdown + trailing click)', () => {
       const config = makeConfig()
       render(renderConfigButton(config, {}, mode, t))
@@ -118,5 +157,33 @@ describe('renderConfigButton activation contract', () => {
       },
       { timeout: 5000 },
     )
+  })
+})
+
+// #6895 — an inline button is an `IconButton`, so a touch press-and-hold shows
+// its name (`IconButton`'s own tests cover the gesture); its tooltip names it
+// and, after the name, shows its shortcut from the keyboard catalog.
+describe('renderConfigButton inline tooltip', () => {
+  it('is an IconButton whose tooltip shows the name, then the shortcut', () => {
+    render(
+      renderConfigButton(
+        makeConfig({ label: 'toolbar.bold', tip: 'toolbar.boldTip' }),
+        {},
+        'inline',
+        t,
+      ),
+    )
+    const btn = screen.getByRole('button', { name: t('toolbar.bold') })
+    expect(btn).toHaveAttribute('data-slot', 'icon-button')
+    const tip = screen.getByTestId('tooltip-content')
+    expect(tip.firstChild?.textContent).toBe(t('toolbar.boldTip'))
+    expect(within(tip).getByText('Ctrl + B').tagName).toBe('KBD')
+  })
+
+  it('shows the name alone for a button with no shortcut', () => {
+    render(renderConfigButton(makeConfig(), {}, 'inline', t))
+    const tip = screen.getByTestId('tooltip-content')
+    expect(tip).toHaveTextContent(t('toolbar.dividerTip'))
+    expect(tip.querySelector('kbd')).toBeNull()
   })
 })

@@ -122,8 +122,8 @@ describe('BlockZoomBar', () => {
 
   it('applies font-medium class to the last breadcrumb (the active span)', () => {
     render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
-    const last = screen.getByText('Detail')
-    expect(last.className).toContain('font-medium')
+    const last = screen.getByText('Detail').parentElement
+    expect(last?.className).toContain('font-medium')
   })
 
   it('does not apply font-medium to non-last breadcrumbs', () => {
@@ -204,8 +204,8 @@ describe('BlockZoomBar', () => {
   describe(' arrow-key navigation', () => {
     it('marks the last breadcrumb with aria-current="page"', () => {
       render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
-      // The active crumb is now a span (non-clickable). Look up by text.
-      const last = screen.getByText('Detail')
+      // The active crumb is a span (non-clickable) around its label's TruncatedText.
+      const last = screen.getByText('Detail').parentElement
       expect(last).toHaveAttribute('aria-current', 'page')
     })
 

@@ -11,7 +11,8 @@ async function rowBelow(page: Page, fromTop: number) {
       const at = row.getBoundingClientRect().top
       if (at >= top && (best == null || at < best.at)) {
         best = {
-          title: row.querySelector('.page-browser-item-title')?.getAttribute('title') ?? '',
+          title:
+            row.querySelector('.page-browser-item-title')?.getAttribute('data-page-title') ?? '',
           at,
         }
       }

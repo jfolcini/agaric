@@ -30,6 +30,7 @@ import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { EditMode } from '@/lib/preferences'
@@ -513,14 +514,13 @@ export function PageHeaderMenu({
                   key={target.id}
                   type="button"
                   role="menuitem"
-                  title={target.name}
                   className={MENU_ITEM_CLASS}
                   onClick={() => {
                     setMoveSubmenuOpen(false)
                     onMoveToSpace?.(target.id)
                   }}
                 >
-                  <span className="line-clamp-1">{target.name}</span>
+                  <TruncatedText>{target.name}</TruncatedText>
                 </button>
               ))}
             </div>

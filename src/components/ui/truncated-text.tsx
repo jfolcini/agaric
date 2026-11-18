@@ -14,13 +14,22 @@ import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-export interface TruncatedTextProps extends Omit<
-  React.ComponentProps<'span'>,
-  'children' | 'title'
-> {
-  /** The full text, shown cut to the box. */
-  children: string
-}
+type SpanProps = Omit<React.ComponentProps<'span'>, 'children' | 'title'>
+
+export type TruncatedTextProps = SpanProps &
+  (
+    | {
+        /** The full text, shown cut to the box. */
+        children: string
+        text?: never
+      }
+    | {
+        /** Rich content (a search highlight), shown cut to the box. */
+        children: React.ReactNode
+        /** Its full text, for the hover. */
+        text: string
+      }
+  )
 
 function isCut(el: HTMLElement): boolean {
   return el.scrollWidth > el.clientWidth
@@ -28,6 +37,7 @@ function isCut(el: HTMLElement): boolean {
 
 function TruncatedText({
   children,
+  text,
   className,
   onPointerEnter,
   onFocus,
@@ -39,7 +49,7 @@ function TruncatedText({
       data-slot="truncated-text"
       className={cn('min-w-0 truncate', className)}
       // oxlint-disable-next-line react/forbid-dom-props -- the sanctioned home: the full text of a truncated line, set only while it is cut (#6895)
-      title={cut ? children : undefined}
+      title={cut ? (text ?? (children as string)) : undefined}
       onPointerEnter={(e) => {
         setCut(isCut(e.currentTarget))
         onPointerEnter?.(e)

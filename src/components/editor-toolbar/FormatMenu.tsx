@@ -38,15 +38,12 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { HighlightColorPicker } from '@/components/editor-toolbar/HighlightColorPicker'
-import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { toolbarPressHandlers, toolbarShortcut } from '@/components/FormattingToolbar/shared'
 import {
   createMarkToggles,
-  MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
-  withShortcutHint,
 } from '@/components/FormattingToolbar/toolbar-config'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
 
 interface FormatMenuProps {
@@ -92,7 +89,6 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
     <div className="flex flex-col gap-1">
       <div role="toolbar" aria-label={t('toolbar.format')} className="flex items-center gap-0.5">
         {markToggles.map((btn) => {
-          const tooltip = withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])
           const active = btn.activeKey
             ? (state[btn.activeKey as keyof typeof state] ?? false)
             : false
@@ -100,24 +96,20 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
             ? !state[btn.disabledWhenFalse as keyof typeof state]
             : undefined
           return (
-            <Tooltip key={btn.label} delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t(btn.label)}
-                  aria-pressed={active}
-                  disabled={disabled}
-                  className={cn(active && toolbarActiveClass)}
-                  {...toolbarPressHandlers(btn.action)}
-                >
-                  <btn.icon />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={6}>
-                {tooltip}
-              </TooltipContent>
-            </Tooltip>
+            <IconButton
+              key={btn.label}
+              variant="ghost"
+              size="icon-xs"
+              tooltip={t(btn.label)}
+              ariaLabel={t(btn.label)}
+              {...toolbarShortcut(btn.label)}
+              aria-pressed={active}
+              disabled={disabled}
+              className={cn(active && toolbarActiveClass)}
+              {...toolbarPressHandlers(btn.action)}
+            >
+              <btn.icon />
+            </IconButton>
           )
         })}
       </div>

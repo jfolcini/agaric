@@ -1101,8 +1101,7 @@ describe('DuePanel', () => {
       expect(projectedBadges).toHaveLength(2)
     })
 
-    // Truncated content gets a `title=` so long names are previewable.
-    it('sets title attribute on truncated projected content', async () => {
+    it('shows the projected content text', async () => {
       const longContent = 'A very long projected task content that will be truncated visually'
       mockedListBlocks.mockResolvedValue(emptyResponse)
       mockedListProjectedAgenda.mockResolvedValue({
@@ -1127,9 +1126,7 @@ describe('DuePanel', () => {
       render(<DuePanel date="2026-04-13" />)
 
       const li = await screen.findByTestId('projected-entry')
-      const truncatedSpan = li.querySelector('span[title]') as HTMLElement | null
-      expect(truncatedSpan).not.toBeNull()
-      expect(truncatedSpan?.getAttribute('title')).toBe(longContent)
+      expect(li).toHaveTextContent(longContent)
     })
 
     it('projected entry navigates to parent page on click', async () => {

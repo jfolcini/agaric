@@ -1,7 +1,7 @@
 /**
  * ZoomControls — the on-screen zoom cluster for a `useZoomPan` surface
- * (#1104, #5638). Each button's accessible name carries its keyboard binding;
- * the surfaces share the graph's `+/-/0` bindings, so they reuse the
+ * (#1104, #5638). Each button's accessible name and tooltip carry its keyboard
+ * binding; the surfaces share the graph's `+/-/0` bindings, so they reuse the
  * `graphZoom*` shortcut ids.
  */
 
@@ -49,6 +49,7 @@ export function ZoomControls({
         onClick={(e) => step(e, () => zoomBy(0.25))}
         tooltip={t('lightbox.zoomIn')}
         ariaLabel={withShortcut(t('lightbox.zoomIn'), 'graphZoomIn')}
+        shortcut={getShortcutKeys('graphZoomIn')}
         data-testid={`${testIdPrefix}-zoom-in`}
       >
         <Plus className="h-4 w-4" />
@@ -59,6 +60,7 @@ export function ZoomControls({
         onClick={(e) => step(e, () => zoomBy(-0.25))}
         tooltip={t('lightbox.zoomOut')}
         ariaLabel={withShortcut(t('lightbox.zoomOut'), 'graphZoomOut')}
+        shortcut={getShortcutKeys('graphZoomOut')}
         data-testid={`${testIdPrefix}-zoom-out`}
       >
         <Minus className="h-4 w-4" />
@@ -69,6 +71,7 @@ export function ZoomControls({
         onClick={(e) => step(e, resetZoom)}
         tooltip={resetLabel}
         ariaLabel={withShortcut(resetLabel, 'graphZoomReset')}
+        shortcut={getShortcutKeys('graphZoomReset')}
         data-testid={`${testIdPrefix}-zoom-reset`}
       >
         <Maximize2 className="h-4 w-4" />

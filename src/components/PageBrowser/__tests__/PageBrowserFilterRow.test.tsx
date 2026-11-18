@@ -20,7 +20,7 @@ import {
   MAX_PAGE_FILTERS,
   PageBrowserFilterRow,
   type PageFilterWithKey,
-  pageFilterChipTitle,
+  pageFilterChipInfo,
   pageFilterSummary,
 } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -386,23 +386,23 @@ describe('HasProperty chip renderer — exhaustive over ALL_PROPERTY_OPS', () =>
   })
 })
 
-describe('pageFilterChipTitle', () => {
+describe('pageFilterChipInfo', () => {
   // D24: the boolean Pages facets carry a long-form description surfaced as the
-  // chip's `title` tooltip; value-bearing facets have no extra title.
+  // chip's ⓘ; value-bearing facets have none.
   it('returns the long-form description for the boolean Pages facets', () => {
-    expect(pageFilterChipTitle({ type: 'Orphan' }, t)).toBe(
+    expect(pageFilterChipInfo({ type: 'Orphan' }, t)).toBe(
       'Fully isolated — no inbound links and no outbound links.',
     )
-    expect(pageFilterChipTitle({ type: 'Stub' }, t)).toBe('A titled page with no content blocks.')
-    expect(pageFilterChipTitle({ type: 'HasNoInboundLinks' }, t)).toBe(
+    expect(pageFilterChipInfo({ type: 'Stub' }, t)).toBe('A titled page with no content blocks.')
+    expect(pageFilterChipInfo({ type: 'HasNoInboundLinks' }, t)).toBe(
       'Nothing links to this page (it may still link out).',
     )
   })
 
   it('returns undefined for value-bearing facets (label self-describes)', () => {
-    expect(pageFilterChipTitle({ type: 'Tag', tag: 'urgent' }, t)).toBeUndefined()
+    expect(pageFilterChipInfo({ type: 'Tag', tag: 'urgent' }, t)).toBeUndefined()
     expect(
-      pageFilterChipTitle({ type: 'PathGlob', pattern: 'x', exclude: false }, t),
+      pageFilterChipInfo({ type: 'PathGlob', pattern: 'x', exclude: false }, t),
     ).toBeUndefined()
   })
 })
@@ -422,17 +422,19 @@ describe('PageBrowserFilterRow', () => {
     expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
   })
 
-  // D24: the boolean Pages facets surface their description as the chip title.
-  it('sets the per-facet description as the chip title tooltip', () => {
+  // D24: the boolean Pages facets explain themselves from an ⓘ beside the chip (#6895).
+  it('carries the per-facet description in an ⓘ beside the chip, and none for a value facet', () => {
     render(
       <PageBrowserFilterRow
-        filters={[withKey({ type: 'Orphan' })]}
+        filters={[withKey({ type: 'Orphan' }), withKey({ type: 'Tag', tag: 'urgent' })]}
         onAddFilter={vi.fn()}
         onRemoveFilter={vi.fn()}
       />,
     )
-    expect(screen.getByRole('group', { name: 'Filter: Orphan' })).toHaveAttribute(
-      'title',
+    expect(screen.queryAllByRole('button', { name: /^About the .* filter$/ })).toHaveLength(1)
+    // Popover is mocked in this file to always render its content.
+    const info = screen.getByRole('button', { name: 'About the Orphan filter' })
+    expect(info.closest('li')).toHaveTextContent(
       'Fully isolated — no inbound links and no outbound links.',
     )
   })

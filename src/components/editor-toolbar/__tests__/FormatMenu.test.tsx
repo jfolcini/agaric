@@ -120,6 +120,22 @@ describe('FormatMenu', () => {
     }
   })
 
+  // #6895 — IconButtons, so a touch press-and-hold shows the name; the
+  // shortcut follows it, from the keyboard catalog (Bold's too).
+  it.each([
+    ['toolbar.bold', 'Ctrl + B'],
+    ['toolbar.underline', 'Ctrl + U'],
+    ['toolbar.code', 'Ctrl + Shift + K'],
+  ])('the %s toggle is an IconButton whose tooltip shows the name, then %s', (label, keys) => {
+    render(<FormatMenu editor={makeEditor()} />)
+    const btn = screen.getByRole('button', { name: t(label) })
+    expect(btn).toHaveAttribute('data-slot', 'icon-button')
+    const tip = btn.nextElementSibling as HTMLElement
+    expect(tip).toHaveAttribute('data-testid', 'tooltip-content')
+    expect(tip.firstChild?.textContent).toBe(t(label))
+    expect(tip.querySelector('kbd')).toHaveTextContent(keys)
+  })
+
   // #3276 f3 — the touch-reachable link affordance lives in
   // SelectionBubbleMenu instead; FormatMenu must never expose it, matching
   // FormattingToolbar.test.tsx's contract.

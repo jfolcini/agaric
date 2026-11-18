@@ -27,8 +27,9 @@ import path from 'node:path'
 
 import {
   ACTION_TIMEOUT,
-  NAV_TIMEOUT,
   blockStaticByMarker,
+  linkChipTarget,
+  NAV_TIMEOUT,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -95,13 +96,13 @@ describe('Agaric real-backend markdown import (#4671) @markdown', () => {
     expect(await ariaLevelOf(`${MARKER}-leaf`)).toBe('3')
 
     // The link was rewritten to the created target page's ULID and renders as
-    // a chip whose `title` resolves back to the target's title
+    // a chip that names the target's title (`linkChipTarget`)
     // (RichContentRenderer/marks/blockLink.tsx).
     const leaf = blockStaticByMarker(`${MARKER}-leaf`)
     const leafId = await leaf.getAttribute('data-block-id')
     const chip = $(`li[data-block-id="${leafId}"] [data-testid="block-link-chip"]`)
     await chip.waitForExist({ timeout: NAV_TIMEOUT })
-    await browser.waitUntil(async () => (await chip.getAttribute('title')) === TARGET, {
+    await browser.waitUntil(async () => (await linkChipTarget(chip)) === TARGET, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: `link chip never resolved to ${JSON.stringify(TARGET)}`,
     })

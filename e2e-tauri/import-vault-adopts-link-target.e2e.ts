@@ -26,8 +26,9 @@ import path from 'node:path'
 
 import {
   ACTION_TIMEOUT,
-  NAV_TIMEOUT,
   blockStaticByMarker,
+  linkChipTarget,
+  NAV_TIMEOUT,
   navigateTo,
   pagesTitled,
   reopenPageByTitle,
@@ -73,11 +74,11 @@ async function assertOneTargetHoldingItsBlockAndLinked(
   const link = blockStaticByMarker(`${marker}-links`)
   await link.waitForDisplayed({ timeout: NAV_TIMEOUT })
   const linkId = await link.getAttribute('data-block-id')
-  // The link was rewritten to the one B's ULID and renders as a chip whose
-  // `title` resolves to B (RichContentRenderer/marks/blockLink.tsx).
+  // The link was rewritten to the one B's ULID and renders as a chip that
+  // names B (`linkChipTarget`).
   const chip = $(`li[data-block-id="${linkId}"] [data-testid="block-link-chip"]`)
   await chip.waitForExist({ timeout: NAV_TIMEOUT })
-  await browser.waitUntil(async () => (await chip.getAttribute('title')) === target, {
+  await browser.waitUntil(async () => (await linkChipTarget(chip)) === target, {
     timeout: NAV_TIMEOUT,
     timeoutMsg: `link chip never resolved to ${JSON.stringify(target)}`,
   })

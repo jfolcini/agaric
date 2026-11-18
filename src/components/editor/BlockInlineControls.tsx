@@ -52,7 +52,7 @@ export function DateChip({
 }: DateChipProps) {
   const { t } = useTranslation()
   // #2282 — compute the compact date and the translated label ONCE; the same
-  // strings feed the title, the aria-label, and the visible text below.
+  // strings feed the accessible name and the visible text below.
   const compact = formatCompactDate(date)
   const label = t(i18nKey, { date: compact })
   const chipClasses = `${chipClass} flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none`
@@ -61,7 +61,7 @@ export function DateChip({
   const iconClass = 'size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0'
   if (!onOpen) {
     return (
-      <span className={cn(chipClasses, colorClass)} title={label}>
+      <span className={cn(chipClasses, colorClass)}>
         <Icon className={iconClass} aria-hidden="true" />
         <span aria-hidden="true">{compact}</span>
         <span className="sr-only">{label}</span>
@@ -72,7 +72,6 @@ export function DateChip({
     <button
       type="button"
       className={cn(chipClasses, 'touch-hit-area cursor-pointer', colorClass)}
-      title={label}
       aria-label={label}
       // #1498: keep the editor focused, its caret where it was, through the
       // click: the picker opens for the block being edited. See the

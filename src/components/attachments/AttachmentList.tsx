@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useBlockAttachments } from '@/hooks/useBlockAttachments'
 import { formatSize } from '@/lib/attachment-utils'
 import type { AttachmentRow } from '@/lib/bindings'
@@ -153,12 +154,9 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                       onBlur={() => setEditingId(null)}
                     />
                   ) : (
-                    <span
-                      className="truncate flex-1 text-sm font-medium"
-                      title={attachment.filename}
-                    >
+                    <TruncatedText className="flex-1 text-sm font-medium">
                       {attachment.filename}
-                    </span>
+                    </TruncatedText>
                   )}
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {formatSize(attachment.size_bytes)}

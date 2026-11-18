@@ -594,7 +594,7 @@ describe('CollapsibleGroupList', () => {
       expect(breadcrumb).toHaveTextContent('Notes / 2026')
     })
 
-    it('full path stays available via title="" tooltip (button branch)', () => {
+    it('shows the full path as leaf + breadcrumb TruncatedText lines (button branch)', () => {
       const groups = [makeGroup('P1', 'Notes/2026/Quarterly', [{ id: 'B1', content: 'block' }])]
 
       render(
@@ -608,7 +608,17 @@ describe('CollapsibleGroupList', () => {
       )
 
       const button = screen.getByRole('button', { expanded: false })
-      expect(button).toHaveAttribute('title', 'Notes/2026/Quarterly')
+      expect(within(button).getByText('Quarterly (1)')).toHaveAttribute(
+        'data-slot',
+        'truncated-text',
+      )
+      expect(within(button).getByTestId('group-header-breadcrumb')).toHaveTextContent(
+        'Notes / 2026',
+      )
+      expect(within(button).getByTestId('group-header-breadcrumb')).toHaveAttribute(
+        'data-slot',
+        'truncated-text',
+      )
     })
 
     it('does not render a breadcrumb element for non-namespaced titles', () => {
@@ -648,8 +658,9 @@ describe('CollapsibleGroupList', () => {
       // Breadcrumb is nested beside it.
       const breadcrumb = screen.getByTestId('group-header-breadcrumb')
       expect(breadcrumb).toHaveTextContent('Notes / 2026')
-      // The link wrapper carries the full-path tooltip.
-      expect(pageLink.querySelector('[title="Notes/2026/Quarterly"]')).not.toBeNull()
+      // Both lines truncate as TruncatedText.
+      expect(within(pageLink).getByText('Quarterly')).toHaveAttribute('data-slot', 'truncated-text')
+      expect(breadcrumb).toHaveAttribute('data-slot', 'truncated-text')
     })
   })
 

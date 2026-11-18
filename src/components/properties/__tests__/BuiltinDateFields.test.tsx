@@ -51,7 +51,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    expect(screen.getByTitle('Due')).toBeInTheDocument()
+    expect(screen.getByText('Due')).toBeInTheDocument()
     expect(screen.getByDisplayValue('2026-06-15')).toBeInTheDocument()
   })
 
@@ -66,7 +66,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+    expect(screen.getByText('Scheduled')).toBeInTheDocument()
     expect(screen.getByDisplayValue('2026-07-01')).toBeInTheDocument()
   })
 
@@ -81,8 +81,8 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    expect(screen.getByTitle('Due')).toBeInTheDocument()
-    expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+    expect(screen.getByText('Due')).toBeInTheDocument()
+    expect(screen.getByText('Scheduled')).toBeInTheDocument()
   })
 
   it('returns null when neither date is provided', () => {
@@ -329,10 +329,12 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const dueBadge = screen.getByTitle('Due')
+    const dueBadge = screen.getByText('Due').closest('[data-slot="badge"]') as HTMLElement
     expect(dueBadge.querySelector('svg')).toBeInTheDocument()
 
-    const scheduledBadge = screen.getByTitle('Scheduled')
+    const scheduledBadge = screen
+      .getByText('Scheduled')
+      .closest('[data-slot="badge"]') as HTMLElement
     expect(scheduledBadge.querySelector('svg')).toBeInTheDocument()
   })
 

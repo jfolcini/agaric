@@ -943,13 +943,22 @@ export async function pagesTitled(title: string): Promise<number> {
 /**
  * The Pages entry titled exactly `title`: a namespaced page is a leaf of the
  * namespace tree (PageTreeItem.tsx), a flat one a PageRow; both carry the
- * full title in the label span's `title` attribute.
+ * full title in the label span's `data-page-title` attribute.
  */
 export function pageEntryTitled(title: string) {
-  return $(`span[title="${title}"]`)
+  return $(`span[data-page-title="${title}"]`)
 }
 
 /** The page header's badge of `alias`. */
+/**
+ * The full title a page-link chip names: its native `title` when the chip shows
+ * a namespaced leaf or a label, else its text, which is then the full title
+ * (`RichContentRenderer/marks/blockLink.tsx`, #6895).
+ */
+export async function linkChipTarget(chip: ReturnType<typeof $>): Promise<string> {
+  return (await chip.getAttribute('title')) ?? (await chip.getText())
+}
+
 export function aliasBadge(alias: string): string {
   return `//*[@data-slot="badge"][normalize-space(.)="${alias}"]`
 }

@@ -189,8 +189,9 @@ describe('PdfViewerDialog', () => {
       <PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:report" filename="report.pdf" />,
     )
     await waitFor(() => {
-      expect(screen.getByText('report.pdf')).toBeInTheDocument()
+      expect(screen.getByText('report.pdf')).toHaveAttribute('data-slot', 'truncated-text')
     })
+    expect(screen.getByRole('heading', { name: 'report.pdf' })).not.toHaveAttribute('title')
   })
 
   // The viewer host is `flex-1 min-h-0` over an `absolute inset-0` child, so it

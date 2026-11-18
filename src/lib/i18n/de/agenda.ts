@@ -104,6 +104,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.removeFilterLabel': 'Filter {{label}} entfernen',
   'agendaFilter.valuedSubsumedByIsSet':
     'Keine Wirkung — die Eigenschaft wird bereits nach "ist gesetzt" gefiltert',
+  'agendaFilter.subsumedInfoLabel': 'Warum der Filter {{label}} keine Wirkung hat',
   'duePanel.headerOne': '1 in der Agenda',
   'duePanel.header': '{{count}} in der Agenda',
   'duePanel.groupDoing': 'DOING',

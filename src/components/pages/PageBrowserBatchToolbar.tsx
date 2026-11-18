@@ -530,11 +530,6 @@ export function PageBrowserBatchToolbar({
             ? t('pageBrowser.batch.removeBookmarkSelected')
             : t('pageBrowser.batch.bookmarkSelected')
         }
-        title={
-          allStarred
-            ? t('pageBrowser.batch.removeBookmarkSelected')
-            : t('pageBrowser.batch.bookmarkSelected')
-        }
         data-testid={allStarred ? 'page-batch-remove-bookmark-btn' : 'page-batch-bookmark-btn'}
       >
         {allStarred ? <BookmarkX /> : <Bookmark fill="none" />}

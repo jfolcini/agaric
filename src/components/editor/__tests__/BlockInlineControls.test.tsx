@@ -319,9 +319,8 @@ describe('DateChip', () => {
   })
 
   // #2282 — the compact date + translated label are computed once and reused
-  // for the title, the aria-label, and the visible text, so all three stay in
-  // lockstep (identical string, single formatCompactDate/t call).
-  it('reuses one computed label for title, aria-label, and text', () => {
+  // for the aria-label and the visible text, so both stay in lockstep.
+  it('reuses one computed label for aria-label and text', () => {
     render(
       <DateChip
         date="2099-06-15"
@@ -333,14 +332,9 @@ describe('DateChip', () => {
       />,
     )
     const compact = formatCompactDate('2099-06-15')
-    const button = screen.getByRole('button')
+    const button = screen.getByRole('button', { name: t('block.dueDate', { date: compact }) })
     // Visible text is the bare compact date.
     expect(button).toHaveTextContent(compact)
-    // Title and aria-label are the SAME translated label (both contain the
-    // compact date the i18n template interpolates).
-    const title = button.getAttribute('title')
-    expect(title).toContain(compact)
-    expect(button.getAttribute('aria-label')).toBe(title)
   })
 })
 

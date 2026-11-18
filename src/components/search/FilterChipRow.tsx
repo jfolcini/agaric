@@ -117,8 +117,7 @@ export function FilterChipRow({
             // before the click on its remove button.
             onMouseDown={(e) => e.preventDefault()}
             // Thread aria-invalid to the Badge so its `aria-invalid:border-destructive`
-            // variant goes live (was previously dead — only the hover title
-            // carried any error signal).
+            // variant goes live. The error itself shows in the alert below.
             {...(isInvalid ? { 'aria-invalid': true } : {})}
             groupAriaLabel={
               isInvalid
@@ -127,7 +126,6 @@ export function FilterChipRow({
                 : t('search.filterGroupLabel', { value: label })
             }
             {...(invalidClass ? { className: invalidClass } : {})}
-            {...(error ? { title: error } : {})}
           />
         )
       })}

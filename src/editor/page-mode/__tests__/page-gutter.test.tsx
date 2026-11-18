@@ -126,7 +126,7 @@ describe('the chevron', () => {
     expect(fold).toHaveAttribute('aria-expanded', 'true')
     expect(fold).toHaveAttribute('aria-label', t('block.collapseChildren'))
     expect(fold).toHaveAttribute('aria-keyshortcuts', t('block.collapseKeyshortcuts'))
-    expect(fold).toHaveAttribute('title', t('block.collapseTip'))
+    expect(fold).not.toHaveAttribute('title')
     expect(blockEl(container, A).querySelector('.page-block-content')?.contains(fold)).toBe(false)
     for (const id of [B, C]) {
       expect(blockEl(container, id).querySelector('.page-block-gutter')).toBeNull()
@@ -153,7 +153,7 @@ describe('the chevron', () => {
     expect(fold).toHaveAttribute('aria-expanded', 'false')
     expect(fold).toHaveAttribute('data-collapsed', 'true')
     expect(fold).toHaveAttribute('aria-label', t('block.expandChildren'))
-    expect(fold).toHaveAttribute('title', t('block.expandTip'))
+    expect(fold).not.toHaveAttribute('title')
     expect(fold?.querySelector('svg')).toHaveClass('fill-current')
     expect(await axe(container)).toHaveNoViolations()
 
@@ -229,7 +229,7 @@ describe('the grip', () => {
     expect(handle).toHaveAttribute('data-testid', 'drag-handle')
     expect(handle).toHaveAttribute('aria-label', t('block.reorder'))
     expect(handle).toHaveAttribute('aria-haspopup', 'menu')
-    expect(handle).toHaveAttribute('title', t('pageMode.gripTip'))
+    expect(handle).not.toHaveAttribute('title')
     expect(handle).toHaveAttribute('tabindex', '-1')
     expect(frame(container)).toBeVisible()
     expect(await axe(container)).toHaveNoViolations()

@@ -81,11 +81,9 @@ describe('PairingPeersList', () => {
     render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
 
     // Rendered truncated (a real peer_id is a 36-char UUID; the full string
-    // pushed Unpair off a 360px screen). The full id stays on `title`.
+    // pushed Unpair off a 360px screen).
     expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
     expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
-    expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
-    expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
   })
 
   // #4298 — the pairing dialog's peer list must resolve a name the same way
@@ -107,9 +105,6 @@ describe('PairingPeersList', () => {
     expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
     expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
     expect(screen.getByText('Pixel 8').className).toContain('font-medium')
-    // The full id stays available on `title` regardless of which name is shown.
-    expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
-    expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
   })
 
   // #4298 (review) — stock Android reports the hostname `localhost` for EVERY
@@ -350,14 +345,13 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
     ...over,
   })
 
-  /** The rendered peer ids, top to bottom. */
+  /** The rendered name lines (a name, else the truncated id), top to bottom. */
   const renderedOrder = (container: HTMLElement): string[] =>
-    // Keyed on the name line, whose `title` carries the full id whether that
-    // line renders a name or the truncated id itself. (Not `p.font-mono`: since
+    // Keyed on the name line, which every row has. (Not `p.font-mono`: since
     // #4298's review fix the monospace belongs to the id SUBTITLE, which only
     // named rows have, so that selector saw a different set of rows per row.)
     Array.from(container.querySelectorAll('.pairing-peer-item p.pairing-peer-name')).map(
-      (el) => el.getAttribute('title') ?? '',
+      (el) => el.textContent ?? '',
     )
 
   it('lifts a responder-only peer above the genuinely-never-synced ones', () => {
@@ -373,9 +367,9 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
     const { container } = render(<PairingPeersList peers={backendOrder} onUnpair={vi.fn()} />)
 
     expect(renderedOrder(container)).toEqual([
-      'peer-responder-only', // streamed_at 9000 — the most recent activity
-      'peer-pulled-long-ago', // synced_at 1000
-      'peer-never-synced', // no activity at all
+      'peer-respond...', // peer-responder-only: streamed_at 9000, the most recent activity
+      'peer-pulled-...', // peer-pulled-long-ago: synced_at 1000
+      'peer-never-s...', // peer-never-synced: no activity at all
     ])
   })
 
@@ -387,7 +381,7 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
 
     const { container } = render(<PairingPeersList peers={backendOrder} onUnpair={vi.fn()} />)
 
-    expect(renderedOrder(container)).toEqual(['peer-named', 'peer-unnamed'])
+    expect(renderedOrder(container)).toEqual(['Pixel 8', 'peer-unnamed'])
   })
 
   it('does not mutate the caller-owned peers array', () => {

@@ -53,7 +53,7 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { InPageReplaceRow } from '@/components/query/InPageReplaceRow'
 import { type ReplaceCursor, useInPageReplace } from '@/components/query/use-in-page-replace'
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { useBlockFindVersion } from '@/hooks/useBlockFindVersion'
 import {
@@ -79,7 +79,7 @@ import {
   type WalkerHandle,
 } from '@/lib/in-page-find/matcher'
 import { indexAfter } from '@/lib/in-page-find/replace'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { getShortcutKeys, matchesShortcutBinding, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 import { treeStoresIn } from '@/stores/block-command-bus'
@@ -509,6 +509,10 @@ export function InPageFind({
 
   if (!open) return null
 
+  const replaceKeys = getShortcutKeys('replaceInPage')
+  const prevKeys = getShortcutKeys('findInPagePrev')
+  const nextKeys = getShortcutKeys('findInPageNext')
+
   return (
     <div
       role="toolbar"
@@ -564,13 +568,15 @@ export function InPageFind({
           row 2 toggles 4 × 44 + 3 × 6 = 194 ✓; row 3 counter (4.5rem)
           + 2 × 44 + 3 × 6 = 178 ✓. */}
       <div className="flex items-center gap-1.5" data-testid="in-page-find-toggles">
-        <Button
+        <IconButton
           type="button"
           variant={replaceOpen ? 'secondary' : 'ghost'}
           size="icon-xs"
           aria-expanded={replaceOpen}
-          aria-label={t('findInPage.toggleReplace')}
-          title={t('findInPage.toggleReplace')}
+          // The binding stays in the name: the replace row's own button is also named Replace.
+          ariaLabel={`${t('findInPage.toggleReplace')} (${replaceKeys})`}
+          tooltip={t('findInPage.toggleReplace')}
+          shortcut={replaceKeys}
           data-testid="in-page-find-toggle-replace"
           onClick={() => {
             setReplaceOpen(!replaceOpen)
@@ -578,43 +584,43 @@ export function InPageFind({
           }}
         >
           <Replace aria-hidden="true" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           type="button"
           variant={toggles.caseSensitive ? 'secondary' : 'ghost'}
           size="icon-xs"
           aria-pressed={toggles.caseSensitive}
-          aria-label={t('findInPage.toggleCaseSensitive')}
-          title={t('findInPage.toggleCaseSensitive')}
+          ariaLabel={t('findInPage.toggleCaseSensitive')}
+          tooltip={t('findInPage.toggleCaseSensitive')}
           data-testid="in-page-find-toggle-case"
           onClick={() => setToggles({ caseSensitive: !toggles.caseSensitive })}
         >
           <CaseSensitive aria-hidden="true" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           type="button"
           variant={toggles.wholeWord ? 'secondary' : 'ghost'}
           size="icon-xs"
           aria-pressed={toggles.wholeWord}
-          aria-label={t('findInPage.toggleWholeWord')}
-          title={t('findInPage.toggleWholeWord')}
+          ariaLabel={t('findInPage.toggleWholeWord')}
+          tooltip={t('findInPage.toggleWholeWord')}
           data-testid="in-page-find-toggle-word"
           onClick={() => setToggles({ wholeWord: !toggles.wholeWord })}
         >
           <WholeWord aria-hidden="true" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           type="button"
           variant={toggles.isRegex ? 'secondary' : 'ghost'}
           size="icon-xs"
           aria-pressed={toggles.isRegex}
-          aria-label={t('findInPage.toggleRegex')}
-          title={t('findInPage.toggleRegex')}
+          ariaLabel={t('findInPage.toggleRegex')}
+          tooltip={t('findInPage.toggleRegex')}
           data-testid="in-page-find-toggle-regex"
           onClick={() => setToggles({ isRegex: !toggles.isRegex })}
         >
           <Regex aria-hidden="true" />
-        </Button>
+        </IconButton>
       </div>
 
       <div
@@ -638,43 +644,48 @@ export function InPageFind({
           {counterText}
         </output>
         {variant === 'embedded' && <span className="flex-1" />}
-        <Button
+        <IconButton
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={t('findInPage.previousMatch')}
-          title={t('findInPage.previousMatch')}
+          ariaLabel={t('findInPage.previousMatch')}
+          tooltip={t('findInPage.previousMatch')}
+          shortcut={prevKeys}
+          aria-keyshortcuts={toAriaKeyshortcuts(prevKeys)}
           disabled={totalMatches === 0}
           data-testid="in-page-find-previous"
           onClick={() => prevMatch()}
         >
           <ChevronUp aria-hidden="true" />
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={t('findInPage.nextMatch')}
-          title={t('findInPage.nextMatch')}
+          ariaLabel={t('findInPage.nextMatch')}
+          tooltip={t('findInPage.nextMatch')}
+          shortcut={nextKeys}
+          aria-keyshortcuts={toAriaKeyshortcuts(nextKeys)}
           disabled={totalMatches === 0}
           data-testid="in-page-find-next"
           onClick={() => nextMatch()}
         >
           <ChevronDown aria-hidden="true" />
-        </Button>
+        </IconButton>
         {/* Embedded, the sheet's own close button is the one close. */}
         {variant === 'overlay' && (
-          <Button
+          <IconButton
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={t('findInPage.close')}
-            title={t('findInPage.close')}
+            ariaLabel={t('findInPage.close')}
+            tooltip={t('findInPage.close')}
+            shortcut="Esc"
             data-testid="in-page-find-close"
             onClick={handleClose}
           >
             <X aria-hidden="true" />
-          </Button>
+          </IconButton>
         )}
       </div>
 

@@ -49,6 +49,18 @@ describe('TruncatedText', () => {
     expect(el).toHaveAttribute('title', FULL)
   })
 
+  it('takes rich content, with its full text for the hover', () => {
+    render(
+      <TruncatedText text={FULL}>
+        Work/<mark>Projects</mark>/Agaric/Notes
+      </TruncatedText>,
+    )
+    const el = screen.getByText('Projects').parentElement as HTMLElement
+    setWidths(el, 300, 120)
+    fireEvent.pointerEnter(el)
+    expect(el).toHaveAttribute('title', FULL)
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<TruncatedText>{FULL}</TruncatedText>)
     expect(await axe(container)).toHaveNoViolations()

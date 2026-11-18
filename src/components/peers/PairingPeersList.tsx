@@ -77,20 +77,12 @@ export function PairingPeersList({
                             call the same peer. A raw peer_id is a 36-char
                             UUID; at 360px the untruncated string pushed
                             Unpair off the screen edge, which is why the
-                            fallback is truncated. `title` keeps the full id
-                            available on hover / to assistive tech
-                            regardless of which name is shown — it stays on
-                            this one line rather than being repeated on the
-                            id below, so the full id has exactly one home on
-                            the row whether or not the row has a name.
+                            fallback is truncated, as the device list's is.
 
                             No `font-mono`: that was chosen when this line
                             was always a hex id, and a device name is prose.
                             The id keeps the monospace, on its own line. */}
-                        <p
-                          className="pairing-peer-name text-sm font-medium truncate"
-                          title={peer.peer_id}
-                        >
+                        <p className="pairing-peer-name text-sm font-medium truncate">
                           {peerDisplayName(peer)}
                         </p>
                         {/* #4298 (review): the id line is the SUBTITLE under

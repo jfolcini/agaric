@@ -928,10 +928,8 @@ export function shouldReduceMotion(): boolean {
  * - `'fast'` — `150` ms, a snappier dwell.
  * - `'instant'` — `0` ms, no hover dwell at all.
  *
- * Only affects the app-level `TooltipProvider` baseline that most tooltips
- * inherit. The deliberate per-surface deviations (sidebar `0`, toolbars
- * `200`, block gutter `500`) set their own `delayDuration` and are
- * unaffected by this preference.
+ * Sets the app-level `TooltipProvider` delay, which every tooltip inherits
+ * (#6895).
  */
 export type TooltipDelay = 'instant' | 'fast' | 'default'
 

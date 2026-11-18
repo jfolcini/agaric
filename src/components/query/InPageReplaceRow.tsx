@@ -11,7 +11,9 @@ import { useTranslation } from 'react-i18next'
 import type { ReplaceOutcome } from '@/components/query/use-in-page-replace'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 function outcomeText(t: TFunction, outcome: ReplaceOutcome): string {
@@ -94,28 +96,40 @@ export function InPageReplaceRow({
         data-testid="in-page-replace-input"
         className={cn('text-sm', embedded ? 'w-full' : 'h-7 w-48 md:w-64')}
       />
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        title={t('findInPage.replaceOneHint')}
-        disabled={disabled}
-        data-testid="in-page-replace-one"
-        onClick={onReplace}
-      >
-        {t('findInPage.replaceOne')}
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        title={t('findInPage.replaceAllHint')}
-        disabled={disabled}
-        data-testid="in-page-replace-all"
-        onClick={onReplaceAll}
-      >
-        {t('findInPage.replaceAll')}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            data-testid="in-page-replace-one"
+            onClick={onReplace}
+          >
+            {t('findInPage.replaceOne')}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <Kbd>Enter</Kbd>
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            data-testid="in-page-replace-all"
+            onClick={onReplaceAll}
+          >
+            {t('findInPage.replaceAll')}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <Kbd>Ctrl + Alt + Enter</Kbd>
+        </TooltipContent>
+      </Tooltip>
       {busy && <Spinner size="sm" label={t('findInPage.replacing')} />}
       <span
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the toolbar's inline status spans are <span role="status">, as its counter

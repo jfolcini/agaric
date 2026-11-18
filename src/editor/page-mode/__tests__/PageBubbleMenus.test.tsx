@@ -109,6 +109,9 @@ describe('the link bubble', () => {
   it('shows the href for a caret in a link, and not for a selection or plain text', async () => {
     setup(LINK, 7)
     expect(toolbar('pageMode.linkActions')).toHaveTextContent('https://example.com')
+    expect(
+      toolbar('pageMode.linkActions')?.querySelector('[data-slot="truncated-text"]'),
+    ).toHaveTextContent('https://example.com')
 
     act(() => {
       editor.commands.setTextSelection({ from: 6, to: 9 })

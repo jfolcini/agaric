@@ -268,6 +268,23 @@ describe('PageTreeItem', () => {
     })
   })
 
+  it('cuts a long leaf or hybrid name with the hover kept for when it is cut (#6895)', () => {
+    const leaf = makeLeaf('A long leaf name', 'Work/A long leaf name', 'P1')
+    const { unmount } = render(<PageTreeItem node={leaf} {...defaultProps} />)
+    expect(
+      screen.getByText('A long leaf name').closest('[data-slot="truncated-text"]'),
+    ).not.toBeNull()
+    unmount()
+
+    const hybrid = makeHybrid('A long hybrid name', 'A long hybrid name', 'P2', [
+      makeLeaf('child', 'A long hybrid name/child', 'P3'),
+    ])
+    render(<PageTreeItem node={hybrid} {...defaultProps} />)
+    expect(
+      screen.getByText('A long hybrid name').closest('[data-slot="truncated-text"]'),
+    ).not.toBeNull()
+  })
+
   it('has no a11y violations for leaf node', async () => {
     const node = makeLeaf('Accessible Page', 'Accessible Page', 'P1')
     const { container } = render(<PageTreeItem node={node} {...defaultProps} />)

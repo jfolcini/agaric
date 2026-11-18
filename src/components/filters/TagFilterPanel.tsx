@@ -154,7 +154,6 @@ function PrefixPillBar({
           onRemove={() => onRemove(p)}
           removeAriaLabel={t('tagFilter.removePrefixLabel', { prefix: p })}
           className="truncate max-w-[180px]"
-          title={p}
         />
       ))}
     </div>
@@ -702,7 +701,6 @@ export function TagFilterPanel(): React.ReactElement {
               onRemove={() => handleRemoveTag(tag.id)}
               removeAriaLabel={t('tagFilter.removeTagLabel', { name: tag.name })}
               className="truncate max-w-[150px]"
-              title={tag.name}
             />
           ))}
         </div>

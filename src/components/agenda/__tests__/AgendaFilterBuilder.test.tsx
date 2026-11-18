@@ -660,14 +660,14 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 24c. Property filter chip has tooltip
+  // 24c. Property filter chip shows its formatted label
   // -----------------------------------------------------------------------
-  it('property filter chip has tooltip', () => {
+  it('property filter chip shows its formatted label', () => {
     const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
     renderBuilder({ filters })
 
     const editButton = screen.getByText('project = alpha').closest('button')
-    expect(editButton).toHaveAttribute('title', 'project = alpha')
+    expect(editButton).toHaveTextContent('project = alpha')
   })
 
   // -----------------------------------------------------------------------
@@ -693,15 +693,17 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 24f. non-property filter chips also get a `title=` attribute so
-  // long values that truncate in the pill are still discoverable.
+  // 24f. non-property filter chips are named by their full label.
   // -----------------------------------------------------------------------
-  it('non-property filter chip has title attribute with full label', () => {
+  it('non-property filter chip aria-label carries the full label', () => {
     const filters: AgendaFilter[] = [{ dimension: 'status', values: ['TODO'] }]
     renderBuilder({ filters })
 
     const editButton = screen.getByText('TODO').closest('button')
-    expect(editButton).toHaveAttribute('title', `${t('agendaFilter.status')}: TODO`)
+    expect(editButton).toHaveAttribute(
+      'aria-label',
+      expect.stringContaining(`${t('agendaFilter.status')}: TODO`),
+    )
   })
 
   // -----------------------------------------------------------------------
@@ -823,13 +825,30 @@ describe('AgendaFilterBuilder', () => {
 
       const valuedBtn = screen.getByText('project = alpha').closest('button') as HTMLButtonElement
       expect(valuedBtn).toHaveAttribute('aria-disabled', 'true')
-      expect(valuedBtn).toHaveAttribute('title', subsumedTitle)
       expect(valuedBtn.getAttribute('aria-label')).toContain(subsumedTitle)
 
       // The pill chrome is visibly de-emphasised.
       const pill = valuedBtn.closest('[data-slot="filter-pill"]') as HTMLElement
       expect(pill).toHaveAttribute('data-subsumed', 'true')
       expect(pill.className).toContain('opacity-50')
+    })
+
+    it('explains a subsumed chip behind an ⓘ beside it', async () => {
+      const user = userEvent.setup()
+      const filters: AgendaFilter[] = [
+        { dimension: 'property', values: ['project'] },
+        { dimension: 'property', values: ['project:alpha'] },
+      ]
+      const { container } = renderBuilder({ filters })
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('agendaFilter.subsumedInfoLabel', { label: 'project = alpha' }),
+        }),
+      )
+
+      expect(await screen.findByRole('dialog')).toHaveTextContent(subsumedTitle)
+      expect(await axe(container)).toHaveNoViolations()
     })
 
     it('leaves a non-subsumed valued chip normal (no is-set on its key)', () => {
@@ -841,8 +860,12 @@ describe('AgendaFilterBuilder', () => {
 
       const valuedBtn = screen.getByText('effort = high').closest('button') as HTMLButtonElement
       expect(valuedBtn).not.toHaveAttribute('aria-disabled')
-      expect(valuedBtn).toHaveAttribute('title', 'effort = high')
       expect(valuedBtn.getAttribute('aria-label')).not.toContain(subsumedTitle)
+      expect(
+        screen.queryByRole('button', {
+          name: t('agendaFilter.subsumedInfoLabel', { label: 'effort = high' }),
+        }),
+      ).not.toBeInTheDocument()
 
       const pill = valuedBtn.closest('[data-slot="filter-pill"]') as HTMLElement
       expect(pill).not.toHaveAttribute('data-subsumed')

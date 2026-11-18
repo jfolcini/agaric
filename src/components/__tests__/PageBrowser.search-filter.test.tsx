@@ -63,6 +63,11 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** A Pages row's title span, by the full title it shows (a filter highlight splits its text). */
+function pageTitleSpan(title: string): Element | null {
+  return document.querySelector(`[data-page-title="${title}"]`)
+}
+
 type PageList = CommandReturns['list_pages_with_metadata']
 
 beforeEach(() => {
@@ -113,11 +118,11 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'Meeting')
 
-      // Matching pages visible (title attribute stays intact despite highlight)
-      expect(screen.getByTitle('Meeting notes')).toBeInTheDocument()
-      expect(screen.getByTitle('Meeting agenda')).toBeInTheDocument()
+      // Matching pages visible (found by full title despite the highlight)
+      expect(pageTitleSpan('Meeting notes')).toBeInTheDocument()
+      expect(pageTitleSpan('Meeting agenda')).toBeInTheDocument()
       // Non-matching page hidden
-      expect(screen.queryByTitle('Shopping list')).not.toBeInTheDocument()
+      expect(pageTitleSpan('Shopping list')).not.toBeInTheDocument()
     })
 
     it('search filters namespaced pages and expands matching ancestors', async () => {
@@ -181,7 +186,7 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'meeting')
 
-      expect(screen.getByTitle('Meeting Notes')).toBeInTheDocument()
+      expect(pageTitleSpan('Meeting Notes')).toBeInTheDocument()
     })
 
     // Unicode-aware filter regression tests. Plain
@@ -204,7 +209,7 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'istanbul')
 
-      expect(screen.getByTitle('İstanbul')).toBeInTheDocument()
+      expect(pageTitleSpan('İstanbul')).toBeInTheDocument()
       expect(screen.queryByText('Ankara')).not.toBeInTheDocument()
     })
 
@@ -224,7 +229,7 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'strasse')
 
-      expect(screen.getByTitle('Straße')).toBeInTheDocument()
+      expect(pageTitleSpan('Straße')).toBeInTheDocument()
       expect(screen.queryByText('München')).not.toBeInTheDocument()
     })
 
@@ -244,7 +249,7 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'cafe')
 
-      expect(screen.getByTitle('café meeting')).toBeInTheDocument()
+      expect(pageTitleSpan('café meeting')).toBeInTheDocument()
       expect(screen.queryByText('lunch')).not.toBeInTheDocument()
     })
 
@@ -352,7 +357,7 @@ describe('PageBrowser', () => {
       // After both promises settle, the live filter still reads
       // `Banana`, so only `Banana` is visible. The stale `Apple` match
       // never leaks through.
-      expect(screen.getByTitle('Banana')).toBeInTheDocument()
+      expect(pageTitleSpan('Banana')).toBeInTheDocument()
       expect(screen.queryByText('Apple')).not.toBeInTheDocument()
     })
   })
@@ -377,7 +382,7 @@ describe('PageBrowser', () => {
       await user.type(searchInput, 'Meeting')
       expect(searchInput.value).toBe('Meeting')
       // Filter applied — non-matching page hidden.
-      expect(screen.queryByTitle('Shopping list')).not.toBeInTheDocument()
+      expect(pageTitleSpan('Shopping list')).not.toBeInTheDocument()
 
       const clearBtn = screen.getByTestId('search-input-clear')
       expect(clearBtn).toBeInTheDocument()
@@ -650,9 +655,9 @@ describe('PageBrowser search or create', () => {
       const row = createRow('Meeting')
       expect(row).toBeInTheDocument()
       // It comes before the results.
-      expect((row as HTMLElement).compareDocumentPosition(screen.getByTitle('Meeting notes'))).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING,
-      )
+      expect(
+        (row as HTMLElement).compareDocumentPosition(pageTitleSpan('Meeting notes') as Element),
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
       expect(await axe(view.container)).toHaveNoViolations()
 
       await user.click(row as HTMLElement)
@@ -665,14 +670,14 @@ describe('PageBrowser search or create', () => {
   it('offers no create row when the query is a page title, ignoring case', async () => {
     stubWithPages()
     await search('meeting NOTES')
-    expect(screen.getByTitle('Meeting notes')).toBeInTheDocument()
+    expect(pageTitleSpan('Meeting notes')).toBeInTheDocument()
     expect(createRow('meeting NOTES')).not.toBeInTheDocument()
   })
 
   it("offers no create row when the query is a page's alias", async () => {
     stubWithPages(['P2', 'Shopping list'])
     await search('groceries')
-    expect(await screen.findByTitle('Shopping list')).toBeInTheDocument()
+    await waitFor(() => expect(pageTitleSpan('Shopping list')).toBeInTheDocument())
     expect(createRow('groceries')).not.toBeInTheDocument()
   })
 

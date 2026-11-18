@@ -467,7 +467,6 @@ function AttachmentImage({
         <span
           data-testid="image-resize-handle"
           aria-hidden="true"
-          title={t('attachment.resizeHandle')}
           className={`absolute bottom-1 z-[6] h-3.5 w-3.5 touch-none rounded-sm border border-white/70 bg-popover/80 opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-70 group-hover:opacity-70 [@media(hover:none)]:opacity-60 ${
             handleOnLeft ? 'left-1 cursor-nesw-resize' : 'right-1 cursor-nwse-resize'
           }`}

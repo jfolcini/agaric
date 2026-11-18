@@ -154,7 +154,7 @@ describe('Agaric real-backend re-import of an export folder into its own space (
     // Round-trip: one page of the title, its block, file and flag as they were.
     await navigateTo('Journal')
     expect(await pagesTitled(title)).toBe(1)
-    await expectAbsent(`span[title="${title} (2)"]`, 'a twin of the page')
+    await expectAbsent(`span[data-page-title="${title} (2)"]`, 'a twin of the page')
     await reopenPageByTitle(title)
     await blockStaticByMarker(`${marker}-holder`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     const attached = await invoke<{ filename: string }[]>('list_attachments', {
@@ -245,6 +245,6 @@ describe('Agaric real-backend re-import of a Logseq page into the page of its ti
     await reopenPageByTitle(title)
     await blockStaticByMarker(`${marker}-beta-edited`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await blockStaticByMarker(`${marker}-gamma`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${title} (2)"]`, 'a twin of the page')
+    await expectAbsent(`span[data-page-title="${title} (2)"]`, 'a twin of the page')
   })
 })

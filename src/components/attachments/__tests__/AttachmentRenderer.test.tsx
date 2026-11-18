@@ -906,7 +906,6 @@ describe('AttachmentRenderer', () => {
     await screen.findByRole('img')
     const handle = screen.getByTestId('image-resize-handle')
     expect(handle.getAttribute('aria-hidden')).toBe('true')
-    expect(handle.getAttribute('title')).toBe('Drag to resize image')
   })
 
   it('does not render a resize handle for non-image attachments', () => {

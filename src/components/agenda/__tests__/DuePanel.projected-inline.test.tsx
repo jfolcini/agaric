@@ -118,7 +118,7 @@ beforeEach(() => {
 /** The one-line text span of the projected row. */
 async function clampingSpan(): Promise<HTMLElement> {
   const li = await screen.findByTestId('projected-entry')
-  const span = li.querySelector('span[title]')
+  const span = li.querySelector('span.tag-chip-row')
   expect(span).not.toBeNull()
   return span as HTMLElement
 }

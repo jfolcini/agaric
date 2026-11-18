@@ -20,9 +20,7 @@
  * `agaric-tooltip-delay`), the same machinery behind motion / theme /
  * font-size.
  *
- * This only resolves the inherited baseline. The deliberate per-surface
- * deviations (sidebar `0`, toolbars `200`, block gutter `500`) set their own
- * `delayDuration` on their own `<Tooltip>` and are untouched by this hook.
+ * Every tooltip inherits this delay: no surface sets its own (#6895).
  */
 
 import { useCallback } from 'react'

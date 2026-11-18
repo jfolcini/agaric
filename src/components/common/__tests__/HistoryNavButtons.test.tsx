@@ -75,6 +75,27 @@ describe('HistoryNavButtons', () => {
     )
   })
 
+  // #6895: the binding is IconButton's `shortcut`, after the name in the tooltip.
+  it.each([
+    ['Back', 'Ctrl + Alt + Arrow Left'],
+    ['Forward', 'Ctrl + Alt + Arrow Right'],
+  ])('%s shows its name and binding on hover', async (name, keys) => {
+    const user = userEvent.setup()
+    render(<HistoryNavButtons />)
+    await visit('settings')
+    await visit('tags')
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    await user.unhover(screen.getByRole('button', { name: 'Back' }))
+    const button = screen.getByRole('button', { name })
+    expect(button).toHaveAttribute('data-slot', 'icon-button')
+
+    await user.hover(button)
+
+    const tip = (await screen.findAllByRole('tooltip'))[0]
+    expect(tip).toHaveTextContent(name)
+    expect(tip?.querySelector('kbd')).toHaveTextContent(keys)
+  })
+
   it('Back and Forward step through the visited views', async () => {
     const user = userEvent.setup()
     render(<HistoryNavButtons />)

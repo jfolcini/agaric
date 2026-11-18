@@ -69,36 +69,20 @@ function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefi
 
 /**
  * #216 C2 — canonical `aria-keyshortcuts` per mark button so AT announces the
- * binding (tooltips never fire on touch). Bold/Italic use TipTap StarterKit
- * built-ins (not in the configurable catalog), so their bindings are fixed
- * here; the rest derive from the live (user-customisable) keyboard config.
+ * binding, from the live (user-customisable) keyboard config.
  */
 function ariaKeyshortcutsFor(label: string): string | undefined {
-  if (label === 'toolbar.bold') return 'Control+B'
-  if (label === 'toolbar.italic') return 'Control+I'
   const id = MARK_TOGGLE_SHORTCUT_IDS[label]
   if (!id) return undefined
   return toAriaKeyshortcuts(getShortcutKeys(id)) || undefined
 }
 
-const Tip = ({
-  ref,
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactElement
-  ref?: React.Ref<HTMLButtonElement>
-}) => (
-  // #1094: this surface deliberately uses a 200ms hover delay (snappier than
-  // the 300ms app baseline) — the bubble menu sits right under a fresh text
-  // selection, so its action tips should appear fast. The override lives on
-  // the Tooltip itself now that the per-surface TooltipProvider is gone; it no
-  // longer silently inherits the app-level default.
-  <Tooltip delayDuration={200}>
-    <TooltipTrigger asChild ref={ref}>
-      {children}
-    </TooltipTrigger>
+// Hover and focus only, not `IconButton`'s press-and-hold: the bubble is a
+// portal of the block's editor, so a touch hold on it is also the block row's
+// hold, which lifts the row and opens the block menu (#6895).
+const Tip = ({ label, children }: { label: string; children: React.ReactElement }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>{children}</TooltipTrigger>
     <TooltipContent side="bottom" sideOffset={6}>
       {label}
     </TooltipContent>
@@ -404,8 +388,6 @@ export function SelectionBubbleMenu({
       data-testid="selection-bubble-menu"
     >
       {markToggles.map((btn) => {
-        const shortcutId = MARK_TOGGLE_SHORTCUT_IDS[btn.label]
-        const tooltip = shortcutId ? withShortcutHint(t(btn.label), shortcutId) : t(btn.tip)
         const active = btn.activeKey
           ? (state[btn.activeKey as keyof typeof state] as boolean)
           : false
@@ -413,7 +395,10 @@ export function SelectionBubbleMenu({
           ? !state[btn.disabledWhenFalse as keyof typeof state]
           : undefined
         return (
-          <Tip key={btn.label} label={tooltip}>
+          <Tip
+            key={btn.label}
+            label={withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])}
+          >
             <Button
               variant="ghost"
               size="icon-xs"

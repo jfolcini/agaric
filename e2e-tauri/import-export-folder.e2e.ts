@@ -117,7 +117,10 @@ describe('Agaric real-backend restore of an export by folder import (#6277 G1) @
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntryTitled(leaf).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${folder}/${leaf}"]`, "a page titled with the folder's name")
+    await expectAbsent(
+      `span[data-page-title="${folder}/${leaf}"]`,
+      "a page titled with the folder's name",
+    )
     await openPageTitled(home)
     const linker = blockStaticByMarker(`${marker}-link`)
     await linker.waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -139,9 +142,12 @@ describe('Agaric real-backend restore of an export by folder import (#6277 G1) @
 
     await navigateTo('Pages')
     await pageEntryTitled(colon).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(`span[title="${marker}-a_b"]`, 'a page titled with its file name')
-    await expectAbsent('span[title="export-report"]', 'the export report as a page')
-    await expectAbsent('span[title=".agaric/export-report"]', 'the export report as a page')
+    await expectAbsent(`span[data-page-title="${marker}-a_b"]`, 'a page titled with its file name')
+    await expectAbsent('span[data-page-title="export-report"]', 'the export report as a page')
+    await expectAbsent(
+      'span[data-page-title=".agaric/export-report"]',
+      'the export report as a page',
+    )
     const work = { kind: 'active', space_id: spaceId('Work') }
     const defs = await invoke<{ items: { key: string; value_type: string }[] }>(
       'list_property_defs',

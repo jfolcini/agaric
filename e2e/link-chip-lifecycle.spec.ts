@@ -1,13 +1,18 @@
+import { devices } from '@playwright/test'
+
 import {
   activeAlertDialog,
   activeSuggestionList,
   blurEditors,
   deleteBlockViaContextMenu,
+  emitMockEvent,
   expect,
+  fingerTap,
   focusBlockById,
   ipc,
   navigateToView,
   openPage,
+  openPageMobile,
   reopenPage,
   replaceEditorText,
   showJournalPages,
@@ -27,9 +32,9 @@ import {
  * `[[Quick Notes]]`; Quick Notes' QN_1 links `[[Getting Started]]`; today's
  * journal page holds "Morning standup notes go here".
  *
- * A broken chip is removed (#5736): from a static block through the Remove in
- * the popover a tap on it opens (#6895), from the block's editor and page mode
- * by a click on it; the mock shows each write failing to land.
+ * A broken chip is removed (#5736) through the Remove in the popover a tap on
+ * it opens (#6895): from a static block, the block's editor and page mode; the
+ * mock shows each write failing to land.
  */
 
 const PAGE_GETTING_STARTED = '00000000000000000000PAGE01'
@@ -43,11 +48,21 @@ const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
 const QN_1_TEXT = `These notes complement the [[${PAGE_GETTING_STARTED}]] guide.`
 const QN_1_UNLINKED = 'These notes complement the  guide.'
-/** A broken static chip's name: its label, then that it is broken. */
+/** A broken chip's name: its label, then that it is broken. */
 const brokenName = (label: string) => `${label} (broken link)`
 const MOVED_LABEL = `[[${PAGE_GETTING_STARTED.slice(0, 8)}...]]`
 
 type Page = import('@playwright/test').Page
+type Locator = import('@playwright/test').Locator
+
+const iPhone13 = devices['iPhone 13']
+const PHONE = {
+  viewport: { width: 390, height: 844 },
+  hasTouch: true,
+  isMobile: true,
+  deviceScaleFactor: iPhone13.deviceScaleFactor,
+  userAgent: iPhone13.userAgent,
+}
 
 interface MockWindow extends Window {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
@@ -111,6 +126,37 @@ function removedToast(page: Page) {
 /** QN_1's content as the backend holds it. */
 async function qn1Content(page: Page): Promise<string | null> {
   return (await ipc<{ content: string | null }>(page, 'get_block', { blockId: BLOCK_QN_1 })).content
+}
+
+/** The editor of block `blockId`, while it is being edited. */
+function editorOf(page: Page, blockId: string) {
+  return page.locator(`[data-testid="block-editor"][data-block-id="${blockId}"]`)
+}
+
+/** The popover a broken chip named for `label` opens. */
+function explanationOf(page: Page, label: string) {
+  return page.getByRole('dialog', { name: brokenName(label) })
+}
+
+/**
+ * Press the broken chip `chip`, labelled `label`, in a block being edited: it
+ * explains the link and keeps it, and the block's editor stays; then Remove.
+ */
+async function removeInEditor(
+  page: Page,
+  editor: Locator,
+  chip: Locator,
+  label: string,
+  press: (target: Locator) => Promise<void>,
+): Promise<void> {
+  await press(chip)
+  const explanation = explanationOf(page, label)
+  await expect(explanation).toContainText('the page it pointed to was deleted')
+  await expect(chip).toHaveCount(1)
+  await expect(editor.locator('[contenteditable="true"]')).toBeVisible()
+  await press(explanation.getByRole('button', { name: 'Remove link', exact: true }))
+  await expect(chip).toHaveCount(0)
+  await expect(editor.locator('[contenteditable="true"]')).toBeFocused()
 }
 
 async function restoreAllFromTrash(page: Page): Promise<void> {
@@ -331,20 +377,28 @@ test.describe('a broken chip is removed (#5736) @editor @pages', () => {
     expect(await qn1Content(page)).toBe(QN_1_TEXT)
   })
 
-  test('from the block’s editor: the link goes, Ctrl+Z there brings it back, and a removal saves', async ({
+  test('from the block’s editor: a click explains it, Escape keeps it, Remove takes it, Ctrl+Z there brings it back, and a removal saves', async ({
     page,
   }) => {
     await focusBlockById(page, BLOCK_QN_1)
-    const editorChip = page.locator('[data-testid="block-editor"] [data-testid="block-link-chip"]')
-    // An atomic NodeView gets no DOM click from headless Chromium (e2e/AGENTS.md).
-    await editorChip.dispatchEvent('click')
+    const editor = editorOf(page, BLOCK_QN_1)
+    const editorChip = editor.getByRole('button', { name: brokenName(MOVED_LABEL), exact: true })
+    const click = (target: Locator) => target.click()
+
+    await editorChip.click()
+    await expect(explanationOf(page, MOVED_LABEL)).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(explanationOf(page, MOVED_LABEL)).toHaveCount(0)
+    await expect(editor.locator('[contenteditable="true"]')).toBeFocused()
+    await expect(editorChip).toHaveCount(1)
+    expect(await qn1Content(page)).toBe(QN_1_TEXT)
+
+    await removeInEditor(page, editor, editorChip, MOVED_LABEL, click)
     await expect(removedToast(page)).toBeVisible()
-    await expect(editorChip).toHaveCount(0)
     await page.keyboard.press('Control+z')
     await expect(editorChip).toHaveCount(1)
 
-    await editorChip.dispatchEvent('click')
-    await expect(editorChip).toHaveCount(0)
+    await removeInEditor(page, editor, editorChip, MOVED_LABEL, click)
     await blurEditors(page)
     await reopenPage(page, 'Quick Notes')
     await expect(chipIn(page, BLOCK_QN_1, 'block-link-chip')).toHaveCount(0)
@@ -359,17 +413,65 @@ test.describe('a broken chip is removed (#5736) @editor @pages', () => {
       .getByRole('radio', { name: 'Page' })
       .click()
     const pageDocument = page.locator('[data-testid="page-mode-editor"]')
-    const pageChip = pageDocument.locator('[data-testid="block-link-chip"]')
+    const pageChip = pageDocument.getByRole('button', {
+      name: brokenName(MOVED_LABEL),
+      exact: true,
+    })
+    const removeVia = async () => {
+      await pageChip.click()
+      const explanation = explanationOf(page, MOVED_LABEL)
+      await expect(explanation).toContainText('the page it pointed to was deleted')
+      await expect(pageChip).toHaveCount(1)
+      await explanation.getByRole('button', { name: 'Remove link', exact: true }).click()
+      await expect(pageChip).toHaveCount(0)
+    }
     await pageDocument.focus()
     await expect(pageDocument).toBeFocused()
-    await pageChip.dispatchEvent('click')
+    await removeVia()
     await expect(removedToast(page)).toBeVisible()
-    await expect(pageChip).toHaveCount(0)
     await page.keyboard.press('Control+z')
     await expect(pageChip).toHaveCount(1)
 
-    await pageChip.dispatchEvent('click')
-    await expect(pageChip).toHaveCount(0)
+    await removeVia()
     await expect.poll(() => qn1Content(page)).toBe(QN_1_UNLINKED)
+  })
+})
+
+test.describe('a broken chip in a block being edited on a phone (#6895) @editor @mobile @pages', () => {
+  test.use(PHONE)
+
+  test('a tap explains it and keeps it, Remove takes it, and the block stays in edit mode', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    // A peer trashes Getting Started, which Quick Notes' QN_1 links.
+    await ipc(page, 'delete_block', { blockId: PAGE_GETTING_STARTED })
+    await emitMockEvent(page, 'sync:complete', {
+      type: 'complete',
+      remote_device_id: 'device-b',
+      ops_received: 1,
+      ops_sent: 0,
+      changed_blocks: 1,
+      changed_page_ids: [PAGE_GETTING_STARTED],
+    })
+    await openPageMobile(page, 'Quick Notes')
+    await expect(chipIn(page, BLOCK_QN_1, 'block-link-chip')).toHaveAccessibleName(
+      brokenName('Getting Started'),
+    )
+
+    await focusBlockById(page, BLOCK_QN_1)
+    const editor = editorOf(page, BLOCK_QN_1)
+    const editorChip = editor.getByRole('button', {
+      name: brokenName('Getting Started'),
+      exact: true,
+    })
+    // `fingerTap` presses the point where the box is, so it must be on screen.
+    await editorChip.scrollIntoViewIfNeeded()
+    expect(await qn1Content(page)).toBe(QN_1_TEXT)
+    await removeInEditor(page, editor, editorChip, 'Getting Started', (target) =>
+      fingerTap(page, target),
+    )
+    await expect(removedToast(page)).toBeVisible()
+    await expect(editor).toBeVisible()
   })
 })

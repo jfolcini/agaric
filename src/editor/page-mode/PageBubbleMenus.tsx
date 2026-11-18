@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -169,9 +170,9 @@ function PageLinkBubble({ editor }: { editor: Editor }): React.ReactElement {
     >
       {href !== null && (
         <>
-          <span className="max-w-64 truncate px-1.5 text-xs text-muted-foreground" title={href}>
+          <TruncatedText className="max-w-64 px-1.5 text-xs text-muted-foreground">
             {href}
-          </span>
+          </TruncatedText>
           <Separator orientation="vertical" className="mx-0.5 h-4" />
           <IconButton
             variant="ghost"

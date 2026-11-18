@@ -60,7 +60,7 @@ describe('FilterChipRow', () => {
     expect(onClearAll).toHaveBeenCalled()
   })
 
-  it('marks invalid tokens with a styled chip and the typed error tooltip', () => {
+  it('marks invalid tokens with a styled chip and shows the typed error, not as a title', () => {
     const filters: FilterToken[] = [
       {
         kind: 'invalid',
@@ -71,7 +71,8 @@ describe('FilterChipRow', () => {
     ]
     render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
     const pill = screen.getByText('path:[unclosed').closest('[data-slot="filter-pill"]')
-    expect(pill).toHaveAttribute('title', 'InvalidGlob: unbalanced bracket')
+    // The error shows in the shared alert (see the role="alert" test below).
+    expect(pill).not.toHaveAttribute('title')
   })
 
   // #2262 — invalid chips carry aria-invalid (activating the live

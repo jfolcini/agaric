@@ -83,7 +83,10 @@ test.describe('footnotes typed as [^label] (#6033) @editor @markdown', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
     await editor.pressSequentially('Claim[^1]')
-    await expect(editor.locator('sup[data-type="footnote-ref"]')).toHaveText('1')
+    // No definition yet, which the reference says to a screen reader.
+    await expect(editor.locator('sup[data-type="footnote-ref"]')).toHaveText(
+      '1 No block on this page defines this footnote',
+    )
 
     await page.keyboard.press('Enter')
     const defId = await editingBlockId(page)
@@ -193,6 +196,12 @@ test.describe('footnotes in page mode (#6033) @editor @markdown', () => {
       editor.view.focus()
     }, EDITOR)
     await page.keyboard.type('Z[^z]')
-    await expect(references).toHaveText(['1', '2', '3', '2', '3'])
+    await expect(references).toHaveText([
+      '1 No block on this page defines this footnote',
+      '2',
+      '3',
+      '2',
+      '3',
+    ])
   })
 })

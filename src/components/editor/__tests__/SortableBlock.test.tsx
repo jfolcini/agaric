@@ -4022,13 +4022,13 @@ describe('SortableBlock heading alignment', () => {
 // Date pill tooltips — title & aria-label attributes
 // =========================================================================
 
-describe('SortableBlock date pill tooltips', () => {
+describe('SortableBlock date pill labels', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('due date chip has title and aria-label', () => {
+  it('due date chip has an aria-label', () => {
     const now = new Date()
     const year = now.getFullYear()
     const { container } = render(
@@ -4042,11 +4042,10 @@ describe('SortableBlock date pill tooltips', () => {
     )
     const chip = container.querySelector('.due-date-chip')
     expect(chip).toBeInTheDocument()
-    expect(chip).toHaveAttribute('title', 'Due Jul 4')
     expect(chip).toHaveAttribute('aria-label', 'Due Jul 4')
   })
 
-  it('scheduled date chip has title and aria-label', () => {
+  it('scheduled date chip has an aria-label', () => {
     const now = new Date()
     const year = now.getFullYear()
     const { container } = render(
@@ -4060,7 +4059,6 @@ describe('SortableBlock date pill tooltips', () => {
     )
     const chip = container.querySelector('.scheduled-chip')
     expect(chip).toBeInTheDocument()
-    expect(chip).toHaveAttribute('title', 'Scheduled Aug 15')
     expect(chip).toHaveAttribute('aria-label', 'Scheduled Aug 15')
   })
 })

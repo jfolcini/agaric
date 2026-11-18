@@ -16,12 +16,13 @@
 
 import type React from 'react'
 
-import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { type RenderMode, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import {
   toolbarActiveClass,
   toolbarMenuRowClass,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { cn } from '@/lib/utils'
 import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
@@ -58,7 +59,6 @@ export function renderCyclePriority({
   onAfterOverflowAction,
   onCycle = () => dispatchBlockCommand('CYCLE_PRIORITY'),
 }: CyclePriorityButtonProps): React.ReactElement {
-  const tipText = t('toolbar.cyclePriorityTip')
   if (mode === 'overflow') {
     return (
       <Button
@@ -81,20 +81,20 @@ export function renderCyclePriority({
     )
   }
   return (
-    <Tip label={tipText}>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('toolbar.cyclePriority')}
-        aria-pressed={currentPriority != null}
-        className={cn(currentPriority != null && toolbarActiveClass)}
-        {...toolbarPressHandlers(onCycle)}
-      >
-        <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-          {priorityDot(currentPriority)}
-          {currentPriority ? `P${currentPriority}` : 'P'}
-        </span>
-      </Button>
-    </Tip>
+    // No shortcut: the priority keys set a level (Ctrl+Shift+1–3); none cycles it.
+    <IconButton
+      variant="ghost"
+      size="icon-xs"
+      tooltip={t('toolbar.cyclePriority')}
+      ariaLabel={t('toolbar.cyclePriority')}
+      aria-pressed={currentPriority != null}
+      className={cn(currentPriority != null && toolbarActiveClass)}
+      {...toolbarPressHandlers(onCycle)}
+    >
+      <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
+        {priorityDot(currentPriority)}
+        {currentPriority ? `P${currentPriority}` : 'P'}
+      </span>
+    </IconButton>
   )
 }

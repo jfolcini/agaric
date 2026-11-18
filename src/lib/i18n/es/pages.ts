@@ -102,6 +102,7 @@ export const pages: Record<string, string> = {
   'templates.pageIndicator': 'Plantilla de página',
   'templates.pageTooltip':
     'Una plantilla de página — al insertarla se crea una página nueva con este contenido.',
+  'templates.scopeInfoLabel': 'Acerca del tipo de plantilla de {{name}}',
   'templates.navigateLabel': 'Abrir la plantilla {{name}}',
   'templates.removeTemplateLabel': 'Quitar el estado de plantilla de {{name}}',
   'templates.noSearchResults': 'Ninguna plantilla coincide con tu búsqueda.',
@@ -203,7 +204,6 @@ export const pages: Record<string, string> = {
   'pageMode.editAsPage': 'Editar como página',
   'pageMode.editAsBlocks': 'Editar como bloques',
   'pageMode.editorLabel': 'Texto de la página',
-  'pageMode.gripTip': 'Arrastra para mover · Haz clic para abrir el menú del bloque',
   'pageMode.todoToggleTip': 'Poner o quitar TODO',
   'pageMode.saveFailed':
     'Algunos cambios de esta página aún no se han podido guardar; se volverá a intentar con tu próxima edición.',
@@ -510,6 +510,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.appliedFiltersLabel': 'Filtros activos',
   'pageBrowser.filter.filterGroup': 'Filtro: {{label}}',
   'pageBrowser.filter.removeFilter': 'Quitar el filtro {{label}}',
+  'pageBrowser.filter.aboutFilter': 'Acerca del filtro {{label}}',
   'pageBrowser.filter.manyFiltersWarning': 'Muchos filtros pueden ralentizar la vista.',
   'pageBrowser.filter.clearAll': 'Borrar todo',
   'pageBrowser.filter.clearAllLabel': 'Borrar todos los filtros',

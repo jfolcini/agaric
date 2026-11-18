@@ -75,7 +75,7 @@ test('the + on a namespace folder creates a page inside it through the New page 
   const folder = page.locator('[data-page-tree-row]').filter({
     has: page.getByRole('button', { name: 'Toggle Work namespace', exact: true }),
   })
-  await expect(folder.locator('span[title^="Work/"]')).toHaveText(['Alpha', 'Beta'])
+  await expect(folder.locator('span[data-page-title^="Work/"]')).toHaveText(['Alpha', 'Beta'])
 })
 
 test('Ctrl+Click and Shift+Click select three pages, and batch Trash moves them to Trash @pages', async ({

@@ -55,7 +55,8 @@ describe('renderImage (#1434/#1492)', () => {
     expect(container.querySelector('img')).toBeNull()
     const broken = getByTestId('image-broken')
     expect(broken.textContent).toContain('a cat')
-    expect(broken.getAttribute('title')).toBe('/missing.png')
+    expect(broken).toHaveAttribute('aria-label', 'a cat')
+    expect(broken).not.toHaveAttribute('title')
   })
 
   it('falls back to the URL when alt is empty on load error', () => {

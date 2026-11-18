@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
+import { TruncatedText } from '@/components/ui/truncated-text'
 import { useDateInput } from '@/hooks/useDateInput'
 import { cn } from '@/lib/utils'
 
@@ -106,13 +107,12 @@ export function PropertyField({
         tone="outline"
         className={
           Icon
-            ? 'shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1'
-            : 'shrink-0 font-mono text-xs max-w-[120px] truncate'
+            ? 'shrink-0 text-xs max-w-[120px] flex items-center gap-1'
+            : 'shrink-0 font-mono text-xs max-w-[120px]'
         }
-        title={label}
       >
         {Icon && <Icon className="h-3 w-3" />}
-        {label}
+        <TruncatedText>{label}</TruncatedText>
       </Badge>
       <div className="flex-1">
         {/* when the row is the `repeat` property, wrap the Input

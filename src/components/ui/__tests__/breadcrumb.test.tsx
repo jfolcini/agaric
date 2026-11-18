@@ -18,7 +18,7 @@
  * Axe(container) audit passes (incl. after the focus-style change)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -96,8 +96,8 @@ describe('Breadcrumb', () => {
 
   it('renders the final crumb as a non-clickable span with aria-current="page"', () => {
     render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
-    const last = screen.getByText('Gamma')
-    expect(last.tagName).toBe('SPAN')
+    const last = screen.getByText('Gamma').parentElement
+    expect(last?.tagName).toBe('SPAN')
     expect(last).toHaveAttribute('aria-current', 'page')
   })
 
@@ -110,8 +110,8 @@ describe('Breadcrumb', () => {
 
   it('applies font-medium to the active crumb', () => {
     render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
-    const last = screen.getByText('Gamma')
-    expect(last.className).toContain('font-medium')
+    const last = screen.getByText('Gamma').parentElement
+    expect(last?.className).toContain('font-medium')
   })
 
   it('does not apply font-medium to intermediate crumbs', () => {
@@ -160,34 +160,28 @@ describe('Breadcrumb', () => {
   })
 
   describe('truncation', () => {
-    it('applies max-w-[160px] truncate to intermediate crumbs', () => {
+    it('caps intermediate crumbs at max-w-[160px] and truncates the label as TruncatedText', () => {
+      const label = 'A really really really long ancestor crumb that overflows'
       const items: BreadcrumbCrumb[] = [
-        {
-          id: 'A',
-          label: 'A really really really long ancestor crumb that overflows',
-          onSelect: vi.fn(),
-        },
+        { id: 'A', label, onSelect: vi.fn() },
         { id: 'B', label: 'final' },
       ]
       render(<Breadcrumb items={items} ariaLabel="Trail" />)
-      const intermediate = screen.getByText(/long ancestor crumb/i).closest('button')
-      expect(intermediate).not.toBeNull()
-      expect(intermediate?.className).toContain('truncate')
-      expect(intermediate?.className).toContain('max-w-[160px]')
+      const text = screen.getByText(label)
+      expect(text).toHaveAttribute('data-slot', 'truncated-text')
+      expect(text.closest('button')?.className).toContain('max-w-[160px]')
     })
 
-    it('applies max-w-[280px] truncate to the active final crumb', () => {
+    it('caps the active final crumb at max-w-[280px] and truncates the label as TruncatedText', () => {
+      const label = 'A really really really long anchor crumb that the user is on'
       const items: BreadcrumbCrumb[] = [
         { id: 'A', label: 'first', onSelect: vi.fn() },
-        {
-          id: 'B',
-          label: 'A really really really long anchor crumb that the user is on',
-        },
+        { id: 'B', label },
       ]
       render(<Breadcrumb items={items} ariaLabel="Trail" />)
-      const active = screen.getByText(/long anchor crumb/i)
-      expect(active.className).toContain('truncate')
-      expect(active.className).toContain('max-w-[280px]')
+      const text = screen.getByText(label)
+      expect(text).toHaveAttribute('data-slot', 'truncated-text')
+      expect(text.closest('[aria-current="page"]')?.className).toContain('max-w-[280px]')
     })
   })
 
@@ -273,8 +267,8 @@ describe('Breadcrumb', () => {
 
     it('final crumb is rendered as a span (not a button) with aria-current="page"', () => {
       render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
-      const last = screen.getByText('Gamma')
-      expect(last.tagName).toBe('SPAN')
+      const last = screen.getByText('Gamma').parentElement
+      expect(last?.tagName).toBe('SPAN')
       expect(last).toHaveAttribute('aria-current', 'page')
       // And the same text is not exposed as a button anywhere.
       expect(screen.queryByRole('button', { name: 'Gamma' })).not.toBeInTheDocument()
@@ -388,6 +382,11 @@ describe('Breadcrumb', () => {
       expect(screen.getByRole('menu', { name: t('breadcrumb.showHidden') })).toBeInTheDocument()
       expect(menuitems).toHaveLength(3)
       expect(menuitems.map((el) => el.textContent)).toEqual(['B', 'C', 'D'])
+      // A long collapsed crumb is cut in the menu; its label is a TruncatedText.
+      expect(within(menuitems[0] as HTMLElement).getByText('B')).toHaveAttribute(
+        'data-slot',
+        'truncated-text',
+      )
     })
 
     it('moves focus to the first menuitem when the menu opens', async () => {
@@ -671,8 +670,8 @@ describe('BreadcrumbItem', () => {
 
   it('renders as a span with aria-current when active', () => {
     render(<BreadcrumbItem label="Active" isActive />)
-    const node = screen.getByText('Active')
-    expect(node.tagName).toBe('SPAN')
+    const node = screen.getByText('Active').parentElement
+    expect(node?.tagName).toBe('SPAN')
     expect(node).toHaveAttribute('aria-current', 'page')
   })
 })

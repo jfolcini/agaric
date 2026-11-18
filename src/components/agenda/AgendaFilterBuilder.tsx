@@ -17,6 +17,7 @@ import { PropertyValuePicker } from '@/components/properties/PropertyValuePicker
 import { TagValuePicker } from '@/components/properties/TagValuePicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import {
@@ -424,8 +425,8 @@ export function AgendaFilterBuilder({
                 : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
 
               // #1746 — a valued property chip is subsumed (and inert) when a
-              // bare is-set chip exists for the same key. Grey/disable it so
-              // the user sees it has no effect; it stays removable.
+              // bare is-set chip exists for the same key. Grey/disable it and
+              // put the reason behind an ⓘ beside it; it stays removable.
               const propEntry = isProperty ? parsePropertyEntry(filter.values) : null
               const isSubsumed =
                 propEntry !== null && !propEntry.isSet && isSetPropertyKeys.has(propEntry.key)
@@ -457,9 +458,8 @@ export function AgendaFilterBuilder({
                         type="button"
                         className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
                         // #1746 — keep the chip clickable/removable, but flag it
-                        // as inert to AT and surface a tooltip explaining why.
+                        // as inert to AT, with the reason in its name.
                         aria-disabled={isSubsumed || undefined}
-                        title={isSubsumed ? subsumedTitle : pillLabel}
                         aria-label={
                           isSubsumed
                             ? `${t('agendaFilter.editFilter', { label: pillLabel })} — ${subsumedTitle}`
@@ -487,6 +487,13 @@ export function AgendaFilterBuilder({
                       <X className="h-3 w-3 [@media(pointer:coarse)]:size-5" />
                     </button>
                   </Badge>
+                  {isSubsumed && (
+                    <InfoPopover
+                      variant="icon"
+                      ariaLabel={t('agendaFilter.subsumedInfoLabel', { label: pillLabel })}
+                      content={subsumedTitle}
+                    />
+                  )}
                 </li>
               )
             })}

@@ -92,6 +92,22 @@ describe('TabBar', () => {
       expect(screen.getByText('Project')).toBeInTheDocument()
     })
 
+    it('shows a namespaced tab by its leaf, as TruncatedText', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Work/Plan' }], label: 'Work/Plan' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Project' }], label: 'Project' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      const tab = screen.getByRole('tab', { name: /Plan/ })
+      expect(within(tab).getByText('Plan')).toHaveAttribute('data-slot', 'truncated-text')
+    })
+
     it('displays "Untitled" for tabs with empty labels', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -763,8 +779,15 @@ describe('TabBar', () => {
       return screen.findByRole('combobox')
     }
 
+    /** Each option's visible lines: the label, then its parent path when it has one. */
     function optionLabels(): string[] {
-      return screen.getAllByRole('option').map((o) => o.getAttribute('title') ?? '')
+      return screen
+        .getAllByRole('option')
+        .map((o) =>
+          [...o.querySelectorAll('[data-slot="truncated-text"]')]
+            .map((line) => line.textContent)
+            .join(' | '),
+        )
     }
 
     it('renders the caret before the tablist, outside it', () => {
@@ -813,7 +836,21 @@ describe('TabBar', () => {
       // "Alpha") and in the third tab's label.
       await user.keyboard('WORK')
 
-      expect(optionLabels()).toEqual(['Work/Alpha', 'work notes'])
+      expect(optionLabels()).toEqual(['Alpha | Work', 'work notes'])
+    })
+
+    it('shows the parent path of a namespaced tab as visible text under its label', async () => {
+      setupTabs(['Work/Projects/Alpha', 'Beta'])
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await openSwitcher(user)
+
+      const option = screen.getByRole('option', { name: /Alpha/ })
+      const parent = within(option).getByText('Work / Projects')
+      expect(parent).toHaveAttribute('data-slot', 'truncated-text')
+      expect(parent).toHaveClass('text-muted-foreground')
+      expect(within(option).getByText('Alpha')).toHaveAttribute('data-slot', 'truncated-text')
     })
 
     it('shows the no-match row when nothing matches', async () => {
