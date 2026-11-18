@@ -1311,7 +1311,8 @@ export function BlockTree({
     // (the user's blank line, not a leak: deleting it would make the keystroke
     // a visible no-op), or a block whose only text was the `/query` ·
     // `/assignee` · `/voice` trigger a dialog just consumed, or a block the editor
-    // left to run the page's undo. `handleEnterSave`, `useBlockDialogs` and
+    // left to run the page's undo; or a block Backspace is already deleting.
+    // `handleEnterSave`, `handleDeleteBlock`, `useBlockDialogs` and
     // `useBlockPageHistory` register the ids; this is the single consumption point.
     if (preserveEmptyBlockIds.current.delete(prevId)) return
 

@@ -358,9 +358,9 @@ export function useBlockActionOrchestration({
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
   const deleteInProgress = useRef(false)
 
-  // The latest Enter in flight. A restructure chord waits for it
-  // (`afterEnterSettles`).
-  const enterInFlight = useRef<Promise<void> | null>(null)
+  // The latest Enter in flight, settling to the block it left focused (null if
+  // it failed). A restructure chord waits for it (`afterEnterSettles`).
+  const enterInFlight = useRef<Promise<string | null> | null>(null)
 
   // Re-entrancy guard for merges, in flight until `merge_blocks` answers.
   // handleMergeById unmounts the roving editor (resetting its doc to empty)
@@ -548,6 +548,9 @@ export function useBlockActionOrchestration({
         return
       }
       const reparent = prevBlock ? planChildReparent(blocks, focusedBlockId, prevBlock.id) : null
+      // This delete owns the block: keep the focus-leave cleanup off it, or
+      // while a create it waits on is in flight both send `delete_block`.
+      preserveEmptyBlockIds?.current.add(focusedBlockId)
       deleteInProgress.current = true
       rovingEditorRef.current.unmount()
       const removal =
@@ -601,6 +604,7 @@ export function useBlockActionOrchestration({
       t,
       focusedListStyle,
       clearFocusedListStyle,
+      preserveEmptyBlockIds,
     ],
   )
 
@@ -716,19 +720,32 @@ export function useBlockActionOrchestration({
 
   // Until Enter's create lands the backend does not have the block it focused,
   // and a move of it would be refused. Run a chord pressed in that window (Tab,
-  // a move) on the block focused once Enter settles.
-  const afterEnterSettles = useCallback((chord: (id: string) => Promise<void>): boolean => {
-    const enter = enterInFlight.current
-    if (!enter) return false
-    void enter.then(() => {
-      const id = useBlockStore.getState().focusedBlockId
-      if (id) void chord(id)
-    })
-    return true
-  }, [])
+  // a move) on the block that Enter focused, once it settles: the focus by then
+  // may have moved on (Escape, another Enter).
+  const afterEnterSettles = useCallback(
+    (
+      chordById: (id: string) => Promise<void>,
+      move: (id: string) => Promise<boolean>,
+      successKey: string,
+    ): boolean => {
+      const enter = enterInFlight.current
+      if (!enter) return false
+      void enter.then((id) => {
+        if (!id) return
+        // A later Enter took the editor to another block: `chordById`'s flush
+        // would unmount it under the user's typing. The editor saved `id` as it
+        // left, so move it alone.
+        const editing = rovingEditorRef.current.activeBlockId
+        if (editing !== null && editing !== id) void announceMoveResult(move(id), t, successKey)
+        else void chordById(id)
+      })
+      return true
+    },
+    [t],
+  )
 
   const handleIndent = useCallback(() => {
-    if (afterEnterSettles(handleIndentById)) return
+    if (afterEnterSettles(handleIndentById, indent, 'announce.blockIndented')) return
     if (!focusedBlockId) return
     const blockId = focusedBlockId
     const content = captureEditor()
@@ -750,7 +767,7 @@ export function useBlockActionOrchestration({
   ])
 
   const handleDedent = useCallback(() => {
-    if (afterEnterSettles(handleDedentById)) return
+    if (afterEnterSettles(handleDedentById, dedent, 'announce.blockDedented')) return
     if (!focusedBlockId) return
     const blockId = focusedBlockId
     const content = captureEditor()
@@ -769,7 +786,7 @@ export function useBlockActionOrchestration({
   ])
 
   const handleMoveUp = useCallback(() => {
-    if (afterEnterSettles(handleMoveUpById)) return
+    if (afterEnterSettles(handleMoveUpById, moveUp, 'announce.blockMovedUp')) return
     if (!focusedBlockId) return
     const content = captureEditor()
     handleFlush()
@@ -792,7 +809,7 @@ export function useBlockActionOrchestration({
   ])
 
   const handleMoveDown = useCallback(() => {
-    if (afterEnterSettles(handleMoveDownById)) return
+    if (afterEnterSettles(handleMoveDownById, moveDown, 'announce.blockMovedDown')) return
     if (!focusedBlockId) return
     const content = captureEditor()
     handleFlush()
@@ -952,11 +969,12 @@ export function useBlockActionOrchestration({
       })
       return
     }
-    let settle: () => void = () => undefined
-    const enter = new Promise<void>((resolve) => {
+    let settle: (focused: string | null) => void = () => undefined
+    const enter = new Promise<string | null>((resolve) => {
       settle = resolve
     })
     enterInFlight.current = enter
+    let focusedOnSettle: string | null = null
     try {
       // Capture content before flush so we can re-mount on failure
       const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
@@ -966,6 +984,7 @@ export function useBlockActionOrchestration({
       // item; on a non-empty one the sibling created below carries the style.
       const listStyle = focusedListStyle()
       if (listStyle !== 'none' && savedContent.trim() === '') {
+        focusedOnSettle = focusedBlockId
         await clearFocusedListStyle(focusedBlockId)
         return
       }
@@ -1044,6 +1063,7 @@ export function useBlockActionOrchestration({
         // `edit_block` op that clobbers the split we just committed with the
         // old, un-split content.
         discardDraft(focusedBlockId)
+        focusedOnSettle = createdId
         announce(t('announce.blockCreated'))
         await continueListStyle(createdId, listStyle)
         return
@@ -1062,6 +1082,7 @@ export function useBlockActionOrchestration({
       const pendingSplit = consumePendingSplit(focusedBlockId)
       if (pendingSplit) {
         const lastSplitId = await pendingSplit
+        focusedOnSettle = lastSplitId
         if (lastSplitId) {
           setFocused(lastSplitId)
           announce(t('announce.blockCreated'))
@@ -1082,11 +1103,12 @@ export function useBlockActionOrchestration({
         restoreSource()
         return
       }
+      focusedOnSettle = createdId
       announce(t('announce.blockCreated'))
       await continueListStyle(createdId, listStyle)
     } finally {
       if (enterInFlight.current === enter) enterInFlight.current = null
-      settle()
+      settle(focusedOnSettle)
     }
   }, [
     focusedBlockId,

@@ -49,6 +49,15 @@ async function deleteSelection(page: Page): Promise<void> {
   await activeAlertDialog(page).getByRole('button', { name: 'Yes, delete', exact: true }).click()
 }
 
+/** Each row as `text@level`. */
+function levels(page: Page): Promise<string[]> {
+  return rows(page).evaluateAll((els) =>
+    els.map(
+      (el) => `${el.textContent}@${el.closest('li[aria-level]')?.getAttribute('aria-level')}`,
+    ),
+  )
+}
+
 /** Each row's text box, as `top,left`: what a layout shift moves. */
 function textBoxes(page: Page): Promise<string[]> {
   return page
@@ -144,6 +153,26 @@ test.describe('Enter at a heading @editor @journal', () => {
   })
 })
 
+// #6977 — keys pressed right after Enter, with no wait, reach the backend
+// before its `create_block` has answered.
+test.describe('Keys pressed before Enter has created the block @editor @journal', () => {
+  test.beforeEach(async ({ page }) => {
+    await startEmptyDay(page)
+  })
+
+  test('Tab indents the new block, even when Escape leaves it first', async ({ page }) => {
+    await editor(page).pressSequentially('parent', { delay: 10 })
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Tab')
+    await page.keyboard.insertText('child')
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => levels(page)).toEqual(['parent@1', 'child@2'])
+    await reopenDay(page)
+    await expect.poll(() => levels(page)).toEqual(['parent@1', 'child@2'])
+  })
+})
+
 test.describe('Deleting a block @editor @journal', () => {
   test.beforeEach(async ({ page }) => {
     await startEmptyDay(page)
@@ -218,13 +247,15 @@ test.describe('Deleting a block @editor @journal', () => {
 
   test('Backspace on an empty block removes it without a toast', async ({ page }) => {
     await editor(page).pressSequentially('kept', { delay: 10 })
+    // No wait between the keys: Backspace lands before the create answers (#6977).
     await page.keyboard.press('Enter')
-    await expect(rows(page)).toHaveCount(2)
     await page.keyboard.press('Backspace')
 
-    await expect(rows(page)).toHaveCount(1)
-    // Read once: a retrying `toHaveCount(0)` waits out a toast's lifetime and passes.
+    await expect(rows(page)).toHaveText(['kept'])
+    await reopenDay(page)
+    await expect(rows(page)).toHaveText(['kept'])
+    // Read once, after the round trips of the reopen: a retrying
+    // `toHaveCount(0)` waits out a toast's lifetime and passes.
     expect(await toasts(page).count()).toBe(0)
-    await expect(rows(page)).toContainText('kept')
   })
 })
