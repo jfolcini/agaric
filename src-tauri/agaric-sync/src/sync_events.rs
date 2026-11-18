@@ -102,8 +102,8 @@ pub enum SyncEvent {
         ///   (`sync_daemon::snapshot_transfer`) sends this: it reimports an
         ///   entire space, so every block may have changed and counting them
         ///   is neither cheap nor meaningful. The frontend falls back to a
-        ///   countless message plus a full reload — never to silence, so a
-        ///   producer that forgets this field is loud, not mute.
+        ///   full reload, so a producer that forgets this field still
+        ///   reloads.
         #[serde(default)]
         changed_blocks: Option<usize>,
     },

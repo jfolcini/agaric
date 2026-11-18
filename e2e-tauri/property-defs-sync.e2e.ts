@@ -204,7 +204,7 @@ describe('Agaric real-backend property definitions sync (#5841) @settings @sync'
       options: null,
     })
     await reopenProperties()
-    // The pull above leaves a "Synced" toast in the corner under this last row's Delete, and a
+    // The pull above leaves a "Sync complete" toast in the corner under this last row's Delete, and a
     // toast that expands or expires there takes a WebDriver click meant for the button.
     await clickUncovered($(deleteButton(UNDONE_KEY)), `the Delete button of ${UNDONE_KEY}`)
     await confirmDialog('Delete')

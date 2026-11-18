@@ -2773,6 +2773,39 @@ describe('App — mobile sidebar trigger', () => {
     expect(screen.getByRole('button', { name: t('sidebar.pages') })).toBeInTheDocument()
   })
 
+  // #6870 — the Sync button and its dot sit in the closed drawer, so the
+  // hamburger carries the dot once a device is paired.
+  it('carries the sync dot once a device is paired, with words for any state but idle', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+
+    render(<App />)
+    const trigger = await screen.findByTestId('mobile-sidebar-trigger')
+    expect(screen.queryByTestId('mobile-sync-status-dot')).toBeNull()
+
+    act(() => {
+      useSyncStore.setState({
+        state: 'idle',
+        peers: [{ peerId: 'PEER_1', lastSyncedAt: null, resetCount: 0, name: 'Pixel 8' }],
+      })
+    })
+    const dot = within(trigger).getByTestId('mobile-sync-status-dot')
+    expect(dot).toHaveClass('bg-sync-idle')
+    expect(trigger).toHaveAccessibleDescription('')
+
+    act(() => {
+      useSyncStore.setState({ state: 'error', error: 'Connection refused' })
+    })
+    expect(dot).toHaveClass('bg-destructive')
+    expect(trigger).toHaveAccessibleName(t('sidebar.openMenu'))
+    expect(trigger).toHaveAccessibleDescription('Sync failed: Connection refused')
+
+    act(() => {
+      useSyncStore.setState({ state: 'syncing', error: null })
+    })
+    expect(dot).toHaveClass('bg-sync-active')
+    expect(trigger).toHaveAccessibleDescription(t('sidebar.syncing'))
+  })
+
   it('does not render the hamburger on desktop (sidebar is already visible)', async () => {
     mockedUseIsMobile.mockReturnValue(false)
 

@@ -136,7 +136,8 @@ impl<R: tauri::Runtime> SyncEventSink for ChannelEventSink<R> {
         //
         // Complete + Error stay dual-emit for now because
         // `useSyncEvents.sync:complete` / `.sync:error` carry
-        // post-sync side effects (toast, page reload, conflict refresh)
+        // post-sync side effects (page reload, a pressed sync's failure
+        // toast, conflict refresh)
         // that the channel-stream callback in `useSyncTrigger` does
         // not own. A later cleanup can move those side effects into
         // the channel path and drop the inner emission for Complete
@@ -182,7 +183,7 @@ impl<R: tauri::Runtime> SyncEventSink for ChannelEventSink<R> {
                 // #4305: same reasoning — the channel envelope is the
                 // per-transition progress stream. The honest change count
                 // rides the inner-sink `sync:complete` event, which is where
-                // the toast decision is taken.
+                // the reload decision is taken.
                 changed_blocks: _,
             } => {
                 self.channel.send(SyncProgressUpdate::Sync {

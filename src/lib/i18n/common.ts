@@ -199,13 +199,6 @@ export const common: Record<string, string> = {
   'announce.syncStarted': 'Sync started',
   'announce.syncCompleted': 'Sync completed',
   'announce.syncFailed': 'Sync failed',
-  // #4305 — "operations" was never what the number counted; it was sync
-  // protocol messages, one per space. These are announced for the block counts
-  // the toast now shows, and are only reached when something actually changed.
-  'announce.syncChangesApplied_one': '{{count}} change received from sync',
-  'announce.syncChangesApplied_other': '{{count}} changes received from sync',
-  // #4305 — the countless twin, for a whole-space snapshot catch-up.
-  'announce.syncChangesAppliedUnknownCount': 'Changes received from sync',
   'announce.taskRescheduled': 'Task rescheduled to {{date}}',
   'announce.rescheduleFailed': 'Reschedule failed',
   'announce.dateUpdated': 'Date updated to {{date}}',
@@ -580,6 +573,8 @@ export const common: Record<string, string> = {
   'data.mirrorFailedHeading': 'Could not be written or read',
   'data.mirrorIngestedWarnings_one': '{{path}} was read in with a warning: {{first}}',
   'data.mirrorIngestedWarnings_other': '{{path}} was read in with {{count}} warnings: {{first}}',
+  'data.mirrorIngestedWarningsFiles_one': '{{count}} file was read in with warnings',
+  'data.mirrorIngestedWarningsFiles_other': '{{count}} files were read in with warnings',
   'data.mirrorFailedItem': '{{path}}: {{message}}',
   'data.mirrorReadBackLabel': 'Read changes back',
   'data.mirrorReadBackDesc':

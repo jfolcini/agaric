@@ -1525,7 +1525,11 @@ jobs:
         with:
           source: dir:src-tauri/target/${{ matrix.target }}/release/bundle
           output-prefix: ${{ runner.temp }}/agaric-${{ matrix.target }}
-          binaries: src-tauri/target/${{ matrix.target }}/release/agaric*
+          # The app and its agaric-mcp sidecar, the two Rust executables the
+          # bundle ships.
+          binaries: >-
+            src-tauri/target/${{ matrix.target }}/release/agaric${{ runner.os == 'Windows' && '.exe' || '' }}
+            src-tauri/target/${{ matrix.target }}/release/agaric-mcp${{ runner.os == 'Windows' && '.exe' || '' }}
 
       # PEND-41 R29 — build-time secret scan against the produced bundles.
       # `gitleaks` catches secrets in source; this catches the orthogonal

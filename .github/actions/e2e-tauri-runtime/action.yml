@@ -5,20 +5,17 @@ description: >-
   `e2e-tauri-apt-cache` job runs this on every main push so the key stays warm;
   the shards restore it, and fall back to the mirror on a miss.
 
+inputs:
+  warm-only:
+    description: "`apt-install`'s `warm-only`."
+    required: false
+    default: 'false'
+
 runs:
   using: composite
   steps:
     - name: Prepare apt (free dpkg lock, bound downloads)
       uses: ./.github/actions/prepare-apt
-
-    - name: Restore apt archives (e2e-tauri runtime)
-      id: restore
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: /var/cache/apt/archives/*.deb
-        # Bump `-v1` when the package list below changes. `ci.yml`'s probe step
-        # names the same key.
-        key: apt-e2e-tauri-runtime-${{ runner.os }}-v1
 
     - name: Install runtime dependencies
       # The build deps stay in the lane's `build` job.
@@ -38,6 +35,8 @@ runs:
       #     (#5741); dbus-daemon depends on it, named because a spec calls it.
       uses: ./.github/actions/apt-install
       with:
+        cache: 'true'
+        warm-only: ${{ inputs.warm-only }}
         packages: >-
           webkit2gtk-driver
           xvfb
@@ -46,16 +45,3 @@ runs:
           gstreamer1.0-plugins-good
           xdotool
           dbus-bin
-
-    - name: Save apt archives (e2e-tauri runtime)
-      # On a fresh runner with Keep-Downloaded-Packages, the archive dir now
-      # holds exactly the closure a fresh shard fetches. Main saves for every
-      # PR to read; a branch dispatch saves too, readable by that branch's next
-      # dispatch, which is how a change here shows its hit path before merge.
-      if: >-
-        steps.restore.outputs.cache-hit != 'true'
-        && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: /var/cache/apt/archives/*.deb
-        key: apt-e2e-tauri-runtime-${{ runner.os }}-v1
