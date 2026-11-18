@@ -138,7 +138,7 @@ describe('useMirrorIngestEvents', () => {
   })
 
   // #6887 E — a page trashed, renamed or created from the folder is said.
-  it('names a page trashed from the folder, and its notice opens the Trash', async () => {
+  it('names a page trashed from the folder, in a notice that stays and opens the Trash', async () => {
     renderHook(() => useMirrorIngestEvents())
     await fromFolder('trashed', PAGE, 'S/A.md')
 
@@ -147,6 +147,7 @@ describe('useMirrorIngestEvents', () => {
         t('data.mirrorReadBackTrashed', { path: 'S/A.md' }),
         {
           id: 'mirror-read-back',
+          duration: Number.POSITIVE_INFINITY,
           action: { label: t('palette.cmdGoTrash'), onClick: expect.any(Function) },
           onDismiss: expect.any(Function),
           onAutoClose: expect.any(Function),

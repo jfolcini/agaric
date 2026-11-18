@@ -9,8 +9,9 @@
  * A page the folder trashed, renamed or created is said the same way, in a
  * notice of its own (#6887): one page is named, several are counted by what
  * happened to them, and one trashed offers to open the Trash, where it is
- * restored. Its Undo sits on that page's own stack, which a trashed page no
- * longer shows.
+ * restored, and keeps the notice up until closed: the folder changes while the
+ * user works in another app. Its Undo sits on that page's own stack, which a
+ * trashed page no longer shows.
  */
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +84,7 @@ export function useMirrorIngestEvents(): void {
     if (pages.some((page) => page.kind === 'trashed')) {
       notify.warning(message, {
         ...opts,
+        duration: Number.POSITIVE_INFINITY,
         action: {
           label: t('palette.cmdGoTrash'),
           onClick: () => {
