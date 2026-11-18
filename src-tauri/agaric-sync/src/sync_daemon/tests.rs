@@ -2786,6 +2786,19 @@ impl SyncEventSink for UnpairOnFirstEvent {
 /// row again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unpairing_during_a_session_keeps_the_peer_unpaired() {
+    unpair_during_a_session(true).await;
+}
+
+/// The same for a paired peer whose row has no key yet, which the initiator binds
+/// after the session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unpairing_an_unbound_peer_during_a_session_keeps_it_unpaired() {
+    unpair_during_a_session(false).await;
+}
+
+/// One session in which each side unpairs the other at its first event.
+/// `initiator_bound` is whether the initiator's row carries the responder's key.
+async fn unpair_during_a_session(initiator_bound: bool) {
     const INIT_DEV: &str = "INITUNPAIR";
     const RESP_DEV: &str = "RESPUNPAIR";
     let harness = ServiceHarness::new().await;
@@ -2826,13 +2839,15 @@ async fn unpairing_during_a_session_keeps_the_peer_unpaired() {
     peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
         .await
         .unwrap();
-    peer_refs::bind_endpoint_id(
-        &init_pool,
-        RESP_DEV,
-        &harness.service.endpoint_id().to_string(),
-    )
-    .await
-    .unwrap();
+    if initiator_bound {
+        peer_refs::bind_endpoint_id(
+            &init_pool,
+            RESP_DEV,
+            &harness.service.endpoint_id().to_string(),
+        )
+        .await
+        .unwrap();
+    }
     let init_sink = Arc::new(UnpairOnFirstEvent {
         pool: init_pool.clone(),
         peer_id: RESP_DEV,
