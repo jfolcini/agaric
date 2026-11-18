@@ -126,9 +126,95 @@ pub async fn apply_page_source_inner(
     let mut tx = CommandTx::begin_immediate(pool, "apply_page_source").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    let (tx, report, deletes) = Box::pin(apply_page_source_in_tx(
+        tx,
+        device_id,
+        materializer,
+        &page_id,
+        source,
+        base_source,
+        flags,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    remove_deleted_fts(pool, &deletes).await;
+    Ok(report)
+}
+
+/// Create a page of `space_id` titled `title` and save `source` over its
+/// empty buffer, `line_ids` its lines' ids, as [`apply_page_source_inner`]
+/// saves one, in one transaction: a save refused, as by the op cap, leaves no
+/// page. `None`, with nothing written, when the space already holds the
+/// title.
+///
+/// # Errors
+///
+/// As [`create_page_in_space_inner`](crate::commands::create_page_in_space_inner)
+/// and [`apply_page_source_inner`].
+#[instrument(skip(pool, device_id, materializer, source, line_ids), err)]
+pub async fn create_page_from_source_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    title: &str,
+    source: String,
+    line_ids: Vec<Option<String>>,
+) -> Result<Option<(BlockId, PageSourceReport)>, AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "create_page_from_source").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let space_id = space_id.to_ascii_uppercase();
+    let page = Box::pin(crate::commands::spaces::create_user_page_in_space_in_tx(
+        &mut tx,
+        device_id,
+        materializer,
+        None,
+        title.to_owned(),
+        &space_id,
+        None,
+    ))
+    .await?;
+    let crate::commands::spaces::PageInSpace::Created(page_id) = page else {
+        return Ok(None);
+    };
+    let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Buffer).await?;
+    let (empty, _) = render_page_document(&data);
+    let flags = SourceSaveFlags {
+        merge: false,
+        line_ids,
+    };
+    let (tx, report, deletes) = Box::pin(apply_page_source_in_tx(
+        tx,
+        device_id,
+        materializer,
+        &page_id,
+        source,
+        empty,
+        flags,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    remove_deleted_fts(pool, &deletes).await;
+    Ok(Some((page_id, report)))
+}
+
+/// [`apply_page_source_inner`] in the caller's transaction, armed for the
+/// engine's rollback and handed back for the caller to commit, with the
+/// report and the deletes whose FTS rows the caller removes after the commit
+/// ([`remove_deleted_fts`]).
+async fn apply_page_source_in_tx(
+    mut tx: CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    page_id: &BlockId,
+    source: String,
+    base_source: String,
+    flags: SourceSaveFlags,
+) -> Result<(CommandTx, PageSourceReport, Vec<DeleteInTx>), AppError> {
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Buffer).await?;
     let (base, stale) = read_base(&data, &base_source, flags.merge)?;
-    let mut lines = PropertyLines::load_for_block(&mut tx, &page_id, PropertyWrite::Edit).await?;
+    let mut lines = PropertyLines::load_for_block(&mut tx, page_id, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
     let (blocks, front) = read_buffer(
         &source,
@@ -140,7 +226,7 @@ pub async fn apply_page_source_inner(
         &mut warnings,
     )?;
     let mut buffer = pair_blocks(&base, blocks)?;
-    resolve_value_refs(&mut tx, &page_id, &mut lines, &buffer, &front).await?;
+    resolve_value_refs(&mut tx, page_id, &mut lines, &buffer, &front).await?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, mut names_created) = Box::pin(resolve_buffer_names(
         tx,
@@ -183,11 +269,9 @@ pub async fn apply_page_source_inner(
     .await?;
     names_created.extend(tags);
     let deletes = Box::pin(delete_dropped(&mut tx, &mut save, &base, &buffer)).await?;
-    tx.commit_and_dispatch(materializer).await?;
-    remove_deleted_fts(pool, &deletes).await;
     save.report.names_created = names_created;
     save.report.warnings = warnings;
-    Ok(save.report)
+    Ok((tx, save.report, deletes))
 }
 
 /// Resolve in the page's space the ref values the buffer's blocks and its

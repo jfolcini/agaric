@@ -735,6 +735,32 @@ async fn a_new_file_in_a_space_folder_becomes_a_page_one_undo_removes() {
     assert!(pages_titled(&fx, "Gamma").await.is_empty());
 }
 
+/// The page and the file's blocks are written together or not at all: a new
+/// file the op cap refuses leaves no page behind, not even in the Trash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_file_over_the_op_cap_leaves_no_page_and_is_listed_as_not_read() {
+    let mut fx = Fx::new().await;
+    fx.tick().await;
+    let ops = op_count(&fx).await;
+    let huge: String = (0..1200).map(|n| format!("line {n}\n\n")).collect();
+    write_at(&fx, "TestSpace/Huge.md", huge);
+    fx.settle_file().await;
+
+    let pages = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Huge'",
+    )
+    .fetch_one(&fx.pool)
+    .await
+    .unwrap();
+    assert_eq!(pages, 0, "no page, trashed or not");
+    assert_eq!(op_count(&fx).await, ops, "nor any op");
+    assert!(fx.events().is_empty());
+    let failed = failed_files(&fx).await;
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].0, "TestSpace/Huge.md");
+    assert!(failed[0].1.contains("exceeds maximum"), "{failed:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_file_in_a_subfolder_is_a_namespaced_page_and_its_saves_edit_it() {
     let mut fx = Fx::new().await;

@@ -258,14 +258,7 @@ pub async fn create_page_in_space_inner_with_id(
     let mut tx = CommandTx::begin_immediate(pool, "create_page_in_space").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
-    if agaric_core::tag_norm::tag_of_page_title(&content).is_some()
-        && find_live_page_by_name(&mut tx, &space_id, &content, None)
-            .await?
-            .is_none()
-    {
-        return Err(reserved_tag_page_title(&content));
-    }
-    let page = Box::pin(create_page_in_space_in_tx(
+    let page = Box::pin(create_user_page_in_space_in_tx(
         &mut tx,
         device_id,
         materializer,
@@ -316,9 +309,42 @@ impl PageInSpace {
     }
 }
 
+/// [`create_page_in_space_in_tx`] for a page its caller titles, not a tag's:
+/// a new page under `Tag/` is refused with
+/// [`ValidationCode::ReservedTagPageTitle`] (#6755). One that exists is
+/// answered as any other.
+pub(crate) async fn create_user_page_in_space_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    parent_id: Option<String>,
+    content: String,
+    space_id: &str,
+    client_id: Option<BlockId>,
+) -> Result<PageInSpace, AppError> {
+    if agaric_core::tag_norm::tag_of_page_title(&content).is_some()
+        && find_live_page_by_name(tx, space_id, &content, None)
+            .await?
+            .is_none()
+    {
+        return Err(reserved_tag_page_title(&content));
+    }
+    Box::pin(create_page_in_space_in_tx(
+        tx,
+        device_id,
+        materializer,
+        parent_id,
+        content,
+        space_id,
+        client_id,
+    ))
+    .await
+}
+
 /// [`create_page_in_space_inner`] inside the caller's rollback-armed
 /// transaction, for an uppercase `space_id`. It does not refuse a title under
-/// `Tag/`: its callers do, or are the tag (#6755).
+/// `Tag/`: [`create_user_page_in_space_in_tx`] does, and the tag's page is
+/// made here (#6755).
 pub(crate) async fn create_page_in_space_in_tx(
     tx: &mut CommandTx,
     device_id: &str,
