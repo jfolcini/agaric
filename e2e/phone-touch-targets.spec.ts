@@ -68,7 +68,7 @@ test.describe('phone touch targets @mobile', () => {
   test('drawer rows are 44 px and line up with the header controls', async ({ page }) => {
     await waitForBoot(page)
     const sheet = await openMobileSidebar(page)
-    const newPage = sheet.getByRole('button', { name: 'New Page', exact: true })
+    const newPage = sheet.getByRole('button', { name: 'New page', exact: true })
     const rows = [
       newPage,
       ...['Journal', 'Tasks', 'Pages', 'Search', 'Tags'].map((name) =>
@@ -79,7 +79,7 @@ test.describe('phone touch targets @mobile', () => {
     for (const row of rows) await expect44(row, (await row.textContent()) ?? 'drawer row')
 
     const gutter = await left(sheet.getByRole('combobox', { name: 'Switch space', exact: true }))
-    expect(await left(newPage), 'New Page').toBe(gutter)
+    expect(await left(newPage), 'New page').toBe(gutter)
     for (const name of ['Journal', 'Tags', 'Sync']) {
       expect(await left(sheet.getByRole('button', { name, exact: true })), name).toBe(gutter)
     }
@@ -93,9 +93,9 @@ test.describe('phone touch targets @mobile', () => {
     await expect44(page.getByRole('textbox', { name: 'New template name' }), 'New template name')
   })
 
-  test("Advanced Query's NOT toggle", async ({ page }) => {
+  test("Advanced query's NOT toggle", async ({ page }) => {
     await waitForBoot(page)
-    await navigateToView(page, 'Advanced Query')
+    await navigateToView(page, 'Advanced query')
     const root = page.getByRole('group', { name: 'Filter', exact: true })
     await root.getByRole('button', { name: 'Add filter', exact: true }).click()
     const pop = activePopover(page)

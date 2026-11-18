@@ -359,7 +359,7 @@ export const shortcuts: Record<string, string> = {
   // the address; keep them. "Appearance" is the Settings tab of that name.
   // Deep links — `agaric://…` URLs the OS routes back into the app.
   // Listed in the help sheet so power users discover the scheme.
-  'keyboard.section.deepLinks': 'Deep Links',
+  'keyboard.section.deepLinks': 'Deep links',
   'keyboard.deepLinks.description':
     'Open Agaric from anywhere — paste these URLs into your browser, terminal, or any link surface.',
   'keyboard.deepLinks.pathHeader': 'URL',

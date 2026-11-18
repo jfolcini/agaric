@@ -1488,7 +1488,7 @@ test('creating a page and picking a date list no pages (#6527) @editor @pages @j
   await settle(page, '[id^="page-row-"]')
   await page
     .locator('.page-browser-header')
-    .getByRole('button', { name: 'New Page', exact: true })
+    .getByRole('button', { name: 'New page', exact: true })
     .click()
   const title = page.getByTestId('new-page-dialog').getByRole('textbox', { name: 'New page title' })
   await title.fill('Perf new page')
@@ -1534,7 +1534,7 @@ test('a second page picker lists no pages (#6527) @search @pages', async ({ page
   await expect
     .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
     .toBe(true)
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   const root = page.getByRole('group', { name: 'Filter', exact: true })
   await settle(page, '[role="option"]')
 

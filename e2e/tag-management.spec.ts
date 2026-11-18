@@ -50,9 +50,9 @@ test.describe('Tags view — seed tags @pages', () => {
   test('Tags view shows the create-tag form', async ({ page }) => {
     await navigateToTags(page)
 
-    // The "New tag name..." input and "Add Tag" button should be visible
+    // The "New tag name..." input and "Add tag" button should be visible
     await expect(page.getByPlaceholder('New tag name...')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Add Tag' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Add tag' })).toBeVisible()
   })
 })
 
@@ -69,7 +69,7 @@ test.describe('Tag creation @pages', () => {
   test('creating a new tag adds it to the list', async ({ page }) => {
     const input = page.getByPlaceholder('New tag name...')
     await input.fill('urgent')
-    await page.getByRole('button', { name: 'Add Tag' }).click()
+    await page.getByRole('button', { name: 'Add tag' }).click()
 
     // The new tag should appear in the list — query by stable data-testid so
     // the usage_count suffix in the button text does not confuse exact text match.

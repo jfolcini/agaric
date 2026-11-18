@@ -130,6 +130,12 @@ export const agenda: Record<string, string> = {
     'Geplanter Beginn als Richtwert — nicht überfällig, wenn er verstrichen ist',
   'duePanel.filterPropertiesTooltip':
     'Nach Blockeigenschaften filtern (Aufwand, Zuständigkeit usw.)',
+  'duePanel.countDue_one': '{{count}} fällig',
+  'duePanel.countDue_other': '{{count}} fällig',
+  'duePanel.countScheduled_one': '{{count}} geplant',
+  'duePanel.countScheduled_other': '{{count}} geplant',
+  'duePanel.countProperties_one': '{{count}} nach Eigenschaft',
+  'duePanel.countProperties_other': '{{count}} nach Eigenschaft',
   'duePanel.emptyContent': '(leer)',
   'duePanel.duePanelLabel': 'Agenda',
   'duePanel.hideFutureScheduled': 'Künftig geplante ausblenden',

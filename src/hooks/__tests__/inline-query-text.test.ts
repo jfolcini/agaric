@@ -141,7 +141,7 @@ describe('a query block in the search syntax', () => {
         t('query.text.problem', {
           token: 'state:todo',
           column: 1,
-          message: t('searchQuery.unknownValue', { noun: 'state', value: 'todo' }),
+          message: t('searchQuery.unknownState', { value: 'todo' }),
         }),
         t('query.text.problem', {
           token: '#nope',

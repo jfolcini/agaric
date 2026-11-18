@@ -17,7 +17,7 @@ export const properties: Record<string, string> = {
   'query.column.content': 'Content',
   'query.column.status': 'Status',
   'query.column.priority': 'Priority',
-  'query.column.dueDate': 'Due Date',
+  'query.column.dueDate': 'Due date',
   'query.column.scheduled': 'Scheduled',
   'query.column.page': 'Page',
 
@@ -290,7 +290,7 @@ export const properties: Record<string, string> = {
   // Translators: Build Query dialog (creates or edits a query block in a page): title, subtitle,
   // and the query-type toggle (typeLabel = its screen-reader name). "Backlinks" = blocks that
   // link to a given page.
-  'queryBuilder.title': 'Build Query',
+  'queryBuilder.title': 'Build query',
   'queryBuilder.description': 'Create an inline query to embed in your page.',
   'queryBuilder.typeLabel': 'Query type',
   'queryBuilder.type.tag': 'Tag',
@@ -334,8 +334,8 @@ export const properties: Record<string, string> = {
   'queryBuilder.readable.op.gte': 'is at least',
 
   // Translators: Build Query dialog footer buttons: Insert (new query) or Update (editing one).
-  'queryBuilder.insertButton': 'Insert Query',
-  'queryBuilder.updateButton': 'Update Query',
+  'queryBuilder.insertButton': 'Insert query',
+  'queryBuilder.updateButton': 'Update query',
   'queryBuilder.cancelButton': 'Cancel',
 
   // Translators: Query block header: screen-reader label of the pencil button that opens the Build
@@ -361,7 +361,7 @@ export const properties: Record<string, string> = {
   // Translators: BlockPropertyDrawer (side panel listing a block's properties): title, subtitle,
   // loading text, empty state, and the error (toast, or the error state in Settings › Properties)
   // when properties fail to load.
-  'property.drawerTitle': 'Block Properties',
+  'property.drawerTitle': 'Block properties',
   'property.drawerDescription':
     'View, edit and add properties for this block (status, priority, dates, custom fields).',
   'property.loading': 'Loading...',
@@ -386,17 +386,17 @@ export const properties: Record<string, string> = {
   // = recurring-task settings: Seq = occurrences so far, Origin = the original date.
   'property.dueDate': 'Due',
   'property.scheduledDate': 'Scheduled',
-  'property.createdAt': 'Created At',
-  'property.completedAt': 'Completed At',
+  'property.createdAt': 'Created at',
+  'property.completedAt': 'Completed at',
   'property.effort': 'Effort',
   'property.assignee': 'Assignee',
   'property.location': 'Location',
   'property.repeat': 'Repeat',
-  'property.repeatUntil': 'Repeat Until',
-  'property.repeatCount': 'Repeat Count',
-  'property.repeatSeq': 'Repeat Seq',
-  'property.repeatOrigin': 'Repeat Origin',
-  'property.todoState': 'Todo State',
+  'property.repeatUntil': 'Repeat until',
+  'property.repeatCount': 'Repeat count',
+  'property.repeatSeq': 'Repeat seq',
+  'property.repeatOrigin': 'Repeat origin',
+  'property.todoState': 'Todo state',
   'property.priority': 'Priority',
 
   // Translators: BlockPropertyDrawer fields and inline property chips: screen-reader labels of the
@@ -748,11 +748,13 @@ export const properties: Record<string, string> = {
   'tagFilter.loadingMessage': 'Loading...',
   'tagFilter.loadMoreButton': 'Load more',
 
-  // Translators: Appended to the match count, as in "3 blocks match 2 tags (All)". {{mode}} = the
+  // Translators: Tag filter match count once tags are chosen, as in "3 blocks match 2 tags (All)".
+  // {{count}} = matching blocks; {{tags}} = the tagCount text below ("2 tags"); {{mode}} = the
   // chosen mode button (All / Any / None).
-  // `mode` is the selected toggle's label (`andMode` / `orMode` / `notMode`).
-  'tagFilter.selectedTags_one': '{{count}} tag ({{mode}})',
-  'tagFilter.selectedTags_other': '{{count}} tags ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} block matches {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} blocks match {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} tag',
+  'tagFilter.tagCount_other': '{{count}} tags',
 
   // Translators: Tag filter prefix pills: "Starts with" button adds the typed text as a prefix
   // (its screen-reader label explains); pills read "{{prefix}}*", where * means "any ending".

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Real-backend Advanced Query: group by state, with a Count aggregate (#5738).
+// Real-backend Advanced query: group by state, with a Count aggregate (#5738).
 //
 // Grouped mode buckets the matches in SQL (`run_grouped`,
 // agaric-store/src/query/engine.rs): one `GROUP BY` row per state with its
@@ -68,10 +68,10 @@ function expectedGroups(counted: boolean): string[] {
   )
 }
 
-/** Pages › Advanced Query (a Pages header button), ready once the view mounts. */
+/** Pages › Advanced query (a Pages header button), ready once the view mounts. */
 async function openAdvancedQuery(): Promise<void> {
   await navigateTo('Pages')
-  const open = $('.page-browser-header button[aria-label="Advanced Query"]')
+  const open = $('.page-browser-header button[aria-label="Advanced query"]')
   await open.waitForClickable({ timeout: NAV_TIMEOUT })
   await open.click()
   await $('[data-testid="advanced-query-view"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
@@ -205,7 +205,7 @@ async function waitForBacklinks(holderId: string, when: string, reopen: boolean)
 
 before(waitForAppReady)
 
-describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
+describe('Agaric real-backend Advanced query grouping (#5738) @search', () => {
   it('groups the matches by state with per-group counts and a Count aggregate', async () => {
     // A Markdown file's task is a checkbox item (#6277 decision 1).
     const checkbox = { TODO: '[ ]', DOING: '[/]', DONE: '[x]' } as const
@@ -274,7 +274,7 @@ const AUTHOR_LISTS = [
   ['six', 'Cy'],
 ] as const
 
-describe('Agaric real-backend Advanced Query grouping by a list key (#6741) @search', () => {
+describe('Agaric real-backend Advanced query grouping by a list key (#6741) @search', () => {
   it("puts a block that holds two items in both items' groups", async () => {
     const spaces = await invoke<Array<{ id: string; name: string }>>('list_spaces')
     const spaceId = spaces.find((space) => space.name === 'Personal')?.id

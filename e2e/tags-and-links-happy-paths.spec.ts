@@ -94,7 +94,7 @@ test.describe('Linked references link kind @editor @pages', () => {
     await openPage(page, 'Getting Started')
 
     const references = page.getByTestId('linked-references')
-    const header = references.getByRole('button', { name: /^Collapse \d+ References?$/ })
+    const header = references.getByRole('button', { name: /^Collapse \d+ references?$/ })
     const rows = references.locator('[data-backlink-item]')
     const kind = (name: string) =>
       references
@@ -102,19 +102,19 @@ test.describe('Linked references link kind @editor @pages', () => {
         .getByRole('radio', { name, exact: true })
 
     // Groups order by source-page title: Projects, then Quick Notes.
-    await expect(header).toHaveText('2 References')
+    await expect(header).toHaveText('2 references')
     await expect(rows).toHaveText([/^Block ref note/, /^These notes complement/])
 
     await kind('Page links').click()
-    await expect(header).toHaveText('1 Reference')
+    await expect(header).toHaveText('1 reference')
     await expect(rows).toHaveText([/^These notes complement/])
 
     await kind('Block refs').click()
-    await expect(header).toHaveText('1 Reference')
+    await expect(header).toHaveText('1 reference')
     await expect(rows).toHaveText([/^Block ref note/])
 
     await kind('All').click()
-    await expect(header).toHaveText('2 References')
+    await expect(header).toHaveText('2 references')
     await expect(rows).toHaveText([/^Block ref note/, /^These notes complement/])
   })
 })

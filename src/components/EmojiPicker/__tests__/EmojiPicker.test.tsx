@@ -47,8 +47,8 @@ describe('<EmojiPicker>', () => {
     // asserting on header content.
     await screen.findByRole('gridcell', { name: 'grinning' })
     // The first group appears twice: the inline header row and the sticky pin.
-    expect(screen.getAllByText('Smileys & Emotion').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('People & Body')).toBeInTheDocument()
+    expect(screen.getAllByText('Smileys & emotion').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('People & body')).toBeInTheDocument()
   })
 
   // #4555 — the group header/tab-label/sticky text used to be the raw
@@ -66,7 +66,7 @@ describe('<EmojiPicker>', () => {
       render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
       await screen.findByRole('gridcell', { name: 'grinning' })
       expect(screen.getAllByText('__OVERRIDDEN_SMILEYS_LABEL__').length).toBeGreaterThanOrEqual(1)
-      expect(screen.queryByText('Smileys & Emotion')).not.toBeInTheDocument()
+      expect(screen.queryByText('Smileys & emotion')).not.toBeInTheDocument()
     } finally {
       i18n.addResource('en', 'translation', KEY, original)
     }
@@ -76,7 +76,7 @@ describe('<EmojiPicker>', () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     // #2671 — dataset lazy-loads; findBy awaits it instead of racing.
-    expect(await screen.findByTestId('emoji-sticky-group')).toHaveTextContent('Smileys & Emotion')
+    expect(await screen.findByTestId('emoji-sticky-group')).toHaveTextContent('Smileys & emotion')
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
     expect(screen.queryByTestId('emoji-sticky-group')).not.toBeInTheDocument()
   })
@@ -164,7 +164,7 @@ describe('<EmojiPicker>', () => {
     expect(await screen.findByRole('gridcell', { name: 'rocket' })).toBeInTheDocument()
     expect(screen.queryByRole('gridcell', { name: 'grinning' })).not.toBeInTheDocument()
     // Search results have no category headers.
-    expect(screen.queryByText('Smileys & Emotion')).not.toBeInTheDocument()
+    expect(screen.queryByText('Smileys & emotion')).not.toBeInTheDocument()
   })
 
   it('applies the selected skin tone to a tonable emoji', async () => {
@@ -244,7 +244,7 @@ describe('<EmojiPicker>', () => {
     // One tab per CLDR group (9), each with a non-empty accessible name + icon.
     const tabs = within(tablist).getAllByRole('tab')
     expect(tabs).toHaveLength(9)
-    expect(within(tablist).getByRole('tab', { name: 'Smileys & Emotion' })).toBeInTheDocument()
+    expect(within(tablist).getByRole('tab', { name: 'Smileys & emotion' })).toBeInTheDocument()
     // Clicking a later category is a no-throw jump (jsdom has no real scroll).
     await user.click(within(tablist).getByRole('tab', { name: 'Flags' }))
   })

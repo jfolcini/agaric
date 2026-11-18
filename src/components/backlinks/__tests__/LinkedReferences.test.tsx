@@ -260,7 +260,7 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
     })
     expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
-    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 references')).not.toBeInTheDocument()
     expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
   })
 
@@ -288,7 +288,7 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    expect(await screen.findByText('5 References')).toBeInTheDocument()
+    expect(await screen.findByText('5 references')).toBeInTheDocument()
   })
 
   // 3. renders singular for 1 backlink
@@ -305,7 +305,7 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    expect(await screen.findByText('1 Reference')).toBeInTheDocument()
+    expect(await screen.findByText('1 reference')).toBeInTheDocument()
   })
 
   // 4. header toggle collapses/expands content
@@ -332,7 +332,7 @@ describe('LinkedReferences', () => {
     ).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText('1 Reference')
+    const header = screen.getByText('1 reference')
     await user.click(header)
 
     // Content should be hidden
@@ -738,7 +738,7 @@ describe('LinkedReferences', () => {
   // non-first pages and returns `total_count: 0` there. The "N references"
   // header total is page-invariant, so the FE must keep the FIRST page's value
   // across load-more (setTotalCount is guarded to the first page). Regression:
-  // without the guard, load-more clobbers the header to "0 References".
+  // without the guard, load-more clobbers the header to "0 references".
   it('pagination: header keeps first-page total after load more (total_count 0 on page 2)', async () => {
     const user = userEvent.setup()
     const page1 = {
@@ -773,7 +773,7 @@ describe('LinkedReferences', () => {
     renderLinkedReferences({ targetId: 'PAGE1' })
 
     // First page: header shows the true total.
-    expect(await screen.findByText('2 References')).toBeInTheDocument()
+    expect(await screen.findByText('2 references')).toBeInTheDocument()
 
     const loadMoreBtn = await screen.findByRole('button', {
       name: /load more references/i,
@@ -784,9 +784,9 @@ describe('LinkedReferences', () => {
     expect(await screen.findByText('block 2')).toBeInTheDocument()
     expect(screen.getByText('block 1')).toBeInTheDocument()
 
-    // ...and the header STILL shows the first-page total — NOT "0 References".
-    expect(screen.getByText('2 References')).toBeInTheDocument()
-    expect(screen.queryByText('0 References')).not.toBeInTheDocument()
+    // ...and the header STILL shows the first-page total — NOT "0 references".
+    expect(screen.getByText('2 references')).toBeInTheDocument()
+    expect(screen.queryByText('0 references')).not.toBeInTheDocument()
   })
 
   // 14b. (#1529) load-more merging the SAME page_id must NOT mutate the
@@ -908,7 +908,7 @@ describe('LinkedReferences', () => {
     })
   })
 
-  // 16b. The skeleton is the panel saying "not known yet"; a "0 References"
+  // 16b. The skeleton is the panel saying "not known yet"; a "0 references"
   // header above it says "known, and there are none" — the same false claim
   // #4968 removed from the retry card, one state earlier.
   it('loading: the header does not claim zero while the first read is pending', async () => {
@@ -919,7 +919,7 @@ describe('LinkedReferences', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
     })
-    expect(screen.queryByText(/0 References/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/0 references/)).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', {
         name: t('common.collapse', { section: t('references.panelLabel') }),
@@ -1019,7 +1019,7 @@ describe('LinkedReferences', () => {
       ).toHaveLength(1)
     })
     expect(screen.getByText('page 1 block')).toBeInTheDocument()
-    expect(screen.getByText('1 Reference')).toBeInTheDocument()
+    expect(screen.getByText('1 reference')).toBeInTheDocument()
 
     await act(async () => {
       release()
@@ -1227,7 +1227,7 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    const header = await screen.findByText('1 Reference')
+    const header = await screen.findByText('1 reference')
     const headerBtn = header.closest('button') as HTMLElement
 
     // Initially expanded
@@ -1658,10 +1658,10 @@ describe('LinkedReferences', () => {
     expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
     expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
     // The header must not make the claim either: a failed read leaves
-    // `totalCount` at 0, and "0 References" sitting directly above the retry
+    // `totalCount` at 0, and "0 references" sitting directly above the retry
     // card says exactly what the card is there to deny. It reads as the bare
     // panel name until a read succeeds.
-    expect(screen.queryByText(/0 References/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/0 references/)).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', {
         name: t('common.collapse', { section: t('references.panelLabel') }),

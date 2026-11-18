@@ -60,7 +60,7 @@ function isKnownPriority(value: string): boolean {
 function simpleValueRecogniser<K extends 'state' | 'notState' | 'priority' | 'notPriority'>(
   prefix: string,
   kind: K,
-  noun: string,
+  unknownKey: 'searchQuery.unknownState' | 'searchQuery.unknownPriority',
   isKnown: (value: string) => boolean,
 ): ValueParser {
   return (value, span) => {
@@ -76,7 +76,7 @@ function simpleValueRecogniser<K extends 'state' | 'notState' | 'priority' | 'no
       return {
         kind: 'invalid',
         source: `${prefix}${value}`,
-        error: t('searchQuery.unknownValue', { noun, value }),
+        error: t(unknownKey, { value }),
         span,
       }
     }
@@ -180,19 +180,27 @@ export function ensureRegistered(): void {
 
   // State: / not-state: / priority: / not-priority: — one shared factory
   // (see `simpleValueRecogniser`) so the empty-value contract and the
-  // `unknown <noun>` copy live in a single place.
-  registerTokenPrefix('state:', simpleValueRecogniser('state:', 'state', 'state', isKnownState))
+  // unknown-value error live in a single place.
+  registerTokenPrefix(
+    'state:',
+    simpleValueRecogniser('state:', 'state', 'searchQuery.unknownState', isKnownState),
+  )
   registerTokenPrefix(
     'not-state:',
-    simpleValueRecogniser('not-state:', 'notState', 'state', isKnownState),
+    simpleValueRecogniser('not-state:', 'notState', 'searchQuery.unknownState', isKnownState),
   )
   registerTokenPrefix(
     'priority:',
-    simpleValueRecogniser('priority:', 'priority', 'priority', isKnownPriority),
+    simpleValueRecogniser('priority:', 'priority', 'searchQuery.unknownPriority', isKnownPriority),
   )
   registerTokenPrefix(
     'not-priority:',
-    simpleValueRecogniser('not-priority:', 'notPriority', 'priority', isKnownPriority),
+    simpleValueRecogniser(
+      'not-priority:',
+      'notPriority',
+      'searchQuery.unknownPriority',
+      isKnownPriority,
+    ),
   )
 
   // Due: / scheduled: share the date-value parser.

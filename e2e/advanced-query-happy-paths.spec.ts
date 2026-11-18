@@ -1,5 +1,5 @@
 /**
- * Advanced Query happy paths (#5738): a nested AND / OR / NOT tree built from
+ * Advanced query happy paths (#5738): a nested AND / OR / NOT tree built from
  * filter leaves, and the controls bar's full-text term plus a sort key. Both
  * run the mock's flat `run_advanced_query` path (`handlers/search.ts`), which
  * evaluates the `FilterExpr` tree with the conformance-guarded per-primitive
@@ -51,7 +51,7 @@ test('a nested AND / OR / NOT tree returns exactly the blocks it selects @search
   await seedSearchBlocks(page, [
     { content: 'Archived work task', todo: 'DONE', tagIds: [TAG_WORK] },
   ])
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
 
   // The empty builder matches the whole space, so both blocks the tree must
   // drop are in the result set before it is built.
@@ -102,7 +102,7 @@ test('a full-text term narrows the results and a sort key orders them @search', 
     { content: 'Quokka two', priority: '1' },
     { content: 'Quokka six', priority: '3' },
   ])
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
 
   await page.getByRole('searchbox', { name: 'Full-text search' }).fill('quokka')
   await expect(page.getByTestId('advanced-query-total')).toHaveText('3 matching blocks')
@@ -118,7 +118,7 @@ test('an empty query leaves out template pages and their placeholder blocks @sea
 }) => {
   // #6548: the seeded "Meeting Notes Template" page is a template whose blocks
   // are placeholders, not notes; the agenda already leaves them out.
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
 
   await expect(resultRows(page).filter({ hasText: 'Review pull requests' })).toHaveCount(1)
   await expect(resultRows(page).filter({ hasText: 'Action items for' })).toHaveCount(0)

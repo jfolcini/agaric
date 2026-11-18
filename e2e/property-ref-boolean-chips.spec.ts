@@ -65,7 +65,7 @@ async function openBlockDrawer(page: Page, blockId: string): Promise<Locator> {
     .getByRole('menuitem', { name: /^Properties/ })
     .click()
   const sheet = activeSheet(page)
-  await expect(sheet.getByText('Block Properties')).toBeVisible()
+  await expect(sheet.getByText('Block properties')).toBeVisible()
   return sheet
 }
 

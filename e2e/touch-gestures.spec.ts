@@ -88,8 +88,8 @@ test.describe('Touch gestures (iPhone viewport) @editor @mobile', () => {
     await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
-    await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
-    await expect(menu.getByRole('menuitem', { name: 'Move Down' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Move up' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Move down' })).toBeVisible()
 
     // Dismiss this menu before opening the next (the spec never clicked an
     // action on GS_1's menu, so it would otherwise stay open and collide with

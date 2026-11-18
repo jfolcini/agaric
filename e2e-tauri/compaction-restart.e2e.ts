@@ -124,7 +124,7 @@ describe('Agaric real-backend op-log compaction across a restart (#6518) @pages 
     // cursor clamp exists for.
     expect(eligible).toBe(total)
 
-    const compact = $(CARD).$('button=Compact Now')
+    const compact = $(CARD).$('button=Compact now')
     await compact.waitForClickable({ timeout: ACTION_TIMEOUT })
     await compact.click()
     await confirmDialog('Compact')
