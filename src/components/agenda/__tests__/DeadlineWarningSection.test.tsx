@@ -4,18 +4,21 @@
  * Validates:
  *  - Renders current warning threshold (default 0)
  *  - Updates threshold and persists to localStorage
+ *  - Says inline, not in a toast, that a typed value was clamped
  *  - Has no a11y violations (axe)
  */
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
 import { t } from '@/lib/i18n'
 
 beforeEach(() => {
+  vi.clearAllMocks()
   localStorage.removeItem('agaric:deadlineWarningDays')
 })
 
@@ -68,6 +71,41 @@ describe('DeadlineWarningSection', () => {
 
     expect(input).toHaveValue(90)
     expect(localStorage.getItem('agaric:deadlineWarningDays')).toBe('90')
+  })
+
+  it('says inline that a typed value was clamped, until the next edit', async () => {
+    const user = userEvent.setup()
+
+    render(<DeadlineWarningSection />)
+
+    const input = screen.getByRole('spinbutton', { name: /Deadline warning/i })
+    const help = t('propertiesView.deadlineWarningDesc')
+    const clamped = t('settings.valueClamped', { min: 0, max: 90 })
+    await user.clear(input)
+    await user.type(input, '100')
+    await user.tab()
+
+    expect(screen.getByRole('status')).toHaveTextContent(clamped)
+    expect(input).toHaveAccessibleDescription(`${help} ${clamped}`)
+    expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+
+    await user.type(input, '{Backspace}')
+
+    expect(input).toHaveValue(9)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(input).toHaveAccessibleDescription(help)
+  })
+
+  it('has no a11y violations with the clamp notice showing', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<DeadlineWarningSection />)
+
+    const input = screen.getByRole('spinbutton', { name: /Deadline warning/i })
+    await user.clear(input)
+    await user.type(input, '100')
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('clearing the field does not coerce the stored value to 0', async () => {

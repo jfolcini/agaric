@@ -2,8 +2,8 @@
  * Tests for HistoryRestoreDialog — error-path coverage (#1270).
  *
  * The dialog wraps the `restorePageToOp` IPC. On rejection it must
- * surface the failure (toast via `reportIpcError`, aria-live announce)
- * and NOT swallow it silently. These tests assert that error path
+ * surface the failure (a toast via `reportIpcError`) and NOT swallow it
+ * silently. These tests assert that error path
  * fires when the IPC rejects, and that the happy path notifies success.
  */
 
@@ -98,9 +98,9 @@ describe('HistoryRestoreDialog', () => {
     expect(mockNotify.warning).toHaveBeenCalledWith('1 non-reversible operation was skipped')
   })
 
-  // #1270 error-path: a rejected restore IPC must surface a toast +
-  // announce, not be swallowed.
-  it('surfaces an error toast + announce when restorePageToOp rejects', async () => {
+  // #1270 error-path: a rejected restore IPC must surface a toast, not be
+  // swallowed. The toast is a live region, so no second announcement.
+  it('surfaces an error toast when restorePageToOp rejects', async () => {
     const user = userEvent.setup()
     mockRestore.mockRejectedValueOnce(new Error('ipc boom'))
     const onSuccess = vi.fn()
@@ -116,8 +116,7 @@ describe('HistoryRestoreDialog', () => {
     await waitFor(() => {
       expect(mockNotify.error).toHaveBeenCalledWith('Failed to restore — please try again')
     })
-    // The failure-announce must fire and the success path must not run.
-    expect(mockAnnounce).toHaveBeenCalled()
+    expect(mockAnnounce).not.toHaveBeenCalledWith('Restore failed')
     expect(onSuccess).not.toHaveBeenCalled()
   })
 

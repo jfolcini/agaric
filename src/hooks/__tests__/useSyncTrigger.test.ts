@@ -1136,7 +1136,9 @@ describe('useSyncTrigger', () => {
 
   // Screen-reader announcements paired with sync toast feedback
   describe('screen reader announcements', () => {
-    it('announces sync started and completed on successful sync', async () => {
+    // The toast "Sync complete" is announced by the toaster's live region; a
+    // second announcement said it twice.
+    it('announces the start of a pressed sync, and its end only through the toast', async () => {
       mockListPeerRefs.mockResolvedValue([
         {
           peer_id: 'PEER1',
@@ -1163,7 +1165,8 @@ describe('useSyncTrigger', () => {
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync started')
-      expect(mockedAnnounce).toHaveBeenCalledWith('Sync completed')
+      expect(toast.success).toHaveBeenCalledWith('Sync complete')
+      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync completed')
     })
 
     // #4305 — and a scheduled tick announces neither, for the same reason it
@@ -1197,7 +1200,7 @@ describe('useSyncTrigger', () => {
       expect(mockedAnnounce).not.toHaveBeenCalled()
     })
 
-    it('announces sync failed when listPeerRefs rejects on a press', async () => {
+    it('says a pressed sync failed through the toast alone when listPeerRefs rejects', async () => {
       mockListPeerRefs.mockRejectedValue(new Error('DB error'))
 
       const { result } = renderHook(() => useSyncTrigger())
@@ -1206,7 +1209,11 @@ describe('useSyncTrigger', () => {
         await result.current.syncAll({ userInitiated: true })
       })
 
-      expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Sync failed',
+        expect.objectContaining({ id: 'sync-error' }),
+      )
+      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
     })
   })
 

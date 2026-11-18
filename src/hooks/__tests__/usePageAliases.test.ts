@@ -176,7 +176,7 @@ describe('usePageAliases — add / remove', () => {
       expect(result.current.aliases).toEqual(['own'])
     })
     expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual(['pageHeader.aliasTaken'])
-    expect(mockedAnnounce).toHaveBeenCalledWith('pageHeader.aliasTaken')
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('pageHeader.aliasTaken')
     expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasAdded')
     expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasFailed')
     expect(result.current.aliasInput).toBe('standup')
@@ -230,7 +230,8 @@ describe('usePageAliases — add / remove', () => {
     // The draft is preserved (never optimistically cleared) so the user
     // can retry without retyping.
     expect(result.current.aliasInput).toBe('Nickname')
-    expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasFailed')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('pageHeader.aliasUpdateFailed')
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasFailed')
   })
 
   it('handleAddAlias is a no-op for whitespace-only drafts', async () => {
@@ -287,7 +288,8 @@ describe('usePageAliases — add / remove', () => {
     await waitFor(() => {
       expect(result.current.aliases).toEqual(['alpha', 'beta', 'gamma'])
     })
-    expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasFailed')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('pageHeader.aliasUpdateFailed')
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasFailed')
   })
 
   it('does not let a stale rollback clobber a later, already-successful mutation', async () => {

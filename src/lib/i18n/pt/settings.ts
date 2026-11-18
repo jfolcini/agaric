@@ -18,7 +18,6 @@ export const settings: Record<string, string> = {
   'settings.showWelcomeTour.description':
     'Reabre a janela de boas-vindas da primeira execução, incluindo a opção de criar as páginas de exemplo.',
   'settings.showWelcomeTour.button': 'Mostrar tour',
-  'settings.showWelcomeTour.success': 'Tour de boas-vindas reaberto',
   'settings.tabGeneral': 'Geral',
   'settings.tabSpaces': 'Espaços',
   'settings.spaces.description':
@@ -50,7 +49,6 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageAlways': 'Sempre carregar',
   'settings.editor.externalImageClick': 'Perguntar sempre (recomendado)',
   'settings.editor.externalImageNever': 'Nunca carregar',
-  'settings.editor.externalImageUpdated': 'Política de imagens externas atualizada',
   'settings.editor.externalImageAllowedHosts': 'Domínios de imagem permitidos',
   'settings.editor.externalImageRemoveHost': 'Remover {{host}}',
   'settings.editor.linkPreviewLabel': 'Buscar pré-visualizações de links ao passar o mouse',
@@ -292,7 +290,6 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'A semana começa em',
   'settings.weekStartMonday': 'Segunda-feira',
   'settings.weekStartSunday': 'Domingo',
-  'settings.weekStartUpdated': 'Novo início da semana: {{day}}',
   'settings.journalDateFormatLabel': 'Formato de data do diário',
   'settings.journalDateFormatHelp':
     'Como os títulos do diário são exibidos. As páginas são sempre armazenadas como AAAA-MM-DD, então alterar isto nunca afeta os diários existentes.',
@@ -301,6 +298,5 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Mês D, AAAA (ex.: junho 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/AAAA (ex.: 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (ex.: quarta, jun 17)',
-  'settings.journalDateFormatUpdated': 'As datas do diário agora aparecem como {{example}}',
   'settings.valueClamped': 'Valor limitado a {{min}}–{{max}}',
 }

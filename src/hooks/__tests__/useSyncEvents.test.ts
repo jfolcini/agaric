@@ -1492,7 +1492,8 @@ describe('useSyncEvents', () => {
           `Sync failed: ${message}`,
           expect.objectContaining({ id: 'sync-error' }),
         )
-        expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+        // The toast is announced by the toaster's live region; not twice.
+        expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
         unmount()
       })
     })
@@ -1608,7 +1609,9 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('announces sync failed on a pressed sync:error', async () => {
+    // The failure toast is announced by the toaster's live region; a second
+    // announcement said it twice.
+    it('says a pressed sync failed through the toast alone', async () => {
       pressedSyncPeers.add('device-42')
       const { unmount } = renderHook(() => useSyncEvents())
 
@@ -1625,7 +1628,11 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Sync failed: Connection timed out',
+        expect.objectContaining({ id: 'sync-error' }),
+      )
+      expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
 
       unmount()
     })

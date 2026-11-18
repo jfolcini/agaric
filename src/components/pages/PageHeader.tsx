@@ -33,7 +33,6 @@ import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
-import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { saveBlob } from '@/lib/attachment-utils'
 import { commands } from '@/lib/bindings'
@@ -222,11 +221,9 @@ export function PageHeader({
     try {
       await writeText(await pageMarkdownForCopy(pageId))
       notify.success(t('pageHeader.exportCopied'))
-      announce(t('announce.exported'))
     } catch (err) {
       logger.error('PageHeader', 'Failed to export page markdown', { pageId }, err)
       notify.error(t('pageHeader.exportFailed'))
-      announce(t('announce.exportFailed'))
     }
   }, [pageId, t])
 
@@ -292,21 +289,13 @@ export function PageHeader({
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
   // its ConfirmDialog and, on confirm, runs the IPC, drops the page from
-  // every tab and emits the success toast with an Undo action. We pass
-  // `onDeleted` so the header can still announce to AT. The ConfirmDialog hands focus
-  // back on cancel to whatever held it when it opened, and the menu item is
-  // gone by then, so the kebab takes focus first.
+  // every tab and emits the success toast with an Undo action. The
+  // ConfirmDialog hands focus back on cancel to whatever held it when it
+  // opened, and the menu item is gone by then, so the kebab takes focus first.
   const handleRequestDelete = () => {
     kebab.current?.focus()
     setKebabOpen(false)
-    requestDelete(pageId, title, {
-      onDeleted: () => {
-        announce(t('announce.pageDeleted'))
-      },
-      onFailed: () => {
-        announce(t('announce.pageDeleteFailed'))
-      },
-    })
+    requestDelete(pageId, title)
   }
 
   const handleKebabAddAlias = useCallback(() => {
@@ -405,7 +394,6 @@ export function PageHeader({
     const onMoved = () => {
       announcePagesMovedOut([pageId], originSpaceId)
       notify.success(t('space.movedToast', { space: targetName }))
-      announce(t('announce.pageMoved'))
       // #2785 — do NOT `pageStore.getState().load()` here. `load()`
       // scopes its fetch to `useSpaceStore.getState().currentSpaceId`,
       // which is still the OLD space right after this `await` — the
@@ -427,7 +415,6 @@ export function PageHeader({
     const onFailed = (err: unknown) => {
       logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
       notify.error(spaceMoveFailureMessage(err, t('space.moveFailed')))
-      announce(t('announce.pageMoveFailed'))
     }
     await requestMove({ ids: [pageId], targetSpaceId, targetName, onMoved, onFailed })
   }
@@ -501,7 +488,6 @@ export function PageHeader({
         // #5287 — `renamePage` announces a page rename; the tag lists (the
         // header's tag chips, the `#` picker) only reload on `invalidated`.
         if (resp.block_type === 'tag') invalidateNameCaches()
-        announce(t('announce.pageRenamed'))
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
         logger.error('PageHeader', 'Failed to rename page', { pageId }, err)
@@ -517,7 +503,6 @@ export function PageHeader({
                 : 'pageHeader.renameFailed',
           ),
         )
-        announce(t('announce.pageRenameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
       }

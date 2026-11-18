@@ -96,7 +96,9 @@ export function SearchHeader({
             aria-label={t('search.searchLabel')}
             aria-invalid={invalid ? true : undefined}
             aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
-            aria-describedby={regexMode ? 'search-regex-hint' : undefined}
+            aria-describedby={
+              regexMode ? 'search-filter-hint search-regex-hint' : 'search-filter-hint'
+            }
             className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
             // On a phone the input takes the first row and the toggles,
             // submit and help share the second, instead of a row each.
@@ -140,6 +142,9 @@ export function SearchHeader({
             </span>
           ) : null}
         </form>
+        <p id="search-filter-hint" className="mt-1 text-xs text-muted-foreground">
+          {t('search.filterSyntaxIntro')}
+        </p>
         {inlineError ? (
           <p
             id="search-inline-error"

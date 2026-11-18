@@ -327,7 +327,7 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT ne peut pas inverser un filtre\u00A0; utilisez sa forme not-',
   'searchQuery.emptyGroup': 'parenthèses vides',
   'search.filterSyntaxIntro':
-    'La syntaxe des filtres est interprétée en direct — tapez tag:#name ou path:Journal/* dans le champ de recherche, ou utilisez le bouton Ajouter un filtre. Appuyez sur ? pour obtenir de l’aide.',
+    'Filtrez avec tag:#name ou path:Journal/*, ou utilisez Ajouter un filtre. Appuyez sur ? pour obtenir de l’aide.',
   'search.searchTags': 'Rechercher des étiquettes...',
   'search.searchPages': 'Rechercher des pages...',
   'search.noTagsFound': 'Aucune étiquette trouvée',

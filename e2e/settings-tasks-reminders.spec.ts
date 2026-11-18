@@ -88,4 +88,25 @@ test.describe('Settings › Tasks & reminders: deadline warning @settings @journ
       new RegExp(SEED_NEXT_WEEK),
     ])
   })
+
+  // A form problem is said next to its field, not in a toast (#6870).
+  test('a value past the limit is kept to it, and the field says so until the next edit', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Tasks & reminders')
+    const input = page.getByRole('spinbutton', { name: 'Deadline warning' })
+
+    await input.fill('200')
+    await expect(input).toHaveValue('90')
+    await expect(page.getByText('Value clamped to 0–90', { exact: true })).toBeVisible()
+    // Playwright's description computation skips `<output>` text, which
+    // Chromium's accessibility tree includes, so the wiring is asserted.
+    await expect(input).toHaveAttribute('aria-describedby', /deadline-warning-days-clamped/)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+
+    await input.fill('5')
+    await expect(input).toHaveValue('5')
+    await expect(page.getByText('Value clamped to 0–90', { exact: true })).toHaveCount(0)
+  })
 })

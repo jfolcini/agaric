@@ -65,17 +65,11 @@ export interface RequestDeleteOptions {
   confirmCopy?: PageDeleteConfirmCopy
   /**
    * Called once the delete IPC resolves successfully. Used by hosts that
-   * need post-delete UI side effects (PageHeader → AT `announce(...)`).
+   * need post-delete UI side effects (the journal drops the deleted day).
    */
   onDeleted?: (pageId: string) => void
   /** Called once an Undo restore resolves successfully. */
   onRestored?: (pageId: string) => void
-  /**
-   * Called when the delete IPC rejects. Lets the host surface an AT
-   * announcement or any other failure-only side effect; the shared
-   * error toast (with Retry) still fires unconditionally.
-   */
-  onFailed?: (pageId: string, error: unknown) => void
 }
 
 /** Stable empty-values default so the confirm dialog memo doesn't rebuild each render. */
@@ -88,7 +82,6 @@ interface DeleteTarget {
   copy: PageDeleteConfirmCopy
   onDeleted: ((pageId: string) => void) | undefined
   onRestored: ((pageId: string) => void) | undefined
-  onFailed: ((pageId: string, error: unknown) => void) | undefined
 }
 
 /**
@@ -142,7 +135,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         copy: options?.confirmCopy ?? {},
         onDeleted: options?.onDeleted,
         onRestored: options?.onRestored,
-        onFailed: options?.onFailed,
       })
     },
     [],
@@ -191,7 +183,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
   const handleConfirm = useCallback(
     async function handleConfirm() {
       if (!target) return
-      const { id, originSpaceId, onDeleted, onFailed } = target
+      const { id, originSpaceId, onDeleted } = target
       setDeletingId(id)
       try {
         const { block_id: canonicalSeedId, affected_page_ids: cascadedPageIds } = unwrap(
@@ -284,7 +276,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         onDeleted?.(id)
       } catch (err) {
         logger.error('usePageDeleteAction', 'Failed to delete page', { pageId: id }, err)
-        onFailed?.(id, err)
         notify.error(t('pageDeleteAction.deleteFailed'), {
           action: {
             label: t('pageDeleteAction.retry'),

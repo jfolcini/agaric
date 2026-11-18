@@ -272,7 +272,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     expect(input).toBeInTheDocument()
     expect(input).not.toHaveClass('font-mono')
-    expect(input).not.toHaveAttribute('aria-describedby', 'search-regex-hint')
+    expect(input).toHaveAttribute('aria-describedby', 'search-filter-hint')
     expect(screen.queryByText(t('search.regexModeHint'))).not.toBeInTheDocument()
   })
 
@@ -285,7 +285,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     expect(input).toHaveClass('font-mono')
     expect(input).toHaveClass('flex-1')
-    expect(input).toHaveAttribute('aria-describedby', 'search-regex-hint')
+    expect(input).toHaveAttribute('aria-describedby', 'search-filter-hint search-regex-hint')
 
     const hint = document.getElementById('search-regex-hint')
     expect(hint).not.toBeNull()
@@ -300,7 +300,7 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
     // The describedby target must exist for the input that references it.
     expect(screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))).toHaveAttribute(
       'aria-describedby',
-      'search-regex-hint',
+      'search-filter-hint search-regex-hint',
     )
     expect(await axe(container)).toHaveNoViolations()
   })

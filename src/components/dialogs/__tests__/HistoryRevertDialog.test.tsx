@@ -2,8 +2,8 @@
  * Tests for HistoryRevertDialog — error-path coverage (#1270).
  *
  * The dialog wraps the batch `revertOps` IPC. On rejection it must
- * surface the failure (toast via `reportIpcError`, aria-live announce)
- * rather than swallow it. These tests assert the error path fires on a
+ * surface the failure (a toast via `reportIpcError`) rather than swallow
+ * it. These tests assert the error path fires on a
  * rejected IPC and that the happy path announces success.
  */
 
@@ -88,9 +88,9 @@ describe('HistoryRevertDialog', () => {
     expect(mockAnnounce).toHaveBeenCalled()
   })
 
-  // #1270 error-path: a rejected revertOps IPC must surface a toast +
-  // failure announce, not be swallowed.
-  it('surfaces an error toast + announce when revertOps rejects', async () => {
+  // #1270 error-path: a rejected revertOps IPC must surface a toast, not be
+  // swallowed. The toast is a live region, so no second announcement.
+  it('surfaces an error toast when revertOps rejects', async () => {
     const user = userEvent.setup()
     mockRevert.mockRejectedValueOnce(new Error('ipc boom'))
     const onSuccess = vi.fn()
@@ -106,7 +106,7 @@ describe('HistoryRevertDialog', () => {
     await waitFor(() => {
       expect(mockNotify.error).toHaveBeenCalledWith('Failed to revert operations')
     })
-    expect(mockAnnounce).toHaveBeenCalled()
+    expect(mockAnnounce).not.toHaveBeenCalledWith('Revert failed')
     expect(onSuccess).not.toHaveBeenCalled()
   })
 

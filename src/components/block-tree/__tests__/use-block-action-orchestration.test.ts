@@ -494,10 +494,10 @@ describe('useBlockActionOrchestration handleDeleteBlock', () => {
       expect(params.remove).not.toHaveBeenCalled()
       expect(params.moveBlocks).not.toHaveBeenCalled()
       // A refusal the user cannot see is indistinguishable from a dead
-      // Backspace key, so it says why on both channels — as the neighbouring
-      // last-block bail does.
+      // Backspace key, so it says why in a toast, as the neighbouring
+      // last-block bail does; the toaster's live region voices it.
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.cannotDeleteParentAtTop')
-      expect(mockedAnnounce).toHaveBeenCalledWith('blockTree.cannotDeleteParentAtTop')
+      expect(mockedAnnounce).not.toHaveBeenCalledWith('blockTree.cannotDeleteParentAtTop')
     })
 
     // `BlockTree` hands the hook a `moveBlocks` wrapper that re-reads the tree

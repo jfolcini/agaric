@@ -185,15 +185,20 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
  * description, so the dot is never colour alone.
  */
 function MobileSidebarTrigger(): ReactElement | null {
-  const { t } = useTranslation()
   const { isMobile } = useSidebar()
+  // The sync subscriptions and the minute clock live in the button, so a
+  // desktop window, which renders none, does not re-render every minute.
+  return isMobile ? <MobileSidebarTriggerButton /> : null
+}
+
+function MobileSidebarTriggerButton(): ReactElement {
+  const { t } = useTranslation()
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const syncError = useSyncStore((s) => s.error)
   const waitingFor = useSyncStore((s) => s.waitingFor)
   const now = useMinuteClock()
   const syncStatusId = useId()
-  if (!isMobile) return null
   const paired = syncPeers.length > 0
   const syncStatus = paired
     ? syncStateLine(t, syncState, syncError, syncPeers, waitingFor, now)

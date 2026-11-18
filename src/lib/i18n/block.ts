@@ -187,7 +187,8 @@ export const block: Record<string, string> = {
   'callout.expand': 'Expand {{name}} callout',
 
   // Translators: Settings › Sync & devices, the network address of a paired device: label, empty
-  // value, Edit button, toasts after saving, and the hint about pairing on the same network.
+  // value, Edit button, the toast after saving, the error under the field when a save is refused,
+  // and the hint about pairing on the same network.
   // "host:port" is a fixed format, keep it; {{format}} = an example address, e.g.
   // "192.168.1.100:5000".
   'status.peerAddress': 'Address',

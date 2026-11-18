@@ -865,19 +865,6 @@ const SIDEBAR_WIDTH_PREFERENCE: PreferenceDefinition<number> = {
 }
 
 /**
- * `agaric:searchFilterSyntaxToast:v1` — one-time "filter syntax is live"
- * toast shown (`src/components/SearchPanel/useFilterSyntaxIntroToast.ts`).
- */
-const FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE: PreferenceDefinition<boolean> = {
-  key: 'agaric:searchFilterSyntaxToast:v1',
-  scope: 'device',
-  version: 1,
-  defaultValue: false,
-  parse: () => true,
-  serialize: () => '1',
-}
-
-/**
  * Animation-speed choices for the global motion knob
  * (`src/hooks/useMotionPreference.ts`, surfaced in AppearanceTab).
  *
@@ -1595,7 +1582,6 @@ export const PREFERENCES = {
   savedQueryViews: SAVED_QUERY_VIEWS_PREFERENCE,
   quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
   sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
-  filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,
   motion: MOTION_PREFERENCE,
   tooltipDelay: TOOLTIP_DELAY_PREFERENCE,
   language: LANGUAGE_PREFERENCE,

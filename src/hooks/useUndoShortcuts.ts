@@ -20,7 +20,6 @@
 import { useEffect } from 'react'
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
-import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
@@ -110,7 +109,7 @@ function snakeToCamel(s: string | null | undefined): string {
 
 /**
  * Undo the last page op for `pageId` and surface the standard feedback
- * (per-op-type toast, screen-reader announcement, store reload). Shared by
+ * (per-op-type toast, store reload). Shared by
  * the Ctrl+Z keyboard shortcut and the swipe-to-delete "Undo" toast action
  * (#927 finding 7) so both routes are byte-for-byte identical — the gesture's
  * safety net replays the exact same reverse op the keyboard would.
@@ -132,12 +131,10 @@ export async function performPageUndo(pageId: string): Promise<boolean> {
     const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
     const message = translate(opKey, { defaultValue: translate('undo.undoneMessage') })
     notify(message, { duration: 1500 })
-    announce(translate('announce.undone'))
     await refreshAfterUndoRedo(pageId, spaceId)
     return true
   } catch {
     notify.error(translate('undo.undoFailedMessage'))
-    announce(translate('announce.undoFailed'))
     return false
   }
 }
@@ -168,12 +165,10 @@ export async function performPageRedo(pageId: string): Promise<boolean> {
     if (!result) return false
     const opKey = `redo.op.${snakeToCamel(result.reversed_op_type)}`
     notify(translate(opKey, { defaultValue: translate('undo.redoneMessage') }), { duration: 1500 })
-    announce(translate('announce.redone'))
     await refreshAfterUndoRedo(pageId, spaceId)
     return true
   } catch {
     notify.error(translate('undo.redoFailedMessage'))
-    announce(translate('announce.redoFailed'))
     return false
   }
 }
@@ -181,7 +176,6 @@ export async function performPageRedo(pageId: string): Promise<boolean> {
 /** A journal no day of which was worked in yet: say where undo acts. */
 function notifyNoJournalDay(): void {
   notify(translate('undo.journalNoDayMessage'), { duration: 2500 })
-  announce(translate('announce.journalNoDay'))
 }
 
 /** The page of the journal day last worked in, while its tree is mounted. */

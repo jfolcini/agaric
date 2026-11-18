@@ -22,7 +22,6 @@
 
 import { invalidateDerivedCaches } from '@/hooks/derived-caches'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
-import { announce } from '@/lib/announcer'
 import {
   type BlocksChangedEvent,
   EVENT_BLOCKS_CHANGED,
@@ -313,7 +312,6 @@ export function useSyncEvents(): void {
               }
             : {}
         notify.error(i18n.t('sync.failed', { message }), { id: 'sync-error', ...releasesAction })
-        announce(i18n.t('announce.syncFailed'))
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:error handler failed', undefined, err)
       }

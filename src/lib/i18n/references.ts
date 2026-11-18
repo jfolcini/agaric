@@ -632,10 +632,10 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT cannot negate a filter; use its not- form',
   'searchQuery.emptyGroup': 'empty parentheses',
 
-  // Translators: Search view: one-time toast on the first visit. tag:#name and path:Journal/* are
+  // Translators: Search view: hint line under the search field. tag:#name and path:Journal/* are
   // syntax (keep); "Add filter" names the button; ? is the key that opens help.
   'search.filterSyntaxIntro':
-    'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the Add filter button. Press ? for help.',
+    'Filter with tag:#name or path:Journal/*, or use Add filter. Press ? for help.',
 
   // Translators: Search › Add filter popover, tag and page pickers: search placeholders and empty
   // results.

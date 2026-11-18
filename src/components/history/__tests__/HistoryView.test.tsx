@@ -1758,7 +1758,8 @@ describe('HistoryView screen reader announcements', () => {
     })
   })
 
-  it('announces "Revert failed" when revert backend rejects', async () => {
+  // The error toast is a live region already; a second announcement doubles it.
+  it('toasts "Revert failed" when revert backend rejects, without a second announcement', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
@@ -1778,8 +1779,9 @@ describe('HistoryView screen reader announcements', () => {
     await user.click(screen.getByRole('button', { name: /^Revert$/ }))
 
     await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Revert failed')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('history.revertFailed'))
     })
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('Revert failed')
   })
 
   // ===========================================================================

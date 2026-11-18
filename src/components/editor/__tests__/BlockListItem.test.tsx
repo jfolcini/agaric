@@ -843,6 +843,7 @@ describe('BlockListItem — handleDateSelect', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(expect.stringContaining('2025-01-20'))
     })
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('Task rescheduled to 2025-01-20')
   })
 
   it('shows error toast when getBlock fails and setDueDate also fails', async () => {
@@ -888,6 +889,7 @@ describe('BlockListItem — handleDateSelect', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to reschedule task')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('Reschedule failed')
   })
 
   it('calls onReschedule callback and skips IPC when provided', async () => {
@@ -912,30 +914,6 @@ describe('BlockListItem — handleDateSelect', () => {
     expect(mockGetBlock).not.toHaveBeenCalled()
     expect(mockSetDueDate).not.toHaveBeenCalled()
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
-  })
-
-  // Screen-reader announcement after successful date pick
-  it('announces task rescheduled after successful date pick', async () => {
-    mockGetBlock.mockResolvedValue({
-      status: 'ok',
-      data: { id: 'block-1', due_date: '2025-01-01', scheduled_date: null },
-    })
-    mockSetDueDate.mockResolvedValue({ status: 'ok', data: {} })
-
-    render(
-      <ul>
-        <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
-      </ul>,
-    )
-
-    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
-    await waitFor(async () => {
-      ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 20))
-    })
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Task rescheduled to 2025-01-20')
-    })
   })
 })
 
