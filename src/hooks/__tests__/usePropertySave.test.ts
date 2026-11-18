@@ -5,7 +5,7 @@
  *  - handleSave calls handleSaveProperty and refreshes property list
  *  - handleSave shows invalidNumber toast when validation fails
  *  - handleSave shows saveFailed toast on error
- *  - handleSave surfaces a coded InvalidRepeatRule reason verbatim (#3647)
+ *  - handleSave shows the repeat-rule help for a coded InvalidRepeatRule (#3647)
  *  - handleSave announces on success when announceOnSave is set
  *  - handleSave logs errors when logTag is set
  *  - handleDelete calls handleDeleteProperty and removes from list

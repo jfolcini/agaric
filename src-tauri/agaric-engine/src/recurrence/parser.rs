@@ -21,17 +21,17 @@ use agaric_store::recurrence_math::{
     shift_date_once, split_repeat_rule, try_shift_date_once, validate_repeat_rule_shape,
 };
 
-/// The accepted `repeat` vocabulary, spelled once, for the user-facing
-/// rejection message (#3647). Kept next to [`shift_date`] — the function
-/// whose grammar it describes — so a grammar change and its help text are
-/// one edit apart.
+/// The accepted `repeat` vocabulary, for the rejection message (#3647). Kept
+/// next to [`shift_date`], the function whose grammar it describes. The UI
+/// shows its translation instead, `errorCode.invalidRepeatRule` in
+/// `src/lib/i18n/errors.ts`, so a grammar change edits both.
 pub const REPEAT_RULE_HELP: &str = "accepted: `daily`, `weekly`, `monthly`, `yearly`, \
      or `+Nd` / `+Nw` / `+Nm` / `+Ny` with N of 1 or more — optionally prefixed with \
      `.+` (count from when you complete it) or `++` (catch up to today)";
 
 /// How much of an offending rule to echo back before eliding. A `repeat`
 /// value is free text with no length cap of its own, and the message goes
-/// into a toast.
+/// into a debug-mode toast.
 const MAX_ECHOED_RULE_CHARS: usize = 48;
 
 /// Validate a `repeat` property value at the point the user sets it (#3647).
@@ -511,10 +511,10 @@ mod repeat_rule_validation_tests_3647 {
         }
     }
 
-    /// The rejection has to tell the user what is wrong with THEIR rule, not
-    /// merely that something is: the offending text, a specific reason, and
-    /// the accepted vocabulary. And it must be machine-discriminable so the
-    /// frontend can show it instead of a generic toast.
+    /// The rejection has to tell its reader (an MCP agent, debug mode) what is
+    /// wrong with THEIR rule, not merely that something is: the offending
+    /// text, a specific reason, and the accepted vocabulary. And it must carry
+    /// the code the UI translates it by.
     #[test]
     fn rejection_names_the_rule_the_reason_and_the_vocabulary_3647() {
         let cases: &[(&str, &str)] = &[
@@ -545,7 +545,7 @@ mod repeat_rule_validation_tests_3647 {
                 message.contains(REPEAT_RULE_HELP),
                 "`{rule}`: message must list the accepted vocabulary, got: {message}"
             );
-            // The user's own text is echoed so a toast is self-contained.
+            // The offending text is echoed so the message is self-contained.
             let trimmed = rule.trim();
             assert!(
                 trimmed.is_empty() || message.contains(trimmed),

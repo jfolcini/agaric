@@ -526,7 +526,7 @@ export function assertValidSetPropertyValue(
   if (valueText === null) return
   // #3647 — mirrors `set_property_inner`'s entry-point gate. The rejection
   // carries the `InvalidRepeatRule` code because the frontend branches on it
-  // (`invalidRepeatRuleMessage`) to show the reason instead of a generic
+  // (`invalidRepeatRuleMessage`) to show the rule help instead of a generic
   // toast; an uncoded rejection here would let that branch rot untested.
   if (key === 'repeat' && !isValidRepeatRuleMock(valueText)) {
     throw appErrorRejection({
