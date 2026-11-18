@@ -179,7 +179,7 @@ test.describe('HistoryView — op log compaction @pages', () => {
     await installIpcRecorder(page)
   })
 
-  test('compaction card shows live total ops and Compact Now fires compact_op_log_cmd', async ({
+  test('compaction card shows live total ops and Compact now fires compact_op_log_cmd', async ({
     page,
   }) => {
     // Generate at least one op so `total_ops` (real/stateful in the mock)
@@ -194,7 +194,7 @@ test.describe('HistoryView — op log compaction @pages', () => {
     // leads with the operations, not with a destructive button.
     const toggle = page.getByRole('button', { name: 'Remove old history' })
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.getByRole('button', { name: 'Compact Now' })).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Compact now' })).toBeHidden()
     await toggle.click()
     const totalOps = page.getByTestId('compaction-total-ops')
     await expect(totalOps).toBeVisible()
@@ -204,9 +204,9 @@ test.describe('HistoryView — op log compaction @pages', () => {
     const eligible = await page.getByTestId('compaction-eligible-ops').textContent()
 
     await clearInvokeCalls(page)
-    await page.getByRole('button', { name: 'Compact Now' }).click()
+    await page.getByRole('button', { name: 'Compact now' }).click()
     await expect(activeAlertDialog(page)).toBeVisible()
-    await expect(page.getByText('Compact Op Log?')).toBeVisible()
+    await expect(page.getByText('Compact op log?')).toBeVisible()
 
     await page.getByRole('button', { name: 'Compact', exact: true }).click()
     await expect(activeAlertDialog(page)).not.toBeVisible()

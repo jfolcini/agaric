@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('group by a property key and by a date bucket from the picker @search', async ({ page }) => {
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   const groupBy = page.getByRole('combobox', { name: 'Group by' })
   await groupBy.click()
   await expect(page.getByRole('option')).toHaveText([

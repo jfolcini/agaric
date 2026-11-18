@@ -492,7 +492,7 @@ export const pages: Record<string, string> = {
   // Translators: Pages view: "New Page" is the header button that opens the New page dialog; the
   // two other strings are the empty state of the list (the second when journal pages are hidden by
   // the default filter).
-  'pageBrowser.newPage': 'New Page',
+  'pageBrowser.newPage': 'New page',
   'pageBrowser.noPages': 'No pages yet.',
   // True with or without journal pages: the default chip hides them (#5370).
   'pageBrowser.noPagesOutsideJournal': 'No pages outside the journal yet.',
@@ -611,7 +611,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.delete': 'Delete view {{name}}',
   'pageBrowser.savedViews.deleted': 'Deleted view "{{name}}"',
   'pageBrowser.savedViews.restored': 'Restored view "{{name}}"',
-  'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
 
   // Translators: Saved view errors (toasts). A view cannot be named like a date because dates
   // (YYYY-MM-DD) are journal page titles. {{name}} = the view name the user typed.

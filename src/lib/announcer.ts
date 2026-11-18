@@ -6,9 +6,9 @@ let el: HTMLElement | null = null
 
 /**
  * Coalescing window for identical announcements (ms). If `announce()` is called
- * with the same message within this window (e.g. rapid `Ctrl+Z` mashing),
- * subsequent calls are suppressed so screen-reader users hear t('announce.undone') once
- * per burst rather than once per keystroke. Distinct messages are NEVER
+ * with the same message within this window (e.g. a key held down), subsequent
+ * calls are suppressed so screen-reader users hear it once per burst rather
+ * than once per keystroke. Distinct messages are NEVER
  * suppressed — different events still produce independent announcements.
  */
 const COALESCE_WINDOW_MS = 500

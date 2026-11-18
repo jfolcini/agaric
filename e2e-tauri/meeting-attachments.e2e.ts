@@ -76,7 +76,7 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     )
     await dialog.$('button=Create meeting').click()
     const title = `${DIALOG_TITLE} ${isoDay(new Date())}`
-    await waitForToast(`Meeting ${title} created`)
+    await waitForToast(`Created "${title}"`)
 
     await navigateTo('Journal')
     await reopenPageByTitle(PAGE)
@@ -199,7 +199,7 @@ describe('Agaric real-backend meeting pages (#5364) @attachments @pages @mcp', (
     )
     await $('[data-testid="meeting-dialog"]').$('button=Create meeting').click()
     const title = `${PALETTE_TITLE} ${isoDay(new Date())}`
-    await waitForToast(`Meeting ${title} created`)
+    await waitForToast(`Created "${title}"`)
 
     // The journal was on screen the whole time; its link shows without leaving.
     const link = blockStaticByMarker(title)

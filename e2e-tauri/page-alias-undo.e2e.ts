@@ -61,7 +61,7 @@ async function addAlias(alias: string): Promise<void> {
   await done.click()
 }
 
-/** Re-open the page the sidebar's "New Page" created, with nothing focused. */
+/** Re-open the page the sidebar's "New page" created, with nothing focused. */
 async function reopenTheNewPage(): Promise<void> {
   await reopenPageByTitle('Untitled')
   await blockStaticByMarker(MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })

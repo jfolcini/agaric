@@ -47,7 +47,7 @@ describe('Agaric real-backend batch add-tag (#4671) @editor @pages', () => {
     // 1. The tag.
     await navigateTo('Tags')
     await typeInputVerified('[aria-label="New tag name"]', TAG)
-    const addTag = $('button*=Add Tag')
+    const addTag = $('button*=Add tag')
     await addTag.waitForClickable({ timeout: ACTION_TIMEOUT })
     await addTag.click()
     await $(`[data-testid="tag-item-${TAG}"]`).waitForDisplayed({ timeout: ACTION_TIMEOUT })

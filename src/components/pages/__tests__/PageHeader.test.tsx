@@ -391,9 +391,8 @@ describe('PageHeader title editing', () => {
     })
   })
 
-  // Successful rename surfaces a user-visible toast for sighted
-  // users without screen readers, in addition to the existing aria-live
-  // announcement (regression-guarded below).
+  // Successful rename surfaces a toast, which sonner's live region also voices,
+  // so no separate announcement repeats it.
   it('fires toast.success with localised text on successful rename', async () => {
     const user = userEvent.setup()
     setupTagMock([])
@@ -409,8 +408,7 @@ describe('PageHeader title editing', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith('Page renamed')
     })
-    // Existing aria-live announcement still fires alongside the toast.
-    expect(mockedAnnounce).toHaveBeenCalledWith('Page renamed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // A no-change blur (title unchanged) must be silent.
@@ -494,7 +492,7 @@ describe('PageHeader duplicate-title rename (#4723)', () => {
     })
     expect(mockedToastError).not.toHaveBeenCalledWith('Failed to rename page')
     expect(mockedToastSuccess).not.toHaveBeenCalled()
-    expect(mockedAnnounce).toHaveBeenCalledWith('Page rename failed')
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(titleEl).toHaveTextContent('Original Title')
     expect(await axe(container)).toHaveNoViolations()
   })
@@ -1860,6 +1858,30 @@ describe('PageHeader error paths', () => {
     })
   })
 
+  it('Export as Markdown shows the copied toast', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'export_page_markdown') return '# Test\n'
+      return null
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Export as Markdown/i))
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Markdown copied to clipboard')
+    })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+  })
+
   it('export_page_markdown rejection shows error toast', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1881,6 +1903,7 @@ describe('PageHeader error paths', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Export failed')
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   it('delete_block rejection shows error toast and leaves the tabs alone', async () => {
@@ -1918,6 +1941,7 @@ describe('PageHeader error paths', () => {
         }),
       )
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     expect(useTabsStore.getState().tabs).toBe(tabsBefore)
   })
 
@@ -2559,6 +2583,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
   })
 
   // #2785 — moving the CURRENTLY-VIEWED page used to reload the
@@ -2662,6 +2687,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(expect.stringMatching(/Failed to move page/i))
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
     // #5248 — nothing moved, so its chips stay live.
     expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
   })
@@ -2717,139 +2743,6 @@ describe('PageHeader Move to space (Phase 2)', () => {
       },
       { timeout: 5000 },
     )
-  })
-})
-
-// ── Screen reader announcements ──────────────────────────────────
-
-describe('PageHeader screen reader announcements', () => {
-  it('announces page renamed after a successful title edit', async () => {
-    const user = userEvent.setup()
-    setupTagMock([])
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Old Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    await user.clear(titleEl)
-    await user.type(titleEl, 'New Title')
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Page renamed')
-    })
-  })
-
-  it('announces page rename failed when edit_block rejects', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'get_page_aliases') return []
-      if (cmd === 'edit_block') throw new Error('backend error')
-      return null
-    })
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Old Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    await user.clear(titleEl)
-    await user.type(titleEl, 'Broken Title')
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Page rename failed')
-    })
-  })
-
-  it('announces page deleted on successful delete confirmation', async () => {
-    const user = userEvent.setup()
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
-
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText(/Delete page/i))
-
-    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
-    await user.click(confirmBtn)
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Page deleted')
-    })
-  })
-
-  it('announces page delete failed when delete_block rejects', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'get_page_aliases') return []
-      if (cmd === 'delete_block') throw new Error('backend error')
-      return null
-    })
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
-
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText(/Delete page/i))
-
-    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
-    await user.click(confirmBtn)
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Page delete failed')
-    })
-  })
-
-  it('announces export success after Export as Markdown', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'get_page_aliases') return []
-      if (cmd === 'export_page_markdown') return '# Test\n'
-      return null
-    })
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
-
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Page exported to clipboard')
-    })
-  })
-
-  it('announces export failed when export_page_markdown rejects', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'get_properties') return []
-      if (cmd === 'list_property_defs')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'get_page_aliases') return []
-      if (cmd === 'export_page_markdown') throw new Error('backend error')
-      return null
-    })
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
-
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
-
-    await waitFor(() => {
-      expect(mockedAnnounce).toHaveBeenCalledWith('Export failed')
-    })
   })
 })
 
@@ -2928,6 +2821,7 @@ describe('PageHeader delete from the page-actions menu', () => {
         }),
       )
     })
+    expect(mockedAnnounce).not.toHaveBeenCalled()
 
     expect(useTabsStore.getState().tabs).toEqual([
       { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },

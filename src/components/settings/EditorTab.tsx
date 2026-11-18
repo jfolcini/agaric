@@ -27,7 +27,6 @@ import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useEx
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
 import { type ExternalImagePolicy, isExternalImagePolicy } from '@/lib/external-image-policy'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
-import { notify } from '@/lib/notify'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 
 export function EditorTab(): React.ReactElement {
@@ -52,9 +51,8 @@ export function EditorTab(): React.ReactElement {
       // The Select can only emit the values we render, but validate defensively.
       if (!isExternalImagePolicy(value)) return
       setPolicy(value satisfies ExternalImagePolicy)
-      notify.success(t('settings.editor.externalImageUpdated'))
     },
-    [setPolicy, t],
+    [setPolicy],
   )
 
   // Stable, sorted for a deterministic managed-domains list.

@@ -1497,7 +1497,7 @@ describe('PairingDialog', () => {
       })
     })
 
-    it('resolves to success when a new peer appears in peer_refs, closing the dialog and announcing success', async () => {
+    it('resolves to success when a new peer appears in peer_refs, closing the dialog and toasting success', async () => {
       const onOpenChange = vi.fn()
       const newPeer = {
         peer_id: 'peer-new-999',
@@ -1538,13 +1538,16 @@ describe('PairingDialog', () => {
         // firings — the plain sync advanceTimersByTime used for the
         // purely-synchronous countdown ticks elsewhere in this file would
         // not wait for that promise to settle.
+        // Waiting was announced; from here on, success is the toast's alone.
+        vi.mocked(announce).mockClear()
         await act(async () => {
           await vi.advanceTimersByTimeAsync(2000)
         })
 
         expect(onOpenChange).toHaveBeenCalledWith(false)
         expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
-        expect(vi.mocked(announce)).toHaveBeenCalledWith('Device paired successfully')
+        // The toast is a live region; a second announcement would double it.
+        expect(vi.mocked(announce)).not.toHaveBeenCalled()
         expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
 
         // axe-core's internal engine relies on real timers/promises — it
@@ -1607,7 +1610,6 @@ describe('PairingDialog', () => {
         })
 
         expect(toast.success).not.toHaveBeenCalledWith('Device paired successfully')
-        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
         expect(onOpenChange).not.toHaveBeenCalledWith(false)
         expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
       } finally {
@@ -1694,7 +1696,6 @@ describe('PairingDialog', () => {
         //    attributable to THIS attempt, so clear the first one's traces.
         onOpenChange.mockClear()
         vi.mocked(toast.success).mockClear()
-        vi.mocked(announce).mockClear()
         mockSyncStoreState.setPeers.mockClear()
 
         fireEvent.click(
@@ -1714,7 +1715,6 @@ describe('PairingDialog', () => {
         // here: the success effect resolves on the commit that flips into
         // 'waiting', before this attempt's own first fetch has resolved.
         expect(toast.success).not.toHaveBeenCalled()
-        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
         expect(onOpenChange).not.toHaveBeenCalled()
         expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
         // ...and the device just unpaired must not be pushed back into the
@@ -2058,7 +2058,7 @@ describe('PairingDialog', () => {
           await vi.advanceTimersByTimeAsync(2000)
         })
         expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
-        expect(vi.mocked(announce)).toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).not.toHaveBeenCalled()
         expect(onOpenChange).toHaveBeenCalledWith(false)
 
         rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)

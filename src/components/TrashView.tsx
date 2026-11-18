@@ -38,7 +38,6 @@ import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
 import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
 import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
-import { announce } from '@/lib/announcer'
 import { isInvalidOperation, takenNameReason, unwrap } from '@/lib/app-error'
 import type { BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -257,11 +256,9 @@ export function TrashView(): React.ReactElement {
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
         invalidateCalendarPageDates()
         notify.success(t('trash.blockRestored'))
-        announce(t('announce.blockRestored'))
       } catch (err) {
         logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
         notify.error(takenNameReason(err) ?? t('trash.restoreFailed'))
-        announce(t('announce.restoreFailed'))
       }
     },
     [currentSpaceId, reload, setBlocks, t],
@@ -277,11 +274,9 @@ export function TrashView(): React.ReactElement {
         reload()
         setConfirmPurgeId(null)
         notify.success(t('trash.blockPurged'))
-        announce(t('announce.blockPurged'))
       } catch (err) {
         logger.error('TrashView', 'Failed to purge block', { blockId }, err)
         notify.error(t('trash.purgeFailed'))
-        announce(t('announce.purgeFailed'))
       }
     },
     [reload, setBlocks, t],
@@ -327,7 +322,6 @@ export function TrashView(): React.ReactElement {
       // discard the user's selection on an error they couldn't see.
       logger.error('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
       notify.error(takenNameReason(err) ?? t('trash.batchRestoreFailed'))
-      announce(t('announce.batchRestoreFailed'))
       // #3838 — the most likely cause is now a STALE LISTING: the backend
       // refuses a live id, and an id goes live when another window restores
       // it. Retrying the same selection against the same stale rows fails
@@ -341,7 +335,6 @@ export function TrashView(): React.ReactElement {
     clearSelection()
     if (restored > 0) {
       notify.success(t('trash.batchRestored', { count: restored }))
-      announce(t('announce.batchRestored', { count: restored }))
     } else {
       // A confirmed bulk action that changed nothing while rows were listed.
       // The backend matches ids byte for byte after canonicalising them, so a
@@ -353,7 +346,6 @@ export function TrashView(): React.ReactElement {
         sample: selectedBlocks[0]?.id,
       })
       notify.error(t('trash.batchRestoreFailed'))
-      announce(t('announce.batchRestoreFailed'))
     }
   }, [blocks, selected, currentSpaceId, reload, clearSelection, t])
 
@@ -413,28 +405,24 @@ export function TrashView(): React.ReactElement {
         reload()
         clearSelection()
         notify.error(t('trash.batchPurgeStale'))
-        announce(t('announce.batchPurgeStale'))
         return
       }
       // Surface the failure (matching the single-item path) and KEEP the
       // selection so the user can retry — clearing it here would silently
       // discard the user's selection on an error they couldn't see.
       notify.error(t('trash.batchPurgeFailed'))
-      announce(t('announce.batchPurgeFailed'))
       return
     }
     reload()
     clearSelection()
     if (purged > 0) {
       notify.success(t('trash.batchPurged', { count: purged }))
-      announce(t('announce.batchPurged', { count: purged }))
     } else {
       logger.warn('TrashView', 'batch purge changed nothing', {
         listed: selectedIds.length,
         sample: selectedIds[0],
       })
       notify.error(t('trash.batchPurgeFailed'))
-      announce(t('announce.batchPurgeFailed'))
     }
   }, [selected, reload, clearSelection, t])
 
@@ -453,14 +441,12 @@ export function TrashView(): React.ReactElement {
       setConfirmEmptyTrash(false)
       if (result.affected_count > 0) {
         notify.success(t('trash.allPurged', { count: result.affected_count }))
-        announce(t('announce.trashEmptied', { count: result.affected_count }))
       } else if (blocks.length > 0) {
         logger.warn('TrashView', 'empty trash changed nothing', {
           listed: blocks.length,
           sample: blocks[0]?.id,
         })
         notify.error(t('trash.emptyTrashFailed'))
-        announce(t('announce.emptyTrashFailed'))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to empty trash', undefined, err)
@@ -475,11 +461,9 @@ export function TrashView(): React.ReactElement {
         clearSelection()
         setConfirmEmptyTrash(false)
         notify.error(t('trash.emptyTrashPartial', { count: err.affectedCount }))
-        announce(t('announce.emptyTrashPartial', { count: err.affectedCount }))
         return
       }
       notify.error(t('trash.emptyTrashFailed'))
-      announce(t('announce.emptyTrashFailed'))
     }
   }, [blocks, currentSpaceId, reload, clearSelection, t])
 
@@ -501,14 +485,12 @@ export function TrashView(): React.ReactElement {
         void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
         invalidateCalendarPageDates() // #5247
         notify.success(t('trash.allRestored', { count: result.affected_count }))
-        announce(t('announce.allRestored', { count: result.affected_count }))
       } else if (blocks.length > 0) {
         logger.warn('TrashView', 'restore all changed nothing', {
           listed: blocks.length,
           sample: blocks[0]?.id,
         })
         notify.error(t('trash.restoreAllFailed'))
-        announce(t('announce.restoreAllFailed'))
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to restore all blocks', undefined, err)
@@ -523,7 +505,6 @@ export function TrashView(): React.ReactElement {
         clearSelection()
         setConfirmRestoreAll(false)
         notify.error(t('trash.restoreAllPartial', { count: err.affectedCount }))
-        announce(t('announce.restoreAllPartial', { count: err.affectedCount }))
         return
       }
       // The drain wraps the failing chunk's error, so the refusal is its cause.
@@ -531,7 +512,6 @@ export function TrashView(): React.ReactElement {
         takenNameReason(err instanceof PartialPurgeError ? err.cause : err) ??
           t('trash.restoreAllFailed'),
       )
-      announce(t('announce.restoreAllFailed'))
     }
   }, [blocks, currentSpaceId, reload, clearSelection, t])
 

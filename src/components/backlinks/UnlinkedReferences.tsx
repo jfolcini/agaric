@@ -537,7 +537,7 @@ export function UnlinkedReferences({
             // #3738 note 1 — a FAILED fetch reaches the same "no items, not
             // loading" branch as a genuinely empty result, and since #3735 the
             // header keeps the carried count across the re-key, so a failed
-            // expand read "12 Unlinked References" directly above "No unlinked
+            // expand read "12 unlinked references" directly above "No unlinked
             // references found." Keeping the panel is the deliberate choice
             // (making it vanish under the click that expanded it is worse), so
             // the body has to be honest instead: say the load failed and offer

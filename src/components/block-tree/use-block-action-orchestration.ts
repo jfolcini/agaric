@@ -545,7 +545,6 @@ export function useBlockActionOrchestration({
         // a merge's `idx <= 0` bail. Say so — a Backspace that
         // silently does nothing reads as a broken key.
         notify.error(t('blockTree.cannotDeleteParentAtTop'))
-        announce(t('blockTree.cannotDeleteParentAtTop'))
         return
       }
       const reparent = prevBlock ? planChildReparent(blocks, focusedBlockId, prevBlock.id) : null

@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
-import { formatErrorForDisplay } from '@/lib/error-display'
+import { formatErrorForDisplay, VALIDATION_CODE_KEYS } from '@/lib/error-display'
+import { i18n } from '@/lib/i18n'
+import { loadLocale } from '@/lib/i18n/set-locale'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 
 afterEach(() => {
@@ -71,27 +73,26 @@ describe('formatErrorForDisplay', () => {
 
     it('appends kind/code for a coded validation error when debug is on (#2251)', () => {
       const coded = { kind: 'validation', message: 'unclosed group', code: 'InvalidRegex' }
-      expect(formatErrorForDisplay(coded, { debug: false })).toBe('unclosed group')
+      expect(formatErrorForDisplay(coded, { debug: false })).toBe(
+        'That regular expression is not valid.',
+      )
       expect(formatErrorForDisplay(coded, { debug: true })).toBe(
-        'unclosed group · code: validation/InvalidRegex',
+        'That regular expression is not valid. · unclosed group · code: validation/InvalidRegex',
       )
     })
 
     it('preserves the (err: <id>) correlation code in both modes', () => {
-      // #2045: sanitized internal failures now arrive with wire
-      // `kind:"internal"` (distinct from `invalid_operation`, which real
-      // validation rejects use). The wire `message` is the Rust Display
-      // output, so it carries the `Internal error: ` prefix, which is
-      // stripped for display while the `(err: <id>)` code is preserved.
+      // #2045: sanitized internal failures arrive with wire `kind:"internal"`
+      // and the Rust `Internal error: ` Display prefix.
       const sanitized = {
         kind: 'internal',
         message: 'Internal error: an internal error occurred (err: 7F3A2)',
       }
       expect(formatErrorForDisplay(sanitized, { debug: false })).toBe(
-        'an internal error occurred (err: 7F3A2)',
+        'Something went wrong (err: 7F3A2)',
       )
       expect(formatErrorForDisplay(sanitized, { debug: true })).toBe(
-        'an internal error occurred (err: 7F3A2) · code: internal',
+        'Something went wrong (err: 7F3A2) · an internal error occurred (err: 7F3A2) · code: internal',
       )
     })
   })
@@ -103,4 +104,79 @@ describe('formatErrorForDisplay', () => {
     writePreference(PREFERENCES.debugMode, true)
     expect(formatErrorForDisplay(appError)).toBe('disk full · code: io')
   })
+})
+
+describe('backend errors in the UI language', () => {
+  beforeAll(async () => {
+    await loadLocale('es')
+    await i18n.changeLanguage('es')
+  })
+
+  afterAll(async () => {
+    await i18n.changeLanguage('en')
+  })
+
+  const badRegex = { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group' }
+  const sanitized = {
+    kind: 'internal',
+    message: 'Internal error: an internal error occurred (err: 7F3A2)',
+  }
+
+  it('renders a coded validation error as the sentence for its code', () => {
+    expect(formatErrorForDisplay(badRegex, { debug: false })).toBe(
+      'Esa expresión regular no es válida.',
+    )
+  })
+
+  it('renders a sanitized internal error as a sentence that keeps its correlation id', () => {
+    expect(formatErrorForDisplay(sanitized, { debug: false })).toBe(
+      'Algo ha salido mal (err: 7F3A2)',
+    )
+  })
+
+  it('shows the raw message and the code after the sentence in debug mode', () => {
+    expect(formatErrorForDisplay(badRegex, { debug: true })).toBe(
+      'Esa expresión regular no es válida. · unclosed group · code: validation/InvalidRegex',
+    )
+    expect(formatErrorForDisplay(sanitized, { debug: true })).toBe(
+      'Algo ha salido mal (err: 7F3A2) · an internal error occurred (err: 7F3A2) · code: internal',
+    )
+  })
+
+  it("keeps a taken title's backend message, which names the title", () => {
+    const taken = {
+      kind: 'validation',
+      code: 'DuplicatePageTitle',
+      message: "a page titled 'Home' already exists in this space",
+    }
+    expect(formatErrorForDisplay(taken, { debug: false })).toBe(taken.message)
+  })
+
+  it('keeps the message of an uncoded error, or of an internal one without an id', () => {
+    expect(
+      formatErrorForDisplay(
+        { kind: 'validation', message: 'Validation error: move fewer pages' },
+        { debug: false },
+      ),
+    ).toBe('move fewer pages')
+    expect(
+      formatErrorForDisplay(
+        { kind: 'internal', message: 'Internal error: worker panicked' },
+        { debug: false },
+      ),
+    ).toBe('worker panicked')
+    expect(
+      formatErrorForDisplay(
+        { kind: 'database', message: 'Database error: locked (err: 7F3A2)' },
+        { debug: false },
+      ),
+    ).toBe('locked (err: 7F3A2)')
+  })
+})
+
+it('maps every validation code to a key the English catalog holds, or to null', () => {
+  const missing = Object.entries(VALIDATION_CODE_KEYS).filter(
+    ([, key]) => key !== null && i18n.getResource('en', 'translation', key) === undefined,
+  )
+  expect(missing).toEqual([])
 })

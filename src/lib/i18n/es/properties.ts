@@ -146,7 +146,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.rename': 'Cambiar nombre',
   'advancedQuery.savedViews.renameTitle': 'Cambiar el nombre de "{{name}}"',
   'advancedQuery.savedViews.renamePrompt': 'Nuevo nombre para esta vista:',
-  'advancedQuery.savedViews.renamed': 'Vista renombrada como "{{name}}"',
   'advancedQuery.savedViews.delete': 'Eliminar',
   'advancedQuery.savedViews.deleteTitle': 'Eliminar "{{name}}"',
   'advancedQuery.savedViews.deleteConfirm':
@@ -458,8 +457,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vacío)',
   'tagFilter.loadingMessage': 'Cargando...',
   'tagFilter.loadMoreButton': 'Cargar más',
-  'tagFilter.selectedTags_one': 'con {{count}} etiqueta ({{mode}})',
-  'tagFilter.selectedTags_other': 'con {{count}} etiquetas ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} bloque coincide con {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} bloques coinciden con {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} etiqueta',
+  'tagFilter.tagCount_other': '{{count}} etiquetas',
   'tagFilter.addPrefixButton': 'Empieza por',
   'tagFilter.addPrefixLabel':
     'Empieza por el texto escrito: coincide con todas las etiquetas que empiezan por él',

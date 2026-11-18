@@ -82,7 +82,8 @@ pub enum ValidationCode {
     /// Malformed `repeat` recurrence rule, rejected at `set_property`
     /// (#3647, `agaric_engine::recurrence::validate_repeat_rule`). The
     /// `message` names what is wrong with the rule and lists the accepted
-    /// vocabulary, so the property-save surfaces render it VERBATIM instead
+    /// vocabulary. The UI translates it by this code, so the property-save
+    /// surfaces show the accepted vocabulary in the user's language instead
     /// of the generic "failed to save property" toast — which is the whole
     /// point of validating at the point of entry.
     InvalidRepeatRule,
@@ -443,9 +444,9 @@ impl Serialize for AppError {
         //
         // Coded validation errors ship the raw human reason WITHOUT the
         // `"Validation error: "` display decoration: the machine part
-        // travels in `code`, and the frontend surfaces `message` verbatim
-        // (inline regex alert, invalid-filter toast) instead of stripping
-        // prefixes back out of a display string.
+        // travels in `code`, by which the UI translates the message, and
+        // where the UI shows `message` itself (the inline regex alert, a
+        // taken title) it strips no prefix back out of a display string.
         let message = match self {
             AppError::Validation {
                 code: Some(_),

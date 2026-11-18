@@ -620,8 +620,8 @@ test.describe('Global shortcuts @editor', () => {
     await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible()
 
     // Also verify the sheet title (SheetTitle renders `shortcuts.title`,
-    // i.e. "Quick Reference").
-    await expect(page.getByRole('heading', { name: 'Quick Reference' })).toBeVisible()
+    // i.e. "Quick reference").
+    await expect(page.getByRole('heading', { name: 'Quick reference' })).toBeVisible()
   })
 })
 

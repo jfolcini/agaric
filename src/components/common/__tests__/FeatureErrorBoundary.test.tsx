@@ -93,7 +93,7 @@ describe('FeatureErrorBoundary', () => {
   })
 
   // #1700: when a `nameKey` is supplied the fallback shows the *translated*
-  // section label (here the `sidebar.query` "Advanced Query" copy), not the
+  // section label (here the `sidebar.query` "Advanced query" copy), not the
   // raw English `name` literal ("AdvancedQuery"). The `name` is kept only as
   // the stable, untranslated log domain.
   it('shows the localized section name from nameKey, not the raw name', () => {
@@ -108,7 +108,7 @@ describe('FeatureErrorBoundary', () => {
     )
 
     // Localized label is rendered…
-    expect(screen.getByText('Advanced Query encountered an error')).toBeInTheDocument()
+    expect(screen.getByText('Advanced query encountered an error')).toBeInTheDocument()
     // …and the raw English literal is NOT shown to the user.
     expect(screen.queryByText('AdvancedQuery encountered an error')).not.toBeInTheDocument()
 

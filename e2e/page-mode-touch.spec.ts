@@ -156,7 +156,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await expect(menu).toBeVisible()
     await expect(pageText(page)).toHaveText(['first', 'second', 'third'])
     await menu.getByRole('menuitem', { name: 'Move & arrange' }).tap()
-    await menu.getByRole('menuitem', { name: 'Move Down' }).tap()
+    await menu.getByRole('menuitem', { name: 'Move down' }).tap()
     await expect(menu).toBeHidden()
     await expect(pageText(page)).toHaveText(['first', 'third', 'second'])
 
@@ -313,7 +313,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
       await row.tap()
       const menu = page.getByRole('menu', { name: 'Block actions' })
       await menu.getByRole('menuitem', { name: 'Move & arrange' }).tap()
-      await menu.getByRole('menuitem', { name: 'Move Up' }).tap()
+      await menu.getByRole('menuitem', { name: 'Move up' }).tap()
       const blocks = page.locator(`${EDITOR} [data-page-block]`)
       await expect(blocks.first()).toHaveAttribute('data-page-block-id', ids[1] as string)
       await expect(blocks.last()).toHaveAttribute('data-page-block-id', ids[0] as string)

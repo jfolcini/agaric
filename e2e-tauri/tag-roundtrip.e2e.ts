@@ -40,7 +40,7 @@ describe('Agaric real-backend tag round-trip (#3085 / #3081) @pages', () => {
 
     // 2. Create a tag via the TagList inline form. The text input's accessible
     //    name is `tagList.newTagLabel` ("New tag name"); the submit button's
-    //    visible text is `tag.addTag` ("Add Tag"). (TagList.tsx: the <Input>
+    //    visible text is `tag.addTag` ("Add tag"). (TagList.tsx: the <Input>
     //    aria-label + the <Button type="submit">.)
     //
     //    #3334 — typed through the read-back-and-retry loop, not a bare
@@ -54,7 +54,7 @@ describe('Agaric real-backend tag round-trip (#3085 / #3081) @pages', () => {
     //    the backend for a lost keystroke.
     await typeInputVerified('[aria-label="New tag name"]', TAG_NAME)
 
-    const addTag = $('button*=Add Tag')
+    const addTag = $('button*=Add tag')
     await addTag.waitForClickable({ timeout: ACTION_TIMEOUT })
     await addTag.click()
 

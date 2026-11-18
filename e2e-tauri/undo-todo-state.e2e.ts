@@ -4,7 +4,7 @@
 // Undo/redo are waived from conformance ("NOT cross-checked"), so the reverse
 // path (agaric-engine/src/reverse/) is only proven here. Ctrl+Z reaches
 // `useUndoShortcuts` only in the page editor with NO block focused, so the
-// page comes from the sidebar's "New Page" and the reversed action is the
+// page comes from the sidebar's "New page" and the reversed action is the
 // block menu's "Set as TODO" — one `set_todo_state` IPC, whose effect is
 // readable straight off whether the block shows a task checkbox.
 //
@@ -62,7 +62,7 @@ async function expectTodoState(set: boolean, what: string): Promise<void> {
   })
 }
 
-/** Re-open the page the sidebar's "New Page" created, with nothing focused. */
+/** Re-open the page the sidebar's "New page" created, with nothing focused. */
 async function reopenTheNewPage(): Promise<void> {
   await reopenPageByTitle('Untitled')
   await blockStaticByMarker(MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })

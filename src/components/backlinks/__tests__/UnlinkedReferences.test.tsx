@@ -12,7 +12,7 @@
  *  8. "Link it" case-insensitive match
  *  9. Load more fetches next page
  *  10. Resets on pageId change
- *  11. Shows "No Unlinked References" when totalCount is 0
+ *  11. Shows "No unlinked references" when totalCount is 0
  *  12. A11y audit passes
  */
 
@@ -364,7 +364,7 @@ describe('UnlinkedReferences', () => {
     // Click to expand
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
-    expect(await screen.findByText('5 Unlinked References')).toBeInTheDocument()
+    expect(await screen.findByText('5 unlinked references')).toBeInTheDocument()
   })
 
   // A matched block that also carries a `[[ULID]]` link must show the target's
@@ -725,7 +725,7 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByText('second My Page ref')).toBeInTheDocument()
 
     // Count should decrease
-    expect(screen.getByText('1 Unlinked Reference')).toBeInTheDocument()
+    expect(screen.getByText('1 unlinked reference')).toBeInTheDocument()
   })
 
   // 8. "Link it" case-insensitive match
@@ -1018,7 +1018,7 @@ describe('UnlinkedReferences', () => {
     await waitFor(() => {
       expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
     })
-    expect(screen.queryByText('No Unlinked References')).not.toBeInTheDocument()
+    expect(screen.queryByText('No unlinked references')).not.toBeInTheDocument()
     expect(screen.queryByText('No unlinked references found.')).not.toBeInTheDocument()
     expect(screen.queryByText(t('unlinkedReferences.empty'))).not.toBeInTheDocument()
   })
@@ -1155,7 +1155,7 @@ describe('UnlinkedReferences', () => {
 
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
 
-    expect(await screen.findByText('1 Unlinked Reference')).toBeInTheDocument()
+    expect(await screen.findByText('1 unlinked reference')).toBeInTheDocument()
   })
 
   it('shows error toast when editBlock fails and does not remove block', async () => {
@@ -2157,7 +2157,7 @@ describe('UnlinkedReferences — count waits for the viewport (#5445)', () => {
 
     scrollIntoView()
 
-    expect(await screen.findByText('3 Unlinked References')).toBeInTheDocument()
+    expect(await screen.findByText('3 unlinked references')).toBeInTheDocument()
     expect(mockedCountUnlinked).toHaveBeenCalledTimes(1)
     expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', SCOPE)
     expect(mockedListUnlinked).not.toHaveBeenCalled()
@@ -2166,7 +2166,7 @@ describe('UnlinkedReferences — count waits for the viewport (#5445)', () => {
   it('waits again for the next page, which reuses the same mounted panel', async () => {
     const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
     scrollIntoView()
-    await screen.findByText('3 Unlinked References')
+    await screen.findByText('3 unlinked references')
     mockedCountUnlinked.mockClear()
 
     rerender(

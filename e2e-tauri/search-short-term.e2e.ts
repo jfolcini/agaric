@@ -4,7 +4,7 @@
 // The trigram index holds no term that short, so the backend scans the
 // indexed text for it. The mock matched a short query by substring before the
 // backend did, so only this lane shows the search returning nothing. The
-// Advanced Query box, which a `{{query …}}` block's free text also reaches,
+// Advanced query box, which a `{{query …}}` block's free text also reaches,
 // runs the same scan, and refused a query of only short terms before.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
@@ -74,9 +74,9 @@ describe('Agaric real-backend short search terms (#6752) @search', () => {
   })
 
   // Reads the blocks the first `it` wrote.
-  it('finds a two-character term in the Advanced Query full-text box', async () => {
+  it('finds a two-character term in the Advanced query full-text box', async () => {
     await navigateTo('Pages')
-    const open = $('.page-browser-header button[aria-label="Advanced Query"]')
+    const open = $('.page-browser-header button[aria-label="Advanced query"]')
     await open.waitForClickable({ timeout: NAV_TIMEOUT })
     await open.click()
     await $('[data-testid="advanced-query-view"]').waitForDisplayed({ timeout: NAV_TIMEOUT })

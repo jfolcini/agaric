@@ -62,7 +62,7 @@ test.describe('Query block creation @editor @search', () => {
 
     // Build a tag query and insert it.
     await tagInput.fill('work')
-    await page.getByRole('button', { name: 'Insert Query' }).click()
+    await page.getByRole('button', { name: 'Insert query' }).click()
 
     // The block now renders as a QueryResult.
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
@@ -88,7 +88,7 @@ test.describe('Query block creation @editor @search', () => {
     await expect(tagInput).toBeVisible()
 
     await tagInput.fill('work')
-    await page.getByRole('button', { name: 'Insert Query' }).click()
+    await page.getByRole('button', { name: 'Insert query' }).click()
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })

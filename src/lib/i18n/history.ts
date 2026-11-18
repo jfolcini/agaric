@@ -9,7 +9,7 @@
 export const history: Record<string, string> = {
   // Translators: Block History sheet (the side panel a block's context menu opens): its heading and
   // the line under it. "Mutation history" = the record of every change made to the block.
-  'history.title': 'Block History',
+  'history.title': 'Block history',
   'history.description': 'View and revert the mutation history for this block.',
 
   // Translators: Names of the kinds of change ("operation types") in the History view and the Block
@@ -85,13 +85,14 @@ export const history: Record<string, string> = {
   // of edited text. noChanges: shown when nothing differs. showMore / collapse: button that reveals
   // the hidden rest of a long diff and folds it again; {{count}} = hidden changed runs.
   // hunkCounter: position read out to screen readers; {{current}} = the highlighted change,
-  // {{total}} = all changes. Next / Previous: buttons that jump between changes. regionLabel:
+  // {{count}} = all changes. Next / Previous: buttons that jump between changes. regionLabel:
   // screen-reader name of the diff area.
   'diff.noChanges': 'No changes',
   'diff.showMore_one': 'Show full diff (1 hidden)',
   'diff.showMore_other': 'Show full diff ({{count}} hidden)',
   'diff.collapse': 'Collapse diff',
-  'diff.hunkCounter': '{{current}} of {{total}} changes',
+  'diff.hunkCounter_one': '{{current}} of {{count}} change',
+  'diff.hunkCounter_other': '{{current}} of {{count}} changes',
   'diff.nextHunk': 'Next change',
   'diff.prevHunk': 'Previous change',
   'diff.regionLabel': 'Diff content',
@@ -478,12 +479,12 @@ export const history: Record<string, string> = {
   'compaction.eligibleOps': 'Eligible for cleanup: {{count}}',
 
   // Translators: Destructive button on that card; "Compact" = delete the old change records.
-  'compaction.compactNow': 'Compact Now',
+  'compaction.compactNow': 'Compact now',
 
   // Translators: Confirmation dialog of "Compact Now": title, body, confirm and cancel buttons. "Op
   // Log" = the record of every change; {{count}} = changes to delete, {{days}} = the age limit in
   // days.
-  'compaction.confirmTitle': 'Compact Op Log?',
+  'compaction.confirmTitle': 'Compact op log?',
   'compaction.confirmDescription_one':
     'This will permanently delete {{count}} operation older than {{days}} days. The original data in this operation will be lost. This cannot be undone.',
   'compaction.confirmDescription_other':

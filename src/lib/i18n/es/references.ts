@@ -308,7 +308,8 @@ export const references: Record<string, string> = {
   'search.invalidFilterWithError': 'Filtro no válido: {{label}} — {{error}}',
   'search.invalidFilterError': '{{label}}: {{error}}',
   'searchQuery.valueRequired': '{{prefix}} necesita un valor',
-  'searchQuery.unknownValue': "valor de {{noun}} desconocido: '{{value}}'",
+  'searchQuery.unknownState': "estado desconocido: '{{value}}'",
+  'searchQuery.unknownPriority': "prioridad desconocida: '{{value}}'",
   'searchQuery.dateExpectedAfterOperator':
     "se esperaba YYYY-MM-DD tras '{{op}}', pero se ha recibido '{{rest}}'",
   'searchQuery.unknownDate': "fecha desconocida: '{{value}}'",
@@ -326,7 +327,7 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT no puede negar un filtro; usa su forma not-',
   'searchQuery.emptyGroup': 'paréntesis vacíos',
   'search.filterSyntaxIntro':
-    'La sintaxis de filtros ya está disponible — escribe tag:#name o path:Journal/* en el campo de búsqueda, o usa el botón Añadir filtro. Pulsa ? para ver la ayuda.',
+    'Filtra con tag:#name o path:Journal/*, o usa Añadir filtro. Pulsa ? para ver la ayuda.',
   'search.searchTags': 'Buscar etiquetas...',
   'search.searchPages': 'Buscar páginas...',
   'search.noTagsFound': 'No se han encontrado etiquetas',

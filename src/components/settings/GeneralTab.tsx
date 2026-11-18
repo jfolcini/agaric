@@ -27,14 +27,12 @@ import {
 } from '@/hooks/useJournalDateFormat'
 import { useLanguage } from '@/hooks/useLanguage'
 import { useWeekStart } from '@/hooks/useWeekStart'
-import { formatJournalTitle } from '@/lib/date-utils'
 import {
   type LanguagePreference,
   LOCALES,
   PSEUDO_LOCALE,
   SUPPORTED_LOCALES,
 } from '@/lib/i18n/locales'
-import { notify } from '@/lib/notify'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 
 // #1448 — each journal date-format preset maps to an i18n label key.
@@ -76,33 +74,19 @@ export function GeneralTab(): React.ReactElement {
     [setLanguage],
   )
 
-  // The toast names the new day because the only other cue is calendar grids
-  // silently re-laying out.
   const handleWeekStartChange = useCallback(
     (value: string) => {
-      if (value === '0') {
-        setWeekStart(0)
-        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }))
-      } else if (value === '1') {
-        setWeekStart(1)
-        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }))
-      }
+      if (value === '0') setWeekStart(0)
+      else if (value === '1') setWeekStart(1)
     },
-    [setWeekStart, t],
+    [setWeekStart],
   )
 
   const handleJournalDateFormatChange = useCallback(
     (value: string) => {
-      const fmt = value as JournalDateFormat
-      setJournalDateFormat(fmt)
-      // Show a concrete worked example so the abstract token string is legible.
-      notify.success(
-        t('settings.journalDateFormatUpdated', {
-          example: formatJournalTitle('2026-06-17', fmt),
-        }),
-      )
+      setJournalDateFormat(value as JournalDateFormat)
     },
-    [setJournalDateFormat, t],
+    [setJournalDateFormat],
   )
 
   return (

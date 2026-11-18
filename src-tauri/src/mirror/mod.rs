@@ -16,9 +16,10 @@
 //! adopted when it already holds the render, as after a crash between the file
 //! and its state). A page's file is moved when its path changes and removed
 //! when the page is gone, each only while it is unchanged. While the folder or
-//! its marker is missing, the mirror writes nothing and creates nothing. After
-//! a restore from a daily snapshot it is paused until the folder is chosen
-//! again ([`store::RESTORED_KEY`]).
+//! its marker is missing, or the vault is older than the folder
+//! ([`MirrorState::is_behind`]), the mirror writes nothing and creates nothing.
+//! After a restore from a daily snapshot it is paused until the folder is
+//! chosen again ([`store::RESTORED_KEY`]).
 
 pub mod assets;
 pub mod ingest;
@@ -40,8 +41,9 @@ use agaric_core::error::AppError;
 use agaric_sync::sync_events::SyncEvent;
 
 use crate::commands::pages::{PageFile, get_page_file_inner};
+use crate::db::ReadPool;
 use ingest::{Ingest, NotIngested};
-use store::{PageState, Shadow, StateDir};
+use store::{Head, PageState, Shadow, StateDir};
 
 /// How often the mirror looks for pages to write.
 const TICK: Duration = Duration::from_secs(2);
@@ -58,6 +60,11 @@ const MISSING_TICKS: u8 = 2;
 const RESTORED_PAUSE: &str = "a daily snapshot was restored, and files in the folder may be newer \
      than the notes; sync with your paired devices, then choose the folder again to resume. \
      Reading changes back was turned off";
+
+/// Why the mirror writes nothing while [`Mirror::behind`].
+const BEHIND: &str = "the vault is older than the folder, as after a restore from a backup or a \
+                      new start; choose the folder again to write this vault's pages there, which \
+                      removes no file and writes over none, or choose another folder";
 
 /// A page's file, by its path below the mirror's folder, `/`-separated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -136,8 +143,9 @@ struct Inner {
     /// Copies that could not be written, and why, by path.
     failed_copies: BTreeMap<String, String>,
     last_pass_ms: Option<i64>,
-    /// The folder chosen again while it is emptied: the next tick drops its
-    /// states and writes every page there as new.
+    /// The folder chosen again while it is emptied, or while the vault is
+    /// older than it: the next tick drops its states and writes every page
+    /// there as new.
     start_fresh: bool,
 }
 
@@ -173,15 +181,29 @@ impl MirrorState {
     }
 
     /// Drop the folder's states on the next tick, the way out of the pause
-    /// [`is_emptied`] holds: the user chose the folder again, so it is
-    /// the one to fill.
+    /// [`is_emptied`] holds and of the one [`MirrorState::is_behind`] tells:
+    /// the user chose the folder again, so it is the one to fill. With no
+    /// state, no file there is removed, and one that differs from its page's
+    /// render is kept as changed outside Agaric; nor is the copy of an
+    /// attachment the vault lacks.
     pub fn start_fresh(&self) {
         self.lock().start_fresh = true;
         self.restart();
     }
 
-    fn take_start_fresh(&self) -> bool {
-        std::mem::take(&mut self.lock().start_fresh)
+    /// Whether the mirror is paused because the vault is older than the
+    /// folder, as one restored from a backup is.
+    pub fn is_behind(&self) -> bool {
+        self.lock().paused.as_deref() == Some(BEHIND)
+    }
+
+    /// Whether [`MirrorState::start_fresh`] is yet to drop the states.
+    pub fn start_fresh_due(&self) -> bool {
+        self.lock().start_fresh
+    }
+
+    fn started_fresh(&self) {
+        self.lock().start_fresh = false;
     }
 
     /// Start over in a new folder: forget the old one's diverged and failed
@@ -621,7 +643,8 @@ fn stat_of(meta: &std::fs::Metadata) -> FileStat {
 
 impl Mirror {
     /// The task, from the state files, with its watermark at this device's
-    /// last op: the first tick's full pass writes what came before.
+    /// last op: the first tick's full pass writes what came before, unless
+    /// the vault is older than the folder ([`MirrorState::is_behind`]).
     ///
     /// # Errors
     ///
@@ -680,6 +703,54 @@ impl Mirror {
                 root.display()
             )
         })
+    }
+
+    /// Whether the vault is older than the folder: restored from a backup, a
+    /// new one, or short of its last commits after a power cut, while the
+    /// folder's states, kept outside it, are those of the vault that last
+    /// wrote there. A pass would then remove the file of every page this
+    /// vault lacks and write its older text over every other (#6887). So it
+    /// is when this device's last op is before the folder's saved [`Head`],
+    /// or when its op at that head has another hash: a restored vault soon
+    /// numbers its own ops past it. A folder with no head saved yet, or whose
+    /// head's op compaction has removed, is taken as this vault's; a vault
+    /// once found older stays so ([`Head::older`]) until the folder is
+    /// chosen again.
+    async fn behind(&self) -> Result<bool, AppError> {
+        let Some(saved) = self.store.head()? else {
+            return Ok(false);
+        };
+        if saved.older {
+            return Ok(true);
+        }
+        let mut older = durable_head(&self.pool, &self.device_id).await? < saved.seq;
+        if let (false, Some(hash)) = (older, &saved.hash) {
+            let now = op_hash(&self.pool, &self.device_id, saved.seq).await?;
+            older = now.is_some_and(|now| now != *hash);
+        }
+        if older {
+            self.store.save_head(&Head { older, ..saved })?;
+        }
+        Ok(older)
+    }
+
+    /// Save this device's last op as the folder's [`Head`], which
+    /// [`Mirror::behind`] compares the vault with.
+    async fn save_head(&self) -> Result<(), AppError> {
+        let seq = durable_head(&self.pool, &self.device_id).await?;
+        let hash = op_hash(&self.pool, &self.device_id, seq).await?;
+        let older = false;
+        self.store.save_head(&Head { seq, hash, older })
+    }
+
+    /// On a fresh start, forget the copies whose attachments the vault
+    /// lacks, as one restored from a backup does: such a copy may be the
+    /// only one of its file left, and [`Mirror::sweep_copies`] would remove
+    /// it as unchanged. The rest stay recorded, so one changed in the folder
+    /// is not written over.
+    async fn forget_lost_copies(&mut self) -> Result<(), AppError> {
+        let live = assets::attachments(&self.pool, self.copies.ids()).await?;
+        self.copies.forget_except(&live.into_keys().collect())
     }
 
     /// Start over in another folder, with its own states: nothing it lacks
@@ -746,16 +817,23 @@ impl Mirror {
             self.full_due = true;
             return Ok(());
         }
-        let fresh = self.state.take_start_fresh();
+        // Due until done: a tick failing part way would leave the states in
+        // memory, their head gone, for the next pass to roll the folder back.
+        let fresh = self.state.start_fresh_due();
         if fresh {
             self.store.forget(&folder)?;
+            self.forget_lost_copies().await?;
+            self.state.started_fresh();
         }
         if self.store.bind(&folder)? || fresh {
             self.forget_folder();
             self.pages = self.store.load()?;
         }
         let root = PathBuf::from(folder);
-        let paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
+        let mut paused = pause_reason(&root, &self.device_id).or_else(|| self.emptied(&root));
+        if paused.is_none() && self.behind().await? {
+            paused = Some(BEHIND.to_owned());
+        }
         let resumed = paused.is_none();
         self.state.set_paused(paused);
         if !resumed {
@@ -1145,7 +1223,7 @@ impl Mirror {
             .cloned()
             .collect();
         self.state.passed(full, &known);
-        Ok(())
+        self.save_head().await
     }
 
     /// Remove the copies no longer wanted ([`assets::Copies::remove_except`]):
@@ -1695,6 +1773,23 @@ async fn own_head(pool: &SqlitePool, device_id: &str) -> Result<i64, AppError> {
     )
     .fetch_one(pool)
     .await?)
+}
+
+/// This device's last op `seq` ever, which compaction does not lower as it
+/// does [`own_head`].
+async fn durable_head(pool: &SqlitePool, device_id: &str) -> Result<i64, AppError> {
+    let mut conn = pool.acquire().await?;
+    Ok(agaric_store::op_log::next_seq_for_device(&mut conn, device_id).await? - 1)
+}
+
+/// The hash of this device's op `seq`, `None` when the op log holds no such
+/// op.
+async fn op_hash(pool: &SqlitePool, device_id: &str, seq: i64) -> Result<Option<String>, AppError> {
+    match agaric_store::op_log::get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await {
+        Ok(op) => Ok(Some(op.hash)),
+        Err(AppError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Create the folders `path`'s file sits in, one at a time below `root` and

@@ -2,7 +2,7 @@
  * Tests for ShowWelcomeTourRow + the onboarding re-entry path (#3308).
  *
  * Before this row existed, dismissing the first-run `WelcomeModal` by ANY
- * close path (Get Started, click-outside, Escape / Android Back) set
+ * close path (Get started, click-outside, Escape / Android Back) set
  * `agaric-onboarding-done` forever — nothing in the product could bring the
  * tour, or its "Create sample pages" action, back. These tests pin:
  *  - the row renders and its button resets the WELCOME flag,
@@ -76,7 +76,7 @@ describe('ShowWelcomeTourRow', () => {
     expect(screen.getByTestId('show-welcome-tour-btn')).toBeInTheDocument()
   })
 
-  it('clicking it clears the onboarding flag and confirms with a toast', async () => {
+  it('clicking it clears the onboarding flag without a toast', async () => {
     const user = userEvent.setup()
     markOnboardingDone()
 
@@ -84,7 +84,7 @@ describe('ShowWelcomeTourRow', () => {
     await user.click(screen.getByTestId('show-welcome-tour-btn'))
 
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Welcome tour reopened')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations', async () => {
@@ -119,7 +119,7 @@ describe('welcome tour re-entry (#3308)', () => {
 
     // First run: the modal is up; dismiss it permanently.
     expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Get Started' }))
+    await user.click(screen.getByRole('button', { name: 'Get started' }))
     await waitFor(() => {
       expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
     })

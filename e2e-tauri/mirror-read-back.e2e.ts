@@ -6,8 +6,10 @@
 // back: a file edited from Node, as another editor would, leaves the page as
 // it was and is not written over. Turning reading back on in Settings › Data
 // asks first, listing that file, and only "Read them in" reads it. A
-// checkout that rewrites every file while it is off changes no page. The
-// mock has no mirror task, so only this lane can show it.
+// checkout that rewrites every file while it is off changes no page, and a
+// folder chosen again after Turn off, with reading back asked for, reads in
+// nothing changed there meanwhile until asked. The mock has no mirror task,
+// so only this lane can show it.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -22,6 +24,7 @@ import {
   blockStaticByMarker,
   confirmDialog,
   invoke,
+  navigateTo,
   openDataTab,
   openNewPage,
   runScopedMarker,
@@ -41,11 +44,14 @@ const MARKER = runScopedMarker('wdio-readback-block')
 const OUTSIDE = runScopedMarker('wdio-readback-outside')
 const CHECKOUT = runScopedMarker('wdio-readback-checkout')
 const AFTER = runScopedMarker('wdio-readback-after')
+const AGAIN = runScopedMarker('wdio-readback-again')
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-readback-'))
+const second = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-readback-again-'))
+let blockId = ''
 
-function pageFile(): string | undefined {
-  return readdirSync(folder, { recursive: true, withFileTypes: true })
+function pageFile(root = folder): string | undefined {
+  return readdirSync(root, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name === `${TITLE}.md`)
     .map((entry) => path.join(entry.parentPath, entry.name))[0]
 }
@@ -62,7 +68,7 @@ const status = () => invoke<MirrorStatus>('get_mirror_status')
  * lists it as pending and diverged a tick before any read-in, so a check that
  * nothing was read in waits on this.
  */
-async function twoLaterPasses(label: string): Promise<void> {
+async function twoLaterPasses(label: string, root = folder): Promise<void> {
   const [space] = await invoke<{ id: string }[]>('list_spaces')
   for (const n of [1, 2]) {
     const title = `${AFTER}-${label}-${n}`
@@ -70,7 +76,7 @@ async function twoLaterPasses(label: string): Promise<void> {
     await browser.waitUntil(
       () =>
         Promise.resolve(
-          readdirSync(folder, { recursive: true }).some((entry) =>
+          readdirSync(root, { recursive: true }).some((entry) =>
             String(entry).endsWith(`${title}.md`),
           ),
         ),
@@ -82,6 +88,7 @@ async function twoLaterPasses(label: string): Promise<void> {
 describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @markdown @settings', () => {
   after(() => {
     rmSync(folder, { recursive: true, force: true })
+    rmSync(second, { recursive: true, force: true })
   })
 
   it('reads nothing back while off, and reads the changed file in only once asked', async () => {
@@ -97,7 +104,7 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     await browser.keys(['Escape'])
     const block = blockStaticByMarker(MARKER)
     await block.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    const blockId = (await block.getAttribute('data-block-id')) ?? ''
+    blockId = (await block.getAttribute('data-block-id')) ?? ''
     expect(blockId).not.toBe('')
     let file: string | undefined
     await browser.waitUntil(
@@ -188,5 +195,39 @@ describe('Agaric real-backend Markdown mirror, reading changes back (#5363) @mar
     const after = await pages()
     expect(new Map([...after].filter(([id]) => before.has(id)))).toEqual(before)
     for (const file of files) expect(readFileSync(file, 'utf8')).toBe(checkout(file))
+  })
+
+  it('reads in nothing changed while off when the folder is chosen again', async () => {
+    await invoke('set_mirror_folder', { path: null, readBack: true })
+    await invoke('set_mirror_folder', { path: second, readBack: true })
+    expect((await status()).read_back).toBe(true)
+    const before = await blockContent(blockId)
+    let file: string | undefined
+    await browser.waitUntil(
+      () => {
+        file = pageFile(second)
+        return Promise.resolve(file !== undefined && readFileSync(file, 'utf8').includes(before))
+      },
+      { timeout: NAV_TIMEOUT, timeoutMsg: `${TITLE}.md was never written to the second folder` },
+    )
+
+    // Turn off, another editor's save, and the folder chosen again.
+    await invoke('set_mirror_folder', { path: null, readBack: true })
+    writeFileSync(file as string, `${MARKER} ${AGAIN}\n`)
+    const again = await invoke<MirrorStatus>('set_mirror_folder', { path: second, readBack: true })
+    expect(again.read_back).toBe(false)
+    expect(again.pending.some((p) => p.endsWith(`${TITLE}.md`))).toBe(true)
+
+    await twoLaterPasses('again', second)
+    expect(await blockContent(blockId)).toBe(before)
+    expect((await status()).pending.some((p) => p.endsWith(`${TITLE}.md`))).toBe(true)
+    // Away and back, so the card loads the status afresh.
+    await navigateTo('Journal')
+    await openDataTab()
+    const label = $('//label[normalize-space(.)="Read changes back"]')
+    await label.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    const toggle = $(`[id="${(await label.getAttribute('for')) ?? ''}"]`)
+    await toggle.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    expect(await toggle.getAttribute('aria-checked')).toBe('false')
   })
 })

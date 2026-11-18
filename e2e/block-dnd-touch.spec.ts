@@ -8,7 +8,7 @@
  *   - `useBlockDnD` wires a TouchSensor (`{ delay: 400, tolerance: 5 }`) to
  *     the whole row, so a hold-then-move on the row body reorders;
  *   - `useBlockTouchLongPress` shares the hold: a hold released without moving
- *     opens the BlockContextMenu, whose Move Up / Move Down reorder;
+ *     opens the BlockContextMenu, whose Move up / Move down reorder;
  *   - inside the mounted editor a hold is the native text selection.
  *
  * Correctness is asserted on the recorded `move_block` IPC (the deterministic
@@ -139,8 +139,8 @@ test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
   })
 
   // The same hold released without moving opens the BlockContextMenu, and
-  // "Move Down" reorders the block via the recorded move_block.
-  test('hold, then release opens the context menu and Move Down reorders the block', async ({
+  // "Move down" reorders the block via the recorded move_block.
+  test('hold, then release opens the context menu and Move down reorders the block', async ({
     page,
   }) => {
     await openPageMobile(page, PAGE)
@@ -159,8 +159,8 @@ test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
     await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
-    await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
-    const moveDown = menu.getByRole('menuitem', { name: 'Move Down' })
+    await expect(menu.getByRole('menuitem', { name: 'Move up' })).toBeVisible()
+    const moveDown = menu.getByRole('menuitem', { name: 'Move down' })
     await expect(moveDown).toBeVisible()
 
     await moveDown.click()

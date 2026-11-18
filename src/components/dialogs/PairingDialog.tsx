@@ -616,7 +616,6 @@ export function PairingDialog({
     // honours `onOpenChange(false)`.
     setPairingInfo(null)
     setCountdown(null)
-    announce(t('announce.pairingSucceeded'))
     notify.success(t('pairing.pairSuccessMessage'))
     onOpenChange(false)
   }, [polled, awaitingPairResult, t, onOpenChange])

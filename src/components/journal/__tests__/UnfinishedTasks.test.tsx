@@ -289,7 +289,7 @@ describe('UnfinishedTasks', () => {
     expect(screen.queryByTestId('unfinished-group-yesterday')).not.toBeInTheDocument()
 
     // Click to expand — target the main header by its text
-    const header = screen.getByText('Unfinished Tasks').closest('button') as Element
+    const header = screen.getByText('Unfinished tasks').closest('button') as Element
     await user.click(header)
 
     expect(screen.getByTestId('unfinished-group-yesterday')).toBeInTheDocument()
@@ -310,7 +310,7 @@ describe('UnfinishedTasks', () => {
       expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
     })
 
-    const header = screen.getByText('Unfinished Tasks').closest('button') as Element
+    const header = screen.getByText('Unfinished tasks').closest('button') as Element
 
     // Expand
     await user.click(header)

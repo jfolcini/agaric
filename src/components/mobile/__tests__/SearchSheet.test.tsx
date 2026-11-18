@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -547,6 +548,7 @@ describe('SearchSheet', () => {
         // Persisted to localStorage and badged in the UI.
         expect(getPinnedSearchScope()).toBe('all-pages')
         expect(screen.getByTestId('search-sheet-segment-all-pages-pin')).toBeInTheDocument()
+        expect(toast.success).not.toHaveBeenCalled()
       } finally {
         vi.useRealTimers()
       }
@@ -566,6 +568,7 @@ describe('SearchSheet', () => {
         })
         expect(getPinnedSearchScope()).toBeNull()
         expect(screen.queryByTestId('search-sheet-segment-in-page-pin')).not.toBeInTheDocument()
+        expect(toast.success).not.toHaveBeenCalled()
       } finally {
         vi.useRealTimers()
       }

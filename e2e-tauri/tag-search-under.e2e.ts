@@ -50,7 +50,7 @@ describe('Agaric real-backend search under a tag (#5679) @pages @search', () => 
     // 1. The tag.
     await navigateTo('Tags')
     await typeInputVerified('[aria-label="New tag name"]', TAG)
-    const create = $('button*=Add Tag')
+    const create = $('button*=Add tag')
     await create.waitForClickable({ timeout: ACTION_TIMEOUT })
     await create.click()
     await $(`[data-testid="tag-item-${TAG}"]`).waitForDisplayed({ timeout: ACTION_TIMEOUT })

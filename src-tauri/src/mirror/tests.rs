@@ -33,7 +33,7 @@ struct Fx {
     mirror: Mirror,
     root: PathBuf,
     data: PathBuf,
-    _dirs: [TempDir; 2],
+    _dirs: Vec<TempDir>,
 }
 
 impl Fx {
@@ -61,7 +61,7 @@ impl Fx {
             mirror,
             root,
             data: data.path().to_path_buf(),
-            _dirs: [data, folder],
+            _dirs: vec![data, folder],
         }
     }
 
@@ -995,6 +995,346 @@ async fn a_copy_that_cannot_be_written_is_listed_while_copying_is_on() {
     assert_eq!(failed, [copy]);
 }
 
+// ── A vault older than its folder (#6887) ───────────────────────────────
+
+impl Fx {
+    /// The vault as it is now, as a backup holds it.
+    async fn backup(&self) -> TempDir {
+        settle(&self.mat).await;
+        let dir = TempDir::new().unwrap();
+        sqlx::query("VACUUM INTO ?")
+            .bind(path_string(&dir.path().join("test.db")))
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        dir
+    }
+
+    /// The mirror as the app's next start opens it.
+    async fn reopen(&mut self) {
+        self.state = MirrorState::new(self.data.clone());
+        self.mirror = Mirror::open(self.pool.clone(), DEV.to_owned(), self.state.clone())
+            .await
+            .unwrap();
+    }
+
+    /// Agaric started over the vault in `db`, a restored backup or none yet,
+    /// with the data folder and the device it had.
+    async fn start_over(&mut self, db: TempDir) {
+        self.mat.shutdown();
+        self.pool = init_pool(&db.path().join("test.db")).await.unwrap();
+        self.mat = Materializer::new(self.pool.clone());
+        let registry = &self.mat.loro_state().registry;
+        agaric_engine::loro::snapshot::rehydrate_registry(&self.pool, registry, DEV)
+            .await
+            .unwrap();
+        self._dirs.push(db);
+        self.reopen().await;
+    }
+
+    /// This device's last op.
+    async fn head(&self) -> i64 {
+        sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?")
+            .bind(DEV)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    /// Compaction with none of this device's ops left.
+    async fn compact(&self) {
+        let mut tx = self.pool.begin().await.unwrap();
+        agaric_store::op_log::prune(&mut tx, i64::MAX, DEV, i64::MAX)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(self.head().await, 0, "the fixture: no op is left");
+    }
+
+    async fn paused_as_older(&self) -> bool {
+        let status = self.status().await;
+        status
+            .paused
+            .is_some_and(|why| why.contains("older than the folder"))
+    }
+
+    /// Alpha and Beta written to the folder, then the vault restored from a
+    /// backup that holds Alpha as it was before an edit and lacks Beta.
+    async fn restored() -> (Self, Folder) {
+        let mut fx = Self::new().await;
+        let (page, blocks) = fx.page("Alpha", &["one"]).await;
+        fx.tick().await;
+        let backup = fx.backup().await;
+        fx.edit(&blocks[0], "one, edited since").await;
+        fx.page("Beta", &["two"]).await;
+        fx.tick().await;
+        let folder = Folder {
+            page,
+            files: fx.files(),
+            head: fx.head().await,
+        };
+        let [alpha, beta] = &folder.files;
+        let edited = alpha.as_ref().is_some_and(|text| text.contains("since"));
+        assert!(edited && beta.is_some(), "the fixture: {:?}", folder.files);
+        fx.start_over(backup).await;
+        (fx, folder)
+    }
+
+    /// Alpha's file and Beta's.
+    fn files(&self) -> [Option<String>; 2] {
+        [self.read(ALPHA), self.read(BETA)]
+    }
+}
+
+/// The folder as the vault since restored last wrote it: Alpha's page, both
+/// files, of which the restored vault holds Alpha's page older and lacks
+/// Beta's, and the vault's last op then.
+struct Folder {
+    page: String,
+    files: [Option<String>; 2],
+    head: i64,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_vault_pauses_the_mirror_and_changes_no_file() {
+    let (mut fx, folder) = Fx::restored().await;
+
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+}
+
+/// A restored vault's own ops soon number more than the folder's last: it is
+/// told from the vault that wrote the folder by that op's hash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_vault_written_past_the_folder_s_last_op_stays_paused() {
+    let (mut fx, folder) = Fx::restored().await;
+    let (_, blocks) = fx.page("Gamma", &["three"]).await;
+    for text in ["four", "five", "six", "seven"] {
+        fx.edit(&blocks[0], text).await;
+    }
+    assert!(
+        fx.head().await > folder.head,
+        "the fixture: past the folder"
+    );
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+    assert_eq!(fx.read("TestSpace/Gamma.md"), None, "nothing is written");
+}
+
+/// The way out of the pause: the folder chosen again takes the vault's pages
+/// as new ones, and keeps every file the vault lacks or holds otherwise.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_file() {
+    let (mut fx, folder) = Fx::restored().await;
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+    fx.page("Gamma", &["three"]).await;
+
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    let status = fx.status().await;
+    assert_eq!(status.paused, None);
+    assert_eq!(fx.files(), folder.files);
+    assert_eq!(status.diverged, diverged(&folder.page, ALPHA));
+    assert!(
+        fx.read("TestSpace/Gamma.md").is_some(),
+        "the vault's own pages are written"
+    );
+}
+
+/// The folder chosen again keeps its copies too: one whose attachment the
+/// vault lacks may be the only copy of that file left, and one changed in
+/// the folder is the user's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_for_a_restored_vault_keeps_every_copy() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["one", "two"]).await;
+    let held = fx.image_in(&blocks[0]).await;
+    fx.tick().await;
+    let backup = fx.backup().await;
+    let lacked = fx.image_in(&blocks[1]).await;
+    fx.tick().await;
+    std::fs::write(fx.root.join(&held), b"drawn over").unwrap();
+    fx.start_over(backup).await;
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.status().await.paused, None);
+    let copy = |path: &str| std::fs::read(fx.root.join(path)).ok();
+    assert_eq!(copy(&lacked).as_deref(), Some(PNG), "the vault lacks it");
+    assert_eq!(copy(&held).as_deref(), Some(&b"drawn over"[..]));
+}
+
+/// A fresh start that fails part way, its states dropped but its copies not
+/// yet forgotten, is made again on the next tick: the states still in memory,
+/// with no head left to tell the vault older, would roll the folder back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fresh_start_that_fails_part_way_is_made_again() {
+    let (mut fx, folder) = Fx::restored().await;
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    // The record of copies cannot be saved, for one tick.
+    let copies = fx.data.join("mirror/copies.json");
+    assert!(!copies.exists(), "the fixture: no copy is recorded");
+    std::fs::create_dir(&copies).unwrap();
+    settle(&fx.mat).await;
+    assert!(fx.mirror.tick().await.is_err(), "the fixture: it fails");
+    std::fs::remove_dir(&copies).unwrap();
+
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+}
+
+/// The folder chosen again reads in no file the vault lacks unasked: with no
+/// state left, such a file is no page's, read onto a new page while reading
+/// back is on. It is turned off, and the file listed from the moment the
+/// folder is chosen, for the user to read in or not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_chosen_again_for_a_restored_vault_reads_in_nothing_unasked() {
+    let (mut fx, _) = Fx::restored().await;
+    let ingest = Ingest {
+        pool: fx.pool.clone(),
+        materializer: fx.mat.clone(),
+        notify: Arc::new(|_| {}),
+    };
+    fx.mirror = Mirror::open(fx.pool.clone(), DEV.to_owned(), fx.state.clone())
+        .await
+        .unwrap()
+        .with_ingest(ingest);
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    let chosen =
+        set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+            .await
+            .unwrap();
+    for _ in 0..4 {
+        fx.tick().await;
+    }
+
+    let betas: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks
+          WHERE block_type = 'page' AND content = 'Beta' AND deleted_at IS NULL",
+    )
+    .fetch_one(&fx.pool)
+    .await
+    .unwrap();
+    assert_eq!(betas, 0, "Beta's file is read onto no page");
+    assert!(
+        chosen.pending.contains(&BETA.to_owned()),
+        "{:?}",
+        chosen.pending
+    );
+    let status = fx.status().await;
+    assert!(!status.read_back);
+    assert!(
+        status.pending.contains(&BETA.to_owned()),
+        "{:?}",
+        status.pending
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_vault_given_its_old_folder_pauses_the_mirror_and_removes_no_file() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+    let alpha = fx.read(ALPHA);
+    assert!(alpha.is_some(), "the fixture: Alpha is written");
+
+    fx.start_over(TempDir::new().unwrap()).await;
+    ensure_test_space(&fx.pool).await;
+    mark_block_as_space(&fx.pool, TEST_SPACE_ID).await;
+    set_mirror_folder_inner(&fx.pool, DEV, &fx.state, Some(path_string(&fx.root)), true)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.read(ALPHA), alpha);
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_vault_started_again_is_not_paused() {
+    let mut fx = Fx::new().await;
+    let (_, blocks) = fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    fx.reopen().await;
+    fx.tick().await;
+    assert_eq!(fx.status().await.paused, None);
+
+    fx.edit(&blocks[0], "uno").await;
+    fx.tick().await;
+    assert!(fx.read(ALPHA).unwrap().contains("uno"), "written on");
+    assert_eq!(fx.status().await.paused, None);
+}
+
+/// Compaction can leave the op log without this device's last op, or any:
+/// the vault is no older for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_vault_whose_op_log_was_compacted_is_not_paused() {
+    let mut fx = Fx::new().await;
+    fx.page("Alpha", &["one"]).await;
+    fx.tick().await;
+
+    fx.compact().await;
+    fx.tick().await;
+
+    assert_eq!(fx.status().await.paused, None);
+}
+
+/// The pause outlasts the op that told the vault older: compaction removing
+/// it does not resume the mirror.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_vault_whose_op_log_was_compacted_stays_paused() {
+    let (mut fx, folder) = Fx::restored().await;
+    let (_, blocks) = fx.page("Gamma", &["three"]).await;
+    for text in ["four", "five", "six", "seven"] {
+        fx.edit(&blocks[0], text).await;
+    }
+    fx.tick().await;
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+
+    fx.compact().await;
+    for _ in 0..3 {
+        fx.tick().await;
+    }
+
+    assert_eq!(fx.files(), folder.files);
+    assert!(fx.paused_as_older().await, "{:?}", fx.status().await);
+}
+
+// ── A restore from a daily snapshot (#6744) ─────────────────────────────
+
 /// What a restore leaves newer in the folder than in the notes: paths below
 /// the folder, and the text of each page's file.
 struct NewerThanTheNotes {
@@ -1045,6 +1385,11 @@ impl Fx {
         assert!(fx.root.join(&newer.copy).exists());
         assert!(fx.saved_state(&alpha_page).is_some());
         assert!(fx.data.join("mirror/copies.json").exists());
+        assert_eq!(
+            saved_heads(&fx.data),
+            1,
+            "the pass saved the folder's head (#6887)"
+        );
 
         settle(&fx.mat).await;
         fx.pool.close().await;
@@ -1124,5 +1469,19 @@ async fn a_restore_from_a_snapshot_pauses_the_mirror_and_costs_the_folder_no_fil
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restore_drops_the_mirrors_states_and_its_record_of_copies_6744() {
     let (fx, _) = Fx::restored_under_newer_files().await;
+    assert_eq!(
+        saved_heads(&fx.data),
+        0,
+        "the folder's head goes with its states"
+    );
     assert!(!fx.data.join("mirror").exists());
+}
+
+/// The `head` files saved under each mirrored folder's states in `data`.
+fn saved_heads(data: &Path) -> usize {
+    std::fs::read_dir(data.join("mirror/folders")).map_or(0, |folders| {
+        folders
+            .filter(|folder| folder.as_ref().unwrap().path().join("head").exists())
+            .count()
+    })
 }

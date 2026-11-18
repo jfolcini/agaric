@@ -16,7 +16,6 @@
 
 import { create } from 'zustand'
 
-import { announce } from '@/lib/announcer'
 import { isNonReversible, isNotFound, isValidation, takenNameReason, unwrap } from '@/lib/app-error'
 import type { OpRef, UndoResult } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -263,7 +262,6 @@ function historyEntryBlockId(payload: string): string | null {
 /** `reason`: a taken-name refusal's own words (#6051), shown in place of the generic copy. */
 function notifySwipeUndoFailed(reason: string | null = null): void {
   notify.error(reason ?? t('undo.undoFailedMessage'))
-  announce(t('announce.undoFailed'))
 }
 
 export const useUndoStore = create<UndoStore>((set, get) => {
@@ -499,7 +497,6 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       notify(t('undo.op.deleteBlock', { defaultValue: t('undo.undoneMessage') }), {
         duration: 1500,
       })
-      announce(t('announce.undone'))
       await reloadPage()
     } catch (err) {
       logger.error('UndoStore', 'swipe-delete undo failed', { pageId, blockId }, err)

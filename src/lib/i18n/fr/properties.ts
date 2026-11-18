@@ -149,7 +149,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.rename': 'Renommer',
   'advancedQuery.savedViews.renameTitle': 'Renommer "{{name}}"',
   'advancedQuery.savedViews.renamePrompt': 'Nouveau nom de cette vue\u00A0:',
-  'advancedQuery.savedViews.renamed': 'Vue renommée en "{{name}}"',
   'advancedQuery.savedViews.delete': 'Supprimer',
   'advancedQuery.savedViews.deleteTitle': 'Supprimer "{{name}}"',
   'advancedQuery.savedViews.deleteConfirm':
@@ -465,8 +464,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vide)',
   'tagFilter.loadingMessage': 'Chargement...',
   'tagFilter.loadMoreButton': 'Charger plus',
-  'tagFilter.selectedTags_one': 'à {{count}} étiquette ({{mode}})',
-  'tagFilter.selectedTags_other': 'à {{count}} étiquettes ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} bloc correspond à {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} blocs correspondent à {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} étiquette',
+  'tagFilter.tagCount_other': '{{count}} étiquettes',
   'tagFilter.addPrefixButton': 'Commence par',
   'tagFilter.addPrefixLabel':
     'Commence par le texte saisi\u00A0: inclure toutes les étiquettes qui commencent par celui-ci',

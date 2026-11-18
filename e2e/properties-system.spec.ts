@@ -120,7 +120,7 @@ test.describe('Property drawer @editor', () => {
     // The property drawer is a Radix Sheet; scope to the active
     // sheet-content so stale Sheet portals from previous tests can't match.
     const sheet = activeSheet(page)
-    await expect(sheet.getByText('Block Properties')).toBeVisible()
+    await expect(sheet.getByText('Block properties')).toBeVisible()
 
     // Verify both properties are listed: context and project
     await expect(sheet.getByText('context', { exact: true })).toBeVisible()
@@ -138,7 +138,7 @@ test.describe('Property drawer @editor', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
     const sheet = activeSheet(page)
-    await expect(sheet.getByText('Block Properties')).toBeVisible()
+    await expect(sheet.getByText('Block properties')).toBeVisible()
 
     // The drawer shows Input elements with defaultValues from properties
     // context = "@office", project = "alpha".
@@ -176,7 +176,7 @@ test.describe('Set property via drawer @editor', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
     const sheet = activeSheet(page)
-    await expect(sheet.getByText('Block Properties')).toBeVisible()
+    await expect(sheet.getByText('Block properties')).toBeVisible()
 
     // Should show "No properties set" initially for GS_1
     await expect(sheet.getByText('No properties set')).toBeVisible()
@@ -233,7 +233,7 @@ test.describe('Delete property via drawer @editor', () => {
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
     const sheet = activeSheet(page)
-    await expect(sheet.getByText('Block Properties')).toBeVisible()
+    await expect(sheet.getByText('Block properties')).toBeVisible()
 
     // Both properties should be visible
     await expect(sheet.getByText('context', { exact: true })).toBeVisible()
@@ -321,7 +321,7 @@ test.describe('Property definitions view @editor', () => {
     ).toBeVisible()
 
     // Fill in the create form (scoped to the settings panel so the sidebar's
-    // "New Page" button / other UI doesn't confuse the locator).
+    // "New page" button / other UI doesn't confuse the locator).
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
     const keyInput = settingsPanel.getByLabel('Property key')
     await keyInput.fill('mood')

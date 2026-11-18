@@ -226,6 +226,18 @@ describe('SearchPanel', () => {
     expect(input.placeholder).not.toMatch(/3\+/)
   })
 
+  // The filter syntax is explained at the field for good, not by a toast on the first visit.
+  it('describes the input with the filter-syntax hint, kept while typing, with no toast', () => {
+    render(<SearchPanel />)
+    const input = screen.getByLabelText(t('search.searchLabel'))
+    expect(input).toHaveAccessibleDescription(t('search.filterSyntaxIntro'))
+
+    fireEvent.change(input, { target: { value: 'tag:#work' } })
+
+    expect(input).toHaveAccessibleDescription(t('search.filterSyntaxIntro'))
+    expect(vi.mocked(toast)).not.toHaveBeenCalled()
+  })
+
   it('shows no results before first search', () => {
     render(<SearchPanel />)
     expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()

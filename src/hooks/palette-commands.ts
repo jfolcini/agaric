@@ -375,7 +375,6 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         .then(async (markdown) => {
           await writeText(markdown)
           notify.success(t('pageHeader.exportCopied'))
-          announce(t('announce.exported'))
         })
         .catch((err: unknown) => {
           logger.error(

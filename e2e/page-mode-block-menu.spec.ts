@@ -211,7 +211,7 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     expect((await shown(page)).map((r) => r[1])).toEqual([0, 1, 1, 0])
   })
 
-  test('Move Up, Move Down, Duplicate and Merge act on the block under the pointer, not the caret', async ({
+  test('Move up, Move down, Duplicate and Merge act on the block under the pointer, not the caret', async ({
     page,
   }) => {
     const { pageId, ids } = await seedRows(page, 'Menu arrange', [
@@ -224,13 +224,13 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await caretIn(page, 0)
 
     await rightClick(page, ids[3])
-    await arrange(page, 'Move Up')
+    await arrange(page, 'Move up')
     await expect
       .poll(async () => (await backend(page, pageId)).map((r) => r[0]))
       .toEqual([ids[0], ids[3], ids[1], ids[2]])
 
     await rightClick(page, ids[0])
-    await arrange(page, 'Move Down')
+    await arrange(page, 'Move down')
     await expect
       .poll(async () => (await backend(page, pageId)).map((r) => r[0]))
       .toEqual([ids[3], ids[0], ids[1], ids[2]])

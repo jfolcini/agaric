@@ -96,6 +96,6 @@ test.describe('Command palette actions @search', () => {
 
   test('Keyboard shortcuts opens the quick reference', async ({ page }) => {
     await runPaletteCommand(page, 'Keyboard shortcuts')
-    await expect(activeSheet(page).getByRole('heading', { name: 'Quick Reference' })).toBeVisible()
+    await expect(activeSheet(page).getByRole('heading', { name: 'Quick reference' })).toBeVisible()
   })
 })

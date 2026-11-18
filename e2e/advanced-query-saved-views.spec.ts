@@ -1,5 +1,5 @@
 /**
- * Advanced Query saved views (#5738): a saved query is listed after leaving
+ * Advanced query saved views (#5738): a saved query is listed after leaving
  * the view and coming back, Load restores its tree and results, rename and
  * delete stick, and another space does not list it. A view is a page carrying
  * the `saved_view` property (#6544), left out of the Pages list and the `[[`
@@ -45,10 +45,10 @@ function tagLeaf(page: Page): Locator {
     .getByRole('group', { name: 'tag: work', exact: true })
 }
 
-/** Leave Advanced Query for the journal and open it again. */
+/** Leave Advanced query for the journal and open it again. */
 async function reopenAdvancedQuery(page: Page): Promise<void> {
   await navigateToView(page, 'Journal')
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
 }
 
 /** The tag `work` leaf keeps exactly the three seeded blocks tagged `work`. */
@@ -57,7 +57,7 @@ const WORK_ROWS = [/Weekly standup notes/, /Fix login bug/, /Ship v2\.0 release/
 test('a saved view is listed after leaving, loads, renames, deletes to the Trash, and stays in its space @search @spaces @pages', async ({
   page,
 }) => {
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   const root = page.getByRole('group', { name: 'Filter', exact: true })
   await root.getByRole('button', { name: 'Add filter', exact: true }).click()
   const pop = activePopover(page)
@@ -91,7 +91,7 @@ test('a saved view is listed after leaving, loads, renames, deletes to the Trash
     /^Create\s*Work bl$/,
   ])
   await page.keyboard.press('Escape')
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await savedViews(page)
     .getByRole('button', { name: `Load "${VIEW}"` })
     .click()
@@ -108,10 +108,10 @@ test('a saved view is listed after leaving, loads, renames, deletes to the Trash
   await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
 
   await switchToSpace(page, 'Work')
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
   await switchToSpace(page, 'Personal')
-  await navigateToView(page, 'Advanced Query')
+  await navigateToView(page, 'Advanced query')
   await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
 
   await savedViews(page)

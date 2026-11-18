@@ -310,7 +310,8 @@ export const references: Record<string, string> = {
   'search.invalidFilterWithError': 'Filtre non valide\u00A0: {{label}} — {{error}}',
   'search.invalidFilterError': '{{label}}\u00A0: {{error}}',
   'searchQuery.valueRequired': 'valeur requise pour {{prefix}}',
-  'searchQuery.unknownValue': "valeur de {{noun}} inconnue\u00A0: '{{value}}'",
+  'searchQuery.unknownState': "état inconnu\u00A0: '{{value}}'",
+  'searchQuery.unknownPriority': "priorité inconnue\u00A0: '{{value}}'",
   'searchQuery.dateExpectedAfterOperator': "YYYY-MM-DD attendu après '{{op}}', reçu '{{rest}}'",
   'searchQuery.unknownDate': "date inconnue\u00A0: '{{value}}'",
   'searchQuery.propKeyValueRequired': '{{prefix}}\u00A0: forme key=value requise',
@@ -327,7 +328,7 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT ne peut pas inverser un filtre\u00A0; utilisez sa forme not-',
   'searchQuery.emptyGroup': 'parenthèses vides',
   'search.filterSyntaxIntro':
-    'La syntaxe des filtres est interprétée en direct — tapez tag:#name ou path:Journal/* dans le champ de recherche, ou utilisez le bouton Ajouter un filtre. Appuyez sur ? pour obtenir de l’aide.',
+    'Filtrez avec tag:#name ou path:Journal/*, ou utilisez Ajouter un filtre. Appuyez sur ? pour obtenir de l’aide.',
   'search.searchTags': 'Rechercher des étiquettes...',
   'search.searchPages': 'Rechercher des pages...',
   'search.noTagsFound': 'Aucune étiquette trouvée',

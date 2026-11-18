@@ -18,7 +18,7 @@
  *      (`DateChip` → opens a Popover containing `DateChipEditor`).
  *   2. The popover exposes:
  *        - A natural-language `Input` (`today`, `+3d`, `Apr 15`, …)
- *        - Quick-action `Button`s (Today, Tomorrow, Next Week, Clear)
+ *        - Quick-action `Button`s (Today, Tomorrow, Next week, Clear)
  *      All controls are reachable with Tab / Enter / Space.
  *   3. Pressing Enter on the input or activating any quick action calls
  *      `setDueDate` / `setScheduledDate` — the same backend command this
@@ -34,7 +34,6 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
-import { announce } from '@/lib/announcer'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
@@ -81,13 +80,11 @@ export function RescheduleDropZone({
       try {
         await reschedule(blockId, dateStr)
         notify.success(t('journal.rescheduled', { date: dateStr }))
-        announce(t('announce.taskRescheduled', { date: dateStr }))
       } catch (err) {
         reportIpcError('RescheduleDropZone', 'journal.rescheduleFailed', err, t, {
           blockId,
           dateStr,
         })
-        announce(t('announce.rescheduleFailed'))
       }
     },
     [dateStr, reschedule, t],

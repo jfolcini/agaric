@@ -17,6 +17,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   activeMenu,
   activeSheet,
+  emitMockEvent,
   expect,
   focusBlock,
   navigateMobile,
@@ -83,6 +84,18 @@ async function box(loc: Locator): Promise<DOMRectLike> {
   return b
 }
 
+/** On Search, capture a line through Quick Capture; returns the toast that answers it. */
+async function toastOnSearch(page: Page): Promise<Locator> {
+  await navigateMobile(page, 'Search')
+  await emitMockEvent(page, 'deeplink:capture', { kind: 'prefill', text: 'Toast placement' })
+  const dialog = page.getByTestId('quick-capture-dialog')
+  await dialog.getByRole('button', { name: 'Capture', exact: true }).tap()
+  await expect(dialog).toBeHidden()
+  const toast = page.locator('[data-sonner-toast]', { hasText: "Captured to today's journal" })
+  await expect(toast).toBeVisible()
+  return toast
+}
+
 test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @search', () => {
   test.use({
     viewport: { width: 390, height: 844 },
@@ -102,19 +115,19 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await expectBottomSheet(page, menu)
     // Its rows still act: Properties opens the next sheet.
     await menu.getByRole('menuitem', { name: /Properties/ }).tap()
-    await expect(page.getByRole('dialog', { name: 'Block Properties' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Block properties' })).toBeVisible()
   })
 
   test('block properties open as a bottom sheet', async ({ page }) => {
     const menu = await openBlockMenu(page)
     await menu.getByRole('menuitem', { name: /Properties/ }).tap()
-    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block Properties' }))
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block properties' }))
   })
 
   test('block history opens as a bottom sheet', async ({ page }) => {
     const menu = await openBlockMenu(page)
     await menu.getByRole('menuitem', { name: /History/ }).tap()
-    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block History' }))
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block history' }))
   })
 
   test('the page ⋮ menu is a bottom-sheet list, and Outline a bottom sheet', async ({ page }) => {
@@ -154,7 +167,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await navigateMobile(page, 'Pages')
     await page
       .locator('.page-browser-header')
-      .getByRole('button', { name: 'New Page', exact: true })
+      .getByRole('button', { name: 'New page', exact: true })
       .tap()
     await expectBottomSheet(page, page.getByTestId('new-page-dialog'))
   })
@@ -181,14 +194,11 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     expect(handle.width).toBeGreaterThanOrEqual(TOUCH_FLOOR)
   })
 
-  // The first visit to Search shows the filter-syntax toast, which used to
-  // cover the very field it explains.
+  // Raised on Search, where a toast once covered the search field.
   test('a toast sits above the floating button, clear of the header, with a 44 px close', async ({
     page,
   }) => {
-    await navigateMobile(page, 'Search')
-    const toast = page.locator('[data-sonner-toast]').first()
-    await expect(toast).toBeVisible()
+    const toast = await toastOnSearch(page)
     const header = await box(page.locator('header').first())
     const fab = await box(page.getByTestId('quick-capture-fab'))
     await expect.poll(async () => (await box(toast)).y).toBeGreaterThan(header.y + header.height)
@@ -219,9 +229,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
   test('with the keyboard up, a toast sits above it and off the focused input', async ({
     page,
   }) => {
-    await navigateMobile(page, 'Search')
-    const toast = page.locator('[data-sonner-toast]').first()
-    await expect(toast).toBeVisible()
+    const toast = await toastOnSearch(page)
     const input = page.getByPlaceholder('Search blocks...')
     // Focus without a tap: a toast lying over the field would take the tap.
     await input.focus()

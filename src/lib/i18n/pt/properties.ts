@@ -145,7 +145,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.rename': 'Renomear',
   'advancedQuery.savedViews.renameTitle': 'Renomear "{{name}}"',
   'advancedQuery.savedViews.renamePrompt': 'Novo nome para esta visualização:',
-  'advancedQuery.savedViews.renamed': 'Visualização renomeada para "{{name}}"',
   'advancedQuery.savedViews.delete': 'Excluir',
   'advancedQuery.savedViews.deleteTitle': 'Excluir "{{name}}"',
   'advancedQuery.savedViews.deleteConfirm':
@@ -456,8 +455,10 @@ export const properties: Record<string, string> = {
   'tagFilter.emptyContent': '(vazio)',
   'tagFilter.loadingMessage': 'Carregando...',
   'tagFilter.loadMoreButton': 'Carregar mais',
-  'tagFilter.selectedTags_one': 'a {{count}} etiqueta ({{mode}})',
-  'tagFilter.selectedTags_other': 'a {{count}} etiquetas ({{mode}})',
+  'tagFilter.blockMatchTags_one': '{{count}} bloco corresponde a {{tags}} ({{mode}})',
+  'tagFilter.blockMatchTags_other': '{{count}} blocos correspondem a {{tags}} ({{mode}})',
+  'tagFilter.tagCount_one': '{{count}} etiqueta',
+  'tagFilter.tagCount_other': '{{count}} etiquetas',
   'tagFilter.addPrefixButton': 'Começa com',
   'tagFilter.addPrefixLabel':
     'Começa com o texto digitado: corresponde a todas as etiquetas que começam com ele',

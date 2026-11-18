@@ -55,4 +55,18 @@ export const errors: Record<string, string> = {
   'error.pasteBlocksFailed': 'Blöcke konnten nicht eingefügt werden',
   'error.settingsSaveFailed':
     'Deine Änderungen konnten nicht lokal gespeichert werden — der lokale Speicher ist möglicherweise voll',
+  'error.internal': 'Etwas ist schiefgelaufen (err: {{id}})',
+  'errorCode.invalidGlob': 'Dieses Seitennamen-Muster ist ungültig.',
+  'errorCode.invalidRegex': 'Dieser reguläre Ausdruck ist ungültig.',
+  'errorCode.invalidDateFilter':
+    'Dieser Datumsfilter ist ungültig. Verwende Daten im Format YYYY-MM-DD, mit dem Beginn eines Zeitraums vor seinem Ende.',
+  'errorCode.requiresRefresh':
+    'Das hat sich seit dem Laden geändert. Lade es neu und versuche es erneut.',
+  'errorCode.invalidRepeatRule':
+    'Diese Wiederholungsregel ist ungültig. Verwende `daily`, `weekly`, `monthly`, `yearly` oder `+Nd` / `+Nw` / `+Nm` / `+Ny` mit N ab 1, optional mit vorangestelltem `.+` (ab dem Erledigen zählen) oder `++` (bis heute nachholen).',
+  'errorCode.duplicateAgentName': 'Ein anderer Agent hat bereits diesen Namen.',
+  'errorCode.builtinPropertyLocked':
+    'Diese Eigenschaft ist integriert und kann daher nicht geändert werden.',
+  'errorCode.unacknowledgedPropertyLoss':
+    'Die Werte haben sich seit der Vorschau geändert. Sieh dir die Vorschau erneut an, bevor du bestätigst.',
 }
