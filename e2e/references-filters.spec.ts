@@ -228,52 +228,56 @@ test.describe('References none and short Contains filters (#5736) @pages @search
  * block's ULID, a bound being that day's UTC midnight. The mock's ids carry no time, so only the
  * real backend runs this.
  */
-test.describe('References Created date filter (#5736) @pages @search @real-only', () => {
-  /** `YYYY-MM-DD` of the UTC day `days` from now: two either side brackets every block made now. */
-  function utcDay(days: number): string {
-    return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
-  }
+test.describe(
+  'References Created date filter (#5736) @pages @search',
+  { tag: '@real-only' },
+  () => {
+    /** `YYYY-MM-DD` of the UTC day `days` from now: two either side brackets every block made now. */
+    function utcDay(days: number): string {
+      return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+    }
 
-  test('lists the sources created inside a Created date range and none outside it', async ({
-    page,
-  }) => {
-    await waitForBoot(page)
-    const target = await ipc<string>(page, 'create_page_in_space', {
-      parentId: null,
-      content: 'Created target',
-      spaceId: SEED_IDS.SPACE_PERSONAL,
-    })
-    await seedSearchBlocks(
+    test('lists the sources created inside a Created date range and none outside it', async ({
       page,
-      ['one', 'two', 'three'].map((n) => ({ content: `Created ${n} [[${target}]]` })),
-    )
-    await openPage(page, 'Created target')
-    const references = page.getByTestId('linked-references')
-    const rows = references.locator('li[data-backlink-item] .linked-reference-item-text')
-    const showing = references.getByText(/^Showing \d+ of \d+ backlinks$/)
-    await expect(rows).toHaveCount(3)
-
-    const addCreated = async (after: string | null, before: string | null) => {
-      await references.getByRole('button', { name: 'Add filter', exact: true }).click()
-      await chooseSelectOption(page, 'Filter category', 'Created date')
-      if (after !== null) await references.getByLabel('Date after').fill(after)
-      if (before !== null) await references.getByLabel('Date before').fill(before)
-      await references.getByRole('button', { name: 'Apply filter' }).click()
-    }
-    const clearFilters = async () => {
-      await references.getByRole('button', { name: 'Clear all filters and sort' }).click()
-      await expect(showing).toHaveCount(0)
+    }) => {
+      await waitForBoot(page)
+      const target = await ipc<string>(page, 'create_page_in_space', {
+        parentId: null,
+        content: 'Created target',
+        spaceId: SEED_IDS.SPACE_PERSONAL,
+      })
+      await seedSearchBlocks(
+        page,
+        ['one', 'two', 'three'].map((n) => ({ content: `Created ${n} [[${target}]]` })),
+      )
+      await openPage(page, 'Created target')
+      const references = page.getByTestId('linked-references')
+      const rows = references.locator('li[data-backlink-item] .linked-reference-item-text')
+      const showing = references.getByText(/^Showing \d+ of \d+ backlinks$/)
       await expect(rows).toHaveCount(3)
-    }
 
-    await addCreated(utcDay(-2), utcDay(2))
-    await expect(showing).toHaveText('Showing 3 of 3 backlinks')
-    await expect(rows).toHaveCount(3)
-    await clearFilters()
-    await addCreated(null, utcDay(-2))
-    await expect(showing).toHaveText('Showing 0 of 3 backlinks')
-    await clearFilters()
-    await addCreated(utcDay(2), null)
-    await expect(showing).toHaveText('Showing 0 of 3 backlinks')
-  })
-})
+      const addCreated = async (after: string | null, before: string | null) => {
+        await references.getByRole('button', { name: 'Add filter', exact: true }).click()
+        await chooseSelectOption(page, 'Filter category', 'Created date')
+        if (after !== null) await references.getByLabel('Date after').fill(after)
+        if (before !== null) await references.getByLabel('Date before').fill(before)
+        await references.getByRole('button', { name: 'Apply filter' }).click()
+      }
+      const clearFilters = async () => {
+        await references.getByRole('button', { name: 'Clear all filters and sort' }).click()
+        await expect(showing).toHaveCount(0)
+        await expect(rows).toHaveCount(3)
+      }
+
+      await addCreated(utcDay(-2), utcDay(2))
+      await expect(showing).toHaveText('Showing 3 of 3 backlinks')
+      await expect(rows).toHaveCount(3)
+      await clearFilters()
+      await addCreated(null, utcDay(-2))
+      await expect(showing).toHaveText('Showing 0 of 3 backlinks')
+      await clearFilters()
+      await addCreated(utcDay(2), null)
+      await expect(showing).toHaveText('Showing 0 of 3 backlinks')
+    })
+  },
+)
