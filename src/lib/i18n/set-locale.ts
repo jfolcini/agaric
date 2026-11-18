@@ -46,6 +46,7 @@ const LOCALE_LOADERS: Record<
   () => Promise<Record<string, string>>
 > = {
   de: async () => (await import('@/lib/i18n/de')).de,
+  'en-XA': async () => (await import('@/lib/i18n/en-XA')).enXA,
   es: async () => (await import('@/lib/i18n/es')).es,
   fr: async () => (await import('@/lib/i18n/fr')).fr,
   pt: async () => (await import('@/lib/i18n/pt')).pt,
