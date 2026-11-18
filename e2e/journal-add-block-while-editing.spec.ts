@@ -7,10 +7,10 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * mouse and by a tap: the press adds a block, which takes the editor, and the
  * blur cleanup drops the abandoned empty one.
  *
- * The mouse case comes from `e2e-tauri/search-bm25-order.e2e.ts`, where Enter
- * creates a sibling and focuses it before the next "Add block" press. The
- * button keeps the editor focused through the press. A tap needs that: its blur
- * is not held until the release the way a mouse press's is (`useEditorBlur`).
+ * In the mouse case, Enter creates a sibling and focuses it before the next
+ * "Add block" press. The button keeps the editor focused through the press. A
+ * tap needs that: its blur is not held until the release the way a mouse
+ * press's is (`useEditorBlur`).
  * The mock answers synchronously, so the desktop test injects the backend's IPC
  * latency test-side and drives the click as mousedown / mouseup with a
  * human-sized gap.

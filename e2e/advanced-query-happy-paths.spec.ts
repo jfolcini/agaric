@@ -113,6 +113,29 @@ test('a full-text term narrows the results and a sort key orders them @search', 
   await expect(resultRows(page)).toHaveText([/Quokka two/, /Quokka one/, /Quokka six/])
 })
 
+test('a two-character full-text term is found alone and beside a longer word (#6752) @search', async ({
+  page,
+}) => {
+  await seedSearchBlocks(page, [
+    { content: 'ink qz pod' },
+    { content: 'owl qz hen' },
+    { content: 'owl fig hen' },
+  ])
+  await navigateToView(page, 'Advanced query')
+  const term = page.getByRole('searchbox', { name: 'Full-text search' })
+  const total = page.getByTestId('advanced-query-total')
+  await expect(async () => {
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Advanced query')
+    await term.fill('qz')
+    await expect(total).toHaveText('2 matching blocks', { timeout: 2_000 })
+  }).toPass()
+  await expect(resultRows(page)).toHaveText([/owl qz hen|ink qz pod/, /owl qz hen|ink qz pod/])
+  await term.fill('owl qz')
+  await expect(total).toHaveText('1 matching block')
+  await expect(resultRows(page)).toHaveText([/owl qz hen/])
+})
+
 test('an empty query leaves out template pages and their placeholder blocks @search', async ({
   page,
 }) => {

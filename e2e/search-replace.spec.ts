@@ -121,6 +121,23 @@ test.describe('Replace across pages from Search @search @pages @editor', () => {
     await expect(page.getByText('third zorbex', { exact: true })).toBeVisible()
   })
 
+  test('Ctrl+Z on a page opened after a run undoes that page’s part only', async ({ page }) => {
+    await openSearchView(page)
+    const alpha = await seedPage(page, 'Undo Alpha', ['one pinnacle', 'two pinnacle'])
+    const beta = await seedPage(page, 'Undo Beta', ['three pinnacle'])
+    await previewReplace(page, 'pinnacle', 'zorbex')
+    await confirmReplace(page, 'Replace in 3 blocks across 2 pages')
+    await expect.poll(() => stored(page, alpha)).toEqual(['one zorbex', 'two zorbex'])
+    expect(await stored(page, beta)).toEqual(['three zorbex'])
+
+    await openPage(page, 'Undo Alpha')
+    await expect(page.getByText('one zorbex', { exact: true })).toBeVisible()
+    await page.locator('body').press('Control+z')
+    await expect.poll(() => stored(page, alpha)).toEqual(['one pinnacle', 'two pinnacle'])
+    expect(await stored(page, beta)).toEqual(['three zorbex'])
+    await expect(page.getByText('one pinnacle', { exact: true })).toBeVisible()
+  })
+
   test('replaces a two-letter term, counted on every block before the run (#6752)', async ({
     page,
   }) => {

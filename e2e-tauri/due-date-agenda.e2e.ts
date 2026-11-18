@@ -86,7 +86,7 @@ function duePanelGroupOfTask(): Promise<string | null> {
 /**
  * Wait until today's Due panel lists the task under `group`. The agenda rows
  * are written by the background materializer, so a panel that queried before
- * them is re-mounted to query again, as `search-bm25-order` re-submits.
+ * them is re-mounted to query again.
  */
 async function waitForDuePanelGroup(group: string): Promise<void> {
   let seen: string | null = null

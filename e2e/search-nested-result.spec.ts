@@ -4,7 +4,7 @@
  * An indented block's `parent_id` is the block above it, not its page. The mock's
  * `load_page_subtree` refuses a content block id, so a click that opens the parent
  * as a page is healed away from it and never focuses the hit; this lane shows that.
- * The real-backend twin is `e2e-tauri/search-nested-result.e2e.ts`.
+ * The bridge runs it on the real backend too.
  */
 
 import {

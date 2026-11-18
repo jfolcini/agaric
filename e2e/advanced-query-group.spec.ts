@@ -7,9 +7,21 @@
  * while the real backend labels a bucket by its value (`(none)` for the seed,
  * which has no `status` and no due dates). So this spec asserts that a grouped
  * result renders for a property key and that the date-bucket controls work;
- * real bucket labels are pinned by the engine tests (`agaric-store/src/query/tests.rs`).
+ * real bucket labels are pinned by the engine tests (`agaric-store/src/query/tests.rs`)
+ * and, on the backend, by the `@real-only` tests below.
  */
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import type { Page } from '@playwright/test'
+
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import {
+  chooseSelectOption,
+  expect,
+  ipc,
+  navigateToView,
+  seedSearchBlocks,
+  test,
+  waitForBoot,
+} from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
@@ -44,3 +56,125 @@ test('group by a property key and by a date bucket from the picker @search', asy
   await page.getByRole('option', { name: 'Month', exact: true }).click()
   await expect(unit).toHaveText('Month')
 })
+
+/** Each group's header as `key | count | aggregate chip…`. */
+function groupHeaders(page: Page): Promise<string[]> {
+  return page.getByTestId('advanced-query-group-section').evaluateAll((sections) =>
+    sections.map((section) => {
+      const header = section.querySelector('header')
+      const chips = header?.querySelectorAll('[data-testid="advanced-query-aggregate-chip"]')
+      return [
+        header?.querySelector('[data-testid="advanced-query-group-key"]')?.textContent ?? '',
+        header?.children[1]?.textContent ?? '',
+        ...[...(chips ?? [])].map((chip) => chip.textContent ?? ''),
+      ].join(' | ')
+    }),
+  )
+}
+
+/** Type `term` as the full-text term once the index holds its `count` blocks. */
+async function scopeTo(page: Page, term: string, count: number): Promise<void> {
+  // The materializer writes the FTS rows after the seed; poll before the view caches an answer.
+  await expect
+    .poll(async () => {
+      const res = await ipc<{ items: unknown[] }>(page, 'search_blocks', {
+        query: term,
+        cursor: null,
+        limit: 50,
+        filter: { scope: { kind: 'spaces', space_ids: [SEED_IDS.SPACE_PERSONAL] } },
+      })
+      return res.items.length
+    })
+    .toBe(count)
+  await navigateToView(page, 'Advanced query')
+  await page.getByRole('searchbox', { name: 'Full-text search' }).fill(term)
+  await expect(page.getByTestId('advanced-query-total')).toHaveText(`${count} matching blocks`)
+}
+
+// `@real-only`: the mock's grouped path returns one bucket keyed by the group type.
+test(
+  'groups by state with per-group counts and a Count summary, kept after leaving @search',
+  { tag: '@real-only' },
+  async ({ page }) => {
+    await seedSearchBlocks(page, [
+      { content: 'grpword one', todo: 'TODO' },
+      { content: 'grpword two', todo: 'TODO' },
+      { content: 'grpword six', todo: 'TODO' },
+      { content: 'grpword ten', todo: 'DOING' },
+      { content: 'grpword win', todo: 'DOING' },
+      { content: 'grpword cup', todo: 'DONE' },
+    ])
+    await scopeTo(page, 'grpword', 6)
+    await chooseSelectOption(page, 'Group by', 'State')
+    // `gcount DESC, gkey ASC`; grouped mode's total counts the buckets.
+    await expect
+      .poll(() => groupHeaders(page))
+      .toEqual(['TODO | 3 blocks', 'DOING | 2 blocks', 'DONE | 1 block'])
+    await expect(page.getByTestId('advanced-query-total')).toHaveText('3 groups')
+
+    await page.getByRole('button', { name: 'Add summary', exact: true }).click()
+    const counted = [
+      'TODO | 3 blocks | Count: 3',
+      'DOING | 2 blocks | Count: 2',
+      'DONE | 1 block | Count: 1',
+    ]
+    const global = page
+      .getByTestId('advanced-query-aggregate-summary')
+      .getByTestId('advanced-query-aggregate-chip')
+    await expect.poll(() => groupHeaders(page)).toEqual(counted)
+    await expect(global).toHaveText(['Count: 6'])
+
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Advanced query')
+    await expect.poll(() => groupHeaders(page)).toEqual(counted)
+    await expect(global).toHaveText(['Count: 6'])
+    await expect(page.getByTestId('advanced-query-total')).toHaveText('3 groups')
+  },
+)
+
+test(
+  "a block holding two items of a list key sits in both items' groups (#6741) @search",
+  { tag: '@real-only' },
+  async ({ page }) => {
+    await waitForBoot(page)
+    await ipc(page, 'create_property_def', {
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+      key: 'authors',
+      valueType: 'text',
+      options: null,
+      multiple: true,
+    })
+    const ids = await seedSearchBlocks(page, [
+      { content: 'lstword one' },
+      { content: 'lstword two' },
+      { content: 'lstword six' },
+    ])
+    const lists = [['Ann', 'Bob'], ['Ann', 'Ann'], ['Cy']]
+    await Promise.all(
+      ids.map((blockId, i) =>
+        ipc(page, 'set_property', {
+          blockId,
+          key: 'authors',
+          value: {
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+            value_list: lists[i],
+          },
+        }),
+      ),
+    )
+    await scopeTo(page, 'lstword', 3)
+    await chooseSelectOption(page, 'Group by', 'Property')
+    await page.getByRole('textbox', { name: 'Property key to group by' }).fill('authors')
+    // Block two's repeated Ann counts once.
+    const groups = ['Ann | 2 blocks', 'Bob | 1 block', 'Cy | 1 block']
+    await expect.poll(() => groupHeaders(page)).toEqual(groups)
+
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Advanced query')
+    await expect.poll(() => groupHeaders(page)).toEqual(groups)
+  },
+)
