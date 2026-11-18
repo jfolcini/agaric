@@ -2541,10 +2541,59 @@ struct McpServerWiring {
     write_pool: sqlx::SqlitePool,
     materializer: materializer::Materializer,
     device_id: String,
+    lifecycle: Arc<mcp::McpLifecycle>,
+    activity_ring: mcp::activity::McpActivityRing,
 }
 
-/// Boot-phase 14 — spawn the MCP server and register its managed
-/// lifecycle/gate/activity state.
+/// The managed state the Settings panels read beside the daemons'.
+/// [`manage_settings_state`] hands back the pieces boot's daemons share.
+pub(crate) struct SettingsState {
+    mcp_lifecycle: Arc<mcp::McpLifecycle>,
+    mcp_activity_ring: mcp::activity::McpActivityRing,
+    mirror: mirror::MirrorState,
+}
+
+/// Manage the Settings panels' state, for boot and `HeadlessApp` alike, so a
+/// state boot gains is one the headless bridge manages too.
+///
+/// - `McpLifecycle`: `get_mcp_status`, `mcp_disconnect_all` and
+///   `mcp_set_enabled` observe its connection counter and fire its
+///   disconnect signal.
+/// - `McpToggleGate` serialises rapid `mcp_set_enabled` toggles so the marker
+///   write and the spawn cannot interleave.
+/// - `McpActivityRing` (#695): one ring, so `get_mcp_recent_activity` reads
+///   what the serve task writes, kept across enable/disable cycles.
+/// - `MirrorState` (#5363): the Markdown mirror's commands.
+/// - `MdnsStatusState` (#2506) and `BindExposureStatusState` (#3864): managed
+///   before the sync daemon spawns, or its first emission lands nowhere and
+///   `get_mdns_status` / `get_bind_exposure_status` report a clean device
+///   that isn't.
+pub(crate) fn manage_settings_state<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    app_data_dir: &std::path::Path,
+) -> SettingsState {
+    use tauri::Manager;
+
+    let state = SettingsState {
+        mcp_lifecycle: Arc::new(mcp::McpLifecycle::new()),
+        mcp_activity_ring: mcp::activity::McpActivityRing::new(),
+        mirror: mirror::MirrorState::new(app_data_dir.to_path_buf()),
+    };
+    app.manage(state.mcp_lifecycle.clone());
+    app.manage(commands::McpToggleGate::new());
+    app.manage(state.mcp_activity_ring.clone());
+    app.manage(state.mirror.clone());
+    app.manage(agaric_sync::sync_events::MdnsStatusState(
+        std::sync::Mutex::default(),
+    ));
+    app.manage(agaric_sync::sync_events::BindExposureStatusState(
+        std::sync::Mutex::default(),
+    ));
+    state
+}
+
+/// Boot-phase 14 — spawn the MCP server over the lifecycle and activity ring
+/// [`manage_settings_state`] manages.
 ///
 /// The server is opt-in via its marker file; absent the marker the spawn
 /// helper logs and returns immediately.
@@ -2553,26 +2602,10 @@ fn wire_mcp_server<R: tauri::Runtime>(
     app_data_dir: &std::path::Path,
     w: McpServerWiring,
 ) {
-    use tauri::Manager;
-
     // #5667 — access that was on under either pre-#5667 socket stays on.
     if let Err(e) = mcp::adopt_legacy_markers(app_data_dir) {
         tracing::error!(target: "mcp", error = %e, "could not adopt the legacy MCP markers");
     }
-    // `McpLifecycle` is shared managed state so the Settings UI commands
-    // (`get_mcp_status`, `mcp_disconnect_all`, `mcp_set_enabled`) can observe
-    // the connection counter and fire the disconnect signal.
-    let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
-    app.manage(mcp_lifecycle.clone());
-    // Gate that serialises rapid `mcp_set_enabled` toggles
-    // so the marker write + spawn cannot interleave.
-    app.manage(commands::McpToggleGate::new());
-    // #695 — ONE shared activity ring, managed so the
-    // `get_mcp_recent_activity` command reads what the serve task writes.
-    // Allocated here (not inside `ActivityContext::from_app_handle`) so the
-    // history survives enable/disable cycles.
-    let mcp_activity_ring = mcp::activity::McpActivityRing::new();
-    app.manage(mcp_activity_ring.clone());
     // When the marker is absent, `spawn_mcp_task` logs and returns
     // immediately. When present, it binds the default socket and spawns the
     // serve loop. A second Agaric instance detects the existing socket and
@@ -2584,8 +2617,8 @@ fn wire_mcp_server<R: tauri::Runtime>(
         w.write_pool,
         w.materializer,
         w.device_id,
-        mcp_activity_ring.0.clone(),
-        Some((*mcp_lifecycle).clone()),
+        w.activity_ring.0.clone(),
+        Some((*w.lifecycle).clone()),
     );
 }
 
@@ -3079,12 +3112,15 @@ fn build_mcp_server_wiring(
     pools: &db::DbPools,
     materializer: &materializer::Materializer,
     device_id: &str,
+    settings: &SettingsState,
 ) -> McpServerWiring {
     McpServerWiring {
         read_pool: pools.read.clone(),
         write_pool: pools.write.clone(),
         materializer: materializer.clone(),
         device_id: device_id.to_owned(),
+        lifecycle: settings.mcp_lifecycle.clone(),
+        activity_ring: settings.mcp_activity_ring.clone(),
     }
 }
 
@@ -3093,8 +3129,6 @@ fn build_mcp_server_wiring(
 /// clones, so the "clone-before-move" discipline is enforced by the borrow
 /// checker.
 fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri::Manager;
-
     // #3334 — resolve the app data directory through the single
     // `app_paths` seam: normally the OS-standard directory derived
     // from the `tauri.conf.json` identifier, but `AGARIC_DATA_DIR`
@@ -3156,17 +3190,21 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // remaining synchronous enqueues + post-draft-recovery refresh).
     spawn_boot_maintenance(&pools, &materializer, &report);
 
-    // #5363: the Markdown mirror, managed everywhere for its commands, run on
-    // desktop only. Its first pass is off the critical path, a tick after boot.
-    let mirror_state = mirror::MirrorState::new(app_data_dir.clone());
-    app.manage(mirror_state.clone());
+    let settings = manage_settings_state(app, &app_data_dir);
+    // #5363: the Markdown mirror runs on desktop only. Its first pass is off
+    // the critical path, a tick after boot.
     if cfg!(desktop) {
         let ingest = mirror::ingest::Ingest::for_app(
             app.handle().clone(),
             pools.write.clone(),
             materializer.clone(),
         );
-        mirror::spawn(pools.read.clone(), device_id.clone(), mirror_state, ingest);
+        mirror::spawn(
+            pools.read.clone(),
+            device_id.clone(),
+            settings.mirror.clone(),
+            ingest,
+        );
     }
 
     // Long-running background tasks: sweepers, maintenance daemon,
@@ -3207,34 +3245,13 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Slice 2 — clone the pools + materializer +
     // device_id the MCP RO and RW servers need before the move.
-    let mcp_wiring = build_mcp_server_wiring(&pools, &materializer, &device_id);
+    let mcp_wiring = build_mcp_server_wiring(&pools, &materializer, &device_id, &settings);
 
     // Move all originals into Tauri managed state + install the
     // window-focus lifecycle listener. Returns the shared sync
     // cancel flag (#528) used by the daemon spawned next.
     let cancel_flag =
         register_managed_state(app, pools, device_id, materializer, scheduler, &lifecycle);
-
-    // #2506: register the mDNS-status managed state BEFORE the daemon
-    // spawns below, so `TauriEventSink::on_sync_event` can always
-    // find it via `try_state` the moment mDNS init runs (which can
-    // happen almost immediately if peers already exist —
-    // `start_if_peers_exist_with_lifecycle` skips dormant mode).
-    // `get_mdns_status` resolves this state for a frontend that
-    // mounts after that first emission.
-    app.manage(agaric_sync::sync_events::MdnsStatusState(
-        std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
-    ));
-
-    // #3864: same deal for the internet-facing-bind status, and the
-    // ordering matters more here — the endpoint binds within the
-    // first moments of `daemon_loop`, so this must be managed
-    // before the daemon spawns or the one emission of
-    // `SyncEvent::InternetFacingBind` lands nowhere and
-    // `get_bind_exposure_status` reports a clean device that isn't.
-    app.manage(agaric_sync::sync_events::BindExposureStatusState(
-        std::sync::Mutex::new(agaric_sync::sync_events::BindExposureStatus::default()),
-    ));
 
     // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
     // `app_data_dir` by a previous process that died mid-receive
@@ -3942,6 +3959,8 @@ mod boot_path_tests {
                 read_pool: pool.clone(),
                 write_pool: pool,
                 device_id: "dev-5667".to_owned(),
+                lifecycle: std::sync::Arc::new(crate::mcp::McpLifecycle::new()),
+                activity_ring: crate::mcp::activity::McpActivityRing::new(),
             }
         });
 

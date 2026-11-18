@@ -134,8 +134,7 @@ export function renderBlockRef(
     >
       {/* The `…` marker lives on this child, not the chip — the chip is
           `inline-flex` and `text-overflow` only applies to a block container
-          (see `.block-ref-chip-label` in `src/index.css`). The child is the
-          one that is cut, so it carries the reveal of the full title. */}
+          (see `.block-ref-chip-label` in `src/index.css`). */}
       {/* No hover title: the chip's peek shows the whole block on hover. */}
       <span className="block-ref-chip-label">{title}</span>
       {/* #4551 — the deleted marker is a visually-hidden CHILD, not an
