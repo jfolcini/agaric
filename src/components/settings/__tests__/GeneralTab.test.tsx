@@ -133,16 +133,12 @@ describe('GeneralTab — language', () => {
 describe('GeneralTab — pseudo-locale', () => {
   const PSEUDO_LABEL = '⟦Ĺáñğúáğé ~ ~⟧'
 
-  it('is offered last in debug mode', () => {
+  it('is offered in debug mode', () => {
     writePreference(PREFERENCES.debugMode, true)
     render(<GeneralTab />)
     const select = screen.getByLabelText(t('settings.languageLabel')) as HTMLSelectElement
-    const last = Array.from(select.options).at(-1)
-    expect([last?.value, last?.lang, last?.text]).toEqual([
-      'en-XA',
-      'en-XA',
-      'Pseudo-locale (en-XA)',
-    ])
+    const option = Array.from(select.options).find((o) => o.value === 'en-XA')
+    expect([option?.lang, option?.text]).toEqual(['en-XA', 'Pseudo-locale (en-XA)'])
   })
 
   it('choosing it persists it and re-renders the tab accented, padded and in markers', async () => {

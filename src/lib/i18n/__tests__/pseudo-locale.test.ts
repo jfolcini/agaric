@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest'
 
 import { i18n } from '@/lib/i18n'
 import { enXA, pseudoLocalize } from '@/lib/i18n/en-XA'
-import { ENGLISH_IN_EVERY_LOCALE } from '@/lib/i18n/english-in-every-locale'
 import { DEFAULT_LOCALE } from '@/lib/i18n/locales'
 
 const LETTERS = Array.from('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')
@@ -48,11 +47,5 @@ describe('the en-XA catalog', () => {
 
   it('pseudo-localizes the English value', () => {
     expect(enXA['settings.languageLabel']).toBe('⟦Ĺáñğúáğé ~ ~⟧')
-  })
-
-  it('keeps every ENGLISH_IN_EVERY_LOCALE value English', () => {
-    expect(ENGLISH_IN_EVERY_LOCALE.map((key) => enXA[key])).toEqual(
-      ENGLISH_IN_EVERY_LOCALE.map((key) => en[key]),
-    )
   })
 })

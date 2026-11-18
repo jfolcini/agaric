@@ -36,7 +36,7 @@ Turn on **Debug mode** (Settings › About), then pick **Pseudo-locale (en-XA)**
 - **A missing closing `⟧` is truncation.** The string is cut off, and a longer translation loses more.
 - **A broken layout is a string that will overflow in German or French**: a label that clips, wraps badly or pushes a control out of view.
 
-Placeholders, inline tags and the `ENGLISH_IN_EVERY_LOCALE` values stay as they are, and dates follow English.
+Placeholders, inline tags, the `ENGLISH_IN_EVERY_LOCALE` values and the language names in the picker stay as they are, and dates follow English.
 
 ## Rules every translation follows
 
