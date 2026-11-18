@@ -1,4 +1,4 @@
-# Session 4270 — the phone Settings section picker flake
+# Session 4271 — the phone Settings section picker flake
 
 Found in #6878's flake hunt (session 4239). On a phone, `openSettingsTab` (`e2e/helpers.ts`) picks the Settings section from a Radix Select: it taps the trigger, then taps the option. The open list scrolls to line the chosen item up with the trigger, and under load the option tap is aimed while the list still moves, so it misses and leaves the list open on General. Every phone spec that opens a Settings section through the helper inherits it.
 
