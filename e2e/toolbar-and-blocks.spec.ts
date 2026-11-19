@@ -570,16 +570,12 @@ test.describe('Block interactions @editor', () => {
   test('delete button removes block on hover', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    // Count blocks before deletion
-    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
-    expect(countBefore).toBeGreaterThan(0)
+    const rows = page.locator('[data-testid="sortable-block"]')
+    await expect(rows).toHaveCount(5)
 
-    // Delete the first block via the context menu
-    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    await deleteBlockViaContextMenu(page, firstBlock)
+    await deleteBlockViaContextMenu(page, rows.first())
 
-    // Block count should decrease by one
-    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
+    await expect(rows).toHaveCount(4)
   })
 
   // #370: the drag handle must follow the per-block hover contract — hidden at
