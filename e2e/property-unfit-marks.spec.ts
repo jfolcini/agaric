@@ -19,6 +19,12 @@ import {
  * `project` as a select of alpha, beta and gamma, held by the Meetings blocks
  * as alpha and beta; the Meetings page itself is given beta, and dropping beta
  * from the options leaves both betas not fitting.
+ *
+ * #6545 — beta added back from the page header's Edit options clears the block's mark without
+ * leaving the page. The chip reads the space's shared definitions query, which two paths refresh:
+ * the header writes the write's answer into it (`updateDefinitions`, #6946), and the change feed's
+ * `properties` / `property_defs` domains invalidate it (`invalidatePropertyCaches`). Either alone
+ * keeps the test green; it reds only with both broken.
  */
 
 const MEETINGS = '00000000000000000000PAGE05'
@@ -98,5 +104,23 @@ test.describe("Marks on values that don't fit a property @settings @pages @edito
 
     await navigateToView(page, 'Journal')
     await expectMarked(page)
+  })
+
+  test("an option added in the page header clears a block's mark without leaving the page (#6545)", async ({
+    page,
+  }) => {
+    await openPage(page, 'Meetings')
+    const mark = block(page, MTG_2).getByRole('button', { name: MARK, exact: true })
+    await expect(mark).toBeVisible()
+
+    await page.getByRole('button', { name: /^Properties/ }).click()
+    await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
+    const editor = activePopover(page)
+    await editor.getByRole('textbox', { name: 'New option value', exact: true }).fill('beta')
+    await editor.getByRole('button', { name: 'Add option', exact: true }).click()
+    await editor.getByRole('button', { name: 'Save options', exact: true }).click()
+    await expect(editor).toHaveCount(0)
+
+    await expect(mark).toHaveCount(0)
   })
 })

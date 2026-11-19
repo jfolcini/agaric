@@ -56,6 +56,7 @@ async function twoPagesTitled(
         content: '- a body',
         filename: `${title}.md`,
         spaceId: SCOPE.space_id,
+        dialect: 'Markdown',
       })
     ).page_id
   return [await importFile(olderTitle), await importFile(newerTitle)]
