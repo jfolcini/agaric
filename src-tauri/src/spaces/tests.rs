@@ -3495,6 +3495,92 @@ async fn a_peers_new_page_takes_its_newest_blocks_time_6048() {
     fx.shutdown();
 }
 
+// #6229: an alias two devices gave to different pages moves to the other
+// page when the device that pulled both claims drops it from its holder
+// ---------------------------------------------------------------------------
+
+/// #6229: B aliases its page, A gives its newer page the same alias, and B
+/// pulls the claim: B's older page holds the alias (#5387). B then drops it
+/// from that page, and its commit hands the alias to A's page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dropping_a_pulled_contested_alias_hands_it_to_the_peers_page_6229() {
+    use crate::commands::{
+        create_page_in_space_inner, get_page_aliases_inner, set_page_aliases_inner,
+    };
+
+    const ALIAS: &str = "plans";
+    let fx = SyncedPair::new().await;
+    let holder = create_page_in_space_inner(
+        &fx.pool_b,
+        "device-B",
+        &fx.mat_b,
+        None,
+        "Holder".into(),
+        fx.space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    set_page_aliases_inner(
+        &fx.pool_b,
+        "device-B",
+        &fx.mat_b,
+        holder.as_str(),
+        vec![ALIAS.into()],
+    )
+    .await
+    .unwrap();
+    // A's page must be the newer one, the one that loses the tie.
+    let holder_ms = agaric_store::db::now_ms();
+    while agaric_store::db::now_ms() <= holder_ms {
+        tokio::task::yield_now().await;
+    }
+    let claimant = fx.page_on_a("Claimant").await;
+    set_page_aliases_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        claimant.as_str(),
+        vec![ALIAS.into()],
+    )
+    .await
+    .unwrap();
+    fx.pull().await;
+
+    let aliases = || async {
+        (
+            get_page_aliases_inner(&fx.pool_b, holder.as_str())
+                .await
+                .unwrap(),
+            get_page_aliases_inner(&fx.pool_b, claimant.as_str())
+                .await
+                .unwrap(),
+        )
+    };
+    assert_eq!(
+        aliases().await,
+        (vec![ALIAS.to_owned()], Vec::new()),
+        "after the pull B's older page holds the alias"
+    );
+
+    set_page_aliases_inner(
+        &fx.pool_b,
+        "device-B",
+        &fx.mat_b,
+        holder.as_str(),
+        Vec::new(),
+    )
+    .await
+    .unwrap();
+    fx.mat_b.flush_background().await.unwrap();
+    assert_eq!(
+        aliases().await,
+        (Vec::new(), vec![ALIAS.to_owned()]),
+        "once B's page drops the alias, A's page holds it"
+    );
+    fx.shutdown();
+}
+
+// ---------------------------------------------------------------------------
 // #6242: a mention of a page or tag in another space is indexed by the
 // target's real name, so the incremental FTS path must find the mentioner
 // when the target arrives or is renamed.
