@@ -187,7 +187,7 @@ jobs:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
           # The cross `targets` below install onto this exact toolchain.
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           targets: ${{ matrix.target }}
 
       - name: Read pins.txt
@@ -1860,7 +1860,7 @@ jobs:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
           # The cross `targets` below install onto this exact toolchain.
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           targets: aarch64-linux-android
 
       # NO Rust cache here — deliberately (#3542). A `Swatinem/rust-cache`

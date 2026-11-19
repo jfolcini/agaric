@@ -375,7 +375,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy,rustfmt
 
       - name: Check formatting over the whole workspace
@@ -478,7 +478,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       # No rust-cache: a saved entry was evicted before the next week's run
       # could restore it (the repo is over its cache limit), and each save
@@ -782,7 +782,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -1014,7 +1014,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -1242,7 +1242,7 @@ jobs:
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
