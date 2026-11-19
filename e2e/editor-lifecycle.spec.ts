@@ -5,9 +5,13 @@ import {
   deleteBlockViaContextMenu,
   expect,
   focusBlockById,
+  ipc,
   navigateToView,
+  openPage,
   openPageMobile,
+  reopenPage,
   replaceEditorText,
+  saveBlock,
   test,
   waitForBoot,
 } from './helpers'
@@ -38,6 +42,37 @@ async function openGettingStarted(page: import('@playwright/test').Page) {
   // Violation under parallel load — flake, session 679).
   await page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }).first().click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
+}
+
+/**
+ * Answer each `edit_block` only once a page read has returned its block, so that read predates
+ * the edit: a reopened page then shows the edit only if it reads again after it lands.
+ */
+async function holdEditsUntilBlockReread(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (cmd: string, ...rest: unknown[]) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    const invoke = internals.invoke.bind(internals)
+    const waiting = new Map<string, () => void>()
+    internals.invoke = async (cmd, ...rest) => {
+      if (cmd === 'edit_block') {
+        const { blockId } = rest[0] as { blockId: string }
+        await new Promise<void>((resolve) => waiting.set(blockId, resolve))
+        return invoke(cmd, ...rest)
+      }
+      const answer = await invoke(cmd, ...rest)
+      if (cmd === 'load_page_subtree') {
+        for (const { id } of (answer as { blocks: Array<{ id: string }> }).blocks) {
+          waiting.get(id)?.()
+          waiting.delete(id)
+        }
+      }
+      return answer
+    }
+  })
 }
 
 /** Click "Add block", wait for the TipTap editor to appear, type text, press Enter to save. */
@@ -243,6 +278,42 @@ test.describe('Editor lifecycle @editor @mobile', () => {
 
     // Block should still be there (mock state persists within session)
     await expect(page.getByText('Persistent block')).toBeVisible()
+  })
+
+  test('an edit still saving as its page reopens shows once saved', async ({ page }) => {
+    const text = 'saved after the page reopened'
+    await openGettingStarted(page)
+    await focusBlockById(page, SEED_GS_1)
+    await replaceEditorText(page, text)
+    await holdEditsUntilBlockReread(page)
+    await saveBlock(page, 'Escape')
+    await reopenPage(page, 'Getting Started')
+
+    await expect(
+      page.locator(`[data-block-id="${SEED_GS_1}"] [data-testid="block-static"]`),
+    ).toHaveText(text)
+    expect(
+      (await ipc<{ content: string }>(page, 'get_block', { blockId: SEED_GS_1 })).content,
+    ).toBe(text)
+  })
+
+  // A new page's first block is blank, so the leave writes it through the blur's early persist.
+  test("a new page's first block still saving as the page reopens shows once saved", async ({
+    page,
+  }) => {
+    const title = 'Saved after reopening'
+    const text = 'typed into the first block'
+    await navigateToView(page, 'Pages')
+    await createPageFromPagesView(page, title)
+    await page.keyboard.type(text)
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await expect(editor).toHaveText(text)
+    await holdEditsUntilBlockReread(page)
+    await navigateToView(page, 'Journal')
+    await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible()
+    await openPage(page, title)
+
+    await expect(page.locator('[data-testid="block-static"]')).toHaveText([text])
   })
 
   // A day's block survives the Journal unmounting, whether Enter committed it
