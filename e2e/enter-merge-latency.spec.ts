@@ -134,22 +134,38 @@ async function focusKeptAcrossEnterAndMerge(page: Page, surface: Surface): Promi
   await expectRows(page, surface, ['onetwo'])
 }
 
+// `@mock-only`: the slow save comes from the mock's `__setMockLatency`.
 test.describe('keys typed while a journal day saves Enter or a merge @editor @journal', () => {
-  test('a second Enter is kept and the keys around both land in their blocks', ({ page }) =>
-    typeAcrossEnters(page, journalDay))
-  test('keys typed after Enter mid-line go to the split-off block', ({ page }) =>
-    typeAcrossSplit(page, journalDay))
-  test('keys typed after a Backspace merge go to the join', ({ page }) =>
-    typeAcrossMerge(page, journalDay))
+  test(
+    'a second Enter is kept and the keys around both land in their blocks',
+    { tag: '@mock-only' },
+    ({ page }) => typeAcrossEnters(page, journalDay),
+  )
+  test(
+    'keys typed after Enter mid-line go to the split-off block',
+    { tag: '@mock-only' },
+    ({ page }) => typeAcrossSplit(page, journalDay),
+  )
+  test('keys typed after a Backspace merge go to the join', { tag: '@mock-only' }, ({ page }) =>
+    typeAcrossMerge(page, journalDay),
+  )
   test('the editor keeps the focus straight through Enter and a merge', ({ page }) =>
     focusKeptAcrossEnterAndMerge(page, journalDay))
 })
 
+// `@mock-only`: the slow save comes from the mock's `__setMockLatency`.
 test.describe('keys typed while a page saves Enter or a merge @editor @pages', () => {
-  test('a second Enter is kept and the keys around both land in their blocks', ({ page }) =>
-    typeAcrossEnters(page, newPage))
-  test('keys typed after Enter mid-line go to the split-off block', ({ page }) =>
-    typeAcrossSplit(page, newPage))
-  test('keys typed after a Backspace merge go to the join', ({ page }) =>
-    typeAcrossMerge(page, newPage))
+  test(
+    'a second Enter is kept and the keys around both land in their blocks',
+    { tag: '@mock-only' },
+    ({ page }) => typeAcrossEnters(page, newPage),
+  )
+  test(
+    'keys typed after Enter mid-line go to the split-off block',
+    { tag: '@mock-only' },
+    ({ page }) => typeAcrossSplit(page, newPage),
+  )
+  test('keys typed after a Backspace merge go to the join', { tag: '@mock-only' }, ({ page }) =>
+    typeAcrossMerge(page, newPage),
+  )
 })

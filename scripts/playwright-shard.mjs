@@ -4,6 +4,9 @@
 //   node scripts/playwright-shard.mjs 3/4                prints shard 3's files
 //   node scripts/playwright-shard.mjs --update <report>  rewrites the times
 //
+// With `AGARIC_E2E_BRIDGE` set, as for the run itself, both act on the bridge
+// lane: the files `REAL_BACKEND_SPECS` lists, timed in e2e/bridge-durations.json.
+//
 // Playwright's own `--shard` cuts the test list into contiguous runs of equal
 // count, so the files with the slowest tests, which sort together, made one
 // shard the long pole of `validate-all`. Each file's time is the sum of its
@@ -14,7 +17,8 @@ import { globSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const ROOT = path.join(import.meta.dirname, '..')
-const DURATIONS = 'e2e/spec-durations.json'
+const BRIDGE = process.env['AGARIC_E2E_BRIDGE'] !== undefined
+const DURATIONS = BRIDGE ? 'e2e/bridge-durations.json' : 'e2e/spec-durations.json'
 // Playwright's default `testMatch`, under the config's `testDir`.
 const SPEC_GLOB = 'e2e/**/*.{spec,test}.{js,jsx,cjs,mjs,ts,tsx,cts,mts}'
 
@@ -76,10 +80,11 @@ function main([arg, reportPath]) {
   const [shard, total] = match ? [Number(match[1]), Number(match[2])] : [0, 0]
   if (shard < 1 || shard > total)
     throw new Error('usage: playwright-shard.mjs <k>/<n> | --update <report.json>')
-  const files = globSync(SPEC_GLOB, { cwd: ROOT }).toSorted()
+  const listed = realBackendSpecs().map((spec) => `e2e/${spec}`)
+  const files = BRIDGE ? listed.toSorted() : globSync(SPEC_GLOB, { cwd: ROOT }).toSorted()
   const seconds = JSON.parse(readFileSync(path.join(ROOT, DURATIONS), 'utf8'))
   // The mock lane runs a listed spec's `@mock-only` tests alone, a few seconds.
-  for (const spec of realBackendSpecs()) seconds[`e2e/${spec}`] = 0
+  if (!BRIDGE) for (const spec of listed) seconds[spec] = 0
   const mine = dealSpecFiles(files, total, seconds)[shard - 1]
   // An empty list would make `npx playwright test` run every spec.
   if (mine.length === 0) throw new Error(`shard ${arg} has no spec files`)

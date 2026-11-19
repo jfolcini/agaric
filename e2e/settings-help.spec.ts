@@ -69,39 +69,42 @@ test.describe('Settings › Help @settings', () => {
     await waitForBoot(page)
   })
 
-  test('debug mode appends the error kind to a failure message, and off drops it', async ({
-    page,
-  }) => {
-    // Every toast is handed translated copy, so the kind shows on an inline
-    // banner that formats the raw rejection: the pairing dialog's.
-    await page.evaluate(() => {
-      ;(
-        window as unknown as { __injectMockError: (cmd: string, err: unknown) => void }
-      ).__injectMockError('confirm_pairing', {
-        kind: 'invalid_operation',
-        message: 'Invalid operation: the code was already used',
+  // `@mock-only`: the failure comes from the mock's `__injectMockError`.
+  test(
+    'debug mode appends the error kind to a failure message, and off drops it',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      // Every toast is handed translated copy, so the kind shows on an inline
+      // banner that formats the raw rejection: the pairing dialog's.
+      await page.evaluate(() => {
+        ;(
+          window as unknown as { __injectMockError: (cmd: string, err: unknown) => void }
+        ).__injectMockError('confirm_pairing', {
+          kind: 'invalid_operation',
+          message: 'Invalid operation: the code was already used',
+        })
       })
-    })
-    const debugSwitch = page.getByRole('switch', { name: 'Debug mode' })
+      const debugSwitch = page.getByRole('switch', { name: 'Debug mode' })
 
-    await openAbout(page)
-    await debugSwitch.click()
-    await expect(debugSwitch).toHaveAttribute('aria-checked', 'true')
-    await expect(await failPairing(page)).toHaveText(
-      'Pairing failed: the code was already used · code: invalid_operation',
-    )
-    await page.keyboard.press('Escape')
-    await expect(activeDialog(page)).toHaveCount(0)
+      await openAbout(page)
+      await debugSwitch.click()
+      await expect(debugSwitch).toHaveAttribute('aria-checked', 'true')
+      await expect(await failPairing(page)).toHaveText(
+        'Pairing failed: the code was already used · code: invalid_operation',
+      )
+      await page.keyboard.press('Escape')
+      await expect(activeDialog(page)).toHaveCount(0)
 
-    await openSettingsTab(page, 'About')
-    await debugSwitch.click()
-    await expect(debugSwitch).toHaveAttribute('aria-checked', 'false')
-    await expect(await failPairing(page)).toHaveText('Pairing failed: the code was already used')
+      await openSettingsTab(page, 'About')
+      await debugSwitch.click()
+      await expect(debugSwitch).toHaveAttribute('aria-checked', 'false')
+      await expect(await failPairing(page)).toHaveText('Pairing failed: the code was already used')
 
-    // Each failed pair logs the rejection.
-    expect(getConsoleErrors(page).filter((e) => e.includes('Pairing failed'))).toHaveLength(2)
-    clearConsoleErrors(page)
-  })
+      // Each failed pair logs the rejection.
+      expect(getConsoleErrors(page).filter((e) => e.includes('Pairing failed'))).toHaveLength(2)
+      clearConsoleErrors(page)
+    },
+  )
 
   test('Show tour reopens the welcome modal, and closing it marks onboarding done', async ({
     page,

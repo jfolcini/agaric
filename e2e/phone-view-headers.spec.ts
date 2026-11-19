@@ -115,49 +115,53 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     )
   })
 
-  test('Agenda: no nested scroll box, the header scrolls away, the list stays windowed', async ({
-    page,
-  }) => {
-    await page.evaluate(() =>
-      (window as unknown as { __addMockAgendaItems: (n: number) => string[] }).__addMockAgendaItems(
-        60,
-      ),
-    )
-    await openJournalMode(page, 'Agenda')
-    const items = page.locator('[data-testid="agenda-results-item"]')
-    await expect(items.first()).toBeVisible()
-    expect((await rect(items.first())).top).toBeLessThan(FIRST_ROW_LIMIT)
-    await expect(page.locator('.agenda-results-scroll')).toHaveCount(0)
-    await expectOneHiddenHeading(page, 'Journal')
-    expect(await items.count()).toBeLessThan(60)
-
-    // Halfway down the list, clear of both ends of the window.
-    const scrolled = await page.locator('#main-content').evaluate((el) => {
-      el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
-      return el.scrollTop
-    })
-    expect(scrolled).toBeGreaterThan(0)
-    const bar = await barBottom(page)
-    expect((await rect(page.getByTestId('view-header-outlet'))).bottom).toBeLessThanOrEqual(bar)
-    // The window follows the page scroll: the rows on screen are mounted, and
-    // only the virtualizer's overscan (5) lies past each edge. A window placed
-    // against the list's own top instead of its place in the page mounts a
-    // screen's worth too far down.
-    const rows = page.locator('.agenda-results-list > li[data-index]')
-    await expect
-      .poll(() =>
-        rows.evaluateAll((els, top) => {
-          const boxes = els.map((el) => el.getBoundingClientRect())
-          return {
-            onScreen: boxes.filter((r) => r.bottom > top && r.top < window.innerHeight).length > 3,
-            above: boxes.filter((r) => r.bottom <= top).length,
-            below: boxes.filter((r) => r.top >= window.innerHeight).length,
-          }
-        }, bar),
+  // `@mock-only`: the long list comes from the mock's `__addMockAgendaItems`.
+  test(
+    'Agenda: no nested scroll box, the header scrolls away, the list stays windowed',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      await page.evaluate(() =>
+        (
+          window as unknown as { __addMockAgendaItems: (n: number) => string[] }
+        ).__addMockAgendaItems(60),
       )
-      .toEqual({ onScreen: true, above: 5, below: 5 })
-    expect(await items.count()).toBeLessThan(60)
-  })
+      await openJournalMode(page, 'Agenda')
+      const items = page.locator('[data-testid="agenda-results-item"]')
+      await expect(items.first()).toBeVisible()
+      expect((await rect(items.first())).top).toBeLessThan(FIRST_ROW_LIMIT)
+      await expect(page.locator('.agenda-results-scroll')).toHaveCount(0)
+      await expectOneHiddenHeading(page, 'Journal')
+      expect(await items.count()).toBeLessThan(60)
+
+      // Halfway down the list, clear of both ends of the window.
+      const scrolled = await page.locator('#main-content').evaluate((el) => {
+        el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
+        return el.scrollTop
+      })
+      expect(scrolled).toBeGreaterThan(0)
+      const bar = await barBottom(page)
+      expect((await rect(page.getByTestId('view-header-outlet'))).bottom).toBeLessThanOrEqual(bar)
+      // The window follows the page scroll: the rows on screen are mounted, and
+      // only the virtualizer's overscan (5) lies past each edge. A window placed
+      // against the list's own top instead of its place in the page mounts a
+      // screen's worth too far down.
+      const rows = page.locator('.agenda-results-list > li[data-index]')
+      await expect
+        .poll(() =>
+          rows.evaluateAll((els, top) => {
+            const boxes = els.map((el) => el.getBoundingClientRect())
+            return {
+              onScreen:
+                boxes.filter((r) => r.bottom > top && r.top < window.innerHeight).length > 3,
+              above: boxes.filter((r) => r.bottom <= top).length,
+              below: boxes.filter((r) => r.top >= window.innerHeight).length,
+            }
+          }, bar),
+        )
+        .toEqual({ onScreen: true, above: 5, below: 5 })
+      expect(await items.count()).toBeLessThan(60)
+    },
+  )
 
   test('Trash: one title, its actions kept, rows high on the screen', async ({ page }) => {
     const ids = await seedSearchBlocks(
