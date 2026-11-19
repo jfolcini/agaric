@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { UNDO_GROUP_WINDOW_MS } from '@/lib/constants'
 import {
   isWithinUndoGroup,
   latestUndoEntry,
   MAX_COALESCED_UNDO_REFS,
   MAX_REDO_STACK,
-  UNDO_GROUP_WINDOW_MS,
   useUndoStore,
 } from '@/stores/undo'
 

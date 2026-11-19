@@ -472,8 +472,6 @@ export const common: Record<string, string> = {
   'data.mirrorAdoptLeftAloneHeading_other':
     "{{count}} fichiers laissés tels quels : pas des notes qu'Agaric a importées",
   'data.mirrorAdopted': 'Agaric tient « {{name}} » à jour avec son espace.',
-  'data.mirrorAdoptDeclined':
-    "Les notes restent dans l'espace « {{name}} » ; le dossier n'est pas reflété.",
   'data.mirrorFailed': 'Le dossier miroir n’a pas été modifié\u00A0: {{reason}}',
   'data.mirrorPaused': 'En pause\u00A0: {{reason}}',
   'data.mirrorDivergedHeading': 'Modifiés hors d’Agaric\u00A0; pas encore réintégrés',

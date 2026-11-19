@@ -44,8 +44,9 @@ name: Validate (prek-equivalent)
 #                        lists but for their `@mock-only` tests.
 #   - bridge-build / bridge-specs — the `bridge` bin, then the listed specs
 #                        on the real commands, sharded 3 ways (or the changed
-#                        specs alone, as above); gated on `playwright` or
-#                        `rust_tests`.
+#                        specs alone, as above); gated on the classifier's
+#                        `bridge` (a Rust change, the whole Playwright lane,
+#                        or a changed spec the list names).
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
 #                        sharded 2 ways; gated on the classifier's
 #                        `rust_tests`: a backend change outside the paths
@@ -161,6 +162,7 @@ jobs:
       vitest_e2e_tauri: ${{ steps.classify.outputs.vitest_e2e_tauri }}
       playwright: ${{ steps.classify.outputs.playwright }}
       playwright_specs: ${{ steps.classify.outputs.playwright_specs }}
+      bridge: ${{ steps.classify.outputs.bridge }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1479,11 +1481,12 @@ jobs:
   # bridge-build / bridge-specs — #6529. The specs `playwright.config.ts` lists
   # in `REAL_BACKEND_SPECS`, on the real commands through the `bridge` bin; the
   # mock lane above skips them. A frontend change reaches them as the mock lane
-  # does, and a Rust change through the commands they call.
+  # does, a Rust change through the commands they call, and a spec-only change
+  # only when it touches a listed spec (`bridge` in classify-changes.sh).
   # ---------------------------------------------------------------------------
   bridge-build:
     needs: detect-changes
-    if: needs.detect-changes.outputs.playwright == 'true' || needs.detect-changes.outputs.rust_tests == 'true'
+    if: needs.detect-changes.outputs.bridge == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -2053,6 +2056,7 @@ jobs:
           PLAYWRIGHT: ${{ needs.detect-changes.outputs.playwright }}
           BACKEND: ${{ needs.detect-changes.outputs.backend }}
           RUST_TESTS: ${{ needs.detect-changes.outputs.rust_tests }}
+          BRIDGE: ${{ needs.detect-changes.outputs.bridge }}
         run: |
           set -euo pipefail
 
@@ -2078,13 +2082,13 @@ jobs:
           }
 
           classifier="$(result_of detect-changes)"
-          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>} rust_tests=${RUST_TESTS:-<empty>}"
+          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>} rust_tests=${RUST_TESTS:-<empty>} bridge=${BRIDGE:-<empty>}"
 
           # ---- Resolve category booleans, fail-closed -----------------------
           # On a SUCCESSFUL classifier, take each output that is the literal
           # "true" or "false"; any other value fails the gate and keeps its
           # pin. Otherwise we cannot trust any category: PIN
-          # vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true,
+          # vitest=vitest_e2e_tauri=playwright=backend=rust_tests=bridge=true,
           # docs_only=false (require/run everything) and fail the gate — a
           # classifier that did not succeed can never let a heavy job pass on a
           # skip.
@@ -2094,6 +2098,7 @@ jobs:
           playwright="true"
           backend="true"
           rust_tests="true"
+          bridge="true"
           category() {
             case "$2" in
               true|false) printf -v "$1" '%s' "$2" ;;
@@ -2107,10 +2112,11 @@ jobs:
             category playwright "$PLAYWRIGHT"
             category backend "$BACKEND"
             category rust_tests "$RUST_TESTS"
+            category bridge "$BRIDGE"
           else
-            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true, docs_only=false."
+            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=rust_tests=bridge=true, docs_only=false."
           fi
-          echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend rust_tests=$rust_tests"
+          echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend rust_tests=$rust_tests bridge=$bridge"
 
           # ---- Per-category acceptance --------------------------------------
           # lint is CROSS-CUTTING: it runs on any non-docs change, so its skip
@@ -2130,9 +2136,7 @@ jobs:
           check_job vitest-e2e-tauri "$vet_skip_ok"
           pw_skip_ok="false"; if [ "$playwright" != "true" ]; then pw_skip_ok="true"; fi
           check_job playwright "$pw_skip_ok"
-          # The bridge lane runs on a frontend change as the mock lane does,
-          # and on a Rust change too.
-          br_skip_ok="false"; if [ "$playwright" != "true" ] && [ "$rust_tests" != "true" ]; then br_skip_ok="true"; fi
+          br_skip_ok="false"; if [ "$bridge" != "true" ]; then br_skip_ok="true"; fi
           check_job bridge-build "$br_skip_ok"
           check_job bridge-specs "$br_skip_ok"
 

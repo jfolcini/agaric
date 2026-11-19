@@ -1020,9 +1020,9 @@ impl Mirror {
             Vec::new()
         };
         // An adopted folder's hold names its space, looked up only when
-        // something changed: an ordinary tick reads no space.
+        // enough changed to hold: a tick at or under the limit reads no space.
         let adopted = match &self.adoption {
-            Some(adoption) if !changed.is_empty() => Some(
+            Some(adoption) if changed.len() > read_back::MASS_CHANGE => Some(
                 crate::commands::spaces::list_spaces_inner(&self.pool)
                     .await?
                     .into_iter()

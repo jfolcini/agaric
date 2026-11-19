@@ -19,6 +19,7 @@ import { create } from 'zustand'
 import { isNonReversible, isNotFound, isValidation, takenNameReason, unwrap } from '@/lib/app-error'
 import type { OpRef, UndoResult } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { UNDO_GROUP_WINDOW_MS } from '@/lib/constants'
 import { parsePayloadObject } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -45,14 +46,6 @@ export const MAX_UNDO_STACK = 100
  * the cap `onNewAction` pushes a fresh entry, so each Ctrl+Z reverts one chunk.
  */
 export const MAX_COALESCED_UNDO_REFS = 200
-
-/**
- * Window (ms) within which consecutive ops group into one undo: wide enough
- * for a recurrence burst on a slow device, narrow enough not to merge two
- * intentional actions. Drives capture-time coalescing in `onNewAction` and
- * the backend's grouping for the positional fallback.
- */
-export const UNDO_GROUP_WINDOW_MS = 500
 
 /** Whether two ISO-8601 timestamps are within `UNDO_GROUP_WINDOW_MS` of each other. */
 export function isWithinUndoGroup(ts1: string, ts2: string): boolean {

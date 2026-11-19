@@ -157,9 +157,7 @@ describe('Open a folder of notes', () => {
       ],
     })
     expect(await screen.findByTestId('mirror-folder')).toHaveTextContent(FOLDER)
-    // Adopted, never also told the folder was left unmirrored.
     expect(notified.success).toHaveBeenCalledWith(t('data.mirrorAdopted', { name: 'Vault' }))
-    expect(notified).not.toHaveBeenCalledWith(t('data.mirrorAdoptDeclined', { name: 'Vault' }))
   })
 
   it('refuses a Logseq graph before anything is written', async () => {
@@ -175,15 +173,19 @@ describe('Open a folder of notes', () => {
     expect(adopted).toBeNull()
   })
 
-  it('leaves the folder unmirrored when the user declines', async () => {
+  it.each([
+    ['Not now', (dialog: HTMLElement) => within(dialog).getByTestId('mirror-adopt-decline')],
+    ['Escape', null],
+  ])('leaves the folder unmirrored, saying nothing more, on %s', async (_, button) => {
     const user = userEvent.setup()
     const dialog = await openFolder(user)
-    await user.click(within(dialog).getByTestId('mirror-adopt-decline'))
+    if (button === null) await user.keyboard('{Escape}')
+    else await user.click(button(dialog))
 
     await waitFor(() => expect(screen.queryByTestId('mirror-adopt-dialog')).toBeNull())
     expect(adopted).toBeNull()
-    expect(notified).toHaveBeenCalledWith(t('data.mirrorAdoptDeclined', { name: 'Vault' }))
-    // The imported notes stay in their space.
+    // The dialog already said the notes are the new space's pages.
+    expect(notified).not.toHaveBeenCalled()
     expect(spaces).toEqual([{ id: 'SPACE_1', name: 'Vault' }])
   })
 
