@@ -18,6 +18,7 @@ This is slice 3 of #6755, the last. Slice 1 (#6945) and slice 2 (#6973), with th
 - Org pages in a graph are titled by `#+TITLE`, so mapping them by file name made stray tags. Only Markdown pages map.
 - The merge path rolled back the transaction that had just recreated a deleted tag. `create_import_page` now commits it first.
 - `list_import_merges` looked up the title as written, so a dashed re-import merged without being listed. It now names the same title the import will use (`import_tag_page_naming`).
+- A padded name such as `[[Tag/ x]]` kept its title, so tag x never found it as its page. The title is now `Tag/x` (review note).
 
 **Not done:** the `#` picker's in-session tag cache doesn't learn a tag made by a typed `[[Tag/x]]`. Its Create resolves to the existing tag in the backend, so nothing is duplicated.
 
