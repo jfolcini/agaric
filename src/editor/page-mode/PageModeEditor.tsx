@@ -473,6 +473,7 @@ function PageModeDocument({
     PageTaskActions & {
       pick: (step: () => Promise<void>, readAgain: boolean) => void
       setListStyle: (id: string, style: ListStyle) => void
+      clearLists: (ids: string[]) => Promise<OpRef[]>
       command: (item: PickerItem) => void
       /** `/attach`'s file: attached, as block mode's `/attach` attaches it, never put in the text. */
       attachPicked: (id: string, files: File[]) => void
@@ -498,18 +499,17 @@ function PageModeDocument({
     saveQuery: () => Promise.resolve(false),
     pick: () => {},
     setListStyle: () => {},
+    clearLists: () => Promise.resolve([]),
     command: () => {},
     attachPicked: () => {},
     openHistory: () => {},
     turnInto: () => {},
     pasteOnBlockPath: () => {},
   })
-  // A block made a task loses its list style through page mode's lists (#5691 D3). Each write
-  // joins the change's undo entry by its own refs (#6156), so none are handed back.
-  const [clearLists] = useState(() => (ids: string[]): OpRef[] => {
-    for (const id of ids) actions.current.setListStyle(id, 'none')
-    return []
-  })
+  // A block made a task loses its list style through page mode's lists (#5691 D3). Its callers
+  // run after the save, so the clears are written at once and their refs join the task write's
+  // undo entry (#6156), as block mode's `clearListStyles` does.
+  const [clearLists] = useState(() => (ids: string[]) => actions.current.clearLists(ids))
   const { handleToggleTodo, handleTogglePriority } = useBlockProperties(clearLists)
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
@@ -985,6 +985,26 @@ function PageModeDocument({
             )
           }
         }).then(() => lists.settle(id, seq, written))
+      },
+      // A failure is logged and told, and resolves the refs of the clears made before it.
+      clearLists: async (ids) => {
+        const refs: OpRef[] = []
+        for (const id of ids) {
+          if (lists.styleOf(id) === 'none') continue
+          const seq = lists.want(id, 'none')
+          let written: ListStyle | null = null
+          try {
+            refs.push(...(await setListStyle(id, 'none')))
+            written = 'none'
+          } catch (err) {
+            logger.error('PageModeEditor', "Failed to clear a new task's list style", { id }, err)
+            notify.error(t('blockTree.clearListStyleFailed'))
+            return refs
+          } finally {
+            lists.settle(id, seq, written)
+          }
+        }
+        return refs
       },
       // Block mode's handler on the caret's block: a command that writes to it after the save.
       command: (item) => {

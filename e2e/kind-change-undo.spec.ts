@@ -125,6 +125,12 @@ function caretAtEnd(page: Page, index: number): Promise<unknown> {
   )
 }
 
+function setMockLatency(page: Page, ms: number): Promise<void> {
+  return page.evaluate((delay) => {
+    ;(window as unknown as { __setMockLatency: (ms: number) => void }).__setMockLatency(delay)
+  }, ms)
+}
+
 /** A page-level Ctrl+Z, with no editor focused, once it has run. */
 async function pageUndo(page: Page): Promise<void> {
   await blurEditors(page)
@@ -304,6 +310,30 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     await expect
       .poll(() => kindOf(page, beta))
       .toEqual({ text: 'beta', listStyle: null, todo: 'TODO' })
+
+    await pageUndo(page)
+    await reopen()
+
+    await expect.poll(() => kindOf(page, beta)).toEqual(BETA)
+    expect(await kindOf(page, delta)).toEqual(DELTA)
+  })
+
+  // `@mock-only`: the slow write comes from the mock's `__setMockLatency`.
+  test('page mode: a bullet made a task on a slow backend is still one undo step @mock-only', async ({
+    page,
+  }) => {
+    const {
+      ids: [, beta, , delta],
+      reopen,
+    } = await inPageMode(page, 'Page slow task undo')
+    await caretAtEnd(page, 1)
+    // Slower than `UNDO_GROUP_WINDOW_MS` from the task write to the list style it takes off.
+    await setMockLatency(page, 300)
+    await page.keyboard.press('Control+Enter')
+    await expect
+      .poll(() => kindOf(page, beta))
+      .toEqual({ text: 'beta', listStyle: null, todo: 'TODO' })
+    await setMockLatency(page, 0)
 
     await pageUndo(page)
     await reopen()
