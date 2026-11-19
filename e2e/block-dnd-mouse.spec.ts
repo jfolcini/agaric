@@ -25,6 +25,12 @@ import {
 
 const PAGE = 'Getting Started'
 
+/** Open the seeded page once its five blocks render: `blockIds` reads the rows once. */
+async function openSeededPage(page: import('@playwright/test').Page): Promise<void> {
+  await openPage(page, PAGE)
+  await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(5)
+}
+
 async function blockIds(page: import('@playwright/test').Page): Promise<string[]> {
   return page
     .locator('[data-testid="sortable-block"]')
@@ -55,7 +61,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
   test('dragging a block to the TOP sends slot 0, the previously-rejected case', async ({
     page,
   }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const ids = await blockIds(page)
     const gs2 = ids[1] as string
 
@@ -75,7 +81,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
   test('a downward drag lands the block at the target slot (off-by-one fixed)', async ({
     page,
   }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const ids = await blockIds(page)
     const [gs1] = ids
 
@@ -98,7 +104,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
   test('drag-to-indent: pushing a block right nests it under the previous sibling', async ({
     page,
   }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const ids = await blockIds(page)
     const gs2 = ids[1] as string
     const gs3 = ids[2] as string
@@ -121,7 +127,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
   })
 
   test('dragging a block onto itself with no offset does not move it', async ({ page }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const before = await blockIds(page)
 
     await clearInvokeCalls(page)
@@ -138,7 +144,7 @@ test.describe('Block drag-and-drop (mouse) @editor', () => {
   // Pre-#400 this computed a no-op position (the block's own), so the order was
   // unchanged; #400 fixes the off-by-one so the swap actually happens.
   test('dragging a block down one slot swaps it with the next', async ({ page }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
 
@@ -185,7 +191,7 @@ test.describe('Drag visual layer (#923 f2) @editor', () => {
   }
 
   test('an in-flight drag renders the overlay ghost and indent guides', async ({ page }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     await beginDrag(page, 0) // lift GS_1
 
     // The translucent ghost row that follows the cursor (Notion/Logseq style).
@@ -200,7 +206,7 @@ test.describe('Drag visual layer (#923 f2) @editor', () => {
   })
 
   test('pressing Escape aborts the drag — order unchanged, no move emitted', async ({ page }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const before = await blockIds(page)
 
     await clearInvokeCalls(page)
@@ -223,7 +229,7 @@ test.describe('Drag visual layer (#923 f2) @editor', () => {
   test('Escape after a handle drag gives the focus back to the block being edited (#923)', async ({
     page,
   }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const edited = (await blockIds(page))[2] as string
     await focusBlockById(page, edited)
 
@@ -241,7 +247,7 @@ test.describe('Drag visual layer (#923 f2) @editor', () => {
   })
 
   test('the drop indicator renders at the projected depth when nudged right', async ({ page }) => {
-    await openPage(page, PAGE)
+    await openSeededPage(page)
     const ids = await blockIds(page)
     const gs4 = ids[3] as string
 
