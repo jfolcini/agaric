@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Pairing by scanning a QR code, on the real backend (#5739).
+// The camera, and pairing by scanning a QR code, on the real backend (#5739).
 //
 // The second device, `e2e_sync_peer`, hosts the pairing and the app joins it by
 // scanning the host's QR. The runner has no camera, and WebKitGTK's mock
@@ -7,7 +7,16 @@
 // `getUserMedia` for a canvas stream that draws the peer's QR. Everything after
 // that is the app's own: html5-qrcode reads the frames, the dialog fills the
 // passphrase from the scan, and the pairing runs over the address the QR names.
-// `qr-scanner-camera.e2e.ts` shows the scanner against the mock devices.
+//
+// The two tests before it show the camera itself in the real Linux webview,
+// against WebKitGTK's mock capture devices, which the app turns on under
+// `AGARIC_E2E_SANDBOX`: `getUserMedia` delivers a live track (#5386), and the
+// scanner plays it (#5718). They run first because the scan test replaces the
+// page's `getUserMedia` for the rest of the vault's session. Neither pins
+// `allow_capture_permission` (src-tauri/src/lib.rs): under WebDriver, WebKit
+// grants `getUserMedia` itself and never asks the app, so that handler's unit
+// test is its only check. The Chromium twin of the scanner, which also
+// measures the viewfinder, is `e2e/qr-scanner-camera.spec.ts`.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -58,7 +67,17 @@ async function pointCameraAtQr(svg: string): Promise<void> {
   }, svg)
 }
 
-describe('Agaric real-backend pairing by QR scan (#5739) @sync', () => {
+/** Open the pairing dialog's QR scanner from the sync settings. */
+async function openScanner(): Promise<void> {
+  await openSyncSettings()
+  for (const label of ['Pair new device', 'Have a code from the other device', 'Scan QR code']) {
+    const button = $(`button*=${label}`)
+    await button.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await button.click()
+  }
+}
+
+describe('Agaric real-backend camera and pairing by QR scan (#5739) @sync', () => {
   let peer: SyncPeer | undefined
 
   before(async () => {
@@ -69,18 +88,67 @@ describe('Agaric real-backend pairing by QR scan (#5739) @sync', () => {
     await peer?.stop()
   })
 
+  it('resolves getUserMedia({ video: true }) with a live video track (#5386)', async () => {
+    await waitForAppReady()
+
+    const outcome = await browser.execute(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+        const states = stream.getVideoTracks().map((track) => track.readyState)
+        for (const track of stream.getTracks()) track.stop()
+        return { states }
+      } catch (err) {
+        // Not `error`: WebDriver reads a returned object with that key as a failed command.
+        return { failure: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
+      }
+    })
+
+    expect(outcome).toEqual({ states: ['live'] })
+  })
+
+  it('the QR scanner plays the camera in the viewfinder and shows no camera error (#5718)', async () => {
+    // html5-qrcode asks `getUserMedia` for the scanner's `facingMode`, then
+    // applies its square request (`aspectRatio`) to the track, so WebKitGTK has
+    // to accept both and play the stream.
+    await openScanner()
+    // The scanner is a lazy chunk; until it mounts there is nothing to read.
+    const viewport = $('[aria-label="QR code scanner viewport"]')
+    await viewport.waitForExist({ timeout: ACTION_TIMEOUT })
+
+    // Not `error`: WebDriver reads a returned object with that key as a failed command.
+    const readScanner = () =>
+      browser.execute(() => {
+        const viewfinder = document.querySelector('[aria-label="QR code scanner viewport"]')
+        const video = viewfinder?.querySelector('video')
+        return {
+          playing: Boolean(video && !video.paused && video.videoWidth > 0),
+          // A scanner that crashed takes its viewfinder with it.
+          message:
+            viewfinder?.querySelector('[aria-live="assertive"]')?.textContent ?? 'no viewfinder',
+        }
+      })
+    await browser.waitUntil(
+      async () => {
+        const scanner = await readScanner()
+        return scanner.playing || scanner.message !== ''
+      },
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the scanner neither played the camera nor failed' },
+    )
+
+    expect(await readScanner()).toEqual({ playing: true, message: '' })
+
+    // A joiner's dialog shows no passphrase, so Escape closes it without asking.
+    await browser.keys(['Escape'])
+    await viewport.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+  })
+
   it('scanning the other device\u2019s QR code pairs the two', async () => {
     if (peer === undefined) throw new Error('the sync peer never started')
     await waitForAppReady()
     const qr = await peer.hostPairing()
     await pointCameraAtQr(qr)
 
-    await openSyncSettings()
-    for (const label of ['Pair new device', 'Have a code from the other device', 'Scan QR code']) {
-      const button = $(`button*=${label}`)
-      await button.waitForClickable({ timeout: ACTION_TIMEOUT })
-      await button.click()
-    }
+    await openScanner()
     // A scan fills the four words and flips back to typing, for the user to check.
     await waitForToast('QR code scanned')
     const pair = $('.pairing-pair-btn')

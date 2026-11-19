@@ -3,7 +3,7 @@
 //
 // A voice note records through `getUserMedia({ audio: true })`. This runner has
 // no microphone, so under `AGARIC_E2E_SANDBOX` the app turns on WebKitGTK's mock
-// capture devices. Like its camera twin, `camera-permission.e2e.ts`, it cannot
+// capture devices. Like its camera twin in `sync-qr-scan.e2e.ts`, it cannot
 // pin `allow_capture_permission`: under WebDriver, WebKit grants `getUserMedia`
 // itself and never asks the app.
 //
