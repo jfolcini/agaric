@@ -32,7 +32,7 @@ export type TFn = TFunction
 export interface SlashCommandContext {
   blockId: string
   rootParentId: string | null
-  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount'>
+  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount' | 'activeBlockId'>
   pageStore: StoreApi<PageBlockState>
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void

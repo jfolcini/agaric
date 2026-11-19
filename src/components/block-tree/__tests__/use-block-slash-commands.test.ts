@@ -77,6 +77,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     rovingEditor: {
       editor: null,
       mount: vi.fn() as unknown as (blockId: string, markdown: string) => void,
+      activeBlockId: 'BLOCK_1' as string | null,
     },
     datePickerCursorPos: { current: undefined as number | undefined },
     setDatePickerMode: vi.fn(),
@@ -777,6 +778,7 @@ describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
       rovingEditor: {
         editor: null,
         mount: vi.fn() as unknown as (blockId: string, markdown: string) => void,
+        activeBlockId: 'BLOCK_1',
       },
     })
     rerender({ params: params4 })

@@ -188,7 +188,7 @@ export function usePageSlashCommands({
       blockId: id,
       rootParentId: pageId,
       // `mount` reloads block mode's editor after `edit_block`, which `blockText` replaces here.
-      rovingEditor: { editor, mount: noBlock },
+      rovingEditor: { editor, mount: noBlock, activeBlockId: null },
       pageStore,
       datePickerCursorPos: datePicker.datePickerCursorPos,
       // The picker opens on the command's block, as a chip opens it on the chip's.

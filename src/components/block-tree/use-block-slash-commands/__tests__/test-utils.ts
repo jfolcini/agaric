@@ -64,6 +64,7 @@ export function makeSyntheticCtx(overrides?: {
     rovingEditor: {
       editor: null,
       mount: mount as unknown as (id: string, md: string) => void,
+      activeBlockId: blockId,
     },
     pageStore,
     datePickerCursorPos,

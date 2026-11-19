@@ -382,40 +382,86 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
   })
 
-  // #6935 — a content-writing command (`/h2`) commits the editor's pending text before its own
-  // write. Left pending, that commit fired while the command's `edit_block` was in flight, and
-  // carried the text from before the command with its old base, which the backend merged into
-  // the heading (a doubled trailing space on the real backend).
-  it('writes the pending in-editor content before the heading, never after it (#6935)', async () => {
+  // #6935 — a content-writing command (`/h2`) puts its text in the editor and the store before its
+  // `edit_block` goes out. With the editor still on the old text, a leave or a pending commit while
+  // the write was in flight wrote that text after the command's and erased it.
+  it("puts the command's text in the editor and the store before its write goes out (#6935)", async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore, mount } = makeSyntheticCtx()
+    const atWrite: Array<{ toText: string; mounted: unknown; stored: string | null | undefined }> =
+      []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd !== 'edit_block') return undefined
+      const { toText } = args as { toText: string }
+      atWrite.push({
+        toText,
+        mounted: mount.mock.calls.at(-1),
+        stored: pageStore.getState().blocksById.get('BLOCK_1')?.content,
+      })
+      return { id: 'BLOCK_1', content: toText, op_refs: [{ device_id: 'dev1', seq: 1 }] }
+    })
+
+    await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
+
+    expect(atWrite).toEqual([
+      { toText: '## hello', mounted: ['BLOCK_1', '## hello'], stored: '## hello' },
+    ])
+    expect(mount).toHaveBeenCalledTimes(1)
+  })
+
+  it("a keystroke while the command's write is on its way builds on the command's text (#6935)", async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore, mount } = makeSyntheticCtx()
+    let answer: () => void = () => undefined
     const written: string[] = []
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'edit_block') {
-        written.push((args as { toText: string }).toText)
-        return {
-          id: 'BLOCK_1',
-          content: (args as { toText: string }).toText,
-          op_refs: [{ device_id: 'dev1', seq: written.length }],
-        }
+      if (cmd !== 'edit_block') return undefined
+      const { toText } = args as { toText: string }
+      written.push(toText)
+      if (toText === '## hello') await new Promise<void>((resolve) => (answer = resolve))
+      return {
+        id: 'BLOCK_1',
+        content: toText,
+        op_refs: [{ device_id: 'dev1', seq: written.length }],
       }
-      return undefined
     })
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx, pageStore } = makeSyntheticCtx()
-    // One pending commit: a flush with nothing pending writes nothing, as the real one.
-    let pending = true
-    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
-      if (!pending) return
-      pending = false
-      await pageStore.getState().edit('BLOCK_1', 'call mom ')
-    })
-    try {
-      await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
-    } finally {
-      unregister()
-    }
 
-    expect(written).toEqual(['call mom ', '## hello'])
-    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('## hello')
+    const running = result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
+    await vi.waitFor(() => expect(written).toEqual(['## hello']))
+    // The editor already holds the command's text, so the keystroke's commit carries it.
+    expect(mount).toHaveBeenLastCalledWith('BLOCK_1', '## hello')
+    await pageStore.getState().edit('BLOCK_1', '## hello!')
+    answer()
+    await running
+
+    expect(written).toEqual(['## hello', '## hello!'])
+    expect(mount).toHaveBeenCalledTimes(1)
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('## hello!')
+  })
+
+  it('a refused write puts back the text the block showed and saves it (#6935)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore, mount } = makeSyntheticCtx()
+    // The editor holds typing its pending commit has not written yet: this file's serializer
+    // reads any document as `serialized`.
+    ctx.rovingEditor.editor = { getJSON: () => ({ type: 'doc' }) } as unknown as NonNullable<
+      typeof ctx.rovingEditor.editor
+    >
+    const written: string[] = []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd !== 'edit_block') return undefined
+      const { toText } = args as { toText: string }
+      written.push(toText)
+      if (toText.startsWith('## '))
+        return Promise.reject({ kind: 'validation', message: 'refused' })
+      return { id: 'BLOCK_1', content: toText, op_refs: [{ device_id: 'dev1', seq: 2 }] }
+    })
+
+    await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
+
+    expect(mount).toHaveBeenLastCalledWith('BLOCK_1', 'serialized')
+    await vi.waitFor(() => expect(written).toEqual(['## serialized', 'serialized']))
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('serialized')
   })
 
   it('divider replaces content with `---`', async () => {
