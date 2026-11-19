@@ -221,10 +221,6 @@ function revertBlockRowField(
     // `applyRevertForOp`: every one of them is a COHORT operation on the
     // backend and needs the whole `blocks` map to walk the subtree. See the
     // #3331 fix and `revertLifecycleCohort` below.
-    case 'set_todo_state': {
-      b['todo_state'] = (payload['from_state'] as string | null) ?? null
-      return true
-    }
     case 'set_priority': {
       b['priority'] = (payload['from_level'] as string | null) ?? null
       return true
@@ -412,10 +408,15 @@ function revertPropertyDef(opType: string, payload: Record<string, unknown>): vo
  * Returns `true` when `opType` was a lifecycle op (handled, cohort walked or
  * legitimately empty), `false` to let the caller fall through.
  */
-function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string): boolean {
+function revertLifecycleCohort(
+  opType: string,
+  blocks: Blocks,
+  blockId: string,
+  payload: Record<string, unknown>,
+): boolean {
   switch (opType) {
     case 'delete_block': {
-      restoreRefusingTakenNames(blocks, blockId)
+      if (payload['stamped_nothing'] !== true) restoreRefusingTakenNames(blocks, blockId)
       return true
     }
     // Undo-of-create and undo-of-restore are the same backend payload
@@ -695,7 +696,7 @@ export function applyRevertForOp(
   // `blocks` map, so they run BEFORE (and independently of) the single-row
   // helper. They deliberately do not require `b`: the walks resolve the seed
   // themselves and no-op on a missing row, exactly as before.
-  if (revertLifecycleCohort(target.op_type, blocks, blockId)) return
+  if (revertLifecycleCohort(target.op_type, blocks, blockId, payload)) return
 
   if (b && revertBlockRowField(target.op_type, payload, b, blocks)) return
 

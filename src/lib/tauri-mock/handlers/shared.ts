@@ -2728,8 +2728,13 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
         new_position: p['old_position'],
       }
     }
-    case 'set_todo_state': {
-      return { block_id: blockId, state: p['from_state'] ?? null, from_state: p['state'] ?? null }
+    // #6978 — over a block already deleted, the reverse `delete_block` stamps no row, so the
+    // backend's restore that reverses it (`deleted_at_ref` = that op's time) finds no cohort.
+    case 'create_block':
+    case 'restore_block': {
+      return blocks.get(blockId as string)?.['deleted_at'] == null
+        ? { block_id: blockId }
+        : { block_id: blockId, stamped_nothing: true }
     }
     case 'set_priority': {
       return { block_id: blockId, level: p['from_level'] ?? null, from_level: p['level'] ?? null }

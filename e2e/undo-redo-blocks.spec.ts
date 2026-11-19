@@ -181,7 +181,7 @@ test.describe('Block-level undo/redo @editor', () => {
     await pageHistory(page, 'Control+z', 'Undid property change')
     await expect.poll(() => storedTodo(page, gs3)).toBeNull()
 
-    await pageHistory(page, 'Control+y', /Red(one|id)/)
+    await pageHistory(page, 'Control+y', 'Redid property change')
     await expect.poll(() => storedTodo(page, gs3)).toBe('TODO')
     await expect(marker).toBeVisible()
 
