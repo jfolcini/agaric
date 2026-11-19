@@ -9,16 +9,28 @@ import { expect, ipc, seedSearchBlocks, test, waitForBoot } from './helpers'
  * dotted Monthly day opens Daily on that date with its journal page and its
  * tasks (#5735).
  *
- * In `e2e/` because the mock models every read behind the dots and the Daily
- * view. The seeded days are in the month after the pinned clock: the current
- * month's journal pages are cached at boot (`calendar-page-dates-cache.ts`)
- * until a TTL the pinned clock never reaches, and a page created over IPC,
- * unlike one created in the journal, is not merged into that cache.
+ * The seeded days are in next month: the current month's journal pages are
+ * cached at boot (`calendar-page-dates-cache.ts`), and a page created over IPC,
+ * unlike one created in the journal, is not merged into that cache. They are
+ * dated from the real clock, as the backend dates its seed, and from the 8th
+ * on, past every seeded task (due at most a week from today).
  */
 
-const NOW = new Date('2026-10-14T10:00:00')
-const DOTTED_DAYS = ['2026-11-05', '2026-11-26']
-const EMPTY_DAY = '2026-11-09'
+/** Day `day` of next month, at local midnight. */
+function nextMonthDay(day: number): Date {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth() + 1, day)
+}
+
+function iso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const DOTTED = [nextMonthDay(12), nextMonthDay(26)] as const
+const DOTTED_DAYS = DOTTED.map(iso)
+const EMPTY = nextMonthDay(19)
+const EMPTY_DAY = iso(EMPTY)
+const CLICKED = DOTTED[1]
 
 async function seedDay(page: Page, day: string): Promise<void> {
   const journalId = await ipc<string>(page, 'create_page_in_space', {
@@ -36,13 +48,14 @@ async function seedDay(page: Page, day: string): Promise<void> {
 test('Monthly mode dots each source on a day, none on an empty day, and a click opens Daily @journal', async ({
   page,
 }) => {
-  await page.clock.setFixedTime(NOW)
   await waitForBoot(page)
   for (const day of DOTTED_DAYS) await seedDay(page, day)
 
   await page.getByRole('tab', { name: 'Monthly view' }).click()
   await page.getByRole('button', { name: 'Next month' }).click()
-  await expect(page.getByTestId('date-display')).toHaveText('November 2026')
+  await expect(page.getByTestId('date-display')).toHaveText(
+    CLICKED.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+  )
   const grid = page.getByRole('grid', { name: 'Monthly calendar' })
   const cell = (date: string) => grid.locator(`[role="gridcell"][data-date="${date}"]`)
 
@@ -52,26 +65,39 @@ test('Monthly mode dots each source on a day, none on an empty day, and a click 
     await expect(cell(day).locator('span.bg-date-due-foreground')).toHaveCount(1)
     await expect(cell(day).locator('span.bg-date-scheduled-foreground')).toHaveCount(1)
   }
-  await expect(cell(EMPTY_DAY)).toHaveAccessibleName('Monday, November 9, 2026')
+  await expect(cell(EMPTY_DAY)).toHaveAccessibleName(
+    EMPTY.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    }),
+  )
   await expect(cell(EMPTY_DAY).locator('span[aria-hidden="true"]')).toHaveCount(0)
 
-  await cell('2026-11-26').click()
+  await cell(iso(CLICKED)).click()
 
   await expect(page.getByRole('tab', { name: 'Daily view' })).toHaveAttribute(
     'aria-selected',
     'true',
   )
-  await expect(page.getByTestId('date-display')).toHaveText('Thu, Nov 26, 2026')
-  await expect(page.getByText('Note for 2026-11-26', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('date-display')).toHaveText(
+    CLICKED.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }),
+  )
+  await expect(page.getByText(`Note for ${iso(CLICKED)}`, { exact: true })).toBeVisible()
   const duePanel = page.getByTestId('due-panel')
-  await expect(duePanel.getByText('Due on 2026-11-26')).toBeVisible()
-  await expect(duePanel.getByText('Scheduled on 2026-11-26')).toBeVisible()
+  await expect(duePanel.getByText(`Due on ${iso(CLICKED)}`)).toBeVisible()
+  await expect(duePanel.getByText(`Scheduled on ${iso(CLICKED)}`)).toBeVisible()
 })
 
 test('the date picker dots each source on a day and none on an empty day @journal', async ({
   page,
 }) => {
-  await page.clock.setFixedTime(NOW)
   await waitForBoot(page)
   for (const day of DOTTED_DAYS) await seedDay(page, day)
 
