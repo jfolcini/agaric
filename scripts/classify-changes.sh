@@ -48,6 +48,10 @@ set -euo pipefail
 #                reads (`pw_reads_re`).
 #   playwright_specs  when non-empty, Playwright runs only these changed specs
 #                (space-separated); empty with `playwright` means every shard.
+#   bridge       the bridge lane (`bridge-build`, `bridge-specs`), which runs
+#                the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`
+#                on the real commands: a Rust change, the Playwright lane run
+#                whole, or a changed spec the list names.
 #   real_backend a path the real-backend lane builds or runs.
 #   real_backend_specs  when non-empty, that lane runs only these changed
 #                `e2e-tauri/*.e2e.ts` specs; empty means every spec.
@@ -61,7 +65,7 @@ emit() {
     "docs_only=$docs_only" "docs=$docs" "frontend=$frontend" "backend=$backend" \
     "rust_tests=$rust_tests" "ci=$ci" "desktop=$desktop" "android=$android" "vitest=$vitest" \
     "vitest_e2e_tauri=$vitest_e2e_tauri" "playwright=$playwright" \
-    "playwright_specs=$playwright_specs" "real_backend=$real_backend" \
+    "playwright_specs=$playwright_specs" "bridge=$bridge" "real_backend=$real_backend" \
     "real_backend_specs=$real_backend_specs"
 }
 
@@ -70,8 +74,8 @@ full_suite() {
   echo "$1" >&2
   docs_only=false docs=true frontend=true backend=true rust_tests=true ci=true desktop=true
   android=true
-  vitest=true vitest_e2e_tauri=false playwright=true playwright_specs='' real_backend=true
-  real_backend_specs=''
+  vitest=true vitest_e2e_tauri=false playwright=true playwright_specs='' bridge=true
+  real_backend=true real_backend_specs=''
   emit
   exit 0
 }
@@ -387,6 +391,20 @@ playwright_specs=''
 if [ "$pw_full" = "false" ] && [ "${#pw_specs[@]}" -gt 0 ]; then
   playwright=true
   playwright_specs="${pw_specs[*]}"
+fi
+
+bridge=false
+if [ "$rust_tests" = "true" ] || [ "$pw_full" = "true" ]; then
+  bridge=true
+elif [ "${#pw_specs[@]}" -gt 0 ]; then
+  if listed=$(bash "$(dirname "$0")/real-backend-specs.sh" playwright.config.ts); then
+    for spec in "${pw_specs[@]}"; do
+      if grep -qxF -- "$spec" <<<"$listed"; then bridge=true; fi
+    done
+  else
+    echo "REAL_BACKEND_SPECS unreadable: running the bridge lane (fail-closed)." >&2
+    bridge=true
+  fi
 fi
 
 real_backend="$real_full"

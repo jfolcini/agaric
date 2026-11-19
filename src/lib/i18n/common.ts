@@ -907,7 +907,6 @@ export const common: Record<string, string> = {
   'data.mirrorAdoptLeftAloneHeading_one': '{{count}} file left alone: no note Agaric imported',
   'data.mirrorAdoptLeftAloneHeading_other': '{{count}} files left alone: no notes Agaric imported',
   'data.mirrorAdopted': 'Agaric keeps “{{name}}” in step with its space.',
-  'data.mirrorAdoptDeclined': 'The notes stay in the space “{{name}}”; the folder is not mirrored.',
 
   // Translators: Markdown mirror: error toast, and a status line when the mirror stopped;
   // {{reason}} = the error message.

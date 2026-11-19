@@ -4,6 +4,7 @@ import { basename, join, relative } from 'node:path'
 
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
+import { UNDO_GROUP_WINDOW_MS } from '../src/lib/constants'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { BRIDGE_BINARY, type Bridge, startBridge } from './bridge'
 
@@ -1370,9 +1371,6 @@ export async function blurEditors(page: Page) {
     { timeout: 2000 },
   )
 }
-
-/** `UNDO_GROUP_WINDOW_MS` in `src/stores/undo.ts`. */
-const UNDO_GROUP_WINDOW_MS = 500
 
 /**
  * Writes closer than the undo group window join one undo step: the page's own entries by the

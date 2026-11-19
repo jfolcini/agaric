@@ -37,12 +37,16 @@ function classify(paths: string[], cwd?: string): Record<string, string> {
 
 // A changed spec is listed only while it is on disk (a deleted spec cannot
 // fail), so these run in a tree holding exactly `onDisk`.
-function classifyWith(onDisk: string[], paths: string[]): Record<string, string> {
+function classifyWith(
+  onDisk: string[],
+  paths: string[],
+  contents: Record<string, string> = {},
+): Record<string, string> {
   const root = mkdtempSync(join(tmpdir(), 'classify-specs-'))
   try {
-    for (const file of onDisk) {
+    for (const file of [...onDisk, ...Object.keys(contents)]) {
       mkdirSync(join(root, file, '..'), { recursive: true })
-      writeFileSync(join(root, file), '')
+      writeFileSync(join(root, file), contents[file] ?? '')
     }
     return classify(paths, root)
   } finally {
@@ -69,6 +73,7 @@ const FULL_SET = {
   vitest_e2e_tauri: 'false',
   playwright: 'true',
   playwright_specs: '',
+  bridge: 'true',
   real_backend: 'true',
   real_backend_specs: '',
 }
@@ -86,6 +91,7 @@ const DOCS_ONLY = {
   vitest_e2e_tauri: 'false',
   playwright: 'false',
   playwright_specs: '',
+  bridge: 'false',
   real_backend: 'false',
   real_backend_specs: '',
 }
@@ -258,6 +264,40 @@ describe('classify-changes.sh', () => {
       playwright: 'true',
       playwright_specs: 'e2e/app-chrome.spec.ts e2e/deep-link.spec.ts',
       real_backend: 'false',
+    })
+  })
+
+  describe('the bridge lane', () => {
+    const config = (...listed: string[]) => ({
+      'playwright.config.ts': [
+        'const REAL_BACKEND_SPECS = [',
+        ...listed.map((spec) => `  '${spec}',`),
+        ']',
+        '',
+      ].join('\n'),
+    })
+    const specs = ['e2e/listed.spec.ts', 'e2e/unlisted.spec.ts']
+
+    it('skips a change to specs REAL_BACKEND_SPECS does not list', () => {
+      const out = classifyWith(specs, ['e2e/unlisted.spec.ts'], config('listed.spec.ts'))
+      expect(out).toMatchObject({ playwright: 'true', bridge: 'false' })
+    })
+
+    it('runs on a change to a spec it lists', () => {
+      const out = classifyWith(specs, specs, config('listed.spec.ts'))
+      expect(out).toMatchObject({ playwright: 'true', bridge: 'true' })
+    })
+
+    it('runs when the list cannot be read (fail-closed)', () => {
+      const out = classifyWith(specs, ['e2e/unlisted.spec.ts'], {
+        'playwright.config.ts': 'const REAL_BACKEND_SPECS = [\n  SPECS,\n]\n',
+      })
+      expect(out['bridge']).toBe('true')
+    })
+
+    it('runs on a Rust change and on the Playwright lane run whole', () => {
+      expect(classify(['src-tauri/src/lib.rs'])['bridge']).toBe('true')
+      expect(classify(['src/App.tsx'])['bridge']).toBe('true')
     })
   })
 

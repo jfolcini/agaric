@@ -7,7 +7,9 @@
 # server another worktree left on 5173 is never the one tested) when that is at
 # most MAX_RUN_SPECS specs. The whole lane, or more, prints "CI runs the whole
 # lane" and runs nothing, exit 0. The WebdriverIO lane needs the real backend
-# build and is never run here.
+# build and is never run here. A picked spec that `REAL_BACKEND_SPECS` lists
+# runs on the mock only for its @mock-only tests, so the bridge command for
+# those specs is printed too, never run.
 #
 # Every top-level test or describe title in both lanes ends with its area tags,
 # `… @editor @pages`; Playwright reads them as native tags (`--grep @editor`).
@@ -262,6 +264,22 @@ report_lane Playwright "$PW_FULL" 'npx playwright test' 'e2e/*.spec.ts' '' \
   ${PW_SPECS[@]+"${PW_SPECS[@]}"} -- ${PW_AREAS[@]+"${PW_AREAS[@]}"}
 PW_VERDICT=$LANE_VERDICT
 PW_PICK=(${LANE_SPECS[@]+"${LANE_SPECS[@]}"})
+# The mock runs a spec REAL_BACKEND_SPECS lists only for its @mock-only tests;
+# the rest of it needs the bridge, which this script never builds.
+if [ "$PW_VERDICT" = specs ]; then
+  if listed=$(bash "$REPO_ROOT/scripts/real-backend-specs.sh" "$REPO_ROOT/playwright.config.ts"); then
+    BRIDGE_PICK=()
+    for spec in "${PW_PICK[@]}"; do
+      if grep -qxF -- "$spec" <<<"$listed"; then BRIDGE_PICK+=("$spec"); fi
+    done
+    if [ ${#BRIDGE_PICK[@]} -gt 0 ]; then
+      echo "Bridge: ${#BRIDGE_PICK[@]} of them REAL_BACKEND_SPECS lists, on the real commands (build the bin first: cd src-tauri && cargo build -p agaric-diagnostics --features bridge --bin bridge)"
+      echo '  AGARIC_E2E_BRIDGE=$PWD/src-tauri/target/debug/bridge npx playwright test' "${BRIDGE_PICK[*]}"
+    fi
+  else
+    echo "Bridge: cannot tell which of them run on the real commands" >&2
+  fi
+fi
 report_lane WebdriverIO "$WD_FULL" 'npm run test:e2e-tauri' 'e2e-tauri/*.e2e.ts' '--spec' \
   ${WD_SPECS[@]+"${WD_SPECS[@]}"} -- ${WD_AREAS[@]+"${WD_AREAS[@]}"}
 

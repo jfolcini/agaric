@@ -469,8 +469,6 @@ export const common: Record<string, string> = {
   'data.mirrorAdoptLeftAloneHeading_other':
     '{{count}} archivos sin tocar: no son notas que Agaric haya importado',
   'data.mirrorAdopted': 'Agaric mantiene «{{name}}» al día con su espacio.',
-  'data.mirrorAdoptDeclined':
-    'Las notas quedan en el espacio «{{name}}»; la carpeta no se refleja.',
   'data.mirrorFailed': 'No se ha cambiado la carpeta del espejo: {{reason}}',
   'data.mirrorPaused': 'En pausa: {{reason}}',
   'data.mirrorDivergedHeading': 'Cambiado fuera de Agaric; aún no se ha leído',

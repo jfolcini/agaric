@@ -469,7 +469,6 @@ export const common: Record<string, string> = {
   'data.mirrorAdoptLeftAloneHeading_other':
     '{{count}} arquivos deixados como estão: não são notas que o Agaric importou',
   'data.mirrorAdopted': 'O Agaric mantém “{{name}}” em dia com o espaço dela.',
-  'data.mirrorAdoptDeclined': 'As notas ficam no espaço “{{name}}”; a pasta não é espelhada.',
   'data.mirrorFailed': 'A pasta do espelho não foi alterada: {{reason}}',
   'data.mirrorPaused': 'Pausado: {{reason}}',
   'data.mirrorDivergedHeading': 'Alterados fora do Agaric; ainda não lidos',

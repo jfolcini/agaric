@@ -320,6 +320,8 @@ describe('mdFilesToUnits', () => {
     const [unit] = mdFilesToUnits([file], null, false)
     expect(unit?.name).toBe('test.md')
     expect(unit?.bytes).toBe(file.size)
+    // A plain pick is no folder's file, so the folder import reports no path for it.
+    expect(unit?.source).toBeUndefined()
 
     const loaded = await unit?.load()
     expect(loaded?.content).toBe('# Hello')
@@ -339,6 +341,7 @@ describe('mdFilesToUnits', () => {
     )
     const index = indexVaultFiles([md, png])
     const [unit] = mdFilesToUnits([md], index, false)
+    expect(unit?.source).toBe('note.md')
 
     const loaded = await unit?.load()
     // #1446 — the path below the picked folder drives the namespace mapping;

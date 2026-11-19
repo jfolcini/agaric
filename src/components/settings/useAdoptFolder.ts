@@ -66,9 +66,7 @@ export interface UseAdoptFolder {
   start: () => Promise<void>
   /** Adopt the folder asked about, `onAdopted` given the mirror's status. */
   confirm: () => Promise<void>
-  /** Leave the folder as it is, saying so: its notes stay in their new space. */
-  decline: () => void
-  /** Close the question, as confirming or dismissing it does, saying nothing. */
+  /** Close the question; declined, the notes stay in their new space, as it said. */
   dismiss: () => void
 }
 
@@ -125,12 +123,7 @@ export function useAdoptFolder(onAdopted: (status: MirrorStatus) => void): UseAd
     }
   }, [t, question, onAdopted])
 
-  const decline = useCallback(() => {
-    if (question !== null) notify(t('data.mirrorAdoptDeclined', { name: question.name }))
-    setQuestion(null)
-  }, [t, question])
-
   const dismiss = useCallback(() => setQuestion(null), [])
 
-  return { runner, question, start, confirm, decline, dismiss }
+  return { runner, question, start, confirm, dismiss }
 }

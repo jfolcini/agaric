@@ -470,8 +470,6 @@ export const common: Record<string, string> = {
   'data.mirrorAdoptLeftAloneHeading_other':
     '{{count}} Dateien bleiben unberührt: keine Notizen, die Agaric importiert hat',
   'data.mirrorAdopted': 'Agaric hält „{{name}}“ mit seinem Bereich auf dem gleichen Stand.',
-  'data.mirrorAdoptDeclined':
-    'Die Notizen bleiben im Bereich „{{name}}“; der Ordner wird nicht gespiegelt.',
   'data.mirrorFailed': 'Der Spiegelordner wurde nicht geändert: {{reason}}',
   'data.mirrorPaused': 'Pausiert: {{reason}}',
   'data.mirrorDivergedHeading': 'Außerhalb von Agaric geändert; noch nicht eingelesen',

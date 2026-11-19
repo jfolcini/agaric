@@ -9,7 +9,7 @@
 
 import { Calendar as CalendarIcon, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DonePanel } from '@/components/agenda/DonePanel'
@@ -108,43 +108,42 @@ function useControlledViewportEntry(
   hasEntered: boolean,
   onEnter: () => void,
   rootMargin = '200px 0px',
-): React.RefObject<HTMLDivElement | null> {
-  const ref = useRef<HTMLDivElement | null>(null)
-  // Non-reactive view of `onEnter`, so the observer is not torn down and
-  // rebuilt whenever the caller passes a fresh closure. It is only ever called
-  // from the effect body or from the observer callback the effect owns and
-  // disconnects, which is the boundary an effect event requires.
-  const reportEntered = useEffectEvent(() => {
-    onEnter()
+): React.RefCallback<HTMLDivElement> {
+  // The latest `onEnter`, so a fresh closure from the caller does not tear the
+  // observer down and rebuild it.
+  const onEnterRef = useRef(onEnter)
+  useEffect(() => {
+    onEnterRef.current = onEnter
   })
 
-  useEffect(() => {
-    if (!enabled || hasEntered) return
-    const el = ref.current
-    if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      // Defensive: jsdom/older runtimes — report entered immediately.
-      reportEntered()
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            reportEntered()
-            return
+  // A ref callback, not an effect, so a placeholder that mounts after the day
+  // did (its page restored from the Trash) is still observed.
+  return useCallback(
+    (el: HTMLDivElement | null) => {
+      if (!enabled || hasEntered || !el) return
+      if (typeof IntersectionObserver === 'undefined') {
+        // Defensive: jsdom/older runtimes — report entered immediately.
+        onEnterRef.current()
+        return
+      }
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              onEnterRef.current()
+              return
+            }
           }
-        }
-      },
-      { rootMargin },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [enabled, hasEntered, rootMargin])
-
-  return ref
+        },
+        { rootMargin },
+      )
+      observer.observe(el)
+      return () => {
+        observer.disconnect()
+      }
+    },
+    [enabled, hasEntered, rootMargin],
+  )
 }
 
 // oxlint-disable-next-line eslint/complexity -- cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.

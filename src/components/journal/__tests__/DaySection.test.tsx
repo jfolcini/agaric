@@ -1227,6 +1227,35 @@ describe('DaySection', () => {
         expect(markVisible).toHaveBeenLastCalledWith('2025-06-15')
       })
 
+      it('observes a day whose page arrives after it rendered (restored from the Trash)', () => {
+        const markVisible = vi.fn()
+        const day = { dateStr: '2025-06-15', displayDate: 'Sun, Jun 15, 2025' }
+        const props = { mode: 'stream', lazyMount: true, mounted: false } as const
+        const { rerender } = render(
+          <DaySection
+            {...props}
+            entry={makeDayEntry({ ...day, pageId: null })}
+            onVisible={markVisible}
+            onAddBlock={noop}
+          />,
+        )
+
+        rerender(
+          <DaySection
+            {...props}
+            entry={makeDayEntry({ ...day, pageId: 'PAGE_1' })}
+            onVisible={markVisible}
+            onAddBlock={noop}
+          />,
+        )
+        expect(screen.getByTestId('day-section-lazy-placeholder')).toBeInTheDocument()
+        act(() => {
+          for (const obs of MockIntersectionObserver.instances) obs.enterAll()
+        })
+
+        expect(markVisible).toHaveBeenCalledWith('2025-06-15')
+      })
+
       it('does not call markVisible before the day intersects', () => {
         const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
         const mw = makeMountWindow(false)

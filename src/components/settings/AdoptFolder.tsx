@@ -34,14 +34,11 @@ function FileChanges({ change }: { change: AdoptChange }): React.ReactElement {
 export function AdoptFolderDialog({
   question,
   onConfirm,
-  onDecline,
   onDismiss,
 }: {
   question: AdoptionQuestion | null
   onConfirm: () => void
-  /** *Not now*: the notes stay in their space, and the user is told so. */
-  onDecline: () => void
-  /** The dialog closed, after a confirm or by Escape. */
+  /** The dialog closed: confirmed, *Not now* or Escape. */
   onDismiss: () => void
 }): React.ReactElement {
   const { t } = useTranslation()
@@ -50,11 +47,9 @@ export function AdoptFolderDialog({
   return (
     <ConfirmDialog
       open={question !== null}
-      // A confirm closes the dialog too, so only *Not now* says the folder stays unmirrored.
       onOpenChange={(open) => {
         if (!open) onDismiss()
       }}
-      onCancel={onDecline}
       titleKey="data.mirrorAdoptTitle"
       descriptionKey="data.mirrorAdoptDescription"
       confirmKey="data.mirrorAdoptConfirm"

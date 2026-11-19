@@ -287,3 +287,24 @@ void test('--run leaves a whole lane, a selection over the cap, and nothing to C
   assert.match(over.out, /CI runs the whole lane \(7 Playwright specs selected/)
   assert.match(nothing.out, /Playwright: nothing to run/)
 })
+
+void test('a picked spec REAL_BACKEND_SPECS lists also gets the bridge command', () => {
+  const listed = spawnSync('bash', [join(ROOT, 'scripts/real-backend-specs.sh')], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
+  assert.equal(listed.status, 0, listed.stderr)
+  const bridged = listed.stdout.trim().split('\n')[0]
+  const unlisted = SOME_SPECS.find((spec) => !listed.stdout.split('\n').includes(spec))
+  assert.ok(bridged !== undefined && unlisted !== undefined)
+  const res = spawnSync('bash', [SCRIPT, '--stdin'], {
+    input: [bridged, unlisted].join('\n'),
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
+  assert.equal(res.status, 0, res.stderr)
+  const bridgeLines = res.stdout.split('\n').filter((l) => l.includes('AGARIC_E2E_BRIDGE='))
+  assert.deepEqual(bridgeLines, [
+    `  AGARIC_E2E_BRIDGE=$PWD/src-tauri/target/debug/bridge npx playwright test ${bridged}`,
+  ])
+})
