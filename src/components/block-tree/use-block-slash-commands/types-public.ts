@@ -18,7 +18,7 @@ export interface UseBlockSlashCommandsParams {
   focusedBlockId: string | null
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
-  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount'>
+  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount' | 'activeBlockId'>
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void

@@ -144,6 +144,66 @@ test.describe('page mode’s slash commands write what block mode’s do (#5743)
     ])
   })
 
+  // The command's write and a write the editor started before it can reach the backend in either
+  // order. A leave in block mode while `/callout-warning` was writing still saw the text from before
+  // it, and when that write landed last the callout was gone.
+  test('a leave while block mode’s /callout-warning is writing keeps the callout', async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown> & {
+        __TAURI_INTERNALS__: { invoke: (cmd: string, ...rest: unknown[]) => Promise<unknown> }
+      }
+      const internals = w.__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      let left: () => void = () => undefined
+      const hasLeft = new Promise<void>((resolve) => {
+        left = resolve
+      })
+      let commandAnswered: () => void = () => undefined
+      const command = new Promise<void>((resolve) => {
+        commandAnswered = resolve
+      })
+      let inFlight = 0
+      w['__left'] = left
+      w['__editsSettled'] = () => inFlight === 0
+      internals.invoke = async (cmd, ...rest) => {
+        if (cmd !== 'edit_block') return invoke(cmd, ...rest)
+        const toText = (rest[0] as { toText: string }).toText
+        if (toText.startsWith('> [!')) {
+          inFlight++
+          try {
+            return await invoke(cmd, ...rest)
+          } finally {
+            inFlight--
+            commandAnswered()
+          }
+        }
+        // Started while another write is on its way: it lands after the command's.
+        if (inFlight > 0) await command
+        inFlight++
+        try {
+          // Only once the block is left: a leave then overlaps the writes before the command's.
+          await hasLeft
+          return await invoke(cmd, ...rest)
+        } finally {
+          inFlight--
+        }
+      }
+    })
+    const command = COMMANDS.find((c) => c.id === 'callout-warning') as Command
+    await openPageByTitle(page, 'Slash in blocks')
+    await focusBlockById(page, inBlocks.ids[0] as string)
+    await runCommand(page, command)
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => (window as unknown as { __left: () => void }).__left())
+    await page.waitForFunction(() =>
+      (window as unknown as { __editsSettled: () => boolean }).__editsSettled(),
+    )
+
+    expect(await storedRows(page, inBlocks.pageId)).toEqual(command.stored)
+  })
+
   for (const command of COMMANDS) {
     test(`/${command.id} leaves the same rows in both modes`, async ({ page }) => {
       await openPageByTitle(page, 'Slash in blocks')

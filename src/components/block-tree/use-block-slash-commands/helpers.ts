@@ -12,7 +12,6 @@ import type {
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
-import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import type { OpRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -46,9 +45,10 @@ export function readCurrentContent(ctx: SlashCommandContext): string {
 
 /**
  * Write `newContent` to the block; resolves whether it was written (a refusal is toasted here).
- * The editor's pending commit goes first (#6935): left pending, it fires while this write is in
- * flight, carrying the text from before the command with its old base, and the backend merges
- * it into what the command wrote.
+ * The editor and the store take the command's text before the write goes out: a leave or a
+ * keystroke while it is on its way then builds on the command's text, where the text from before
+ * the command would have been written after it and erased it. A refused write puts back what the
+ * block showed and saves it, so no typing is lost.
  */
 export async function applyContentEdit(
   ctx: SlashCommandContext,
@@ -59,8 +59,13 @@ export async function applyContentEdit(
     ctx.blockText.write(newContent)
     return true
   }
+  const shown = readCurrentContent(ctx)
+  const stored = ctx.pageStore.getState().blocksById.get(ctx.blockId)?.content
+  // Out of the turn that picked the command: the editor's own transaction is still running in it.
+  await Promise.resolve()
+  setStoredContent(ctx, newContent)
+  ctx.rovingEditor.mount(ctx.blockId, newContent)
   try {
-    await flushActiveDraft()
     const resp = unwrap(await commands.editBlock(ctx.blockId, newContent, null))
     // Heading/callout/numbered-list/divider slash commands
     // must clear the redo stack just like every other content-edit
@@ -70,15 +75,20 @@ export async function applyContentEdit(
     // contract (`edit` in `src/stores/page-blocks-reducers.ts`) by calling `notifyUndo` here.
     // #2468 — thread the edit's op ref(s) for ref-addressed undo.
     notifyUndo(ctx.rootParentId, resp.op_refs)
-    ctx.pageStore.setState((state) => ({
-      blocks: state.blocks.map((b) => (b.id === ctx.blockId ? { ...b, content: newContent } : b)),
-    }))
-    ctx.rovingEditor.mount(ctx.blockId, newContent)
     return true
   } catch {
     notify.error(ctx.t(failKey))
+    if (stored !== undefined) setStoredContent(ctx, stored)
+    if (ctx.rovingEditor.activeBlockId === ctx.blockId) ctx.rovingEditor.mount(ctx.blockId, shown)
+    if (shown !== (stored ?? '')) void ctx.pageStore.getState().edit(ctx.blockId, shown)
     return false
   }
+}
+
+function setStoredContent(ctx: SlashCommandContext, content: string | null): void {
+  ctx.pageStore.setState((state) => ({
+    blocks: state.blocks.map((b) => (b.id === ctx.blockId ? { ...b, content } : b)),
+  }))
 }
 
 export function openDatePicker(ctx: SlashCommandContext, mode: DatePickerMode): void {
