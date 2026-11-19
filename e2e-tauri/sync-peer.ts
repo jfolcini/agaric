@@ -140,12 +140,8 @@ type Command =
   | { cmd: 'sync_refused' }
   | { cmd: 'get_block'; id: string }
   | { cmd: 'create_block'; parent_id: string; content: string }
-  | { cmd: 'create_in_space'; block_type: 'page' | 'tag'; content: string; space_id?: string }
-  | { cmd: 'seed_vault'; marker: string; pages: number; blocks_per_page: number; padding: number }
-  | { cmd: 'create_space'; name: string }
-  | { cmd: 'move_to_space'; id: string; space_id: string }
+  | { cmd: 'create_in_space'; block_type: 'page' | 'tag'; content: string }
   | { cmd: 'edit_block'; id: string; content: string }
-  | { cmd: 'set_page_aliases'; id: string; aliases: string[] }
   | { cmd: 'set_property'; id: string; key: string; value: string }
   | {
       cmd: 'create_property_def'
@@ -173,9 +169,7 @@ type Reply =
   | { reply: 'refused'; message: string }
   | { reply: 'block'; id: string; parent_id: string | null; content: string }
   | { reply: 'created'; id: string }
-  | { reply: 'seeded'; op_batches: number; last_block_id: string }
   | { reply: 'edited' }
-  | { reply: 'aliases_set'; aliases: string[] }
   | { reply: 'property_set' }
   | { reply: 'tagged' }
   | { reply: 'moved' }
@@ -191,14 +185,6 @@ export interface PeerBlock {
   id: string
   parentId: string | null
   content: string
-}
-
-/** What `seedVault` wrote. */
-export interface PeerSeed {
-  /** How many `OpLogBatch` messages the peer's op log takes to a device holding none of it. */
-  opBatches: number
-  /** The last block written, on the last page. */
-  lastBlockId: string
 }
 
 /** An attachment row as the peer's vault holds it. */
@@ -223,30 +209,10 @@ export interface SyncPeer {
   getBlock(id: string): Promise<PeerBlock>
   /** Write a content block under `parentId`; resolves to its id. */
   createBlock(parentId: string, content: string): Promise<string>
-  /**
-   * Write a page or tag in space `spaceId`, or in the Personal space, the one a
-   * fresh vault opens on; resolves to its id.
-   */
-  createInSpace(blockType: 'page' | 'tag', content: string, spaceId?: string): Promise<string>
-  /**
-   * Write `pages` Personal pages titled `<marker> page <n>`, each holding
-   * `blocksPerPage` blocks of `<marker> page <n> block <m>` and `padding`
-   * bytes of filler.
-   */
-  seedVault(
-    marker: string,
-    pages: number,
-    blocksPerPage: number,
-    padding: number,
-  ): Promise<PeerSeed>
-  /** Create a space named `name`; resolves to its id. */
-  createSpace(name: string): Promise<string>
-  /** Move page `id` and its blocks to space `spaceId`. */
-  moveToSpace(id: string, spaceId: string): Promise<void>
+  /** Write a page or tag in the Personal space, the one a fresh vault opens on; resolves to its id. */
+  createInSpace(blockType: 'page' | 'tag', content: string): Promise<string>
   /** Replace the whole text of block `id` with `content`. */
   editBlock(id: string, content: string): Promise<void>
-  /** Make `aliases` the whole alias list of page `id`; resolves to the aliases it holds now. */
-  setPageAliases(id: string, aliases: string[]): Promise<string[]>
   /** Set text property `key` on block `id`. */
   setProperty(id: string, key: string, value: string): Promise<void>
   /**
@@ -351,37 +317,11 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     createBlock: async (parentId, content) =>
       (await request({ cmd: 'create_block', parent_id: parentId, content }, 'created')).id,
-    createInSpace: async (blockType, content, spaceId) =>
-      (
-        await request(
-          {
-            cmd: 'create_in_space',
-            block_type: blockType,
-            content,
-            ...(spaceId === undefined ? {} : { space_id: spaceId }),
-          },
-          'created',
-        )
-      ).id,
-    seedVault: async (marker, pages, blocksPerPage, padding) => {
-      const seeded = await request(
-        { cmd: 'seed_vault', marker, pages, blocks_per_page: blocksPerPage, padding },
-        'seeded',
-      )
-      return {
-        opBatches: seeded.op_batches,
-        lastBlockId: seeded.last_block_id,
-      }
-    },
-    createSpace: async (name) => (await request({ cmd: 'create_space', name }, 'created')).id,
-    moveToSpace: async (id, spaceId) => {
-      await request({ cmd: 'move_to_space', id, space_id: spaceId }, 'moved')
-    },
+    createInSpace: async (blockType, content) =>
+      (await request({ cmd: 'create_in_space', block_type: blockType, content }, 'created')).id,
     editBlock: async (id, content) => {
       await request({ cmd: 'edit_block', id, content }, 'edited')
     },
-    setPageAliases: async (id, aliases) =>
-      (await request({ cmd: 'set_page_aliases', id, aliases }, 'aliases_set')).aliases,
     setProperty: async (id, key, value) => {
       await request({ cmd: 'set_property', id, key, value }, 'property_set')
     },

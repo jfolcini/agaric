@@ -10,11 +10,10 @@
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
 //! phone's camera hands the joiner), `create_block_inner`,
-//! `create_block_inner_with_space`, `create_blocks_batch_inner`,
-//! `create_space_inner`, `create_property_def_inner`, `edit_block_inner`,
-//! `set_page_aliases_inner`, `set_property_inner`, `set_todo_state_inner`,
+//! `create_block_inner_with_space`, `create_property_def_inner`,
+//! `edit_block_inner`, `set_property_inner`, `set_todo_state_inner`,
 //! `set_due_date_inner`, `add_tag_inner`, `move_block_inner`,
-//! `move_blocks_to_space_inner`, `add_attachment_with_bytes_inner`,
+//! `add_attachment_with_bytes_inner`,
 //! `get_active_block_inner`, `get_property_inner`, `list_attachments_inner`,
 //! `read_attachment_inner` and `list_peer_refs_inner`, and
 //! `start_pairing_armed_inner` for the pairing this vault hosts. `sync` and
@@ -38,12 +37,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    CreateBlockSpec, add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner,
-    create_block_inner, create_block_inner_with_space, create_blocks_batch_inner,
-    create_property_def_inner, create_space_inner, edit_block_inner, get_active_block_inner,
-    get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
-    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_page_aliases_inner,
-    set_property_inner, set_todo_state_inner, start_pairing_armed_inner,
+    add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner, create_block_inner,
+    create_block_inner_with_space, create_property_def_inner, edit_block_inner,
+    get_active_block_inner, get_property_inner, list_attachments_inner, list_peer_refs_inner,
+    move_block_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
+    set_todo_state_inner, start_pairing_armed_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -53,10 +51,8 @@ use agaric_store::peer_refs::{self, PeerRef};
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_sync::foreground::LifecycleHooks;
 use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate};
-use agaric_sync::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES;
 use agaric_sync::sync_daemon::{SyncDaemon, SyncDaemonContext};
 use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
-use agaric_sync::sync_protocol::{batch_ops_for_wire, collect_ops_for_peer};
 use agaric_sync::sync_scheduler::SyncScheduler;
 
 /// How long a command waits on the app: the lane's `ACTION_TIMEOUT`.
@@ -95,31 +91,11 @@ enum Command {
         parent_id: String,
         content: String,
     },
-    /// Write a `page` or `tag` block, which has no parent, in space
-    /// `space_id`, or in the Personal space, the one a fresh vault opens on.
+    /// Write a `page` or `tag` block, which has no parent, in the Personal
+    /// space, the one a fresh vault opens on.
     CreateInSpace {
         block_type: String,
         content: String,
-        #[serde(default)]
-        space_id: Option<String>,
-    },
-    /// Write `pages` pages in the Personal space, `<marker> page <n>`, each
-    /// holding `blocks_per_page` blocks, `<marker> page <n> block <m>` and
-    /// `padding` bytes of filler, written as one batch per page.
-    SeedVault {
-        marker: String,
-        pages: usize,
-        blocks_per_page: usize,
-        padding: usize,
-    },
-    /// Create a space named `name`.
-    CreateSpace {
-        name: String,
-    },
-    /// Move page `id` and its blocks to space `space_id`.
-    MoveToSpace {
-        id: String,
-        space_id: String,
     },
     /// Replace the whole text of block `id` with `content`.
     EditBlock {
@@ -128,11 +104,6 @@ enum Command {
     },
     /// Declare a property, as [`PropertyDefArgs`] spells it.
     CreatePropertyDef(PropertyDefArgs),
-    /// Make `aliases` the whole alias list of page `id`.
-    SetPageAliases {
-        id: String,
-        aliases: Vec<String>,
-    },
     /// Set text property `key` on block `id`.
     SetProperty {
         id: String,
@@ -233,17 +204,7 @@ enum Reply {
     Created {
         id: String,
     },
-    /// How many `OpLogBatch` messages this vault's op log takes to a device
-    /// that holds none of it, and the last block `seed_vault` wrote.
-    Seeded {
-        op_batches: usize,
-        last_block_id: String,
-    },
     Edited,
-    /// The aliases the page holds now.
-    AliasesSet {
-        aliases: Vec<String>,
-    },
     PropertySet,
     Tagged,
     Moved,
@@ -390,22 +351,9 @@ impl Peer {
             Command::CreateInSpace {
                 block_type,
                 content,
-                space_id,
-            } => self.create_in_space(block_type, content, space_id).await,
-            Command::SeedVault {
-                marker,
-                pages,
-                blocks_per_page,
-                padding,
-            } => {
-                self.seed_vault(&marker, pages, blocks_per_page, padding)
-                    .await
-            }
-            Command::CreateSpace { name } => self.create_space(name).await,
-            Command::MoveToSpace { id, space_id } => self.move_to_space(id, space_id).await,
+            } => self.create_in_space(block_type, content).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
             Command::CreatePropertyDef(args) => self.create_property_def(args).await,
-            Command::SetPageAliases { id, aliases } => self.set_page_aliases(id, aliases).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
             Command::SetTodoState { id, state } => self.set_todo_state(id, state).await,
             Command::SetDueDate { id, date } => self.set_due_date(id, date).await,
@@ -574,9 +522,7 @@ impl Peer {
         &mut self,
         block_type: String,
         content: String,
-        space_id: Option<String>,
     ) -> Result<Reply, AppError> {
-        let space = space_id.unwrap_or_else(|| SPACE_PERSONAL_ULID.to_owned());
         let row = create_block_inner_with_space(
             &self.pools.write,
             &self.device_id,
@@ -585,7 +531,7 @@ impl Peer {
             content,
             None,
             None,
-            &SpaceScope::Active(SpaceId::from_trusted(&space)),
+            &SpaceScope::Active(SpaceId::from_trusted(SPACE_PERSONAL_ULID)),
             None,
         )
         .await?;
@@ -593,94 +539,6 @@ impl Peer {
         Ok(Reply::Created {
             id: row.id.into_string(),
         })
-    }
-
-    async fn seed_vault(
-        &mut self,
-        marker: &str,
-        pages: usize,
-        blocks_per_page: usize,
-        padding: usize,
-    ) -> Result<Reply, AppError> {
-        let mut filler = "lorem ipsum ".repeat(padding.div_ceil(12));
-        filler.truncate(padding);
-        let personal = SpaceScope::Active(SpaceId::from_trusted(SPACE_PERSONAL_ULID));
-        let mut last_block_id = None;
-        for page in 1..=pages {
-            let page_row = create_block_inner_with_space(
-                &self.pools.write,
-                &self.device_id,
-                &self.materializer,
-                "page".into(),
-                format!("{marker} page {page}"),
-                None,
-                None,
-                &personal,
-                None,
-            )
-            .await?;
-            let specs = (1..=blocks_per_page)
-                .map(|block| CreateBlockSpec {
-                    block_type: "content".into(),
-                    content: format!("{marker} page {page} block {block} {filler}"),
-                    parent_id: Some(page_row.id.clone()),
-                    position: None,
-                    parent_index: None,
-                    block_id: None,
-                    typed_properties: std::collections::HashMap::new(),
-                    properties: std::collections::HashMap::new(),
-                })
-                .collect();
-            let rows = create_blocks_batch_inner(
-                &self.pools.write,
-                &self.device_id,
-                &self.materializer,
-                specs,
-            )
-            .await?;
-            last_block_id = rows.last().map(|row| row.id.as_str().to_owned());
-            // Every block queues its cache tasks; unflushed, the pages overflow the queue.
-            self.materializer.flush_background().await?;
-        }
-        self.last_write_ms = now_ms();
-        let records = collect_ops_for_peer(&self.pools.read, &[]).await?;
-        Ok(Reply::Seeded {
-            op_batches: batch_ops_for_wire(records, OP_LOG_BATCH_INLINE_MAX_BYTES).len(),
-            last_block_id: last_block_id.ok_or_else(|| {
-                AppError::InvalidOperation(
-                    "seed_vault wrote no block: pass pages and blocks".into(),
-                )
-            })?,
-        })
-    }
-
-    async fn create_space(&mut self, name: String) -> Result<Reply, AppError> {
-        let id = create_space_inner(
-            &self.pools.write,
-            &self.device_id,
-            &self.materializer,
-            name,
-            None,
-        )
-        .await?;
-        self.last_write_ms = now_ms();
-        Ok(Reply::Created {
-            id: id.into_string(),
-        })
-    }
-
-    async fn move_to_space(&mut self, id: String, space_id: String) -> Result<Reply, AppError> {
-        move_blocks_to_space_inner(
-            &self.pools.write,
-            &self.device_id,
-            &self.materializer,
-            vec![BlockId::from_string(id)?],
-            space_id,
-            &[],
-        )
-        .await?;
-        self.last_write_ms = now_ms();
-        Ok(Reply::Moved)
     }
 
     async fn edit_block(&mut self, id: String, content: String) -> Result<Reply, AppError> {
@@ -712,23 +570,6 @@ impl Peer {
         .await?;
         self.last_write_ms = now_ms();
         Ok(Reply::PropertySet)
-    }
-
-    async fn set_page_aliases(
-        &mut self,
-        id: String,
-        aliases: Vec<String>,
-    ) -> Result<Reply, AppError> {
-        let aliases = set_page_aliases_inner(
-            &self.pools.write,
-            &self.device_id,
-            &self.materializer,
-            &id,
-            aliases,
-        )
-        .await?;
-        self.last_write_ms = now_ms();
-        Ok(Reply::AliasesSet { aliases })
     }
 
     async fn set_property(
@@ -1125,43 +966,8 @@ mod tests {
             Ok(Command::CreateInSpace {
                 block_type: "tag".into(),
                 content: "marigold".into(),
-                space_id: None,
             }),
             "sync-peer.ts sends a page or tag as its block type and its text"
-        );
-        assert_eq!(
-            parse_command(
-                r#"{"cmd":"create_in_space","block_type":"page","content":"Plan","space_id":"S1"}"#
-            ),
-            Ok(Command::CreateInSpace {
-                block_type: "page".into(),
-                content: "Plan".into(),
-                space_id: Some("S1".into()),
-            }),
-            "…and names the space when it is not Personal"
-        );
-    }
-
-    #[test]
-    fn create_space_takes_a_name() {
-        assert_eq!(
-            parse_command(r#"{"cmd":"create_space","name":"Alpha"}"#),
-            Ok(Command::CreateSpace {
-                name: "Alpha".into()
-            }),
-            "sync-peer.ts sends a space as its name"
-        );
-    }
-
-    #[test]
-    fn move_to_space_takes_a_page_and_a_space() {
-        assert_eq!(
-            parse_command(r#"{"cmd":"move_to_space","id":"P1","space_id":"S2"}"#),
-            Ok(Command::MoveToSpace {
-                id: "P1".into(),
-                space_id: "S2".into(),
-            }),
-            "sync-peer.ts sends a move to another space as the page id and the space"
         );
     }
 
@@ -1188,18 +994,6 @@ mod tests {
                 space_id: Some("S1".into()),
             })),
             "…and a select's options and another space when it names them"
-        );
-    }
-
-    #[test]
-    fn set_page_aliases_takes_a_page_and_its_whole_alias_list() {
-        assert_eq!(
-            parse_command(r#"{"cmd":"set_page_aliases","id":"P1","aliases":["Plans","roadmap"]}"#),
-            Ok(Command::SetPageAliases {
-                id: "P1".into(),
-                aliases: vec!["Plans".into(), "roadmap".into()],
-            }),
-            "sync-peer.ts sends an alias edit as the page id and the page's whole alias list"
         );
     }
 

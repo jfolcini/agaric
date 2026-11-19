@@ -15070,6 +15070,109 @@ async fn a_synced_purge_of_a_contested_alias_holder_hands_it_to_the_other_claima
     b.flush_and_shutdown().await;
 }
 
+/// #5739: a fresh device pulls a vault whose op log spans several
+/// `OpLogBatch` messages over real QUIC. It must hold every page and block,
+/// and the last block's op, which rides the last batch, as an audit record:
+/// the app never applies those records, so the rows alone cannot see a
+/// dropped batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fresh_device_pulls_a_vault_several_op_batches_long_5739() {
+    use crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES;
+    use crate::sync_protocol::SyncState;
+    use crate::sync_protocol::{batch_ops_for_wire, collect_ops_for_peer};
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
+
+    const PAGES: usize = 3;
+    const BLOCKS_PER_PAGE: usize = 20;
+    const PADDING: usize = 100_000;
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5739SPACEXXXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5739AA", "DEV5739BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+
+    let mut written: Vec<(String, String)> = Vec::new();
+    let mut ts = 1_736_942_400_000;
+    for p in 0..PAGES {
+        let page = format!("01HZ5739PAGE{p:0>14}");
+        let mut create =
+            |block_id: &str, block_type: &str, parent: Option<&str>, content: String| {
+                ts += 1;
+                written.push((block_id.to_owned(), content.clone()));
+                (
+                    OpPayload::CreateBlock(CreateBlockPayload {
+                        block_id: BlockId::from_trusted(block_id),
+                        block_type: block_type.into(),
+                        parent_id: parent.map(BlockId::from_trusted),
+                        position: None,
+                        index: Some(0),
+                        content,
+                    }),
+                    ts,
+                )
+            };
+        let mut ops = vec![create(&page, "page", None, format!("Large vault page {p}"))];
+        for i in 0..BLOCKS_PER_PAGE {
+            let block = format!("01HZ5739BLK{p:0>3}{i:0>12}");
+            let text = format!("{block} {}", "x".repeat(PADDING));
+            ops.push(create(&block, "content", Some(&page), text));
+        }
+        for (payload, at) in ops {
+            on_5387(a, &space, payload, at).await;
+        }
+    }
+    let last_block = written.last().unwrap().0.clone();
+    let batches = batch_ops_for_wire(
+        collect_ops_for_peer(&a.pool, &[]).await.unwrap(),
+        OP_LOG_BATCH_INLINE_MAX_BYTES,
+    )
+    .len();
+    assert!(
+        batches >= 3,
+        "premise: the op log spans {batches} batches, not 3 or more"
+    );
+
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "B's pull completes"
+    );
+    b.mat.flush_background().await.unwrap();
+
+    let held: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, content FROM blocks WHERE deleted_at IS NULL AND id LIKE '01HZ5739%' ORDER BY id",
+    )
+    .fetch_all(&b.pool)
+    .await
+    .unwrap();
+    written.sort_unstable();
+    // Compared by hand: a failed `assert_eq!` would print 6 MB twice.
+    assert_eq!(
+        held.len(),
+        written.len(),
+        "B holds every page and block A wrote"
+    );
+    assert!(
+        held == written,
+        "B holds every page and block with A's text"
+    );
+
+    let history: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT device_id, op_type, is_replicated FROM op_log WHERE block_id = ? ORDER BY seq",
+    )
+    .bind(&last_block)
+    .fetch_all(&b.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        history,
+        vec![(a.id.clone(), "create_block".to_owned(), 1)],
+        "the last block's op, in the last batch, reached B as an audit record"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
 /// #6451: a peer that does not answer the first pairing-window dial (its user is
 /// still typing the passphrase) and is listening a few seconds later is redialled
 /// by the periodic round, with no mDNS event or local change to prompt it.
