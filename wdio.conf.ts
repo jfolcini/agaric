@@ -1046,7 +1046,7 @@ const SPECS_WITH_A_SLOW_MATERIALIZER = new Set(['link-it-linked-refs.e2e.ts'])
  * the host's `xdg-open` appends the target and the `LD_LIBRARY_PATH` and
  * `APPDIR` it was given to `launches.txt` in the vault.
  */
-const SPECS_IN_AN_APPIMAGE_ENV = new Set(['appimage-launcher-env.e2e.ts'])
+const SPECS_IN_AN_APPIMAGE_ENV = new Set(['block-clipboard.e2e.ts'])
 
 function stageAppImageEnv(env: NodeJS.ProcessEnv): void {
   if (sandboxRunDir === undefined) throw new Error('[sandbox] no run dir to stage the AppImage in')

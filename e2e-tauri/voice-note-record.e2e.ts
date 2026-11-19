@@ -5,9 +5,17 @@
 // through an `AudioWorklet` (a same-origin module, under the app's CSP), encodes
 // with WebCodecs `AudioEncoder('opus')` through GStreamer, and writes Ogg
 // itself. Under `AGARIC_E2E_SANDBOX` the microphone is WebKitGTK's mock
-// capture device, a tone (`microphone-permission.e2e.ts`). The mock-backed
+// capture device, a tone; the first case checks that device delivers a live
+// track (#5717). It cannot pin `allow_capture_permission`: under WebDriver,
+// WebKit grants `getUserMedia` itself and never asks the app. The mock-backed
 // `e2e/voice-note-record.spec.ts` runs Chromium's encoder and player; only this
 // lane plays the file in the engine Linux users have, from the bytes on disk.
+//
+// The last case is the image twin (#5365): a pasted PNG is an `attachments` row
+// plus a file, the block holds only an `![name](attachment:<id>)` ref, and
+// GatedImage resolves it with `read_attachment` into a `blob:` URL that WebKitGTK
+// must decode under the app's real CSP. The same ref kept through an Edit-as-
+// Markdown save is `e2e/inline-image-1434.spec.ts`, on the bridge.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -16,9 +24,11 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  expectImageRendered,
   invoke,
   navigateTo,
   openNewPage,
+  pasteFileIntoFocusedBlock,
   reopenPageByTitle,
   restartApp,
   runScopedMarker,
@@ -29,6 +39,12 @@ import {
 
 const PAGE = runScopedMarker('wdio-voice-page')
 const BLOCK = runScopedMarker('wdio-voice-note')
+const IMAGE_PAGE = runScopedMarker('wdio-img-page')
+const IMAGE_BLOCK = runScopedMarker('wdio-img-holder')
+const IMAGE_FILENAME = 'wdio-image.png'
+// A 1x1 transparent PNG.
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
 interface AttachmentRow {
   filename: string
@@ -37,6 +53,24 @@ interface AttachmentRow {
 }
 
 describe('Agaric real-webview voice note (#5730) @attachments', () => {
+  it('resolves getUserMedia({ audio: true }) with a live audio track (#5717)', async () => {
+    await waitForAppReady()
+
+    const outcome = await browser.execute(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const states = stream.getAudioTracks().map((track) => track.readyState)
+        for (const track of stream.getTracks()) track.stop()
+        return { states }
+      } catch (err) {
+        // Not `error`: WebDriver reads a returned object with that key as a failed command.
+        return { failure: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
+      }
+    })
+
+    expect(outcome).toEqual({ states: ['live'] })
+  })
+
   it('records Ogg Opus from the microphone, and the note plays after a round trip', async () => {
     await waitForAppReady()
     await openNewPage(PAGE)
@@ -125,5 +159,20 @@ describe('Agaric real-webview voice note (#5730) @attachments', () => {
         ),
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the voice note never played after the restart' },
     )
+  })
+
+  it('renders a pasted PNG from its stored bytes after leaving the page (#5365)', async () => {
+    await openNewPage(IMAGE_PAGE)
+    await typeMarkerVerified(IMAGE_BLOCK)
+    await pasteFileIntoFocusedBlock(PNG_BASE64, IMAGE_FILENAME, 'image/png')
+    await waitForToast(`Attached "${IMAGE_FILENAME}"`)
+
+    await navigateTo('Journal')
+    await reopenPageByTitle(IMAGE_PAGE)
+    const block = blockStaticByMarker(IMAGE_BLOCK)
+    await block.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await block.getAttribute('data-block-id')
+    if (id === null) throw new Error('the image block has no data-block-id')
+    await expectImageRendered(id, 'after the round trip')
   })
 })
