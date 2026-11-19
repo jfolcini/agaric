@@ -3300,7 +3300,9 @@ mod reader_delegation_tests {
     // #6277 G5 wired `list_import_merges`: `snapshot_page_link_matches`' two
     // SELECTs over `blocks` and `page_aliases` and one `query_scalar!` SELECT
     // over `blocks`, in a plain `pool.begin()` tx
-    // (`commands/pages/markdown_import_merge.rs`). The merge it lists for is
+    // (`commands/pages/markdown_import_merge.rs`), and for a spaced title
+    // under `Tag/` the tag and page-name SELECTs over the same tables
+    // (`import_tag_page_naming`). The merge it lists for is
     // `import_markdown`, not a read arm. Writer set unchanged.
     // #6527 wired `resolve_page_title`: `SpacePageNames::read`'s two
     // `query_scalar!` SELECTs over `blocks` and `page_aliases JOIN blocks`

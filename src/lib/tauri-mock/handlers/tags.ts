@@ -10,7 +10,7 @@
  */
 
 import type { BlockRow } from '@/lib/bindings'
-import { tagPageTitle } from '@/lib/name-tokens'
+import { dashedTagName, tagOfPageTitle, tagPageTitle } from '@/lib/name-tokens'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TagExprNode,
@@ -22,11 +22,13 @@ import {
   ownerSpaceOf,
   pageRequestLimit,
   refInclusiveTags,
+  reservedTagPageTitle,
   validationRejection,
   readActiveSpaceScope,
   BLOCK_TAG_CAP,
   inheritedTagIds,
 } from '@/lib/tauri-mock/handlers/shared'
+import { importTagPageTitle } from '@/lib/tauri-mock/names'
 import { blockTags, blocks, properties, pushOp } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
@@ -392,9 +394,23 @@ export const tagsHandlers = {
     const pageId = createPageInSpace(null, tagPageTitle(tag['content']), spaceId, true)
     return { ...blocks.get(pageId) } as BlockRow
   },
+
+  // #6755 — `create_tag_page_titled_inner`: the page a `[[Tag/x]]` link names,
+  // its tag found or made first and a spaced name dashed, as an import names
+  // them (`importTagPageTitle`). A title naming no tag is refused.
+  create_tag_page_titled: (args) => {
+    const a = args as Record<string, unknown>
+    const title = a['title'] as string
+    const spaceId = a['spaceId'] as string
+    if (dashedTagName(tagOfPageTitle(title) ?? '') === '') throw reservedTagPageTitle(title)
+    const tagged = importTagPageTitle(title, spaceId, [])
+    const pageId = createPageInSpace(null, tagged.title, spaceId, true)
+    return { ...blocks.get(pageId) } as BlockRow
+  },
 } satisfies Pick<
   TypedHandlers,
   | 'create_tag_page'
+  | 'create_tag_page_titled'
   | 'add_tag'
   | 'remove_tag'
   | 'add_tags_by_ids'

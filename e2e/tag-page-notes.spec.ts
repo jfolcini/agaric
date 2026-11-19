@@ -6,8 +6,11 @@ import {
   activeDialog,
   blurEditors,
   expect,
+  focusBlockById,
   ipc,
   navigateToView,
+  openPage,
+  saveBlock,
   test,
   waitForBoot,
 } from './helpers'
@@ -17,8 +20,9 @@ import {
  * makes the page `Tag/<tag>` through the tag and lands the caret in its first
  * block; what is typed there is the page's block, shown on the tag's page and
  * on the page itself, which links back to its tag. The tag and its page are
- * renamed together from either one and reverted together from History, and a
- * page under `Tag/` is made no other way.
+ * renamed together from either one and reverted together from History. A
+ * typed `[[Tag/x]]` naming no page makes tag `x` and its page, as `#x` makes
+ * the tag; the New page dialog makes no page under `Tag/`.
  *
  * Persistence is read back from the backend after navigating away and back.
  */
@@ -147,6 +151,40 @@ test.describe("A tag's page is written on @pages @editor", () => {
     await expect.poll(() => pageTitled(page, 'Tag/idea')).toBe(pageId)
     const back = await openTag(page, 'idea')
     await expect(back.locator('[data-testid="block-static"]')).toHaveText(['Seeds'])
+  })
+
+  test('a typed [[Tag/x]] makes the tag and links its page, as #x makes the tag', async ({
+    page,
+  }) => {
+    const block = '0000000000000000000B10CK01'
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlockById(page, block)
+    await editor.press('End')
+    await page.keyboard.type(' see [[Tag/typed-link]]', { delay: 30 })
+    await expect(editor.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
+    await saveBlock(page)
+
+    await expect.poll(() => pageTitled(page, 'Tag/typed-link')).not.toBeNull()
+    const pageId = await pageTitled(page, 'Tag/typed-link')
+    const stored = () => ipc<{ content: string }>(page, 'get_block', { blockId: block })
+    await expect.poll(async () => (await stored()).content).toContain(`see [[${pageId}]]`)
+
+    await openTag(page, 'typed-link')
+    const tags = await ipc<{ tag_id: string; name: string }[]>(page, 'list_all_tags_in_space', {
+      scope: SCOPE,
+    })
+    const tag = tags.find((row) => row.name === 'typed-link')
+    expect(
+      await ipc<{ id: string }>(page, 'create_tag_page', { tagId: tag?.tag_id }),
+    ).toMatchObject({ id: pageId })
+
+    await navigateToView(page, 'Pages')
+    await page.locator('[data-page-title="Getting Started"]').click()
+    const chip = page.locator(`[data-testid="block-link-chip"][data-id="${pageId}"]`)
+    await chip.dispatchEvent('click')
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Tag/typed-link')
+    await page.getByRole('button', { name: 'Notes of the tag #typed-link', exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('typed-link')
   })
 
   test('a page under Tag/ is not made as an ordinary page', async ({ page }) => {

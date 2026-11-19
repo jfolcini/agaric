@@ -238,7 +238,9 @@ pub use sync_cmds::{
     start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
     update_peer_name_inner,
 };
-pub use tag_pages::{create_tag_page, create_tag_page_inner};
+pub use tag_pages::{
+    create_tag_page, create_tag_page_inner, create_tag_page_titled, create_tag_page_titled_inner,
+};
 pub use tag_properties::{
     SuggestedProperty, TaggedBlocksWrite, TaggedWriteCounts, list_suggested_properties,
     list_suggested_properties_inner, preview_set_property_on_tagged_blocks,

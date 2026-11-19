@@ -194,6 +194,7 @@ export const references: Record<string, string> = {
   'tagNotes.openTag': 'Notizen zum Tag #{{name}}',
   'tags.pageTitleReserved':
     'Seiten unter "Tag/" gehören zu ihren Tags. Erstelle den Tag oder benenne ihn um.',
+  'tags.linkPageDashed': '{{title}} verlinkt: Ein Tag-Name enthält keine Leerzeichen',
   'tags.pageTitleTaken':
     'Ein Tag und seine Notizseite werden gemeinsam umbenannt, und eine andere Seite oder ein anderer Tag trägt diesen Namen bereits. Benenne diese zuerst um oder lösche sie.',
   'backlink.searchTextRequired': 'Suchtext ist erforderlich',

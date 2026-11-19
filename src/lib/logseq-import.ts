@@ -15,6 +15,7 @@ import { format, isValid } from 'date-fns'
 
 import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source-buffer-document'
 import { logger } from '@/lib/logger'
+import { tagPageTitle } from '@/lib/name-tokens'
 
 /** The vault-relative path of a graph's config. */
 export const LOGSEQ_CONFIG = 'logseq/config.edn'
@@ -27,6 +28,9 @@ const PAGE_LINK_RE = /\[\[([^\]\n]+)\]\]/g
 
 /** A run of percent-encoded bytes, decoded together so a multi-byte character reads whole. */
 const PERCENT_RUN_RE = /(?:%[0-9A-Fa-f]{2})+/g
+
+/** A `tags::` or `alias::` line, whose items name tags or the page itself. */
+const NAMES_LINE_RE = /^\s*(?:-\s+)?(?:tags|alias)::/i
 
 /** A page property line `key:: value` of the lines a Logseq page opens with. */
 const PAGE_PROPERTY_RE = /^([A-Za-z0-9_-]+)::(.*)$/
@@ -134,8 +138,12 @@ function journalLinks(days: readonly Date[], titleFormat: string): Map<string, s
 export interface LogseqGraph {
   /** The page title each path imports as, in order; null outside `pages/` and `journals/`. */
   titles: (string | null)[]
-  /** `content` with each link naming a journal by its Logseq title naming its day instead. */
-  rewrite: (content: string) => string
+  /**
+   * `content` with each link naming a journal by its Logseq title naming its
+   * day instead, and each naming a page of `tagPages` ({@link logseqTagPages})
+   * naming that page's title.
+   */
+  rewrite: (content: string, tagPages?: ReadonlyMap<string, string>) => string
 }
 
 /**
@@ -162,12 +170,47 @@ export function logseqGraph(edn: string | null, paths: readonly string[]): Logse
       : percentDecode(stem.replaceAll(legacy ? '.' : '___', '/'))
   })
   const links = journalLinks(days, titleFormat)
-  return { titles, rewrite: (content) => rewriteLinks(content, links) }
+  return {
+    titles,
+    rewrite: (content, tagPages) => rewriteLinks(content, links, tagPages ?? new Map()),
+  }
 }
 
-/** `content` with each `[[Name]]` outside a code fence that `links` names linking its day. */
-function rewriteLinks(content: string, links: ReadonlyMap<string, string>): string {
-  if (links.size === 0) return content
+/**
+ * A graph's tag pages (#6755): each Markdown page under `pages/` (of the
+ * vault-relative `paths`) whose title (`titles`, as it imports) the graph makes
+ * a tag, a name of `tags` in lowercase, imports as that tag's page,
+ * `Tag/<title>`. Keyed by the title in lowercase, as Logseq matches a
+ * `[[link]]` to a page. An Org page keeps its title: its `#+TITLE` is read only
+ * as it converts.
+ */
+export function logseqTagPages(
+  paths: readonly string[],
+  titles: readonly string[],
+  tags: ReadonlySet<string>,
+): Map<string, string> {
+  const pages = new Map<string, string>()
+  for (const [index, path] of paths.entries()) {
+    const title = titles[index]
+    if (!path.startsWith('pages/') || path.endsWith('.org') || title === undefined) continue
+    const name = title.toLowerCase()
+    if (tags.has(name)) pages.set(name, tagPageTitle(title))
+  }
+  return pages
+}
+
+/**
+ * `content` with each `[[Name]]` outside a code fence that `links` names
+ * linking its day, and each naming a page of `tagPages` linking that page's
+ * title; but for a `#[[Name]]` tag and the names of a `tags::` or `alias::`
+ * line, which name a tag or the page itself.
+ */
+function rewriteLinks(
+  content: string,
+  links: ReadonlyMap<string, string>,
+  tagPages: ReadonlyMap<string, string>,
+): string {
+  if (links.size === 0 && tagPages.size === 0) return content
   let fence: FenceRun | null = null
   return content
     .split('\n')
@@ -176,9 +219,12 @@ function rewriteLinks(content: string, links: ReadonlyMap<string, string>): stri
       if (fence === null) fence = documentFenceOpener(line)
       else if (closesFence(line, fence)) fence = null
       if (before !== null || fence !== null) return line
-      return line.replace(PAGE_LINK_RE, (link, name: string) => {
-        const day = links.get(name.trim().toLowerCase())
-        return day === undefined ? link : `[[${day}]]`
+      const names = NAMES_LINE_RE.test(line)
+      return line.replace(PAGE_LINK_RE, (link, name: string, at: number) => {
+        const key = name.trim().toLowerCase()
+        const tagPage = names || line[at - 1] === '#' ? undefined : tagPages.get(key)
+        const target = links.get(key) ?? tagPage
+        return target === undefined ? link : `[[${target}]]`
       })
     })
     .join('\n')

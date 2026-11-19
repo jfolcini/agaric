@@ -398,6 +398,11 @@ export const references: Record<string, string> = {
   'tags.pageTitleReserved':
     'Pages under "Tag/" belong to their tags. Create or rename the tag instead.',
 
+  // Translators: Toast after a typed link [[Tag/<name>]] whose name held spaces made the tag with
+  // dashes instead, and the page titled with them. {{title}} = the page title made, e.g.
+  // "Tag/deep-work".
+  'tags.linkPageDashed': 'Linked {{title}}: a tag name holds no spaces',
+
   // Translators: Error when renaming a tag or its notes page "Tag/<name>": the two are renamed
   // together, and another page or tag already has the new name.
   'tags.pageTitleTaken':

@@ -13,6 +13,7 @@
  */
 
 import { closesFence, documentFenceOpener, type FenceRun } from '@/editor/source-buffer-document'
+import { dashedTagName, tagPageTitle } from '@/lib/name-tokens'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { holdsOr, parse, serialize } from '@/lib/search-query'
 import type { FilterNode, FilterToken, SearchQueryAST } from '@/lib/search-query/types'
@@ -137,9 +138,14 @@ function priorityClause(args: Sexp[]): Node {
   )
 }
 
-/** The page named exactly: a glob with no wildcard still matches as a substring, so its first character is a one-character class. */
-function pageClause(args: Sexp[]): Node {
-  const name = argument(args[0])
+/**
+ * The page named exactly: a glob with no wildcard still matches as a substring, so its first
+ * character is a one-character class. A page of `tagPages` imports as its tag's page, a spaced
+ * name dashed as the import dashes it (#6755).
+ */
+function pageClause(args: Sexp[], tagPages: ReadonlyMap<string, string>): Node {
+  const written = argument(args[0])
+  const name = tagPages.has(written.toLowerCase()) ? tagPageTitle(dashedTagName(written)) : written
   if (args.length !== 1 || /["*?[\]{},\\]/.test(name)) throw new Unsupported()
   const [first = '', ...rest] = name
   return filters({ kind: 'pathInclude', value: `[${first}]${rest.join('')}`, span: noSpan })
@@ -206,7 +212,11 @@ function negate(node: Node): Node {
   }
 }
 
-function clause(sexp: Sexp, tags: ReadonlySet<string>): Node {
+function clause(
+  sexp: Sexp,
+  tags: ReadonlySet<string>,
+  tagPages: ReadonlyMap<string, string>,
+): Node {
   if (sexp.k === 'string') return { t: 'word', text: `"${sexp.text}"` }
   if (sexp.k === 'page') {
     // An inline `#x` is a reference, not an attached tag, and `under:` matches both.
@@ -222,12 +232,12 @@ function clause(sexp: Sexp, tags: ReadonlySet<string>): Node {
       if (args.length === 0) throw new Unsupported()
       return {
         t: head.text.toLowerCase() === 'and' ? 'and' : 'or',
-        children: args.map((arg) => clause(arg, tags)),
+        children: args.map((arg) => clause(arg, tags, tagPages)),
       }
     }
     case 'not': {
       if (args.length !== 1) throw new Unsupported()
-      return negate(clause(args[0] as Sexp, tags))
+      return negate(clause(args[0] as Sexp, tags, tagPages))
     }
     case 'task':
     case 'todo': {
@@ -237,7 +247,7 @@ function clause(sexp: Sexp, tags: ReadonlySet<string>): Node {
       return priorityClause(args)
     }
     case 'page': {
-      return pageClause(args)
+      return pageClause(args, tagPages)
     }
     case 'page-tags': {
       if (args.length !== 1) throw new Unsupported()
@@ -315,13 +325,18 @@ function toAst(node: Node): SearchQueryAST {
  * The query block text, `{{query …}}`, that `expression` (the text between
  * `{{query ` and `}}`) translates to, or null when a clause has no
  * equivalent. `tags` holds the lowercased names the import makes tags, which
- * a `[[name]]` clause needs, since only a tag is a filter (`under:`, which sees inline `#name`).
+ * a `[[name]]` clause needs, since only a tag is a filter (`under:`, which sees inline `#name`),
+ * and `tagPages` the pages that import as a tag's (`logseqTagPages` in `logseq-import.ts`).
  */
-export function translateLogseqQuery(expression: string, tags: ReadonlySet<string>): string | null {
+export function translateLogseqQuery(
+  expression: string,
+  tags: ReadonlySet<string>,
+  tagPages: ReadonlyMap<string, string> = new Map(),
+): string | null {
   try {
     const sexp = readSexp(expression)
     if (sexp === null) return null
-    const ast = toAst(normalise(clause(sexp, tags)))
+    const ast = toAst(normalise(clause(sexp, tags, tagPages)))
     const text = serialize(ast)
     const back = parse(text)
     const lost =
@@ -363,6 +378,7 @@ export const holdsLogseqQuery = (content: string): boolean => /\{\{query\s/i.tes
 export function translateLogseqQueries(
   content: string,
   tags: ReadonlySet<string>,
+  tagPages: ReadonlyMap<string, string> = new Map(),
 ): { content: string; kept: number } {
   let fence: FenceRun | null = null
   let kept = 0
@@ -374,7 +390,7 @@ export function translateLogseqQueries(
     const match = QUERY_LINE_RE.exec(line)
     if (match === null) return line
     const [, lead = '', expression = ''] = match
-    const translated = translateLogseqQuery(expression, tags)
+    const translated = translateLogseqQuery(expression, tags, tagPages)
     if (translated !== null) return `${lead}${translated}`
     kept += 1
     const column = ' '.repeat(lead.length)

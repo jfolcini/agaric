@@ -143,6 +143,24 @@ describe('translateLogseqQuery', () => {
   })
 })
 
+// #6755 — a page the graph makes a tag imports as the tag's page, `Tag/x`, a
+// spaced name dashed as the import dashes it, so `(page x)` asks for that page.
+describe('translateLogseqQuery of a tag page', () => {
+  const tagPages = new Map([
+    ['work', 'Tag/Work'],
+    ['big idea', 'Tag/Big Idea'],
+  ])
+
+  it.each([
+    ['(page work)', '{{query path:[T]ag/work}}'],
+    ['(page "Big Idea")', '{{query path:[T]ag/Big-Idea}}'],
+    ['(not (page Work))', '{{query not-path:[T]ag/Work}}'],
+    ['(page inbox)', '{{query path:[i]nbox}}'],
+  ])('%s asks for the page it imports as', (expression, block) => {
+    expect(translateLogseqQuery(expression, TAGS, tagPages)).toBe(block)
+  })
+})
+
 describe('translateLogseqQueries', () => {
   const run = (content: string) => translateLogseqQueries(content, TAGS)
 

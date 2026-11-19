@@ -34,6 +34,7 @@ import {
   LOGSEQ_CONFIG,
   type LogseqGraph,
   logseqGraph,
+  logseqTagPages,
   logseqTitleProperty,
 } from '@/lib/logseq-import'
 import { holdsLogseqQuery, logseqTagNames, translateLogseqQueries } from '@/lib/logseq-query'
@@ -555,23 +556,6 @@ function retitle(path: string, title: string | null): string {
 }
 
 /**
- * The path a note named `path` imports as once its `text` is read: an Org
- * file's `#+TITLE` (from `org`, its conversion, where the caller has it), a
- * page of the Logseq `graph` its `title::`. Any other note keeps `path`.
- */
-function titledPath(
-  path: string,
-  extension: string,
-  text: string,
-  graph: LogseqGraph | null,
-  org?: OrgPage,
-): string {
-  if (extension === '.org') return retitle(path, (org ?? orgToMarkdown(text)).title)
-  const title = graph === null ? null : logseqTitleProperty(text)
-  return title === null ? path : `${title}.md`
-}
-
-/**
  * The paths a pick's notes import as, the notes keyed by the names a link
  * calls them, and the Logseq graph they make, if any.
  */
@@ -579,32 +563,47 @@ interface NamedNotes {
   paths: string[]
   notesByName: Map<string, string[]>
   graph: LogseqGraph | null
-  /** The names the pick's notes make tags, read from every note on first call. */
-  tags: () => Promise<ReadonlySet<string>>
+  /** The names a graph's notes make tags, lowercased; none outside a graph. */
+  tags: ReadonlySet<string>
+  /** A graph's tag pages ({@link logseqTagPages}). */
+  tagPages: ReadonlyMap<string, string>
 }
 
 /**
  * Name a pick's `notes`, each keyed by its file stem as Obsidian links it. A
  * Logseq graph's pages and journals are titled as Logseq titles them (#6033),
- * and only one outside a namespace is keyed, since a Logseq link names a
- * whole title.
+ * by the `title::` a page names itself by (not in a Notion export) or else its
+ * file name, a Markdown page the graph makes a tag as that tag's page (#6755), and only
+ * one outside a namespace is keyed, since a Logseq link names a whole title.
+ * Every note of a graph is read here, for those titles and its tags.
  */
 async function nameNotes(
   files: readonly VaultEntry[],
-  notes: readonly { file: VaultEntry; path: string }[],
+  notes: readonly { file: VaultEntry; extension: string; path: string }[],
   logseq: boolean,
+  notion: boolean,
 ): Promise<NamedNotes> {
-  const relPath = (file: VaultEntry) => vaultRelativePath(file.webkitRelativePath)
-  const config = logseq ? files.find((file) => relPath(file) === LOGSEQ_CONFIG) : undefined
-  const graph = logseq
-    ? logseqGraph(
-        (await config?.text()) ?? null,
-        notes.map(({ file }) => relPath(file)),
-      )
-    : null
-  const paths = notes.map(({ path }, index) => {
-    const title = graph?.titles[index]
-    return title == null ? path : `${title}.md`
+  const relPaths = notes.map(({ file }) => vaultRelativePath(file.webkitRelativePath))
+  const config = logseq
+    ? files.find((file) => vaultRelativePath(file.webkitRelativePath) === LOGSEQ_CONFIG)
+    : undefined
+  const graph = logseq ? logseqGraph((await config?.text()) ?? null, relPaths) : null
+  const read = await Promise.all(
+    notes.map(async ({ file, extension }) => {
+      if (graph === null) return { tags: [], title: null }
+      const text = await file.text()
+      const named = extension === '.org' || notion ? null : logseqTitleProperty(text)
+      return { tags: logseqTagNames(text), title: named }
+    }),
+  )
+  const tags = new Set(read.flatMap((note) => note.tags))
+  const titles = notes.map(
+    ({ path }, index) => read[index]?.title ?? graph?.titles[index] ?? path.slice(0, -'.md'.length),
+  )
+  const tagPages = logseqTagPages(relPaths, titles, tags)
+  const paths = titles.map((title, index) => {
+    const tagPage = relPaths[index]?.startsWith('pages/') && tagPages.get(title.toLowerCase())
+    return `${tagPage || title}.md`
   })
   const notesByName = new Map<string, string[]>()
   for (const path of paths) {
@@ -614,14 +613,7 @@ async function nameNotes(
     const name = basename(path).slice(0, -'.md'.length).toLowerCase()
     notesByName.set(name, [...(notesByName.get(name) ?? []), path])
   }
-  let tags: Promise<ReadonlySet<string>> | undefined
-  const readTags = async () => {
-    const names = await Promise.all(
-      notes.map(async ({ file }) => logseqTagNames(await file.text())),
-    )
-    return new Set(names.flat())
-  }
-  return { paths, notesByName, graph, tags: () => (tags ??= readTags()) }
+  return { paths, notesByName, graph, tags, tagPages }
 }
 
 /** Where the Org links of a pick lead: its `:ID:`s and its Org files' page titles by vault path. */
@@ -686,7 +678,7 @@ export function mdFilesToUnits(
   })
   // A Logseq graph's titles wait on its `config.edn`, read once, on the first load.
   let named: Promise<NamedNotes> | undefined
-  const naming = () => (named ??= nameNotes(files, notes, logseq))
+  const naming = () => (named ??= nameNotes(files, notes, logseq, notion))
   let orgTargets: Promise<OrgPickTargets> | undefined
   return notes.map(({ file, extension, path: importedAs }, index) => ({
     name: file.name,
@@ -697,13 +689,13 @@ export function mdFilesToUnits(
     merges:
       logseq || extension === '.org'
         ? async () => {
-            const { paths, graph } = await naming()
-            const text = await file.text()
-            return titledPath(paths[index] as string, extension, text, notion ? null : graph)
+            const path = (await naming()).paths[index] as string
+            if (extension !== '.org') return path
+            return retitle(path, orgToMarkdown(await file.text()).title)
           }
         : importedAs,
     load: async () => {
-      const { paths, notesByName, graph, tags } = await naming()
+      const { paths, notesByName, graph, tags, tagPages } = await naming()
       const text = await file.text()
       let content = text
       let org: OrgPage | undefined
@@ -726,15 +718,15 @@ export function mdFilesToUnits(
         const name = basename(paths[index] as string).slice(0, -'.md'.length)
         content = notionToMarkdown(text, name)
       }
-      const path = titledPath(paths[index] as string, extension, text, notion ? null : graph, org)
+      const path = retitle(paths[index] as string, org?.title ?? null)
       if (graph !== null) {
         // Before the links are rewritten, so a query kept as written is as written.
         if (holdsLogseqQuery(content)) {
-          const queries = translateLogseqQueries(content, await tags())
+          const queries = translateLogseqQueries(content, tags, tagPages)
           content = queries.content
           keptQueries.count += queries.kept
         }
-        content = graph.rewrite(content)
+        content = graph.rewrite(content, tagPages)
       }
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings. A folder note always

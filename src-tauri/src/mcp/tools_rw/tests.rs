@@ -3699,6 +3699,48 @@ async fn append_block_links_the_names_its_content_writes_5397() {
     assert_eq!(refs, tag, "the tag is attached as an inline ref");
 }
 
+/// #6755 — a `[[Tag/x]]` an agent writes that names no page makes tag `x`
+/// and its page, and links that page, as the editor and an import do; the
+/// same link written again links the same page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_and_update_link_a_tag_page_with_its_tag_6755() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let inbox = mk_page(&pool, &mat, &space, "Inbox").await;
+    settle(&mat).await;
+
+    let appended = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": inbox, "content": "see [[Tag/idea]]", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append");
+    let block = appended["id"].as_str().unwrap().to_owned();
+    let updated = tools
+        .call_tool(
+            "update_block_content",
+            json!({"block_id": block, "content": "about [[tag/IDEA]]", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("update");
+    settle(&mat).await;
+
+    assert_eq!(tag_named(&pool, &space, "idea").await.len(), 1, "one tag");
+    let pages: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Tag/idea' \
+         AND space_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&space)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pages.len(), 1, "one page");
+    assert_eq!(appended["content"], format!("see [[{}]]", pages[0]));
+    assert_eq!(updated["content"], format!("about [[{}]]", pages[0]));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_block_content_links_names_but_keeps_a_title_as_written_5397() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;

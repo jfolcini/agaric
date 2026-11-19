@@ -617,3 +617,72 @@ async fn each_half_of_an_undone_rename_names_its_block() {
     let undone = undo_ops_inner(&f.pool, DEV, &f.mat, alone).await.unwrap();
     assert_eq!(undone[0].paired_rename_of, None, "a rename with no pair");
 }
+
+/// The page a `[[Tag/x]]` link names (#6755): `create_tag_page_titled`.
+impl Fixture {
+    async fn link_page(&self, title: &str) -> Result<BlockRow, AppError> {
+        let page =
+            create_tag_page_titled_inner(&self.pool, DEV, &self.mat, &self.space, title.into())
+                .await;
+        settle(&self.mat).await;
+        page
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_under_the_path_makes_its_tag_and_the_tags_page() {
+    let f = fixture().await;
+
+    let page = f.link_page("Tag/book/novel").await.unwrap();
+
+    assert_eq!(page.content.as_deref(), Some("Tag/book/novel"));
+    let tag = f.tag_named("book/novel").await.expect("the tag is made");
+    let tag_page = f.tag_page(&BlockId::from_trusted(&tag)).await;
+    assert_eq!(tag_page.id, page.id, "the page is the tag's");
+    assert_eq!(f.page_titles().await, vec!["Tag/book/novel".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_under_the_path_adopts_the_tag_and_the_page_the_space_holds() {
+    let f = fixture().await;
+    let tag = f.tag("book").await;
+
+    let page = f.link_page("Tag/Book").await.unwrap();
+    let again = f.link_page("tag/BOOK").await.unwrap();
+
+    assert_eq!(f.tag_named("book").await, Some(tag.into_string()));
+    assert_eq!(f.tag_named("Book").await, None, "no second tag");
+    assert_eq!(again.id, page.id, "the second link names the same page");
+    assert_eq!(f.page_titles().await, vec!["Tag/Book".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spaced_link_under_the_path_is_dashed() {
+    let f = fixture().await;
+
+    let page = f.link_page("Tag/deep  work").await.unwrap();
+
+    assert_eq!(page.content.as_deref(), Some("Tag/deep-work"));
+    assert!(
+        f.tag_named("deep-work").await.is_some(),
+        "the tag is dashed"
+    );
+    assert_eq!(f.page_titles().await, vec!["Tag/deep-work".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_page_off_the_path_is_refused_and_writes_nothing() {
+    let f = fixture().await;
+    let ops = f.op_count().await;
+
+    for title in ["Plain", "Tag/", "Tag/  ", "Notes/Tag/x"] {
+        let err = f.link_page(title).await.unwrap_err();
+        assert_eq!(
+            code(&err),
+            Some(ValidationCode::ReservedTagPageTitle),
+            "{title:?} names no tag; got {err:?}"
+        );
+    }
+    assert_eq!(f.op_count().await, ops, "nothing was written");
+    assert_eq!(f.page_titles().await, Vec::<String>::new());
+}

@@ -246,6 +246,13 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("edit_block", "id", &["content"], &[]),
     // #6755 — the tag's page: the one under its path already, or a new one.
     ("create_tag_page", "id", &["block_type", "content"], &[]),
+    // #6755 — the page a `[[Tag/x]]` link names, with its tag.
+    (
+        "create_tag_page_titled",
+        "id",
+        &["block_type", "content"],
+        &[],
+    ),
     // #6608 — the blocks the batch left alone; the snapshot pins the rest.
     ("edit_blocks_batch", HEADED_ID_KEY, &[], &["skipped"]),
     // #6054 — the four the differential fuzz drives as commands, so it compares

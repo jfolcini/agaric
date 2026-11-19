@@ -1,6 +1,7 @@
 //! A tag's page (#6755): tag `x` of a space is paired with the page titled
 //! `Tag/x` of that space, by that title alone ([`tag_page_title`]). A page
-//! under `Tag/` is made by its tag ([`create_tag_page_inner`]), and a tag and
+//! under `Tag/` is made by its tag ([`create_tag_page_inner`]), or with it by
+//! a `[[Tag/x]]` link or an import ([`create_tag_page_titled_inner`]), and a tag and
 //! its page are renamed together (`tag_path_rename`) and reverted together
 //! (`with_tag_path_partners`); a page that was there before the rule, or
 //! whose tag is gone, is an ordinary page.
@@ -14,8 +15,9 @@ use agaric_core::tag_norm::{name_key, tag_of_page_title, tag_page_title};
 use agaric_core::ulid::BlockId;
 use agaric_store::op::OpRef;
 use agaric_store::pagination::BlockRow;
+use agaric_store::space::SpaceId;
 
-use super::blocks::crud::space_tag_names;
+use super::blocks::crud::{create_tag_in_space_in_tx, space_tag_names};
 use super::spaces::{
     PageNameHolder, create_page_in_space_in_tx, find_live_page_by_name, reserved_tag_page_title,
 };
@@ -75,6 +77,146 @@ pub async fn create_tag_page(
     create_tag_page_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), tag_id)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// The page a `[[Tag/x]]` link names where no page holds its title, as the
+/// editor makes it (#6755): tag `x` of `space_id` and its page `Tag/x`, each
+/// the one the space holds or a new one, in one transaction, named as an
+/// import names them (`import_tag_page_title`). A title naming no tag is
+/// refused: it is no tag's page.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] coded [`ValidationCode::ReservedTagPageTitle`]
+///   — `title` is not under `Tag/`, or is `Tag/` alone.
+/// - [`AppError::Validation`] — `space_id` is no live space.
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn create_tag_page_titled_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    title: String,
+) -> Result<BlockRow, AppError> {
+    if tag_of_page_title(&title).is_none_or(|name| name.trim().is_empty()) {
+        return Err(reserved_tag_page_title(&title));
+    }
+    let mut tx = CommandTx::begin_immediate(pool, "create_tag_page_titled").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
+    let mut warnings = Vec::new();
+    let title = import_tag_page_title(
+        &mut tx,
+        device_id,
+        materializer,
+        space_id,
+        &title,
+        &mut warnings,
+    );
+    let title = Box::pin(title).await?;
+    let page = Box::pin(create_page_in_space_in_tx(
+        &mut tx,
+        device_id,
+        materializer,
+        None,
+        title,
+        space_id,
+        None,
+    ))
+    .await?;
+    let page_id = page.commit(tx, materializer).await?;
+    get_active_block_inner(pool, page_id).await
+}
+
+/// Tauri command: the page a `[[Tag/x]]` link names, with its tag.
+/// Delegates to [`create_tag_page_titled_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn create_tag_page_titled(
+    ctx: State<'_, WriteCtx>,
+    space_id: SpaceId,
+    title: String,
+) -> Result<BlockRow, AppError> {
+    space_id.validate_shape()?;
+    create_tag_page_titled_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        space_id.as_str(),
+        title,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// The tag a page an import makes titled `title` brings in `space_id`, and
+/// the title the page then takes ([`import_tag_page_title`]). A name a new
+/// tag cannot take, one holding whitespace, is dashed, title included;
+/// unless the space has a page of that title or a tag of that name already,
+/// both from before the rule, when the title stays and brings no tag
+/// (`None`), as a title off the path and `Tag/` alone bring none.
+pub(crate) async fn import_tag_page_naming(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    title: &str,
+) -> Result<Option<(String, String)>, AppError> {
+    let Some(name) = tag_of_page_title(title).map(str::trim) else {
+        return Ok(None);
+    };
+    let dashed = name.split_whitespace().collect::<Vec<_>>().join("-");
+    if dashed.is_empty() {
+        return Ok(None);
+    }
+    if dashed == name {
+        return Ok(Some((dashed, title.to_owned())));
+    }
+    let tag_held = space_tag_names(conn, space_id)
+        .await?
+        .iter()
+        .any(|(_, key)| *key == name_key(name));
+    if tag_held
+        || find_live_page_by_name(conn, space_id, title, None)
+            .await?
+            .is_some()
+    {
+        return Ok(None);
+    }
+    let retitled = tag_page_title(&dashed);
+    Ok(Some((dashed, retitled)))
+}
+
+/// The title a page an import makes under `Tag/` takes, once its tag is
+/// resolved or made in `space_id` inside `tx` ([`create_tag_in_space_in_tx`]),
+/// so the page never lands without its tag. A respelled title
+/// ([`import_tag_page_naming`]) is named in `warnings`. Any other title is
+/// answered as it is.
+pub(crate) async fn import_tag_page_title(
+    tx: &mut CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    title: &str,
+    warnings: &mut Vec<String>,
+) -> Result<String, AppError> {
+    let Some((name, retitled)) = import_tag_page_naming(tx, space_id, title).await? else {
+        return Ok(title.to_owned());
+    };
+    if retitled != title {
+        warnings.push(format!(
+            "the page '{title}' was imported as '{retitled}': a tag name holds no whitespace"
+        ));
+    }
+    Box::pin(create_tag_in_space_in_tx(
+        tx,
+        device_id,
+        materializer,
+        name,
+        None,
+        None,
+        space_id,
+        None,
+    ))
+    .await?;
+    Ok(retitled)
 }
 
 /// What renaming the page or tag `block` to `to_text` takes along: a tag and
