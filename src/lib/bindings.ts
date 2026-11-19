@@ -3389,8 +3389,8 @@ export type MirrorStatus = {
 	ask_mass_change: boolean,
 	/**
 	 *  The space folders whose changed files hold reading back until the
-	 *  user reads them in ([`MirrorState::hold_mass_change`]); each is listed
-	 *  under `failed` with why.
+	 *  user reads them in ([`MirrorState::hold_mass_change`]), an adopted one
+	 *  by its space's name; each is listed under `failed` with why.
 	 */
 	held: string[],
 	/**  The spaces not mirrored; every other one is, a new one included. */

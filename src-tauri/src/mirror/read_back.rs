@@ -58,20 +58,17 @@ pub const MASS_CHANGE: usize = 5;
 
 /// The space folders holding more than [`MASS_CHANGE`] of `changed`, files
 /// that are not among `confirmed` as they changed, each with how many. In a
-/// folder `adopted` as one space's (#6540), every file is that space's: the
-/// folder itself, `.`, holds them all.
+/// folder adopted as one space's (#6540), every file is that space's: they
+/// all count under `adopted`, the space's name, as a space folder's name
+/// reads as its space.
 pub fn mass_changed<'a>(
     changed: &'a [MirrorPending],
     confirmed: &HashSet<MirrorPending>,
-    adopted: bool,
+    adopted: Option<&'a str>,
 ) -> BTreeMap<&'a str, usize> {
     let mut counts = BTreeMap::new();
     for file in changed.iter().filter(|file| !confirmed.contains(*file)) {
-        let folder = if adopted {
-            Some(".")
-        } else {
-            file.path.split_once('/').map(|(folder, _)| folder)
-        };
+        let folder = adopted.or_else(|| file.path.split_once('/').map(|(folder, _)| folder));
         if let Some(folder) = folder {
             *counts.entry(folder).or_default() += 1;
         }

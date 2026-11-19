@@ -11,7 +11,8 @@ import { expect, ipc, navigateToView, openSettingsTab, test, waitForBoot } from 
  * imported into a new space through the folder import (the backend serving each file from disk),
  * previewed, and adopted in place as that space's mirror folder. Bytes on disk are the point, so
  * the test is `@real-only`: adopting rewrites, moves and adds no file, and a block edited in
- * Agaric then rewrites only its own line of its file.
+ * Agaric then rewrites only its own line of its file. Many of its notes removed at once hold
+ * reading back in a notice that names the space.
  *
  * The folder dialog is the OS's, so the one command that opens it, `pick_mirror_folder`, answers
  * with this spec's folder from an in-page stub; every other command reaches the real backend.
@@ -22,6 +23,7 @@ interface MirrorStatus {
   folder: string | null
   adopted_space: string | null
   last_pass_ms: number | null
+  held: string[]
 }
 
 /** A note as another editor writes it: front matter in its own order, `*` bullets. */
@@ -59,6 +61,25 @@ async function stubFolderPick(page: Page, folder: string): Promise<void> {
 
 const status = (page: Page) => ipc<MirrorStatus>(page, 'get_mirror_status', {})
 
+/** Open `folder` from Settings › Data, adopt it, and wait for the mirror's first pass there. */
+async function adopt(page: Page, folder: string): Promise<void> {
+  await stubFolderPick(page, folder)
+  await navigateToView(page, 'Settings')
+  await openSettingsTab(page, 'Data')
+  await page.getByRole('button', { name: 'Open a folder of notes…', exact: true }).click()
+
+  const dialog = page.getByTestId('mirror-adopt-dialog')
+  await expect(dialog.getByTestId('mirror-adopt-left-alone')).toContainText('diagram.png')
+  await dialog.getByTestId('mirror-adopt-confirm').click()
+
+  await expect
+    .poll(async () => {
+      const now = await status(page)
+      return now.adopted_space !== null && now.last_pass_ms !== null
+    })
+    .toBe(true)
+}
+
 test.describe('Markdown mirror, opening a folder of notes in place (#6540) @markdown @settings', () => {
   let folder = ''
 
@@ -79,21 +100,7 @@ test.describe('Markdown mirror, opening a folder of notes in place (#6540) @mark
     'imports the folder, adopts it without touching a file, and writes only an edited block',
     { tag: '@real-only' },
     async ({ page }) => {
-      await stubFolderPick(page, folder)
-      await navigateToView(page, 'Settings')
-      await openSettingsTab(page, 'Data')
-      await page.getByRole('button', { name: 'Open a folder of notes…', exact: true }).click()
-
-      const dialog = page.getByTestId('mirror-adopt-dialog')
-      await expect(dialog.getByTestId('mirror-adopt-left-alone')).toContainText('diagram.png')
-      await dialog.getByTestId('mirror-adopt-confirm').click()
-
-      await expect
-        .poll(async () => {
-          const now = await status(page)
-          return now.adopted_space !== null && now.last_pass_ms !== null
-        })
-        .toBe(true)
+      await adopt(page, folder)
       // Adopting rewrote, moved and added nothing: no space folder, no file for a page with none.
       expect(filesOnDisk(folder)).toEqual(NOTES)
 
@@ -148,6 +155,27 @@ test.describe('Markdown mirror, opening a folder of notes in place (#6540) @mark
       expect(readFileSync(planFile, 'utf8')).toBe(
         PLAN.replace('* First step\n', '- First step, done\n'),
       )
+    },
+  )
+
+  test(
+    'names the space, not its folder as ".", when many of its notes vanish at once (#6964)',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      // One more note than `read_back::MASS_CHANGE`, each a page of its own.
+      const notes = [1, 2, 3, 4, 5, 6].map((n) => `Note ${n}.md`)
+      for (const note of notes) writeFileSync(path.join(folder, note), `${note}\n`)
+      await adopt(page, folder)
+
+      for (const note of notes) rmSync(path.join(folder, note))
+
+      // The adopted space takes the folder's name.
+      const space = path.basename(folder)
+      const toast = page
+        .locator('[data-sonner-toast]')
+        .filter({ hasText: 'changed or vanished outside Agaric at once' })
+      await expect(toast).toContainText(`Many files in ${space} changed`, { timeout: 30_000 })
+      expect((await status(page)).held).toEqual([space])
     },
   )
 })

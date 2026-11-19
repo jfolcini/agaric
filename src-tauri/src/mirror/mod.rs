@@ -77,8 +77,9 @@ const BEHIND: &str = "the vault is older than the folder, as after a restore fro
                       removes no file and writes over none, or choose another folder";
 
 /// The event a tick emits when the space folders that hold reading back
-/// change ([`MirrorState::hold_mass_change`]): the folders, none once the hold
-/// ends, so the app can say so while its settings are closed.
+/// change ([`MirrorState::hold_mass_change`]): the folders, an adopted one by
+/// its space's name, none once the hold ends, so the app can say so while its
+/// settings are closed.
 pub const EVENT_MIRROR_HELD: &str = "mirror:held";
 
 /// A page's file, by its path below the mirror's folder, `/`-separated.
@@ -124,8 +125,8 @@ pub struct MirrorStatus {
     /// says so ([`MirrorState::hold_mass_change`]).
     pub ask_mass_change: bool,
     /// The space folders whose changed files hold reading back until the
-    /// user reads them in ([`MirrorState::hold_mass_change`]); each is listed
-    /// under `failed` with why.
+    /// user reads them in ([`MirrorState::hold_mass_change`]), an adopted one
+    /// by its space's name; each is listed under `failed` with why.
     pub held: Vec<String>,
     /// The spaces not mirrored; every other one is, a new one included.
     pub unmirrored_spaces: Vec<String>,
@@ -284,8 +285,13 @@ impl MirrorState {
     /// with the reason and under `held`, and its `pending` names the files,
     /// as when reading back was turned off. Whatever is about to act on files
     /// changed outside Agaric asks here first, once a tick, with all of them;
-    /// none while the user chose not to be asked.
-    pub fn hold_mass_change(&self, changed: &[read_back::MirrorPending], adopted: bool) -> bool {
+    /// none while the user chose not to be asked. In a folder adopted as one
+    /// space's, the hold is that space's, by its name, `adopted`.
+    pub fn hold_mass_change(
+        &self,
+        changed: &[read_back::MirrorPending],
+        adopted: Option<&str>,
+    ) -> bool {
         let mut inner = self.lock();
         let now: HashSet<&read_back::MirrorPending> = changed.iter().collect();
         // A choice lasts while its file stays changed as it was shown: one
@@ -1013,9 +1019,19 @@ impl Mirror {
         } else {
             Vec::new()
         };
-        Ok(self
-            .state
-            .hold_mass_change(&changed, self.adoption.is_some()))
+        // An adopted folder's hold names its space, looked up only when
+        // something changed: an ordinary tick reads no space.
+        let adopted = match &self.adoption {
+            Some(adoption) if !changed.is_empty() => Some(
+                crate::commands::spaces::list_spaces_inner(&self.pool)
+                    .await?
+                    .into_iter()
+                    .find(|space| space.id == adoption.space_id)
+                    .map_or_else(|| adoption.space_id.clone(), |space| space.name),
+            ),
+            _ => None,
+        };
+        Ok(self.state.hold_mass_change(&changed, adopted.as_deref()))
     }
 
     /// Each space's id, mirrored or not, by its folder below the mirror's.
