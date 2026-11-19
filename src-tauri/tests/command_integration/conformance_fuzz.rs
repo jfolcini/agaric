@@ -48,9 +48,8 @@
 //! The same body over [`FIXED_SEED`] and [`FIXED_SEED_CASES`] chains is an
 //! ordinary test (#6567): the chains are the same on every run, so it reddens
 //! only on a change to the mock, the backend, or the generator. It runs with
-//! the Rust tests, which `scripts/classify-changes.sh` skips for a PR that
-//! touches only `src/lib/tauri-mock/`: such a divergence shows on the next PR
-//! that runs them.
+//! the Rust tests, which `scripts/classify-changes.sh` also runs for a change
+//! under `src/lib/tauri-mock/`.
 //!
 //! ## Known blind spots
 //!
@@ -698,8 +697,6 @@ const LIMIT_CAPS: &[(&str, i64)] = &[
     ("list_blocks", 100),
     ("list_trash", 100),
     ("list_pages_with_metadata", 100),
-    ("search_blocks", 100),
-    ("run_advanced_query", 200),
     ("list_tags_by_prefix", 200),
     ("get_backlinks", 200),
     ("list_backlinks_grouped", 200),
@@ -711,12 +708,13 @@ const LIMIT_CAPS: &[(&str, i64)] = &[
 /// The read steps every generated chain ends with (#6054): the derived views
 /// the snapshot does not hold, through the corpus's own query vocabulary.
 ///
-/// `created` is how many blocks the backend's ops made (`C1..`), `dates` the
-/// days the accepted ops wrote (what an agenda count can find), and `term` a
-/// word of the chain's content (what a search can find); random content and
+/// `created` is how many blocks the backend's ops made (`C1..`), and `dates`
+/// the days the accepted ops wrote (what an agenda count can find); random
 /// dates would never meet a fixed one. A wall-clock read
-/// (`list_projected_agenda`) is not among them: no fixture can pin it.
-fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
+/// (`list_projected_agenda`) is not among them: no fixture can pin it. The
+/// search and query engine's reads are not either: the mock answers them with
+/// a stub, and only the backend asserts them (`QUERY_COMMANDS_BACKEND_ONLY`).
+fn read_steps(created: usize, dates: &[String]) -> Vec<Value> {
     let scope = harness_scope();
     let mut steps = vec![
         json!({ "name": "pages", "command": "list_pages_with_metadata", "args": {
@@ -745,18 +743,6 @@ fn read_steps(created: usize, dates: &[String], term: &str) -> Vec<Value> {
             "args": {
                 "beforeDate": "2031-01-01", "todoStates": ["TODO"], "limit": 100, "scope": scope,
             },
-        }),
-        json!({ "name": "search", "command": "search_blocks",
-            "unordered": "ranked by bm25, which the mock approximates by match density \
-                          (`approximateFtsRank`), so blocks that match a different number of \
-                          times can rank in a different order",
-            "args": {
-                "query": term, "limit": 50,
-                "filter": { "scope": { "kind": "spaces", "space_ids": ["$SPACE"] } },
-            },
-        }),
-        json!({ "name": "advanced", "command": "run_advanced_query", "unordered": RAW_ID_ORDER,
-            "args": { "request": { "limit": 100, "spaceId": "$SPACE" } },
         }),
         json!({ "name": "page_links", "command": "list_page_links", "args": { "scope": scope } }),
         json!({ "name": "unlinked", "command": "list_unlinked_references",
@@ -848,30 +834,6 @@ fn written_dates(fixture: &Value, records: &[Value]) -> Vec<String> {
         })
         .collect();
     dates.into_iter().collect()
-}
-
-/// The first word of three or more characters the chain wrote, the shortest
-/// a trigram search matches; a word nothing holds when it wrote none.
-fn search_term(fixture: &Value) -> String {
-    let ops = fixture["ops"].as_array().expect("rendered ops");
-    ops.iter()
-        .filter_map(|op| {
-            op["args"]["content"]
-                .as_str()
-                .or(op["args"]["toText"].as_str())
-        })
-        .flat_map(str::split_whitespace)
-        // A woven token is a label, not the text either stack stored. A word
-        // like `C12` is one too: the read steps expand it to a block id.
-        .find(|word| {
-            word.len() >= 3
-                && word.chars().all(char::is_alphanumeric)
-                && !word
-                    .strip_prefix(['C', 'S'])
-                    .is_some_and(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
-        })
-        .unwrap_or("absent")
-        .to_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,11 +1120,7 @@ fn run_differential_fuzz(mut runner: TestRunner) -> BTreeMap<String, usize> {
             // The reads come after the ops have run, because which blocks they
             // name is what the backend's ops created.
             let created = replay.canonical_order.len() - seed()["blocks"].as_array().unwrap().len();
-            let steps = read_steps(
-                created,
-                &written_dates(&fixture, &records),
-                &search_term(&fixture),
-            );
+            let steps = read_steps(created, &written_dates(&fixture, &records));
             fixture["queries"] = json!(steps);
             let queries = run_query_steps(&replay.pool, &fixture, &labels).await;
             BackendRun {
@@ -1272,17 +1230,4 @@ fn run_differential_fuzz(mut runner: TestRunner) -> BTreeMap<String, usize> {
     }
 
     reached
-}
-
-/// The search term skips a word the read steps would expand as a label: a
-/// generated `C02` once named a block the chain never made, and the replay
-/// panicked.
-#[test]
-fn search_term_skips_a_label_shaped_word() {
-    let fixture = json!({ "ops": [{ "args": { "content": "C02 S12 plain" } }] });
-    assert_eq!(
-        search_term(&fixture),
-        "plain",
-        "a label-shaped word is no search term"
-    );
 }
