@@ -115,4 +115,42 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
     await expect(blockRow(page, GS1).getByTestId('tag-ref-chip')).toHaveText('newtagname')
     expect(await storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
   })
+
+  test('a #name made a tag after the reopened page has read its blocks shows as the tag (#6953)', async ({
+    page,
+  }) => {
+    const editor = await focusBlockById(page, GS1)
+    await editor.press('End')
+    await page.keyboard.type(' #loadingtag', { delay: 30 })
+    await page.keyboard.press('Escape')
+    // The leave's writes wait until the reopened page has read its blocks, so that read predates
+    // both the typed text and the rewrite.
+    await page.evaluate((pageId) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, ...rest: unknown[]) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      let pageRead: () => void = () => undefined
+      const read = new Promise<void>((resolve) => {
+        pageRead = resolve
+      })
+      internals.invoke = async (cmd, ...rest) => {
+        const args = rest[0] as { rootBlockId?: string } | undefined
+        if (cmd === 'edit_block') {
+          await read
+          return invoke(cmd, ...rest)
+        }
+        const answer = await invoke(cmd, ...rest)
+        if (cmd === 'load_page_subtree' && args?.rootBlockId === pageId) pageRead()
+        return answer
+      }
+    }, SEED_IDS.PAGE_GETTING_STARTED)
+    await saveBlock(page, 'Escape')
+    await reopenPage(page, PAGE)
+
+    await expect(blockRow(page, GS1).getByTestId('tag-ref-chip')).toHaveText('loadingtag')
+    expect(await storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
+  })
 })
