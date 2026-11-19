@@ -132,7 +132,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.save': 'Ansicht speichern',
   'advancedQuery.savedViews.saveTitle': 'Aktuelle Abfrage als benannte Ansicht speichern',
   'advancedQuery.savedViews.namePrompt': 'Name für diese Ansicht:',
-  'advancedQuery.savedViews.saved': 'Ansicht "{{name}}" gespeichert',
   'advancedQuery.savedViews.saveError': 'Die Ansicht konnte nicht gespeichert werden',
   'advancedQuery.savedViews.nameTaken':
     'In diesem Bereich gibt es bereits eine Seite oder Ansicht namens "{{name}}"',
@@ -142,7 +141,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.empty': 'Noch keine gespeicherten Ansichten',
   'advancedQuery.savedViews.load': 'Laden',
   'advancedQuery.savedViews.loadTitle': '"{{name}}" laden',
-  'advancedQuery.savedViews.loaded': 'Ansicht "{{name}}" geladen',
   'advancedQuery.savedViews.loadError': 'Diese Ansicht konnte nicht geladen werden',
   'advancedQuery.savedViews.rename': 'Umbenennen',
   'advancedQuery.savedViews.renameTitle': '"{{name}}" umbenennen',

@@ -51,8 +51,8 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
 
   const handleLoad = (view: SavedQueryView): void => {
     try {
+      // The builder shows the loaded query; a toast would cover these controls.
       loadView(spaceKey, parseQuerySpec(view.spec))
-      notify.success(t('advancedQuery.savedViews.loaded', { name: view.name }))
     } catch (err) {
       notify.error(err instanceof Error ? err : t('advancedQuery.savedViews.loadError'))
     }

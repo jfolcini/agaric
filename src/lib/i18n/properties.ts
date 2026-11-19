@@ -258,7 +258,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.save': 'Save view',
   'advancedQuery.savedViews.saveTitle': 'Save the current query as a named view',
   'advancedQuery.savedViews.namePrompt': 'Name this view:',
-  'advancedQuery.savedViews.saved': 'Saved view "{{name}}"',
   'advancedQuery.savedViews.saveError': 'Could not save the view',
   'advancedQuery.savedViews.nameTaken':
     'A page or view named "{{name}}" already exists in this space',
@@ -271,7 +270,6 @@ export const properties: Record<string, string> = {
   // labels naming the view ({{name}}); then the rename and delete dialogs and their toasts.
   'advancedQuery.savedViews.load': 'Load',
   'advancedQuery.savedViews.loadTitle': 'Load "{{name}}"',
-  'advancedQuery.savedViews.loaded': 'Loaded view "{{name}}"',
   'advancedQuery.savedViews.loadError': 'Could not load this view',
   'advancedQuery.savedViews.rename': 'Rename',
   'advancedQuery.savedViews.renameTitle': 'Rename "{{name}}"',

@@ -134,7 +134,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.save': 'Enregistrer la vue',
   'advancedQuery.savedViews.saveTitle': 'Enregistrer la requête actuelle comme vue nommée',
   'advancedQuery.savedViews.namePrompt': 'Nom de cette vue\u00A0:',
-  'advancedQuery.savedViews.saved': 'Vue "{{name}}" enregistrée',
   'advancedQuery.savedViews.saveError': 'Impossible d’enregistrer la vue',
   'advancedQuery.savedViews.nameTaken':
     'Une page ou une vue nommée "{{name}}" existe déjà dans cet espace',
@@ -145,7 +144,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.empty': 'Aucune vue enregistrée pour l’instant',
   'advancedQuery.savedViews.load': 'Charger',
   'advancedQuery.savedViews.loadTitle': 'Charger "{{name}}"',
-  'advancedQuery.savedViews.loaded': 'Vue "{{name}}" chargée',
   'advancedQuery.savedViews.loadError': 'Impossible de charger cette vue',
   'advancedQuery.savedViews.rename': 'Renommer',
   'advancedQuery.savedViews.renameTitle': 'Renommer "{{name}}"',

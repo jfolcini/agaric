@@ -118,7 +118,7 @@ describe('SavedViews', () => {
     })
     const controls = selectAdvancedQueryControlsForSpace(useAdvancedQueryStore.getState(), SPACE_ID)
     expect(controls.fulltext).toBe('hello')
-    expect(mockedToastSuccess).toHaveBeenCalledTimes(1)
+    expect(mockedToastSuccess).not.toHaveBeenCalled()
   })
 
   it('surfaces a toast error and leaves the builder alone when the spec is invalid', async () => {

@@ -153,8 +153,8 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     }
     saveView(currentSpaceId, name, { kind: 'query', spec: serializeQuerySpec(builder, controls) })
       .then((saved) => {
-        if (saved) notify.success(t('advancedQuery.savedViews.saved', { name }))
-        else
+        // The new row shows the save; only a refusal needs saying.
+        if (!saved)
           notify.error(
             t(
               isDateFormattedPage(name)

@@ -133,7 +133,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.save': 'Guardar vista',
   'advancedQuery.savedViews.saveTitle': 'Guardar la consulta actual como una vista con nombre',
   'advancedQuery.savedViews.namePrompt': 'Nombre para esta vista:',
-  'advancedQuery.savedViews.saved': 'Vista "{{name}}" guardada',
   'advancedQuery.savedViews.saveError': 'No se ha podido guardar la vista',
   'advancedQuery.savedViews.nameTaken':
     'Ya existe una página o vista llamada "{{name}}" en este espacio',
@@ -143,7 +142,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.empty': 'Aún no hay vistas guardadas',
   'advancedQuery.savedViews.load': 'Cargar',
   'advancedQuery.savedViews.loadTitle': 'Cargar "{{name}}"',
-  'advancedQuery.savedViews.loaded': 'Vista "{{name}}" cargada',
   'advancedQuery.savedViews.loadError': 'No se ha podido cargar esta vista',
   'advancedQuery.savedViews.rename': 'Cambiar nombre',
   'advancedQuery.savedViews.renameTitle': 'Cambiar el nombre de "{{name}}"',
