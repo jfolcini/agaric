@@ -48,7 +48,8 @@ export function readCurrentContent(ctx: SlashCommandContext): string {
  * The editor and the store take the command's text before the write goes out: a leave or a
  * keystroke while it is on its way then builds on the command's text, where the text from before
  * the command would have been written after it and erased it. A refused write puts back what the
- * block showed and saves it, so no typing is lost.
+ * block showed, or keeps what was typed on top of the command's text, and saves it, so no typing
+ * is lost.
  */
 export async function applyContentEdit(
   ctx: SlashCommandContext,
@@ -78,9 +79,13 @@ export async function applyContentEdit(
     return true
   } catch {
     notify.error(ctx.t(failKey))
+    // Typing on top of the command's text while it was on its way is kept, the command with it.
+    const editing = ctx.rovingEditor.activeBlockId === ctx.blockId
+    const live = editing ? readCurrentContent(ctx) : newContent
+    const kept = live === newContent ? shown : live
     if (stored !== undefined) setStoredContent(ctx, stored)
-    if (ctx.rovingEditor.activeBlockId === ctx.blockId) ctx.rovingEditor.mount(ctx.blockId, shown)
-    if (shown !== (stored ?? '')) void ctx.pageStore.getState().edit(ctx.blockId, shown)
+    if (editing && kept === shown) ctx.rovingEditor.mount(ctx.blockId, shown)
+    if (kept !== (stored ?? '')) void ctx.pageStore.getState().edit(ctx.blockId, kept)
     return false
   }
 }

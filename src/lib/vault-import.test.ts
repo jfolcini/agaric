@@ -1601,6 +1601,44 @@ describe('Logseq graph (#6033)', () => {
     ])
   })
 
+  // A `title::` line is a Markdown page's: an Org page is titled by its `#+TITLE` or its file name.
+  it('titles an Org page by its file name, not by a `title::` line it holds', async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(['title:: Other\n* the plan'], 'plan.org', 'Graph/pages/plan.org'),
+    ]
+
+    expect((await loadAll(files)).map(({ path }) => path)).toEqual(['plan.md'])
+  })
+
+  // Only a page under `pages/` is a tag's page: a note elsewhere keeps its name.
+  it("keeps the name of a note outside `pages/` that shares a tag page's title", async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(['- ship #project'], 'notes.md', 'Graph/pages/notes.md'),
+      folderFile(['- the plan'], 'Project.md', 'Graph/pages/Project.md'),
+      folderFile(['- loose'], 'project.md', 'Graph/project.md'),
+    ]
+
+    expect((await loadAll(files)).map(({ path }) => path)).toEqual([
+      'notes.md',
+      'Tag/Project.md',
+      'project.md',
+    ])
+  })
+
+  // A Markdown page merges into the page of its Logseq title; an Org `#+TITLE` line in it is text.
+  it('names the page a Markdown page merges into by its Logseq title, not an Org title line', async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(['#+TITLE: Other\n- body'], 'page.md', 'Graph/pages/page.md'),
+    ]
+    const [unit] = mdFilesToUnits(files, null, false)
+
+    expect(typeof unit?.merges === 'function' ? await unit.merges() : unit?.merges).toBe('page.md')
+    expect((await unit?.load())?.path).toBe('page.md')
+  })
+
   // #6755 — an Org page of a graph is titled by its `#+TITLE`, read only as
   // it converts, so a tag page is a Markdown page: the Org one keeps its title.
   it('keeps the title of an Org page the graph makes a tag, and its links', async () => {
