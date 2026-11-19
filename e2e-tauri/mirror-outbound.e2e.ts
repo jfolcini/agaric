@@ -11,7 +11,12 @@
 // one folder, in order: an edit reaches the file, a restart writes an edit
 // the old process could not (its folder had lost its marker), and a file
 // changed outside Agaric is read
-// back into its page, and the app's own edit made meanwhile is kept.
+// back into its page, and the app's own edit made meanwhile is kept. Then, in
+// the same folder, the switch in Settings › Data turns on copying attachments
+// (#5363 slice 4, setting 3): the image a page links is copied into
+// `<space>/assets/<id>/<name>` and the page's file links the copy. A copy
+// deleted while the app is down is written again by the next start's pass, and
+// the switch is still on.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -34,6 +39,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   invoke,
+  openDataTab,
   openNewPage,
   reopenPageHolding,
   restartApp,
@@ -49,6 +55,7 @@ interface MirrorStatus {
   diverged: { page_id: string; path: string }[]
   failed: { page_id: string; path: string; message: string }[]
   last_pass_ms: number | null
+  copy_files: boolean
 }
 
 const TITLE = runScopedMarker('wdio-mirror-page')
@@ -56,6 +63,13 @@ const MARKER = runScopedMarker('wdio-mirror-block')
 const SECOND = runScopedMarker('wdio-mirror-app-edit')
 const RESTARTED = `${MARKER} ${runScopedMarker('wdio-mirror-restarted')}`
 const EXTERNAL = runScopedMarker('wdio-mirror-external-line')
+const COPY_TITLE = runScopedMarker('wdio-copy-page')
+const COPY_MARKER = runScopedMarker('wdio-copy-block')
+const FILENAME = 'pixel.png'
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 const folder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-'))
 
@@ -83,6 +97,47 @@ async function waitForPageFile(): Promise<string> {
   return found[0] as string
 }
 
+const status = () => invoke<MirrorStatus>('get_mirror_status')
+
+/** Every file below the folder named `name`, as absolute paths. */
+function filesNamed(name: string): string[] {
+  return readdirSync(folder, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === name)
+    .map((entry) => path.join(entry.parentPath, entry.name))
+}
+
+/** The switch labelled `label` in Settings › Data. */
+async function settingSwitch(label: string) {
+  const labelled = $(`//label[normalize-space(.)="${label}"]`)
+  await labelled.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const toggle = $(`[id="${(await labelled.getAttribute('for')) ?? ''}"]`)
+  await toggle.waitForClickable({ timeout: ACTION_TIMEOUT })
+  return toggle
+}
+
+/** Wait for the image's copy and a page file linking it; returns the copy. */
+async function waitForCopyLinked(attachment: string, when: string): Promise<string> {
+  const link = `assets/${attachment}/${FILENAME})`
+  let copy = ''
+  await browser.waitUntil(
+    () => {
+      copy = filesNamed(FILENAME).find((file) => file.includes(attachment)) ?? ''
+      const page = filesNamed(`${COPY_TITLE}.md`)[0]
+      return Promise.resolve(
+        copy !== '' &&
+          readFileSync(copy).equals(PNG) &&
+          page !== undefined &&
+          readFileSync(page, 'utf8').includes(link),
+      )
+    },
+    {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: `no copy of ${FILENAME} linked from ${COPY_TITLE}.md ${when}`,
+    },
+  )
+  return copy
+}
+
 async function waitForFileHolding(relative: string, text: string, when: string): Promise<void> {
   const file = path.join(folder, relative)
   await browser.waitUntil(
@@ -91,7 +146,7 @@ async function waitForFileHolding(relative: string, text: string, when: string):
   )
 }
 
-describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot', () => {
+describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot @settings @attachments', () => {
   after(() => {
     rmSync(folder, { recursive: true, force: true })
   })
@@ -158,8 +213,61 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot',
 
     await reopenPageHolding(TITLE, EXTERNAL)
 
-    const status = await invoke<MirrorStatus>('get_mirror_status')
-    expect(status.diverged).toEqual([])
-    expect(status.failed).toEqual([])
+    const final = await invoke<MirrorStatus>('get_mirror_status')
+    expect(final.diverged).toEqual([])
+    expect(final.failed).toEqual([])
+  })
+
+  it('copies a linked image beside the pages, links it, and copies it again after a restart', async () => {
+    // The folder the test above set and left with a finished pass.
+    await openNewPage(COPY_TITLE)
+    await typeMarkerVerified(COPY_MARKER)
+    await browser.keys(['Escape'])
+    const block = blockStaticByMarker(COPY_MARKER)
+    await block.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    const blockId = (await block.getAttribute('data-block-id')) ?? ''
+    expect(blockId).not.toBe('')
+    const { id: attachment } = await invoke<{ id: string }>('add_attachment_with_bytes', {
+      blockId,
+      filename: FILENAME,
+      mimeType: 'image/png',
+      bytes: PNG.toString('base64'),
+    })
+    await invoke('edit_block', {
+      blockId,
+      toText: `${COPY_MARKER} ![a pixel](attachment:${attachment})`,
+    })
+    await browser.waitUntil(
+      () => {
+        const page = filesNamed(`${COPY_TITLE}.md`)[0]
+        return Promise.resolve(
+          page !== undefined && readFileSync(page, 'utf8').includes(`attachment:${attachment}`),
+        )
+      },
+      { timeout: NAV_TIMEOUT, timeoutMsg: `${COPY_TITLE}.md never linked the attachment` },
+    )
+    expect(filesNamed(FILENAME)).toEqual([])
+
+    // The switch, as a user turns it on.
+    await openDataTab()
+    const copying = await settingSwitch('Copy attachments into the folder')
+    expect(await copying.getAttribute('aria-checked')).toBe('false')
+    await copying.click()
+    const copy = await waitForCopyLinked(attachment, 'once copying was turned on')
+    expect((await status()).copy_files).toBe(true)
+
+    // Deleted while the app is down: only the next start's pass can copy it.
+    unlinkSync(copy)
+    await restartApp('kill')
+    expect(await waitForCopyLinked(attachment, 'after the restart')).toBe(copy)
+    expect(existsSync(copy)).toBe(true)
+
+    await openDataTab()
+    expect(
+      await (await settingSwitch('Copy attachments into the folder')).getAttribute('aria-checked'),
+    ).toBe('true')
+    const settled = await status()
+    expect(settled.diverged).toEqual([])
+    expect(settled.failed).toEqual([])
   })
 })
