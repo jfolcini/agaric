@@ -386,20 +386,25 @@ test.describe('Draft autosave @editor', () => {
     const flushedIds = (await getInvokeCalls(page, 'flush_draft')).map((c) => c['blockId'])
     expect(flushedIds).not.toContain(blockId)
 
-    // #5057 — the durable effect, not just the call. The discard has already
-    // been observed above, so this reads settled state: re-query the store and
-    // assert the departed block holds no draft row. Asserting the response is
-    // an array first keeps a broken IPC from passing as "no draft".
-    const draftIds = await page.evaluate(async () => {
-      const internals = (
-        window as unknown as {
-          __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__
-      const rows = await internals?.invoke('list_drafts', {})
-      return Array.isArray(rows) ? rows.map((r: { block_id: string }) => r.block_id) : null
-    })
-    expect(draftIds).not.toBeNull()
-    expect(draftIds).not.toContain(blockId)
+    // #5057 — the durable effect, not just the call. The discard was only
+    // seen sent, and the bridge answers a read sent after it before the delete
+    // commits, so poll the store until the row is gone; a late save of the
+    // stale text would keep it. A non-array response (a broken IPC) fails the
+    // poll rather than passing as "no draft".
+    await expect
+      .poll(() =>
+        page.evaluate(async (id) => {
+          const internals = (
+            window as unknown as {
+              __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+            }
+          ).__TAURI_INTERNALS__
+          const rows = await internals?.invoke('list_drafts', {})
+          return Array.isArray(rows)
+            ? rows.some((r: { block_id: string }) => r.block_id === id)
+            : 'not an array'
+        }, blockId),
+      )
+      .toBe(false)
   })
 })
