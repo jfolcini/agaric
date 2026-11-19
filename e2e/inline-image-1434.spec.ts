@@ -18,9 +18,24 @@
  *
  * A tiny 1x1 transparent GIF is used as the bytes so `<img>` actually decodes
  * and stays mounted (no broken-image fallback swap).
+ *
+ * Then an Edit-as-Markdown save that edits only another line must leave the
+ * image block's ref as it was, and the image still resolving: the buffer's
+ * render and parse (`get_page_buffer` / `apply_page_source`) are the backend's,
+ * so this runs on the bridge.
  */
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { attachFile, expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  attachFile,
+  expect,
+  focusBlock,
+  ipc,
+  openPage,
+  reopenPage,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // 1x1 transparent GIF.
 const GIF_1X1 = Buffer.from(
@@ -67,5 +82,57 @@ test.describe('inline image attachment-ref (#1434) @attachments @editor', () => 
     // Surrounding text survived the markdown round-trip.
     await expect(block).toContainText('pic')
     await expect(block).toContainText('done')
+  })
+
+  test('an Edit-as-Markdown save of another line keeps the image ref and its render', async ({
+    page,
+  }) => {
+    const { id: attachmentId } = await attachFile(
+      page,
+      SEED_IDS.BLOCK_GS_1,
+      'pasted.gif',
+      'image/gif',
+      GIF_1X1,
+    )
+    // The setup is not under test: the ref is written as the paste handler writes it.
+    await ipc(page, 'edit_block', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      toText: `pic ![a cat](attachment:${attachmentId}) done`,
+    })
+    const imageBlock = page.locator(
+      `[data-testid="sortable-block"][data-block-id="${SEED_IDS.BLOCK_GS_1}"]`,
+    )
+    const img = imageBlock.locator('img[alt="a cat"]')
+    const imageLine = async () =>
+      page.locator(`[data-source-line][data-block-id="${SEED_IDS.BLOCK_GS_1}"]`).textContent()
+    const openSource = async () => {
+      await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
+      const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+      // The buffer focuses itself once its text shows; a click before then is undone.
+      await expect(editor).toBeFocused()
+      return editor
+    }
+
+    await openPage(page, 'Getting Started')
+    await expect(img).toHaveAttribute('src', /^blob:/, { timeout: 10_000 })
+
+    const editor = await openSource()
+    const before = await imageLine()
+    expect(before).toContain(`](attachment:${attachmentId})`)
+    await editor
+      .locator(`[data-source-line][data-block-id="${SEED_IDS.BLOCK_GS_3}"]`)
+      .click({ clickCount: 3 })
+    await page.keyboard.type('Edited below the image')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(editor).toHaveCount(0)
+
+    await reopenPage(page, 'Getting Started')
+    await expect(
+      page.locator(`[data-testid="block-static"][data-block-id="${SEED_IDS.BLOCK_GS_3}"]`),
+    ).toHaveText('Edited below the image')
+    await expect(img).toHaveAttribute('src', /^blob:/, { timeout: 10_000 })
+    await openSource()
+    expect(await imageLine()).toBe(before)
   })
 })

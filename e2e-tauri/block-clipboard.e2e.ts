@@ -11,24 +11,52 @@
 // latter granted by the capability file for the first time here. The
 // Playwright twin (`e2e/block-paste-outline.spec.ts`) runs against the mock.
 //
+// The other plugin and capability paths share this boot:
+// - The bug report (#5741 item 12, #5740 item 11): its integrity section, the
+//   body copied verbatim through the clipboard plugin, and the ZIP with the log
+//   files, which is bytes on disk. The App health counters and the integrity
+//   check's rebuild of a seeded vault are `e2e/app-health.spec.ts`, on the bridge.
+// - The opener plugin in an AppImage (#6871): an AppImage's launchers point
+//   `LD_LIBRARY_PATH` and more into the bundle, and a program the app starts
+//   inherits them, so on a host with a newer GLib `gio` and `flatpak` load the
+//   bundle's libraries and exit before the browser opens. The AppImage ships
+//   `src-tauri/scripts/appimage-xdg-open.sh` as its first `xdg-open` on PATH,
+//   which strips the bundle before running the host's. wdio.conf.ts starts this
+//   file's app the way an AppImage would, with that wrapper and a stand-in host
+//   `xdg-open` behind it that records what it receives
+//   (`SPECS_IN_AN_APPIMAGE_ENV`). A link or the data folder the opener opens
+//   must reach the host's launcher with the app's environment minus the bundle.
+//
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
 // ---------------------------------------------------------------------------
 
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import path from 'node:path'
+
+import JSZip from 'jszip'
+
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  appEnvironment,
+  appVaultDir,
   blockStaticByMarker,
+  clickUncovered,
   clipboardText,
   ctrlClick,
   enterBlankSibling,
   invoke,
   navigateTo,
+  openDataTab,
   openNewPage,
+  openSettingsTab,
   reopenPageByTitle,
   runScopedMarker,
+  takeDownload,
   typeMarkerVerified,
   waitForAppReady,
+  waitForToast,
 } from './helpers'
 
 const PARENT = runScopedMarker('wdio-clip-parent')
@@ -36,6 +64,18 @@ const CHILD = runScopedMarker('wdio-clip-kid')
 const FIRST = runScopedMarker('wdio-clip-codeone')
 const SECOND = runScopedMarker('wdio-clip-codetwo')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
+
+const RESULT = 'output[aria-label="Integrity check result"]'
+const PREVIEW = '[data-testid="bug-report-preview"]'
+
+const TOKEN_REFERENCE_URL =
+  'https://github.com/jfolcini/agaric/blob/main/docs/features/appearance.md#custom-css'
+
+interface Launch {
+  target: string
+  ldLibraryPath: string
+  appDir: string
+}
 
 interface RowShape {
   marker: string | null
@@ -97,7 +137,83 @@ async function reopenTheNewPage(): Promise<void> {
   await $(`[data-testid="sortable-block"]*=${PARENT}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor', () => {
+/** Settings › App health, freshly mounted when the caller came from another view. */
+async function openAppHealth(): Promise<void> {
+  await navigateTo('Settings')
+  const tab = $('#settings-tab-status')
+  await tab.waitForClickable({ timeout: NAV_TIMEOUT })
+  await tab.click()
+  await $('[data-testid="settings-panel-status"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/**
+ * Press Run check on a freshly mounted App health tab and wait for the clean
+ * answer; resolves to the block count and date the backend rebuilt from.
+ */
+async function runIntegrityCheck(): Promise<{ blocks: number; date: string }> {
+  const result = $(RESULT)
+  await result.waitForExist({ timeout: NAV_TIMEOUT })
+  expect(await result.getText()).toBe('')
+  const run = $('[data-testid="integrity-run-button"]')
+  await run.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await run.click()
+  let text = ''
+  await browser
+    .waitUntil(
+      async () => {
+        text = await result.getText()
+        return text !== ''
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error('the integrity check never reported')
+    })
+  expect(text).toContain('Everything matches')
+  const match = /from (\d+) blocks? on (\d{4}-\d{2}-\d{2})/.exec(text)
+  if (match === null) throw new Error(`the integrity result names no block count: ${text}`)
+  return { blocks: Number(match[1]), date: match[2] ?? '' }
+}
+
+function launches(): Launch[] {
+  const record = path.join(appVaultDir(), 'launches.txt')
+  if (!existsSync(record)) return []
+  return readFileSync(record, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [target = '', ldLibraryPath = '', appDir = ''] = line.split('\t')
+      return { target, ldLibraryPath, appDir }
+    })
+}
+
+async function launchOf(isTarget: (target: string) => boolean, what: string): Promise<Launch> {
+  let launch: Launch | undefined
+  await browser.waitUntil(
+    () => {
+      launch = launches().find((l) => isTarget(l.target))
+      return launch !== undefined
+    },
+    { timeout: NAV_TIMEOUT, timeoutMsg: `the launcher was never started for ${what}` },
+  )
+  return launch as Launch
+}
+
+/**
+ * The `LD_LIBRARY_PATH` the launcher should get: the app's own, which must
+ * start in the bundle or this spec proves nothing, minus the bundle's entries.
+ */
+function hostLibraryPath(): string {
+  const env = appEnvironment()
+  const bundle = `${env.get('APPDIR') ?? '<no APPDIR>'}/`
+  const entries = (env.get('LD_LIBRARY_PATH') ?? '').split(':')
+  expect(entries[0]?.startsWith(bundle)).toBe(true)
+  const host = entries.filter((entry) => entry !== '' && !entry.startsWith(bundle))
+  expect(host.length).toBeGreaterThan(0)
+  return host.join(':')
+}
+
+describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor @settings @boot', () => {
   it('copies and pastes a TODO parent with its child and a code block, durably', async () => {
     await waitForAppReady()
     await openNewPage()
@@ -214,5 +330,113 @@ describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor', () => {
       expect(row.code).toBe(true)
       expect(row.both).toBe(true)
     }
+  })
+
+  it('puts the integrity section in the bug report, copies the body verbatim, and saves the ZIP with the logs (#5741, #5740)', async () => {
+    await waitForAppReady()
+    await navigateTo('Journal')
+    await openAppHealth()
+    const check = await runIntegrityCheck()
+
+    const help = $('#settings-tab-help')
+    await help.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await help.click()
+    const report = $('[data-testid="settings-panel-help"]').$('button*=Report a bug')
+    await report.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await report.click()
+
+    const previewText = () =>
+      browser.execute(
+        (selector: string) => document.querySelector(selector)?.textContent ?? '',
+        PREVIEW,
+      )
+    const section = `## Integrity check\n\nNo divergences — ${check.blocks} blocks scanned, ${check.date}.`
+    await browser
+      .waitUntil(async () => (await previewText()).includes(section), { timeout: ACTION_TIMEOUT })
+      .catch(async () => {
+        throw new Error(`the report body lacks ${JSON.stringify(section)}: ${await previewText()}`)
+      })
+
+    const includeLogs = $('#bug-report-include-logs')
+    await includeLogs.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await includeLogs.click()
+    let listed: string[] = []
+    await browser
+      .waitUntil(
+        async () => {
+          listed = await browser.execute(() =>
+            [
+              ...document.querySelectorAll('[data-testid="bug-report-logs-list"] li .font-mono'),
+            ].map((name) => name.textContent ?? ''),
+          )
+          return listed.length > 0
+        },
+        { timeout: ACTION_TIMEOUT },
+      )
+      .catch(() => {
+        throw new Error('the bug report listed no log file')
+      })
+
+    const copy = $('button*=Copy report')
+    await copy.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await copy.click()
+    await waitForToast('Report copied to clipboard')
+    const body = await previewText()
+    expect(await clipboardText()).toBe(body)
+
+    const since = Date.now()
+    const save = $('[data-testid="bug-report-download-zip"]')
+    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await save.click()
+    await waitForToast('Saved agaric-bug-report-')
+    const zip = await JSZip.loadAsync(
+      await takeDownload(/^agaric-bug-report-\d{4}-\d{2}-\d{2}( \(\d+\))?\.zip$/, since),
+    )
+
+    const logs = Object.values(zip.files).filter((f) => !f.dir && f.name.startsWith('logs/'))
+    expect(logs.map((f) => f.name).toSorted()).toEqual(listed.map((n) => `logs/${n}`).toSorted())
+    for (const log of logs) expect((await log.async('string')).length).toBeGreaterThan(0)
+    const metadata = JSON.parse((await zip.file('metadata.json')?.async('string')) ?? '{}') as {
+      app_version?: string
+      device_id?: string
+    }
+    expect(metadata.device_id).toBe('[REDACTED_DEVICE_ID]')
+    expect(body).toContain(metadata.app_version ?? 'metadata.json names no app_version')
+
+    await browser.keys(['Escape'])
+    await $(PREVIEW).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+  })
+
+  it('opens a link with the host environment, not the bundle (#6871)', async () => {
+    await waitForAppReady()
+    const expected = hostLibraryPath()
+
+    await openSettingsTab('appearance')
+    await clickUncovered(
+      $('[data-testid="settings-panel-appearance"]').$('button=Token reference'),
+      'the custom CSS token reference button',
+    )
+
+    const launch = await launchOf((t) => t === TOKEN_REFERENCE_URL, TOKEN_REFERENCE_URL)
+    expect(launch.ldLibraryPath).toBe(expected)
+    expect(launch.appDir).toBe('<unset>')
+  })
+
+  it('opens the data folder with the host environment, not the bundle (#6871)', async () => {
+    const expected = hostLibraryPath()
+    const vault = realpathSync(appVaultDir())
+
+    await openDataTab()
+    await clickUncovered(
+      $('[data-testid="settings-panel-data"]').$('button=Open folder'),
+      'the snapshot row open folder button',
+    )
+
+    const launch = await launchOf(
+      (t) => existsSync(t) && realpathSync(t) === vault,
+      `the vault folder ${vault}`,
+    )
+    expect(launch.ldLibraryPath).toBe(expected)
+    expect(launch.appDir).toBe('<unset>')
   })
 })
