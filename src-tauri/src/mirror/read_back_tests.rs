@@ -43,11 +43,11 @@ fn only_a_folder_with_more_unconfirmed_files_than_the_limit_is_a_mass_change() {
         .chain(files("B", MASS_CHANGE))
         .collect();
     assert_eq!(
-        mass_changed(&changed, &HashSet::new(), false),
+        mass_changed(&changed, &HashSet::new(), None),
         BTreeMap::from([("A", MASS_CHANGE + 1)])
     );
     let confirmed = HashSet::from([edited("A/0.md")]);
-    assert_eq!(mass_changed(&changed, &confirmed, false), BTreeMap::new());
+    assert_eq!(mass_changed(&changed, &confirmed, None), BTreeMap::new());
     // A choice names its file as it changed: one confirmed as edited and
     // gone since still counts.
     let gone = HashSet::from([MirrorPending {
@@ -55,24 +55,24 @@ fn only_a_folder_with_more_unconfirmed_files_than_the_limit_is_a_mass_change() {
         ..edited("A/0.md")
     }]);
     assert_eq!(
-        mass_changed(&changed, &gone, false),
+        mass_changed(&changed, &gone, None),
         BTreeMap::from([("A", MASS_CHANGE + 1)])
     );
 }
 
 #[test]
-fn in_an_adopted_folder_every_changed_file_counts_toward_the_folder_itself() {
+fn in_an_adopted_folder_every_changed_file_counts_toward_its_space() {
     // Three notes at the top and three in a subfolder: no subfolder passes
     // the limit, but the adopted folder, one space's, does.
     let changed: Vec<MirrorPending> = ["a.md", "b.md", "c.md", "Sub/d.md", "Sub/e.md", "Sub/f.md"]
         .map(edited)
         .into();
     assert_eq!(
-        mass_changed(&changed, &HashSet::new(), true),
-        BTreeMap::from([(".", MASS_CHANGE + 1)])
+        mass_changed(&changed, &HashSet::new(), Some("Notes")),
+        BTreeMap::from([("Notes", MASS_CHANGE + 1)])
     );
     assert_eq!(
-        mass_changed(&changed, &HashSet::new(), false),
+        mass_changed(&changed, &HashSet::new(), None),
         BTreeMap::new()
     );
 }

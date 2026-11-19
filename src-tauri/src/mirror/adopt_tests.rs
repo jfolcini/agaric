@@ -3,7 +3,7 @@
 //! folder adopted as the space's mirror folder.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tempfile::TempDir;
 
@@ -35,6 +35,8 @@ struct Fx {
     state: MirrorState,
     vault: PathBuf,
     data: PathBuf,
+    /// Each list of held space folders the mirror told, in order.
+    told_held: Arc<Mutex<Vec<Vec<String>>>>,
     _dirs: [TempDir; 3],
 }
 
@@ -59,6 +61,7 @@ impl Fx {
             state: MirrorState::new(data.path().to_path_buf()),
             vault: folder.path().to_path_buf(),
             data: data.path().to_path_buf(),
+            told_held: Arc::default(),
             _dirs: [db, data, folder],
         }
     }
@@ -107,11 +110,12 @@ impl Fx {
     }
 
     async fn mirror(&self) -> Mirror {
+        let told = Arc::clone(&self.told_held);
         let ingest = Ingest {
             pool: self.pool.clone(),
             materializer: self.mat.clone(),
             notify: Arc::new(|_| {}),
-            notify_held: Arc::new(|_| {}),
+            notify_held: Arc::new(move |folders| told.lock().unwrap().push(folders)),
         };
         Mirror::open(self.pool.clone(), DEV.to_owned(), self.state.clone())
             .await
@@ -442,6 +446,8 @@ async fn a_page_trashed_in_agaric_sends_its_adopted_file_to_the_os_trash() {
 /// Many notes of the vault removed outside Agaric at once, some at its top
 /// and some in a subfolder, none past the limit alone, hold reading back, as
 /// a mass change in a space's folder does, instead of trashing every page.
+/// The hold names the space, as a space folder's does, in the status and the
+/// notice alike (#6964).
 #[tokio::test]
 async fn many_notes_removed_from_an_adopted_folder_ask_before_trashing_their_pages() {
     let notes: Vec<(String, String)> = (0..=MASS_CHANGE)
@@ -478,6 +484,19 @@ async fn many_notes_removed_from_an_adopted_folder_ask_before_trashing_their_pag
         .await
         .unwrap();
     assert!(!status.read_back, "reading back waits for the user");
+    assert_eq!(status.held, ["TestSpace"]);
+    assert!(
+        status
+            .failed
+            .iter()
+            .any(|failure| failure.path == "TestSpace" && failure.page_id.is_empty()),
+        "{:?}",
+        status.failed
+    );
+    assert_eq!(
+        *fx.told_held.lock().unwrap(),
+        [vec!["TestSpace".to_owned()]]
+    );
 }
 
 /// Logseq is import-only (#6540): its graph is never adopted in place.
