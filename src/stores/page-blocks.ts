@@ -148,9 +148,9 @@ function healStalePageReference(err: unknown, spaceId: string, pageId: string): 
 }
 
 /**
- * Unmount flushes still writing, by page (#6953). A flush whose text lands only
- * after its IPCs answer can outlast leaving the page and coming back, and the
- * reopened page's load can read before it lands.
+ * Unmount flushes still writing, by page (#6953). A flush can outlast leaving
+ * the page and coming back, and the reopened page's load, on a reader
+ * connection, can read before its write commits.
  */
 const pageFlushes = new Map<string, { pending: Set<Promise<unknown>>; started: number }>()
 

@@ -157,6 +157,7 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     bumpFlushSeq(blockId)
     onWillSplit?.()
     const outcome = invokeSync(() => splitBlock(blockId, changed))
+    if (outcome && deps.rootParentId !== null) trackPageFlush(deps.rootParentId, outcome)
     return { kind: 'split', outcome }
   }
 
@@ -171,12 +172,15 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: classified.kind, outcome }
   }
 
-  // 5. Plain edit.
+  // 5. Plain edit, unless the blur's early persist of a blank block already wrote it.
+  let outcome: Promise<boolean> | void
   if (dedupe && dedupe.content === changed) {
-    return { kind: 'edit', outcome: dedupe.outcome }
+    outcome = dedupe.outcome
+  } else {
+    bumpFlushSeq(blockId)
+    outcome = invokeSync(() => edit(blockId, changed, { baseText: base }))
   }
-  bumpFlushSeq(blockId)
-  const outcome = invokeSync(() => edit(blockId, changed, { baseText: base }))
+  if (outcome && deps.rootParentId !== null) trackPageFlush(deps.rootParentId, outcome)
   return { kind: 'edit', outcome }
 }
 

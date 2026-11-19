@@ -1,7 +1,7 @@
 /**
- * `trackPageFlush` (#6953): leaving a page flushes its edited block, and a flush whose text lands
- * only after its IPCs answer can outlast coming back. The reopened page's load reads again once
- * every flush its snapshot may predate has settled.
+ * `trackPageFlush` (#6953): leaving a page flushes its edited block, and the flush can outlast
+ * coming back. The reopened page's load reads again once every flush its snapshot may predate
+ * has settled.
  */
 import { invoke } from '@tauri-apps/api/core'
 import { act, render } from '@testing-library/react'
@@ -18,6 +18,7 @@ import {
   usePageBlockStoreApi,
 } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
+import { runUnmountFlush } from '@/stores/unmount-flush'
 
 const mockedInvoke = vi.mocked(invoke)
 const PAGE = 'PAGE_1'
@@ -137,5 +138,72 @@ describe('trackPageFlush', () => {
 
     expect(contentOf(store)).toBe(NAMED)
     expect(reads()).toBe(1)
+  })
+
+  it('reads the page again once a plain edit flushed on leaving it has landed', async () => {
+    const reads = stubLoads([Promise.resolve('call the'), Promise.resolve('call the plumber')])
+    const write = deferred<boolean>()
+    runUnmountFlush({
+      blockId: 'B1',
+      loaded: 'call the',
+      changed: 'call the plumber',
+      base: 'call the',
+      edit: () => write.promise,
+      splitBlock: () => undefined,
+      rootParentId: PAGE,
+    })
+    const store = mountPage()
+    await act(() => store.getState().load())
+    expect(contentOf(store)).toBe('call the')
+
+    await act(async () => write.resolve(true))
+
+    await vi.waitFor(() => expect(contentOf(store)).toBe('call the plumber'))
+    expect(reads()).toBe(2)
+  })
+
+  it('reads the page again once a split flushed on leaving it has landed', async () => {
+    const reads = stubLoads([Promise.resolve('call the'), Promise.resolve('call the plumber')])
+    const write = deferred<boolean>()
+    runUnmountFlush({
+      blockId: 'B1',
+      loaded: 'call the',
+      changed: 'call the\n\nplumber',
+      base: 'call the',
+      edit: () => undefined,
+      splitBlock: () => write.promise,
+      rootParentId: PAGE,
+    })
+    const store = mountPage()
+    await act(() => store.getState().load())
+    expect(contentOf(store)).toBe('call the')
+
+    await act(async () => write.resolve(true))
+
+    await vi.waitFor(() => expect(contentOf(store)).toBe('call the plumber'))
+    expect(reads()).toBe(2)
+  })
+
+  it("reads the page again once a blank block's early persist, deduped on leaving, has landed", async () => {
+    const reads = stubLoads([Promise.resolve(''), Promise.resolve('call the plumber')])
+    const write = deferred<boolean>()
+    runUnmountFlush({
+      blockId: 'B1',
+      loaded: '',
+      changed: 'call the plumber',
+      base: '',
+      edit: () => undefined,
+      splitBlock: () => undefined,
+      rootParentId: PAGE,
+      dedupe: { content: 'call the plumber', outcome: write.promise },
+    })
+    const store = mountPage()
+    await act(() => store.getState().load())
+    expect(contentOf(store)).toBe('')
+
+    await act(async () => write.resolve(true))
+
+    await vi.waitFor(() => expect(contentOf(store)).toBe('call the plumber'))
+    expect(reads()).toBe(2)
   })
 })
