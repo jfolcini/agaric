@@ -232,7 +232,7 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # it — none of which derive from `CI_PATH_RE` automatically.
 #
 # Defined up here so `--self-test` below can drive it directly.
-CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/'
+CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/|^mutation-accepted\.tsv$'
 
 # Shell scripts the RUST phases depend on. These are CI-attributable for
 # Phase A purposes (shellcheck still runs), but a change to
