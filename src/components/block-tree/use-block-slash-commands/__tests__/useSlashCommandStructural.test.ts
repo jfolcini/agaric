@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
+import { serialize } from '@/editor/markdown-serializer'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import type { PropertyRow } from '@/lib/bindings'
 import { listStyleFromRows, setListStyle } from '@/lib/list-style'
@@ -462,6 +463,33 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     expect(mount).toHaveBeenLastCalledWith('BLOCK_1', 'serialized')
     await vi.waitFor(() => expect(written).toEqual(['## serialized', 'serialized']))
     expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('serialized')
+  })
+
+  it('typing during a refused write is kept and saved (#7019)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore, mount } = makeSyntheticCtx()
+    ctx.rovingEditor.editor = { getJSON: () => ({ type: 'doc' }) } as unknown as NonNullable<
+      typeof ctx.rovingEditor.editor
+    >
+    // The command reads `hello` twice; by the refusal the user has typed on top of its text.
+    vi.mocked(serialize)
+      .mockReturnValueOnce('hello')
+      .mockReturnValueOnce('hello')
+      .mockReturnValueOnce('## hello!')
+    const written: string[] = []
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd !== 'edit_block') return undefined
+      const { toText } = args as { toText: string }
+      written.push(toText)
+      if (toText === '## hello') return Promise.reject({ kind: 'validation', message: 'refused' })
+      return { id: 'BLOCK_1', content: toText, op_refs: [{ device_id: 'dev1', seq: 3 }] }
+    })
+
+    await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'Heading 2' })
+
+    await vi.waitFor(() => expect(written).toEqual(['## hello', '## hello!']))
+    expect(mount).toHaveBeenLastCalledWith('BLOCK_1', '## hello')
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('## hello!')
   })
 
   it('divider replaces content with `---`', async () => {
