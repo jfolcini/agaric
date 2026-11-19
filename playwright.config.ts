@@ -82,6 +82,7 @@ const REAL_BACKEND_SPECS = [
   'keyboard-chords-page.spec.ts',
   'mcp-agents.spec.ts',
   'meeting-attachments.spec.ts',
+  'mirror-adopt.spec.ts',
   'mirror-inbound.spec.ts',
   'mirror-new-file.spec.ts',
   'mirror-read-back.spec.ts',
