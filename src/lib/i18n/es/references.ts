@@ -193,6 +193,7 @@ export const references: Record<string, string> = {
   'tagNotes.openTag': 'Notas de la etiqueta #{{name}}',
   'tags.pageTitleReserved':
     'Las páginas bajo "Tag/" pertenecen a sus etiquetas. Crea la etiqueta o cámbiale el nombre.',
+  'tags.linkPageDashed': 'Se enlazó {{title}}: un nombre de etiqueta no lleva espacios',
   'tags.pageTitleTaken':
     'Una etiqueta y su página de notas cambian de nombre juntas, y otra página o etiqueta ya tiene ese nombre. Cámbiale el nombre o elimínala primero.',
   'backlink.searchTextRequired': 'El texto de búsqueda es obligatorio',

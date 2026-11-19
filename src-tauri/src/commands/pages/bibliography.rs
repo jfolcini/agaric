@@ -27,6 +27,7 @@ use agaric_store::op::{PropertyList, PropertyListItem, PropertyValueFields};
 use agaric_store::space::SpaceId;
 
 use super::super::*;
+use crate::commands::tag_pages::import_tag_page_title;
 
 /// #1454 — number of bibliography entries written into one import chunk
 /// before the open transaction is committed (releasing the single SQLite
@@ -459,13 +460,14 @@ fn disambiguated_page_title(
 }
 
 /// Create one entry's reference page and stamp its `space` ref property inside
-/// the caller's chunk transaction, returning the new page id.
+/// the caller's chunk transaction, returning the new page id. A title under
+/// `Tag/` brings its tag first ([`import_tag_page_title`]).
 ///
 /// `Ok(None)` means the entry was skipped with a warning: a per-entry
 /// Validation rejection (e.g. an absurdly long title exceeding the content cap)
 /// degrades to skip-and-warn — mirroring the #1918 recoverable-failure contract
-/// — instead of aborting the whole import. No writes have landed for the entry
-/// at that point.
+/// — instead of aborting the whole import. No writes but that tag have landed
+/// for the entry at that point.
 async fn create_reference_page_in_tx(
     tx: &mut CommandTx,
     ctx: &BibImportCtx<'_>,
@@ -473,12 +475,21 @@ async fn create_reference_page_in_tx(
     title: &str,
     warnings: &mut Vec<String>,
 ) -> Result<Option<String>, AppError> {
+    let title = import_tag_page_title(
+        tx,
+        ctx.device_id,
+        ctx.materializer,
+        ctx.space_id,
+        title,
+        warnings,
+    );
+    let title = Box::pin(title).await?;
     let (page, page_op) = match create_block_in_tx(
         tx,
         ctx.materializer.loro_state(),
         ctx.device_id,
         "page".into(),
-        title.to_string(),
+        title,
         None,
         None,
         // #2849 PR2: server-generated id.

@@ -30,7 +30,7 @@ import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { dashedTagName } from '@/lib/name-tokens'
+import { dashedTagName, nameKey, tagOfPageTitle } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { searchBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope, requireActiveSearchScope } from '@/lib/space-scope'
@@ -439,6 +439,23 @@ function recordCreatedRow<Row, IdKey extends keyof Row>(
   const alreadyPresent = list.some((existing) => existing[idKey] === row[idKey])
   if (addedRowDisposition(list.length === 0, alreadyPresent) === 'skip') return
   listRef.current = [...list, row]
+}
+
+/**
+ * The page a `[[Tag/x]]` link names (#6755): tag `x` and its page, each the
+ * one the space holds or a new one, made together by the backend, a name
+ * holding whitespace dashed, which a toast says.
+ */
+async function createLinkedTagPage(
+  label: string,
+  spaceId: string,
+): Promise<{ id: string; title: string }> {
+  const row = unwrap(await commands.createTagPageTitled(spaceId, label))
+  const title = row.content ?? label
+  if (nameKey(tagOfPageTitle(title) ?? '') !== nameKey(tagOfPageTitle(label) ?? '')) {
+    notify.info(translate('tags.linkPageDashed', { title }))
+  }
+  return { id: row.id, title }
 }
 
 export function useBlockResolve(): UseBlockResolveReturn {
@@ -1010,14 +1027,20 @@ export function useBlockResolve(): UseBlockResolveReturn {
       throw new Error('Space store is not ready')
     }
     try {
-      const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
+      const { id: newId, title } =
+        dashedTagName(tagOfPageTitle(label) ?? '') === ''
+          ? {
+              id: unwrap(await commands.createPageInSpace(null, label, currentSpaceId)),
+              title: label,
+            }
+          : await createLinkedTagPage(label, currentSpaceId)
       // Populate resolve cache so the link chip shows the title immediately
-      useResolveStore.getState().set(newId, label, false)
+      useResolveStore.getState().set(newId, title, false)
       // #4319 — the generation bump (#4275 item 1) and the fill-guarded
       // append (#4008 review note 1) as ONE call, so this site cannot drift
       // from `onCreateTag`'s or the date picker's. See `recordCreatedRow`
       // for both invariants and why they compose.
-      recordCreatedRow(pagesListRef, nameChangeGenerationRef, { id: newId, title: label }, 'id')
+      recordCreatedRow(pagesListRef, nameChangeGenerationRef, { id: newId, title }, 'id')
       return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)

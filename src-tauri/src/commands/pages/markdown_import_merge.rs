@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::commands::spaces::SpacePageNames;
+use crate::commands::tag_pages::import_tag_page_naming;
 
 /// A file an import places ([`create_import_page`]): the space it lands in,
 /// the title it imports as, its text, and whether it may merge.
@@ -49,6 +50,7 @@ pub(super) struct MergedPage {
 }
 
 /// Whether a file merges into the page of its title that holds blocks.
+#[derive(Clone, Copy)]
 pub(super) struct MergeRule<'a> {
     /// Whether the import reads the file as an outline, a Logseq or Org
     /// file, which merges as its render ([`render_outline`]).
@@ -303,11 +305,14 @@ pub async fn list_import_merges_inner(
     space_id: &str,
     filenames: Vec<String>,
 ) -> Result<Vec<ImportMerge>, AppError> {
-    let titles: Vec<String> = filenames
-        .into_iter()
-        .map(|name| import_title(Some(name)))
-        .collect();
     let mut tx = pool.begin().await?;
+    let mut titles = Vec::with_capacity(filenames.len());
+    for name in filenames {
+        let title = import_title(Some(name));
+        // A spaced name under `Tag/` imports under its dashed title (#6755).
+        let naming = import_tag_page_naming(&mut tx, space_id, &title).await?;
+        titles.push(naming.map_or(title, |(_, title)| title));
+    }
     let pages = title_pages(&mut tx, space_id, &titles).await?;
     tx.commit().await?;
     let mut listed = HashSet::new();

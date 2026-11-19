@@ -196,6 +196,7 @@ export const references: Record<string, string> = {
   'tagNotes.openTag': 'Notes de l’étiquette #{{name}}',
   'tags.pageTitleReserved':
     'Les pages sous « Tag/ » appartiennent à leurs étiquettes. Créez ou renommez plutôt l’étiquette.',
+  'tags.linkPageDashed': '{{title}} lié : un nom d’étiquette ne contient pas d’espace',
   'tags.pageTitleTaken':
     'Une étiquette et sa page de notes sont renommées ensemble, et une autre page ou étiquette porte déjà ce nom. Renommez-la ou supprimez-la d’abord.',
   'backlink.searchTextRequired': 'Le texte à rechercher est requis',

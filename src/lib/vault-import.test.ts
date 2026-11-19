@@ -1558,6 +1558,63 @@ describe('Logseq graph (#6033)', () => {
       '2026-10-21.md',
     ])
   })
+
+  // #6755 — a page the graph makes a tag is that tag's page.
+  it("imports a page the graph makes a tag as the tag's page, and its links name that page", async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(
+        ['- ship #project #[[project]] [[project]] [[Plain]]'],
+        'notes.md',
+        'Graph/pages/notes.md',
+      ),
+      folderFile(['- the plan'], 'Project.md', 'Graph/pages/Project.md'),
+      folderFile(['- see [[a/b]]'], 'Plain.md', 'Graph/pages/Plain.md'),
+      folderFile(['tags:: [[a/b]]\n\n- x'], 'a___b.md', 'Graph/pages/a___b.md'),
+      folderFile(['title:: Named\n\n- y #named'], 'other.md', 'Graph/pages/other.md'),
+      folderFile(['- day [[Project]]'], '2026_10_21.md', 'Graph/journals/2026_10_21.md'),
+    ]
+
+    expect(await loadAll(files)).toEqual([
+      { path: 'notes.md', content: '- ship #project #[[project]] [[Tag/Project]] [[Plain]]' },
+      { path: 'Tag/Project.md', content: '- the plan' },
+      { path: 'Plain.md', content: '- see [[Tag/a/b]]' },
+      { path: 'Tag/a/b.md', content: 'tags:: [[a/b]]\n\n- x' },
+      { path: 'Tag/Named.md', content: 'title:: Named\n\n- y #named' },
+      { path: '2026-10-21.md', content: '- day [[Tag/Project]]' },
+    ])
+    const merges = await Promise.all(
+      mdFilesToUnits(files, null, false).map(async (unit) =>
+        typeof unit.merges === 'function' ? unit.merges() : unit.merges,
+      ),
+    )
+    expect(merges).toEqual([
+      'notes.md',
+      'Tag/Project.md',
+      'Plain.md',
+      'Tag/a/b.md',
+      'Tag/Named.md',
+      '2026-10-21.md',
+    ])
+  })
+
+  // #6755 — an Org page of a graph is titled by its `#+TITLE`, read only as
+  // it converts, so a tag page is a Markdown page: the Org one keeps its title.
+  it('keeps the title of an Org page the graph makes a tag, and its links', async () => {
+    const files = [
+      folderFile(['{:file/name-format :triple-lowbar}'], 'config.edn', 'Graph/logseq/config.edn'),
+      folderFile(['- ship #proj [[proj]] #named'], 'notes.md', 'Graph/pages/notes.md'),
+      folderFile(['* the plan'], 'proj.org', 'Graph/pages/proj.org'),
+      folderFile(['#+TITLE: named\n* y'], 'other.org', 'Graph/pages/other.org'),
+    ]
+
+    expect((await loadAll(files)).map(({ path }) => path)).toEqual([
+      'notes.md',
+      'proj.md',
+      'named.md',
+    ])
+    expect((await loadAll(files))[0]?.content).toBe('- ship #proj [[proj]] #named')
+  })
 })
 
 describe('enexNotesToUnits', () => {

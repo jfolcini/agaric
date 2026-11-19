@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from '@/lib/logger'
-import { isLogseqGraph, logseqGraph, logseqTitleProperty } from '@/lib/logseq-import'
+import {
+  isLogseqGraph,
+  logseqGraph,
+  logseqTagPages,
+  logseqTitleProperty,
+} from '@/lib/logseq-import'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -124,6 +129,46 @@ describe('logseqGraph journal links', () => {
     ].join('\n')
 
     expect(rewrite(text)).toBe(text.replace(/- \[\[Oct 21st, 2026\]\]$/, '- [[2026-10-21]]'))
+  })
+})
+
+// #6755 — a page the graph makes a tag is that tag's page.
+describe('logseqTagPages', () => {
+  it('maps each page under `pages/` whose title is a tag to its tag page, by the title lowercased', () => {
+    const paths = ['pages/Project.md', 'pages/a___b.md', 'pages/plain.md', 'journals/x.md']
+    const tags = new Set(['project', 'a/b', 'x'])
+
+    expect(logseqTagPages(paths, ['Project', 'a/b', 'plain', 'x'], tags)).toEqual(
+      new Map([
+        ['project', 'Tag/Project'],
+        ['a/b', 'Tag/a/b'],
+      ]),
+    )
+    expect(logseqTagPages(paths, ['Project', 'a/b', 'plain', 'x'], new Set())).toEqual(new Map())
+  })
+
+  it('rewrites a link to a tag page, but not a `#[[tag]]` nor the names of a `tags::` or `alias::` line', () => {
+    const { rewrite } = logseqGraph(null, ['pages/Project.md'])
+    const tagPages = new Map([['project', 'Tag/Project']])
+    const text = [
+      'tags:: [[project]]',
+      'alias:: [[Project]]',
+      '- see [[project]], [[ Project ]] and #[[project]]',
+      '  owner:: [[project]]',
+      '  ```',
+      '  [[project]]',
+      '  ```',
+    ].join('\n')
+
+    expect(rewrite(text, tagPages).split('\n')).toEqual([
+      'tags:: [[project]]',
+      'alias:: [[Project]]',
+      '- see [[Tag/Project]], [[Tag/Project]] and #[[project]]',
+      '  owner:: [[Tag/Project]]',
+      '  ```',
+      '  [[project]]',
+      '  ```',
+    ])
   })
 })
 

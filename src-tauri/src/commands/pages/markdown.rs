@@ -29,6 +29,7 @@ use agaric_store::space::SpaceId;
 use super::super::*;
 // The moved seam modules name these by `super::` paths.
 use super::{aliases, inline_query_md, markdown_yaml};
+use crate::commands::tag_pages::import_tag_page_title;
 
 /// Export a page and its full descendant subtree as a Markdown string with
 /// human-readable tag/page references and optional YAML frontmatter.

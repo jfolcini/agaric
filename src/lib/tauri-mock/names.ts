@@ -18,8 +18,9 @@
  *     on its first `|` (D10);
  *   - a tag is the smallest-id tag of the same normalised name, else created.
  *
- * Created pages come first, in name order, then tags, each with the
- * `create_block` and `set_property` (space) ops the backend appends.
+ * Created pages come first, in name order, a page under `Tag/` after the tag
+ * it brings (#6755), then tags, each with the `create_block` and
+ * `set_property` (space) ops the backend appends.
  */
 
 import { ULID_RE } from '@/editor/markdown-common'
@@ -31,6 +32,8 @@ import {
   normalizeTagName,
   type PageToken,
   scanNameTokens,
+  tagOfPageTitle,
+  tagPageTitle,
 } from '@/lib/name-tokens'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
@@ -170,7 +173,8 @@ function createNamed(
     block_type: blockType,
     content,
     parent_id: null,
-    page_id: blockType === 'page' ? id : null,
+    // A top-level tag is its own page, as the backend stamps it.
+    page_id: id,
     position: 0,
     deleted_at: null,
     todo_state: null,
@@ -242,6 +246,50 @@ export function resolveTagNames(
   return { ids, created, warnings }
 }
 
+/**
+ * `import_tag_page_naming` (#6755): the tag a page an import makes titled
+ * `title` brings and the title the page takes, a name holding whitespace
+ * dashed; null off the path, for `Tag/` alone, and for a spaced name whose
+ * tag or title the space already holds, which keeps its title.
+ */
+export function importTagPageNaming(
+  title: string,
+  spaceId: string,
+): { name: string; title: string } | null {
+  const name = tagOfPageTitle(title)?.trim()
+  const dashed = name === undefined ? '' : dashedTagName(name)
+  if (name === undefined || dashed === '') return null
+  if (dashed === name) return { name, title }
+  const tagHeld = [...blocks.values()].some(
+    (b) =>
+      b['block_type'] === 'tag' &&
+      inSpace(b, spaceId) &&
+      nameKey(String(b['content'])) === nameKey(name),
+  )
+  if (tagHeld || findPage(title, livePages(spaceId)) !== null) return null
+  return { name: dashed, title: tagPageTitle(dashed) }
+}
+
+/**
+ * `import_tag_page_title` (#6755): the title a page an import makes under
+ * `Tag/` takes ({@link importTagPageNaming}), its tag resolved or made first,
+ * a respelled title named in a warning.
+ */
+export function importTagPageTitle(
+  title: string,
+  spaceId: string,
+  opRefs: OpRefs,
+): { title: string; created: Row[]; warnings: string[] } {
+  const naming = importTagPageNaming(title, spaceId)
+  if (naming === null) return { title, created: [], warnings: [] }
+  const warnings =
+    naming.title === title
+      ? []
+      : [`the page '${title}' was imported as '${naming.title}': a tag name holds no whitespace`]
+  const { created } = resolveTagNames([naming.name], spaceId, opRefs)
+  return { title: naming.title, created, warnings }
+}
+
 /** Resolve the names `contents` write in `spaceId`, creating what no name matches. */
 export function resolveInboundNames(
   contents: readonly string[],
@@ -262,9 +310,16 @@ export function resolveInboundNames(
     readings.set(body, readLinkBody(token, pages))
   }
   const pageIds = new Map<string, string>()
-  const resolvePage = (title: string): string => {
-    const match = findPage(title, pages)
+  const warnings: string[] = []
+  const resolvePage = (base: string): string => {
+    const match = findPage(base, pages)
     if (match !== null) return match
+    const tagged = importTagPageTitle(base, spaceId, opRefs)
+    created.push(...tagged.created)
+    warnings.push(...tagged.warnings)
+    const title = tagged.title
+    const held = title === base ? null : findPage(title, pages)
+    if (held !== null) return held
     const row = createNamed('page', title, spaceId, opRefs)
     pages.push(row)
     created.push(row)
@@ -306,5 +361,5 @@ export function resolveInboundNames(
     }
     return out
   })
-  return { contents: rewritten, created, warnings: tags.warnings }
+  return { contents: rewritten, created, warnings: [...warnings, ...tags.warnings] }
 }

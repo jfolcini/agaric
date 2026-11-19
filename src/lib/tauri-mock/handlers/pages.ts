@@ -75,6 +75,8 @@ import { indexLinks } from '@/lib/tauri-mock/link-index'
 import {
   findEmptyPageTitled,
   findPageTitled,
+  importTagPageNaming,
+  importTagPageTitle,
   resolveInboundNames,
   resolveRefValue,
   resolveTagNames,
@@ -2286,20 +2288,24 @@ export const pagesHandlers = {
       return match !== null && importKeepsProperty(spaceId, match[1] ?? '', (match[2] ?? '').trim())
     }).length
 
+    // A title under `Tag/` brings its tag, made first (#6755).
+    const tagged = spaceId
+      ? importTagPageTitle(pageTitle, spaceId, [])
+      : { title: pageTitle, warnings: [] }
     // Create the page block in the space, unless an empty page of the space
     // already carries the title (#5160 D12).
-    const adopted = spaceId ? findEmptyPageTitled(pageTitle, spaceId) : null
+    const adopted = spaceId ? findEmptyPageTitled(tagged.title, spaceId) : null
     const pageId = adopted ?? fakeId()
     if (adopted === null) {
       const space = spaceId === '' ? null : spaceId
       const position = nextDenseRank(null, space)
       blocks.set(pageId, {
-        ...makeBlock(pageId, 'page', pageTitle, null, position),
+        ...makeBlock(pageId, 'page', tagged.title, null, position),
         space_id: space,
       })
       pushOp('create_block', {
         block_id: pageId,
-        content: pageTitle,
+        content: tagged.title,
         parent_id: null,
         block_type: 'page',
         position,
@@ -2323,6 +2329,7 @@ export const pagesHandlers = {
     // diagnostic (attachments are not modelled; their refs stay literal text).
     const warnings: string[] = [
       'dev-preview mock: attachments are not imported (kept as literal text)',
+      ...tagged.warnings,
     ]
     const names = spaceId ? resolveInboundNames(parsedLines, spaceId, []) : null
     const contentLines = names?.contents ?? parsedLines
@@ -2352,7 +2359,7 @@ export const pagesHandlers = {
 
     emit({
       kind: 'complete',
-      page_title: pageTitle,
+      page_title: tagged.title,
       blocks_created: blocksCreated,
       properties_set: propertiesSet,
     })
@@ -2360,7 +2367,7 @@ export const pagesHandlers = {
     // The mock reads no Logseq `collapsed::` line, so it folds nothing, and no
     // anchor, so it leaves no reference for `link_import_anchors`.
     return {
-      page_title: pageTitle,
+      page_title: tagged.title,
       page_id: pageId,
       blocks_created: blocksCreated,
       properties_set: propertiesSet,
@@ -2379,7 +2386,9 @@ export const pagesHandlers = {
     const { spaceId, filenames } = args as { spaceId: string; filenames: string[] }
     const listed = new Map<string, string>()
     for (const filename of filenames) {
-      const page = findPageTitled(importTitle(filename), spaceId)
+      const title = importTitle(filename)
+      // A spaced name under `Tag/` imports under its dashed title (#6755).
+      const page = findPageTitled(importTagPageNaming(title, spaceId)?.title ?? title, spaceId)
       if (page?.hasBlocks && !listed.has(page.id)) {
         listed.set(page.id, (blocks.get(page.id)?.['content'] as string | null) ?? '')
       }

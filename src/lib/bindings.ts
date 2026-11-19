@@ -598,6 +598,11 @@ export const commands = {
 	 *  tag has none. Delegates to [`create_tag_page_inner`].
 	 */
 	createTagPage: (tagId: BlockId) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_tag_page", { tagId })),
+	/**
+	 *  Tauri command: the page a `[[Tag/x]]` link names, with its tag.
+	 *  Delegates to [`create_tag_page_titled_inner`].
+	 */
+	createTagPageTitled: (spaceId: SpaceId, title: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_tag_page_titled", { spaceId, title })),
 	/**  Tauri command: [`list_suggested_properties_inner`]. */
 	listSuggestedProperties: (blockId: BlockId) => typedError<SuggestedProperty[], AppError>(__TAURI_INVOKE("list_suggested_properties", { blockId })),
 	/**  Tauri command: [`preview_set_property_on_tagged_blocks_inner`]. */

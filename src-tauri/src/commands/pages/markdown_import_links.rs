@@ -4,6 +4,7 @@
 //! and [`resolve_inbound_tags`].
 
 use super::*;
+use crate::commands::spaces::find_live_page_by_name;
 
 /// What the wiki-link bodies and inline-query page names of a text resolve to
 /// (#5160 D9, D10).
@@ -347,6 +348,24 @@ async fn resolve_or_create_link_target(
         resolved_base_links.insert(base, found.clone());
         return Ok(found);
     }
+    // A page under `Tag/` brings its tag, its name dashed when it holds
+    // whitespace, which an earlier spelling of the link may have made.
+    let title = import_tag_page_title(
+        tx,
+        ctx.device_id,
+        ctx.materializer,
+        ctx.space_id,
+        &base,
+        ctx.warnings,
+    );
+    let title = Box::pin(title).await?;
+    if title != base
+        && let Some(held) = find_live_page_by_name(tx, ctx.space_id, &title, None).await?
+    {
+        let held = held.into_id();
+        resolved_base_links.insert(base, held.clone());
+        return Ok(held);
+    }
     // Create the missing target page inside this chunk's tx, then stamp its
     // `space` ref (mirrors the importing page), so the new page is a
     // first-class member of the import's space.
@@ -355,7 +374,7 @@ async fn resolve_or_create_link_target(
         ctx.materializer.loro_state(),
         ctx.device_id,
         "page".into(),
-        base.clone(),
+        title,
         None,
         None,
         // #2849 PR2: server-generated id.

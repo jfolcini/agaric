@@ -614,6 +614,56 @@ test.describe('Obsidian vault import @markdown', { tag: '@real-only' }, () => {
   })
 })
 
+// #6755 — a Logseq graph's page that the graph makes a tag is imported as
+// that tag's page, `Tag/<name>`, the tag made with it, and the graph's links
+// to the page name it there.
+test.describe('Logseq tag pages @markdown @pages', { tag: '@real-only' }, () => {
+  test("a page the graph tags is the tag's notes, and a link to it opens them", async ({
+    page,
+  }) => {
+    await importFolder(
+      page,
+      'import-folder-input',
+      'lst-graph',
+      {
+        'logseq/config.edn': '{:file/name-format :triple-lowbar}\n',
+        'pages/lst-notes.md': '- lst-ship #lst-proj\n- lst-see [[lst-proj]]\n',
+        'pages/lst-proj.md': '- lst-the-plan\n',
+      },
+      'Imported “2 files”',
+    )
+    const tagPageId = await pageIdTitled(page, 'Tag/lst-proj')
+    expect((await pagesIn(page, PERSONAL)).filter((p) => p.content === 'lst-proj')).toEqual([])
+
+    await navigateToView(page, 'Tags')
+    await page.getByTestId('tag-item-lst-proj').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('lst-proj')
+    await expect(page.getByTestId('tag-notes')).toContainText('lst-the-plan')
+
+    await reopenTitled(page, 'lst-notes')
+    await expect(rowOf(page, 'lst-ship').getByTestId('tag-ref-chip')).toContainText('lst-proj')
+    const chip = rowOf(page, 'lst-see').getByTestId('block-link-chip')
+    await expect(chip).toHaveAttribute('data-id', tagPageId)
+    await chip.dispatchEvent('click')
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Tag/lst-proj')
+    await expect(rowOf(page, 'lst-the-plan')).toBeVisible()
+  })
+
+  test('a Markdown file titled under Tag/ makes its tag, whose notes it is', async ({ page }) => {
+    await importFolder(
+      page,
+      'import-folder-input',
+      'lst-folder',
+      { 'Tag/lst-solo.md': '- lst-solo-note\n' },
+      'Imported “Tag/lst-solo”',
+    )
+    await navigateToView(page, 'Tags')
+    await page.getByTestId('tag-item-lst-solo').click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('lst-solo')
+    await expect(page.getByTestId('tag-notes')).toContainText('lst-solo-note')
+  })
+})
+
 // #6277 G5 — a file whose title names a page with blocks merges into it as an
 // Edit as Markdown save of the file does, after a dialog listing the pages it
 // updates (`list_import_merges`).

@@ -347,8 +347,10 @@ pub(super) fn announce_import_start(
 /// D12), returning the transaction, the page's ULID and title and how the
 /// file's property lines read ([`create_note_targets`], #5160 D11). A file that merges
 /// into the page of its title, which holds blocks ([`import_target`], #6277
-/// decision 7), rolls the chunk back and merges ([`merge_into_page`]),
-/// returning its result.
+/// decision 7), commits the chunk and merges ([`merge_into_page`]),
+/// returning its result. A title under `Tag/` brings its tag, made first in
+/// the chunk, which a merge keeps, and may be respelled
+/// ([`import_tag_page_title`]).
 ///
 /// --- Chunked IMMEDIATE transactions (#662) --- `CommandTx` couples commit +
 /// post-commit dispatch; op records enqueue per chunk and drain in FIFO order on
@@ -384,12 +386,26 @@ pub(super) async fn create_import_page(
 
     let space_id = file.space_id;
     crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
+    let title = import_tag_page_title(
+        &mut tx,
+        device_id,
+        materializer,
+        space_id,
+        file.title,
+        &mut parse_output.warnings,
+    );
+    let title = Box::pin(title).await?;
+    let file = &ImportFile {
+        title: &title,
+        ..*file
+    };
 
     let warnings = &mut parse_output.warnings;
     let (page_id, title) = match import_target(&mut tx, file, warnings).await? {
         ImportTarget::Adopt(page_id) => (page_id, file.title.to_string()),
         ImportTarget::Merge { page_id, title } => {
-            tx.rollback().await?;
+            // A tag the title brought stays: the page merged into is its.
+            tx.commit_and_dispatch(materializer).await?;
             let outline = file
                 .rule
                 .outline
@@ -411,35 +427,18 @@ pub(super) async fn create_import_page(
             })));
         }
         ImportTarget::Create(title) => {
-            let (page, page_op) = create_block_in_tx(
-                &mut tx,
-                materializer.loro_state(),
-                device_id,
-                "page".into(),
-                title.clone(),
-                None,
-                None,
-                // #2849 PR2: server-generated id.
-                None,
-            )
-            .await?;
-            tx.enqueue_background(page_op);
-            let page_id = page.id.clone().into_string();
-            stamp_space_property(&mut tx, materializer, device_id, page_id.clone(), space_id)
-                .await?;
-            (page_id, title)
+            let page = create_space_page(&mut tx, materializer, device_id, &title, space_id);
+            (Box::pin(page).await?, title)
         }
     };
-    let mut lines = PropertyLines::load(&mut tx, Some(space_id), PropertyWrite::Import).await?;
-    let front = frontmatter_values(parse_output);
-    let values = parse_output
-        .blocks
-        .iter()
-        .flat_map(|block| &block.properties)
-        .chain(&front);
-    lines.resolve_refs(&mut tx, Some(space_id), values).await?;
-    create_note_targets(&mut tx, materializer, device_id, file, &mut lines).await?;
-    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
+    let lines = Box::pin(read_property_lines(
+        &mut tx,
+        materializer,
+        device_id,
+        file,
+        parse_output,
+    ))
+    .await?;
     Ok(ImportPage::Write(Box::new(OpenPage {
         tx,
         page_id,
@@ -448,18 +447,73 @@ pub(super) async fn create_import_page(
     })))
 }
 
+/// Create the page `title` in `space_id` inside `tx` and stamp its `space`
+/// ref, returning its id.
+async fn create_space_page(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    title: &str,
+    space_id: &str,
+) -> Result<String, AppError> {
+    let (page, page_op) = create_block_in_tx(
+        &mut *tx,
+        materializer.loro_state(),
+        device_id,
+        "page".into(),
+        title.to_owned(),
+        None,
+        None,
+        // #2849 PR2: server-generated id.
+        None,
+    )
+    .await?;
+    tx.enqueue_background(page_op);
+    let page_id = page.id.into_string();
+    stamp_space_property(tx, materializer, device_id, page_id.clone(), space_id).await?;
+    Ok(page_id)
+}
+
+/// How `file`'s property lines read against the space's definitions, their
+/// ref values resolved and the pages of the folder's notes they name made
+/// ([`create_note_targets`]); a value a definition refuses is kept as text.
+async fn read_property_lines(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    file: &ImportFile<'_>,
+    parse_output: &mut import::ParseOutput,
+) -> Result<PropertyLines, AppError> {
+    let space_id = file.space_id;
+    let mut lines = PropertyLines::load(tx, Some(space_id), PropertyWrite::Import).await?;
+    let front = frontmatter_values(parse_output);
+    let values = parse_output
+        .blocks
+        .iter()
+        .flat_map(|block| &block.properties)
+        .chain(&front);
+    lines.resolve_refs(tx, Some(space_id), values).await?;
+    let warnings = &mut parse_output.warnings;
+    let targets = create_note_targets(tx, materializer, device_id, file, &mut lines, warnings);
+    Box::pin(targets).await?;
+    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
+    Ok(lines)
+}
+
 /// Make the page of each ref value that names a note of the same folder pick
 /// with no page yet, as a link to that note makes it (#6277 G6): the note
 /// adopts it when it imports ([`import_target`], #5160 D12), so the order a
 /// pick's notes import in loses no ref. A bare name names the note a bare
 /// link does ([`vault_note_titles`]). Any other title names no page, and its
-/// value is kept as text (D11).
+/// value is kept as text (D11). A page under `Tag/` brings its tag
+/// ([`import_tag_page_title`]).
 async fn create_note_targets(
     tx: &mut CommandTx,
     materializer: &Materializer,
     device_id: &str,
     file: &ImportFile<'_>,
     lines: &mut PropertyLines,
+    warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
     let notes: HashMap<String, &String> = file
         .notes
@@ -478,20 +532,11 @@ async fn create_note_targets(
             lines.name_ref(name, page_id.clone());
             continue;
         }
-        let (page, page_op) = create_block_in_tx(
-            &mut *tx,
-            materializer.loro_state(),
-            device_id,
-            "page".into(),
-            (*title).clone(),
-            None,
-            None,
-            None,
-        )
-        .await?;
-        tx.enqueue_background(page_op);
-        let page_id = page.id.into_string();
-        stamp_space_property(tx, materializer, device_id, page_id.clone(), file.space_id).await?;
+        let space_id = file.space_id;
+        let title = import_tag_page_title(tx, device_id, materializer, space_id, title, warnings);
+        let title = Box::pin(title).await?;
+        let page = create_space_page(tx, materializer, device_id, &title, space_id);
+        let page_id = Box::pin(page).await?;
         made.insert(key, page_id.clone());
         lines.name_ref(name, page_id);
     }

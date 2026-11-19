@@ -1,0 +1,350 @@
+{
+  "description": "#6755 — a page an import makes under `Tag/` brings its tag, made first in the same transaction: a file titled `Tag/project`, a link stub `[[Tag/idea]]`, and a file `Tag/deep work`, whose name a new tag cannot take, imported as `Tag/deep-work` with its tag `deep-work`. Before a re-import, `list_import_merges` lists `Tag/deep work.md`'s page under its dashed title.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Imports",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "project",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tag/project",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Plans",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Links",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "idea",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tag/idea",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "See [[C7]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "deep-work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tag/deep-work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B10",
+        "parent_id": null,
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Focus",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B10",
+        "parent_id": "B10",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 24,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "set_property_def"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B8",
+        "source_page_id": "B5",
+        "target_id": "B7"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_to_import_into",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_file_under_the_path",
+      "returns": ["B3#page_title=Tag/project#blocks_created=1#properties_set=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_link_stub_under_the_path",
+      "returns": ["B5#page_title=Links#blocks_created=1#properties_set=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_spaced_name_is_dashed",
+      "returns": ["B10#page_title=Tag/deep-work#blocks_created=1#properties_set=0"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "a_spaced_title_lists_its_dashed_page",
+      "rows": ["B10#title=Tag/deep-work", "B3#title=Tag/project"],
+      "total_count": null
+    }
+  ],
+  "name": "import_markdown_tag_page",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Imports"
+      },
+      "command": "create_space",
+      "comment": "The target space, `C1`: an import refuses the harness space.",
+      "name": "a_space_to_import_into",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Plans\n",
+        "dialect": "Markdown",
+        "filename": "Tag/project.md",
+        "spaceId": "C1"
+      },
+      "command": "import_markdown",
+      "name": "a_file_under_the_path",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "See [[Tag/idea]]\n",
+        "dialect": "Markdown",
+        "filename": "Links.md",
+        "spaceId": "C1"
+      },
+      "command": "import_markdown",
+      "name": "a_link_stub_under_the_path",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Focus\n",
+        "dialect": "Markdown",
+        "filename": "Tag/deep work.md",
+        "spaceId": "C1"
+      },
+      "command": "import_markdown",
+      "name": "a_spaced_name_is_dashed",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filenames": ["Tag/deep work.md", "Tag/project.md"],
+        "spaceId": "C1"
+      },
+      "command": "list_import_merges",
+      "comment": "The pages a re-import of the two files updates: `Tag/deep-work`, the dashed title the spaced one imports under, then `Tag/project`.",
+      "name": "a_spaced_title_lists_its_dashed_page"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}
