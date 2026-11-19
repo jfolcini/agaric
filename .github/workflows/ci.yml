@@ -16,16 +16,13 @@ on:
   pull_request:
     branches: [main]
 
-# PR refs cancel a superseded run of the same ref: only the latest head is
-# interesting.
-#
-# `main` shares one group without cancel: a running main run finishes, a newer
-# push replaces the one pending run, and the newest main commit's run covers
-# everything before it. One run per commit (#3672) kept a verdict for every
-# merge but piled main runs up in the runner queue ahead of PR gates.
+# A newer push cancels the superseded run of the same ref, `main` included:
+# only the newest head is interesting. On `main` that is safe because every
+# run there takes the full set (`_validate.yml`'s `detect-changes`), so the
+# newest run covers every commit before it.
 concurrency:
-  group: ${{ github.ref == 'refs/heads/main' && 'ci-main' || format('ci-{0}', github.ref) }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
 # not need to write back to the repo (artifact uploads use separate scopes

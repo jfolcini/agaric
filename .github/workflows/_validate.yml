@@ -176,7 +176,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
+          # A push to `main` runs every lane, as if it touched every kind of
+          # file: the empty base is one the classifier answers with the full set.
+          PUSH_BEFORE: ${{ github.ref != 'refs/heads/main' && github.event.before || '' }}
           PUSH_AFTER: ${{ github.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
       # The version mutual-agreement check (#2975) over every file

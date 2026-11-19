@@ -52,54 +52,60 @@ test.describe('Typing into a popup keeps its input still @editor', () => {
     expect(maxDrift(tops, opened)).toBeLessThanOrEqual(0.5)
   })
 
-  test('the ref-property picker opened above its chip stays above', async ({ page }) => {
-    // A text value under a key later defined as `ref` opens the page picker.
-    await ipc(page, 'set_property', { blockId: GS5, key: 'owner', value: { value_text: 'x' } })
-    await ipc(page, 'create_property_def', {
-      spaceId: SEED_IDS.SPACE_PERSONAL,
-      key: 'owner',
-      valueType: 'ref',
-      options: null,
-    })
-    await openPage(page, 'Getting Started')
-    // The real backend answers after the popup's first placement, which sees
-    // only a plain input; the mock answers before it unless delayed.
-    await page.evaluate(() => {
-      const internals = (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> })
-        .__TAURI_INTERNALS__
-      const invoke = internals['invoke'] as (cmd: string, ...rest: unknown[]) => Promise<unknown>
-      internals['invoke'] = async (cmd: string, ...rest: unknown[]) => {
-        if (cmd === 'get_property_def' || cmd === 'list_blocks') {
-          await new Promise((resolve) => setTimeout(resolve, 50))
+  // @mock-only: the real `create_property_def` refuses a type the key's stored values break, so
+  // only the mock can hold the text value under a `ref` key whose chip opens the picker.
+  test(
+    'the ref-property picker opened above its chip stays above',
+    { tag: '@mock-only' },
+    async ({ page }) => {
+      // A text value under a key later defined as `ref` opens the page picker.
+      await ipc(page, 'set_property', { blockId: GS5, key: 'owner', value: { value_text: 'x' } })
+      await ipc(page, 'create_property_def', {
+        spaceId: SEED_IDS.SPACE_PERSONAL,
+        key: 'owner',
+        valueType: 'ref',
+        options: null,
+      })
+      await openPage(page, 'Getting Started')
+      // The real backend answers after the popup's first placement, which sees
+      // only a plain input; the mock answers before it unless delayed.
+      await page.evaluate(() => {
+        const internals = (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> })
+          .__TAURI_INTERNALS__
+        const invoke = internals['invoke'] as (cmd: string, ...rest: unknown[]) => Promise<unknown>
+        internals['invoke'] = async (cmd: string, ...rest: unknown[]) => {
+          if (cmd === 'get_property_def' || cmd === 'list_blocks') {
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+          return invoke(cmd, ...rest)
         }
-        return invoke(cmd, ...rest)
-      }
-    })
-    const chip = page.getByText('x', { exact: true }).last()
-    const box = await chip.boundingBox()
-    const viewport = page.viewportSize()
-    if (!box || !viewport) throw new Error('no chip or viewport')
-    // Too little room below the chip for the full list.
-    await page.setViewportSize({
-      width: viewport.width,
-      height: Math.round(box.y + box.height + 40),
-    })
-    await chip.click()
-    const picker = page.getByTestId('ref-picker')
-    const input = page.getByTestId('ref-search-input')
-    await expect(input).toBeFocused()
-    await expect(picker.getByRole('button').first()).toBeVisible()
-    const opened = (await input.boundingBox())?.y ?? Number.NaN
-    const pickerBox = await picker.boundingBox()
-    expect((pickerBox?.y ?? Number.NaN) + (pickerBox?.height ?? 0)).toBeLessThan(box.y)
-    const tops = await topsWhileTyping(
-      page,
-      input,
-      'Getti',
-      picker.getByRole('button', { name: 'Getting Started' }),
-    )
-    expect(maxDrift(tops, opened)).toBeLessThanOrEqual(0.5)
-  })
+      })
+      const chip = page.getByText('x', { exact: true }).last()
+      const box = await chip.boundingBox()
+      const viewport = page.viewportSize()
+      if (!box || !viewport) throw new Error('no chip or viewport')
+      // Too little room below the chip for the full list.
+      await page.setViewportSize({
+        width: viewport.width,
+        height: Math.round(box.y + box.height + 40),
+      })
+      await chip.click()
+      const picker = page.getByTestId('ref-picker')
+      const input = page.getByTestId('ref-search-input')
+      await expect(input).toBeFocused()
+      await expect(picker.getByRole('button').first()).toBeVisible()
+      const opened = (await input.boundingBox())?.y ?? Number.NaN
+      const pickerBox = await picker.boundingBox()
+      expect((pickerBox?.y ?? Number.NaN) + (pickerBox?.height ?? 0)).toBeLessThan(box.y)
+      const tops = await topsWhileTyping(
+        page,
+        input,
+        'Getti',
+        picker.getByRole('button', { name: 'Getting Started' }),
+      )
+      expect(maxDrift(tops, opened)).toBeLessThanOrEqual(0.5)
+    },
+  )
 })
 
 const phone = devices['Pixel 7']

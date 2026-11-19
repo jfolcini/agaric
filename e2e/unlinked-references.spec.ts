@@ -24,23 +24,11 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * sibling `src/components/backlinks/LinkedReferences.tsx:304` convention (`linked-references`) —
  * the unlinked panel previously had no stable root selector at all.
  *
- * Structural limitation (documented, not tested around): `handleLinkIt`
- * (`src/components/backlinks/UnlinkedReferences.tsx:223-332`) calls `edit_block` and then patches
- * ONLY its own TanStack query cache optimistically — the comment at
- * `src/components/backlinks/UnlinkedReferences.tsx:270-271` states `edit_block` "emits no
- * `block:properties-changed`, so nothing else refetches". `LinkedReferences`
- * shares the same `queryClient` (`src/lib/query-client.ts`,
- * `staleTime: Infinity`, invalidated only by that
- * event). So within one test session the "Getting Started" page's
- * `LinkedReferences` panel will NOT show the freshly-created backlink group
- * — there is no invalidation trigger, and `page.reload()` cannot force a
- * refetch either, because the mock's entire block store is an in-memory JS
- * Map re-seeded from scratch on every page load (no persistence), which
- * would discard the newly created block along with everything else. What
- * IS asserted instead: the source block's rendered content becomes a real
- * link chip after "Link it" (proving the text rewrite happened), and the
- * occurrence disappears from Unlinked (the optimistic removal this
- * component's own query DOES support).
+ * This file asserts the source block's rendered content becoming a real link
+ * chip after "Link it" (the text rewrite happened) and the occurrence leaving
+ * Unlinked (the panel's optimistic removal). That the Linked References panel
+ * then shows the new link, from the backend's change feed, is asserted on the
+ * bridge by `link-it-linked-refs.spec.ts`.
  */
 
 async function addBlock(page: import('@playwright/test').Page, text: string) {

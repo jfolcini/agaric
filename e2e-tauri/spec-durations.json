@@ -21,7 +21,6 @@
   "e2e-tauri/page-mode-restart.e2e.ts": 8,
   "e2e-tauri/page-mode-reveal.e2e.ts": 7,
   "e2e-tauri/page-mode-save-cost.e2e.ts": 1,
-  "e2e-tauri/ref-property-title-follows-rename.e2e.ts": 4,
   "e2e-tauri/reminder-due-task.e2e.ts": 11,
   "e2e-tauri/settings-desktop-integration.e2e.ts": 13,
   "e2e-tauri/smoke.e2e.ts": 4,
