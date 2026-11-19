@@ -17,4 +17,6 @@ The three files' copies of `syncIdle`, `pullPeerWrites` and `waitInOpenView` are
 
 **Left:** `e2e-tauri/AGENTS.md`'s two-device rule still names `sync-refresh.e2e.ts`; the section F docs PR owns that file.
 
-**Ran:** both specs with `just e2e-real` under `WDIO_SKIP_TAURI_BUILD=1`, on a binary built from this branch; `npm run typecheck:e2e-tauri`; oxlint and oxfmt over `e2e-tauri/`.
+**Durations:** `spec-durations.json` gets estimates for the two specs (the folded files' CI means, less a boot each) until `scripts/e2e-tauri-durations.mjs` measures them on CI.
+
+**Ran:** both specs with `just e2e-real` under `WDIO_SKIP_TAURI_BUILD=1`, on a binary built from this branch. `sync-qr-scan`: all 3 pass. `sync-two-device`: 24 of 25 pass, every folded test among them. The red one is the unchanged "Settings shows this device's sync address": the container's only interface is `192.0.2.2`, a documentation range `lan_interface.rs` refuses, so the app has no address to show. The test is unchanged from main, so CI's run is its check. Also `npm run typecheck:e2e-tauri`, and oxlint and oxfmt over `e2e-tauri/`.
