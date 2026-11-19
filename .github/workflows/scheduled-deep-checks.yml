@@ -639,7 +639,13 @@ jobs:
           # Persist the slice so the smoke step runs exactly what we compiled.
           printf '%s\n' "${mine[@]}" > "$RUNNER_TEMP/shard-benches.txt"
           args=(); for b in "${mine[@]}"; do args+=(--bench "$b"); done
-          cargo bench --no-run "${args[@]}"
+          # Cargo's build-dir layout is not a stable interface (it moved in
+          # 1.100), so the smoke step finds each binary through this map of
+          # cargo's own JSON artifact messages instead of a path glob.
+          cargo bench --no-run --message-format=json-render-diagnostics "${args[@]}" \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null
+                       and (.target.kind | index("bench"))) | "\(.target.name)\t\(.executable)"' \
+            > "$RUNNER_TEMP/shard-bench-bins.tsv"
 
       - name: Smoke-run this shard's benches (--test) — #978 seed/fixture guard
         working-directory: src-tauri
@@ -649,9 +655,7 @@ jobs:
         # budget), so a bench whose hand-seeded raw-SQL fixture drifted from the
         # schema PANICS here and fails the shard. We run the PREBUILT binaries
         # from the `--no-run` build above (no per-bench recompile → race-free),
-        # discovering them dynamically (no hardcoded hashes): each `[[bench]]`
-        # becomes a `target/release/deps/<name>-<hash>` executable; we pick the
-        # newest non-metadata file (`.d`/`.so`/`.dwp` filtered out).
+        # at the paths cargo reported for them (`shard-bench-bins.tsv`).
         #
         # Concurrency 3 (`wait -n` gate) within the shard cuts wall-clock while
         # keeping peak memory sane on the 100K-seed benches. Each bench is
@@ -663,16 +667,8 @@ jobs:
         run: |
           set -uo pipefail
           fail=0
-          newest_bench_bin() {
-            local name="$1" newest="" f
-            for f in "target/release/deps/${name}-"*; do
-              [[ -f "$f" && -x "$f" ]] || continue
-              case "$f" in *.d|*.so|*.dwp) continue ;; esac
-              if [[ -z "$newest" || "$f" -nt "$newest" ]]; then
-                newest="$f"
-              fi
-            done
-            printf '%s' "$newest"
+          bench_bin() {
+            awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' "$RUNNER_TEMP/shard-bench-bins.tsv"
           }
           # The exact slice this shard compiled (written by the step above).
           # #3330: an ABSENT slice file means the compile step never reached
@@ -693,8 +689,8 @@ jobs:
           status_dir="$(mktemp -d)"
           smoke_one() {
             local name="$1" bin
-            bin="$(newest_bench_bin "$name")"
-            if [ -z "$bin" ]; then
+            bin="$(bench_bin "$name")"
+            if [ -z "$bin" ] || [ ! -x "$bin" ]; then
               echo "::error::no prebuilt binary for bench '$name' (did --no-run compile it?)"
               echo fail > "$status_dir/$name.status"
               return
