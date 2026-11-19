@@ -54,11 +54,13 @@ pin_platform() {
   printf '%s-%s\n' "$os" "$arch"
 }
 
+# From stdin: given a path with a backslash (Windows' $RUNNER_TEMP is
+# D:\a\_temp), sha256sum escapes its output line with a leading `\`.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{ print $1 }'
+    sha256sum <"$1" | awk '{ print $1 }'
   else
-    shasum -a 256 "$1" | awk '{ print $1 }'
+    shasum -a 256 <"$1" | awk '{ print $1 }'
   fi
 }
 

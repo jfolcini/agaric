@@ -1,7 +1,9 @@
 // Tests for pins.txt, scripts/pins.mjs and scripts/pins.sh.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, it } from 'node:test'
 // Every `describe()`/`it()` is `void`-ed: node:test's returned promise fulfils
@@ -232,6 +234,42 @@ void describe('pins.sh agrees with pins.mjs on the real pins.txt', () => {
   })
   void it('fails for an unknown name', () => {
     assert.throws(() => sh('version', 'no-such-pin'), /no `version no-such-pin` line/)
+  })
+})
+
+void describe('pins.sh fetch', () => {
+  void it('accepts a download whose destination path holds a backslash, as on Windows', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pins-fetch-'))
+    try {
+      const bytes = 'tool bytes'
+      const digest = createHash('sha256').update(bytes).digest('hex')
+      writeFileSync(
+        join(dir, 'pins.txt'),
+        `version tool 1.0.0 -\nasset tool any ${digest} https://example.com/tool\n`,
+      )
+      // A curl stand-in that writes the bytes to its `-o` argument.
+      const curl = join(dir, 'curl')
+      writeFileSync(
+        curl,
+        `#!/usr/bin/env bash\nwhile [ "$1" != -o ]; do shift; done\nprintf %s '${bytes}' >"$2"\n`,
+      )
+      chmodSync(curl, 0o755)
+      execFileSync(
+        'bash',
+        [join(ROOT, 'scripts/pins.sh'), 'fetch', 'tool', 'any', join(dir, 'a\\b')],
+        {
+          env: {
+            ...process.env,
+            PATH: `${dir}:${process.env.PATH}`,
+            PINS_FILE: join(dir, 'pins.txt'),
+          },
+          encoding: 'utf8',
+        },
+      )
+      assert.equal(readFileSync(join(dir, 'a\\b'), 'utf8'), bytes)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
