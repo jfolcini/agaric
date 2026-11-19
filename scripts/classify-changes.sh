@@ -29,8 +29,9 @@ set -euo pipefail
 #                vite/vitest/tailwind/postcss/tsconfig config, index.html.
 #   backend      any src-tauri/, *.rs, Cargo.*, migrations, .sqlx/.
 #   rust_tests   any backend path but the ones only `lint` reads
-#                (`rust_lint_only_re`): drives cargo-tests, cargo-coverage and
-#                mcp-tests.
+#                (`rust_lint_only_re`), and any `src/lib/tauri-mock/` path,
+#                which the Rust conformance fuzz runs: drives cargo-tests,
+#                cargo-coverage and mcp-tests.
 #   ci           any .github/, scripts/, .claude/, prek.toml, .taplo.toml,
 #                lychee.toml, .gitleaks.toml, justfile, .editorconfig,
 #                .vscode/. `_validate.yml` and the composites its jobs run
@@ -329,6 +330,9 @@ for f in "${changed[@]}"; do
     matched_cat=true
     if [[ ! "$f" =~ $rust_lint_only_re ]]; then rust_tests=true; fi
   fi
+  # The Rust conformance fuzz drives the mock through node (#6567), so a mock
+  # change can redden a Rust test.
+  if [[ "$f" =~ ^src/lib/tauri-mock/ ]]; then rust_tests=true; fi
   if [[ "$f" =~ $ci_re ]]; then
     ci=true
     matched_cat=true
