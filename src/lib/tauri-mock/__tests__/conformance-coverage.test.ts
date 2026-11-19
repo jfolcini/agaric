@@ -248,8 +248,8 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   readmit_quarantined_sync_slot:
     'fixture candidate (#6057): needs a `seed.loro_sync_quarantine` section on both stacks ' +
     'and a query projection for non-block rows; until then `sync_cmd_tests.rs` pins the backend, ' +
-    '`quarantined-sync-slots.test.ts` the mock, and the e2e-tauri sync-quarantine spec the boot ' +
-    'that retries it',
+    '`quarantined-sync-slots.test.ts` the mock, and ' +
+    '`e2e-tauri/snapshot-restore.e2e.ts (via seedQuarantinedDelta)` the boot that retries it',
 
   // ── Observability / runtime toggles (no persistent domain state) ──
   log_frontend: 'no persistent state — forwards a frontend log line',
