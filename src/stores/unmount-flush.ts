@@ -37,7 +37,7 @@ import {
   type PageBlockStoreLike,
   readFlushSeq,
 } from '@/stores/inline-property-commit'
-import { adoptLateWrite } from '@/stores/page-blocks'
+import { trackPageFlush } from '@/stores/page-blocks'
 
 // Saves whose text write lands only after an IPC answers (the checkbox and
 // property branches, a paste into the block), by block id (#5448, #6952). Until
@@ -167,6 +167,7 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     const typed = commitTyped(deps, classified, mySeq, invokeSync)
     // The marker and property commits write the text only after their IPCs answer.
     const outcome = classified.kind === 'tag' ? typed : trackPendingSave(blockId, typed)
+    if (deps.rootParentId !== null) trackPageFlush(deps.rootParentId, outcome)
     return { kind: classified.kind, outcome }
   }
 
@@ -235,18 +236,12 @@ async function commitTyped(
     lastWrite =
       dedupe?.content === changed ? dedupe.outcome : invokeSync(() => edit(blockId, changed))
   }
-  const typed = content
   return commitTypedTags({
     blockId,
     content,
     tags,
     textSaved: lastWrite,
     mySeq,
-    edit: async (id, named) => {
-      const rewritten = (await write(id, named)) !== false
-      // Creating a tag can outlast leaving the page and coming back (#6953).
-      if (rewritten && rootParentId !== null) adoptLateWrite(rootParentId, id, typed, named)
-      return rewritten
-    },
+    edit: write,
   })
 }

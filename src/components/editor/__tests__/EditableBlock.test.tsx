@@ -207,6 +207,7 @@ vi.mock('@/stores/page-blocks', () => ({
     getState: () => _mockPageStore,
     setState: applyMockPageStoreUpdate,
   }),
+  trackPageFlush: vi.fn(),
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────

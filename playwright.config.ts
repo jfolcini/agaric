@@ -62,6 +62,7 @@ const REAL_BACKEND_SPECS = [
   'graph-happy-paths.spec.ts',
   'graph-restore.spec.ts',
   'graph-view.spec.ts',
+  'hash-tag-typing.spec.ts',
   'header-search-button.spec.ts',
   'history-advanced.spec.ts',
   'history-keyboard-controls.spec.ts',

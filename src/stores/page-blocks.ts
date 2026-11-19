@@ -29,7 +29,7 @@ import { stopReading } from '@/lib/speech/read-aloud'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { buildBlocksById, reuseUnchangedBlocks } from '@/stores/page-blocks-map'
-import { createReducers, withContent } from '@/stores/page-blocks-reducers'
+import { createReducers } from '@/stores/page-blocks-reducers'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
@@ -145,6 +145,45 @@ function healStalePageReference(err: unknown, spaceId: string, pageId: string): 
   useRecentPagesStore.getState().removeRecentPage(pageId)
   useTabsStore.getState().removePages([pageId])
   return true
+}
+
+/**
+ * Unmount flushes still writing, by page (#6953). A flush whose text lands only
+ * after its IPCs answer can outlast leaving the page and coming back, and the
+ * reopened page's load can read before it lands.
+ */
+const pageFlushes = new Map<string, { pending: Set<Promise<unknown>>; started: number }>()
+
+/** Register `outcome` as an unmount flush of a block on `pageId`. */
+export function trackPageFlush(pageId: string, outcome: Promise<unknown>): void {
+  let flushes = pageFlushes.get(pageId)
+  if (flushes === undefined) {
+    flushes = { pending: new Set(), started: 0 }
+    pageFlushes.set(pageId, flushes)
+  }
+  const { pending } = flushes
+  pending.add(outcome)
+  flushes.started++
+  const settled = () => {
+    pending.delete(outcome)
+  }
+  void outcome.then(settled, settled)
+}
+
+/**
+ * Called as a load starts: returns a function that, given the snapshot read,
+ * runs `reload` once every flush the snapshot may predate has settled, and
+ * does nothing when there is none.
+ */
+function reloadAfterUnseenFlushes(pageId: string): (reload: () => unknown) => void {
+  const atStart = pageFlushes.get(pageId)
+  const pendingAtStart = [...(atStart?.pending ?? [])]
+  const startedAtStart = atStart?.started ?? 0
+  return (reload) => {
+    const now = pageFlushes.get(pageId)
+    if (pendingAtStart.length === 0 && (now?.started ?? 0) === startedAtStart) return
+    void Promise.allSettled([...pendingAtStart, ...(now?.pending ?? [])]).then(reload)
+  }
 }
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
@@ -267,6 +306,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // Likewise an optimistic write, which the snapshot would revert (#6972).
       for (let held = pendingHolds(); held; held = pendingHolds()) await held
       const holdsAtStart = holdsTaken
+      const afterUnseenFlushes = reloadAfterUnseenFlushes(rootParentId)
       const generation = ++loadGeneration
       // What the focused editor was based on as this load started (#6533).
       const startFocusedId = useBlockStore.getState().focusedBlockId
@@ -298,6 +338,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // it may predate the command: applied, it would drop the block Enter
         // just made, and the focus with its editor (#6814). Read again after it.
         if (holdsTaken !== holdsAtStart) return await get().load()
+        // An unmount flush was writing while the snapshot was read: read again
+        // once it has landed, without waiting here, as it may itself load.
+        afterUnseenFlushes(() => get().load())
         // Reuse the held object for every unchanged row, so a reload that
         // changed one block does not memo-miss every mounted row (#3321).
         let newBlocks = reuseUnchangedBlocks(
@@ -547,17 +590,6 @@ function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): v
  */
 export function getPageStore(pageId: string): StoreApi<PageBlockState> | undefined {
   return pageBlockSlots.get(pageId)?.store
-}
-
-/**
- * Show `to` as `blockId`'s text in the page's live store if it still shows
- * `from`. A write that answers after the page was read again updates only the
- * store that made it, which has since unmounted (#6953).
- */
-export function adoptLateWrite(pageId: string, blockId: string, from: string, to: string): void {
-  const store = getPageStore(pageId)
-  if (store === undefined || store.getState().blocksById.get(blockId)?.content !== from) return
-  store.setState((state) => withContent(state, blockId, to))
 }
 
 /** Every mounted page store, one per pageId. */
