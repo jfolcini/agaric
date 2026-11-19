@@ -68,9 +68,9 @@ asset   lychee darwin-arm64   c9d3740ea2d891854d37116c9fba840f37b6e7c89d330e7db8
 asset   taplo-cli linux-x86_64   8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156 https://github.com/tamasfe/taplo/releases/download/{version}/taplo-linux-x86_64.gz
 asset   taplo-cli linux-aarch64  033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3 https://github.com/tamasfe/taplo/releases/download/{version}/taplo-linux-aarch64.gz
 
-version cargo-binstall 1.20.1  github:cargo-bins/cargo-binstall@v
-asset   cargo-binstall linux-x86_64   f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-x86_64-unknown-linux-musl.tgz
-asset   cargo-binstall linux-aarch64  23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288 https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-aarch64-unknown-linux-musl.tgz
+version cargo-binstall 1.27.0  github:cargo-bins/cargo-binstall@v
+asset   cargo-binstall linux-x86_64   b2e4b70fcddc5bd6fd90c5cf8dc17b4cf0ea54a3db16c65ee0307f42c9bd3187 https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-x86_64-unknown-linux-musl.tgz
+asset   cargo-binstall linux-aarch64  84f2afefd325e52c92702a1f2a396902301ccdafd7614270cbbf46b9cff3accf https://github.com/cargo-bins/cargo-binstall/releases/download/v{version}/cargo-binstall-aarch64-unknown-linux-musl.tgz
 
 version uv            0.8.17   github:astral-sh/uv
 asset   uv linux-x86_64   4057052999a210fe78d93599d2165da9e24c8bbb23370cdd26b66a98ab479203 https://github.com/astral-sh/uv/releases/download/{version}/uv-x86_64-unknown-linux-musl.tar.gz
@@ -78,8 +78,8 @@ asset   uv linux-aarch64  bd141b7e263935d14f5725f2a5c1c942fd89642e37683cb904f198
 asset   uv darwin-arm64   e4d4859d7726298daa4c12e114f269ff282b2cfc2b415dc0b2ca44ae2dbd358e https://github.com/astral-sh/uv/releases/download/{version}/uv-aarch64-apple-darwin.tar.gz
 asset   uv darwin-x86_64  31ed353cfd8e6c962e7c60617bd8a9d6b97b704c1ecb5b5eceaff8c6121b54ac https://github.com/astral-sh/uv/releases/download/{version}/uv-x86_64-apple-darwin.tar.gz
 
-version nvm           0.39.7   github:nvm-sh/nvm@v
-asset   nvm any  a42d1695e0ca1861e41083937129e6eb9402404f817ac1e352b74287c44449c1 https://raw.githubusercontent.com/nvm-sh/nvm/v{version}/nvm.sh
+version nvm           0.41.0   github:nvm-sh/nvm@v
+asset   nvm any  e7ffd3d192735da61e5eb04e68f1aca4a293af4cd0000864568d6de7aa8f6fc4 https://raw.githubusercontent.com/nvm-sh/nvm/v{version}/nvm.sh
 
 # --- Release path ---
 version minisign      0.12     github:jedisct1/minisign

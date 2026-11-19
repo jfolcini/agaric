@@ -311,7 +311,7 @@ jobs:
           # version-sensitive (MSRV-aware resolution), so a floating
           # toolchain could disagree with the committed lock for reasons
           # that have nothing to do with the diff.
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Verify both Cargo.lock files resolve their manifests
         working-directory: src-tauri
@@ -1671,7 +1671,7 @@ jobs:
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
