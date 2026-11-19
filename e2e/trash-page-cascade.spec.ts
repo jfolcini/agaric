@@ -2,7 +2,15 @@ import type { Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { pageRow } from './domain'
-import { activeAlertDialog, expect, ipc, navigateToView, test, waitForBoot } from './helpers'
+import {
+  activeAlertDialog,
+  expect,
+  ipc,
+  navigateToView,
+  settleBackend,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A deleted page and its tree in the Trash (#5737). Deleting a page soft-deletes its whole
@@ -10,6 +18,11 @@ import { activeAlertDialog, expect, ipc, navigateToView, test, waitForBoot } fro
  * badge (`list_trash` + `trash_descendant_counts`); Restore brings the cohort back
  * (`restore_block`) and Purge erases it (`purge_block`). Each case re-reads the result after a
  * view change.
+ *
+ * #6545 — a bookmarked page restored from Trash is back in the sidebar's Bookmarks without another
+ * navigation. The sidebar's list, read at boot, never held the page, and it is read again only on
+ * an `invalidated` name change, which after a local command only the change feed's `names` domain
+ * sends (`invalidateNameCaches`).
  */
 
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
@@ -111,5 +124,29 @@ test.describe('Trash: a deleted page’s tree, restored or purged (#5737) @pages
     await navigateToView(page, 'Pages')
     await expect(pageRow(page, 'Getting Started')).toBeVisible()
     await expect(pageRow(page, 'Purged page')).toHaveCount(0)
+  })
+
+  test("a bookmarked page restored from Trash is back in the sidebar's Bookmarks (#6545)", async ({
+    page,
+  }) => {
+    const title = 'Restored bookmark'
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: title,
+      spaceId: SCOPE.space_id,
+    })
+    await ipc(page, 'set_property', { blockId: pageId, key: 'bookmark', value: { value_num: 1 } })
+    await ipc(page, 'delete_block', { blockId: pageId })
+    await settleBackend(page)
+    const bookmark = page
+      .getByTestId('sidebar-bookmarks')
+      .getByRole('button', { name: `Remove ${title} from bookmarks`, exact: true })
+    await expect(bookmark).toHaveCount(0)
+
+    await navigateToView(page, 'Trash')
+    await trashRow(page, title).getByTestId('trash-restore-btn').click()
+    await expect(trashRow(page, title)).toHaveCount(0)
+
+    await expect(bookmark).toHaveCount(1)
   })
 })

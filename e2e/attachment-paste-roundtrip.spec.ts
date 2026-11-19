@@ -21,6 +21,11 @@ import {
  * from `list_attachments_batch`. A multi-megabyte paste is read back through `read_attachment` and
  * must be the bytes that were pasted: they cross IPC as one base64 string, and only the bridge
  * decodes it with the backend's decoder.
+ *
+ * #6545 — a pasted PDF stays a block attachment, and the block's row reads the tree's batch list,
+ * which the paste handler leaves alone: it re-reads on `recordAttachmentInvalidation`, which after a
+ * local command only the change feed's `attachments` domain sends. That test never leaves the page,
+ * since a reopen would re-read the list by itself.
  */
 
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
@@ -97,6 +102,23 @@ test.describe('Attachment paste (#4671) @editor @attachments', () => {
     await expect(
       page.locator(`[data-block-id="${id}"] [data-testid="attachment-badge"]`),
     ).toHaveAttribute('aria-label', '1 attachment')
+  })
+
+  test("lists a pasted PDF in its block's attachment row without leaving the page (#6545)", async ({
+    page,
+  }) => {
+    const id = await editLineOn(page, 'Pasted pdf page', 'a line with a document')
+    await pasteFile(page.locator('[data-testid="block-editor"]'), {
+      name: 'feed.pdf',
+      type: 'application/pdf',
+      base64: Buffer.from('%PDF-1.4 feed').toString('base64'),
+    })
+    await expect(page.getByText('Attached "feed.pdf"')).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    await expect(
+      page.locator(`[data-block-id="${id}"] [data-testid="attachment-section"]`),
+    ).toContainText('feed.pdf')
   })
 
   test('stores a multi-megabyte paste byte for byte (#6539)', async ({ page }) => {

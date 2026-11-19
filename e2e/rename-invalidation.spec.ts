@@ -1,10 +1,13 @@
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeSuggestionList,
   blurEditors,
+  emitMockEvent,
   expect,
   focusBlock,
+  ipc,
   navigateToView,
   openPage,
   test,
@@ -14,6 +17,12 @@ import {
 /**
  * E2E — surfaces that must refresh when a page title, an alias or a child
  * page changes while they hold an earlier read (#5249, #5250, #5253).
+ *
+ * An open ref property shows its target's new title once an agent renames it: the picker's trigger
+ * read the title from the resolve cache without subscribing to it, and the React Compiler keeps its
+ * props stable, so a title that reached the cache after the row mounted never reached the label.
+ * Only a compiled build shows it, which this lane serves. MCP does not run here, so the agent's
+ * write is the rename through the commands plus the `blocks:changed` an MCP write sends after it.
  */
 
 /** Rename the open page through its header title and wait for the write. */
@@ -196,5 +205,48 @@ test.describe('Rename and create invalidation @pages', () => {
     await expect(section).toBeVisible()
     await section.getByRole('button', { name: /pages tree/i }).click()
     await expect(section.getByText('Alpha', { exact: true })).toBeVisible()
+  })
+
+  test("an open ref property shows its target's new title after an agent renames it", async ({
+    page,
+  }) => {
+    const spaceId = SEED_IDS.SPACE_PERSONAL
+    await ipc(page, 'create_property_def', {
+      spaceId,
+      key: 'renamedref',
+      valueType: 'ref',
+      options: null,
+    })
+    const target = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Ref target',
+      spaceId,
+    })
+    const holder = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Ref holder',
+      spaceId,
+    })
+    await ipc(page, 'set_property', {
+      blockId: holder,
+      key: 'renamedref',
+      value: { value_ref: target },
+    })
+
+    await openPage(page, 'Ref holder')
+    // The empty page opens its first block's editor, whose toolbar has a Properties button too.
+    await page.getByRole('button', { name: /^Properties \(/ }).click()
+    const value = page.getByRole('button', { name: 'renamedref value', exact: true })
+    await expect(value).toHaveText('Ref target')
+
+    // The holder stays open while the agent renames the page it points at.
+    await ipc(page, 'edit_block', { blockId: target, toText: 'Ref renamed' })
+    await emitMockEvent(page, 'blocks:changed', {
+      changed_page_ids: [target],
+      local_ops_appended: true,
+      domains: null,
+      local_command: false,
+    })
+    await expect(value).toHaveText('Ref renamed')
   })
 })
