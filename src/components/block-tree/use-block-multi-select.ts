@@ -64,8 +64,7 @@ export interface UseBlockMultiSelectReturn {
  * A task is a list kind (#5691 D3): once every one is set, the blocks it made
  * tasks lose their list style through `clearLists`, page mode's own in page
  * mode; a refused write clears none. The undo entry holds the refs of both
- * writes (#6156), so its undo takes back these and no later write; page mode's
- * clears resolve none, as each joins the entry by its own.
+ * writes (#6156), so its undo takes back these and no later write.
  */
 export async function setTodoStateOnBlocks(
   pageStore: StoreApi<PageBlockState>,
