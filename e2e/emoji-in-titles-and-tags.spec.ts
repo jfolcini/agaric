@@ -5,9 +5,11 @@
  * (parked: #283, #284) on the basis that a user can already put an emoji
  * directly in the page *title* text and in a *tag name*. These tests lock
  * that justification in — emoji are plain Unicode, so the title
- * contentEditable and the tag-create path must carry them intact.
+ * contentEditable and the tag-create path must carry them intact. Each test
+ * reads the stored title or tag name back from the backend.
  */
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { expect, focusBlock, ipc, openPage, test, waitForBoot } from './helpers'
 
 const PARTY = '\u{1F389}' // 🎉
 const ROCKET = '\u{1F680}' // 🚀
@@ -30,6 +32,16 @@ test.describe('Emoji in titles & tags (#130) @editor @pages', () => {
 
     await expect(title).toContainText(PARTY)
     await expect(title).toContainText('Getting Started')
+    await expect
+      .poll(
+        async () =>
+          (
+            await ipc<{ content: string }>(page, 'get_block', {
+              blockId: SEED_IDS.PAGE_GETTING_STARTED,
+            })
+          ).content,
+      )
+      .toBe(`Getting Started ${PARTY}`)
   })
 
   test('a tag can be created with an emoji in its name', async ({ page }) => {
@@ -46,5 +58,13 @@ test.describe('Emoji in titles & tags (#130) @editor @pages', () => {
     const chip = editor.locator('[data-testid="tag-ref-chip"]')
     await expect(chip).toBeVisible({ timeout: 5000 })
     await expect(chip).toContainText(ROCKET)
+    await expect
+      .poll(async () => {
+        const tags = await ipc<Array<{ name: string }>>(page, 'list_all_tags_in_space', {
+          scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+        })
+        return tags.map((tag) => tag.name)
+      })
+      .toContain(`${ROCKET}rocket`)
   })
 })

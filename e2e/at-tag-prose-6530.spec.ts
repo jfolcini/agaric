@@ -1,13 +1,22 @@
 import type { Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, focusBlockById, ipc, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  ipc,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+  waitForStableBlockRows,
+} from './helpers'
 
 /**
  * #6530: an `@` in ordinary prose is text. The picker's query ends at the
  * first space unless an existing tag still starts with it, so Enter after
  * `meet @ 5pm tomorrow` splits the block and creates no tag. `@work` and Enter
- * still pick the tag `work`. Read back from the mock backend, and the text
+ * still pick the tag `work`. Read back from the backend, and the text
  * after navigating away and back.
  */
 
@@ -43,6 +52,7 @@ test.describe('An @ in prose stays text (#6530) @editor', () => {
     ' @alice about the review and the budget for next quarter please',
   ]) {
     test(`"meet${prose}" and Enter split the block and create no tag`, async ({ page }) => {
+      await waitForStableBlockRows(page)
       const before = await rows(page).count()
       const editor = await focusBlockById(page, GS1)
       await editor.press('End')

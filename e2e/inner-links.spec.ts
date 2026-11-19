@@ -6,6 +6,7 @@ import {
   openPage,
   test,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 /**
@@ -404,6 +405,7 @@ test.describe('Inner links — link persistence @editor @pages', () => {
 
   test('link chip persists in static view after editor closes', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    await waitForStableBlockRows(page)
 
     // Count existing link chips before our edit. Scope to .block-tree so the
     // LinkedReferences panel's backlink-preview chips (which render "Quick Notes"
