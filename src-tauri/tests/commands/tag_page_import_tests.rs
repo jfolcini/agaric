@@ -164,6 +164,18 @@ async fn a_spaced_name_under_the_path_is_dashed_and_re_imports_into_its_page() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_stub_padded_under_the_path_pairs_with_its_tag() {
+    let (pool, mat, dir) = fixture().await;
+    let tag = make_tag(&pool, &mat, "x").await;
+    import(&pool, &mat, &dir, "Notes.md", "- [[Tag/ x]]\n").await;
+    assert_eq!(tags(&pool).await, [(tag.clone(), "x".to_owned())]);
+    assert_eq!(page_titles(&pool).await, ["Notes", "Tag/x"]);
+    tag_page(&pool, &mat, &tag).await;
+    assert_eq!(page_titles(&pool).await, ["Notes", "Tag/x"]);
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_spaced_link_stub_under_the_path_is_dashed_once() {
     let (pool, mat, dir) = fixture().await;
     import(

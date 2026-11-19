@@ -159,15 +159,22 @@ pub(crate) async fn import_tag_page_naming(
     space_id: &str,
     title: &str,
 ) -> Result<Option<(String, String)>, AppError> {
-    let Some(name) = tag_of_page_title(title).map(str::trim) else {
+    let Some(raw) = tag_of_page_title(title) else {
         return Ok(None);
     };
+    let name = raw.trim();
     let dashed = name.split_whitespace().collect::<Vec<_>>().join("-");
     if dashed.is_empty() {
         return Ok(None);
     }
     if dashed == name {
-        return Ok(Some((dashed, title.to_owned())));
+        // `Tag/ x` would never be found as tag x's page, which is `Tag/x` by title.
+        let title = if raw == name {
+            title.to_owned()
+        } else {
+            tag_page_title(&dashed)
+        };
+        return Ok(Some((dashed, title)));
     }
     let tag_held = space_tag_names(conn, space_id)
         .await?
