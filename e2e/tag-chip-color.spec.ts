@@ -6,6 +6,7 @@ import {
   focusBlockById,
   navigateToView,
   openPage,
+  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -86,6 +87,9 @@ test('a tag colour outlives its localStorage entry through the tag property @edi
   await activePopover(page).getByRole('button', { name: 'Rose', exact: true }).click()
 
   await page.evaluate(() => localStorage.removeItem('tag-colors'))
+  // A space switch re-reads the tag colours from the tag property.
+  await switchToSpace(page, 'Work')
+  await switchToSpace(page, 'Personal')
   await openPage(page, 'Getting Started')
   const paint = await rosePaint(page)
   const staticBlock = page.locator(`[data-testid="block-static"][data-block-id="${GS_4}"]`)

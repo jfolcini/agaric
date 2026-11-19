@@ -2,9 +2,9 @@
  * A labelled link typed in a table cell is stored as `[[ULID\|label]]`: the
  * table writer escapes every pipe in a cell so the row keeps its columns. Every
  * reader of stored link tokens reads that escaped separator as the bare one,
- * so the link is a backlink of its page like any other. Mock lane: the mock's
- * own link scan (`link-scan.ts`) serves the linked-references panel, and the
- * backend's `block_links` side is pinned by `conformance/fixtures/table_cell_link.json`.
+ * so the link is a backlink of its page like any other. On the bridge the
+ * backend's `block_links` serves the linked-references panel; on the mock, the
+ * mock's own link scan (`link-scan.ts`).
  */
 
 import {

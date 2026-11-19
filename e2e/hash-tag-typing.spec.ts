@@ -16,7 +16,7 @@ import {
 /**
  * #5160 D8 / N7: typing `#project` and a space, or `#[[multi word]]`, in a
  * block makes the tag. The block is stored with `#[ULID]` and the tag exists;
- * both are read back from the mock backend. Follow-up 7a: a `#name` still text
+ * both are read back from the backend. Follow-up 7a: a `#name` still text
  * when the block is saved (the picker dismissed) is made the tag then.
  */
 
@@ -34,6 +34,7 @@ async function storedContent(page: Page): Promise<string> {
   return (await ipc<{ content: string }>(page, 'get_block', { blockId: GS1 })).content
 }
 
+/** Tag id to name, from `tags_cache`: a tag made by a save is there once its rebuild has run. */
 async function tagNames(page: Page): Promise<Map<string, string>> {
   const rows = await ipc<TagRow[]>(page, 'list_all_tags_in_space', {
     scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
@@ -59,9 +60,13 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
       .poll(() => storedContent(page))
       .toMatch(/^Plan #\[[0-9A-Z]{26}\] and #\[[0-9A-Z]{26}\] done$/)
     const ids = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
-    const names = await tagNames(page)
     // #6278 I4 — a new tag name holds no whitespace.
-    expect(ids.map((id) => names.get(id))).toEqual(['project', 'multi-word'])
+    await expect
+      .poll(async () => {
+        const names = await tagNames(page)
+        return ids.map((id) => names.get(id))
+      })
+      .toEqual(['project', 'multi-word'])
   })
 
   test('a #name left as text by Escape is a tag once Enter saves the block', async ({ page }) => {
@@ -74,7 +79,7 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
 
     await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
     const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
-    expect((await tagNames(page)).get(id as string)).toBe('later')
+    await expect.poll(async () => (await tagNames(page)).get(id as string)).toBe('later')
   })
 
   test('a #name left as text is the existing tag once a click away saves the block', async ({
