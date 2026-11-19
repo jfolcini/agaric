@@ -128,6 +128,8 @@ test.describe('Journal week view: undo keeps to the day last worked in @editor @
 
     // Past today's edit, the next press goes on into today's older history, not the other day's.
     await page.keyboard.press('Control+z')
+    // The row, not only the stored text: a press while this undo is still in flight is dropped.
+    await expect(row(page, TODAY_BLOCK)).toHaveText(TODAY_TEXT)
     await expect.poll(() => stored(page, TODAY_BLOCK)).toBe(TODAY_TEXT)
     await installIpcRecorder(page)
     await page.keyboard.press('Control+z')
