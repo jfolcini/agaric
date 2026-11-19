@@ -17,9 +17,9 @@ on:
     branches: [main]
 
 # A newer push cancels the superseded run of the same ref, `main` included:
-# only the newest head is interesting. On `main` that is safe because
-# `detect-changes` diffs a push against main's last green run, not the commit
-# before it, so the newest run covers every commit since that verdict.
+# only the newest head is interesting. On `main` that is safe because every
+# run there takes the full set (`_validate.yml`'s `detect-changes`), so the
+# newest run covers every commit before it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
