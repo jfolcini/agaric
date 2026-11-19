@@ -241,32 +241,8 @@ describe('applyRevertForOp', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Task-property setters (revert to from_state / from_level / from_date)
+  // Task-property setters (revert to from_level / from_date)
   // ---------------------------------------------------------------------------
-
-  it('reverts set_todo_state by restoring from_state on the block row', () => {
-    const b = makeBlockRow('BLK_T1', { todo_state: 'DONE' })
-    blocks.set('BLK_T1', b)
-    const op = makeOp('set_todo_state', {
-      block_id: 'BLK_T1',
-      state: 'DONE',
-      from_state: 'TODO',
-    })
-
-    applyRevertForOp(op, blocks)
-
-    expect(b['todo_state']).toBe('TODO')
-  })
-
-  it('reverts set_todo_state with null from_state to null', () => {
-    const b = makeBlockRow('BLK_T2', { todo_state: 'TODO' })
-    blocks.set('BLK_T2', b)
-    const op = makeOp('set_todo_state', { block_id: 'BLK_T2', state: 'TODO', from_state: null })
-
-    applyRevertForOp(op, blocks)
-
-    expect(b['todo_state']).toBeNull()
-  })
 
   it('reverts set_priority by restoring from_level on the block row', () => {
     const b = makeBlockRow('BLK_P1', { priority: 'A' })

@@ -79,7 +79,7 @@ export function canonicalLabelMap(canonicalOrder: ReadonlyArray<string>): Map<st
  * it). Mirrors `RawOp::canonicalize` on the Rust side: auto-derived timestamp
  * property ops are dropped; reserved-key set_property ops collapse to their
  * `set_<key>` logical name. The mock already emits dedicated op_types
- * (`set_todo_state`, …) so most entries pass through unchanged.
+ * (`set_priority`, …) so most entries pass through unchanged.
  */
 function canonicalizeOp(opType: string, key: string | null): Record<string, unknown> | null {
   // Both directions: `write_todo_timestamp_transitions_in_tx` emits a

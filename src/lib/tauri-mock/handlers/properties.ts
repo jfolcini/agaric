@@ -974,7 +974,13 @@ export const propertiesHandlers = {
     const start = opLog.length
     writeTodoState(blockId, state, (fromState) => {
       b['todo_state'] = state
-      pushOp('set_todo_state', { block_id: blockId, state, from_state: fromState })
+      // `set_property_in_tx`'s op, as the batch below writes it: there is no `set_todo_state` op.
+      pushOp('set_property', {
+        block_id: blockId,
+        key: 'todo_state',
+        value_text: state,
+        prior: valueFieldsOf({ value_text: fromState }),
+      })
     })
     // Every op appended, as `capture_op_refs` takes them: the stamps' and the next occurrence's
     // among them (#6156).

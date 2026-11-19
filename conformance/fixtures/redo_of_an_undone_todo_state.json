@@ -1,0 +1,225 @@
+{
+  "description": "#6978 — `set_todo_state` writes a `set_property` op on the `todo_state` key, with its `prior`, as `set_todo_state_in_tx` runs `set_property_in_tx`; it has no op type of its own. So its undo reports `reversed_op_type = set_property` and a redo of that undo the undo row's type: `delete_property` for a block that held no state, `set_property` for one that did. The frontend's toast reads that field (`redo.op.deleteProperty`, \"Redid property change\"); the mock wrote a `set_todo_state` op, so its toast fell back to \"Redone\". S2 goes from none to TODO and is undone by both refs the set returned, as the page undo does; S3 goes from TODO to DOING, which stamps nothing, and is undone by its one ref.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "none to TODO",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "TODO to DOING",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DOING"
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B2#changed_keys=[\"todo_state\"]"],
+      "name": "task_s2",
+      "returns": ["B2#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
+      "name": "task_s3",
+      "returns": ["B3#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "events": ["block:properties-changed#block_id=B3#changed_keys=[\"todo_state\"]"],
+      "name": "doing_s3",
+      "returns": ["B3#todo_state=DOING"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_task_s2",
+      "returns": [
+        "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false",
+        "undo_ops#reversed_op_type=set_property#new_op_type=delete_property#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_task_s2",
+      "returns": [
+        "redo_page_op#reversed_op_type=delete_property#new_op_type=set_property#is_redo=true"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_doing_s3",
+      "returns": ["undo_op#reversed_op_type=set_property#new_op_type=set_property#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_doing_s3",
+      "returns": [
+        "redo_page_op#reversed_op_type=set_property#new_op_type=set_property#is_redo=true"
+      ]
+    }
+  ],
+  "name": "redo_of_an_undone_todo_state",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "comment": "O1 the state, O2 its `created_at` stamp.",
+      "name": "task_s2",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "comment": "O3 the state, O4 its `created_at` stamp.",
+      "name": "task_s3",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DOING"
+      },
+      "command": "set_todo_state",
+      "comment": "O5 — TODO to DOING stamps nothing.",
+      "name": "doing_s3",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O2", "O1"]
+      },
+      "command": "undo_ops",
+      "comment": "O6 clears the stamp, O7 the state: S2 held none, so both reverses are `delete_property`.",
+      "name": "undo_task_s2",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O7"
+      },
+      "command": "redo_page_op",
+      "comment": "O8 — S2 is TODO again; the result names the undo row, a `delete_property`.",
+      "name": "redo_task_s2",
+      "via": "command"
+    },
+    {
+      "args": {
+        "opRef": "O5"
+      },
+      "command": "undo_op",
+      "comment": "O9 — S3 back to TODO: it held a state, so the reverse is a `set_property`.",
+      "name": "undo_doing_s3",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O9"
+      },
+      "command": "redo_page_op",
+      "comment": "S3 is DOING again; the result names the undo row, a `set_property`.",
+      "name": "redo_doing_s3",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "none to TODO",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "TODO to DOING",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

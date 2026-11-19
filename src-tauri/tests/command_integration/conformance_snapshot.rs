@@ -96,7 +96,7 @@ impl RawOp {
         }
         // Reserved-key set_property ops are emitted by the backend as
         // `set_property(key=<reserved>)` but the mock has dedicated op_types
-        // (`set_todo_state`, `set_due_date`, …). Canonicalize the backend shape
+        // (`set_priority`, `set_due_date`, …). Canonicalize the backend shape
         // to the mock's logical name so the digests line up.
         if op_type == "set_property"
             && let Some(k) = key

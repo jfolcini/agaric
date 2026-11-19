@@ -1,0 +1,171 @@
+{
+  "description": "#6978 — redo of an undo whose `delete_block` found its block already deleted. Undoing O1 (the create) by ref after O2 deleted the block appends a reverse `delete_block` whose cascade tombstones nothing: its `Active` walk finds no live row, so the block keeps O2's `deleted_at`. The redo reverses that undo row into `RestoreBlock { deleted_at_ref: <the undo row's created_at> }`, which matches no row, so the block STAYS deleted. The mock restored it, reading the cohort off the block's own `deleted_at` rather than off the op that is reversed.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Redo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "kept",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "created then deleted",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_create_of_a_deleted_block",
+      "returns": ["undo_op#reversed_op_type=create_block#new_op_type=delete_block#is_redo=false"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "redo_restores_nothing",
+      "returns": [
+        "redo_page_op#reversed_op_type=delete_block#new_op_type=restore_block#is_redo=true"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "children_after_the_redo",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "redo_of_an_undone_create_after_its_delete",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "created then deleted",
+        "index": 1,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "O1 — C1, the create the undo below reverses."
+    },
+    {
+      "args": {
+        "blockId": "C1"
+      },
+      "command": "delete_block",
+      "comment": "O2 — C1 is a tombstone before the undo reaches its create."
+    },
+    {
+      "args": {
+        "opRef": "O1"
+      },
+      "command": "undo_op",
+      "comment": "O3 — the reverse `delete_block` of O1, over a block already deleted: it stamps no row.",
+      "name": "undo_the_create_of_a_deleted_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "undoOp": "O3"
+      },
+      "command": "redo_page_op",
+      "comment": "The redo restores the cohort O3 stamped, which is empty: C1 stays deleted, absent from the query and a tombstone in the snapshot.",
+      "name": "redo_restores_nothing",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 10,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The observation: S2 alone, C1 still deleted.",
+      "name": "children_after_the_redo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Redo",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "kept",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

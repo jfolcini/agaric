@@ -175,7 +175,7 @@ describe('#4870 — reverse rows carry a real reverse payload', () => {
     expect(blocks.get(A)?.['deleted_at']).not.toBeNull()
   })
 
-  it('set_todo_state: the reverse swaps state and from_state', () => {
+  it('set_todo_state: the reverse is a set_property back to the prior state', () => {
     // DOING, not DONE: an edge into DONE also stamps `completed_at`, whose op
     // would then be the newest one `undo_page_op` reverses.
     dispatch('set_todo_state', { blockId: A, state: 'TODO' })
@@ -184,8 +184,13 @@ describe('#4870 — reverse rows carry a real reverse payload', () => {
     expect(blocks.get(A)?.['todo_state']).toBe('TODO')
 
     const reverse = lastOp()
-    expect(reverse.op_type).toBe('set_todo_state')
-    expect(payloadOf(reverse)).toMatchObject({ block_id: A, state: 'TODO', from_state: 'DOING' })
+    expect(reverse.op_type).toBe('set_property')
+    expect(payloadOf(reverse)).toMatchObject({
+      block_id: A,
+      key: 'todo_state',
+      value_text: 'TODO',
+      prior: { value_text: 'DOING' },
+    })
 
     dispatch('revert_ops', { ops: [{ device_id: reverse.device_id, seq: reverse.seq }] })
     expect(blocks.get(A)?.['todo_state']).toBe('DOING')
