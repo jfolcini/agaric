@@ -479,6 +479,11 @@ describe('classify-changes.sh', () => {
     },
   )
 
+  // Only the mutation lanes read it, through scripts: no validate lane parses it.
+  it('mutation-accepted.tsv alone is ci: no suite', () => {
+    expect(classify(['mutation-accepted.tsv'])).toEqual(CI_ONLY)
+  })
+
   it('justfile next to a manifest keeps the manifest backend', () => {
     expect(classify(['justfile', 'src-tauri/Cargo.toml'])).toMatchObject({
       backend: 'true',
