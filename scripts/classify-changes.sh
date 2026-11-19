@@ -189,7 +189,8 @@ frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|
 # drop classes from the CSS) and which knip analyses, and `lint` runs knip
 # only for `frontend`; `.gitattributes` sets `eol=` on the shell scripts and
 # `-text` on test corpora.
-ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/)'
+# `mutation-accepted.tsv` is read only by the mutation lanes' scripts, never by a validate lane.
+ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/|^mutation-accepted\.tsv$)'
 
 # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on purpose:
 # logic correctness lives in the suites above, so these only guard bundling /
