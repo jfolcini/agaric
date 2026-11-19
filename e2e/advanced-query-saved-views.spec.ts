@@ -26,57 +26,8 @@ import {
 const VIEW = 'Work blocks'
 const RENAMED = 'Work items'
 
-// Diagnostic for the rename dialog that did not open on #6910's run 44306809918:
-// on a failure the report carries who got each pointer event and when a dialog
-// mounted. Delete it once that flake is root-caused.
-const TRACE = '__savedViewsTrace'
-
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript((key) => {
-    const trace: string[] = []
-    ;(window as unknown as Record<string, string[]>)[key] = trace
-    const ids = new WeakMap<Node, number>()
-    let next = 1
-    const name = (target: EventTarget | null): string => {
-      if (!(target instanceof Element)) return target === null ? 'null' : target.constructor.name
-      if (!ids.has(target)) ids.set(target, next++)
-      const label = target.getAttribute('aria-label') ?? target.textContent?.slice(0, 24) ?? ''
-      return `${target.tagName.toLowerCase()}#${ids.get(target)}[${label}]`
-    }
-    const note = (what: string): void => {
-      trace.push(`${performance.now().toFixed(0)} ${what}`)
-    }
-    for (const type of ['pointerdown', 'pointerup', 'click', 'focusin']) {
-      document.addEventListener(type, (e) => note(`${type} ${name(e.target)}`), true)
-    }
-    new MutationObserver((records) => {
-      for (const record of records) {
-        for (const [nodes, sign] of [
-          [record.addedNodes, '+'],
-          [record.removedNodes, '-'],
-        ] as const) {
-          for (const node of nodes) {
-            if (
-              node instanceof Element &&
-              (node.parentElement?.closest('[role="dialog"]') ?? null) === null &&
-              (node.matches('[role="dialog"]') || node.querySelector('[role="dialog"]') !== null)
-            ) {
-              note(`dialog${sign} ${name(node)}`)
-            }
-          }
-        }
-      }
-    }).observe(document, { childList: true, subtree: true })
-  }, TRACE)
   await waitForBoot(page)
-})
-
-test.afterEach(async ({ page }, testInfo) => {
-  if (testInfo.status === testInfo.expectedStatus) return
-  const trace = await page
-    .evaluate((key) => (window as unknown as Record<string, string[]>)[key] ?? [], TRACE)
-    .catch((e: unknown) => [`trace unreadable: ${String(e)}`])
-  await testInfo.attach('saved-views-trace', { body: trace.join('\n'), contentType: 'text/plain' })
 })
 
 function resultRows(page: Page): Locator {
@@ -146,9 +97,6 @@ test('a saved view is listed after leaving, loads, renames, deletes to the Trash
   await expect(tagLeaf(page)).toBeVisible()
   await expect(resultRows(page)).toHaveText(WORK_ROWS)
 
-  await page.evaluate((key) => {
-    ;(window as unknown as Record<string, string[]>)[key]?.push('--- rename click')
-  }, TRACE)
   await savedViews(page)
     .getByRole('button', { name: `Rename "${VIEW}"` })
     .click()

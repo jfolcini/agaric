@@ -132,7 +132,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.save': 'Salvar visualização',
   'advancedQuery.savedViews.saveTitle': 'Salvar a consulta atual como uma visualização com nome',
   'advancedQuery.savedViews.namePrompt': 'Dê um nome a esta visualização:',
-  'advancedQuery.savedViews.saved': 'Visualização "{{name}}" salva',
   'advancedQuery.savedViews.saveError': 'Não foi possível salvar a visualização',
   'advancedQuery.savedViews.nameTaken':
     'Já existe uma página ou visualização chamada "{{name}}" neste espaço',
@@ -142,7 +141,6 @@ export const properties: Record<string, string> = {
   'advancedQuery.savedViews.empty': 'Nenhuma visualização salva ainda',
   'advancedQuery.savedViews.load': 'Carregar',
   'advancedQuery.savedViews.loadTitle': 'Carregar "{{name}}"',
-  'advancedQuery.savedViews.loaded': 'Visualização "{{name}}" carregada',
   'advancedQuery.savedViews.loadError': 'Não foi possível carregar esta visualização',
   'advancedQuery.savedViews.rename': 'Renomear',
   'advancedQuery.savedViews.renameTitle': 'Renomear "{{name}}"',

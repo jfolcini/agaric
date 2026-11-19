@@ -1015,7 +1015,7 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
 
     const list = await screen.findByTestId('saved-views-list')
     expect(within(list).getByText('My saved query')).toBeInTheDocument()
-    await waitFor(() => expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
     unmount()
 
     render(<AdvancedQueryView />)
