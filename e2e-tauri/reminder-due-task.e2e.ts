@@ -22,17 +22,30 @@
 // proves. It waits for one run only; that a later run does not notify again is the
 // ledger's job, pinned by `fires_exactly_once_across_two_ticks`.
 //
+// The same daemon writes today's snapshot beside the database a little after
+// boot (#6554), and Settings › Data says when: the file on disk, the command
+// that reads its time and the row are three parts only this lane runs
+// together. The snapshot is opened as a database and holds the spaces boot
+// created, so it is a copy of the vault and not an empty file under the name.
+// That case runs first, on the vault boot left.
+//
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
 // ---------------------------------------------------------------------------
 
 import { type ChildProcess, spawn } from 'node:child_process'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   ACTION_TIMEOUT,
+  appVaultDir,
+  dailySnapshots,
+  invoke,
   isoDay,
   NAV_TIMEOUT,
   navigateTo,
+  openDataTab,
   openNewPage,
   openSettingsTab,
   runScopedMarker,
@@ -158,7 +171,22 @@ async function reminderSettingsShown(time: string): Promise<{ enabled: string | 
   return { enabled: await $(SWITCH).getAttribute('aria-checked') }
 }
 
-describe('Agaric real-backend due-task reminder (#5741) @journal', () => {
+function snapshots(): string[] {
+  return dailySnapshots(appVaultDir())
+}
+
+/** How many of `ids` the database file at `file` holds as blocks. */
+function blocksHeld(file: string, ids: string[]): number {
+  const db = new DatabaseSync(file, { readOnly: true })
+  try {
+    const held = db.prepare('SELECT count(*) AS n FROM blocks WHERE id = ?')
+    return ids.filter((id) => (held.get(id) as { n: number }).n === 1).length
+  } finally {
+    db.close()
+  }
+}
+
+describe('Agaric real-backend due-task reminder (#5741) @journal @boot @settings', () => {
   before(async () => {
     await startNotifyMonitor()
     await waitForAppReady()
@@ -166,6 +194,28 @@ describe('Agaric real-backend due-task reminder (#5741) @journal', () => {
 
   after(() => {
     monitor?.kill()
+  })
+
+  it('writes one snapshot of the vault after boot and Settings › Data says when (#6554)', async () => {
+    const spaces = await invoke<{ id: string }[]>('list_spaces')
+    expect(spaces.length).toBeGreaterThan(0)
+
+    await browser.waitUntil(() => snapshots().length > 0, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'no daily snapshot appeared beside the database',
+    })
+    const taken = snapshots()
+    expect(taken).toHaveLength(1)
+    const held = blocksHeld(
+      path.join(appVaultDir(), taken[0] as string),
+      spaces.map((space) => space.id),
+    )
+    expect(held).toBe(spaces.length)
+
+    await openDataTab()
+    const status = $('[data-testid="snapshot-status"]')
+    await status.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    expect(await status.getText()).toContain('Last snapshot:')
   })
 
   it('reminders on at the current minute, with a task due that day', async () => {
