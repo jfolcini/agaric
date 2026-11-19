@@ -23,6 +23,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { checkDeclaration } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
   assertUniqueStepNames,
+  QUERY_COMMANDS_BACKEND_ONLY,
   type QueryStep,
   runQuerySteps,
 } from '@/lib/tauri-mock/__tests__/conformance-query'
@@ -165,7 +166,8 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
   // against the SAME backend-authored recording. Kept as its own `it` per
   // fixture so a query divergence names the query, not the snapshot.
   for (const { fixture } of fixtures) {
-    if (!fixture.queries || fixture.queries.length === 0) continue
+    const steps = (fixture.queries ?? []).filter((s) => !(s.command in QUERY_COMMANDS_BACKEND_ONLY))
+    if (steps.length === 0) continue
     // A snapshot divergence invalidates the state the reads run over, so the
     // query leg skips for EITHER set.
     const run = DRIFT_SKIP.has(fixture.name) || QUERY_DRIFT_SKIP.has(fixture.name) ? it.skip : it
@@ -181,9 +183,10 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
         replayFixtureInSpace(fixture)
 
         const labels = canonicalLabelMap(canonicalOrder(fixture))
-        const actual = await runQuerySteps(fixture.queries ?? [], labels)
+        const actual = await runQuerySteps(steps, labels)
 
-        expect(actual).toEqual(fixture.expected_queries)
+        const names = new Set(steps.map((s) => s.name))
+        expect(actual).toEqual(fixture.expected_queries?.filter((r) => names.has(r.name)))
       },
     )
   }

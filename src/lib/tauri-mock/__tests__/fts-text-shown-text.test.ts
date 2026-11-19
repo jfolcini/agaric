@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
-import { stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { stripForFts } from '@/lib/tauri-mock/fts-text'
 import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const T = '01HQREFT00000000000000RT01'

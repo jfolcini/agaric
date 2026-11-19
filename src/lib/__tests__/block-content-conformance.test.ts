@@ -30,7 +30,7 @@ import { parse, serialize } from '@/editor/markdown-serializer'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
 import { clearMock } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
-import { stripForFts } from '@/lib/tauri-mock/handlers/search'
+import { stripForFts } from '@/lib/tauri-mock/fts-text'
 import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
 

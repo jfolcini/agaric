@@ -768,7 +768,7 @@ describe('AdvancedQueryView', () => {
       act(() =>
         useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'State' } }),
       )
-      await screen.findByTestId('advanced-query-group-section')
+      await waitFor(() => expect(boardSegment()).toBeEnabled())
       await user.click(boardSegment())
 
       const columns = await screen.findAllByTestId('query-board-column')
@@ -809,8 +809,7 @@ describe('AdvancedQueryView', () => {
       await screen.findAllByTestId('query-board-column')
 
       act(() => useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'Tag' } }))
-      await screen.findByTestId('advanced-query-group-section')
-      expect(screen.queryByTestId('query-board')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId('query-board')).not.toBeInTheDocument())
       expect(boardSegment()).toBeDisabled()
     })
 

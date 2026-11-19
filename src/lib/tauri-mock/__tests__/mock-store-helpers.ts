@@ -2,8 +2,7 @@
  * The preamble every store-level Tauri-mock test file was re-spelling.
  *
  * #4036 item 3 / #4151 review item 6 — `id` / `clearMock` / `setSpace` were
- * duplicated character-for-character across `search-fts-strip.test.ts`,
- * `links-fts-strip.test.ts` and `search-blocks-partitioned-residuals.test.ts`.
+ * duplicated character-for-character across three test files.
  * The cost is specific and has been paid before: a future store addition that
  * needs resetting has to be applied in every copy, and #3469's `peerRefs` is
  * the precedent for what happens when it is applied in one. One owner removes

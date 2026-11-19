@@ -67,30 +67,6 @@ describe('the References panel’s date leaf on a day', () => {
   })
 })
 
-describe('filtered_blocks_query on a day', () => {
-  function matching(filter: Record<string, unknown>): string[] {
-    const res = dispatch('filtered_blocks_query', {
-      propertyFilters: [{ key: 'when', ...filter }],
-      tagFilters: null,
-      scope: { kind: 'active', space_id: SPACE },
-    }) as { items: Array<Record<string, unknown>> }
-    return sorted(res.items.map((b) => b['id'] as string))
-  }
-  const on = (operator: string) => matching({ valueDate: '2026-11-14', operator })
-
-  it('reads each row and string item by its form, under every operator and a range', () => {
-    expect(on('eq')).toEqual(sorted([INSTANT, DAY, LISTED]))
-    expect(on('neq')).toEqual([LATER])
-    expect(on('lt')).toEqual([])
-    expect(on('lte')).toEqual(sorted([INSTANT, DAY, LISTED]))
-    expect(on('gt')).toEqual([LATER])
-    expect(on('gte')).toEqual(sorted([INSTANT, DAY, LISTED, LATER]))
-    expect(matching({ valueDateRange: ['2026-11-14', '2026-11-15'] })).toEqual(
-      sorted([INSTANT, DAY, LISTED]),
-    )
-  })
-})
-
 describe('query_by_property on a day', () => {
   function matching(fields: Record<string, unknown>): string[] {
     const res = dispatch('query_by_property', {

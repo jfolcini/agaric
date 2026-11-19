@@ -1,10 +1,8 @@
 /**
  * Advanced query happy paths (#5738): a nested AND / OR / NOT tree built from
- * filter leaves, and the controls bar's full-text term plus a sort key. Both
- * run the mock's flat `run_advanced_query` path (`handlers/search.ts`), which
- * evaluates the `FilterExpr` tree with the conformance-guarded per-primitive
- * matrix, intersects the full-text term and honours the sort keys, so a
- * builder or controls regression shows up as a wrong result list here.
+ * filter leaves, and the controls bar's full-text term plus a sort key, on the
+ * real backend (the spec is in `REAL_BACKEND_SPECS`), so a builder or controls
+ * regression shows up as a wrong result list here.
  *
  * Seed ids pointer: `SEED_IDS` in `src/lib/tauri-mock/seed.ts`.
  */
