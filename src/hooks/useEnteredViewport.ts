@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import type React from 'react'
+import { useCallback, useState } from 'react'
 
 /**
  * One-shot viewport gate (#758 item 5, #2670): returns `true` once the
@@ -12,36 +13,39 @@ import { useEffect, useState } from 'react'
  * the mount effect regardless of visibility, which hurt mobile memory on long
  * pages).
  *
- * The ref is a callback, so an element that mounts after the hook did (a week
- * day whose page arrives later, #6990) is still observed.
+ * The ref is a callback that observes the element it is given, so an element
+ * that mounts after the hook did (a week day whose page arrives later, #6990)
+ * is still observed.
  */
 export function useEnteredViewport<T extends HTMLElement>(
   enabled = true,
   rootMargin = '200px 0px',
-): [boolean, (el: T | null) => void] {
+): [boolean, React.RefCallback<T>] {
   // A runtime without `IntersectionObserver` has no gate to wait for, so it
   // starts entered and loads eagerly.
   const [entered, setEntered] = useState(
     () => !enabled || typeof IntersectionObserver === 'undefined',
   )
-  const [el, ref] = useState<T | null>(null)
 
-  useEffect(() => {
-    if (!enabled || entered || !el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setEntered(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin },
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-    }
-  }, [enabled, entered, rootMargin, el])
+  const ref = useCallback(
+    (el: T | null) => {
+      if (!enabled || entered || !el) return
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            setEntered(true)
+            observer.disconnect()
+          }
+        },
+        { rootMargin },
+      )
+      observer.observe(el)
+      return () => {
+        observer.disconnect()
+      }
+    },
+    [enabled, entered, rootMargin],
+  )
 
   return [entered, ref]
 }
