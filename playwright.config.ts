@@ -18,11 +18,10 @@ const useCloudChromium = !existsSync(chromium.executablePath()) && existsSync(CL
 // minus every test tagged `@mock-only`, which drives a hook only the mock has.
 // A test tagged `@real-only` asserts what only the real backend does (BM25
 // ranking, a second page of results) and runs there alone.
-// A spec joins the list once it passes there; the nightly `full-suite` lane of
-// `scheduled-deep-checks.yml` runs it. Unset, the run is the mock's, and a
-// listed test not tagged `@mock-only` runs on a mock that withholds its
-// `window.__*` hooks, as the bridge does (`realBackend` in `e2e/helpers.ts`),
-// so a PR that adds a hook call to a listed spec goes red before the nightly.
+// A spec joins the list once it passes there; `_validate.yml`'s `bridge-specs`
+// job runs it on a PR whose diff reaches it. Unset, the run is the mock's: the
+// `chromium` project skips the listed specs and `mock-only` runs their
+// `@mock-only` tests.
 const REAL_BACKEND = process.env['AGARIC_E2E_BRIDGE'] !== undefined
 const REAL_BACKEND_SPECS = [
   'advanced-query-board.spec.ts',
@@ -182,6 +181,12 @@ const REAL_BACKEND_SPECS = [
   'unlinked-references.spec.ts',
 ]
 
+const LISTED = REAL_BACKEND_SPECS.map((spec) => `**/${spec}`)
+const browser = {
+  ...devices['Desktop Chrome'],
+  ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),
+}
+
 export default defineConfig({
   testDir: './e2e',
   // For its `@/` alias: `e2e/bridge.ts` imports the mock's seed from `src/`.
@@ -266,19 +271,12 @@ export default defineConfig({
       ],
     },
   },
-  projects: [
-    {
-      name: REAL_BACKEND ? 'real-backend' : 'chromium',
-      ...(REAL_BACKEND
-        ? { testMatch: REAL_BACKEND_SPECS.map((spec) => `**/${spec}`), grepInvert: /@mock-only/ }
-        : { grepInvert: /@real-only/ }),
-      metadata: { realBackendSpecs: REAL_BACKEND_SPECS },
-      use: {
-        ...devices['Desktop Chrome'],
-        ...(useCloudChromium ? { launchOptions: { executablePath: CLOUD_CHROMIUM } } : {}),
-      },
-    },
-  ],
+  projects: REAL_BACKEND
+    ? [{ name: 'real-backend', testMatch: LISTED, grepInvert: /@mock-only/, use: browser }]
+    : [
+        { name: 'chromium', testIgnore: LISTED, grepInvert: /@real-only/, use: browser },
+        { name: 'mock-only', testMatch: LISTED, grep: /@mock-only/, use: browser },
+      ],
   webServer: {
     // #1458 ROOT-CAUSE FIX: serve a static *production* build via `vite
     // preview` instead of `npm run dev` (vite dev + HMR). The dev server

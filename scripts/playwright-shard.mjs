@@ -56,6 +56,15 @@ export function secondsFromReport(report) {
   )
 }
 
+/** `REAL_BACKEND_SPECS` in playwright.config.ts, which the bridge lane runs. */
+function realBackendSpecs() {
+  const config = readFileSync(path.join(ROOT, 'playwright.config.ts'), 'utf8')
+  const list = /const REAL_BACKEND_SPECS = \[([^\]]*)\]/.exec(config)?.[1] ?? ''
+  const specs = [...list.matchAll(/'([^']+)'/g)].map((match) => match[1])
+  if (specs.length === 0) throw new Error('playwright.config.ts: no REAL_BACKEND_SPECS list found')
+  return specs
+}
+
 function main([arg, reportPath]) {
   if (arg === '--update') {
     const seconds = secondsFromReport(JSON.parse(readFileSync(reportPath, 'utf8')))
@@ -69,6 +78,8 @@ function main([arg, reportPath]) {
     throw new Error('usage: playwright-shard.mjs <k>/<n> | --update <report.json>')
   const files = globSync(SPEC_GLOB, { cwd: ROOT }).toSorted()
   const seconds = JSON.parse(readFileSync(path.join(ROOT, DURATIONS), 'utf8'))
+  // The mock lane runs a listed spec's `@mock-only` tests alone, a few seconds.
+  for (const spec of realBackendSpecs()) seconds[`e2e/${spec}`] = 0
   const mine = dealSpecFiles(files, total, seconds)[shard - 1]
   // An empty list would make `npx playwright test` run every spec.
   if (mine.length === 0) throw new Error(`shard ${arg} has no spec files`)

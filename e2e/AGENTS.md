@@ -33,6 +33,8 @@ In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec
 
 ## The real backend, through the bridge (#6529)
 
+A spec whose assertions depend on what the backend stores or derives belongs on `REAL_BACKEND_SPECS`. Add the file there when you write it, tag only the tests that drive a mock hook `@mock-only`, and tag a test that only the real backend can pass `@real-only`. Date it from the real clock: `page.clock` moves only the browser, and the backend groups undo and stamps the seed by its own time.
+
 The same specs can run on the real commands instead of the mock. `AGARIC_E2E_BRIDGE` names the `bridge` binary; with it set, each worker starts one bridge (`e2e/bridge.ts`), each test starts on a fresh copy of its template vault, and the page sends every app command to it (`src/lib/tauri-mock/bridge.ts`). Unset, nothing changes.
 
 ```sh
@@ -50,7 +52,7 @@ What a spec can rely on there differs from the mock:
 - **Not carried**: a `Channel` argument's messages (an import's progress).
 - **The mirror runs; MCP and sync do not**: each vault copy runs the Markdown mirror, which writes once a spec chooses a folder (`set_mirror_folder` with a temp directory of the spec's own). MCP and sync keep their state, so their Settings panels read it, but no server or peer runs behind them.
 
-The nightly `full-suite` lane of `scheduled-deep-checks.yml` runs specs this way: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`; a test tagged `@real-only` asserts what only the real backend does (BM25 ranking, a second page of results) and the mock run skips it. On every PR the same tests run on a mock that withholds its hooks as the bridge does, so a hook call in a listed spec fails there unless its test is tagged `@mock-only`. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
+Every PR whose diff reaches them runs specs this way, in `_validate.yml`'s `bridge-specs` job, and the nightly `full-suite` lane of `scheduled-deep-checks.yml` again: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`; a test tagged `@real-only` asserts what only the real backend does (BM25 ranking, a second page of results). The mock run skips the listed specs and runs only their `@mock-only` tests, in its `mock-only` project; a listed spec run without the bridge runs nothing else. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
 
 ## The mock is a contract, not a convenience
 

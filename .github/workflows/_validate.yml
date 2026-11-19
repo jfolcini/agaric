@@ -40,7 +40,12 @@ name: Validate (prek-equivalent)
 #   - playwright      — the e2e suite, sharded 3 ways, or one leg running only
 #                        the changed specs of a spec-only diff; gated on
 #                        frontend changes minus vitest test files and
-#                        `e2e-tauri/`.
+#                        `e2e-tauri/`. Skips the specs `REAL_BACKEND_SPECS`
+#                        lists but for their `@mock-only` tests.
+#   - bridge-build / bridge-specs — the `bridge` bin, then the listed specs
+#                        on the real commands, sharded 3 ways (or the changed
+#                        specs alone, as above); gated on `playwright` or
+#                        `rust_tests`.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
 #                        sharded 2 ways; gated on the classifier's
 #                        `rust_tests`: a backend change outside the paths
@@ -1423,8 +1428,10 @@ jobs:
         run: |
           if [ -n "$SPECS" ]; then
             # One path per word; the classifier lists only `e2e/*.spec.ts`.
+            # A spec `REAL_BACKEND_SPECS` lists runs here only for its
+            # `@mock-only` tests, and may have none.
             # shellcheck disable=SC2086
-            npx playwright test $SPECS
+            npx playwright test --pass-with-no-tests $SPECS
           else
             # Dealt by each file's measured time (scripts/playwright-shard.mjs):
             # `--shard` cuts equal test counts, and the slow files sort together.
@@ -1462,6 +1469,103 @@ jobs:
           # `${{ matrix.shard }}` keeps shard artifacts from colliding —
           # GitHub rejects duplicate artifact names within a workflow run.
           name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # bridge-build / bridge-specs — #6529. The specs `playwright.config.ts` lists
+  # in `REAL_BACKEND_SPECS`, on the real commands through the `bridge` bin; the
+  # mock lane above skips them. A frontend change reaches them as the mock lane
+  # does, and a Rust change through the commands they call.
+  # ---------------------------------------------------------------------------
+  bridge-build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.playwright == 'true' || needs.detect-changes.outputs.rust_tests == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        uses: ./.github/actions/toolchain
+        with:
+          # Per-job-class key (#813): a dev-profile tree of the bridge bin alone.
+          rust-shared-key: rust-bridge
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Build the bridge
+        working-directory: src-tauri
+        run: |
+          cargo build -p agaric-diagnostics --features bridge --bin bridge
+          # Debug info is most of the binary, and no shard reads it.
+          strip target/debug/bridge
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bridge
+          path: src-tauri/target/debug/bridge
+          retention-days: 1
+          if-no-files-found: error
+
+  bridge-specs:
+    needs: [detect-changes, bridge-build]
+    runs-on: ubuntu-24.04
+    # The playwright job's budget: the same setup, and a shard of comparable length.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        # Only the changed specs, on one leg, when they are the whole change.
+        shard: ${{ fromJSON(needs.detect-changes.outputs.playwright_specs != '' && needs.detect-changes.outputs.rust_tests != 'true' && '[1]' || '[1, 2, 3]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Playwright setup (Node, npm ci, browsers, system deps)
+        uses: ./.github/actions/playwright-setup
+
+      - name: Install the bridge's shared libraries
+        # The bin links the Tauri crates' WebKitGTK, GTK and libsoup;
+        # `libwebkit2gtk-4.1-0` pulls every library it needs.
+        uses: ./.github/actions/apt-install
+        with:
+          cache: 'true'
+          packages: libwebkit2gtk-4.1-0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bridge
+          path: bridge-bin
+
+      - name: Playwright on the real backend (shard ${{ matrix.shard }})
+        id: playwright
+        env:
+          AGARIC_E2E_BRIDGE: ${{ github.workspace }}/bridge-bin/bridge
+          SHARD: ${{ matrix.shard }}
+          SPECS: ${{ needs.detect-changes.outputs.rust_tests != 'true' && needs.detect-changes.outputs.playwright_specs || '' }}
+        run: |
+          chmod +x "$AGARIC_E2E_BRIDGE"
+          if [ -n "$SPECS" ]; then
+            # A changed spec the list does not name has no test here.
+            # shellcheck disable=SC2086
+            npx playwright test --pass-with-no-tests $SPECS
+          else
+            npx playwright test --shard "$SHARD/3"
+          fi
+
+      - name: Upload Playwright report (on failure)
+        if: failure() && steps.playwright.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bridge-report-shard-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -1925,7 +2029,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, vitest-e2e-tauri, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, vitest-e2e-tauri, playwright, bridge-build, bridge-specs, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -2026,6 +2130,11 @@ jobs:
           check_job vitest-e2e-tauri "$vet_skip_ok"
           pw_skip_ok="false"; if [ "$playwright" != "true" ]; then pw_skip_ok="true"; fi
           check_job playwright "$pw_skip_ok"
+          # The bridge lane runs on a frontend change as the mock lane does,
+          # and on a Rust change too.
+          br_skip_ok="false"; if [ "$playwright" != "true" ] && [ "$rust_tests" != "true" ]; then br_skip_ok="true"; fi
+          check_job bridge-build "$br_skip_ok"
+          check_job bridge-specs "$br_skip_ok"
 
           # Rust suites (+ cargo-tests' transitive coverage): skip allowed only
           # when no path a Rust test can see changed.
@@ -2138,6 +2247,24 @@ jobs:
     uses: ./.github/workflows/_stop-pr-ci.yml
     with:
       failed-job: playwright
+
+  stop-after-bridge-build:
+    needs: bridge-build
+    if: failure() && needs.bridge-build.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: bridge-build
+
+  stop-after-bridge-specs:
+    needs: bridge-specs
+    if: failure() && needs.bridge-specs.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: bridge-specs
 
   stop-after-cargo-tests:
     needs: cargo-tests
