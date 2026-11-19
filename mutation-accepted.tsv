@@ -490,9 +490,9 @@ frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	if (holdsLogseqQuery(
 frontend	src/lib/vault-import.ts	ObjectLiteral	34	1	keptQueries: { count: number } = { count: 0 },
 # #5964 page-tasks: `unwatch` without `watched.delete` leaves a block in `watched` only until the next `pick`, which drops it and unobserves it again; a view watches its own element once, so none is watched again
 frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.watched.delete(dom)
-# vault-import: the graph-less branch's tags are read only under `graph !== null`, and its title falls through `??` to the same name as null
+# vault-import: with `{}` the graph-less branch's tags are `undefined`, which `logseqTagPages`'s `tags.has(<lowercase title>)` never matches; its `undefined` title falls through `??` as null does
 frontend	src/lib/vault-import.ts	ObjectLiteral	28	1	if (graph === null) return { tags: [], title: null }
-# vault-import: a graph-less pick's tags are read only under `graph !== null`, and a tag page needs a lowercase title equal to the tag, which the mutant's mixed-case tag never is
+# vault-import: a graph-less pick's tags reach only `logseqTagPages`'s `tags.has(<lowercase title>)`, which the mutant's mixed-case tag never matches
 frontend	src/lib/vault-import.ts	ArrayDeclaration	36	1	if (graph === null) return { tags: [], title: null }
 # vault-import: `read` is `notes.map(...)` awaited, so `read[index]` exists for every index of `notes`
 frontend	src/lib/vault-import.ts	OptionalChaining	22	1	({ path }, index) => read[index]?.title ?? graph?.titles[index] ?? path.slice(0, -'.md'.length),
