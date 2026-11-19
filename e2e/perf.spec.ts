@@ -61,6 +61,7 @@ import {
   focusBlock,
   navigateToView,
   openPage,
+  settleBackend,
   test,
   typeSlashCommand,
   waitForBoot,
@@ -179,8 +180,10 @@ function installProbes(): void {
       Object.defineProperty(value, 'invoke', {
         configurable: true,
         get: () => wrapped,
+        // The bridge assigns it again, with a function that calls the first:
+        // wrapping that too would record every call twice.
         set: (fn: Invoke) => {
-          wrapped = defer(fn)
+          wrapped = wrapped === undefined ? defer(fn) : fn
         },
       })
     },
@@ -1235,6 +1238,8 @@ interface ListView {
   ipcOnOpen: number
   seed: (page: Page) => Promise<unknown>
   open: (page: Page) => Promise<void>
+  /** `@mock-only` when `seed` drives a mock hook. */
+  tag?: string
 }
 
 const indices = Array.from({ length: SEEDED_ROWS }, (_, i) => String(i).padStart(4, '0'))
@@ -1263,6 +1268,8 @@ const LIST_VIEWS: ListView[] = [
     // list_projected_agenda, filtered_blocks_query, get_batch_properties; page
     // titles come from the resolve store's boot preload (#5439)
     ipcOnOpen: 3,
+    // Seeded through the mock's `__addMockAgendaItems`, which the bridge lacks.
+    tag: '@mock-only',
     seed: (page) =>
       page.evaluate((n) => {
         ;(
@@ -1344,39 +1351,46 @@ async function settle(page: Page, rows: string): Promise<void> {
 }
 
 for (const view of LIST_VIEWS) {
-  test(`opening ${view.name} on ${SEEDED_ROWS} rows renders a window and pins its IPC (#5366) @editor @pages @journal @search`, async ({
-    page,
-  }) => {
-    await page.addInitScript(installProbes)
-    await page.goto('/')
-    await page.locator('[data-testid="block-static"]').first().waitFor()
-    await view.seed(page)
-    // The boot sync (`useSyncTrigger`) fires 2 s after mount; wait it out so a
-    // quick seed cannot leave it to land inside the measured window.
-    await expect
-      .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
-      .toBe(true)
-    await settle(page, view.rows)
+  test(
+    `opening ${view.name} on ${SEEDED_ROWS} rows renders a window and pins its IPC (#5366) @editor @pages @journal @search`,
+    {
+      tag: view.tag ?? [],
+    },
+    async ({ page }) => {
+      await page.addInitScript(installProbes)
+      await page.goto('/')
+      await page.locator('[data-testid="block-static"]').first().waitFor()
+      await view.seed(page)
+      // On the bridge a seed's `blocks:changed` arrives once its cache rebuilds
+      // have run, and a view open by then refetches inside the measured window.
+      await settleBackend(page)
+      // The boot sync (`useSyncTrigger`) fires 2 s after mount; wait it out so a
+      // quick seed cannot leave it to land inside the measured window.
+      await expect
+        .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
+        .toBe(true)
+      await settle(page, view.rows)
 
-    const mark = await page.evaluate((selector) => {
-      const probe = window.__perf__ as PerfProbe
-      probe.rowSelector = selector
-      probe.peakRows = 0
-      return probe.ipc.length
-    }, view.rows)
-    await view.open(page)
-    await page.locator(view.rows).first().waitFor()
-    await settle(page, view.rows)
-    const { peakRows, calls } = await page.evaluate((from) => {
-      const probe = window.__perf__ as PerfProbe
-      return { peakRows: probe.peakRows, calls: probe.ipc.slice(from) }
-    }, mark)
+      const mark = await page.evaluate((selector) => {
+        const probe = window.__perf__ as PerfProbe
+        probe.rowSelector = selector
+        probe.peakRows = 0
+        return probe.ipc.length
+      }, view.rows)
+      await view.open(page)
+      await page.locator(view.rows).first().waitFor()
+      await settle(page, view.rows)
+      const { peakRows, calls } = await page.evaluate((from) => {
+        const probe = window.__perf__ as PerfProbe
+        return { peakRows: probe.peakRows, calls: probe.ipc.slice(from) }
+      }, mark)
 
-    // The lower bound proves the probe saw the view at all.
-    expect(peakRows).toBeGreaterThanOrEqual(10)
-    expect(peakRows).toBeLessThanOrEqual(PEAK_RENDERED_BLOCKS_BOUND)
-    expect(calls.length, calls.join(', ')).toBe(view.ipcOnOpen)
-  })
+      // The lower bound proves the probe saw the view at all.
+      expect(peakRows).toBeGreaterThanOrEqual(10)
+      expect(peakRows).toBeLessThanOrEqual(PEAK_RENDERED_BLOCKS_BOUND)
+      expect(calls.length, calls.join(', ')).toBe(view.ipcOnOpen)
+    },
+  )
 }
 
 /**
@@ -1476,8 +1490,13 @@ test('creating a page and picking a date list no pages (#6527) @editor @pages @j
   page,
 }) => {
   const blocks = '[data-testid="block-static"]'
-  // The seed's only journal page is today's.
-  await page.clock.setFixedTime(new Date('2026-10-14T10:00:00'))
+  // The seed's only journal page is today's, by the real clock (the backend
+  // seeds by its own). Two days away, inside the month the picker opens on.
+  const day = new Date()
+  day.setDate(day.getDate() + 2)
+  if (day.getMonth() !== new Date().getMonth()) day.setDate(day.getDate() - 4)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const pickDay = `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
   await page.addInitScript(installProbes)
   await page.goto('/')
   await page.locator(blocks).first().waitFor()
@@ -1513,7 +1532,7 @@ test('creating a page and picking a date list no pages (#6527) @editor @pages @j
     await typeSlashCommand(page, 'date')
     await page.keyboard.press('Enter')
     const popup = page.getByTestId('date-picker-popup')
-    await popup.locator('[role="gridcell"][data-day="2026-10-16"] button').click()
+    await popup.locator(`[role="gridcell"][data-day="${pickDay}"] button`).click()
     await expect(page.locator('[data-testid="block-link-chip"]')).toHaveCount(1)
   })
   // The lower bounds prove each gesture reached the backend at all.

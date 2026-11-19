@@ -5,8 +5,8 @@
  * `YYYY-MM-DD` title, and the link it inserts names that page.
  *
  * The preference is localStorage-backed and the seed's journal page is
- * titled with today's date, so the mock-backed build shows the whole effect.
- * The clock is pinned so that page is 2026-06-17.
+ * titled with today's date, read from the real clock: the backend dates the
+ * seed by its own, which `page.clock` does not move.
  */
 
 import type { Page } from '@playwright/test'
@@ -24,8 +24,10 @@ import {
   waitForBoot,
 } from './helpers'
 
-const NOW = new Date('2026-06-17T12:00:00')
-const SHOWN = '17/06/2026'
+const pad = (n: number) => String(n).padStart(2, '0')
+const today = new Date()
+const ISO = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+const SHOWN = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`
 
 async function chooseSlashFormat(page: Page): Promise<void> {
   await navigateToView(page, 'Settings')
@@ -35,7 +37,6 @@ async function chooseSlashFormat(page: Page): Promise<void> {
 
 test.describe('journal titles in the journal date format outside the journal @settings @journal @editor', () => {
   test.beforeEach(async ({ page }) => {
-    await page.clock.install({ time: NOW })
     await waitForBoot(page)
     await chooseSlashFormat(page)
   })
@@ -46,18 +47,18 @@ test.describe('journal titles in the journal date format outside the journal @se
     await openPage(page, 'Getting Started')
     await focusBlock(page)
     await page.keyboard.press('End')
-    await page.keyboard.type(' [[2026-06', { delay: 30 })
+    await page.keyboard.type(` [[${ISO.slice(0, 7)}`, { delay: 30 })
 
     const items = activeSuggestionList(page).getByTestId('suggestion-item')
     await expect(items.filter({ hasText: SHOWN })).toHaveCount(1)
-    await expect(items.filter({ hasText: '2026-06-17' })).toHaveCount(0)
+    await expect(items.filter({ hasText: ISO })).toHaveCount(0)
 
     await items.filter({ hasText: SHOWN }).click()
     await saveBlock(page)
     // The chip in block text keeps the stored title, as the page's own text does.
     await expect(
       page.locator('[data-testid="block-static"] [data-testid="block-link-chip"]', {
-        hasText: '2026-06-17',
+        hasText: ISO,
       }),
     ).toHaveCount(1)
   })
