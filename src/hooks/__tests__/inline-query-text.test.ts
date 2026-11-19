@@ -10,7 +10,6 @@ import { invoke } from '@tauri-apps/api/core'
 import fc from 'fast-check'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import {
   dispatchQuery,
   fetchRichInlineQuery,
@@ -24,10 +23,8 @@ import { formatDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
-import { searchBlocks } from '@/lib/ipc-helpers'
 import { isLegacyQueryText } from '@/lib/query-text'
 import { parseQueryExpression } from '@/lib/query-utils'
-import { astToFilterProjection, parse } from '@/lib/search-query'
 import { requireActiveScope } from '@/lib/space-scope'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -154,23 +151,7 @@ describe('a query block in the search syntax', () => {
     expect(sent).toEqual(['list_all_tags_in_space'])
   })
 
-  // The same text through the search box's own request (`astFilterParams` → `searchBlocks`).
-  async function searchIds(text: string): Promise<string[]> {
-    const ast = parse(text)
-    const projection = astToFilterProjection(ast)
-    const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(SPACE)))
-    const tagIds = projection.tagNames.flatMap(
-      (name) => tags.find((tag) => tag.name === name)?.tag_id ?? [],
-    )
-    const res = await searchBlocks({
-      query: ast.freeText,
-      ...astFilterParams(projection, tagIds),
-      spaceId: SPACE,
-    })
-    return res.items.map((b) => b.id).toSorted()
-  }
-
-  describe('runs what it refused before #6742, as the search box runs it', () => {
+  describe('runs what it refused before #6742', () => {
     const OTHER = id('OTHER')
     const C1 = id('C1') // under B1, so it inherits work; due today
     const O1 = id('O1') // on the other page, TODO, due long ago
@@ -206,7 +187,6 @@ describe('a query block in the search syntax', () => {
       ['due:older', [O1]],
     ])('%s', async (text, expected) => {
       expect(await ids(text)).toEqual(expected.toSorted())
-      expect(await searchIds(text)).toEqual(expected.toSorted())
     })
   })
 
@@ -326,7 +306,7 @@ describe('a block not in the search syntax sends the requests it sent before', (
 
   it('a v2: payload', async () => {
     const before = await requests(resolveInlineQueryBefore6628, V2)
-    expect(before.ids).toEqual([B3, B1])
+    expect(before.ids).toEqual([B1, B3])
     expect(await requests(resolveInlineQuery, V2)).toEqual(before)
   })
 

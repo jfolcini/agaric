@@ -145,14 +145,6 @@ describe('run_advanced_query — FLAT FilterExpr interpretation', () => {
     return res.rows.map((r) => r['id'] as string).toSorted()
   }
 
-  /** Like `runIds`, but preserves the handler's row order (no `.toSorted()`). */
-  function runIdsOrdered(filter: Record<string, unknown> | undefined): string[] {
-    const res = dispatch('run_advanced_query', {
-      request: { spaceId: SPACE_A, ...(filter ? { filter } : {}) },
-    }) as { rows: Array<Record<string, unknown>> }
-    return res.rows.map((r) => r['id'] as string)
-  }
-
   it('a filterless query returns every block in the space (incl. the page)', () => {
     expect(runIds(undefined)).toEqual([PAGE_A, B1, B2, B3].toSorted())
   })
@@ -179,13 +171,6 @@ describe('run_advanced_query — FLAT FilterExpr interpretation', () => {
     // under the bug `['page']` matches all four and `['text']` matches none,
     // so the union still equals the filterless set. Both legs above are
     // individually discriminating, which is what actually pins the fix.)
-  })
-
-  // #3821 defect 2 — the FLAT path's default order is the backend's
-  // `b.id DESC` recency keyset (`agaric-store/src/query/engine.rs`: no
-  // `sort` + no full-text ⇒ `b.id DESC`), NOT `b.id ASC`.
-  it('defaults to id DESC (the backend recency keyset), not id ASC', () => {
-    expect(runIdsOrdered(undefined)).toEqual([PAGE_A, B1, B2, B3].toSorted().toReversed())
   })
 
   it('a Priority leaf filters to matching blocks', () => {

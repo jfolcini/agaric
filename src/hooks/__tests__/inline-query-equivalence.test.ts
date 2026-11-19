@@ -6,8 +6,8 @@
  * or via the rich `run_advanced_query` engine (`resolveLegacyQueryToFilterExpr`
  * → `fetchRichInlineQuery`). This drives a battery of queries through BOTH paths
  * over one seeded mock dataset and asserts identical result-id sets — the
- * faithfulness gate for the reroute. The mock is conformance-pinned to the real
- * backend, so equivalence here ⇒ equivalence in production.
+ * faithfulness gate for the reroute, over the tag and property-equality shapes
+ * the mock's query stub answers (#6529).
  *
  * `invoke` is routed to the real mock `dispatch`, so both paths read the same
  * seeded store (no per-command stubbing).
@@ -57,7 +57,6 @@ const B4 = id('B4') // custom: project=beta
 const B5 = id('B5') // todo DONE
 const B6 = id('B6') // custom date: deadline=2025-06-01
 const B7 = id('B7') // tagged work ONLY via an inline block_tag_refs reference
-const B8 = id('B8') // custom: context=beta (present, == beta)
 const BX = id('BX') // OTHER space — must never appear
 
 function clearMock(): void {
@@ -123,8 +122,6 @@ beforeEach(() => {
   childBlock(B6, PAGE, {})
   setProp(B6, 'deadline', { value_date: '2025-06-01' })
   childBlock(B7, PAGE, {})
-  childBlock(B8, PAGE, {})
-  setProp(B8, 'context', { value_text: 'beta' }) // present but == beta (excluded by !=beta)
   // Other-space block tagged work + priority 1 — must never leak into SPACE.
   childBlock(BX, PAGE_OTHER, { priority: '1' })
 
@@ -169,9 +166,6 @@ describe('legacy ↔ rich inline-query equivalence', () => {
     'property:priority=1 property:todo_state=TODO',
     'property:context=@office tag:work',
     'type:property key:context value:@office',
-    // Custom `!=`: present-and-not-equal (B2 has context=@office), excluding
-    // both the matching-value block (B8: context=beta) and absent-key blocks.
-    'property:context!=beta',
   ]
 
   for (const expr of TRANSLATABLE) {

@@ -17,8 +17,8 @@
 // reuses their paginator rather than growing a second cursor codec that would
 // be free to drift from the backend's `Cursor` shape.
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { matchesFtsIndex, matchesSearchText, stripForFts } from '@/lib/tauri-mock/fts-text'
 import { idKey, paginateKeyset } from '@/lib/tauri-mock/handlers/blocks'
-import { matchesFtsIndex, matchesSearchText, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   columnBackedValue,

@@ -21,7 +21,7 @@
  * `((ULID))`, `src-tauri/agaric-store/src/cache/mod.rs:53-69`):
  *
  *   - {@link linkTokenRe} — `PAGE_LINK_RE`-shaped. Its one consumer is
- *     `stripForFts` (`handlers/search.ts`), which models
+ *     `stripForFts` (`fts-text.ts`), which models
  *     `strip_for_fts_with_maps`'s page-link resolution step. That backend
  *     step is `PAGE_LINK_RE`-scoped on purpose (it substitutes a page's
  *     TITLE; a block ref resolves to its target's first line in a step of

@@ -38,12 +38,9 @@ export function utf8ToBase64Url(s: string): string {
  * `URL_SAFE_NO_PAD.decode` enforces — a remainder of 1 symbol carries no
  * whole byte, so Rust rejects it as `InvalidLength`.
  *
- * Shared by every mock cursor decoder that must match `URL_SAFE_NO_PAD`'s
- * strictness (`run_advanced_query`'s `decodeCursor` / `decodeGroupCursor` in
- * `handlers/search.ts`, `list_blocks`'s `decodeBlocksCursor` in
- * `handlers/blocks.ts`, #3942 review note 5) — extracted here rather than
- * left as `search.ts`-local once a second caller needed the identical check,
- * the same reasoning `utf8ToBase64Url`/`base64UrlToUtf8` were extracted for.
+ * Shared by the mock cursor decoders that must match `URL_SAFE_NO_PAD`'s
+ * strictness (`list_blocks`'s `decodeBlocksCursor` in `handlers/blocks.ts`,
+ * #3942 review note 5).
  *
  * Checked ahead of {@link base64UrlToUtf8} rather than relying on `atob` to
  * throw, for two reasons: it separates the engine's FIRST failure mode (bad

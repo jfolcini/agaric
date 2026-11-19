@@ -39,6 +39,23 @@
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, opLog } from '@/lib/tauri-mock/seed'
 
+const ENGINE_SEMANTICS =
+  'engine semantics (#6529); asserted by the backend, and on the bridge by the ' +
+  'REAL_BACKEND_SPECS specs'
+
+/**
+ * Read commands whose query steps the mock leg does not run (#6529): the mock
+ * answers them with a thin stub (`handlers/search.ts`), so their steps pin the
+ * engine on the backend alone. `conformance.test.ts` drops these steps and
+ * `conformance-coverage.test.ts` counts them as backend-only.
+ */
+export const QUERY_COMMANDS_BACKEND_ONLY: Readonly<Record<string, string>> = {
+  search_blocks: ENGINE_SEMANTICS,
+  search_blocks_partitioned: ENGINE_SEMANTICS,
+  run_advanced_query: ENGINE_SEMANTICS,
+  filtered_blocks_query: ENGINE_SEMANTICS,
+}
+
 /**
  * The harness space id. MUST equal `TEST_SPACE_ID` in
  * `src-tauri/tests/command_integration/common.rs` — fixtures never spell it

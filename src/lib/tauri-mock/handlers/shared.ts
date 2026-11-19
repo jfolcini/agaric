@@ -1046,7 +1046,7 @@ export function inheritedTagIds(blockId: string): string[] {
  * page is absent from the cache and its blocks satisfy neither half of the
  * `IN` / `NOT IN` pair by membership.
  */
-export function pagesCacheTitle(pageId: string): string | null {
+function pagesCacheTitle(pageId: string): string | null {
   const page = blocks.get(pageId)
   if (!page || page['block_type'] !== 'page' || page['deleted_at']) return null
   return (page['content'] as string | null) ?? null
@@ -1058,15 +1058,8 @@ export function pagesCacheTitle(pageId: string): string | null {
  * `query/projection.rs`). Callers refuse their surface's off-limits leaves first,
  * as the backend's surface gates do; the Search-only toggles (`Regex`,
  * `CaseSensitive`, `WholeWord`, `Snippet`) have no arm here.
- *
- * `lastEditedAt` selects which last-edited stamp the `LastEdited` arm reads;
- * it defaults to the row's own `lastModifiedAt`. See {@link LastEditedSource}.
  */
-export function metaRowMatchesFilter(
-  r: PageMetaRow,
-  f: Record<string, unknown>,
-  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
-): boolean {
+export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
   const type = f['type'] as string
   if (!Object.hasOwn(META_ROW_MATCHERS, type)) {
     throw appErrorRejection({
@@ -1075,14 +1068,10 @@ export function metaRowMatchesFilter(
       message: `\`${String(f['type'])}\` is not a valid filter on this surface`,
     })
   }
-  return (META_ROW_MATCHERS[type] as MetaRowMatcher)(r, f, lastEditedAt)
+  return (META_ROW_MATCHERS[type] as MetaRowMatcher)(r, f)
 }
 
-type MetaRowMatcher = (
-  r: PageMetaRow,
-  f: Record<string, unknown>,
-  lastEditedAt: LastEditedSource,
-) => boolean
+type MetaRowMatcher = (r: PageMetaRow, f: Record<string, unknown>) => boolean
 
 /**
  * Multi-value membership over a nullable column, mirroring the REAL backend's
@@ -1143,8 +1132,7 @@ const META_ROW_MATCHERS: Record<string, MetaRowMatcher> = {
     return pageGlobFilterMatches((f['pattern'] as string) ?? '', title, exclude)
   },
   HasProperty: (r, f) => hasPropertyMatches(r, f),
-  LastEdited: (r, f, lastEditedAt) =>
-    lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined, lastEditedAt),
+  LastEdited: (r, f) => lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined),
   // `in_or_null("b.todo_state", …)`, identical shape to `Priority`.
   State: (r, f) => inOrNullMatches(r.todoState, f),
   BlockType: (r, f) => {
@@ -1173,7 +1161,7 @@ const META_ROW_MATCHERS: Record<string, MetaRowMatcher> = {
   HasParentMatching: (r, f) => {
     // `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND <matcher on p>)`:
     // any parent row, trashed or not, judged on its own columns and its own
-    // last-edited stamp (`lastEditedAt` is the outer row's).
+    // last-edited stamp.
     const parent = r.parentId === null ? undefined : blocks.get(r.parentId)
     return (
       parent !== undefined &&
@@ -1283,40 +1271,25 @@ export function datePredicateMatches(
  *
  * Callers gate the tree first ({@link assertQueryFilterLeaves}), as the engine
  * does, so every leaf reaching `metaRowMatchesFilter` is one it evaluates.
- *
- * `lastEditedAt` is forwarded unchanged to every leaf. `run_advanced_query`
- * passes a memoizing {@link blockLastEditedAt} wrapper so its `LastEdited`
- * filter and its `lastEdited` sort read the SAME column — #3863 fixed the sort
- * getter only, which left the two halves of one command reading different data
- * (#3888 review note 3).
  */
-export function metaRowMatchesExpr(
-  r: PageMetaRow,
-  expr: Record<string, unknown>,
-  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
-): boolean {
+export function metaRowMatchesExpr(r: PageMetaRow, expr: Record<string, unknown>): boolean {
   switch (expr['type'] as string) {
     case 'Leaf': {
       return metaRowMatchesFilter(
         r,
         (expr['primitive'] as Record<string, unknown> | undefined) ?? {},
-        lastEditedAt,
       )
     }
     case 'And': {
       const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
-      return children.every((c) => metaRowMatchesExpr(r, c, lastEditedAt))
+      return children.every((c) => metaRowMatchesExpr(r, c))
     }
     case 'Or': {
       const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
-      return children.some((c) => metaRowMatchesExpr(r, c, lastEditedAt))
+      return children.some((c) => metaRowMatchesExpr(r, c))
     }
     case 'Not': {
-      return !metaRowMatchesExpr(
-        r,
-        (expr['child'] as Record<string, unknown> | undefined) ?? {},
-        lastEditedAt,
-      )
+      return !metaRowMatchesExpr(r, (expr['child'] as Record<string, unknown> | undefined) ?? {})
     }
     default: {
       throw unknownFilterNode(expr)
@@ -1669,25 +1642,6 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 }
 
 /**
- * Resolve the last-edited stamp a `LastEdited` filter reads for one row, the
- * data source `compile_last_edited` (`src-tauri/agaric-store/src/filters/primitive.rs`)
- * compiles to on that surface.
- *
- *  - {@link DEFAULT_LAST_EDITED_SOURCE} reads `r.lastModifiedAt`, which
- *    `buildPageMetaRow` populated from {@link blockLastEditedAt} and
- *    `list_pages_with_metadata` replaces with the page-wide stamp
- *    (`pages_cache.last_edited_ms`) its sort and filter both read.
- *  - `run_advanced_query` passes a per-row memoizing wrapper around
- *    {@link blockLastEditedAt} (`search.ts`), because it evaluates the
- *    filter over EVERY active block rather than over pre-built page rows and
- *    would otherwise rescan `opLog` per comparison.
- */
-export type LastEditedSource = (r: PageMetaRow) => string | null
-
-/** See {@link LastEditedSource} — the pre-computed last-edited stamp on the row. */
-export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifiedAt
-
-/**
  * Evaluate a `LastEdited` primitive against the row's last-edited stamp,
  * mirroring the backend's `compile_last_edited` buckets (rolling window
  * ending "now"):
@@ -1697,18 +1651,17 @@ export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifie
  *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
  *
  * The NULL handling matches the engine's epoch-sentinel rule exactly
- * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). `lastEditedAt` is a
- * {@link LastEditedSource} callback rather than a plain `r.lastModifiedAt`
- * read, but that seam is a MEMOIZATION hook, not a semantic choice — see
- * {@link LastEditedSource}.
+ * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). It reads
+ * `r.lastModifiedAt`, which `buildPageMetaRow` fills from
+ * {@link blockLastEditedAt} and `list_pages_with_metadata` replaces with the
+ * page-wide stamp (`pages_cache.last_edited_ms`) its sort also reads.
  */
 export function lastEditedMatches(
   r: PageMetaRow,
   spec: Record<string, unknown> | undefined,
-  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
 ): boolean {
   if (!spec) return true
-  const lm = lastEditedAt(r)
+  const lm = r.lastModifiedAt
   const cutoff = (days: number): string => {
     const d = new Date()
     d.setDate(d.getDate() - days)
@@ -1804,8 +1757,7 @@ export function sortDiscriminator(sort: string): number {
  * string key rides in `deleted_at`, the i64 key in `seq`.
  *
  * Goes through `utf8ToBase64Url` (`@/lib/base64url`) rather than a bare
- * `btoa`, as `run_advanced_query`'s `encodeCursor` (`search.ts`) does (#3863,
- * #3888): under `alphabetical` the `deleted_at` slot carries a title key,
+ * `btoa` (#3863, #3888): under `alphabetical` the `deleted_at` slot carries a title key,
  * user text. The backend's `Cursor::encode` is
  * `URL_SAFE_NO_PAD.encode(json.as_bytes())`, the UTF-8 bytes of the JSON;
  * `btoa` maps each code unit to a byte, so it throws on `—` (U+2014) and emits
@@ -1976,8 +1928,8 @@ export function sortOpLogNewestFirst<T extends { created_at: string; seq: number
  * Assemble one `PageMetaRow` from a block + its (already-filtered) descendants.
  *
  * Despite the name, `b` need not be a `block_type: 'page'` row: `run_advanced_query`
- * (#3821) calls this for EVERY active, in-space block so its `FilterExpr`
- * interpreter can evaluate primitives (incl. `BlockType`) against the row.
+ * (#3821) calls this for every live block so its `FilterExpr` interpreter can
+ * evaluate primitives (incl. `BlockType`) against the row.
  * `blockType` therefore always mirrors the source block's real `block_type` —
  * hardcoding `'page'` here made the `BlockType` filter a no-op (every row
  * compared equal to the constant).
@@ -2188,153 +2140,7 @@ export function refreshDescendantPageIds(rootBlockId: string): void {
   }
 }
 
-// -- filtered_blocks_query helpers (extracted to keep the handler flat) -------
-
-/** Reserved row-level columns and the value column they compare against. */
-export const FBQ_ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
-  todo_state: 'text',
-  priority: 'text',
-  due_date: 'date',
-  scheduled_date: 'date',
-}
-
-/** Compare `lhs`/`rhs` under the named PropertyFilter operator; a date filter
- * (`dated`) reads a datetime against a day by the local day (#6906). */
-export function fbqCompare(operator: string, lhs: string, rhs: string, dated = false): boolean {
-  const day = dated ? onLocalDay(operator, lhs, rhs) : null
-  if (day !== null) return day
-  switch (operator) {
-    case 'neq': {
-      return lhs !== rhs
-    }
-    case 'lt': {
-      return lhs < rhs
-    }
-    case 'gt': {
-      return lhs > rhs
-    }
-    case 'lte': {
-      return lhs <= rhs
-    }
-    case 'gte': {
-      return lhs >= rhs
-    }
-    default: {
-      return lhs === rhs
-    }
-  }
-}
-
-/** Apply backend NULL semantics for a scalar property comparison. Non-reserved
- * property rows store exactly one typed column, so a sibling-column NULL is
- * unequal to a target. Reserved block columns retain their `IS NOT NULL` gate. */
-function fbqTypedValueMatches(
-  operator: string,
-  lhs: string | null,
-  rhs: string,
-  source: 'property' | 'reserved',
-  dated: boolean,
-): boolean {
-  if (lhs === null) return operator === 'neq' && source === 'property'
-  return fbqCompare(operator, lhs, rhs, dated)
-}
-
-/** The scalar comparison, or a list's (#6741): `neq` when no string item is equal, any other
- * operator when one string item compares true. */
-function fbqValueMatches(
-  operator: string,
-  lhs: string | null,
-  items: readonly string[],
-  rhs: string,
-  source: 'property' | 'reserved',
-  dated: boolean,
-): boolean {
-  const scalar = fbqTypedValueMatches(operator, lhs, rhs, source, dated)
-  if (operator === 'neq') return scalar && !items.some((item) => fbqCompare('eq', item, rhs, dated))
-  return scalar || items.some((item) => fbqCompare(operator, item, rhs, dated))
-}
-
-/** Resolve a block's candidate text/date and storage source for `key`.
- * Returns null only when a non-reserved property key is absent; reserved keys
- * retain a result with null values so their backend `IS NOT NULL` gate wins. */
-export function fbqResolveValues(
-  b: Record<string, unknown>,
-  key: string,
-): {
-  pText: string | null
-  pDate: string | null
-  /** A list's string items (#6741), which the text and date filters both compare. */
-  pItems: string[]
-  source: 'property' | 'reserved'
-} | null {
-  const prop = properties.get(b['id'] as string)?.get(key)
-  if (prop) {
-    return {
-      pText: (prop['value_text'] as string | null) ?? null,
-      pDate: (prop['value_date'] as string | null) ?? null,
-      pItems: listCandidates(prop, false) as string[],
-      source: 'property',
-    }
-  }
-  const rowKind = FBQ_ROW_FIELD_KEYS[key]
-  if (rowKind === undefined) return null // key absent
-  const v = (b[key] as string | null | undefined) ?? null
-  return rowKind === 'text'
-    ? { pText: v, pDate: null, pItems: [], source: 'reserved' }
-    : { pText: null, pDate: v, pItems: [], source: 'reserved' }
-}
-
-/**
- * Evaluate one PropertyFilter against a block — mirrors the EXISTS-subquery
- * semantics the backend emits per filter (or, for reserved keys, the direct
- * column predicate routing).
- */
-export function fbqPropertyFilterMatches(
-  b: Record<string, unknown>,
-  pf: Record<string, unknown>,
-): boolean {
-  const resolved = fbqResolveValues(b, pf['key'] as string)
-  if (resolved === null) return false
-  const { pText, pDate, pItems, source } = resolved
-  const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
-
-  // #3930 review note 2 — a reserved key's `AND b.{col} IS NOT NULL` gate
-  // (queries.rs's `reserved_col` match) is UNCONDITIONAL: it is emitted
-  // before any value predicate, not only when one is present. Every value
-  // check below is already null-safe for `source === 'reserved'`
-  // (`fbqTypedValueMatches`, the `valueTextIn`/`valueDateRange` null guards),
-  // so the only gap is the bare key-presence filter — no value field at all —
-  // which without this check fell through every guard below and matched
-  // regardless of whether the column was actually set.
-  if (source === 'reserved' && pText === null && pDate === null) return false
-  // A reserved column holds days only; a property's date may be a datetime (#6906).
-  const dated = source === 'property'
-
-  const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
-  if (
-    valueTextIn &&
-    valueTextIn.length > 0 &&
-    ![...(pText == null ? [] : [pText]), ...pItems].some((held) => valueTextIn.includes(held))
-  ) {
-    return false
-  }
-  const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
-  if (valueDateRange) {
-    const [from, to] = valueDateRange
-    const inRange = (held: string): boolean =>
-      fbqCompare('gte', held, from, dated) && fbqCompare('lt', held, to, dated)
-    if (!(pDate != null && inRange(pDate)) && !pItems.some(inRange)) return false
-  }
-  const valueText = (pf['valueText'] as string | null) ?? null
-  if (valueText !== null && !fbqValueMatches(operator, pText, pItems, valueText, source, false)) {
-    return false
-  }
-  const valueDate = (pf['valueDate'] as string | null) ?? null
-  if (valueDate !== null && !fbqValueMatches(operator, pDate, pItems, valueDate, source, dated)) {
-    return false
-  }
-  return true
-}
+// -- filtered_blocks_query helpers ------------------------------------------
 
 /** Resolve prefix strings to tag-block ids by content prefix-match (mirrors the
  *  backend's `tags_cache.name LIKE ?`; the mock walks tag blocks instead). */
@@ -2372,11 +2178,6 @@ export function fbqTagFilterMatches(
   const tags = refInclusiveTags(b['id'] as string)
   if (tags.size === 0) return false
   return mode === 'and' ? allIds.every((tid) => tags.has(tid)) : allIds.some((tid) => tags.has(tid))
-}
-
-/** Space-scope gate (mirrors `filtered_blocks_query_inner`). */
-export function fbqInSpace(b: Record<string, unknown>, spaceId: string): boolean {
-  return ownerSpaceOf(b) === spaceId
 }
 
 // ─── Compile-time contract linkage to the generated bindings (#2241) ─────────

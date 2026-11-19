@@ -147,36 +147,6 @@ describe('list_backlinks_grouped — the property leaves over a list', () => {
   })
 })
 
-describe('filtered_blocks_query — a property filter over a list', () => {
-  function matching(filter: Record<string, unknown>): string[] {
-    const res = dispatch('filtered_blocks_query', {
-      propertyFilters: [filter],
-      tagFilters: null,
-      scope: { kind: 'active', space_id: SPACE },
-    }) as { items: Array<Record<string, unknown>> }
-    return res.items.map((b) => b['id'] as string).toSorted()
-  }
-
-  it('= and an ordering hold when one string item does', () => {
-    expect(matching({ key: 'authors', valueText: 'Ann' })).toEqual([L1, L3].toSorted())
-    expect(matching({ key: 'authors', valueText: 'Bz', operator: 'gt' })).toEqual([L2])
-    expect(matching({ key: 'days', valueDate: '2026-02-01', operator: 'lt' })).toEqual([D1])
-  })
-
-  it('neq takes a block with the key and no equal item', () => {
-    expect(matching({ key: 'authors', valueText: 'Ann', operator: 'neq' })).toEqual([L2])
-  })
-
-  it('value_text_in and value_date_range hold when one string item does', () => {
-    expect(matching({ key: 'authors', valueTextIn: ['Bob', 'Zed'] })).toEqual([L1])
-    expect(matching({ key: 'days', valueDateRange: ['2026-03-01', '2026-04-01'] })).toEqual([D1])
-  })
-
-  it('a number item is no text', () => {
-    expect(matching({ key: 'scores', valueText: '3' })).toEqual([N2])
-  })
-})
-
 describe('list_property_values — the items of a text, select, url or undeclared list', () => {
   const values = (key: string) => dispatch('list_property_values', { key }) as string[]
   const define = (key: string, valueType: string) =>

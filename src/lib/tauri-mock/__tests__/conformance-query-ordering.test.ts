@@ -22,29 +22,35 @@ import {
 import { blocks, makeBlock, properties } from '@/lib/tauri-mock/seed'
 
 /**
- * One step over the seeded space with no `sort`, so the engine's terminal
- * `b.id DESC` tiebreaker (`resolve_sort`) decides: `P1` before `C1`. The two
- * ids sort the OTHER way canonically, which is what makes the ordered and the
- * unordered projections distinguishable at all.
+ * The children of `P1` in `position` order: `C2` before `C1`. The two ids sort
+ * the OTHER way canonically, which is what makes the ordered and the unordered
+ * projections distinguishable at all.
  */
 const flatStep = {
-  name: 'flat_no_group',
-  command: 'run_advanced_query',
-  args: { request: { spaceId: CONFORMANCE_SPACE_ID, limit: 100 } },
+  name: 'children_by_position',
+  command: 'list_blocks',
+  args: {
+    request: { parentId: 'P1', limit: 100 },
+    scope: { kind: 'active', space_id: CONFORMANCE_SPACE_ID },
+  },
 }
+
+/** The block ids of a step's row tokens, without their attributes. */
+const ids = (rows: string[] | undefined) => rows?.map((token) => token.split('#')[0])
 
 describe('runQuerySteps compares rows in order unless a step names a reason', () => {
   beforeEach(() => {
     blocks.clear()
     properties.clear()
     blocks.set('P1', makeBlock('P1', 'page', 'Page One', null, 0))
-    blocks.set('C1', makeBlock('C1', 'content', 'A child', 'P1', 1))
+    blocks.set('C2', makeBlock('C2', 'content', 'First child', 'P1', 1))
+    blocks.set('C1', makeBlock('C1', 'content', 'Second child', 'P1', 2))
     stampMockSpace()
   })
 
   it('keeps the returned order when the step says nothing', async () => {
     const out = await runQuerySteps([flatStep], new Map())
-    expect(out[0]?.rows).toEqual(['P1', 'C1'])
+    expect(ids(out[0]?.rows)).toEqual(['C2', 'C1'])
   })
 
   it('canonically sorts a step that names why the order is not comparable', async () => {
@@ -52,7 +58,7 @@ describe('runQuerySteps compares rows in order unless a step names a reason', ()
       [{ ...flatStep, unordered: 'the two stacks mint different ids for these rows' }],
       new Map(),
     )
-    expect(out[0]?.rows).toEqual(['C1', 'P1'])
+    expect(ids(out[0]?.rows)).toEqual(['C1', 'C2'])
   })
 
   // `"unordered": true` is the old opt-in wearing the new key's name: it reads
