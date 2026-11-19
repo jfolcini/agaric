@@ -162,8 +162,7 @@ pub async fn due_tasks(pool: &SqlitePool, today: NaiveDate) -> Result<Vec<DueTas
 pub fn notification_title(content: Option<&str>) -> String {
     let first_line = content
         .and_then(|c| c.lines().next())
-        .map(str::trim)
-        .unwrap_or_default();
+        .map_or_default(str::trim);
     if first_line.is_empty() {
         return "Untitled task".to_string();
     }

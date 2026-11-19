@@ -244,11 +244,7 @@ fn is_blocked_ipv6(v6: Ipv6Addr) -> bool {
     // Teredo — 2001::/32 (i.e. 2001:0000::/32). Prefix-block the whole range:
     // the embedded server/client IPv4 encoding is fiddly and Teredo is
     // deprecated, so blocking the prefix outright is the safe choice.
-    if seg0 == 0x2001 && seg[1] == 0x0000 {
-        return true;
-    }
-
-    false
+    seg0 == 0x2001 && seg[1] == 0x0000
 }
 
 /// Enforcement-time variant of [`is_blocked_ip`]. In production it is

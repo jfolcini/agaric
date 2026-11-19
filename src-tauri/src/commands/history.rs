@@ -1994,8 +1994,7 @@ fn plan_reverse_apply_order(
                 OpPayload::MoveBlock(m) => (
                     m.new_parent_id
                         .as_ref()
-                        .map(|b| b.as_str().to_owned())
-                        .unwrap_or_default(),
+                        .map_or_default(|b| b.as_str().to_owned()),
                     m.new_index
                         .unwrap_or_else(|| m.new_position.saturating_sub(1)),
                     reverses[idx].0.seq,

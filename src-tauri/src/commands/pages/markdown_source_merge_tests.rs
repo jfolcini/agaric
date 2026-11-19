@@ -321,7 +321,7 @@ fn outline(specs: &[Spec]) -> String {
     specs
         .iter()
         .map(|spec| {
-            let anchor = spec.anchor.map(|a| format!(" ^{a}")).unwrap_or_default();
+            let anchor = spec.anchor.map_or_default(|a| format!(" ^{a}"));
             format!("{}+ {}{anchor}\n", "  ".repeat(spec.depth), spec.content)
         })
         .collect()

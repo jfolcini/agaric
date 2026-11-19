@@ -520,7 +520,7 @@ async fn create_note_targets(
         .iter()
         .map(|title| (agaric_core::tag_norm::name_key(title), title))
         .collect();
-    let bare = file.vault_notes.map(vault_note_titles).unwrap_or_default();
+    let bare = file.vault_notes.map_or_default(vault_note_titles);
     let mut made: HashMap<String, String> = HashMap::new();
     for name in lines.missing_titles() {
         let found = notes.get(&agaric_core::tag_norm::name_key(&name)).copied();

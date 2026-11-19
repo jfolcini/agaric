@@ -796,8 +796,7 @@ fn scalar_tokens(v: &Value) -> Vec<String> {
 fn ids_at(v: &Value, rows_key: &str, id_key: &str) -> Vec<String> {
     v.get(rows_key)
         .and_then(Value::as_array)
-        .map(|rows| ids_in(rows, id_key))
-        .unwrap_or_default()
+        .map_or_default(|rows| ids_in(rows, id_key))
 }
 
 /// One step's args, carrying WHO is asking (#3833 item 5).
@@ -1174,7 +1173,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let rows = v
                 .get("edges")
                 .and_then(Value::as_array)
-                .map(|edges| {
+                .map_or_default(|edges| {
                     edges
                         .iter()
                         .map(|e| {
@@ -1186,8 +1185,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                             )
                         })
                         .collect()
-                })
-                .unwrap_or_default();
+                });
             RawResult {
                 rows,
                 has_more: v.get("truncated").and_then(Value::as_bool),
@@ -1388,7 +1386,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             // Bare `Vec<BlockRow>` — the response IS the row array.
             let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
             RawResult {
-                rows: v.as_array().map(|a| ids_in(a, "id")).unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| ids_in(a, "id")),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1477,20 +1475,17 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             // columns ride as attributes: the graph's filters read them.
             let v = serde_json::to_value(&rows).expect("serialize Vec<PageHeading>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| {
-                                row_token(
-                                    r,
-                                    "id",
-                                    &["todo_state", "priority", "due_date", "scheduled_date"],
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| {
+                            row_token(
+                                r,
+                                "id",
+                                &["todo_state", "priority", "due_date", "scheduled_date"],
+                            )
+                        })
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1513,14 +1508,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let rows = list_drafts_inner(pool).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<Draft>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| row_token(r, "block_id", &["content"]))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| row_token(r, "block_id", &["content"]))
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1538,14 +1530,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let rows = list_spaces_inner(pool).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<SpaceRow>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| row_token(r, "id", &["name", "accent_color"]))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| row_token(r, "id", &["name", "accent_color"]))
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1619,14 +1608,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 count_property_usage_inner(pool, &arg_req::<String>(args, "spaceId")).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyUsage>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| row_token(r, "key", &["count", "unfit", "unfit_in_trash"]))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| row_token(r, "key", &["count", "unfit", "unfit_in_trash"]))
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1750,14 +1736,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let rows = list_suggested_properties_inner(pool, arg_req(args, "blockId")).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<SuggestedProperty>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| row_token(r, "key", &["tag_id", "tag_name"]))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| row_token(r, "key", &["tag_id", "tag_name"]))
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -1808,10 +1791,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             .await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyLoss>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| a.iter().map(|r| row_token(r, "key", &["count"])).collect())
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter().map(|r| row_token(r, "key", &["count"])).collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -2063,14 +2045,11 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             .await?;
             let v = serde_json::to_value(&merges).expect("serialize Vec<ImportMerge>");
             RawResult {
-                rows: v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| row_token(r, "page_id", &["title"]))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                rows: v.as_array().map_or_default(|a| {
+                    a.iter()
+                        .map(|r| row_token(r, "page_id", &["title"]))
+                        .collect()
+                }),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,
@@ -2397,8 +2376,7 @@ fn page_result_with(v: &Value, token: &dyn Fn(&Value) -> String) -> RawResult {
         rows: v
             .get("items")
             .and_then(Value::as_array)
-            .map(|rows| rows.iter().map(token).collect())
-            .unwrap_or_default(),
+            .map_or_default(|rows| rows.iter().map(token).collect()),
         has_more: v.get("has_more").and_then(Value::as_bool),
         total_count: v.get("total_count").and_then(Value::as_i64),
         next_cursor: v
