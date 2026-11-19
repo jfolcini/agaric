@@ -149,6 +149,10 @@ jobs:
   detect-changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
+    permissions:
+      contents: read
+      # The `base` step reads main's last green CI run.
+      actions: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       docs: ${{ steps.classify.outputs.docs }}
@@ -170,13 +174,25 @@ jobs:
           # merge-base for PRs whose head sits behind `main`.
           fetch-depth: 0
           persist-credentials: false
+      # A main push diffs against main's last green CI run, not the commit
+      # before it, so a lane that diff would skip cannot report green over its
+      # own last red, and a cancelled superseded run's commits keep their lanes.
+      # No green run found sets the all-zero sha: the full set runs.
+      - id: base
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty') || sha=''
+          echo "sha=${sha:-0000000000000000000000000000000000000000}" >> "$GITHUB_OUTPUT"
       - id: classify
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_BEFORE: ${{ steps.base.outputs.sha || github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
       # The version mutual-agreement check (#2975) over every file
