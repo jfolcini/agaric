@@ -132,9 +132,7 @@ export function setupMock(): void {
   // mock's change feed sends it on the next task. The bridge defines it too.
   w['__settleBackend'] = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-  // The rest are the mock's alone: a Playwright fixture that asked for the
-  // bridge's surface gets none of them, as the bridge has none.
-  if (w['__AGARIC_NO_MOCK_HOOKS__'] === true) return
+  // The rest are the mock's alone; the bridge has none of them.
   w['__injectMockError'] = injectMockError
   w['__clearMockErrors'] = clearMockErrors
   w['__setMockLatency'] = setMockLatency

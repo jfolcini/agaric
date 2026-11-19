@@ -266,7 +266,10 @@ void test('--run runs a small Playwright selection on its own port and passes fa
   const ok = runWith([SOME_SPECS[0]])
   assert.equal(ok.status, 0, ok.out)
   assert.equal(ok.calls.length, 1)
-  assert.match(ok.calls[0], new RegExp(`^\\d+ playwright test --trace off ${SOME_SPECS[0]}$`))
+  assert.match(
+    ok.calls[0],
+    new RegExp(`^\\d+ playwright test --trace off --pass-with-no-tests ${SOME_SPECS[0]}$`),
+  )
 
   const red = runWith([SOME_SPECS[0]], { npxStatus: 3 })
   assert.equal(red.status, 3, red.out)

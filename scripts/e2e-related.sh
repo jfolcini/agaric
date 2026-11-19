@@ -274,8 +274,10 @@ if [ "$RUN" = 1 ]; then
       else
         PW_PORT="${PW_PORT:-$(node -e 'const s=require("node:net").createServer();s.listen(0,()=>{console.log(s.address().port);s.close()})')}"
         export PW_PORT
-        echo "running on port $PW_PORT: npx playwright test --trace off ${PW_PICK[*]}"
-        exec npx playwright test --trace off "${PW_PICK[@]}"
+        # A spec REAL_BACKEND_SPECS lists runs here only for its @mock-only
+        # tests, and may have none.
+        echo "running on port $PW_PORT: npx playwright test --trace off --pass-with-no-tests ${PW_PICK[*]}"
+        exec npx playwright test --trace off --pass-with-no-tests "${PW_PICK[@]}"
       fi
       ;;
     *) echo "CI runs the whole lane (Playwright: the selection is the whole lane)" ;;

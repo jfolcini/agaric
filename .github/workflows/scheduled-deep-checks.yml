@@ -3092,7 +3092,8 @@ jobs:
   # plus the FULL vitest / playwright / nextest / doc-test suites over the
   # entire tree, so a latent breach in an untouched, unchanged-category file
   # is caught here even when no PR re-linted it. The nextest leg also runs the
-  # `real-backend` Playwright project (#6529), which no PR runs. Nothing is category-gated:
+  # `real-backend` Playwright project (#6529), which a PR runs only when its
+  # diff reaches it (`_validate.yml`'s `bridge-specs`). Nothing is category-gated:
   # every hook and every test runs. Not a required check — a maintainer
   # triages any failure.
   #
