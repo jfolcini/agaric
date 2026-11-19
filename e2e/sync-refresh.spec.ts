@@ -13,7 +13,7 @@ import { expect, navigateToView, openPage, openSearchView, test, waitForBoot } f
  * that write with the change feed's `blocks:changed` (#6545), as it cannot tell
  * it from a local command, so these specs show the surfaces refresh after an
  * out-of-band write. The `sync:complete` path alone is pinned by
- * `useSyncEvents.test.ts` and by `e2e-tauri/sync-refresh.e2e.ts`, where a real
+ * `useSyncEvents.test.ts` and by `e2e-tauri/sync-two-device.e2e.ts`, where a real
  * peer's ops send no feed event.
  *
  * Seed ids: src/lib/tauri-mock/seed.ts `SEED_IDS`.

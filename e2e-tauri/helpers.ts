@@ -73,9 +73,9 @@
 //     `[data-testid="device-no-peers"]`, and the toasts "Device paired
 //     successfully" and "Address updated". Its outline reads
 //     `[data-testid="sortable-block"]` rows, their `li[aria-level]`, and the
-//     `[data-testid="property-chip"]` inside a row. sync-refresh.e2e.ts pairs
-//     through the same settings and then reads: the sidebar's
-//     `button[aria-label="Sync"]` and its `aria-disabled` while a sync runs
+//     `[data-testid="property-chip"]` inside a row. Its views-follow-a-pull
+//     tests read: the sidebar's `button[aria-label="Sync"]` and its
+//     `aria-disabled` while a sync runs
 //     (AppSidebar.tsx), `[data-testid="due-panel"]`, `.done-panel`,
 //     `[data-testid="unfinished-tasks"]` and its `button[aria-expanded]`
 //     header, `.page-browser-item-title`, `[aria-label="Page title"]`, the

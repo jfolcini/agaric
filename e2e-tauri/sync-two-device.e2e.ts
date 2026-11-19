@@ -5,7 +5,11 @@
 // edit crosses in each direction, then a property and a move, then two
 // concurrent edits to one block, then an image each way, then a meeting with
 // its files (#5364), then the open page's undo and redo across a pull (#6541),
-// then a sync cancelled while the peer does not answer, and last an unpair.
+// then a sync cancelled while the peer does not answer. Then the peer's writes
+// reach the views the app holds open (Due, Done and Unfinished panels, the
+// Pages list, an open page's title, a search, the week, Last edited), a
+// property definition it declares, a page open in page mode, and the Markdown
+// mirror; and last a restart and an unpair.
 // The second device is `e2e_sync_peer`, a headless vault on the app's sync daemon
 // (sync-peer.ts). It reads the dialog's QR as a phone's camera would; the QR
 // carries the address that mDNS, which a CI runner cannot be relied on for,
@@ -18,6 +22,15 @@
 // The tests share one vault: each after the second works on the pairing and
 // the page the second leaves. Unpair ends the pairing, so it runs last.
 //
+// The views-follow-a-pull tests start each pull from the sidebar's Sync
+// button: "Sync now" lives in Settings, and leaving the view to press it would
+// remount the view and re-query it, which is the very refresh under test. No
+// local surface announces a peer's ops, so each view holds only if
+// `reloadChangedPageStores` (useSyncEvents.ts) refreshes it, on `sync:complete`
+// and again on the `blocks:changed` that follows the post-sync cache rebuild
+// (`SpacePlacementSink`). The mock-lane twin, `e2e/sync-refresh.spec.ts`, cannot
+// show this: its out-of-band write also answers with `blocks:changed`.
+//
 // An image's row and block arrive in a session's op phase, and its bytes in the
 // file phase after it, so neither side's sync wait covers the bytes: each image
 // test waits on the receiving side's `read_attachment` instead.
@@ -25,25 +38,39 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
   caretToEnd,
+  chooseSelectOption,
   enterBlankSibling,
   expectAbsent,
   expectImageRendered,
   invoke,
   navigateTo,
   openNewPage,
+  openSettingsTab,
   pasteFileIntoFocusedBlock,
   reopenPageByTitle,
   restartApp,
   runScopedMarker,
+  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
+import {
+  PAGE_MODE,
+  chooseEditMode,
+  pageModeBlocks,
+  pageModeCaret,
+  typeInPageMode,
+} from './page-mode'
 import {
   type SyncPeer,
   openPairing,
@@ -94,6 +121,56 @@ const PEER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR42mP4z8AAQv8BD/kD/Zh51wAAAAAASUVORK5CYII=',
   'base64',
 )
+
+// The views-follow-a-pull tests. Titles are matched whole and not run-scoped:
+// every spec file boots its own vault. The tag is typed, so it doubles no letter.
+const TODAY_TASK = runScopedMarker('wdio-peer-today-task')
+const LATE_TASK = runScopedMarker('wdio-peer-late-task')
+const TAGGED = runScopedMarker('wdio-peer-tagged')
+const DAY_ENTRY = runScopedMarker('wdio-peer-day-entry')
+const LATE_BLOCK = runScopedMarker('wdio-peer-late-block')
+const TASKS_PAGE = 'peer tasks'
+const LATE_PAGE = 'peer late tasks'
+const TAGGED_PAGE = 'peer tagged notes'
+const LISTED = 'peer listed page'
+const CREATED = 'peer created page'
+const RENAMED = 'peer renamed page'
+const OPEN_TITLE = 'peer open page'
+const RETITLED = 'peer retitled page'
+const EDITED_PAGE = 'peer edited page'
+const NEWER_PAGE = 'peer newer page'
+const TAG = 'marigold'
+const DUE_PANEL = '[data-testid="due-panel"]'
+const DONE_PANEL = '.done-panel'
+const UNFINISHED = '[data-testid="unfinished-tasks"]'
+const TITLE = '[aria-label="Page title"]'
+const TAB_LIST = '[role="tablist"][aria-label="Editor tabs"]'
+const SEARCH_INPUT = '[aria-label="Search blocks"]'
+const SEARCH_STATUS = '[data-testid="search-results-count"]'
+// The property definition the peer declares a `date`, held by the app as text first.
+const SYNCED_KEY = runScopedMarker('wdio-due')
+const DEFS_PAGE = runScopedMarker('wdio-defs-page')
+const DEFS_HOLDER = runScopedMarker('wdio-defs-holder')
+// Page mode while the peer edits.
+const PM_TITLE = 'peer page mode'
+const PM_FIRST = runScopedMarker('wdio-pm-first')
+const PM_SECOND = runScopedMarker('wdio-pm-second')
+const PM_THIRD = runScopedMarker('wdio-pm-third')
+const PM_FROM_PEER = runScopedMarker('wdio-pm-from-peer')
+const PM_FOURTH = runScopedMarker('wdio-pm-fourth')
+// The Markdown mirror's folder and the page the peer writes into it.
+const MIRROR_TITLE = runScopedMarker('wdio-mirror-peer-page')
+const MIRROR_FIRST = runScopedMarker('wdio-mirror-peer-block')
+const MIRROR_EDITED = runScopedMarker('wdio-mirror-peer-edit')
+const mirrorFolder = mkdtempSync(path.join(os.tmpdir(), 'wdio-mirror-sync-'))
+
+/** `MirrorStatus` (src-tauri/src/mirror/mod.rs) as the command serializes it. */
+interface MirrorStatus {
+  folder: string | null
+  diverged: { page_id: string; path: string }[]
+  failed: { page_id: string; path: string; message: string }[]
+  last_pass_ms: number | null
+}
 
 /** Close the open pairing dialog through its "Cancel pairing?" guard. */
 async function cancelPairing(): Promise<void> {
@@ -355,6 +432,211 @@ function chipIn(id: string, value: string) {
   )
 }
 
+/** Whether the sidebar's Sync button takes a click: it is `aria-disabled` while a sync runs. */
+async function syncIdle(): Promise<boolean> {
+  return (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false'
+}
+
+/** Write on the peer, then press the sidebar's Sync, which leaves the open view mounted. */
+async function pullPeerWrites<T>(device: SyncPeer, writes: () => Promise<T>): Promise<T> {
+  const written = await writes()
+  await browser.waitUntil(syncIdle, {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: 'the app never finished the sync it was running',
+  })
+  await $(SYNC_BUTTON).click()
+  await device.waitPulled()
+  return written
+}
+
+/**
+ * Wait until the open view shows `holds`, pressing Sync again between reads. A
+ * pull of the daemon's already running at the first press can end after the
+ * peer's writes without carrying them, and answer `waitPulled` early; a later
+ * pull carries them. A pull never remounts the view, so with the refresh gone
+ * none of them makes `holds` true.
+ */
+async function waitInOpenView(holds: () => Promise<boolean>, what: () => string): Promise<void> {
+  await browser
+    .waitUntil(
+      async () => {
+        if (await holds()) return true
+        if (await syncIdle()) await $(SYNC_BUTTON).click()
+        return false
+      },
+      { timeout: NAV_TIMEOUT, interval: 1_000 },
+    )
+    .catch(() => {
+      throw new Error(what())
+    })
+}
+
+/**
+ * Wait until `holds`, pressing Sync and re-opening the view with `open` between
+ * reads. For a seed only: a remount re-queries, so it would hide a refresh
+ * under test.
+ */
+async function waitInFreshView(
+  open: () => Promise<void>,
+  holds: () => Promise<boolean>,
+  what: string,
+): Promise<void> {
+  await open()
+  await browser.waitUntil(
+    async () => {
+      if (await holds()) return true
+      if (await syncIdle()) await $(SYNC_BUTTON).click()
+      await navigateTo('Tags')
+      await open()
+      return false
+    },
+    { timeout: NAV_TIMEOUT, interval: 1_000, timeoutMsg: what },
+  )
+}
+
+/** The DOM text of `selector`, or '' when it is not rendered; read whether or not it is visible. */
+function textOf(selector: string): Promise<string> {
+  return browser.execute((sel: string) => document.querySelector(sel)?.textContent ?? '', selector)
+}
+
+/** The local date `offsetDays` from today, as the app's views compute it. */
+function localDate(offsetDays: number): Promise<string> {
+  return browser.execute((offset: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, offsetDays)
+}
+
+/** Switch the journal to `mode` (`JournalControls`, `journalTabId(mode)`). */
+async function openJournalMode(mode: 'daily' | 'weekly'): Promise<void> {
+  await navigateTo('Journal')
+  const tab = $(`#journal-tab-${mode}`)
+  await tab.waitForClickable({ timeout: NAV_TIMEOUT })
+  await tab.click()
+  await browser.waitUntil(async () => (await tab.getAttribute('aria-selected')) === 'true', {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: `the ${mode} journal tab never became selected`,
+  })
+}
+
+/** Expand Unfinished tasks if it renders collapsed (its default). */
+async function expandUnfinished(): Promise<void> {
+  const header = $(`${UNFINISHED} button[aria-expanded]`)
+  if ((await header.isExisting()) && (await header.getAttribute('aria-expanded')) === 'false') {
+    await header.click()
+  }
+}
+
+/**
+ * The id of a week day other than `except` that still shows its no-page empty
+ * state. Its "No blocks for" sentence is for screen readers only, which
+ * `getText()` leaves out, so this reads the text content.
+ */
+async function emptyWeekDay(except: string): Promise<string> {
+  let found: string | undefined
+  await browser.waitUntil(
+    async () => {
+      for (const day of await $$('section[id^="journal-"]').getElements()) {
+        const date = ((await day.getAttribute('id')) ?? '').replace('journal-', '')
+        const text = await browser.execute((el: HTMLElement) => el.textContent ?? '', day)
+        if (date !== except && text.includes('No blocks for')) {
+          found = date
+          return true
+        }
+      }
+      return false
+    },
+    { timeout: NAV_TIMEOUT, timeoutMsg: `the week view shows no day but ${except} without a page` },
+  )
+  if (found === undefined) throw new Error('no empty week day found')
+  return found
+}
+
+/** A Pages list row's title span (PageBrowser/PageRow.tsx), by exact title. */
+function pageRow(title: string): string {
+  return `//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`
+}
+
+/** Whether the Pages list shows `upper` above `lower`, in its order (PageRow.tsx's `data-index`). */
+async function listsAbove(upper: string, lower: string): Promise<boolean> {
+  const titles = await browser.execute(() => {
+    const rows = [...document.querySelectorAll('[data-page-item]')]
+    rows.sort((a, b) => Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index')))
+    return rows.map(
+      (row) => row.querySelector('.page-browser-item-title')?.getAttribute('data-page-title') ?? '',
+    )
+  })
+  const at = titles.indexOf(upper)
+  return at !== -1 && titles.includes(lower) && at < titles.indexOf(lower)
+}
+
+/** The Delete button of `key`'s row in Settings › Properties. */
+const deletePropertyButton = (key: string) => `button[aria-label="Delete property ${key}"]`
+
+/** The value type badge of `key`'s row in Settings › Properties, or null when it is not listed. */
+function listedType(key: string): Promise<string | null> {
+  return browser.execute((selector: string) => {
+    const row = document.querySelector(selector)?.closest('[data-slot="list-item"]')
+    return row?.querySelector('[data-slot="badge"]')?.textContent ?? null
+  }, deletePropertyButton(key))
+}
+
+/** Settings › Properties, opened from another view so it lists afresh. */
+async function reopenProperties(): Promise<void> {
+  await navigateTo('Pages')
+  await openSettingsTab('properties')
+}
+
+/** Wait until the peer, pulling from the app, holds `content` in block `id`. */
+async function waitPeerHolds(device: SyncPeer, id: string, content: string): Promise<void> {
+  let seen = ''
+  await browser
+    .waitUntil(
+      async () => {
+        await device.sync()
+        seen = (await device.getBlock(id)).content
+        return seen === content
+      },
+      { timeout: NAV_TIMEOUT, interval: 1_000 },
+    )
+    .catch(() => {
+      throw new Error(
+        `the peer holds ${JSON.stringify(seen)} in ${id}, not ${JSON.stringify(content)}`,
+      )
+    })
+}
+
+/** The text of the mirrored peer page's file, under whatever space folder holds it; '' while there is none. */
+function mirroredPageFile(): string {
+  const file = readdirSync(mirrorFolder, { recursive: true, withFileTypes: true }).find(
+    (entry) => entry.isFile() && entry.name === `${MIRROR_TITLE}.md`,
+  )
+  if (file === undefined) return ''
+  return readFileSync(path.join(file.parentPath, file.name), 'utf8')
+}
+
+/**
+ * Wait until the mirrored page's file holds `text`, pressing the sidebar's Sync
+ * between reads: a pull already running at the first press can end without the
+ * peer's write, and a later one carries it.
+ */
+async function syncUntilFileHolds(text: string, absent?: string): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const onDisk = mirroredPageFile()
+      if (onDisk.includes(text) && (absent === undefined || !onDisk.includes(absent))) return true
+      if (await syncIdle()) await $(SYNC_BUTTON).click()
+      return false
+    },
+    {
+      timeout: NAV_TIMEOUT,
+      interval: 1_000,
+      timeoutMsg: `${MIRROR_TITLE}.md never held ${text}; it holds ${JSON.stringify(mirroredPageFile())}`,
+    },
+  )
+}
+
 /** What the pairing test leaves for the tests after it. */
 interface Paired {
   deviceId: string
@@ -364,7 +646,7 @@ interface Paired {
   peerBlockId: string
 }
 
-describe('Agaric real-backend two-device sync (#5365) @sync', () => {
+describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @settings @markdown', () => {
   let peer: SyncPeer | undefined
   let paired: Paired | undefined
 
@@ -374,6 +656,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
 
   after(async () => {
     await peer?.stop()
+    rmSync(mirrorFolder, { recursive: true, force: true })
   })
 
   it('cancelling a pairing and reopening it mints a new passphrase', async () => {
@@ -893,6 +1176,405 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
         .catch(() => {
           throw new Error(`the edit never reached the peer: ${held}`)
         })
+    })
+
+    it('a task the peer marks DONE leaves the Due panel and joins the Done panel (#5256)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const today = await localDate(0)
+      // The panels leave out the open day's own blocks, so the task has a page of its own.
+      const taskId = await pullPeerWrites(device, async () => {
+        const page = await device.createInSpace('page', TASKS_PAGE)
+        const id = await device.createBlock(page, TODAY_TASK)
+        await device.setTodoState(id, 'TODO')
+        await device.setDueDate(id, today)
+        return id
+      })
+      await waitInFreshView(
+        // Today's daily journal, where the Due, Done and Unfinished panels mount.
+        () => openJournalMode('daily'),
+        async () => (await textOf(DUE_PANEL)).includes(TODAY_TASK),
+        "today's Due panel never listed the peer's task",
+      )
+      expect(await textOf(DONE_PANEL)).not.toContain(TODAY_TASK)
+
+      await pullPeerWrites(device, () => device.setTodoState(taskId, 'DONE'))
+      await waitInOpenView(
+        async () =>
+          (await textOf(DONE_PANEL)).includes(TODAY_TASK) &&
+          !(await textOf(DUE_PANEL)).includes(TODAY_TASK),
+        () => 'the open journal did not move the task from the Due panel to the Done panel',
+      )
+    })
+
+    it('an overdue task the peer marks DONE leaves Unfinished tasks (#5256)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const yesterday = await localDate(-1)
+      const taskId = await pullPeerWrites(device, async () => {
+        const page = await device.createInSpace('page', LATE_PAGE)
+        const id = await device.createBlock(page, LATE_TASK)
+        await device.setTodoState(id, 'TODO')
+        await device.setDueDate(id, yesterday)
+        return id
+      })
+      await waitInFreshView(
+        () => openJournalMode('daily'),
+        async () => {
+          await expandUnfinished()
+          return (await textOf(UNFINISHED)).includes(LATE_TASK)
+        },
+        "Unfinished tasks never listed the peer's overdue task",
+      )
+
+      await pullPeerWrites(device, () => device.setTodoState(taskId, 'DONE'))
+      // The Done panel listing it shows the pull has reached the open journal.
+      await waitInOpenView(
+        async () =>
+          (await textOf(DONE_PANEL)).includes(LATE_TASK) &&
+          !(await textOf(UNFINISHED)).includes(LATE_TASK),
+        () => 'the open journal still lists the done task under Unfinished tasks',
+      )
+    })
+
+    it('the Pages list shows a page the peer created and one it renamed (#5258)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const listedId = await pullPeerWrites(device, () => device.createInSpace('page', LISTED))
+      await waitInFreshView(
+        () => navigateTo('Pages'),
+        () => $(pageRow(LISTED)).isDisplayed(),
+        "the Pages list never showed the peer's page",
+      )
+
+      await pullPeerWrites(device, async () => {
+        await device.createInSpace('page', CREATED)
+        await device.editBlock(listedId, RENAMED)
+      })
+      const titles = () =>
+        browser.execute(() =>
+          [...document.querySelectorAll('.page-browser-item-title')].map(
+            (t) => t.textContent ?? '',
+          ),
+        )
+      let seen: string[] = []
+      await waitInOpenView(
+        async () => {
+          seen = await titles()
+          return seen.includes(CREATED) && seen.includes(RENAMED) && !seen.includes(LISTED)
+        },
+        () => `the open Pages list did not follow the peer: it lists ${JSON.stringify(seen)}`,
+      )
+    })
+
+    it("the open page's title and tabs show the peer's new title (#5242)", async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const pageId = await pullPeerWrites(device, async () => {
+        const id = await device.createInSpace('page', OPEN_TITLE)
+        // A block of its own, so opening the page creates no first block here.
+        await device.createBlock(id, runScopedMarker('wdio-peer-open-page-body'))
+        return id
+      })
+      await waitInFreshView(
+        () => navigateTo('Pages'),
+        () => $(pageRow(OPEN_TITLE)).isDisplayed(),
+        "the Pages list never showed the peer's page",
+      )
+      await reopenPageByTitle(OPEN_TITLE)
+      await browser.waitUntil(async () => (await $(TITLE).getText()) === OPEN_TITLE, {
+        timeout: ACTION_TIMEOUT,
+        timeoutMsg: "the peer's page never opened under its title",
+      })
+      // A second tab on the same page makes the (otherwise hidden) tab bar render.
+      await browser.keys(['Control', 't'])
+      await browser.waitUntil(
+        async () => (await $$(`${TAB_LIST} [role="tab"]`).getElements()).length === 2,
+        { timeout: ACTION_TIMEOUT, timeoutMsg: 'Ctrl+T did not open a second tab' },
+      )
+      expect(await textOf(TAB_LIST)).toContain(OPEN_TITLE)
+
+      await pullPeerWrites(device, () => device.editBlock(pageId, RETITLED))
+      let seen = { title: '', tabs: '' }
+      await waitInOpenView(
+        async () => {
+          seen = { title: await $(TITLE).getText(), tabs: await textOf(TAB_LIST) }
+          return (
+            seen.title === RETITLED &&
+            seen.tabs.includes(RETITLED) &&
+            !seen.tabs.includes(OPEN_TITLE)
+          )
+        },
+        () => `the open page kept its old title: ${JSON.stringify(seen)}`,
+      )
+    })
+
+    it('tag:# finds the block once the peer creates and applies the tag (#5255)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      await navigateTo('Search')
+      await typeInputVerified(SEARCH_INPUT, `tag:#${TAG}`)
+      await browser.keys(['Enter'])
+      // Settled: the search is held until the tag name resolves, here to none.
+      await browser.waitUntil(async () => (await textOf(SEARCH_STATUS)) === 'No results', {
+        timeout: ACTION_TIMEOUT,
+        timeoutMsg: `the search for an unknown tag never settled on no results`,
+      })
+
+      const blockId = await pullPeerWrites(device, async () => {
+        const page = await device.createInSpace('page', TAGGED_PAGE)
+        const id = await device.createBlock(page, TAGGED)
+        const tag = await device.createInSpace('tag', TAG)
+        await device.addTag(id, tag)
+        return id
+      })
+      await waitInOpenView(
+        () => $(`[data-testid="search-result-row-${blockId}"]`).isDisplayed(),
+        () => `the open search for tag:#${TAG} never listed the block the peer tagged`,
+      )
+    })
+
+    it('a journal day the peer wrote stops offering an empty day (#5258)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      await openJournalMode('weekly')
+      // Not today: the app makes today's page itself, and two pages would share the date.
+      const date = await emptyWeekDay(await localDate(0))
+      const day = `section[id="journal-${date}"]`
+
+      await pullPeerWrites(device, async () => {
+        const page = await device.createInSpace('page', date)
+        await device.createBlock(page, DAY_ENTRY)
+      })
+      let seen = ''
+      await waitInOpenView(
+        async () => {
+          seen = await textOf(day)
+          const hasPage = await $(day).$('button[aria-label="Delete page"]').isExisting()
+          return hasPage && !seen.includes('No blocks for')
+        },
+        () => `the open week still shows ${date} without its page: ${seen}`,
+      )
+    })
+
+    // Last edited is the order the backend stores, so this reads it the way a
+    // persistence check does: from a remounted list, not the one left open.
+    it('a block the peer adds lifts its page above a newer one in Last edited (#6048)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const editedId = await pullPeerWrites(device, () => device.createInSpace('page', EDITED_PAGE))
+      // A pull of its own, so the two pages never share a millisecond.
+      await pullPeerWrites(device, () => device.createInSpace('page', NEWER_PAGE))
+      await navigateTo('Pages')
+      // The page count mounts left of the sort trigger once the list loads and
+      // shifts it right, so a click aimed before the shift lands on the count.
+      await $('[data-testid="page-browser-count"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+      await chooseSelectOption('[aria-label="Sort order"]', 'Last edited')
+      await waitInFreshView(
+        () => navigateTo('Pages'),
+        () => listsAbove(NEWER_PAGE, EDITED_PAGE),
+        "Last edited never listed the peer's newer page above the older one",
+      )
+
+      await pullPeerWrites(device, () => device.createBlock(editedId, LATE_BLOCK))
+      await waitInFreshView(
+        () => navigateTo('Pages'),
+        () => listsAbove(EDITED_PAGE, NEWER_PAGE),
+        'Last edited kept the page the peer added a block to below the newer page',
+      )
+    })
+
+    // #5841 — the app holds a value under a key no definition declares, so it is
+    // stored as text: today's date, on a page of its own (the Due panel leaves
+    // out the day's own blocks). The peer then declares the key a `date` in the
+    // Personal space, which both vaults share. The setup is not under test, so
+    // it goes through the real IPC.
+    it("lists the peer's property definition, and reads the value the app held as a date (#5841)", async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const spaces = await invoke<Array<{ id: string; name: string }>>('list_spaces')
+      const personal = spaces.find((space) => space.name === 'Personal')?.id
+      if (personal === undefined) throw new Error('no Personal space')
+      const page = await invoke<string>('create_page_in_space', {
+        parentId: null,
+        content: DEFS_PAGE,
+        spaceId: personal,
+      })
+      const holder = await invoke<{ id: string }>('create_block', {
+        blockType: 'content',
+        content: DEFS_HOLDER,
+        parentId: page,
+        index: null,
+        scope: { kind: 'active', space_id: personal },
+        blockId: null,
+      })
+      await invoke('set_property', {
+        blockId: holder.id,
+        key: SYNCED_KEY,
+        value: { value_text: await localDate(0) },
+      })
+
+      await reopenProperties()
+      await expectAbsent(
+        deletePropertyButton(SYNCED_KEY),
+        'a definition before the peer declared one',
+      )
+
+      await pullPeerWrites(device, () => device.createPropertyDef(SYNCED_KEY, 'date'))
+
+      let seen: string | null = null
+      await browser
+        .waitUntil(
+          async () => {
+            await reopenProperties()
+            seen = await listedType(SYNCED_KEY)
+            return seen === 'date'
+          },
+          { timeout: NAV_TIMEOUT, interval: 2_000 },
+        )
+        .catch(() => {
+          throw new Error(`Settings › Properties lists ${SYNCED_KEY} as ${String(seen)}, not date`)
+        })
+      await browser.waitUntil(
+        async () => {
+          await navigateTo('Pages')
+          await openJournalMode('daily')
+          return (await textOf(DUE_PANEL)).includes(DEFS_HOLDER)
+        },
+        {
+          timeout: NAV_TIMEOUT,
+          interval: 2_000,
+          timeoutMsg: "today's Due panel never listed the block holding the now-date value",
+        },
+      )
+    })
+
+    // #5691 — page mode must show the peer's edit in place without remounting,
+    // keep the app's own text, and never write the peer's block back with the
+    // old text when it next saves: a save that compares against anything but
+    // each block's own last-saved state reverts a peer's edit. The app writes
+    // and closes its editor before the peer writes.
+    it('page mode shows a peer’s edit in place, keeps its own, and never writes the peer’s block back (#5691)', async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const [pageId, firstId, secondId, thirdId] = await pullPeerWrites(device, async () => {
+        const page = await device.createInSpace('page', PM_TITLE)
+        return [
+          page,
+          await device.createBlock(page, PM_FIRST),
+          await device.createBlock(page, PM_SECOND),
+          await device.createBlock(page, PM_THIRD),
+        ] as const
+      })
+      // The page's arrival is not under test: re-open it until it shows.
+      await browser.waitUntil(
+        async () => {
+          await navigateTo('Pages')
+          if (!(await $(`.//span[normalize-space(.)="${PM_TITLE}"]`).isExisting())) {
+            if (await syncIdle()) await $(SYNC_BUTTON).click()
+            return false
+          }
+          await reopenPageByTitle(PM_TITLE)
+          return await $(`[data-testid="sortable-block"]*=${PM_THIRD}`).isExisting()
+        },
+        { timeout: NAV_TIMEOUT, interval: 1_000, timeoutMsg: "the peer's page never arrived" },
+      )
+      await chooseEditMode('Page')
+      expect((await pageModeBlocks()).map((block) => block.id)).toEqual([
+        firstId,
+        secondId,
+        thirdId,
+      ])
+      // Marks this page-mode editor, so a remount, which would re-read the page, shows.
+      await browser.execute((selector: string) => {
+        document.querySelector(selector)?.setAttribute('data-wdio-mounted', 'once')
+      }, PAGE_MODE)
+
+      // The app's edit, saved and closed before the peer writes.
+      await pageModeCaret(0, 'end')
+      await typeInPageMode(' app', 0, `${PM_FIRST} app`)
+      await $(TITLE).click()
+      await waitPeerHolds(device, firstId, `${PM_FIRST} app`)
+
+      await pullPeerWrites(device, () => device.editBlock(thirdId, PM_FROM_PEER))
+      let seen: string[] = []
+      await waitInOpenView(
+        async () => {
+          seen = (await pageModeBlocks()).map((block) => block.text)
+          return seen[2] === PM_FROM_PEER
+        },
+        () => `page mode never showed the peer's edit: ${JSON.stringify(seen)}`,
+      )
+      expect(seen[0]).toBe(`${PM_FIRST} app`)
+      expect(await $(`${PAGE_MODE}[data-wdio-mounted="once"]`).isExisting()).toBe(true)
+
+      // The app saves again; the peer's block must come through it unchanged.
+      await pageModeCaret(0, 'end')
+      await typeInPageMode(' more', 0, `${PM_FIRST} app more`)
+      await $(TITLE).click()
+      await waitPeerHolds(device, firstId, `${PM_FIRST} app more`)
+      expect((await device.getBlock(thirdId)).content).toBe(PM_FROM_PEER)
+
+      // The peer creates a block (last) and moves the third to the top.
+      const fourthId = await pullPeerWrites(device, async () => {
+        const id = await device.createBlock(pageId, PM_FOURTH)
+        await device.moveBlock(thirdId, pageId, 0)
+        return id
+      })
+      let ids: string[] = []
+      await waitInOpenView(
+        async () => {
+          ids = (await pageModeBlocks()).map((block) => block.id)
+          return ids.length === 4 && ids[0] === thirdId
+        },
+        () => `page mode never showed the peer's new and moved blocks: ${JSON.stringify(ids)}`,
+      )
+      expect(ids).toEqual([thirdId, firstId, secondId, fourthId])
+      expect(await $(`${PAGE_MODE}[data-wdio-mounted="once"]`).isExisting()).toBe(true)
+
+      // The app saves again: the peer's block stays where the peer put it.
+      await pageModeCaret(1, 'end')
+      await typeInPageMode(' last', 1, `${PM_FIRST} app more last`)
+      await $(TITLE).click()
+      await waitPeerHolds(device, firstId, `${PM_FIRST} app more last`)
+      expect((await device.getBlock(fourthId)).content).toBe(PM_FOURTH)
+      expect((await pageModeBlocks()).map((block) => block.id)).toEqual(ids)
+    })
+
+    // #5363 — the mirror writes the pages this device's own ops touched, and
+    // those a sync names in `SyncEvent::Complete.changed_page_ids`
+    // (`MirrorState::note_sync`, fed by `mirror::on_sync_event`); its full pass
+    // otherwise runs only hourly. So the peer's page reaches the folder within
+    // the wait only through a real pull's event. A snapshot catch-up, the sync
+    // that names no pages, cannot be produced from here; `note_sync` turning it
+    // into a full pass is pinned by the Rust test
+    // `a_sync_rewrites_the_pages_it_names_and_one_naming_none_rescans`.
+    it("the Markdown mirror writes the page a peer creates, then rewrites it with the peer's edit (#5363)", async () => {
+      if (peer === undefined) throw new Error('the pairing test failed')
+      const device = peer
+      const set = await invoke<MirrorStatus>('set_mirror_folder', {
+        path: mirrorFolder,
+        readBack: true,
+      })
+      expect(set.folder).toBe(mirrorFolder)
+      await browser.waitUntil(
+        async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
+        {
+          timeout: ACTION_TIMEOUT,
+          timeoutMsg: 'the mirror never finished a pass in the new folder',
+        },
+      )
+
+      const page = await device.createInSpace('page', MIRROR_TITLE)
+      const block = await device.createBlock(page, MIRROR_FIRST)
+      await syncUntilFileHolds(MIRROR_FIRST)
+
+      await device.editBlock(block, MIRROR_EDITED)
+      await syncUntilFileHolds(MIRROR_EDITED, MIRROR_FIRST)
+
+      const status = await invoke<MirrorStatus>('get_mirror_status')
+      expect(status.diverged).toEqual([])
+      expect(status.failed).toEqual([])
     })
 
     // #6523 — the peer is frozen across the restart, so no session of the new
