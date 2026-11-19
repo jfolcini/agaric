@@ -232,6 +232,13 @@ describe('classify-changes.sh', () => {
     })
   })
 
+  it.each([
+    'src/lib/tauri-mock/handlers/search.ts',
+    'src/lib/tauri-mock/__tests__/conformance-fuzz-bridge.ts',
+  ])('the mock %s runs the Rust tests, whose conformance fuzz drives it', (path) => {
+    expect(classify([path])).toMatchObject({ rust_tests: 'true' })
+  })
+
   it.each(['src/test-setup.ts', 'src/lib/tauri-mock/__tests__/conformance-coverage.test.ts'])(
     'shared test infrastructure %s runs every lane, whole',
     (path) => {

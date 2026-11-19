@@ -18,7 +18,8 @@
 #   migrations, a Cargo.toml or            full suite: every crate
 #   Cargo.lock, nextest config and setup   compiles or runs against them
 #   scripts, rust-toolchain.toml
-#   conformance/**, src/lib/bindings.ts    agaric (its tests read them)
+#   conformance/**, src/lib/bindings.ts,   agaric (its tests read them; the
+#   src/lib/tauri-mock/**                  conformance fuzz drives the mock)
 #   src-tauri/<member>/**                  that member's package
 #   any other src-tauri/** path            agaric (the root package)
 #   anything else                          not a Rust test input
@@ -173,7 +174,7 @@ for file in "${CHANGED[@]}"; do
       FULL="$file"
       break
       ;;
-    conformance/* | src/lib/bindings.ts)
+    conformance/* | src/lib/bindings.ts | src/lib/tauri-mock/*)
       CRATES+=(agaric)
       ;;
     src-tauri/*)
