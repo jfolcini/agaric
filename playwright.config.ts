@@ -97,6 +97,7 @@ const REAL_BACKEND_SPECS = [
   'journal-week-empty-day-add-block.spec.ts',
   'keyboard-chords-page.spec.ts',
   'kind-change-undo.spec.ts',
+  'link-chip-lifecycle.spec.ts',
   'link-labels.spec.ts',
   'list-marker-only-lists.spec.ts',
   'list-style-keyboard.spec.ts',
