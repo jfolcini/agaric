@@ -80,6 +80,7 @@ const REAL_BACKEND_SPECS = [
   'journal-undo.spec.ts',
   'journal-week-empty-day-add-block.spec.ts',
   'keyboard-chords-page.spec.ts',
+  'link-chip-lifecycle.spec.ts',
   'mcp-agents.spec.ts',
   'meeting-attachments.spec.ts',
   'mirror-adopt.spec.ts',
