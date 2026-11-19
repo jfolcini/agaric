@@ -388,8 +388,7 @@ fn space_args_cover_every_tool_schema_5667() {
             .unwrap_or_else(|| panic!("{}: no properties", tool.name));
         let required: Vec<&str> = tool.input_schema["required"]
             .as_array()
-            .map(|r| r.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default();
+            .map_or_default(|r| r.iter().filter_map(Value::as_str).collect());
         let named: Vec<&String> = properties
             .keys()
             .filter(|key| key.ends_with("space_id"))

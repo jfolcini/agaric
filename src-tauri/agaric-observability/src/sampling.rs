@@ -103,9 +103,8 @@ impl ShouldSample for RuntimeSampler {
                     }
                 },
             );
-        let trace_state = parent_context
-            .map(|cx| cx.span().span_context().trace_state().clone())
-            .unwrap_or_default();
+        let trace_state =
+            parent_context.map_or_default(|cx| cx.span().span_context().trace_state().clone());
         SamplingResult {
             decision,
             attributes: Vec::new(),

@@ -1305,7 +1305,7 @@ fn engine_differences(booted: &EngineState, held: &EngineState) -> Vec<String> {
             if other.is_none() {
                 differences.push(format!("{side} only: space {space}"));
             }
-            let other = other.map(Vec::as_slice).unwrap_or_default();
+            let other = other.map_or_default(Vec::as_slice);
             for block in blocks.iter().filter(|block| !other.contains(block)) {
                 differences.push(format!("{side} only, in {space}: {block}"));
             }

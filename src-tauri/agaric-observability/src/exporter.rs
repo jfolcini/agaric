@@ -376,8 +376,7 @@ fn format_log_record(record: &SdkLogRecord) -> String {
 
     let body = record
         .body()
-        .map(|b| sanitize_inline(&any_value_to_string(b)))
-        .unwrap_or_default();
+        .map_or_default(|b| sanitize_inline(&any_value_to_string(b)));
 
     let mut line = String::new();
     let _ = write!(

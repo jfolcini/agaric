@@ -353,12 +353,11 @@ pub(crate) async fn prior_task_state_in_tx(
     )
     .fetch_optional(&mut *conn)
     .await?
-    .map(|r| PriorTaskState {
+    .map_or_default(|r| PriorTaskState {
         todo_state: r.todo_state,
         has_created_at: r.has_created_at,
         has_completed_at: r.has_completed_at,
-    })
-    .unwrap_or_default())
+    }))
 }
 
 /// Write the `created_at` / `completed_at` rows implied by a

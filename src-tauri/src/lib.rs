@@ -2642,8 +2642,7 @@ fn panic_payload_and_location(info: &std::panic::PanicHookInfo<'_>) -> (String, 
     };
     let location = info
         .location()
-        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-        .unwrap_or_default();
+        .map_or_default(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
     (payload, location)
 }
 

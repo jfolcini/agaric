@@ -491,8 +491,7 @@ pub(super) fn task_marker(block: &BlockRow) -> String {
         .todo_state
         .as_deref()
         .and_then(import::task_marker_for)
-        .map(|marker| format!("[{marker}] "))
-        .unwrap_or_default()
+        .map_or_default(|marker| format!("[{marker}] "))
 }
 
 /// How a checkbox task's first line is written (#6277 D3): its fields as the

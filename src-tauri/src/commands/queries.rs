@@ -123,11 +123,7 @@ pub async fn get_status_inner(
     scheduler: Option<&SyncScheduler>,
 ) -> StatusInfo {
     materializer
-        .status_with_sync(
-            scheduler
-                .map(crate::sync_host::sync_status)
-                .unwrap_or_default(),
-        )
+        .status_with_sync(scheduler.map_or_default(crate::sync_host::sync_status))
         .await
 }
 
