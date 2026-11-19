@@ -10,13 +10,16 @@ import { expect, openPage, seedSearchBlocks, test, waitForBoot } from './helpers
 const FLOWCHART =
   '```mermaid\ngraph TD\n  A[Capture idea] --> B{Worth doing?}\n  B -->|yes| C[Plan it]\n  B -->|no| D[Archive]\n  C --> E[Do it] --> F[Review]\n```'
 
-/** The diagram's natural size, as Mermaid laid it out. */
+/**
+ * The diagram's natural size, as Mermaid laid it out. Each call boots and seeds its own flowchart:
+ * the mock's seed comes back on a boot, a real backend's vault keeps the one seeded before it.
+ */
 async function renderedSize(page: Page) {
   await page.setViewportSize({ width: 1280, height: 900 })
   await waitForBoot(page)
-  await seedSearchBlocks(page, [{ content: FLOWCHART }])
+  const [id] = await seedSearchBlocks(page, [{ content: FLOWCHART }])
   await openPage(page, 'Projects')
-  const svg = page.locator('[data-testid="mermaid-diagram"] svg')
+  const svg = page.locator(`[data-block-id="${id}"] [data-testid="mermaid-diagram"] svg`)
   await expect(svg).toBeVisible()
   return svg.evaluate((el) => {
     const { width, height } = (el as SVGSVGElement).viewBox.baseVal
