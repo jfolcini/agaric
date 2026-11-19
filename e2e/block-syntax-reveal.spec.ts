@@ -208,6 +208,23 @@ function stored(page: Page, ids: readonly string[]): Promise<string[]> {
   )
 }
 
+/** A block's content as the backend holds it, or null while its create is still on its way. */
+function storedOnceCreated(page: Page, blockId: string): Promise<string | null> {
+  return page.evaluate(async (id) => {
+    const { invoke } = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    try {
+      return ((await invoke('get_block', { blockId: id })) as { content: string }).content
+    } catch (err) {
+      if ((err as { kind?: unknown }).kind === 'not_found') return null
+      throw err
+    }
+  }, blockId)
+}
+
 test.describe('block syntax revealed around the cursor in page mode (#5691) @editor @markdown @pages', () => {
   let ids: string[] = []
 
@@ -308,7 +325,8 @@ test.describe('block syntax revealed around the cursor in page mode (#5691) @edi
       .getAttribute('data-page-block-id')
     if (!id) throw new Error('the new block has no id')
     await caretAt(page, PAGE_EDITOR, 'plain start', 0)
-    await expect.poll(() => stored(page, [id])).toEqual(['```js\nconst x = 42\nd\n```'])
+    // Page mode's Enter names the block before the backend has created it.
+    await expect.poll(() => storedOnceCreated(page, id)).toBe('```js\nconst x = 42\nd\n```')
     await reopenPage(page, TITLE)
     await expect(page.getByTestId('block-static')).toHaveCount(CONTENTS.length + 1)
     expect(await stored(page, [id])).toEqual(['```js\nconst x = 42\nd\n```'])
