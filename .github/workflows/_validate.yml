@@ -613,7 +613,7 @@ jobs:
         run: bash scripts/pins.sh github-output
 
       - name: Install prek + non-Rust lint tools via prebuilt binaries
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: prek@${{ steps.pins.outputs.prek }},zizmor@${{ steps.pins.outputs.zizmor }},taplo-cli@${{ steps.pins.outputs.taplo_cli }},typos-cli@${{ steps.pins.outputs.typos_cli }},shellcheck@${{ steps.pins.outputs.shellcheck }},shfmt@${{ steps.pins.outputs.shfmt }}
@@ -635,7 +635,7 @@ jobs:
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-deny@${{ steps.pins.outputs.cargo_deny }},cargo-machete@${{ steps.pins.outputs.cargo_machete }},cargo-audit@${{ steps.pins.outputs.cargo_audit }}
@@ -1047,7 +1047,7 @@ jobs:
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: prek@${{ steps.pins.outputs.prek }},typos-cli@${{ steps.pins.outputs.typos_cli }}
@@ -1719,7 +1719,7 @@ jobs:
         # don't have to swap runners. Output is lcov (industry standard,
         # consumable by Codecov / coveralls / VSCode coverage gutters) plus
         # a JSON summary the step below renders as a markdown table.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }},cargo-llvm-cov
@@ -1966,7 +1966,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
