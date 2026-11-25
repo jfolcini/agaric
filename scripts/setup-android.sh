@@ -78,12 +78,13 @@ buildtools_pkg=''
 for p in ${ci_packages[@]+"${ci_packages[@]}"}; do
   case "$p" in
     platforms\;*) platform_pkg="$p" ;;
-    build-tools\;*) buildtools_pkg="$p" ;;
-    ndk\;*) ndk_pkg="$p" ;;
   esac
 done
-{ [ -n "$platform_pkg" ] && [ -n "$buildtools_pkg" ] && [ -n "$ndk_pkg" ] && [ "${#rust_targets[@]}" -gt 0 ]; } \
-  || die "could not read the platform, build-tools, NDK and Rust targets from the android-build job in $ci_file"
+# CI installs the build-tools and NDK that pins.txt pins.
+buildtools_pkg="build-tools;$(bash scripts/pins.sh version android-build-tools)"
+ndk_pkg="ndk;$(bash scripts/pins.sh version android-ndk)"
+{ [ -n "$platform_pkg" ] && [ "${#rust_targets[@]}" -gt 0 ]; } \
+  || die "could not read the platform and Rust targets from the android-build job in $ci_file"
 
 ndk_version="${ndk_pkg#ndk;}"
 api_level="${platform_pkg#platforms;android-}"
@@ -179,7 +180,7 @@ if [ "${#problems[@]}" -gt 0 ]; then
 fi
 
 # --- 2. SDK packages --------------------------------------------------------
-echo "== SDK packages (versions from $ci_file)"
+echo "== SDK packages (versions from $ci_file and pins.txt)"
 
 with_timeout() {
   if command -v timeout >/dev/null 2>&1; then timeout "${install_timeout}s" "$@"; else "$@"; fi

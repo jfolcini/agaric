@@ -76,8 +76,8 @@ jobs:
           log-accepted-android-sdk-licenses: false
           packages: >
             platforms;android-36
-            build-tools;36.0.0
-            ndk;27.2.12479018
+            build-tools;${{ steps.pins.outputs.android_build_tools }}
+            ndk;${{ steps.pins.outputs.android_ndk }}
 
       - name: Install Node.js
         uses: ./.github/actions/setup-node
@@ -116,7 +116,7 @@ jobs:
           fi
           rm -rf "$OVERRIDES"
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
         run: bash scripts/patch-android-build.sh
@@ -125,7 +125,7 @@ jobs:
         # No `--debug`: the release profile is what sets `panic = "abort"`.
         run: npm run tauri -- android build --target x86_64
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Sign the APK with a throwaway key
         # The emulator refuses an unsigned APK. The key lives and dies with

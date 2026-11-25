@@ -97,10 +97,11 @@ Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew
 
 Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.tauri.app/start/prerequisites/#android).
 
-`sdkmanager` is now a deprecated wrapper around the `android` CLI, whose first run downloads it to `~/.android/bin` and hangs silently meanwhile. Package names take slashes, licenses need no separate step, and the versions below are the ones `.github/workflows/ci.yml` installs:
+`sdkmanager` is now a deprecated wrapper around the `android` CLI, whose first run downloads it to `~/.android/bin` and hangs silently meanwhile. Package names take slashes, licenses need no separate step, and the platform is the one `.github/workflows/ci.yml` installs; the build-tools and NDK versions are the `android-build-tools` and `android-ndk` pins in `pins.txt` (`bash scripts/pins.sh version android-ndk`):
 
 ```bash
-android sdk install platform-tools platforms/android-36 build-tools/36.0.0 ndk/27.2.12479018 \
+android sdk install platform-tools platforms/android-36 "build-tools/$(bash scripts/pins.sh version android-build-tools)" \
+  "ndk/$(bash scripts/pins.sh version android-ndk)" \
   emulator system-images/android-36/google_apis/x86_64
 avdmanager create avd -n spike_test -k "system-images;android-36;google_apis;x86_64"
 ```

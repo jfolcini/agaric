@@ -5,7 +5,8 @@
 //
 //   node scripts/pins.mjs bump <name> <version>   rewrite the version and
 //       recompute every asset's sha256 from the new download (fetched, never
-//       run). `node` bumps .nvmrc.
+//       run). `node` bumps .nvmrc, `npm` package.json's packageManager,
+//       `code-review-graph` .mcp.json.
 //   node scripts/pins.mjs stale                   list pins behind upstream;
 //       exit 1 if any is, or if an upstream could not be read (fail closed).
 //       A release younger than COOLDOWN_DAYS is reported, not flagged, the
@@ -22,10 +23,39 @@ export const COOLDOWN_DAYS = 7
 export const NIGHTLY_MAX_AGE_DAYS = 28
 const DAY_MS = 86_400_000
 
-// Pins whose source of truth is a file a tool reads natively.
+// Pins whose source of truth is a file a tool reads natively. `read` returns
+// the version; `write`, where present, returns the file at a new version
+// (rust also has lockstep copies, so it is bumped by hand).
 export const FILE_PINS = [
-  { name: 'node', file: '.nvmrc', upstream: 'node:24' },
-  { name: 'rust', file: 'rust-toolchain.toml', upstream: 'rust-stable' },
+  {
+    name: 'node',
+    file: '.nvmrc',
+    upstream: 'node:24',
+    read: (text) => text.trim(),
+    write: (_text, version) => `${version}\n`,
+  },
+  {
+    name: 'rust',
+    file: 'rust-toolchain.toml',
+    upstream: 'rust-stable',
+    read: (text) => text.match(/^channel = "([^"]+)"/m)?.[1],
+  },
+  {
+    name: 'npm',
+    file: 'package.json',
+    upstream: 'npm:npm',
+    read: (text) => JSON.parse(text).packageManager?.match(/^npm@(.+)$/)?.[1],
+    write: (text, version) =>
+      text.replace(/"packageManager": "npm@[^"]+"/, `"packageManager": "npm@${version}"`),
+  },
+  {
+    name: 'code-review-graph',
+    file: '.mcp.json',
+    upstream: 'pypi:code-review-graph',
+    read: (text) => text.match(/"code-review-graph@([^"]+)"/)?.[1],
+    write: (text, version) =>
+      text.replace(/"code-review-graph@[^"]+"/, `"code-review-graph@${version}"`),
+  },
 ]
 
 /** Parse pins.txt into version and asset records, keeping line numbers. */
@@ -138,6 +168,50 @@ export const UPSTREAMS = {
     if (found.length === 0) throw new Error(`Cargo.lock has no ${crate}`)
     return { version: found.at(-1) }
   },
+  // The AppImage tools tauri-bundler's `prepare_tools` downloads, as named at
+  // the tag of the Tauri CLI package-lock.json resolves. Not a version line:
+  // any difference means the CLI now fetches a file pins.txt does not verify.
+  async 'tauri-bundler'(tool, http, ctx) {
+    const lock =
+      ctx.packageLock ?? JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'))
+    const cli = lock.packages['node_modules/@tauri-apps/cli'].version
+    const src = await http.text(
+      `https://raw.githubusercontent.com/tauri-apps/tauri/@tauri-apps/cli-v${cli}/crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs`,
+    )
+    const pattern = {
+      apprun: /binary-releases\/releases\/download\/apprun-([^/]+)\//,
+      linuxdeploy: /LINUXDEPLOY_COMMIT_HASH: &str = "([^"]+)"/,
+    }[tool]
+    const version = pattern && src.match(pattern)?.[1]
+    if (!version) throw new Error(`no ${tool} in tauri-bundler's linuxdeploy.rs at CLI ${cli}`)
+    return { version, exact: true }
+  },
+  // `ndk;27` is the newest stable 27.x NDK; release candidates share the
+  // stable channel, so only all-numeric versions count.
+  async 'android-sdk'(line, http) {
+    const xml = await http.text('https://dl.google.com/android/repository/repository2-3.xml')
+    const [pkg, major] = line.split(';')
+    const found = [...xml.matchAll(/<remotePackage path="([^"]+)">([\s\S]*?)<\/remotePackage>/g)]
+      .filter(
+        ([, path, body]) =>
+          path.startsWith(`${pkg};`) && body.includes('channelRef ref="channel-0"'),
+      )
+      .map(([, path]) => path.slice(pkg.length + 1))
+      .filter((v) => v.startsWith(`${major}.`) && /^[0-9.]+$/.test(v))
+      .toSorted(compareVersions)
+    if (found.length === 0) throw new Error(`no stable ${line}.x in repository2-3.xml`)
+    return { version: found.at(-1) }
+  },
+  async npm(name, http) {
+    const r = await http.json(`https://registry.npmjs.org/${name}`)
+    const version = r['dist-tags'].latest
+    return { version, publishedAt: r.time[version] }
+  },
+  async pypi(name, http) {
+    const r = await http.json(`https://pypi.org/pypi/${name}/json`)
+    const version = r.info.version
+    return { version, publishedAt: r.releases[version]?.[0]?.upload_time_iso_8601 }
+  },
   async temurin(major, http) {
     const r = await http.json(
       `https://api.adoptium.net/v3/assets/feature_releases/${major}/ga?image_type=jdk&os=linux&architecture=x64&jvm_impl=hotspot&page_size=1&sort_order=DESC`,
@@ -175,24 +249,20 @@ export const UPSTREAMS = {
 }
 
 export function filePinVersion(pin, root = ROOT) {
-  const text = readFileSync(join(root, pin.file), 'utf8')
-  if (pin.name === 'rust') return text.match(/^channel = "([^"]+)"/m)[1]
-  return text.trim()
+  const version = pin.read(readFileSync(join(root, pin.file), 'utf8'))
+  if (!version) throw new Error(`${pin.file}: no ${pin.name} version`)
+  return version
 }
 
 /**
  * One row per pin: `status` is `current`, `stale`, `cooling` (newer release
- * younger than the cooldown), `unchecked` (upstream `-`) or `error`.
+ * younger than the cooldown) or `error`.
  */
 export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {}) {
   const rows = []
   for (const pin of pins) {
     const row = { name: pin.name, pinned: pin.version, upstream: pin.upstream }
     rows.push(row)
-    if (pin.upstream === '-') {
-      row.status = 'unchecked'
-      continue
-    }
     const [scheme, ...rest] = pin.upstream.split(':')
     const reader = UPSTREAMS[scheme]
     if (!reader) {
@@ -206,7 +276,9 @@ export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {})
       const ageDays = latest.publishedAt
         ? (now - Date.parse(latest.publishedAt)) / DAY_MS
         : Infinity
-      if (scheme === 'rust-nightly') {
+      if (latest.exact) {
+        row.status = latest.version === pin.version ? 'current' : 'stale'
+      } else if (scheme === 'rust-nightly') {
         const pinAge = (now - Date.parse(`${pin.version}T00:00:00Z`)) / DAY_MS
         row.status = pinAge > NIGHTLY_MAX_AGE_DAYS ? 'stale' : 'current'
       } else if (compareVersions(latest.version, pin.version) <= 0) {
@@ -222,8 +294,17 @@ export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {})
   return rows
 }
 
+/** The command that bumps a stale row, or what to edit by hand. */
+function bumpLine(r) {
+  const file = FILE_PINS.find((p) => p.name === r.name)
+  if (file && !file.write)
+    return `# ${r.name}: edit ${file.file} and its lockstep copies to ${r.latest}`
+  return `just pin-bump ${r.name} ${r.latest}`
+}
+
 export function staleMarkdown(rows) {
   const flagged = rows.filter((r) => r.status === 'stale' || r.status === 'error')
+  const stale = rows.filter((r) => r.status === 'stale')
   const lines = [
     `## Pins behind upstream: ${flagged.length}`,
     '',
@@ -235,6 +316,7 @@ export function staleMarkdown(rows) {
       (r) =>
         `| \`${r.name}\` | ${r.pinned} | ${r.latest ?? '—'} (${r.upstream}) | ${r.status}${r.note ? `: ${r.note}` : ''} |`,
     ),
+    ...(stale.length > 0 ? ['', '```sh', ...stale.map(bumpLine), '```'] : []),
   ]
   return `${lines.join('\n')}\n`
 }
@@ -272,11 +354,12 @@ async function main(argv) {
     if (!name || !version) throw new Error('usage: pins.mjs bump <name> <version>')
     const file = FILE_PINS.find((p) => p.name === name)
     if (file) {
-      if (name !== 'node')
+      if (!file.write)
         throw new Error(
           `${name} is pinned in ${file.file} and its lockstep copies; bump it by hand`,
         )
-      writeFileSync(join(ROOT, file.file), `${version}\n`)
+      const path = join(ROOT, file.file)
+      writeFileSync(path, file.write(readFileSync(path, 'utf8'), version))
       console.log(`${file.file}: ${version}`)
       return 0
     }

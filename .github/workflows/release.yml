@@ -1918,8 +1918,8 @@ jobs:
         with:
           packages: >
             platforms;android-36
-            build-tools;36.0.0
-            ndk;27.2.12479018
+            build-tools;${{ steps.pins.outputs.android_build_tools }}
+            ndk;${{ steps.pins.outputs.android_ndk }}
 
       - name: Install Node.js
         # No npm cache on a publishing lane (#3542) — same rationale as the
@@ -1999,7 +1999,7 @@ jobs:
           fi
           rm -rf "$OVERRIDES"
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
         run: bash scripts/patch-android-build.sh
@@ -2018,7 +2018,7 @@ jobs:
       - name: Build Android APK (aarch64 release, unsigned)
         run: cargo tauri android build --target aarch64
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       # #4425 — first of two alignment assertions. This one judges the linker
       # output straight from gradle, BEFORE the signing step decodes the
@@ -2099,7 +2099,7 @@ jobs:
             # straight out of the archive and its payload must START on a
             # 16 KB boundary as well as being internally 16 KB-aligned. Under
             # `-p` that held for 0.9.9 only by arithmetic luck. `-P` needs
-            # build-tools 35+; this job installs 36.0.0.
+            # build-tools 35+; this job installs the pins.txt `android-build-tools`.
             "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$src" "$aligned"
             "$BUILD_TOOLS/apksigner" sign \
               --ks "$keystore" \
