@@ -299,6 +299,9 @@ async fn the_endpoint_follows_the_bind_decision_and_then_syncs_6526() {
     for _failure in 0..8 {
         scheduler.record_failure(&b.id);
     }
+    // #7065: held for a history fork, which a new network does not end.
+    scheduler.record_failure("DEV6526FORKED");
+    scheduler.hold("DEV6526FORKED");
 
     bind.move_to(bind_on(NEW_NETWORK));
     tick_until(
@@ -313,6 +316,10 @@ async fn the_endpoint_follows_the_bind_decision_and_then_syncs_6526() {
     assert_eq!(
         second.endpoint_id, first.endpoint_id,
         "the identity peers pinned survives the rebind"
+    );
+    assert!(
+        !scheduler.may_retry("DEV6526FORKED"),
+        "the rebind leaves a held peer held"
     );
     tick_until(
         &lifecycle,
