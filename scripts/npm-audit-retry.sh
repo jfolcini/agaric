@@ -4,8 +4,9 @@
 # the hook is a blocking step feeding the required `validate / validate-all`
 # context, so one `read ECONNRESET` reddened `main` and every open PR with it.
 #
-# 3 attempts, 5s then 15s: modest picks around that one data point, not a
-# measured optimum.
+# The waits add up to about four minutes: a registry fault can outlast seconds
+# of retrying (#7050's first lint run, where the attestations endpoint answered
+# `OK` instead of JSON). A genuine failure pays that wait once before it reds.
 #
 # With no arguments it retries the advisory scan; with arguments it retries
 # that command instead (`npm audit signatures` in _validate.yml, which also
@@ -14,7 +15,7 @@
 set -euo pipefail
 
 # One entry per RETRY, so the attempt budget is this many plus the first try.
-BACKOFF_SECONDS=(5 15)
+BACKOFF_SECONDS=(5 15 60 150)
 
 # The advisory scan also fails on a `.nsprc` waiver that matches nothing, so a
 # waiver goes the first run after its advisory is withdrawn or fixed; the

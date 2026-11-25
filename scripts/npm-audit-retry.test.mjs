@@ -73,7 +73,7 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
   assert.equal(run.status, 0)
   assert.equal(run.npxCalls, 2)
   assert.equal(retryLines(run.stderr).length, 1)
-  assert.match(run.stderr, /attempt 1 of 3 failed \(exit 1\); retrying in 5s\./)
+  assert.match(run.stderr, /attempt 1 of 5 failed \(exit 1\); retrying in 5s\./)
   assert.deepEqual(run.sleeps, ['5'])
 })
 
@@ -82,11 +82,11 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
 void test('a failure that never clears fails closed, inside the attempt budget', () => {
   const run = runWrapper(Infinity)
   assert.notEqual(run.status, 0)
-  assert.equal(run.npxCalls, 3)
-  assert.deepEqual(run.sleeps, ['5', '15'])
+  assert.equal(run.npxCalls, 5)
+  assert.deepEqual(run.sleeps, ['5', '15', '60', '150'])
   // The underlying command's own output still reaches the reader.
   assert.match(run.stderr, /npm error audit endpoint returned an error/)
-  assert.match(run.stderr, /attempt 3 of 3 failed \(exit 1\); no attempts left\./)
+  assert.match(run.stderr, /attempt 5 of 5 failed \(exit 1\); no attempts left\./)
 })
 
 // `npm audit signatures` is retried through the same wrapper, not through npx.
