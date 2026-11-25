@@ -21,6 +21,7 @@
   - Built-in rows are as they were.
 - **Scheduled earlier** (review of #7067). It left out tasks due today or in the deadline warning window, which other sections list, and reads every page of `list_unfinished_tasks`, as the Unfinished tasks section it replaced did.
 - **The report** keeps every changed pair's images; the last one carried 220 of 382 as text only.
+- **Back to a long page** (CI's bridge lane, `phone-views`). `useScrollRestore` set the saved position one frame after the view changed. A page whose blocks were still loading clamped it to the top, and nothing set it again. It now sets it each frame until it holds, the user scrolls by hand, or about three seconds pass.
 
 **Ran.**
 - `npm run typecheck`, oxlint, and vitest on the properties, i18n, filters, layout, UI primitives and Due panel suites.
@@ -31,4 +32,5 @@
   - the row's tap target, with the stretched button removed;
   - the delete confirmation's focus, with the sheet taking focus back to the row;
   - the sheet closing after a type change, with it left open;
-  - the sheet's focus on open, with the Name taking it.
+  - the sheet's focus on open, with the Name taking it;
+  - the scroll restore, with one frame's try, and its stop on a hand scroll, with the wheel unheard.

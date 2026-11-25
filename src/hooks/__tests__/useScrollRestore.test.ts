@@ -21,6 +21,21 @@ function createScrollContainer(): HTMLDivElement {
   return el
 }
 
+/** A container whose scrollTop clamps at `max()`, as a browser's does at the content's end. */
+function createClampingContainer(max: () => number): HTMLDivElement {
+  const el = document.createElement('div')
+  document.body.append(el)
+  let _scrollTop = 0
+  Object.defineProperty(el, 'scrollTop', {
+    get: () => _scrollTop,
+    set: (v: number) => {
+      _scrollTop = Math.min(v, max())
+    },
+    configurable: true,
+  })
+  return el
+}
+
 describe('useScrollRestore', () => {
   let container: HTMLDivElement
 
@@ -238,5 +253,65 @@ describe('useScrollRestore', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('restores a position its view can only hold once the content arrives (#7040)', () => {
+    let max = 1000
+    const el = createClampingContainer(() => max)
+    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(el, viewKey), {
+      initialProps: { viewKey: 'page' },
+    })
+    act(() => {
+      el.scrollTop = 600
+      el.dispatchEvent(new Event('scroll'))
+    })
+    rerender({ viewKey: 'pages' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+    })
+
+    // Back on the page, whose blocks are still loading: nothing to scroll yet.
+    max = 0
+    rerender({ viewKey: 'page' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+    })
+    expect(el.scrollTop).toBe(0)
+
+    max = 1000
+    act(() => {
+      vi.advanceTimersByTime(32)
+    })
+    expect(el.scrollTop).toBe(600)
+    el.remove()
+  })
+
+  it('stops restoring once the user scrolls by hand', () => {
+    let max = 1000
+    const el = createClampingContainer(() => max)
+    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(el, viewKey), {
+      initialProps: { viewKey: 'page' },
+    })
+    act(() => {
+      el.scrollTop = 600
+      el.dispatchEvent(new Event('scroll'))
+    })
+    rerender({ viewKey: 'pages' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+    })
+    max = 0
+    rerender({ viewKey: 'page' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+      el.dispatchEvent(new Event('wheel'))
+    })
+
+    max = 1000
+    act(() => {
+      vi.advanceTimersByTime(32)
+    })
+    expect(el.scrollTop).toBe(0)
+    el.remove()
   })
 })
