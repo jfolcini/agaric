@@ -5,7 +5,8 @@
  * Resolves every distinct `page_id` (the owning page of a trashed block)
  * to a ResolvedBlock (or `null` when that page was itself purged) and
  * exposes a `getPageLabel` helper that returns the user-visible
- * breadcrumb string. Resolving `page_id` rather than `parent_id` means a
+ * breadcrumb string: the page's title, marked when the page is in the Trash
+ * too. Resolving `page_id` rather than `parent_id` means a
  * deeply-nested trashed block reports the page it lived in, not its
  * immediate parent block. Extracted from TrashView.tsx.
  */
@@ -64,8 +65,12 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
       if (!block.page_id) return null
       const resolved = pageMap.get(block.page_id)
       if (resolved === undefined) return null // not yet loaded
-      if (resolved === null || resolved.deleted) return t('trash.deletedPage')
-      return resolved.title ?? t('trash.deletedPage')
+      // A page in the Trash too still has its title; only a purged one is unnamed.
+      if (resolved === null || (resolved.deleted && resolved.title === null)) {
+        return t('trash.deletedPage')
+      }
+      const title = resolved.title ?? t('common.untitled')
+      return resolved.deleted ? t('trash.deletedPageNamed', { page: title }) : title
     },
     [pageMap, t],
   )

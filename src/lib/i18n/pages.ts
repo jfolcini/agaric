@@ -245,6 +245,9 @@ export const pages: Record<string, string> = {
   'templates.variableIsoweek': 'ISO week number',
   'templates.variableRecording':
     'On a block of its own, where a new meeting puts its recording; other inserts leave it out',
+  // Translators: After the first placeholders shown in the Templates view, how many more the ⓘ
+  // beside them lists. {{n}} = that count, always several.
+  'templates.variablesMore': '+{{n}} more',
 
   // Translators: PageHeader kebab menu: "Export as Markdown" copies the page as Markdown text to
   // the clipboard; "Delete page" is a menu item, the delete dialog's confirm button and the tooltip

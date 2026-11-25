@@ -95,6 +95,25 @@ test.describe("A tag's page is written on @pages @editor", () => {
     await expect(page.getByTestId('tag-notes')).toContainText('Deep work rituals')
   })
 
+  // "Notes" was a bold black heading over grey "Pages" and "Blocks", and its
+  // "Add notes" a bordered button beside the line the empty panels centre (#7040).
+  test("a tag's page titles its sections alike, and an empty one offers its action in place", async ({
+    page,
+  }) => {
+    const notes = await openTag(page, 'idea')
+    const empty = notes.getByRole('region', { name: 'Nothing is written on this tag yet.' })
+    await expect(empty.getByRole('button', { name: 'Add notes', exact: true })).toBeVisible()
+
+    const style = (el: Element) => {
+      const css = getComputedStyle(el)
+      return `${css.color} ${css.fontWeight} ${css.fontSize}`
+    }
+    const heading = (name: string) => page.getByRole('heading', { name, exact: true, level: 2 })
+    const notesStyle = await heading('Notes').evaluate(style)
+    expect(await heading('Pages').evaluate(style)).toBe(notesStyle)
+    expect(await heading('Blocks').evaluate(style)).toBe(notesStyle)
+  })
+
   test('renaming the tag moves its page, notes and all', async ({ page }) => {
     const notes = await openTag(page, 'idea')
     await writeFirstNote(page, notes, 'Seeds')

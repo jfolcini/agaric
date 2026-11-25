@@ -5,7 +5,7 @@
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -68,6 +68,15 @@ describe('TagNotesSection', () => {
     expect(screen.getByText(t('tagNotes.empty'))).toBeInTheDocument()
     expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
     expect(pagesTitled('Tag/work')).toEqual([])
+  })
+
+  // #7040 — the offer is the empty state's own action, as the empty Pages and
+  // Blocks panels below it are empty states.
+  it('offers the notes as the action of an empty state', async () => {
+    render(<TagNotesSection tagId={WORK} tagName="work" />)
+
+    const empty = await screen.findByRole('region', { name: t('tagNotes.empty') })
+    expect(within(empty).getByRole('button', { name: t('tagNotes.add') })).toBeEnabled()
   })
 
   it('makes the page through the tag and mounts its tree, seeding a first block', async () => {

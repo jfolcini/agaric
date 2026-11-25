@@ -115,6 +115,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintIntro':
     'Escríbelos en cualquier parte de una plantilla; cada uno se rellena al insertarla.',
   'templates.variablesHintInfoLabel': 'Acerca de los marcadores',
+  'templates.variablesMore': '+{{n}} más',
   'templates.variableToday': 'Fecha actual (YYYY-MM-DD)',
   'templates.variableTime': 'Hora actual (HH:MM)',
   'templates.variableDatetime': 'Fecha y hora actuales',

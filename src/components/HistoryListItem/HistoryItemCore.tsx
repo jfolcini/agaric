@@ -44,6 +44,7 @@ import { getPayloadDisplayContent, getPropertyPayload, opTypeLabel } from '@/lib
 import { formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 
 // ---------------------------------------------------------------------------
@@ -190,6 +191,12 @@ export function HistoryItemCore({
   const deviceName = entry.is_replicated
     ? (peerName ?? truncateId(entry.device_id))
     : t('device.thisDevice')
+  // A ref value is named: a space by the space list, any other block by its
+  // resolved title, its short id until that resolves.
+  const refId = propPayload?.ref
+  const spaceName = useSpaceStore((s) =>
+    propPayload?.key === 'space' ? s.availableSpaces.find((sp) => sp.id === refId)?.name : null,
+  )
 
   // #1623 — memoize the recursive-descent parse of the content preview so a
   // parent re-render (selection/focus churn in the history list) doesn't
@@ -203,6 +210,10 @@ export function HistoryItemCore({
   // `isPlainTextOpType`).
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } = richCallbacks
   const resolveVersion = useResolveStore((s) => s.version)
+  const propValue =
+    refId === undefined
+      ? propPayload?.value
+      : (spaceName ?? resolveBlockTitle(refId) ?? truncateId(refId))
   const previewContent = useMemo(
     () =>
       !propPayload && !isPlainTextOp && rawContent
@@ -294,8 +305,9 @@ export function HistoryItemCore({
           )}
         </div>
         {/* Its own grid cell, not part of the meta line: beside it on a wide
-            row, and under a phone row's actions (`history-row-cell`), so a
-            device name never takes a line of its own. The separator stays
+            row, and on a phone row under the actions, or beside the meta line
+            in a row without content (`history-row-cell`), so a device name
+            never takes a line of its own. The separator stays
             with the name. It truncates rather than overflow: in the block
             history sheet it shares the row with the op type and the time. */}
         <span className="history-item-device-group min-w-0 truncate text-xs text-muted-foreground">
@@ -306,7 +318,7 @@ export function HistoryItemCore({
         {propPayload && (
           <span className="history-item-preview text-sm line-clamp-2">
             {formatPropertyName(propPayload.key)}
-            {propPayload.value != null && ` → ${propPayload.value}`}
+            {propValue != null && ` → ${propValue}`}
           </span>
         )}
         {/* Attachment and alias rows (#4335 review item 5, #5387): the raw

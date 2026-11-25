@@ -2,7 +2,8 @@
  * TagsView — the `tags` sidebar view.
  *
  * Composes the tag browser (`TagList`) with the tag-filter panel
- * (`TagFilterPanel`), separated by a labelled section divider. Extracted
+ * (`TagFilterPanel`), separated by a labelled section divider; the panel
+ * shows only while the space has a tag. Extracted
  * from the inline `tags` branch of `ViewDispatcher` (#1649) so the router
  * delegates to a single view component like every other case, and so the
  * section label flows through i18n rather than a hardcoded literal.
@@ -23,16 +24,19 @@ export interface TagsViewProps {
 export function TagsView({ onTagClick }: TagsViewProps): ReactElement {
   const { t } = useTranslation()
   return (
-    <div className="mx-auto w-full max-w-list space-y-8">
-      <TagList onTagClick={onTagClick} />
-      <div className="flex items-center gap-4">
-        <Separator className="flex-1" />
-        <span className="text-xs font-medium text-muted-foreground">
-          {t('tagFilter.sectionLabel')}
-        </span>
-        <Separator className="flex-1" />
-      </div>
-      <TagFilterPanel />
+    <div className="mx-auto w-full max-w-list">
+      <TagList onTagClick={onTagClick}>
+        <div className="space-y-8 pt-4">
+          <div className="flex items-center gap-4">
+            <Separator className="flex-1" />
+            <span className="text-xs font-medium text-muted-foreground">
+              {t('tagFilter.sectionLabel')}
+            </span>
+            <Separator className="flex-1" />
+          </div>
+          <TagFilterPanel />
+        </div>
+      </TagList>
     </div>
   )
 }

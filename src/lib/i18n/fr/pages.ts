@@ -114,6 +114,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintIntro':
     'Saisissez-les n’importe où dans un modèle\u00A0; chacun est remplacé lors de l’insertion du modèle.',
   'templates.variablesHintInfoLabel': 'À propos des espaces réservés',
+  'templates.variablesMore': '+{{n}} autres',
   'templates.variableToday': 'Date du jour (YYYY-MM-DD)',
   'templates.variableTime': 'Heure actuelle (HH:MM)',
   'templates.variableDatetime': 'Date et heure actuelles',

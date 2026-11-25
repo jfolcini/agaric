@@ -1,3 +1,5 @@
+import { devices } from '@playwright/test'
+
 import {
   activePopover,
   expect,
@@ -6,6 +8,7 @@ import {
   navigateToView,
   openPage,
   saveBlock,
+  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -64,6 +67,56 @@ test.describe('Tags view — seed tags @pages', () => {
     // The "New tag name..." input and "Add tag" button should be visible
     await expect(page.getByPlaceholder('New tag name...')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Add tag' })).toBeVisible()
+  })
+})
+
+// A tag filter needs a tag to pick, so a space without tags offers none (#7040).
+test.describe('Tags view — a space with no tags @pages @spaces', () => {
+  test('offers no tag filter until the space has a tag', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToTags(page)
+    const filterHeading = page.getByRole('heading', { name: 'Find blocks by tag' })
+    await expect(filterHeading).toBeVisible()
+
+    // The seed writes its tags into Personal only.
+    await switchToSpace(page, 'Work')
+    await navigateToTags(page)
+    await expect(
+      page.getByText('No tags yet. Create one above to organize your blocks.'),
+    ).toBeVisible()
+    await expect(filterHeading).toHaveCount(0)
+
+    await page.getByPlaceholder('New tag name...').fill('roadmap')
+    await page.getByRole('button', { name: 'Add tag' }).click()
+    await expect(page.getByTestId('tag-item-roadmap')).toBeVisible()
+    await expect(filterHeading).toBeVisible()
+  })
+})
+
+// The Add button sat under the input at full width on a phone (#7040).
+test.describe('Tags view on a phone @pages @mobile', () => {
+  const pixel = devices['Pixel 7']
+  test.use({
+    viewport: { width: 412, height: 915 },
+    hasTouch: true,
+    isMobile: true,
+    userAgent: pixel.userAgent,
+  })
+
+  test('the Add tag button sits on the name input row', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Tags')
+    const input = page.getByPlaceholder('New tag name...')
+    const add = page.getByRole('button', { name: 'Add tag' })
+    await expect(add).toBeDisabled()
+    await input.fill('urgent')
+    await expect(add).toBeEnabled()
+    const [inputBox, addBox] = await Promise.all([input.boundingBox(), add.boundingBox()])
+    if (!inputBox || !addBox) throw new Error('the create form is not laid out')
+    expect(
+      Math.abs(addBox.y + addBox.height / 2 - (inputBox.y + inputBox.height / 2)),
+    ).toBeLessThanOrEqual(1)
+    expect(addBox.x).toBeGreaterThanOrEqual(inputBox.x + inputBox.width)
   })
 })
 

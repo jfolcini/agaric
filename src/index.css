@@ -2583,8 +2583,9 @@ mark[data-highlight-color='purple'] {
 /* A History row's cell below `sm`: the meta line shares the first line with
  * the labelled Diff / Reset actions; the content takes the second line,
  * indented past the checkbox, and the device name trails it under the actions.
- * Wrapping the actions onto a line of their own made every row three lines
- * tall on a phone. From `sm` up it is a
+ * A row without content or Diff is one line, the device name in Diff's place,
+ * giving way to the meta line. Wrapping the actions onto a line of their own made every row
+ * three lines tall on a phone. From `sm` up it is a
  * single flex line. The utility owns `display` at both widths: a separate
  * `flex` class would come later in the sheet and override the grid. */
 @utility history-row-cell {
@@ -2619,6 +2620,13 @@ mark[data-highlight-color='purple'] {
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    &:not(:has(.history-item-preview, .diff-toggle-btn)) {
+      grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+      & > .history-item-main > .history-item-device-group {
+        grid-column: 3;
+        grid-row: 1;
+      }
     }
     & > .diff-toggle-btn {
       grid-column: 3;

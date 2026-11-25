@@ -114,6 +114,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintIntro':
     'Digite-os em qualquer lugar de um modelo; cada um é preenchido quando o modelo é inserido.',
   'templates.variablesHintInfoLabel': 'Sobre os marcadores',
+  'templates.variablesMore': '+{{n}} mais',
   'templates.variableToday': 'Data atual (YYYY-MM-DD)',
   'templates.variableTime': 'Hora atual (HH:MM)',
   'templates.variableDatetime': 'Data e hora atuais',

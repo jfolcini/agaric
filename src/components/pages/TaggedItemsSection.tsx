@@ -192,7 +192,7 @@ function Panel({
   const headingId = useId()
   return (
     <section aria-labelledby={headingId} data-testid={`tagged-${kind}`}>
-      <h2 id={headingId} className="mb-2 text-sm font-semibold text-muted-foreground">
+      <h2 id={headingId} className="mb-2 text-sm font-semibold">
         {heading}
       </h2>
       <ListViewState

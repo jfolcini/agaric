@@ -71,6 +71,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 - **Restore** a single item, or multi-select and batch-restore.
 - **Purge** a single item permanently (with confirmation), or batch-purge.
 - **Restore All / Empty Trash** in the header for the nuclear options.
+- Each row names the page the block was deleted from; a page in the Trash too is named and marked *(deleted)*.
 - The Pages header's **Trash** button shows a count badge; large purges may trigger a "non-reversible" warning dialog before confirming.
 
 ## History
@@ -78,7 +79,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
 
 - **Page history**: the page kebab's *Page history* opens the view scoped to that page. It names the page, lists and restores that page's operations only, leaves out the compaction card, and *Show all pages* goes back to the whole log.
-- **Rows** name the operation in words (*Edit*, *Add tag*, …) with an icon per kind, and the device that made it: *This device*, or a synced op's paired-device name (its truncated id until it has one). An op an MCP agent wrote carries a badge with the agent's name.
+- **Rows** name the operation in words (*Edit*, *Add tag*, …) with an icon per kind, and the device that made it: *This device*, or a synced op's paired-device name (its truncated id until it has one). An op an MCP agent wrote carries a badge with the agent's name. A property op shows the key and the value set (*Space → Work*), a page or space named by its title.
 - **Remove old history** (the compaction card) sits collapsed at the top of the whole-log view and opens only when clicked.
 - **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
@@ -92,7 +93,8 @@ Global operation log — every edit Agaric has applied, in reverse chronological
 
 Pages tagged as templates.
 
-- **Browse**: each template is a page; the row shows a preview of its first child block. The placeholders a template can use (`<% today %>` and the rest) are listed below the templates, each with what it fills in.
+- **Browse**: each template is a page; the row shows a preview of its first child block, rendered as text without its Markdown. Below the templates, the first two placeholders a template can use (`<% today %>`, `<% time %>`) and a count of the rest; the ⓘ beside them lists all of them, each with what it fills in.
+- **Create** a template from the name field and its *Create template* button beside it; *Remove template status* on a row keeps the page.
 - **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's blocks land after the current block's last sibling, each with its task state, priority, dates and properties, all in one transaction: a failed insert lands nothing and says so, and one `Ctrl+Z` takes a whole insert back (#6530).
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
 - **Journal template**: the template page new daily pages in the space copy, nesting included; it carries a *Journal template* badge. Set it from the page kebab (*Set as journal template*) or Settings › General › *Journal template* — see [spaces.md](spaces.md).

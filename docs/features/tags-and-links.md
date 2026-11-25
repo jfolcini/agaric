@@ -24,7 +24,7 @@ Tags are first-class entities — each tag is a record with its own page in the 
 
 ## Boolean tag queries
 
-The **Tags** view (and the Agenda tag filter) supports boolean expressions:
+The **Tags** view (and the Agenda tag filter) supports boolean expressions; the Tags view offers them once the space has a tag:
 
 - `@a AND @b` — blocks carrying both tags
 - `@a OR @b` — blocks carrying either

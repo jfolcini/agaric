@@ -871,7 +871,7 @@ describe('HistoryListItem', () => {
     it('renders set_property with formatted name and value', () => {
       renderInListbox(
         defaultProps({
-          entry: makeEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
+          entry: makeEntry(1, 'set_property', { key: 'due_date', value_date: '2026-04-15' }),
         }),
       )
 
@@ -1292,7 +1292,7 @@ describe('BlockHistoryItem', () => {
   it('renders property payload display', () => {
     renderInList(
       blockDefaultProps({
-        entry: makeBlockEntry(1, 'set_property', { key: 'due_date', value: '2026-04-15' }),
+        entry: makeBlockEntry(1, 'set_property', { key: 'due_date', value_date: '2026-04-15' }),
       }),
     )
     expect(screen.getByText(/Due Date/)).toBeInTheDocument()

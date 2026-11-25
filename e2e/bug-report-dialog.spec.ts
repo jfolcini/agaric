@@ -79,4 +79,24 @@ test.describe('Report-a-bug dialog @settings', () => {
     // sub-pixel rounding).
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1)
   })
+
+  // Settings puts a switch right of its label; the bug report put it left (#7040).
+  test('its switches sit right of their labels, as in Settings', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 800 })
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('agaric:report-bug', { detail: { message: 'probe' } }))
+    })
+    const body = page.getByTestId('bug-report-body')
+    await expect(body).toBeVisible()
+
+    for (const name of ['Include diagnostic logs', 'Redact file paths and device ID']) {
+      const toggle = body.getByRole('switch', { name, exact: true })
+      const label = body.locator('label').filter({ hasText: name })
+      const [switchBox, labelBox] = await Promise.all([toggle.boundingBox(), label.boundingBox()])
+      if (!switchBox || !labelBox) throw new Error(`${name} is not laid out`)
+      expect(switchBox.x).toBeGreaterThanOrEqual(labelBox.x + labelBox.width)
+    }
+  })
 })

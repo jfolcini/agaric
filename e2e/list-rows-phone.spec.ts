@@ -108,6 +108,28 @@ test.describe('List rows on a phone @pages @mobile', () => {
     ).toBeLessThanOrEqual(resetBox.height / 2)
   })
 
+  // A row without content showed "· This device" alone on a second line (#7040).
+  test('a History row without content is one line, its device on the meta line', async ({
+    page,
+  }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    // The new page's first block is created empty.
+    const row = page
+      .locator('[data-history-item]')
+      .filter({ hasNot: page.locator('.history-item-preview') })
+      .first()
+    const badge = row.getByTestId('history-type-badge')
+    const device = row.locator('.history-item-device-group')
+    await expect(device).toBeVisible()
+    const [badgeBox, deviceBox] = await Promise.all([badge.boundingBox(), device.boundingBox()])
+    if (!badgeBox || !deviceBox) throw new Error('row parts are not laid out')
+    const middle = (box: { y: number; height: number }) => box.y + box.height / 2
+    expect(Math.abs(middle(deviceBox) - middle(badgeBox))).toBeLessThanOrEqual(1)
+    expect(deviceBox.x).toBeGreaterThan(badgeBox.x + badgeBox.width)
+  })
+
   // The cursor's accent bar used to be an inset box-shadow, which the card's
   // rounded corner bent into a curve on an end row. The bar now runs the row's
   // full height, and the card squares that corner while the cursor sits in it.
@@ -144,6 +166,62 @@ test.describe('List rows on a phone @pages @mobile', () => {
     // Off the end row, the corner is round again.
     await page.keyboard.press('ArrowDown')
     await expect(card).toHaveCSS('border-top-left-radius', '8px')
+  })
+
+  // The room the touch list leaves for the ↑/↓ pill is most of a landscape
+  // phone's height; without a floor the list shrank to its bottom padding.
+  test('the History list does not collapse on a landscape phone', async ({ page }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const grid = page.getByRole('grid')
+    await expect(grid).toBeVisible()
+    await page.setViewportSize({ width: 844, height: 390 })
+    expect(await grid.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+    expect(await grid.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(3 * TOUCH_TARGET_PX)
+  })
+
+  // The touch ↑/↓ pill floats at the bottom of the view; the last row must
+  // clear it once the list is scrolled to its end (#7040).
+  test.describe('on a 412×915 phone', () => {
+    test.use({ viewport: { width: 412, height: 915 } })
+
+    test('the History ↑/↓ pill covers no row at the end of the list', async ({ page }) => {
+      for (const title of ['Row one', 'Row two', 'Row three', 'Row four']) {
+        await openPagesView(page)
+        await createPageFromPagesView(page, title)
+      }
+      await navigateToView(page, 'History')
+      const grid = page.getByRole('grid')
+      const pill = page.getByTestId('history-touch-nav')
+      await expect(pill).toBeVisible()
+      // The list overflows its scroller, so its end is not in view yet.
+      expect(await grid.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+      // Scrolled to the end on every read: the list grows as the virtualizer
+      // measures rows taller than its estimate. Read once the final row is
+      // mounted (its bottom is the full-height spacer's) and the list is at its end.
+      await expect
+        .poll(() =>
+          grid.evaluate((el) => {
+            el.scrollTop = el.scrollHeight
+            const rows = [...el.querySelectorAll<HTMLElement>('[data-history-item]')]
+            const spacer = rows[0]?.parentElement
+            const last = rows.toSorted(
+              (a, b) => Number(b.dataset.index) - Number(a.dataset.index),
+            )[0]
+            const pillEl = document.querySelector('[data-testid="history-touch-nav"]')
+            if (!spacer || !last || !pillEl) return 'not laid out'
+            const row = last.getBoundingClientRect()
+            const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
+            if (!atEnd || Math.abs(row.bottom - spacer.getBoundingClientRect().bottom) > 1) {
+              return 'not at end'
+            }
+            const pillBox = pillEl.getBoundingClientRect()
+            return row.bottom <= pillBox.top || pillBox.bottom <= row.top ? 'clear' : 'covered'
+          }),
+        )
+        .toBe('clear')
+    })
   })
 
   test('Tags rows sit flush and are touch-sized', async ({ page }) => {
