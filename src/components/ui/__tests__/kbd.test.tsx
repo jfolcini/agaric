@@ -1,162 +1,118 @@
 /**
- * Tests for the canonical <Kbd> / <KbdChord> primitives (#1005 / #1004).
- *
- * Validates:
- *  - <Kbd> renders a single key chip with the absolute-token chrome that
- *    keeps it legible on a selected row (`bg-background text-foreground
- *    border-border`, #1004).
- *  - size="sm" vs size="md" produce the compact / prominent variants.
- *  - aria-hidden is opt-in (not blanket-applied), so standalone help chips
- *    stay readable to assistive tech while interactive-row chips can be
- *    hidden by the caller (#1005).
- *  - <KbdChord> splits `+` combos and `/` alternatives, and substitutes the
- *    platform mod key for a literal `Ctrl`.
+ * Tests for <Kbd>, the one shortcut renderer (#1005, #7040): one keycap per
+ * alternative, modifier glyphs on macOS and words elsewhere, arrow glyphs
+ * everywhere, and the absolute colour tokens that keep it legible on a
+ * selected row (#1004).
  */
 
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
-import { Kbd, KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+import { acceleratorToKeys } from '@/lib/quick-capture-shortcut'
+
+function setPlatform(platform: string): void {
+  __resetPlatformCacheForTests()
+  Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
+}
+
+const keycaps = (container: HTMLElement) =>
+  Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
 
 beforeEach(() => {
-  __resetPlatformCacheForTests()
-  // Force non-Mac so `Ctrl` stays the literal `Ctrl` token by default.
-  Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
+  setPlatform('Linux x86_64')
 })
 
 afterEach(() => {
   __resetPlatformCacheForTests()
 })
 
+describe('a saved quick-capture accelerator, drawn', () => {
+  const draw = (accelerator: string) =>
+    keycaps(render(<Kbd keys={acceleratorToKeys(accelerator)} />).container)
+
+  it('on macOS keeps the Control key apart from Command', () => {
+    setPlatform('MacIntel')
+    expect(draw('Ctrl+Alt+N')).toEqual(['⌃⌥N'])
+    expect(draw('Cmd+Alt+N')).toEqual(['⌘⌥N'])
+    expect(draw('CommandOrControl+Shift+Space')).toEqual(['⌘⇧Space'])
+  })
+
+  it('elsewhere draws Control and CommandOrControl as Ctrl', () => {
+    expect(draw('Ctrl+Alt+N')).toEqual(['Ctrl+Alt+N'])
+    expect(draw('CommandOrControl+Shift+Space')).toEqual(['Ctrl+Shift+Space'])
+  })
+})
+
 describe('Kbd', () => {
-  it('renders a single key as one <kbd>', () => {
-    const { container } = render(<Kbd>Esc</Kbd>)
-    const kbds = container.querySelectorAll('kbd')
-    expect(kbds).toHaveLength(1)
-    expect(kbds[0]?.textContent).toBe('Esc')
+  it('draws a chord as one keycap, modifiers as words joined by +', () => {
+    const { container } = render(<Kbd keys="Ctrl + Shift + F" />)
+    expect(keycaps(container)).toEqual(['Ctrl+Shift+F'])
+  })
+
+  it('draws arrow keys as glyphs', () => {
+    const { container } = render(<Kbd keys="Alt + Shift + Arrow Up" />)
+    expect(keycaps(container)).toEqual(['Alt+Shift+↑'])
+  })
+
+  it('draws modifiers as glyphs on macOS, with no separator', () => {
+    setPlatform('MacIntel')
+    const { container } = render(<Kbd keys="Ctrl + Alt + Shift + Arrow Right" />)
+    expect(keycaps(container)).toEqual(['⌘⌥⇧→'])
+  })
+
+  it('keeps a + key as a token', () => {
+    const { container } = render(<Kbd keys="Ctrl + +" />)
+    expect(keycaps(container)).toEqual(['Ctrl++'])
+  })
+
+  it('draws each alternative as its own keycap, with a / between', () => {
+    const { container } = render(<Kbd keys="Ctrl + Y / Ctrl + Shift + Z" />)
+    expect(keycaps(container)).toEqual(['Ctrl+Y', 'Ctrl+Shift+Z'])
+    expect(container.textContent).toBe('Ctrl+Y/Ctrl+Shift+Z')
+  })
+
+  it('draws a repeated alternative without a duplicate-key warning (#1562)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { container } = render(<Kbd keys="Esc / Esc" />)
+      expect(keycaps(container)).toEqual(['Esc', 'Esc'])
+      expect(errorSpy).not.toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 
   it('carries its own absolute colour tokens so it contrasts on selected rows (#1004)', () => {
-    const { container } = render(<Kbd>K</Kbd>)
+    const { container } = render(<Kbd keys="K" />)
     const kbd = container.querySelector('kbd')
     expect(kbd?.className).toContain('bg-background')
     expect(kbd?.className).toContain('text-foreground')
     expect(kbd?.className).toContain('border-border')
-    expect(kbd?.className).toContain('rounded')
-    expect(kbd?.className).toContain('font-mono')
-    // The old row-relative muted fill must be gone.
-    expect(kbd?.className).not.toContain('bg-muted')
   })
 
-  it('defaults to the compact sm size', () => {
-    const { container } = render(<Kbd>A</Kbd>)
+  it('defaults to the compact sm size, and md is the prominent variant', () => {
+    const { container: sm } = render(<Kbd keys="A" />)
+    expect(sm.querySelector('kbd')?.className).not.toContain('font-semibold')
+    const { container: md } = render(<Kbd keys="A / B" size="md" />)
+    for (const kbd of md.querySelectorAll('kbd')) expect(kbd.className).toContain('font-semibold')
+  })
+
+  it('forwards aria-hidden and className to the outer element', () => {
+    const { container } = render(<Kbd keys="Enter" aria-hidden="true" className="ml-1" />)
     const kbd = container.querySelector('kbd')
-    expect(kbd?.className).toContain('text-xs')
-    expect(kbd?.className).not.toContain('font-semibold')
+    expect(kbd?.getAttribute('aria-hidden')).toBe('true')
+    expect(kbd?.className).toContain('ml-1')
   })
 
-  it('size="md" renders the prominent settings variant', () => {
-    const { container } = render(<Kbd size="md">A</Kbd>)
-    const kbd = container.querySelector('kbd')
-    expect(kbd?.className).toContain('text-xs')
-    expect(kbd?.className).toContain('font-semibold')
-    expect(kbd?.className).toContain('shadow-(--shadow-resting)')
-  })
-
-  it('does not apply aria-hidden by default (standalone help chips stay readable)', () => {
-    const { container } = render(<Kbd>?</Kbd>)
-    expect(container.querySelector('kbd')?.getAttribute('aria-hidden')).toBeNull()
-  })
-
-  it('forwards aria-hidden when the caller marks the chip decorative', () => {
-    const { container } = render(<Kbd aria-hidden="true">↵</Kbd>)
-    expect(container.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true')
-  })
-
-  it('merges caller className', () => {
-    const { container } = render(<Kbd className="ml-1">↵</Kbd>)
-    expect(container.querySelector('kbd')?.className).toContain('ml-1')
-  })
-})
-
-describe('KbdChord', () => {
-  it('renders a single key as one chip', () => {
-    const { container } = render(<KbdChord keys="Tab" />)
-    const kbds = container.querySelectorAll('kbd')
-    expect(kbds).toHaveLength(1)
-    expect(kbds[0]?.textContent).toBe('Tab')
-  })
-
-  it('splits a `+` combo into multiple chips joined by `+`', () => {
-    const { container } = render(<KbdChord keys="Ctrl + S" />)
-    const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['Ctrl', 'S'])
-    expect(container.textContent).toContain('+')
-  })
-
-  it('splits `/` alternatives joined by a `/` separator', () => {
-    const { container } = render(<KbdChord keys="Cmd / Ctrl" />)
-    const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['Cmd', 'Ctrl'])
-    expect(container.textContent).toContain('/')
-  })
-
-  it('handles combined alternatives like `Ctrl + Z / Ctrl + Shift + Z`', () => {
-    const { container } = render(<KbdChord keys="Ctrl + Z / Ctrl + Shift + Z" />)
-    const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['Ctrl', 'Z', 'Ctrl', 'Shift', 'Z'])
-  })
-
-  it('substitutes `Ctrl` with the ⌘ glyph on macOS', () => {
-    __resetPlatformCacheForTests()
-    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
-    const { container } = render(<KbdChord keys="Ctrl + K" />)
-    const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['⌘', 'K'])
-  })
-
-  it('propagates the size variant to its chips', () => {
-    const { container } = render(<KbdChord keys="Ctrl + K" size="md" />)
-    for (const kbd of container.querySelectorAll('kbd')) {
-      expect(kbd.className).toContain('font-semibold')
-    }
-  })
-
-  // #1562: keying the inner Fragments by token text produced duplicate React
-  // keys when a chord repeated a token (e.g. `G + G`) or an alternative,
-  // emitting a dev-only "Encountered two children with the same key" warning and
-  // risking incorrect reconciliation. Index-based keys are correct because the
-  // tokens are positional and never reordered.
-  it('renders a chord with a REPEATED token without duplicate-key warnings (#1562)', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const { container } = render(<KbdChord keys="G + G" />)
-      const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-      // Both repeated tokens still render in order.
-      expect(kbds).toEqual(['G', 'G'])
-      // No React duplicate-key warning was emitted.
-      const sawDuplicateKeyWarning = errorSpy.mock.calls.some((args) =>
-        args.some((a) => typeof a === 'string' && /same key/i.test(a)),
-      )
-      expect(sawDuplicateKeyWarning).toBe(false)
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
-  it('renders duplicate alternatives without duplicate-key warnings (#1562)', () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const { container } = render(<KbdChord keys="Esc / Esc" />)
-      const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-      expect(kbds).toEqual(['Esc', 'Esc'])
-      const sawDuplicateKeyWarning = errorSpy.mock.calls.some((args) =>
-        args.some((a) => typeof a === 'string' && /same key/i.test(a)),
-      )
-      expect(sawDuplicateKeyWarning).toBe(false)
-    } finally {
-      errorSpy.mockRestore()
-    }
+  it('has no a11y violations, one chord or several', async () => {
+    const { container } = render(
+      <p>
+        <Kbd keys="Ctrl + Shift + Arrow Up" /> <Kbd keys="Ctrl + Y / Ctrl + Shift + Z" size="md" />
+      </p>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

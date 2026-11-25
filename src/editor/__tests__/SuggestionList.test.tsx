@@ -22,7 +22,11 @@ import { axe } from 'vitest-axe'
 
 import type { PickerItem, SuggestionListRef } from '@/editor/SuggestionList'
 import { SuggestionList } from '@/editor/SuggestionList'
+import { _resetHardwareKeyboardLatchForTests } from '@/hooks/useHasHardwareKeyboard'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 const sampleItems: PickerItem[] = [
   { id: '1', label: 'Alpha' },
@@ -36,6 +40,8 @@ function makeKeyEvent(key: string): KeyboardEvent {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(useIsTouch).mockReturnValue(false)
+  _resetHardwareKeyboardLatchForTests()
 })
 
 describe('SuggestionList', () => {
@@ -901,38 +907,33 @@ describe('SuggestionList', () => {
     expect(footer).toHaveTextContent('Esc to close')
   })
 
-  // -- #1006: footer is pointer-conditional, not width-conditional -------------
+  // -- Keyboard-only on touch (#7040) ------------------------------------------
 
-  it('keyboard-hint footer is gated on a fine pointer (not a width breakpoint)', () => {
-    const command = vi.fn()
-    render(<SuggestionList items={sampleItems} command={command} />)
-
-    const fineFooter = screen.getByTestId('suggestion-list-footer')
-    // No longer hidden behind a width breakpoint (`sm:flex`); a large tablet
-    // is still touch. The keyboard hints reveal only on a fine pointer.
-    expect(fineFooter.className).not.toContain('sm:flex')
-    expect(fineFooter.className).toContain('[@media(pointer:fine)]:flex')
-    expect(fineFooter.className).toContain('hidden')
+  it('a touch screen with no hardware keyboard shows no key footer and no shortcut chips', () => {
+    vi.mocked(useIsTouch).mockReturnValue(true)
+    render(
+      <SuggestionList
+        items={[{ id: 'bold', label: 'BOLD', keys: 'Ctrl + B' }]}
+        command={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('suggestion-list-footer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('suggestion-shortcut-bold')).not.toBeInTheDocument()
   })
 
-  it('renders a coarse-pointer touch footer with touch copy and aria-hidden (#1006)', () => {
-    const command = vi.fn()
-    render(<SuggestionList items={sampleItems} command={command} />)
-
-    const touchFooter = screen.getByTestId('suggestion-list-footer-touch')
-    expect(touchFooter).toBeInTheDocument()
-    expect(touchFooter).toHaveAttribute('aria-hidden', 'true')
-    // Touch copy — no keyboard glyphs (↑↓ / ↵⇥ / Esc are meaningless on touch).
-    expect(touchFooter).toHaveTextContent('Tap to select')
-    expect(touchFooter).not.toHaveTextContent('↑↓')
-    expect(touchFooter).not.toHaveTextContent('Esc')
-    // Revealed only on a coarse pointer; same chrome as the fine footer.
-    expect(touchFooter.className).toContain('[@media(pointer:coarse)]:flex')
-    expect(touchFooter.className).toContain('hidden')
-    expect(touchFooter.className).toContain('border-t')
-    expect(touchFooter.className).toContain('px-2')
-    expect(touchFooter.className).toContain('py-1')
-    expect(touchFooter.className).toContain('text-xs')
+  it('a touch screen gets the key footer and chips back once a hardware key is pressed', () => {
+    vi.mocked(useIsTouch).mockReturnValue(true)
+    render(
+      <SuggestionList
+        items={[{ id: 'bold', label: 'BOLD', keys: 'Ctrl + B' }]}
+        command={vi.fn()}
+      />,
+    )
+    act(() => {
+      document.dispatchEvent(makeKeyEvent('a'))
+    })
+    expect(screen.getByTestId('suggestion-list-footer')).toBeInTheDocument()
+    expect(screen.getByTestId('suggestion-shortcut-bold')).toBeInTheDocument()
   })
 
   // -- #1007: hover state matches the canonical context-menu token ------------
@@ -979,15 +980,15 @@ describe('SuggestionList', () => {
     })
     /** The catalog's `Ctrl` is the platform mod key (#6548). */
     const MOD_BY_PLATFORM = [
-      ['Linux x86_64', 'Ctrl'],
-      ['Win32', 'Ctrl'],
-      ['MacIntel', '⌘'],
+      ['Linux x86_64', 'Ctrl+', 'Shift+'],
+      ['Win32', 'Ctrl+', 'Shift+'],
+      ['MacIntel', '⌘', '⇧'],
     ] as const
     const chipTexts = (testId: string): string[] =>
       Array.from(screen.getByTestId(testId).querySelectorAll('kbd')).map((k) => k.textContent ?? '')
 
     it.each(MOD_BY_PLATFORM)(
-      'renders a static `keys` chord as chips (Bold/Italic have no catalog id) on %s',
+      'renders a static `keys` chord as a keycap (Bold/Italic have no catalog id) on %s',
       (platform, mod) => {
         setPlatform(platform)
         const command = vi.fn()
@@ -1000,13 +1001,13 @@ describe('SuggestionList', () => {
         const chip = screen.getByTestId('suggestion-shortcut-bold')
         expect(chip).toBeInTheDocument()
         expect(chip).toHaveAttribute('aria-hidden', 'true')
-        expect(chipTexts('suggestion-shortcut-bold')).toEqual([mod, 'B'])
+        expect(chipTexts('suggestion-shortcut-bold')).toEqual([`${mod}B`])
       },
     )
 
     it.each(MOD_BY_PLATFORM)(
       'resolves a live `shortcutId` from the keyboard catalog on %s',
-      (platform, mod) => {
+      (platform, mod, shift) => {
         setPlatform(platform)
         const command = vi.fn()
         // `strikethrough` defaults to Ctrl + Shift + S in the catalog (#211 P2-11).
@@ -1016,7 +1017,7 @@ describe('SuggestionList', () => {
             command={command}
           />,
         )
-        expect(chipTexts('suggestion-shortcut-strike')).toEqual([mod, 'Shift', 'S'])
+        expect(chipTexts('suggestion-shortcut-strike')).toEqual([`${mod}${shift}S`])
       },
     )
 

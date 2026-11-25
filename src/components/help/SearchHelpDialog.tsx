@@ -18,6 +18,7 @@
  */
 
 import { CaseSensitive, Regex, WholeWord } from 'lucide-react'
+import { Children } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { DialogBody } from '@/components/ui/dialog'
@@ -283,13 +284,20 @@ function BooleanOperatorsBody() {
   )
 }
 
+/** A Trans `<kbd>` slot: the key the translation names, drawn by `Kbd`. */
+function TransKbd({ children }: { children?: React.ReactNode }) {
+  const keys = Children.toArray(children)
+    .filter((child): child is string => typeof child === 'string')
+    .join('')
+  return <Kbd keys={keys} size="md" />
+}
+
 /** Tips section body. */
 function TipsBody() {
   const { t } = useTranslation()
-  // #1005 — canonical chip. This is a standalone help kbd inside descriptive
-  // prose (not an interactive row), so it stays readable to assistive tech;
-  // no blanket `aria-hidden`.
-  const kbd = <Kbd size="md" />
+  // A standalone help key inside descriptive prose (not an interactive row),
+  // so it stays readable to assistive tech; no blanket `aria-hidden`.
+  const kbd = <TransKbd />
   return (
     <div className="text-muted-foreground text-sm space-y-2">
       <p>

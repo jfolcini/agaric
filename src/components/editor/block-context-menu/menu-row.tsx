@@ -10,23 +10,26 @@
 import { Check, ChevronDown, ChevronRight } from 'lucide-react'
 
 import type { MenuItem } from '@/components/editor/block-context-menu/types'
+import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 /**
  * #999/#1002/#1003 — the trailing slot of an interactive row holds a keyboard
- * shortcut hint (suppressed on coarse pointers, which have no keyboard) and/or
- * a disclosure chevron (the "Turn into" toggle). #976 (item 14) — a disclosure
+ * shortcut hint (only where there is a keyboard, `useKeyboardHints`) and/or a
+ * disclosure chevron (the "Turn into" toggle). #976 (item 14) — a disclosure
  * toggle that ALSO has a binding (Turn into → Ctrl+Shift+L) shows the hint
  * before the chevron, so the keyboard shortcut stays discoverable.
  */
-export function renderTrailing(item: MenuItem): React.ReactNode {
-  const hint = item.shortcut ? (
-    // #1002 — no magic `ml-4`; the label's `flex-1` + button `gap-2`
-    // right-align the hint. `tabular-nums` keeps glyph widths even.
-    <span className="text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden">
-      {item.shortcut}
-    </span>
-  ) : null
+export function renderTrailing(item: MenuItem, keyboardHints: boolean): React.ReactNode {
+  const hint =
+    item.shortcut && keyboardHints ? (
+      // #1002 — no magic `ml-4`; the label's `flex-1` + button `gap-2`
+      // right-align the hint.
+      <span className="text-xs text-muted-foreground">
+        <Kbd keys={item.shortcut} />
+        {item.shortcutNote && ` ${item.shortcutNote}`}
+      </span>
+    ) : null
   if (item.expanded !== undefined) {
     const Chevron = item.expanded ? ChevronDown : ChevronRight
     return (
@@ -46,6 +49,8 @@ export interface MenuRowContext {
   itemRefs: React.RefObject<(HTMLButtonElement | null)[]>
   /** Mutable per-render counter; advanced for each interactive (actionable) row. */
   nextIndex: () => number
+  /** Whether rows show their shortcut hints (`useKeyboardHints`). */
+  keyboardHints: boolean
 }
 
 /**
@@ -115,7 +120,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
     >
       {item.icon}
       <span className="flex-1">{item.label}</span>
-      {renderTrailing(item)}
+      {renderTrailing(item, ctx.keyboardHints)}
     </button>
   )
 }

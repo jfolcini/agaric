@@ -2631,34 +2631,36 @@ mark[data-highlight-color='purple'] {
   }
 }
 
-/* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
- * key is pressed, so at rest it is a tint plus a 2px edge bar in the ring
- * colour, which keeps the row legible where a tint alone washes out (dark,
- * high contrast); History's touch ↑/↓ and the document-level Space/Enter
- * shortcuts act on it without focus. The ring shows while keyboard focus is on
- * this row or a sibling row, or on the composite container (document-level
- * lists move focus there on a navigation key). Not keyed off focus deeper in
- * the container (Pages rows hold their own tabbable buttons) nor off any
- * ancestor: the Journal container and #main-content take programmatic focus at
- * boot and match :focus-visible then. The tint is an image layer so it sits
- * over a row's own background. The accent bar runs the row's full height and
- * is square-ended; a card squares its corner on the bar's side while the
- * cursor row sits in it (`listCardVariants`), so the bar meets the corner at a
- * right angle. */
+/* Keyboard cursor of a navigable list row: a tint plus a 2px edge bar in the
+ * ring colour, which keeps the row legible where a tint alone washes out (dark,
+ * high contrast). It paints only from a navigation key until the next pointer
+ * press (`data-list-cursor` on the root, `showListCursor`): at rest the cursor
+ * sits unseen on row 0, where it would read as a selection. The ring shows
+ * while keyboard focus is on this row or a sibling row, or on the composite
+ * container (document-level lists move focus there on a navigation key). Not
+ * keyed off focus deeper in the container (Pages rows hold their own tabbable
+ * buttons) nor off any ancestor: the Journal container and #main-content take
+ * programmatic focus at boot. The tint is an image layer so it sits over a
+ * row's own background. The accent bar runs the row's full height and is
+ * square-ended; a card squares its corner on the bar's side while the cursor
+ * row sits in it (`listCardVariants`), so the bar meets the corner at a right
+ * angle. */
 @utility list-cursor {
-  background-image: linear-gradient(
-    color-mix(in oklab, var(--accent) 30%, transparent),
-    color-mix(in oklab, var(--accent) 30%, transparent)
-  );
   position: relative;
-  &::before {
-    content: '';
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: 0;
-    width: 2px;
-    background-color: var(--ring);
-    pointer-events: none;
+  :root[data-list-cursor] & {
+    background-image: linear-gradient(
+      color-mix(in oklab, var(--accent) 30%, transparent),
+      color-mix(in oklab, var(--accent) 30%, transparent)
+    );
+    &::before {
+      content: '';
+      position: absolute;
+      inset-block: 0;
+      inset-inline-start: 0;
+      width: 2px;
+      background-color: var(--ring);
+      pointer-events: none;
+    }
   }
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {

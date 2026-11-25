@@ -69,6 +69,7 @@ export function ReferenceSheet({
   const isMobile = useIsMobile()
   const [filter, setFilter] = useState('')
   const opener = useRef<Element | null>(null)
+  const filterRef = useRef<HTMLInputElement>(null)
   const needle = filter.trim()
   const shown = sections
     .map((section) => ({
@@ -88,8 +89,11 @@ export function ReferenceSheet({
       <SheetContent
         side={isTouch && isMobile ? 'bottom' : 'right'}
         data-editor-portal=""
-        onOpenAutoFocus={() => {
+        // The filter takes focus with no ring: the user did not put it there.
+        onOpenAutoFocus={(e) => {
           opener.current = document.activeElement
+          e.preventDefault()
+          filterRef.current?.focus({ focusVisible: false })
         }}
         // Radix gives the focus back only to a `Dialog.Trigger`; there is none,
         // so give it to what had it, an editor with its selection.
@@ -108,6 +112,7 @@ export function ReferenceSheet({
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>{description}</SheetDescription>
           <SearchInput
+            ref={filterRef}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={filterLabel}

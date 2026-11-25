@@ -164,3 +164,54 @@ test('a star keeps focus when its toggle moves the page out of view @pages', asy
   await expect(pageRow(page, title).getByRole('button', { name: 'Bookmark page' })).toBeFocused()
   await expect(pageTitle(page)).toHaveCount(0)
 })
+
+/**
+ * #7040 — keyboard affordances show once the keyboard is in use. At rest the
+ * cursor sits on the first row unpainted (a tint and a bar there read as a
+ * selection); a key that moves it paints it, and a pointer press puts it back
+ * to rest. The search field App focuses on arrival draws no ring, and Tab does.
+ */
+test.describe('Pages keyboard affordances at rest @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Pages')
+    await expect(pageRow(page, 'Getting Started')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  const bar = (row: ReturnType<typeof pageRow>) =>
+    row.evaluate((el) => {
+      const cursor = el.closest('.list-cursor') ?? el.querySelector('.list-cursor')
+      return cursor === null ? null : getComputedStyle(cursor, '::before').content
+    })
+
+  test('the first row paints no cursor bar until a key moves the cursor', async ({ page }) => {
+    const first = pageRow(page, 'Getting Started')
+    await expect.poll(() => bar(first)).toBe('none')
+
+    await page.getByRole('grid').focus()
+    await page.keyboard.press('ArrowDown')
+    const second = pageRow(page, 'Meeting Notes Template')
+    await expect(second).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => bar(second)).toBe('""')
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => bar(first)).toBe('""')
+
+    await page.getByTestId('header-label').click()
+    await expect.poll(() => bar(first)).toBe('none')
+  })
+
+  test('the search field App focuses draws no ring, and Tab draws one', async ({ page }) => {
+    // A first visit right after boot can mount the lazy view after App's
+    // one-frame focus pass (`new-page-dialog.spec.ts`), so focus is checked on
+    // an entry with it loaded.
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Pages')
+    const search = page.getByLabel('Search pages...', { exact: true })
+    await expect(search).toBeFocused()
+    expect(await search.evaluate((el) => el.matches(':focus-visible'))).toBe(false)
+
+    await page.keyboard.press('Tab')
+    await expect(search).not.toBeFocused()
+    expect(await page.evaluate(() => document.activeElement?.matches(':focus-visible'))).toBe(true)
+  })
+})

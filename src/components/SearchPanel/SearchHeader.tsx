@@ -7,8 +7,7 @@
  *
  * Debouncing logic stays in the parent; this component is a pure view.
  * The `ref` is forwarded to the underlying `SearchInput` so the parent
- * can register it with `useRegisterPrimaryFocus` and trigger
- * auto-focus.
+ * can register it with `useRegisterPrimaryFocus` and focus it on open.
  */
 
 import { HelpCircle } from 'lucide-react'
@@ -20,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 
 export interface SearchHeaderProps {
   inputRef: React.RefObject<HTMLInputElement | null>
@@ -73,6 +73,7 @@ export function SearchHeader({
   regexMode,
 }: SearchHeaderProps): React.ReactElement {
   const { t } = useTranslation()
+  const keyboardHints = useKeyboardHints()
   return (
     <ViewHeader>
       <div className="mx-auto max-w-list">
@@ -104,8 +105,6 @@ export function SearchHeader({
             // On a phone the input takes the first row and the toggles,
             // submit and help share the second, instead of a row each.
             wrapperClassName="max-sm:w-full"
-            // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: search input gets focus when the search panel opens so the user can type the query immediately
-            autoFocus
             {...comboboxAttrs}
           />
           {regexMode ? (
@@ -144,6 +143,7 @@ export function SearchHeader({
         </form>
         <p id="search-filter-hint" className="mt-1 text-xs text-muted-foreground">
           {t('search.filterSyntaxIntro')}
+          {keyboardHints && ` ${t('search.filterHelpKey')}`}
         </p>
         {inlineError ? (
           <p

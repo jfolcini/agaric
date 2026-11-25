@@ -110,7 +110,7 @@ export function InPageReplaceRow({
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <Kbd>Enter</Kbd>
+          <Kbd keys="Enter" />
         </TooltipContent>
       </Tooltip>
       <Tooltip>
@@ -127,7 +127,7 @@ export function InPageReplaceRow({
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <Kbd>Ctrl + Alt + Enter</Kbd>
+          <Kbd keys="Ctrl + Alt + Enter" />
         </TooltipContent>
       </Tooltip>
       {busy && <Spinner size="sm" label={t('findInPage.replacing')} />}

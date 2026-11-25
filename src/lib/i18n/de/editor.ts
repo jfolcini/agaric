@@ -269,7 +269,6 @@ export const editor: Record<string, string> = {
   'suggestion.footer.navigate': '↑↓ navigieren',
   'suggestion.footer.select': '↵ oder ⇥ auswählen',
   'suggestion.footer.close': 'Esc zum Schließen',
-  'suggestion.footer.touch.select': 'Zum Auswählen tippen',
   'link.opensInNewTab': '(öffnet in neuem Tab)',
   'linkPreview.notFoundTag': '(nicht gefunden)',
   'lightbox.description': 'Vollbildvorschau von {{filename}}',

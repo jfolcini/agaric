@@ -9,8 +9,9 @@ import { useMemo, useState } from 'react'
 import type { useTranslation } from 'react-i18next'
 
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/hooks/palette-commands'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useIsReadingAloud, useReadAloudSupported } from '@/hooks/useReadAloud'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
@@ -19,7 +20,7 @@ import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 /**
  * Right-aligned chord chip group rendered inside a `<CommandItem>`.
  * Reads live from `getShortcutKeys` so a rebind takes effect on the
- * next render, and renders through `KbdChord`, which shows the catalog's
+ * next render, and renders through `Kbd`, which shows the catalog's
  * `Ctrl` as this platform's mod key. Returns null when the binding is
  * empty (e.g. a deleted-then-not-rebound binding) so the row layout stays
  * consistent — no empty `<span>` placeholder.
@@ -28,13 +29,12 @@ function ShortcutChips({ shortcutId }: { shortcutId: string }): React.ReactEleme
   const keys = getShortcutKeys(shortcutId)
   if (keys.length === 0) return null
   return (
-    <span
-      className="ml-auto inline-flex items-center"
+    <Kbd
+      keys={keys}
+      className="ml-auto"
       aria-hidden="true"
       data-testid={`palette-cmd-shortcut-${shortcutId}`}
-    >
-      <KbdChord keys={keys} size="sm" />
-    </span>
+    />
   )
 }
 
@@ -83,11 +83,11 @@ export function CommandsModeBody({
   }
   const speech = useReadAloudSupported()
   const reading = useIsReadingAloud()
-  const commands: ReadonlyArray<RenderedCommand> = useMemo(
-    () =>
-      PALETTE_COMMANDS.filter(
-        (c) => c.requires === undefined || (c.requires === 'speech' ? speech : reading),
-      ).map((c) => {
+  const keyboard = useKeyboardHints()
+  const commands: ReadonlyArray<RenderedCommand> = useMemo(() => {
+    const offered = { speech, reading, keyboard }
+    return PALETTE_COMMANDS.filter((c) => c.requires === undefined || offered[c.requires]).map(
+      (c) => {
         const rendered: RenderedCommand = {
           id: c.id,
           category: c.category,
@@ -95,11 +95,11 @@ export function CommandsModeBody({
           label: t(c.labelKey),
           run: () => c.run({ onClose, onEscalate }),
         }
-        if (c.shortcutId !== undefined) rendered.shortcutId = c.shortcutId
+        if (c.shortcutId !== undefined && keyboard) rendered.shortcutId = c.shortcutId
         return rendered
-      }),
-    [t, onEscalate, onClose, speech, reading],
-  )
+      },
+    )
+  }, [t, onEscalate, onClose, speech, reading, keyboard])
 
   const filtered = useMemo(
     () =>

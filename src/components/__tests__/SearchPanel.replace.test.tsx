@@ -495,7 +495,7 @@ describe('SearchPanel replace across pages', () => {
 
     const tip = (await screen.findAllByRole('tooltip'))[0]
     expect(tip).toHaveTextContent(t('search.replace.toggle'))
-    expect(tip).toHaveTextContent('Ctrl + H')
+    expect(tip).toHaveTextContent('Ctrl+H')
   })
 
   it('Ctrl+H in the panel opens and closes the replace row', async () => {

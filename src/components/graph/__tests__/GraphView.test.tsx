@@ -904,7 +904,7 @@ describe('GraphView', () => {
 
     // #6895: the binding reaches the tooltip too, not only the accessible name.
     it.each([
-      [/Zoom in/, 'graph.zoomIn', '+ / ='],
+      [/Zoom in/, 'graph.zoomIn', '+/='],
       [/Zoom out/, 'graph.zoomOut', '-'],
       [/Fit to view/, 'graph.zoomReset', '0'],
     ])('%s shows its name and binding on hover', async (name, key, keys) => {
@@ -918,7 +918,8 @@ describe('GraphView', () => {
 
       const tip = (await screen.findAllByRole('tooltip'))[0]
       expect(tip).toHaveTextContent(t(key))
-      expect(tip?.querySelector('kbd')).toHaveTextContent(keys)
+      const keycaps = Array.from(tip?.querySelectorAll('kbd') ?? []).map((k) => k.textContent)
+      expect(keycaps.join('/')).toBe(keys)
     })
 
     it('respects user-customised binding via getShortcutKeys', async () => {

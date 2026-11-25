@@ -134,7 +134,7 @@ describe('JournalControls', () => {
     const previous = screen.getByRole('button', { name: /previous day/i })
     await user.hover(previous)
 
-    expect(await screen.findByText('Ctrl + Shift + Arrow Left')).toBeInTheDocument()
+    expect(await screen.findByText('Ctrl+Shift+←')).toBeInTheDocument()
     expect(previous).toHaveAttribute('aria-keyshortcuts', 'Control+Shift+ArrowLeft')
     expect(screen.getByRole('button', { name: /next day/i })).toHaveAttribute(
       'aria-keyshortcuts',
@@ -148,8 +148,8 @@ describe('JournalControls', () => {
 
   // #6895: the binding is IconButton's `shortcut`, after the name in the tooltip.
   it.each([
-    [/previous day/i, 'Previous day', 'Alt + ←'],
-    [/next day/i, 'Next day', 'Alt + →'],
+    [/previous day/i, 'Previous day', 'Alt+←'],
+    [/next day/i, 'Next day', 'Alt+→'],
   ])('%s shows its name and binding on hover', async (role, name, keys) => {
     const user = userEvent.setup()
     render(<JournalControls />)

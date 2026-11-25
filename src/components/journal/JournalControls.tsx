@@ -314,9 +314,7 @@ export function JournalControls(): React.ReactElement {
           </TooltipTrigger>
           <TooltipContent>
             {t('journal.goToToday')}{' '}
-            <Kbd className="ml-1" aria-hidden="true">
-              {todayShortcut}
-            </Kbd>
+            <Kbd keys={todayShortcut} className="ml-1" aria-hidden="true" />
           </TooltipContent>
         </Tooltip>
         {/* Agenda / stream have no date chip to hang the picker on, so they

@@ -204,7 +204,7 @@ describe('usePrimaryFocus', () => {
     }).not.toThrow()
   })
 
-  it('focus() uses preventScroll: true to avoid jumping to the top', () => {
+  it('focus() uses preventScroll: true to avoid jumping to the top, and draws no ring', () => {
     const el = document.createElement('input')
     document.body.append(el)
     const ref = { current: el }
@@ -225,7 +225,7 @@ describe('usePrimaryFocus', () => {
       result.current?.focus()
     })
 
-    expect(lastArgs).toEqual({ preventScroll: true })
+    expect(lastArgs).toEqual({ preventScroll: true, focusVisible: false })
 
     el.remove()
   })

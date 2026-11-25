@@ -29,6 +29,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
+import { showListCursor } from '@/hooks/useListKeyboardNavigation'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
@@ -381,7 +382,8 @@ export function HistoryView(): React.ReactElement {
       {/* touch-only ↑/↓ navigation buttons.
           Vim-mode (`j`/`k`) and arrow keys only fire on physical keyboards;
           on touch devices the user has no equivalent. These two buttons map
-          to the same `setFocusedIndex` calls a keyboard nav step would make.
+          to the same `setFocusedIndex` calls a keyboard nav step would make,
+          and paint the cursor as one does (`showListCursor`).
           Hidden on pointer:fine (mouse / trackpad) — those users already
           have arrow keys. Hidden when there are no entries. */}
       {entries.length > 0 && (
@@ -399,7 +401,10 @@ export function HistoryView(): React.ReactElement {
             ariaLabel={t('history.touchNavPrev')}
             tooltip={t('history.touchNavPrev')}
             disabled={focusedIndex <= 0}
-            onClick={() => setFocusedIndex((idx) => (idx > 0 ? idx - 1 : 0))}
+            onClick={() => {
+              setFocusedIndex((idx) => (idx > 0 ? idx - 1 : 0))
+              showListCursor()
+            }}
           >
             <ChevronUp />
           </IconButton>
@@ -410,9 +415,10 @@ export function HistoryView(): React.ReactElement {
             ariaLabel={t('history.touchNavNext')}
             tooltip={t('history.touchNavNext')}
             disabled={focusedIndex >= entries.length - 1}
-            onClick={() =>
+            onClick={() => {
               setFocusedIndex((idx) => (idx < entries.length - 1 ? idx + 1 : entries.length - 1))
-            }
+              showListCursor()
+            }}
           >
             <ChevronDown />
           </IconButton>

@@ -403,7 +403,7 @@ describe('KeyboardTab', () => {
 
     expect(row.children[0]).toBe(name)
     expect(row.children[1]).toHaveAttribute('data-testid', 'kbd-keys-column')
-    expect(row.children[1]).toHaveTextContent('Arrow Right')
+    expect(row.children[1]).toHaveTextContent('Ctrl+Shift+→')
     expect(row.children[2]).toContainElement(reset)
   })
 
@@ -569,11 +569,10 @@ describe('KeyboardTab', () => {
 
       render(<MacTab />)
 
-      // The indentBlock row has keys "Ctrl + Shift + Arrow Right" — on macOS the
-      // Ctrl kbd must be rendered as ⌘, not the literal "Ctrl".
-      const cmdKeys = screen.getAllByText('⌘')
-      expect(cmdKeys.length).toBeGreaterThan(0)
-      expect(screen.queryByText('Ctrl')).toBeNull()
+      // The indentBlock row has keys "Ctrl + Shift + Arrow Right" — on macOS
+      // it is drawn as ⌘⇧→, with no literal "Ctrl".
+      expect(screen.getAllByText('⌘⇧→').length).toBeGreaterThan(0)
+      expect(screen.queryByText(/Ctrl/)).toBeNull()
     } finally {
       if (original) Object.defineProperty(navigator, 'platform', original)
     }
@@ -593,9 +592,8 @@ describe('KeyboardTab', () => {
       render(<LinuxTab />)
 
       // On Linux, Ctrl renders literally and no ⌘ appears.
-      const ctrlKeys = screen.getAllByText('Ctrl')
-      expect(ctrlKeys.length).toBeGreaterThan(0)
-      expect(screen.queryByText('⌘')).toBeNull()
+      expect(screen.getAllByText('Ctrl+Shift+→').length).toBeGreaterThan(0)
+      expect(screen.queryByText(/⌘/)).toBeNull()
     } finally {
       if (original) Object.defineProperty(navigator, 'platform', original)
     }

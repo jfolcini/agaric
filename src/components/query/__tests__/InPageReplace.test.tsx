@@ -231,7 +231,7 @@ describe('InPageFind replace row', () => {
   // #6895: the shortcut moved out of a native title into a tooltip; the button's text is its name.
   it.each([
     ['Replace', 'Enter'],
-    ['Replace all', 'Ctrl + Alt + Enter'],
+    ['Replace all', 'Ctrl+Alt+Enter'],
   ])('%s shows %s in its tooltip on hover', async (name, shortcut) => {
     seed([['A', 'foo']])
     const { user } = await openReplace('foo', 'bar')

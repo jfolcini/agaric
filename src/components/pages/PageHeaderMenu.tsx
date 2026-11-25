@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next'
 import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { EditModeItem } from '@/components/pages/EditModeItem'
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
@@ -33,6 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import type { EditMode } from '@/lib/preferences'
 
 /** A space shown in the "Move to space" sub-menu. */
@@ -44,8 +46,7 @@ export interface MoveTargetSpace {
 export const MENU_ITEM_CLASS =
   'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent active:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
 
-const SHORTCUT_HINT_CLASS =
-  'ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden'
+const SHORTCUT_HINT_CLASS = 'ml-auto shrink-0'
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -174,6 +175,7 @@ export function PageHeaderMenu({
   const { t } = useTranslation()
   const isMobile = useIsMobile()
   const isTouch = useIsTouch()
+  const keyboardHints = useKeyboardHints()
   // A touch phone has no tab bar (`TabBar`), so a new tab there could never be seen.
   const offersNewTab = onOpenInNewTab != null && !(isTouch && isMobile)
 
@@ -331,7 +333,9 @@ export function PageHeaderMenu({
       <button type="button" className={MENU_ITEM_CLASS} onClick={onUndo} {...menuItemProps('undo')}>
         <Undo2 className="h-3.5 w-3.5" />
         {t('pageHeader.undoAction')}
-        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('undoLastPageOp')}</span>
+        {keyboardHints && (
+          <Kbd keys={shortcutHint('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
+        )}
       </button>
       <button
         type="button"
@@ -342,7 +346,9 @@ export function PageHeaderMenu({
       >
         <Redo2 className="h-3.5 w-3.5" />
         {t('pageHeader.redoAction')}
-        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('redoLastUndoneOp')}</span>
+        {keyboardHints && (
+          <Kbd keys={shortcutHint('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
+        )}
       </button>
       {onOpenHistory != null && (
         <button
@@ -373,7 +379,9 @@ export function PageHeaderMenu({
       >
         <Network className="h-3.5 w-3.5" />
         {t('pageHeader.showInGraph')}
-        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('showPageInGraph')}</span>
+        {keyboardHints && (
+          <Kbd keys={shortcutHint('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
+        )}
       </button>
       <button
         type="button"
@@ -442,7 +450,9 @@ export function PageHeaderMenu({
       >
         <Copy className="h-3.5 w-3.5" />
         {t('pageHeader.exportMarkdown')}
-        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
+        {keyboardHints && (
+          <Kbd keys={shortcutHint('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
+        )}
       </button>
       {onSaveMarkdownFile != null && (
         <button

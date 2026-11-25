@@ -194,7 +194,7 @@ describe('the link bubble', () => {
     fireEvent.focus(screen.getByRole('button', { name: t('toolbar.link') }))
     const tip = (await screen.findAllByRole('tooltip'))[0]
     expect(tip).toHaveTextContent(t('toolbar.link'))
-    expect(tip?.querySelector('kbd')).toHaveTextContent('Ctrl + K')
+    expect(tip?.querySelector('kbd')).toHaveTextContent('Ctrl+K')
   })
 })
 

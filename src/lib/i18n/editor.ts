@@ -455,17 +455,13 @@ export const editor: Record<string, string> = {
   // bold, as in "Create Project X".
   'suggestion.create': 'Create',
   // Translators: key hints in the footer of a popup list; very short. Keep the arrows and key
-  // symbols (↑↓ ↵ ⇥) and "Esc" as written. touch.select replaces them on touch screens.
+  // symbols (↑↓ ↵ ⇥) and "Esc" as written.
   'suggestion.footer.navigate': '↑↓ navigate',
   // D6 (#217): Tab also confirms the highlighted item (suggestion-renderer
   // maps the `suggestionAutocomplete` binding → synthetic Enter), so advertise
   // both keys rather than implying Enter is the only way to select.
   'suggestion.footer.select': '↵ or ⇥ select',
   'suggestion.footer.close': 'Esc to close',
-  // #1006 — touch users get no keyboard glyphs; the strip has no
-  // dismiss-on-tap-away affordance of its own (the picker closes when the
-  // editor selection moves), so the copy stays minimal.
-  'suggestion.footer.touch.select': 'Tap to select',
 
   // Translators: web links. opensInNewTab = screen-reader text read after a link's text (keep
   // the parentheses); notFoundTag = small tag in the preview shown on hovering a link whose web

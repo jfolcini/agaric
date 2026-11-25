@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import {
   findConflicts,
   getCurrentShortcuts,
@@ -233,7 +233,7 @@ export function KeyboardTab(): React.ReactElement {
                             </>
                           ) : (
                             <span className="inline-flex flex-wrap items-center gap-1">
-                              <KbdChord keys={shortcut.keys} size="sm" />
+                              <Kbd keys={shortcut.keys} />
                               {shortcut.isCustom && (
                                 <Badge tone="secondary" className="ml-1">
                                   {t('keyboard.settings.customized')}

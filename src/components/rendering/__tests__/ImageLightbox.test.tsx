@@ -417,7 +417,7 @@ describe('ImageLightbox', () => {
 
     // #6895: ZoomControls' binding reaches the tooltip, not only the accessible name.
     it.each([
-      ['lightbox-zoom-in', 'Zoom in', '+ / ='],
+      ['lightbox-zoom-in', 'Zoom in', '+/='],
       ['lightbox-zoom-out', 'Zoom out', '-'],
       ['lightbox-zoom-reset', 'Reset zoom', '0'],
     ])('%s shows %s and its binding on hover', async (testId, name, keys) => {
@@ -431,7 +431,8 @@ describe('ImageLightbox', () => {
 
       const tip = (await screen.findAllByRole('tooltip'))[0]
       expect(tip).toHaveTextContent(name)
-      expect(tip?.querySelector('kbd')).toHaveTextContent(keys)
+      const keycaps = Array.from(tip?.querySelectorAll('kbd') ?? []).map((k) => k.textContent)
+      expect(keycaps.join('/')).toBe(keys)
     })
 
     it('clicking ZoomIn increases the zoom and reveals the badge', async () => {

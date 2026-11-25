@@ -47,6 +47,28 @@ export function loadQuickCaptureShortcut(): string {
 }
 
 /**
+ * An accelerator in the plugin's format (`Ctrl+Alt+N`, `Cmd+Alt+N`,
+ * `CommandOrControl+Space`) as the catalog's `Ctrl + Alt + N`, which `Kbd`
+ * draws. `Cmd` and `CommandOrControl` become the catalog's mod key `Ctrl`
+ * (⌘ on macOS); the plugin's `Ctrl` is the Control key, which on macOS is
+ * `Control` (⌃), not the mod key; `Option` becomes `Alt`.
+ */
+const MOD_KEY_NAMES = new Set(['Cmd', 'Command', 'CommandOrControl', 'CmdOrCtrl', 'CmdOrControl'])
+
+export function acceleratorToKeys(accelerator: string): string {
+  const mac = isMac()
+  return accelerator
+    .split('+')
+    .map((part) => part.trim())
+    .map((part) => {
+      if (MOD_KEY_NAMES.has(part)) return 'Ctrl'
+      if (part === 'Ctrl' || part === 'Control') return mac ? 'Control' : 'Ctrl'
+      return part === 'Option' ? 'Alt' : part
+    })
+    .join(' + ')
+}
+
+/**
  * Persist `shortcut` under the canonical localStorage key. Silently
  * tolerates a missing / disabled `localStorage` so the in-memory
  * registration path still works in private-mode browsers.

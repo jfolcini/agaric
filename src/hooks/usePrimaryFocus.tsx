@@ -10,6 +10,10 @@
  * If the registry is empty for the current view, `focus()` returns `false`
  * and the caller is expected to fall back to focusing `#main-content`.
  *
+ * The move draws no focus ring (`focusVisible: false`): the user did not put
+ * focus there, and a text input matches `:focus-visible` on any focus, so the
+ * view would open with a ring around its search field. Tab draws it.
+ *
  * Design notes:
  *   - Only one primary element may be registered at a time — registering
  *     a new ref replaces any existing one. This matches the invariant that
@@ -64,7 +68,7 @@ export function PrimaryFocusProvider({ children }: ProviderProps): ReactElement 
         const ref = currentRef.current
         const el = ref?.current ?? null
         if (el?.isConnected) {
-          el.focus({ preventScroll: true })
+          el.focus({ preventScroll: true, focusVisible: false })
           return true
         }
         return false

@@ -507,7 +507,7 @@ function App() {
     const id = requestAnimationFrame(() => {
       const focusedPrimary = focusRegistry?.focus() ?? false
       if (!focusedPrimary) {
-        mainContentRef.current?.focus({ preventScroll: true })
+        mainContentRef.current?.focus({ preventScroll: true, focusVisible: false })
       }
     })
     return () => cancelAnimationFrame(id)

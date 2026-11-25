@@ -13,6 +13,7 @@
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Kbd } from '@/components/ui/kbd'
 import {
   Select,
   SelectContent,
@@ -22,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
@@ -56,9 +58,9 @@ const CREATE_SENTINEL = '__create__'
  */
 const MAX_HOTKEY_SPACES = 9
 
-/** The hint chip for the Nth space's `switchSpaceN` binding (`Alt+1`). */
-function spaceHotkeyHint(index: number): string {
-  return getShortcutKeys(`switchSpace${index + 1}`).replaceAll(' + ', '+')
+/** The Nth space's `switchSpaceN` binding (`Alt + 1`). */
+function spaceHotkey(index: number): string {
+  return getShortcutKeys(`switchSpace${index + 1}`)
 }
 
 interface SpaceSwitcherProps {
@@ -71,6 +73,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace)
+  const keyboardHints = useKeyboardHints()
 
   // Colour identity in the trigger. The dot inherits the
   // active space's accent so the user reads the same colour signal
@@ -93,7 +96,8 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
       {/*
        * Surface the `Alt+1..9` space-switching
        * shortcuts via a tooltip on the trigger so users discover
-       * them without opening the `?` keyboard help dialog. The
+       * them without opening the `?` keyboard help dialog; only where
+       * there is a keyboard to press them (`useKeyboardHints`). The
        * tooltip wraps a `<span>` rather than the SelectTrigger
        * directly so the Tooltip's pointer events do not interfere
        * with Radix Select's own trigger handling, and the tooltip
@@ -155,16 +159,18 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
          * digit-hint chip via `SelectItem`'s `endContent` slot — that
          * Is contribution and is kept untouched.
          */}
-        <TooltipContent>
-          <div className="flex flex-col gap-0.5 text-xs">
-            <span>{t('spaceSwitcher.shortcutHint')}</span>
-            {availableSpaces.slice(0, 5).map((space, idx) => (
-              <span key={space.id} className="opacity-90">
-                {spaceHotkeyHint(idx)} {space.name}
-              </span>
-            ))}
-          </div>
-        </TooltipContent>
+        {keyboardHints && (
+          <TooltipContent>
+            <div className="flex flex-col gap-0.5 text-xs">
+              <span>{t('spaceSwitcher.shortcutHint')}</span>
+              {availableSpaces.slice(0, 5).map((space, idx) => (
+                <span key={space.id} className="opacity-90">
+                  <Kbd keys={spaceHotkey(idx)} /> {space.name}
+                </span>
+              ))}
+            </div>
+          </TooltipContent>
+        )}
       </Tooltip>
       <SelectContent>
         {availableSpaces.map((space, idx) => (
@@ -172,7 +178,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
             key={space.id}
             value={space.id}
             endContent={
-              idx < MAX_HOTKEY_SPACES ? (
+              idx < MAX_HOTKEY_SPACES && keyboardHints ? (
                 /*
                  * Right-aligned digit-hint chip (`Alt+1`) for the
                  * first nine spaces. Rendered via
@@ -180,13 +186,12 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
                  * `<SelectPrimitive.ItemText>` and therefore out of
                  * Radix's auto-mirror into the trigger label.
                  */
-                <span
+                <Kbd
+                  keys={spaceHotkey(idx)}
                   aria-hidden="true"
-                  className="ml-auto text-xs text-muted-foreground"
+                  className="ml-auto"
                   data-testid={`space-hotkey-hint-${idx + 1}`}
-                >
-                  {spaceHotkeyHint(idx)}
-                </span>
+                />
               ) : undefined
             }
           >

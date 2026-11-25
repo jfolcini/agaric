@@ -666,9 +666,10 @@ export const references: Record<string, string> = {
   'searchQuery.emptyGroup': 'empty parentheses',
 
   // Translators: Search view: hint line under the search field. tag:#name and path:Journal/* are
-  // syntax (keep); "Add filter" names the button; ? is the key that opens help.
-  'search.filterSyntaxIntro':
-    'Filter with tag:#name or path:Journal/*, or use Add filter. Press ? for help.',
+  // syntax (keep); "Add filter" names the button. filterHelpKey follows it where there is a
+  // keyboard; ? is the key that opens help.
+  'search.filterSyntaxIntro': 'Filter with tag:#name or path:Journal/*, or use Add filter.',
+  'search.filterHelpKey': 'Press ? for help.',
 
   // Translators: Search › Add filter popover, tag and page pickers: search placeholders and empty
   // results.
@@ -954,10 +955,10 @@ export const references: Record<string, string> = {
 
   // Translators: Command palette: info strip after typing [[ (picking a page inserts a link; Enter
   // is the key); no page matches ({{query}} = typed text); the last row, which opens the Search
-  // view (keep → and Ctrl+Shift+F).
+  // view (its shortcut follows it).
   'palette.linkModeBadge': 'Linking to page — Enter inserts',
   'palette.noPageMatch': 'No page named “{{query}}”. Type more to refine.',
-  'palette.escalateLabel': 'Search in all pages with toggles → Ctrl+Shift+F',
+  'palette.escalateLabel': 'Search in all pages with toggles',
 
   // Translators: Command palette search results: a page group's screen-reader label
   // ({{pageTitle}}), and a row under it; {{count}} = further matches in that page (keep the +).

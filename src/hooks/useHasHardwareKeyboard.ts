@@ -86,12 +86,15 @@ export function useHasHardwareKeyboard(): boolean {
     // the surface out of mobile chrome mid-session. We reject events
     // that are not browser-trusted (`isTrusted === false`), IME/soft
     // composition events (`keyCode === 229`), and the soft-keyboard
-    // `key === 'Unidentified'` sentinel. Only a genuine hardware
-    // keydown sets the latch.
+    // `key === 'Unidentified'` sentinel. Enter and Backspace don't count
+    // either: Android soft keyboards send both as trusted keydowns with
+    // their real codes, so the first new block would latch. Only a genuine
+    // hardware keydown sets the latch.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
         return
       }
+      if (e.key === 'Enter' || e.key === 'Backspace') return
       // oxlint-disable-next-line typescript/no-deprecated -- an IME composition keydown can carry a real key name; only keyCode 229 marks it
       if (e.isTrusted === false || e.keyCode === 229 || e.key === 'Unidentified') {
         return

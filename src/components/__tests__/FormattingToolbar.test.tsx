@@ -1097,20 +1097,20 @@ describe('FormattingToolbar', () => {
       // 'toolbar.code' → 'inlineCode' (catalog default 'Ctrl + Shift + K').
       const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
       // Name + live chord (IconButton's shortcut chip), sourced from the catalog.
-      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl + Shift + K`)
+      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl+Shift+K`)
     })
 
     it('updates the tooltip when the shortcut is rebound (proves it derives from the catalog)', () => {
       setCustomShortcut('inlineCode', 'Ctrl + Shift + E')
       const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
-      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl + Shift + E`)
+      expect(tooltip).toBe(`${t('toolbar.codeTip')}Ctrl+Shift+E`)
       // And it is NOT the old hardcoded i18n chord.
       expect(tooltip).not.toContain('Ctrl+E')
     })
 
     it('never doubles the chord — the tip string carries no chord', () => {
       const tooltip = renderButton(makeConfig('toolbar.bold', 'toolbar.boldTip'))
-      expect(tooltip).toBe(`${t('toolbar.boldTip')}Ctrl + B`)
+      expect(tooltip).toBe(`${t('toolbar.boldTip')}Ctrl+B`)
       expect(t('toolbar.boldTip')).toBe('Bold')
       expect(t('toolbar.codeTip')).toBe('Inline code')
       expect(t('toolbar.undoTip')).toBe('Undo')

@@ -7,13 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  __resetPlatformCacheForTests,
-  isAndroid,
-  isMac,
-  isMobilePlatform,
-  modKey,
-} from '@/lib/platform'
+import { __resetPlatformCacheForTests, isAndroid, isMac, isMobilePlatform } from '@/lib/platform'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
 const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
@@ -232,23 +226,6 @@ describe('platform', () => {
     it.each(sites)('$name no longer declares a local isMobilePlatform', ({ path }) => {
       const src = readSite(path)
       expect(src).not.toMatch(/function\s+isMobilePlatform\s*\(/)
-    })
-  })
-
-  describe('modKey', () => {
-    it('returns "⌘" on macOS', () => {
-      setNavigatorPlatform('MacIntel')
-      expect(modKey()).toBe('\u2318')
-    })
-
-    it('returns "Ctrl" on Linux', () => {
-      setNavigatorPlatform('Linux x86_64')
-      expect(modKey()).toBe('Ctrl')
-    })
-
-    it('returns "Ctrl" on Windows', () => {
-      setNavigatorPlatform('Win32')
-      expect(modKey()).toBe('Ctrl')
     })
   })
 })

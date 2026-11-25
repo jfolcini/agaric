@@ -1,11 +1,10 @@
 /**
  * Platform detection helpers (bundled fix).
  *
- * These utilities abstract platform-specific UI decisions — currently the
- * keyboard-modifier label shown in shortcut help / tooltips. macOS users
- * expect ⌘/Cmd where other platforms use Ctrl, even though our
- * `matchesShortcutBinding` matcher already accepts both `ctrlKey` and
- * `metaKey`.
+ * These utilities abstract platform-specific UI decisions — among them the
+ * shortcut glyphs `Kbd` draws: macOS users expect ⌘ where other platforms
+ * use Ctrl, even though our `matchesShortcutBinding` matcher already accepts
+ * both `ctrlKey` and `metaKey`.
  *
  * Detection preference: `navigator.userAgentData.platform` when available
  * (Chromium 90+), falling back to `navigator.platform`. The result is
@@ -32,17 +31,6 @@ export function isMac(): boolean {
     (uaData?.platform ?? '').toLowerCase() || (navigator.platform ?? '').toLowerCase()
   cachedIsMac = platformStr.includes('mac')
   return cachedIsMac
-}
-
-/**
- * Returns the user-facing label for the primary shortcut-modifier key:
- * `⌘` on macOS, `Ctrl` elsewhere. Use inside `renderKeys`-style display
- * paths and tooltips. Stored shortcut binding strings in
- * `keyboard-config.ts` remain `Ctrl + …` so settings export/import stays
- * portable across devices.
- */
-export function modKey(): string {
-  return isMac() ? '⌘' : 'Ctrl'
 }
 
 /**
