@@ -1,6 +1,6 @@
 /**
  * Tests for useTagColors: a colour lands in localStorage and state at once,
- * closes the picker, and follows to the `color` property best-effort.
+ * leaves the picker open, and follows to the `color` property best-effort.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -36,7 +36,7 @@ describe('useTagColors', () => {
     expect(result.current.colorPickerOpen).toBeNull()
   })
 
-  it('setColor stores the colour, closes the picker and writes the property', async () => {
+  it('setColor stores the colour, leaves the picker open and writes the property', async () => {
     stubInvoke({ set_property: () => withOps(makeBlockRow({ id: 'T1', block_type: 'tag' })) })
     const { result } = renderHook(() => useTagColors())
     act(() => result.current.setColorPickerOpen('T1'))
@@ -45,7 +45,7 @@ describe('useTagColors', () => {
 
     expect(getTagColors()).toEqual({ T1: 'accent-blue' })
     expect(result.current.tagColors).toEqual({ T1: 'accent-blue' })
-    expect(result.current.colorPickerOpen).toBeNull()
+    expect(result.current.colorPickerOpen).toBe('T1')
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'T1',
       key: 'color',
@@ -77,7 +77,7 @@ describe('useTagColors', () => {
     warn.mockRestore()
   })
 
-  it('clearColor drops the colour, closes the picker and deletes the property', async () => {
+  it('clearColor drops the colour, leaves the picker open and deletes the property', async () => {
     localStorage.setItem('tag-colors', JSON.stringify({ T1: 'accent-rose', T2: 'accent-blue' }))
     stubInvoke({ delete_property: () => withOps({ block_id: 'T1', key: 'color' }) })
     const { result } = renderHook(() => useTagColors())
@@ -87,7 +87,7 @@ describe('useTagColors', () => {
 
     expect(getTagColors()).toEqual({ T2: 'accent-blue' })
     expect(result.current.tagColors).toEqual({ T2: 'accent-blue' })
-    expect(result.current.colorPickerOpen).toBeNull()
+    expect(result.current.colorPickerOpen).toBe('T1')
     expect(mockedInvoke).toHaveBeenCalledWith('delete_property', { blockId: 'T1', key: 'color' })
   })
 

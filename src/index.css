@@ -2284,6 +2284,55 @@ mark[data-highlight-color='purple'] {
   background-color: #78191b;
 }
 
+/* ── react-colorful (ColorSwatchPicker's custom colour) ────────────── */
+/* react-colorful injects its stylesheet at runtime, unlayered and after this
+ * one, so these rules are unlayered too and add a class to outrank it: a
+ * Tailwind utility, in `@layer utilities`, would lose. */
+.react-colorful.react-colorful {
+  width: 100%;
+  height: 9rem;
+  gap: 0.5rem;
+}
+
+.react-colorful .react-colorful__saturation {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.react-colorful .react-colorful__hue {
+  height: 0.75rem;
+  border-radius: var(--radius-md);
+}
+
+@media (pointer: coarse) {
+  .react-colorful.react-colorful {
+    gap: 0.75rem;
+  }
+
+  .react-colorful .react-colorful__hue {
+    height: 1.5rem;
+  }
+}
+
+.react-colorful .react-colorful__pointer {
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 2px solid var(--background);
+  box-shadow: 0 0 0 1px var(--foreground);
+}
+
+.react-colorful .react-colorful__interactive:focus .react-colorful__pointer {
+  transform: translate(-50%, -50%);
+}
+
+/* `focus-ring-visible`'s 3 px ring, on the pointer the arrow keys move. */
+.react-colorful .react-colorful__interactive:focus-visible .react-colorful__pointer {
+  box-shadow:
+    0 0 0 1px var(--foreground),
+    0 0 0 4px var(--ring);
+}
+
 /* ── Accessibility: prefers-contrast ───────────────────────────────── */
 @media (prefers-contrast: more) {
   * {

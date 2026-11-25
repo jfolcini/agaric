@@ -56,7 +56,7 @@ test('a tag colour picked in the Tags view paints its chips @editor @pages', asy
   await navigateToView(page, 'Tags')
   const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
   await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
-  await activePopover(page).getByRole('button', { name: 'Rose', exact: true }).click()
+  await activePopover(page).getByRole('radio', { name: 'Rose', exact: true }).click()
 
   await openPage(page, 'Getting Started')
   const paint = await rosePaint(page)
@@ -84,7 +84,7 @@ test('a tag colour outlives its localStorage entry through the tag property @edi
   await navigateToView(page, 'Tags')
   const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
   await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
-  await activePopover(page).getByRole('button', { name: 'Rose', exact: true }).click()
+  await activePopover(page).getByRole('radio', { name: 'Rose', exact: true }).click()
 
   await page.evaluate(() => localStorage.removeItem('tag-colors'))
   // A space switch re-reads the tag colours from the tag property.

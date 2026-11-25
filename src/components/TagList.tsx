@@ -12,7 +12,7 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
+import { Paintbrush, Pencil, Plus, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -24,6 +24,7 @@ import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ColorSwatchPicker } from '@/components/ui/color-swatch-picker'
 import { Input } from '@/components/ui/input'
 import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -439,53 +440,35 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                           )}
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-auto p-3" align="start">
-                        <fieldset
-                          className="grid grid-cols-4 gap-2 border-0 p-0 m-0"
+                      <PopoverContent
+                        className="w-auto p-3"
+                        align="start"
+                        aria-label={t('tagList.colorTagLabel')}
+                      >
+                        <ColorSwatchPicker
                           aria-label={t('tagList.colorPaletteLabel')}
-                        >
-                          {TAG_COLOR_PRESETS.map((preset) => (
-                            <button
-                              key={preset.value}
-                              type="button"
-                              className={cn(
-                                'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 focus-ring-visible',
-                                color === preset.value
-                                  ? 'border-foreground scale-110'
-                                  : 'border-transparent',
-                              )}
-                              style={{ backgroundColor: resolveTagBackground(preset.value) }}
-                              aria-label={t(`tagList.color.${preset.name}`)}
-                              aria-pressed={color === preset.value}
-                              onClick={() => void setColor(tag.tag_id, preset.value)}
-                            />
-                          ))}
-                        </fieldset>
-                        {/* #1099 — free-form custom-hex escape hatch for power
-                          users. Presets re-theme via accent tokens; a custom
-                          hex bypasses the palette. */}
-                        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                          <input
-                            type="color"
-                            className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
-                            // A custom hex never matches an accent token, so a
-                            // token-coloured tag falls back to the swatch default.
-                            value={color && color.startsWith('#') ? color : '#000000'}
-                            aria-label={t('tagList.customColorLabel')}
-                            onChange={(e) => void setColor(tag.tag_id, e.target.value)}
-                          />
-                          {t('tagList.customColorLabel')}
-                        </label>
-                        {color && (
-                          <button
-                            type="button"
-                            className="mt-2 flex w-full items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                            onClick={() => void clearColor(tag.tag_id)}
-                          >
-                            <X className="h-3 w-3" />
-                            {t('tagList.clearColor')}
-                          </button>
-                        )}
+                          swatches={TAG_COLOR_PRESETS.map((preset) => ({
+                            value: preset.value,
+                            label: t(`tagList.color.${preset.name}`),
+                            color: resolveTagBackground(preset.value),
+                          }))}
+                          value={color}
+                          onValueChange={(value) => {
+                            void setColor(tag.tag_id, value)
+                            setColorPickerOpen(null)
+                          }}
+                          // #1099 — the custom-hex escape hatch; the picker stays
+                          // open while the colour is tuned.
+                          onCustomColor={(hex) => void setColor(tag.tag_id, hex)}
+                          onClear={() => {
+                            void clearColor(tag.tag_id)
+                            setColorPickerOpen(null)
+                          }}
+                          clearLabel={t('tagList.clearColor')}
+                          customLabel={t('tagList.customColorLabel')}
+                          hexLabel={t('tagList.hexColorLabel')}
+                          hexError={t('tagList.hexColorInvalid')}
+                        />
                       </PopoverContent>
                     </Popover>
                     <Button

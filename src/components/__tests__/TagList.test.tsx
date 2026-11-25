@@ -1063,13 +1063,12 @@ describe('TagList', () => {
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
 
-      // Should show color palette with radio buttons
-      const palette = await screen.findByRole('group', { name: /color palette/i })
+      const palette = await screen.findByRole('radiogroup', { name: /color palette/i })
       expect(palette).toBeInTheDocument()
 
       // #1099 — the palette is now the 7 themed --accent-* tokens
       // (emerald/blue/violet/amber/rose/slate/orange), not 8 flat sRGB hexes.
-      const swatches = within(palette).getAllByRole('button')
+      const swatches = within(palette).getAllByRole('radio')
       expect(swatches).toHaveLength(7)
     })
 
@@ -1090,7 +1089,7 @@ describe('TagList', () => {
 
       // Click the "rose" swatch — #1099 persists the accent *token*, not a
       // raw sRGB hex, so the value re-themes across light/dark/high-contrast.
-      const roseSwatch = await screen.findByRole('button', { name: t('tagList.color.rose') })
+      const roseSwatch = await screen.findByRole('radio', { name: t('tagList.color.rose') })
       await user.click(roseSwatch)
 
       await waitFor(() => {
@@ -1164,8 +1163,7 @@ describe('TagList', () => {
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
 
-      // Click clear button
-      const clearBtn = await screen.findByText(/clear color/i)
+      const clearBtn = await screen.findByRole('button', { name: t('tagList.clearColor') })
       await user.click(clearBtn)
 
       await waitFor(() => {
@@ -1180,7 +1178,7 @@ describe('TagList', () => {
       expect(stored.T1).toBeUndefined()
     })
 
-    it('clear option is hidden when no color is set', async () => {
+    it('clear option is disabled when no color is set', async () => {
       const user = userEvent.setup()
       stubTags([makeTag('T1', 'no-color')])
 
@@ -1192,10 +1190,9 @@ describe('TagList', () => {
       await user.click(colorBtn)
 
       // Wait for popover to appear
-      await screen.findByRole('group', { name: /color palette/i })
+      await screen.findByRole('radiogroup', { name: /color palette/i })
 
-      // Clear button should NOT be present
-      expect(screen.queryByText(/clear color/i)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('tagList.clearColor') })).toBeDisabled()
     })
 
     // #1092: color preset swatches use the canonical focus-ring-visible
@@ -1211,8 +1208,8 @@ describe('TagList', () => {
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
 
-      const palette = await screen.findByRole('group', { name: /color palette/i })
-      const swatch = within(palette).getByRole('button', { name: t('tagList.color.emerald') })
+      const palette = await screen.findByRole('radiogroup', { name: /color palette/i })
+      const swatch = within(palette).getByRole('radio', { name: t('tagList.color.emerald') })
       expect(swatch.className).toContain('focus-ring-visible')
       expect(swatch.className).not.toContain('focus-visible:ring-2')
       expect(swatch.className).not.toContain('focus-visible:ring-ring')
@@ -1227,12 +1224,77 @@ describe('TagList', () => {
       const tag = await screen.findByText('named-tag')
       await user.click(findColorButton(tag.closest('li') as HTMLElement))
 
-      const palette = await screen.findByRole('group', { name: /color palette/i })
+      const palette = await screen.findByRole('radiogroup', { name: /color palette/i })
       expect(
         within(palette)
-          .getAllByRole('button')
+          .getAllByRole('radio')
           .map((b) => b.getAttribute('aria-label')),
       ).toEqual(TAG_COLOR_PRESETS.map((p) => t(`tagList.color.${p.name}`)))
+    })
+
+    it('a preset or clear closes the picker; a custom hex keeps it open', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'close-tag')], {
+        set_property: () =>
+          withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'close-tag' })),
+        delete_property: () => withOps({ block_id: 'T1', key: 'color' }),
+      })
+
+      render(<TagList />)
+
+      const row = (await screen.findByText('close-tag')).closest('li') as HTMLElement
+      await user.click(findColorButton(row))
+      await user.click(await screen.findByRole('button', { name: t('tagList.customColorLabel') }))
+      const field = screen.getByRole('textbox', { name: t('tagList.hexColorLabel') })
+      await user.clear(field)
+      await user.type(field, '#1e8a7a{Enter}')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+          blockId: 'T1',
+          key: 'color',
+          value: {
+            value_text: '#1e8a7a',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        })
+      })
+      expect(screen.getByRole('radiogroup', { name: /color palette/i })).toBeInTheDocument()
+      const badge = screen.getByText('close-tag').closest('[data-slot="badge"]') as HTMLElement
+      expect(badge.style.getPropertyValue('--tag-color')).toBe('#1e8a7a')
+
+      await user.click(screen.getByRole('radio', { name: t('tagList.color.rose') }))
+      await waitFor(() => {
+        expect(screen.queryByRole('radiogroup', { name: /color palette/i })).not.toBeInTheDocument()
+      })
+
+      await user.click(findColorButton(row))
+      await user.click(await screen.findByRole('button', { name: t('tagList.clearColor') }))
+      await waitFor(() => {
+        expect(screen.queryByRole('radiogroup', { name: /color palette/i })).not.toBeInTheDocument()
+      })
+      expect(badge.style.getPropertyValue('--tag-color')).toBe('')
+    })
+
+    it('has no a11y violations with the custom colour open', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'custom-a11y-tag', 1)])
+
+      render(<TagList />)
+
+      const row = (await screen.findByText('custom-a11y-tag')).closest('li') as HTMLElement
+      await user.click(findColorButton(row))
+      await user.click(await screen.findByRole('button', { name: t('tagList.customColorLabel') }))
+      await screen.findByRole('slider', { name: 'Hue' })
+
+      // The popover portals out of the render container, so it is audited itself.
+      const popover = screen.getByRole('dialog', { name: t('tagList.colorTagLabel') })
+      await waitFor(async () => {
+        expect(await axe(popover)).toHaveNoViolations()
+      })
     })
 
     it('has no a11y violations with color picker open', async () => {
@@ -1246,7 +1308,7 @@ describe('TagList', () => {
       const colorBtn = findColorButton(tagRow)
       await user.click(colorBtn)
 
-      await screen.findByRole('group', { name: /color palette/i })
+      await screen.findByRole('radiogroup', { name: /color palette/i })
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
