@@ -488,8 +488,8 @@ export function UnlinkedReferences({
         </CollapsiblePanelHeader>
         {!collapsed && filters.length > 0 && (
           <Badge
-            tone="secondary"
-            className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-xs"
+            tone="metadata"
+            className="unlinked-references-filter-count"
             aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
           >
             {t('references.filtersAppliedBadge', { count: filters.length })}

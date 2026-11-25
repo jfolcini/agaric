@@ -1,9 +1,10 @@
 /**
  * ProjectedEntries -- the projected future occurrences of repeating tasks
  * (`list_projected_agenda`), shared by the Due panel and Agenda mode so a
- * projection looks the same wherever it shows: a dashed row carrying a
- * "Projected" badge, listed after the host's committed tasks. A projected row
- * is not a block of its own; its only action is opening its source task.
+ * projection looks the same wherever it shows: a dashed row, its text, then a
+ * "Projected" label, its priority and the date chip of the date it falls on,
+ * listed after the host's committed tasks. A projected row is not a block of
+ * its own; its only action is opening its source task.
  */
 
 import { Repeat } from 'lucide-react'
@@ -11,6 +12,7 @@ import type React from 'react'
 import { memo, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DateChip } from '@/components/common/DateChip'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { ListItem } from '@/components/ui/list-item'
@@ -22,7 +24,6 @@ import {
 } from '@/hooks/useRichContentCallbacks'
 import type { ActiveProjectedAgendaEntry } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { formatCompactDate } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
@@ -61,15 +62,12 @@ function ProjectedEntryContentInner({
         // wires `useTagClickHandler()` down to this component explicitly, and the
         // chips `stopPropagation` so a tag click navigates to the tag rather
         // than to the entry's page. (Block-link chips stay inert regardless —
-        // `renderBlockLink` needs `onNavigate` too, and none is passed.) So
-        // this stays `true`, unlike the Due panel's `AlertSection` rows, whose
-        // whole row is the only click target.
+        // `renderBlockLink` needs `onNavigate` too, and none is passed.)
         interactive: true,
         // #4719 — the output lands in the row's text span below, a single
         // clamped line. Without `inline` a projected entry whose content
         // starts `# ` or `- ` puts an <h1> / <ul> block box inside that span
         // and breaks the row layout (#1533).
-        // The Due panel's `AlertSection` rows pass it too.
         inline: true,
         onTagClick: (id) => onTagClickRef.current(id),
         resolveBlockTitle: (id) => callbacksRef.current.resolveBlockTitle(id),
@@ -101,7 +99,6 @@ interface ProjectedEntryRowProps {
   onTagClick: (id: string) => void
   projectedBadgeLabel: string
   emptyContentLabel: string
-  showDate: boolean
 }
 
 /**
@@ -123,7 +120,6 @@ function ProjectedEntryRowInner({
   onTagClick,
   projectedBadgeLabel,
   emptyContentLabel,
-  showDate,
 }: ProjectedEntryRowProps): React.ReactElement {
   // #2200 — source the rich-content callbacks INSIDE the memoized row (the
   // `BlockListItem` pattern) rather than taking them as a prop.
@@ -160,13 +156,6 @@ function ProjectedEntryRowInner({
         navigate()
       }}
     >
-      <span className="text-xs font-mono opacity-60">
-        {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
-      </span>
-      <Badge tone="outline" className="text-xs font-normal">
-        <Repeat className="h-3 w-3 mr-1" />
-        {projectedBadgeLabel}
-      </Badge>
       {/* `truncate` would clip the chips' touch area (`tag-chip-row`) to the
           line; clipped sideways only, the text still ends in an ellipsis. */}
       <span className="tag-chip-row min-w-0 flex-1 overflow-x-clip text-ellipsis whitespace-nowrap">
@@ -180,16 +169,19 @@ function ProjectedEntryRowInner({
           emptyContentLabel
         )}
       </span>
+      <Badge tone="metadata">
+        <Repeat />
+        {projectedBadgeLabel}
+      </Badge>
       {entry.block.priority && (
         <Badge tone="priority" size="sm" priorityLevel={entry.block.priority}>
           P{entry.block.priority}
         </Badge>
       )}
-      {showDate && (
-        <time className="shrink-0 text-xs" dateTime={entry.projected_date}>
-          {formatCompactDate(entry.projected_date)}
-        </time>
-      )}
+      <DateChip
+        kind={entry.source === 'due_date' ? 'due' : 'scheduled'}
+        date={entry.projected_date}
+      />
     </ListItem>
   )
 }
@@ -204,8 +196,6 @@ interface ProjectedEntriesSectionProps {
   firstFlatIndex: number
   focusedIndex: number
   onNavigateToPage: NavigateToPageFn | undefined
-  /** Each row shows its date: for a host whose entries span several days. */
-  showDate?: boolean | undefined
 }
 
 export function ProjectedEntriesSection({
@@ -214,7 +204,6 @@ export function ProjectedEntriesSection({
   firstFlatIndex,
   focusedIndex,
   onNavigateToPage,
-  showDate = false,
 }: ProjectedEntriesSectionProps): React.ReactElement | null {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
@@ -239,7 +228,6 @@ export function ProjectedEntriesSection({
             onTagClick={onTagClick}
             projectedBadgeLabel={t('duePanel.projectedBadge')}
             emptyContentLabel={t('duePanel.emptyContent')}
-            showDate={showDate}
           />
         ))}
       </ul>

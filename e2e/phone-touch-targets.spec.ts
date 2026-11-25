@@ -216,7 +216,10 @@ test.describe('journal headings and chips on a 360 px touch phone @mobile @journ
     await expectSmallBox(streamHeading, 'stream heading')
 
     await chooseMode(page, /^Agenda/)
-    const dateChip = page.getByRole('button', { name: 'Edit date', exact: true }).first()
+    const dateChip = page
+      .getByTestId('agenda-results-item')
+      .getByRole('button', { name: /^Due / })
+      .first()
     await expect44(dateChip, 'agenda date chip')
     await expectSmallBox(dateChip, 'agenda date chip')
   })

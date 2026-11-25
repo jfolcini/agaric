@@ -50,10 +50,9 @@ interface PropertyChipProps {
  * name says the value doesn't fit, and an `UnfitValueMark` after the value
  * opens the key's values that don't fit in Settings.
  *
- * Chrome: the pill shares the design-system Badge primitive's chrome via
- * `badgeVariants()` (#1678) — base flex/shape/size tokens come from Badge so
- * the chip stays in the pill family; the muted tone and tighter padding/gap
- * are PropertyChip-specific overrides (Badge has no `muted` tone).
+ * Chrome: Badge's `property` tone via `badgeVariants()` (#1678, #7040): an
+ * outline around `key: value`, no fill, so a property never reads as a tag;
+ * the tighter gap is the chip's own.
  */
 export function PropertyChip({
   propKey,
@@ -146,18 +145,9 @@ export function PropertyChip({
       role="group"
       aria-label={groupLabel}
       className={cn(
-        // Compose the shared Badge primitive's chrome (base flex layout,
-        // badge radius, font-medium, text-xs size, transition) so the
-        // chip stays in sync with the rest of the chip family (#1678).
-        badgeVariants({ size: 'default' }),
-        'property-chip',
-        // PropertyChip overrides: Badge has no `muted` tone, and the chip uses a
-        // tighter gap/padding than the default Badge. twMerge (via `cn`) resolves
-        // these against the recipe's tokens deterministically (last wins).
-        'gap-0.5 leading-none select-none',
-        unfit
-          ? 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground'
-          : 'bg-muted text-muted-foreground',
+        badgeVariants({ tone: 'property' }),
+        'property-chip gap-0.5 leading-none select-none',
+        unfit && 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground',
         'focus-within:ring-[3px] focus-within:ring-ring',
         onClick &&
           (unfit

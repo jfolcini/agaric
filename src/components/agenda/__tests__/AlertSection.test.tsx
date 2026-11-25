@@ -6,14 +6,13 @@
  *  - Renders with pending variant (upcoming mode)
  *  - Returns null for empty blocks
  *  - Shows the task checkbox, named with its state, when present
- *  - Shows PriorityBadge when showPriorityBadge is true
- *  - Hides PriorityBadge when showPriorityBadge is false/default
+ *  - Shows the priority badge in every variant
  *  - Sorts blocks by due_date ascending
  *  - Navigation on click
  *  - Navigation on keyboard (Enter)
  *  - Does not navigate when parent_id is null
- *  - Renders due_date for each block as the compact date chip text ("Jan 15"),
- *    never the raw ISO string, keeping the overdue colour and "(Nd overdue)" text
+ *  - Renders each block's date as the date chip of its kind ("Jan 15"), never
+ *    the raw ISO string, keeping the overdue colour and "(Nd overdue)" text
  *  - Renders content as rich content, so a [[ULID]] page link is a titled
  *    pill and never a raw ULID (#4705)
  *  - Falls back to the empty-content marker for a blank block (#4705)
@@ -122,45 +121,67 @@ describe('AlertSection', () => {
     expect(within(marker).getByTestId('task-checkbox-todo')).toBeInTheDocument()
   })
 
-  it('shows priority badge when showPriorityBadge is true', () => {
+  // #7040 — a section is a heading over the one task row, not a card per row.
+  it('lists its blocks as task rows under a heading, with no card around a row', () => {
     render(
       <AlertSection
         variant="destructive"
         title="Overdue"
-        blocks={[makeBlock({ id: 'B1', priority: '1' })]}
+        blocks={[makeBlock({ id: 'B1' }), makeBlock({ id: 'B2', content: 'second' })]}
         pageTitles={defaultTitles}
-        showPriorityBadge
       />,
     )
 
-    expect(screen.getByText('P1')).toBeInTheDocument()
+    const rows = screen.getAllByTestId('due-panel-alert-item')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row).toHaveAttribute('data-block-list-item')
+      expect(row).toHaveClass('list-row')
+      expect(row.className).not.toMatch(/(^|\s)border(-|\s|$)/)
+      expect(row.className).not.toContain('bg-destructive')
+    }
+    expect(screen.getByRole('heading', { level: 2, name: /^Overdue/ })).toBeInTheDocument()
   })
 
-  it('does not show priority badge when showPriorityBadge is false', () => {
-    render(
+  it('only the Overdue heading takes the overdue colour', () => {
+    const { rerender } = render(
       <AlertSection
         variant="destructive"
         title="Overdue"
-        blocks={[makeBlock({ id: 'B1', priority: '1' })]}
+        blocks={[makeBlock({ id: 'B1' })]}
         pageTitles={defaultTitles}
       />,
     )
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-alert-error-foreground')
 
-    expect(screen.queryByText('P1')).not.toBeInTheDocument()
-  })
-
-  it('does not show priority badge with pending variant by default', () => {
-    render(
+    rerender(
       <AlertSection
         variant="pending"
         title="Upcoming"
-        blocks={[makeBlock({ id: 'B1', priority: '1' })]}
+        blocks={[makeBlock({ id: 'B1' })]}
         pageTitles={defaultTitles}
       />,
     )
-
-    expect(screen.queryByText('P1')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2 })).not.toHaveClass('text-alert-error-foreground')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-muted-foreground')
   })
+
+  // The one task row shows a task's priority wherever it is listed (#7040).
+  it.each(['destructive', 'pending', 'scheduled'] as const)(
+    'shows the priority badge in the %s variant',
+    (variant) => {
+      render(
+        <AlertSection
+          variant={variant}
+          title="Section"
+          blocks={[makeBlock({ id: 'B1', priority: '1' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      expect(screen.getByText('P1')).toBeInTheDocument()
+    },
+  )
 
   it('sorts blocks by due_date ascending', () => {
     const blocks = [
@@ -303,22 +324,19 @@ describe('AlertSection', () => {
       expect(screen.getByText('(7d overdue)')).toBeInTheDocument()
     })
 
-    // The date span has `shrink-0` so flex compression won't
-    // truncate long localized relative-date strings on phones — pair it with
-    // `truncate` so the span clips with an ellipsis instead of overflowing.
-    it('date span has truncate in its className', () => {
-      render(
+    // #7040 — a date is the date chip of its kind, in every section.
+    it('draws a due date as the due chip and a scheduled one as the scheduled chip', () => {
+      const { container } = render(
         <AlertSection
-          variant="destructive"
-          title="Overdue"
-          blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
+          variant="scheduled"
+          title="Scheduled earlier"
+          blocks={[makeBlock({ id: 'B1', due_date: '2099-01-15', scheduled_date: '2025-01-10' })]}
           pageTitles={defaultTitles}
         />,
       )
 
-      const dateSpan = screen.getByText('Jan 15').parentElement
-      expect(dateSpan).not.toBeNull()
-      expect(dateSpan?.className).toContain('truncate')
+      expect(container.querySelector('[data-date-kind="due"]')).toHaveTextContent('Jan 15, 2099')
+      expect(container.querySelector('[data-date-kind="scheduled"]')).toHaveTextContent('Jan 10')
     })
   })
 
@@ -340,9 +358,9 @@ describe('AlertSection', () => {
     expect(container.textContent).not.toContain(LINKED_PAGE_ID)
   })
 
-  // The row is itself the click target (`AlertListRow.onClick` navigates), so
-  // a rendered link must not become a competing one nested inside it.
-  it('renders the page-link pill inert (interactive: false)', () => {
+  // #7040 — the row is the one task row, so its content behaves as in every
+  // other group of the panel: a chip in it is a tab stop.
+  it('renders the page-link pill as the task row does (interactive)', () => {
     render(
       <AlertSection
         variant="pending"
@@ -352,11 +370,7 @@ describe('AlertSection', () => {
       />,
     )
 
-    // `tabindex` is the discriminating attribute: `renderBlockLink` gives an
-    // `interactive` chip `tabIndex=0` even with no navigate handler, while
-    // `role="link"` needs a handler AlertSection never passes — so asserting on
-    // the role could not fail either way.
-    expect(screen.getByTestId('block-link-chip')).not.toHaveAttribute('tabindex')
+    expect(screen.getByTestId('block-link-chip')).toHaveAttribute('tabindex', '0')
   })
 
   // `truncateContent`'s third argument used to supply this; the explicit empty
@@ -425,7 +439,6 @@ describe('AlertSection', () => {
         title="Overdue"
         blocks={[makeBlock({ id: 'B1', todo_state: 'TODO', priority: '1', content: 'a11y block' })]}
         pageTitles={defaultTitles}
-        showPriorityBadge
       />,
     )
 

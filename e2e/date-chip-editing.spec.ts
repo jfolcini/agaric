@@ -51,7 +51,7 @@ function submitReportChip(page: Page): Locator {
   return page
     .getByTestId('agenda-results-item')
     .filter({ hasText: 'Submit report' })
-    .getByRole('button', { name: 'Edit date' })
+    .getByRole('button', { name: /^Due / })
 }
 
 /** Open the chip's editor and type `input`, waiting for the parse preview. */

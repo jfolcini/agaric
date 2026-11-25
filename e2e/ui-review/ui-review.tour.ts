@@ -208,6 +208,17 @@ async function views({ page, profile, shot }: Scene): Promise<void> {
     await search.press('Enter')
   })
   await shot('tags', () => navigateToView(page, 'Tags'))
+  const tagColor = page.getByRole('dialog', { name: 'Set tag color' })
+  await shot('tag-color', async () => {
+    const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
+    await row.hover()
+    await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
+    await expect(tagColor).toBeVisible()
+  })
+  await shot('tag-color-custom', () =>
+    tagColor.getByRole('button', { name: 'Custom color', exact: true }).click(),
+  )
+  await page.keyboard.press('Escape')
   await shot('tag-page-work', () => page.getByTestId('tag-item-work').click())
   await shot('templates', () => navigateToView(page, 'Templates'))
   await shot('graph', async () => {

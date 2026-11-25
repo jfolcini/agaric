@@ -40,7 +40,7 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
 vi.mock('lucide-react', () => ({
   ArrowDown: () => <svg data-testid="arrow-down-icon" />,
   ArrowUp: () => <svg data-testid="arrow-up-icon" />,
-  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  Flag: () => <svg data-testid="flag-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   Check: () => <svg data-testid="check-icon" />,

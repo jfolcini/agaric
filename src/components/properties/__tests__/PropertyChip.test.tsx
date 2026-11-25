@@ -34,17 +34,18 @@ describe('PropertyChip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  it('uses bg-muted and text-muted-foreground default styling', () => {
+  // #7040 — a property is outlined, never filled: the fill is a tag's.
+  it('is outlined in muted text, with no fill', () => {
     const { container } = render(<PropertyChip propKey="effort" value="1h" />)
 
     const chip = container.querySelector('.property-chip')
-    expect(chip?.className).toContain('bg-muted')
-    expect(chip?.className).toContain('text-muted-foreground')
+    expect(chip).toHaveClass('border-border', 'text-muted-foreground')
+    expect(chip?.className).not.toMatch(/(^|\s)bg-/)
   })
 
   // #1678: the wrapper composes the shared Badge primitive's chrome via
   // badgeVariants() (badge radius + base flex layout) so it stays in the
-  // chip family, while keeping the chip-specific muted tone and tighter padding.
+  // chip family.
   it('composes the shared Badge chrome (badge radius + base layout)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
@@ -452,7 +453,7 @@ describe('PropertyChip', () => {
       render(<PropertyChip propKey="project" value="beta" onClick={vi.fn()} />)
 
       expect(screen.queryByRole('button', { name: MARK })).not.toBeInTheDocument()
-      expect(screen.getByRole('group')).toHaveClass('bg-muted')
+      expect(screen.getByRole('group')).not.toHaveClass('bg-alert-warning')
     })
 
     it('has no a11y violations with the mark', async () => {

@@ -43,6 +43,7 @@ The Due Panel surfaces today's tasks that have a due / scheduled / property-deri
 - **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
 - **Scheduled earlier**: on today, the open tasks (TODO or DOING) whose scheduled date has passed and whose due date has not, each with *(Xd ago)*; a task past its due date is under Overdue only. Together they list every open task carried over from before today, once (#7040).
 - **Task checkbox**: each task row, overdue and upcoming ones too, carries the block's own checkbox, which steps the task's state as a click in the block does.
+- **One task row**: every group of the panel, Overdue, Scheduled earlier and Upcoming included, lists the same row the Agenda does: the checkbox, the task's text, then its priority, its due date (a flag) and scheduled date (a calendar with a clock) as chips, and its source page. On a narrow screen the chips sit under the text, on the checkbox's side of it. Overdue is told apart by its red heading and each row's red date chip.
 
 ## Done Panel (Daily mode)
 
@@ -91,7 +92,7 @@ Projected entries deduplicate against the cached projection — the agenda you s
 
 ## Inline date editing
 
-Date chips on agenda entries (due, scheduled) are clickable. Click opens an inline date editor with a text input that accepts natural-language strings (`today`, `tomorrow`, `+3d`, `next monday`, `Apr 15`) plus a calendar widget. Press Enter to apply, Escape to cancel.
+Date chips on a task row (due, scheduled), in the Agenda and the Due Panel, are clickable. Click opens an inline date editor with a text input that accepts natural-language strings (`today`, `tomorrow`, `+3d`, `next monday`, `Apr 15`) plus a calendar widget. Press Enter to apply, Escape to cancel.
 
 ## Repeating tasks
 

@@ -1,21 +1,25 @@
 /**
- * BlockListItem — shared presentational component for rendering a block
- * in list views (DuePanel, DonePanel, AgendaResults).
+ * BlockListItem — the one task row (#7040): a block as a row of a list
+ * (DuePanel and its Overdue / Scheduled earlier / Upcoming sections,
+ * DonePanel, AgendaResults).
  *
- * Renders a clickable `<li>` with a consistent layout:
- *   [metadata row] → [truncated content] → [page breadcrumb]
+ * A clickable `<li>`, read in one order everywhere:
+ *   [checkbox or state icon] → [title] → [metadata chips] → [source page]
+ * On one line from `sm` up; below it the title keeps the checkbox's line and
+ * the chips and source wrap under it.
  *
- * The metadata row is rendered from typed primitive props
- * (`statusIconState`, `priority`, `dueDate`, `dependencyBlockId`,
- * `showCompletedIcon`) so that `React.memo` shallow-compare can hit
- * across parent re-renders.
+ * The leading control and the chips are rendered from typed primitive props
+ * (`taskState`, `priority`, `dueDate`, `scheduledDate`, `dependencyBlockId`,
+ * `showCompletedIcon`) so that `React.memo` shallow-compare can hit across
+ * parent re-renders.
  */
 
-import { AlertCircle, CalendarDays, CheckCircle2 } from 'lucide-react'
+import { CalendarDays, CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DateChip, type DateKind } from '@/components/common/DateChip'
 import { DependencyIndicator } from '@/components/common/DependencyIndicator'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
@@ -39,15 +43,8 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
-import {
-  displayPageTitle,
-  dueDateColor,
-  formatCompactDate,
-  formatDate,
-  getTodayString,
-} from '@/lib/date-utils'
+import { displayPageTitle, formatDate } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
-import { priorityColor } from '@/lib/priority-color'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
@@ -58,53 +55,37 @@ const Calendar = lazy(() =>
   import('@/components/ui/calendar').then((m) => ({ default: m.Calendar })),
 )
 
-/** Variant of the priority badge rendering used in the metadata row. */
-export type PriorityBadgeVariant = 'default' | 'agenda'
+// ── Inline editable date chip ─────────────────────────────────────────
+// A row's `DateChip` as the trigger of a Popover + DateChipEditor, so a due
+// or scheduled date is changed inline without leaving the list view.
 
-// ── Inline editable due date chip ─────────────────────────────────────
-// Wraps a date string in a Popover + DateChipEditor so callers can pick
-// a new due date inline without leaving the list view. Lifted from
-// `AgendaResults` so `BlockListItem` can render the chip directly from
-// the `dueDate` primitive prop instead of accepting it as inline JSX
-// (perf-review Tier 1.4 metadata half, 2026-05-14).
-
-interface DueDateChipProps {
+interface RowDateChipProps {
+  kind: DateKind
   blockId: string | null | undefined
-  dueDate: string
+  date: string
   onDateChanged: (() => void) | undefined
 }
 
-function isOverdue(dateStr: string): boolean {
-  return dateStr < getTodayString()
-}
-
-function DueDateChipInner({
+function RowDateChipInner({
+  kind,
   blockId,
-  dueDate,
+  date,
   onDateChanged,
-}: DueDateChipProps): React.ReactElement {
+}: RowDateChipProps): React.ReactElement {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const overdue = isOverdue(dueDate)
   // A (#216): on coarse pointers render the date editor in a bottom Sheet so
   // the on-screen keyboard can't cover the natural-language date input.
   const isTouch = useIsTouch()
 
   const chipButton = (
-    <button
-      type="button"
-      className={cn(
-        'agenda-results-due touch-hit-area inline-flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 cursor-pointer hover:ring-1 hover:ring-ring focus-ring-visible',
-        dueDateColor(dueDate),
-      )}
+    <DateChip
+      kind={kind}
+      date={date}
+      className={kind === 'due' ? 'agenda-results-due' : undefined}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
-      aria-label={t('dateChip.editDate')}
-    >
-      {/* surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
-      {overdue && <AlertCircle className="h-3 w-3" aria-hidden="true" />}
-      {formatCompactDate(dueDate)}
-    </button>
+    />
   )
 
   // Editor closes the surface + refreshes; DateChipEditor already fires its
@@ -112,8 +93,8 @@ function DueDateChipInner({
   const editor = blockId ? (
     <DateChipEditor
       blockId={blockId}
-      dateType="due"
-      currentDate={dueDate}
+      dateType={kind}
+      currentDate={date}
       onSuccess={() => {
         setOpen(false)
         onDateChanged?.()
@@ -129,7 +110,7 @@ function DueDateChipInner({
         {blockId && (
           <SheetContent
             side="bottom"
-            data-testid="due-date-sheet"
+            data-testid={`${kind}-date-sheet`}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
@@ -152,7 +133,7 @@ function DueDateChipInner({
         <PopoverContent
           align="start"
           className="w-64 max-w-[calc(100vw-2rem)]"
-          data-testid="due-date-popover"
+          data-testid={`${kind}-date-popover`}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
@@ -163,62 +144,37 @@ function DueDateChipInner({
   )
 }
 
-const DueDateChip = memo(DueDateChipInner)
-DueDateChip.displayName = 'DueDateChip'
+const RowDateChip = memo(RowDateChipInner)
+RowDateChip.displayName = 'RowDateChip'
 
-// ── Metadata row sub-component ────────────────────────────────────────
-// Renders the leading icons / badges / chips from typed primitive props
-// so `React.memo` on `BlockListItem` can shallow-compare metadata props
-// instead of always-fresh ReactNode references.
+// ── Leading control and metadata chips ────────────────────────────────
+// Rendered from typed primitive props so `React.memo` on `BlockListItem`
+// can shallow-compare them instead of always-fresh ReactNode references.
 
-interface BlockMetadataRowProps {
-  dueDateBlockId: string | null | undefined
+interface RowLeadProps {
+  blockId: string | null | undefined
   taskState: string | null | undefined
   statusIconState: string | null | undefined
   statusIconShowDone: boolean | undefined
-  priority: string | null | undefined
-  priorityVariant: PriorityBadgeVariant | undefined
-  priorityBadgeClassName: string | undefined
-  dueDate: string | null | undefined
-  onDateChanged: (() => void) | undefined
   showCompletedIcon: boolean | undefined
   completedIconClassName: string | undefined
-  dependencyBlockId: string | undefined
 }
 
-function BlockMetadataRowInner({
-  dueDateBlockId,
+/** What leads the row, before its title: the task checkbox, or a state icon. */
+function RowLead({
+  blockId,
   taskState,
   statusIconState,
   statusIconShowDone,
-  priority,
-  priorityVariant = 'default',
-  priorityBadgeClassName,
-  dueDate,
-  onDateChanged,
   showCompletedIcon,
   completedIconClassName,
-  dependencyBlockId,
-}: BlockMetadataRowProps): React.ReactElement | null {
-  // Bail out cheaply when no metadata is requested at all (DonePanel
-  // without showCompletedIcon, etc.) so we don't emit phantom DOM.
+}: RowLeadProps): React.ReactElement {
   const cycleTaskState = useTaskStateCycle()
-  if (
-    !taskState &&
-    statusIconState === undefined &&
-    (priority == null || priority === '') &&
-    !dueDate &&
-    !showCompletedIcon &&
-    !dependencyBlockId
-  ) {
-    return null
-  }
-
   return (
     <>
-      {taskState && dueDateBlockId && (
+      {taskState && blockId && (
         <TaskMarkerButton
-          blockId={dueDateBlockId}
+          blockId={blockId}
           todoState={taskState}
           onToggleTodo={(id) => void cycleTaskState(id, taskState)}
         />
@@ -238,20 +194,35 @@ function BlockMetadataRowInner({
           data-testid="check-circle"
         />
       )}
+    </>
+  )
+}
 
-      {priority != null && priority !== '' && priorityVariant === 'agenda' && (
-        <span
-          className={cn(
-            'agenda-results-priority inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:text-sm',
-            priorityColor(priority),
-            priorityBadgeClassName,
-          )}
-        >
-          P{priority}
-        </span>
-      )}
+interface RowMetadataProps {
+  blockId: string | null | undefined
+  priority: string | null | undefined
+  priorityBadgeClassName: string | undefined
+  dueDate: string | null | undefined
+  scheduledDate: string | null | undefined
+  onDateChanged: (() => void) | undefined
+  dependencyBlockId: string | undefined
+  note: string | undefined
+}
 
-      {priority != null && priority !== '' && priorityVariant === 'default' && (
+/** The chips after the title, in a block's own order: priority, due, scheduled. */
+function RowMetadataInner({
+  blockId,
+  priority,
+  priorityBadgeClassName,
+  dueDate,
+  scheduledDate,
+  onDateChanged,
+  dependencyBlockId,
+  note,
+}: RowMetadataProps): React.ReactElement {
+  return (
+    <>
+      {priority != null && priority !== '' && (
         <Badge
           tone="priority"
           size="sm"
@@ -263,16 +234,53 @@ function BlockMetadataRowInner({
       )}
 
       {dueDate && (
-        <DueDateChip blockId={dueDateBlockId} dueDate={dueDate} onDateChanged={onDateChanged} />
+        <RowDateChip kind="due" blockId={blockId} date={dueDate} onDateChanged={onDateChanged} />
       )}
+
+      {scheduledDate && (
+        <RowDateChip
+          kind="scheduled"
+          blockId={blockId}
+          date={scheduledDate}
+          onDateChanged={onDateChanged}
+        />
+      )}
+
+      {note !== undefined && <span className="shrink-0 text-xs text-muted-foreground">{note}</span>}
 
       {dependencyBlockId && <DependencyIndicator blockId={dependencyBlockId} />}
     </>
   )
 }
 
-const BlockMetadataRow = memo(BlockMetadataRowInner)
-BlockMetadataRow.displayName = 'BlockMetadataRow'
+const RowMetadata = memo(RowMetadataInner)
+RowMetadata.displayName = 'RowMetadata'
+
+/**
+ * Below `sm` the title keeps the first line, after the leading status icon
+ * (the row's only `svg` child) or task checkbox, and the chips and source wrap
+ * under it: on one line a 360 px phone squeezed the title to a few characters
+ * a line. The leading control hangs in the row's padding (a negative margin as
+ * wide as the control and its gap), so the title and the chips under it share
+ * one left edge beside it.
+ */
+function leadHangClass({
+  taskState,
+  statusIconState,
+  statusIconShowDone,
+  showCompletedIcon,
+}: Omit<RowLeadProps, 'blockId' | 'completedIconClassName'>): string | undefined {
+  if (taskState) {
+    // The checkbox's 1.125em box and its p-0.5, then the row's gap-2.
+    return 'max-sm:pl-[calc(0.75rem+1.875rem)] max-sm:[&>.task-marker]:-ml-[1.875rem] max-sm:[&>.task-marker]:self-start'
+  }
+  const hasIcon =
+    showCompletedIcon === true ||
+    (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
+  return hasIcon
+    ? 'max-sm:pl-[calc(0.75rem+1.5rem)] max-sm:[&>svg]:-ml-[1.5rem] max-sm:[&>svg]:self-start max-sm:[&>svg]:mt-0.5'
+    : undefined
+}
 
 // ── BlockListItem ──────────────────────────────────────────────────────
 
@@ -300,22 +308,22 @@ export interface BlockListItemProps {
   statusIconShowDone?: boolean
   /** Priority string ('1' / '2' / '3' / custom). Omit / null / empty to skip. */
   priority?: string | null
-  /** Priority badge rendering variant. `'default'` uses `Badge tone="priority"`;
-   * `'agenda'` uses the legacy `agenda-results-priority` layout. */
-  priorityVariant?: PriorityBadgeVariant
-  /** Extra classes for the priority badge wrapper. */
+  /** Extra classes for the priority badge. */
   priorityBadgeClassName?: string
   /** Due date chip — ISO YYYY-MM-DD. Omit / null / empty to skip. */
   dueDate?: string | null
+  /** Scheduled date chip — ISO YYYY-MM-DD. Omit / null / empty to skip. */
+  scheduledDate?: string | null
   /**
-   * Block ID for the inline due-date editor (rendered when `dueDate` is
-   * set). Separate from the outer `blockId` prop so callers can render
-   * an editable date chip without opting into HTML5 drag + the
-   * touch-only reschedule button (e.g. `AgendaResults`).
+   * Block ID for the checkbox and the inline date editors. Separate from
+   * the outer `blockId` prop so callers can render them without opting
+   * into HTML5 drag + the touch-only reschedule button (e.g. `AgendaResults`).
    */
   dueDateBlockId?: string | null
-  /** Callback fired after the inline due-date editor saves. */
+  /** Callback fired after an inline date editor saves. */
   onDateChanged?: () => void
+  /** Plain text after the chips, e.g. how long a task has been overdue. */
+  note?: string
   /** When `true`, renders a leading `CheckCircle2` icon (DonePanel). */
   showCompletedIcon?: boolean
   /** Extra classes for the completion icon. */
@@ -374,11 +382,12 @@ function BlockListItemInner({
   statusIconState,
   statusIconShowDone,
   priority,
-  priorityVariant,
   priorityBadgeClassName,
   dueDate,
+  scheduledDate,
   dueDateBlockId,
   onDateChanged,
+  note,
   showCompletedIcon,
   completedIconClassName,
   dependencyBlockId,
@@ -481,21 +490,12 @@ function BlockListItemInner({
     [rowRef, liRef],
   )
 
-  // Below `sm` the title keeps the first line, after the leading status icon
-  // (the row's only `svg` child) or task checkbox, and the chips and source wrap under it: on
-  // one line a 360 px phone squeezed the title to a few characters a line. The leading control
-  // hangs in the row's padding (a negative margin as wide as the control and its gap), so the
-  // title and the chips under it share one left edge beside it.
-  const hasLeadingIcon =
-    showCompletedIcon === true ||
-    Boolean(taskState) ||
-    (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
-  const leadHang = !hasLeadingIcon
-    ? undefined
-    : taskState
-      ? // The checkbox's 1.125em box and its p-0.5, then the row's gap-2.
-        'max-sm:pl-[calc(0.75rem+1.875rem)] max-sm:[&>.task-marker]:-ml-[1.875rem] max-sm:[&>.task-marker]:self-start'
-      : 'max-sm:pl-[calc(0.75rem+1.5rem)] max-sm:[&>svg]:-ml-[1.5rem] max-sm:[&>svg]:self-start max-sm:[&>svg]:mt-0.5'
+  const leadHang = leadHangClass({
+    taskState,
+    statusIconState,
+    statusIconShowDone,
+    showCompletedIcon,
+  })
 
   const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
@@ -505,8 +505,9 @@ function BlockListItemInner({
       data-index={dataIndex}
       className={cn(
         listRowVariants({
-          className:
-            'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first max-sm:[&>.task-marker]:order-first',
+          // Two lines below `sm`, so less padding around them: the row stays
+          // near one touch target tall.
+          className: 'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:py-1.5',
         }),
         leadHang,
         blockId && 'cursor-grab',
@@ -527,40 +528,42 @@ function BlockListItemInner({
         }
       }}
     >
-      {/* Metadata row — primitive props rendered by a memoed sub-component
-          so parent re-renders without prop changes don't allocate fresh
-          children (perf-review Tier 1.4 metadata half). */}
-      <BlockMetadataRow
-        dueDateBlockId={dueDateBlockId ?? blockId}
+      <RowLead
+        blockId={dueDateBlockId ?? blockId}
         taskState={taskState}
         statusIconState={statusIconState}
         statusIconShowDone={statusIconShowDone}
-        priority={priority}
-        priorityVariant={priorityVariant}
-        priorityBadgeClassName={priorityBadgeClassName}
-        dueDate={dueDate}
-        onDateChanged={onDateChanged}
         showCompletedIcon={showCompletedIcon}
         completedIconClassName={completedIconClassName}
-        dependencyBlockId={dependencyBlockId}
       />
 
       {/* Block content — full content by default; callers opt into line-clamp
           via contentClassName="line-clamp-2" when a truncated preview is needed
           (e.g. SearchPanel). Agenda shows full content. */}
-      <span
-        className={cn(
-          'tag-chip-row text-sm min-w-0 flex-1 max-sm:order-first max-sm:basis-full',
-          contentClassName,
-        )}
-      >
+      <span className={cn('tag-chip-row text-sm min-w-0 max-sm:basis-full', contentClassName)}>
         {richContent ?? emptyContentFallback ?? t('common.empty')}
       </span>
+
+      <RowMetadata
+        blockId={dueDateBlockId ?? blockId}
+        priority={priority}
+        priorityBadgeClassName={priorityBadgeClassName}
+        dueDate={dueDate}
+        scheduledDate={scheduledDate}
+        onDateChanged={onDateChanged}
+        dependencyBlockId={dependencyBlockId}
+        note={note}
+      />
 
       {/* Source page breadcrumb */}
       {pageId && (
         <span
-          className={cn('text-xs text-muted-foreground truncate max-w-[40%]', breadcrumbClassName)}
+          className={cn(
+            // Below `sm` it takes what the chips leave of their line, and
+            // shortens before it wraps onto a line of its own.
+            'text-xs text-muted-foreground truncate max-w-[40%] sm:ml-auto max-sm:max-w-none max-sm:min-w-16 max-sm:flex-1 max-sm:basis-0',
+            breadcrumbClassName,
+          )}
         >
           {breadcrumbArrow}{' '}
           {breadcrumbAsLink ? (
@@ -577,7 +580,9 @@ function BlockListItemInner({
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-target focus-ring-visible"
+              // Its 44 px target is the invisible hit area: as a 44 px box it
+              // made every row two targets tall.
+              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-0.5 max-sm:ml-auto text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-hit-area focus-ring-visible"
               aria-label={t('block.reschedule')}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => e.stopPropagation()}

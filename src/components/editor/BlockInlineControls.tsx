@@ -1,8 +1,8 @@
-import type { LucideIcon } from 'lucide-react'
-import { Calendar, CalendarDays, ChevronRight, Link2, Paperclip, Repeat } from 'lucide-react'
+import { ChevronRight, Link2, Paperclip, Repeat } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DateChip } from '@/components/common/DateChip'
 import { PdfSourceChip } from '@/components/editor/PdfSourceChip'
 import { TaskMarkerButton } from '@/components/editor/TaskMarkerButton'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
@@ -31,59 +31,6 @@ export function priorityLabel(priority: string): string {
 // Names from BlockInlineControls keep working after
 // deduplication.
 export { dueDateColor, formatCompactDate }
-
-interface DateChipProps {
-  date: string
-  icon: LucideIcon
-  colorClass: string
-  /** None draws the chip with no control, as an embedded row does (#6747). */
-  onOpen?: (() => void) | undefined
-  i18nKey: string
-  chipClass: string
-}
-
-export function DateChip({
-  date,
-  icon: Icon,
-  colorClass,
-  onOpen,
-  i18nKey,
-  chipClass,
-}: DateChipProps) {
-  const { t } = useTranslation()
-  // #2282 — compute the compact date and the translated label ONCE; the same
-  // strings feed the accessible name and the visible text below.
-  const compact = formatCompactDate(date)
-  const label = t(i18nKey, { date: compact })
-  const chipClasses = `${chipClass} flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none`
-  // The chips pin text-xs, where 1em stays 12px at every font size, so their
-  // icons size from the setting itself (#5369).
-  const iconClass = 'size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0'
-  if (!onOpen) {
-    return (
-      <span className={cn(chipClasses, colorClass)}>
-        <Icon className={iconClass} aria-hidden="true" />
-        <span aria-hidden="true">{compact}</span>
-        <span className="sr-only">{label}</span>
-      </span>
-    )
-  }
-  return (
-    <button
-      type="button"
-      className={cn(chipClasses, 'touch-hit-area cursor-pointer', colorClass)}
-      aria-label={label}
-      // #1498: keep the editor focused, its caret where it was, through the
-      // click: the picker opens for the block being edited. See the
-      // collapse-toggle note below.
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onOpen}
-    >
-      <Icon className={iconClass} />
-      {compact}
-    </button>
-  )
-}
 
 /**
  * #217 C2 / A3 (#1021) — the responsive cap on how many property chips render
@@ -256,6 +203,17 @@ export function BlockCollapseControl({
   )
 }
 
+/**
+ * A date chip's handlers in a block's metadata row. #1498: the press keeps the
+ * editor focused, its caret where it was, so the picker opens for the block
+ * being edited (see the collapse-toggle note above).
+ */
+function chipTrigger(
+  open: () => void,
+): Pick<React.ComponentProps<'button'>, 'onMouseDown' | 'onClick'> {
+  return { onMouseDown: (e) => e.preventDefault(), onClick: open }
+}
+
 /** The priority badge toggle (rendered only when a priority is set). */
 function PriorityBadge({
   blockId,
@@ -322,7 +280,7 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
   const label = formatRepeatLabel(repeatValue, t)
   return (
     <output
-      className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
+      className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground"
       aria-label={t('block.repeats', { value: label })}
     >
       <Repeat className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
@@ -330,6 +288,18 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
     </output>
   )
 }
+
+/**
+ * The `+N` chip after the property chips: outlined, as a property is
+ * (`Badge`'s `property` tone, whose icon size these chips cannot take: theirs
+ * follows the font-size setting, #5369).
+ */
+const OVERFLOW_CHIP =
+  'inline-flex items-center flex-shrink-0 rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium leading-none text-muted-foreground select-none'
+
+/** A count (attachments, references): plain muted text, as `Badge`'s `metadata` tone is. */
+const COUNT_CHIP =
+  'flex items-center gap-0.5 rounded-sm text-xs leading-none tabular-nums text-muted-foreground select-none cursor-pointer hover:text-foreground focus-ring-visible touch-hit-area'
 
 /** The inline property chips, each marked if it doesn't fit its key, + `+N` overflow pill. */
 function InlineProperties({
@@ -373,7 +343,7 @@ function InlineProperties({
         )
       })}
       {filteredProperties.length > inlinePropLimit && readOnly && (
-        <span className="property-overflow inline-flex items-center flex-shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground select-none">
+        <span className={cn(OVERFLOW_CHIP, 'property-overflow')}>
           +{filteredProperties.length - inlinePropLimit}
         </span>
       )}
@@ -382,7 +352,10 @@ function InlineProperties({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="property-overflow inline-flex items-center flex-shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
+              className={cn(
+                OVERFLOW_CHIP,
+                'property-overflow touch-hit-area hover:bg-accent/50 hover:text-foreground transition-colors focus-ring-visible active:scale-95',
+              )}
               data-testid="property-overflow"
               aria-label={t('block.showAllProperties', { count: filteredProperties.length })}
               // #1498: keep editor focus on click (see collapse-toggle note).
@@ -425,7 +398,7 @@ function ReferenceCountChip({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="ref-count-chip flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent focus-ring-visible max-sm:px-2.5 touch-hit-area"
+          className={cn(COUNT_CHIP, 'ref-count-chip')}
           data-testid="ref-count-chip"
           aria-label={label}
           // #1498: keep editor focus on click (see collapse-toggle note).
@@ -463,7 +436,8 @@ function AttachmentBadge({
           key={animKey ?? 'initial'}
           type="button"
           className={cn(
-            'attachment-badge flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 touch-hit-area',
+            COUNT_CHIP,
+            'attachment-badge',
             animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
           )}
           data-testid="attachment-badge"
@@ -638,29 +612,17 @@ export const BlockMetadataRow = React.memo(
 
         {dueDate && (
           <DateChip
+            kind="due"
             date={dueDate}
-            icon={CalendarDays}
-            colorClass={dueDateColor(dueDate)}
-            onOpen={readOnly ? undefined : () => onOpenDatePicker?.(blockId, 'due')}
-            i18nKey="block.dueDate"
-            chipClass="due-date-chip"
+            {...(readOnly ? {} : chipTrigger(() => onOpenDatePicker?.(blockId, 'due')))}
           />
         )}
 
         {scheduledDate && (
-          // The due-date chip uses `dueDateColor(dueDate)` to colour-code
-          // overdue / today tasks because a due date is meaningful in every
-          // temporal state. The scheduled date is always neutral — Org-mode's
-          // SCHEDULED semantics are future-only ("don't start before this
-          // date"), so there is no past/today state to surface. The icon, not
-          // a hue, tells it apart from a future due date.
           <DateChip
+            kind="scheduled"
             date={scheduledDate}
-            icon={Calendar}
-            colorClass="bg-secondary text-secondary-foreground"
-            onOpen={readOnly ? undefined : () => onOpenDatePicker?.(blockId, 'schedule')}
-            i18nKey="block.scheduledDate"
-            chipClass="scheduled-chip"
+            {...(readOnly ? {} : chipTrigger(() => onOpenDatePicker?.(blockId, 'schedule')))}
           />
         )}
 

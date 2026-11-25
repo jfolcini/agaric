@@ -384,10 +384,12 @@ const THEME_PAIRS = [
   { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
   { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
   { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
+  { pair: 'future due chip', fg: 'secondary-foreground', bg: 'secondary', min: AA_NORMAL },
+  // `DateChip`: on a block, in a task row and as a Week header's count (#7040).
   {
-    pair: 'scheduled / future due chip',
-    fg: 'secondary-foreground',
-    bg: 'secondary',
+    pair: 'scheduled chip',
+    fg: 'date-scheduled-foreground',
+    bg: 'date-scheduled',
     min: AA_NORMAL,
   },
   { pair: 'today due chip', fg: 'date-due-foreground', bg: 'date-due', min: AA_NORMAL },
@@ -398,6 +400,13 @@ const THEME_PAIRS = [
     min: AA_NORMAL,
   },
   { pair: 'overdue due chip', fg: 'alert-error-foreground', bg: 'alert-error', min: AA_NORMAL },
+  // The Due panel's Overdue heading is text on the page, not a card (#7040).
+  {
+    pair: 'overdue heading',
+    fg: 'alert-error-foreground',
+    bg: 'background',
+    min: AA_NORMAL,
+  },
   { pair: 'hover / selected surface', fg: 'accent-foreground', bg: 'accent', min: AA_NORMAL },
   // Graph nodes are the buttons you pick out; the accent marks the current page (#5429).
   { pair: 'graph node', fg: 'graph-node', bg: 'background', min: NON_TEXT },
@@ -435,6 +444,8 @@ const THEME_PAIRS = [
   { pair: 'muted text / code comment', fg: 'muted-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'muted text on hover', fg: 'muted-foreground', bg: 'accent', min: AA_NORMAL },
   { pair: 'muted text on secondary', fg: 'muted-foreground', bg: 'secondary', min: AA_NORMAL },
+  // `Badge`'s `metadata` tone: a type label or a count in a list's card (#7040).
+  { pair: 'type label on a list card', fg: 'muted-foreground', bg: 'card', min: AA_NORMAL },
   { pair: 'code keyword', fg: 'alert-error-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },
@@ -556,6 +567,7 @@ const HUE_ROLES = {
   overdue: ['alert-error', 'alert-error-foreground'],
   destructive: ['destructive'],
   'due today': DUE_TODAY,
+  scheduled: ['date-scheduled', 'date-scheduled-foreground'],
   'DOING / in progress': ['status-active', 'status-active-foreground'],
   'focus ring': ['ring'],
   // Month's today disc (`MonthlyDayCell`) and the date picker's outline are ink.
@@ -570,6 +582,8 @@ const HUE_PAIRS: ReadonlyArray<readonly [HueRole, HueRole]> = [
   ['P1', 'destructive'],
   ['P2', 'due today'],
   ['due today', 'overdue'],
+  ['scheduled', 'due today'],
+  ['scheduled', 'overdue'],
   ['P3', 'DOING / in progress'],
   ['P3', 'focus ring'],
   ['today', 'brand'],
