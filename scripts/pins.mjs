@@ -5,7 +5,8 @@
 //
 //   node scripts/pins.mjs bump <name> <version>   rewrite the version and
 //       recompute every asset's sha256 from the new download (fetched, never
-//       run). `node` bumps .nvmrc, `code-review-graph` .mcp.json.
+//       run). `node` bumps .nvmrc, `npm` package.json's packageManager,
+//       `code-review-graph` .mcp.json.
 //   node scripts/pins.mjs stale                   list pins behind upstream;
 //       exit 1 if any is, or if an upstream could not be read (fail closed).
 //       A release younger than COOLDOWN_DAYS is reported, not flagged, the
@@ -38,6 +39,14 @@ export const FILE_PINS = [
     file: 'rust-toolchain.toml',
     upstream: 'rust-stable',
     read: (text) => text.match(/^channel = "([^"]+)"/m)?.[1],
+  },
+  {
+    name: 'npm',
+    file: 'package.json',
+    upstream: 'npm:npm',
+    read: (text) => JSON.parse(text).packageManager?.match(/^npm@(.+)$/)?.[1],
+    write: (text, version) =>
+      text.replace(/"packageManager": "npm@[^"]+"/, `"packageManager": "npm@${version}"`),
   },
   {
     name: 'code-review-graph',
@@ -192,6 +201,11 @@ export const UPSTREAMS = {
       .toSorted(compareVersions)
     if (found.length === 0) throw new Error(`no stable ${line}.x in repository2-3.xml`)
     return { version: found.at(-1) }
+  },
+  async npm(name, http) {
+    const r = await http.json(`https://registry.npmjs.org/${name}`)
+    const version = r['dist-tags'].latest
+    return { version, publishedAt: r.time[version] }
   },
   async pypi(name, http) {
     const r = await http.json(`https://pypi.org/pypi/${name}/json`)

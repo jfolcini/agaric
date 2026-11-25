@@ -1,8 +1,9 @@
 # Every tool, toolchain and download the build fetches from outside the repo,
 # in one place (AGENTS.md § Supply-chain pinning). Workflows, composite
 # actions and the setup scripts read this file through scripts/pins.sh; the
-# lockfiles, Actions SHAs, `.nvmrc`, `rust-toolchain.toml` and the Gradle
-# verification file pin the rest.
+# lockfiles, Actions SHAs, the Gradle verification file and the file pins
+# (`FILE_PINS` in scripts/pins.mjs: `.nvmrc`, `rust-toolchain.toml`,
+# package.json's `packageManager`, `.mcp.json`) pin the rest.
 #
 #   version <name> <version> <upstream>
 #   asset   <name> <platform> <sha256> <url>    `{version}` expands to the version

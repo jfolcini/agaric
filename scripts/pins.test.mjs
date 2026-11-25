@@ -206,6 +206,19 @@ void describe('upstream readers', () => {
     await assert.rejects(UPSTREAMS['android-sdk']('ndk;26', http), /no stable ndk;26/)
   })
 
+  void it('npm reads the latest dist-tag and its publish time', async () => {
+    const http = fakeHttp({
+      'registry.npmjs.org/npm': {
+        'dist-tags': { latest: '12.3.0', next: '13.0.0-pre' },
+        time: { '12.3.0': '2026-10-01T00:00:00Z' },
+      },
+    })
+    assert.deepEqual(await UPSTREAMS.npm('npm', http), {
+      version: '12.3.0',
+      publishedAt: '2026-10-01T00:00:00Z',
+    })
+  })
+
   void it('pypi reads the newest version and its upload time', async () => {
     const http = fakeHttp({
       'pypi.org/pypi/tool/json': {
@@ -294,6 +307,7 @@ void describe('file pins', () => {
     try {
       writeFileSync(join(dir, '.nvmrc'), '24.1.0\n')
       writeFileSync(join(dir, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.90.0"\n')
+      writeFileSync(join(dir, 'package.json'), '{"name":"x","packageManager":"npm@12.2.0"}')
       writeFileSync(
         join(dir, '.mcp.json'),
         '{"mcpServers":{"g":{"command":"uvx","args":["code-review-graph@2.3.8","serve"]}}}',
@@ -303,6 +317,7 @@ void describe('file pins', () => {
         [
           ['node', '24.1.0'],
           ['rust', '1.90.0'],
+          ['npm', '12.2.0'],
           ['code-review-graph', '2.3.8'],
         ],
       )

@@ -107,8 +107,10 @@ name: Scheduled deep checks
 #                    `release.yml`). Only a release build reproduces
 #                    `panic = "abort"`, which 0.15.0 crashed on while CI was
 #                    green.
-#   stale-pins     — pins.txt, .nvmrc, rust-toolchain.toml and .mcp.json
-#                    against their upstreams (`node scripts/pins.mjs stale`).
+#   stale-pins     — pins.txt and the file pins (`FILE_PINS` in
+#                    scripts/pins.mjs: .nvmrc, rust-toolchain.toml, package.json's
+#                    packageManager, .mcp.json) against their upstreams
+#                    (`node scripts/pins.mjs stale`).
 #                    Dependabot cannot see these pins, so this is how one that
 #                    fell behind, a tool's security release included, gets
 #                    noticed. Red: a newer release past the 7-day cooldown, or
