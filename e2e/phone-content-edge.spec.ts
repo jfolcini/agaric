@@ -83,6 +83,32 @@ async function expectSheetOnGutter(page: Page): Promise<void> {
     .toBe(GUTTER)
 }
 
+/**
+ * How far the drawn checkbox of the task whose text holds `text` sits below
+ * the middle of that text's first line, in px.
+ */
+function checkboxDrop(page: Page, text: string): Promise<number> {
+  return page
+    .locator('[data-testid="sortable-block"]', { hasText: text })
+    .first()
+    .evaluate((row) => {
+      const box = row.querySelector('.task-checkbox')
+      const textBox = row.querySelector('[data-testid="block-static"]')
+      if (!box || !textBox) throw new Error('no checkbox or text')
+      const walker = document.createTreeWalker(textBox, NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.trim()) continue
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const line = [...range.getClientRects()].find((r) => r.width > 0)
+        if (!line) continue
+        const b = box.getBoundingClientRect()
+        return Math.round(b.top + b.height / 2 - (line.top + line.height / 2))
+      }
+      throw new Error('no visible text')
+    })
+}
+
 test.describe('One left edge on a phone (#5929) @mobile @journal @pages @settings', () => {
   test.use(PHONE)
 
@@ -127,6 +153,16 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
 
   test('a sheet insets its title and body by the gutter', async ({ page }) => {
     await expectSheetOnGutter(page)
+  })
+
+  // Its 44 px box is taller than the line, and once hung below it.
+  test("a task's checkbox centres on its first text line", async ({ page }) => {
+    await expect(block(page, 'Buy groceries')).toBeVisible()
+    expect(await checkboxDrop(page, 'Buy groceries'), 'journal task').toBe(0)
+    await openPageMobile(page, 'Projects')
+    for (const task of ['Ship v2.0 release', 'Fix login bug', 'Update dependencies']) {
+      await expect.poll(() => checkboxDrop(page, task), task).toBe(0)
+    }
   })
 
   test('Settings: a card groups its controls on the gutter, without a second inset', async ({

@@ -125,10 +125,10 @@ function SheetContent({
           // App.tsx) rather than slicing through the view title. With the
           // keyboard up both edges move with the layout viewport, which on
           // Android ends at the keyboard's top (`MainActivity.kt`, #6790).
-          // Its free edge takes the modal radius tier (docs/UX.md); the handle
+          // Square: it spans the screen edge to edge (docs/UX.md). The handle
           // is its top padding.
           bottom &&
-            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] rounded-t-xl border-t pt-0 md:pt-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t pt-0 md:pt-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className,
         )}
         style={

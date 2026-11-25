@@ -188,9 +188,9 @@ describe('SheetContent base classes', () => {
     expect(dialog).not.toHaveClass(BOTTOM_CAP)
   })
 
-  // Only a bottom sheet has a free edge on screen: it takes the modal radius
-  // there (docs/UX.md). Edge-to-edge sheets stay square.
-  it.each(['top', 'right', 'left'] as const)('%s sheets have square corners', (side) => {
+  // A sheet spans the screen from edge to edge, so a radius would curve away
+  // from the screen's own corner (docs/UX.md).
+  it.each(['top', 'right', 'bottom', 'left'] as const)('%s sheets have square corners', (side) => {
     render(
       <Sheet open>
         <SheetContent side={side} aria-describedby={undefined}>
@@ -201,20 +201,6 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     expect(screen.getByRole('dialog').className).not.toMatch(/\brounded/)
-  })
-
-  it('a bottom sheet rounds its top corners only', () => {
-    render(
-      <Sheet open>
-        <SheetContent side="bottom" aria-describedby={undefined}>
-          <SheetHeader>
-            <SheetTitle>Bottom Sheet</SheetTitle>
-          </SheetHeader>
-        </SheetContent>
-      </Sheet>,
-    )
-    const rounding = screen.getByRole('dialog').className.match(/\brounded\S*/g)
-    expect(rounding).toEqual(['rounded-t-xl'])
   })
 
   // Both side-anchored arms, not just one: they are `h-full` already, so the

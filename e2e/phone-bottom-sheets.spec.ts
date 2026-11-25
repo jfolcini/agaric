@@ -31,8 +31,6 @@ import {
 const iPhone13 = devices['iPhone 13']
 const PAGE = 'Getting Started'
 const TOUCH_FLOOR = 44
-/** `--radius-xl`, the modal tier a bottom sheet's free edge takes (docs/UX.md). */
-const SHEET_RADIUS = 12
 
 interface Edges {
   left: number
@@ -64,15 +62,15 @@ async function openBlockMenu(page: Page): Promise<Locator> {
   return activeMenu(page)
 }
 
-/** The open sheet rises on a rounded top, from a 44 px grab handle. */
+/** The open sheet is square, edge to edge, and opens on a 44 px grab handle. */
 async function expectGrabbable(page: Page): Promise<void> {
   const sheet = activeSheet(page)
   await expect(sheet).toBeVisible()
   const corners = await sheet.evaluate((el) => {
     const s = getComputedStyle(el)
-    return [s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomLeftRadius]
+    return [s.borderTopLeftRadius, s.borderTopRightRadius]
   })
-  expect(corners).toEqual([`${SHEET_RADIUS}px`, `${SHEET_RADIUS}px`, '0px'])
+  expect(corners).toEqual(['0px', '0px'])
   const handle = await box(sheet.locator('[data-slot="sheet-drag-handle"]'))
   expect(handle.height).toBe(TOUCH_FLOOR)
 }
@@ -246,9 +244,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
   })
 
   // One of each kind: a MenuSheet, a plain Sheet, and a `useDialogOrSheet` dialog.
-  test('each kind of bottom sheet rises on a rounded top with a 44 px grab handle', async ({
-    page,
-  }) => {
+  test('each kind of bottom sheet is square and opens on a 44 px grab handle', async ({ page }) => {
     await openBlockMenu(page)
     await expectGrabbable(page)
     await activeMenu(page)
