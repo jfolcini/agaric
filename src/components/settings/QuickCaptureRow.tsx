@@ -26,8 +26,8 @@
  * `tauri-plugin-global-shortcut` compiles only on desktop). Gating
  * visibility on the viewport width (`useIsMobile`, < 768 px) instead
  * would let an Android tablet ≥ 768 px render the row and silently
- * accept a chord that never registers (#742). Width drives LAYOUT
- * (`useDialogOrSheet`); capability drives whether this SETTING exists.
+ * accept a chord that never registers (#742). The screen drives LAYOUT
+ * (`usePhoneLayout`); capability drives whether this SETTING exists.
  */
 
 import type React from 'react'

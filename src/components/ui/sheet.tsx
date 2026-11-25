@@ -16,8 +16,8 @@ import { cn } from '@/lib/utils'
 // scrollable region without re-stating padding / overflow at every call
 // site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `md`
 // the padding is the app's 16 px phone gutter (`App.tsx`), so a sheet's text
-// starts where the view's does; `md` is also where `useIsMobile` stops picking
-// sheets over dialogs. A consumer overriding it overrides `md:` too.
+// starts where the view's does; wider, a sheet is a side panel or a phone's
+// held sideways. A consumer overriding it overrides `md:` too.
 //
 // A closed sheet takes no taps: until it unmounts it can still sit where it
 // was open (a busy main thread starts its exit late, and it springs back once

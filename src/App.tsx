@@ -45,7 +45,6 @@ import { useCustomCss } from '@/hooks/useCustomCss'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useFontSize } from '@/hooks/useFontSize'
 import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLanguage } from '@/hooks/useLanguage'
 import { useMinuteClock } from '@/hooks/useMinuteClock'
@@ -53,6 +52,7 @@ import { useMirrorIngestEvents } from '@/hooks/useMirrorIngestEvents'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { usePageRenameNotices } from '@/hooks/usePageRenameNotices'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
 import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { useRecoveryStatus } from '@/hooks/useRecoveryStatus'
@@ -152,7 +152,7 @@ function preloadSearchOverlays(): void {
  * instead: the screen's foot is then the keyboard's top (#6790).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const toolbarPinned = usePinnedToolbarShown()
   const mobile = {
     bottom: `calc(${toolbarPinned ? '5rem' : '1rem'} + var(--safe-area-bottom))`,
@@ -161,10 +161,10 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   }
   return (
     <Toaster
-      position={isMobile ? 'bottom-left' : 'bottom-right'}
+      position={phoneLayout ? 'bottom-left' : 'bottom-right'}
       // `mobileOffset` applies up to sonner's own 600 px breakpoint, `offset`
-      // above it, so a phone in landscape gets the same placement.
-      {...(isMobile ? { offset: mobile, mobileOffset: mobile } : {})}
+      // above it: both, so the placement follows `usePhoneLayout` alone.
+      {...(phoneLayout ? { offset: mobile, mobileOffset: mobile } : {})}
       theme={isDark ? 'dark' : 'light'}
       richColors
       closeButton
@@ -175,9 +175,9 @@ function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
 /**
  * The mobile entry point to the nav sidebar.
  *
- * When the sidebar is a Sheet (below the 768px `useIsMobile` breakpoint, or
- * on a touch screen in landscape) it has NO persistent rail (see `Sidebar`'s
- * mobile branch), so this button is the way in; Ctrl+B remains as a secondary.
+ * When the sidebar is a Sheet (`usePhoneLayout`) it has NO persistent rail (see
+ * `Sidebar`'s mobile branch), so this button is the way in; Ctrl+B remains as a
+ * secondary.
  * Gated on the sidebar's own `isMobile`, the predicate the Sheet branch uses,
  * so the affordance can never be absent while the rail is, and can never
  * appear next to the desktop sidebar.
@@ -390,7 +390,7 @@ function App() {
   useLanguage()
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const isTouch = useIsTouch()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
   // Shell-level dialog state (the dialogs' open flags + their
@@ -543,7 +543,7 @@ function App() {
   // OS-level chord (`registerGlobalShortcut`) below stays here
   // because it interacts with Tauri APIs and the local
   // `quickCaptureChord` state.
-  useAppKeyboardShortcuts({ t, isTouchPhone: isTouch && isMobile })
+  useAppKeyboardShortcuts({ t, isTouchPhone: isTouch && phoneLayout })
 
   // ── register the quick-capture global hotkey ─────────────
   // Chord state, the storage-event re-bind listener, and the SEQUENCED
@@ -690,7 +690,7 @@ function App() {
               className={cn(
                 'flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4 max-md:gap-1',
                 // Room for the 44 px touch targets; a mouse window has none.
-                isTouch && isMobile && 'min-h-14 py-1.5',
+                isTouch && phoneLayout && 'min-h-14 py-1.5',
               )}
             >
               {/* Leads the header row, before the view title, because that
@@ -794,13 +794,15 @@ function App() {
               )}
               data-slot="main-content"
             >
-              {/* `-mx-4 -mt-4` cancel the viewport's `p-4` so the header spans
-                  the pane as it does on desktop. A header holding the view's
+              {/* The negative margins cancel the viewport's padding (`p-4`;
+                  `md:p-6` on a phone held sideways) so the header spans the
+                  pane as it does on desktop. A header holding the view's
                   search field (`data-sticky-search`) keeps it at the top;
-                  sticky offsets count from inside that padding, hence `-top-4`. */}
+                  sticky offsets count from inside that padding, hence the
+                  negative `top`. */}
               <ViewHeaderOutletSlot
                 insideScroller
-                className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10"
+                className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10 md:-mx-6 md:-mt-6 md:px-6 md:has-[[data-sticky-search]]:-top-6"
               />
               <ViewToolbarSlot room={currentView === 'journal' || currentView === 'page-editor'} />
               <div

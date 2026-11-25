@@ -24,8 +24,8 @@ import { SheetTrigger } from '@/components/ui/sheet'
 import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { useEditModeShortcut, usePageMode } from '@/editor/page-mode/use-page-mode'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useBlockStore } from '@/stores/blocks'
@@ -50,8 +50,8 @@ export function DayPageEditor({
 }: DayPageEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
-  const onPhone = isTouch && isMobile
+  const phoneLayout = usePhoneLayout()
+  const onPhone = isTouch && phoneLayout
   const [menuOpen, setMenuOpen] = useState(false)
   const pageMode = usePageMode(pageId)
   useEditModeShortcut(pageMode.mode, pageMode.changeMode)

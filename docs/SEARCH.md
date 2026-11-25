@@ -393,6 +393,6 @@ Two safety nets:
 
 ### Known limitations
 
-- **Tablet / hardware-keyboard detection.** The trigger also renders on a keyboard-less tablet: `useHasHardwareKeyboard` runs a `navigator.keyboard` + first-keydown probe, and `useShouldShowMobileChrome` shows the touch trigger when `isTouch && (isMobile || (isTablet && !hasKeyboard))`.
+- **Tablet / hardware-keyboard detection.** The trigger also renders on a keyboard-less tablet: `useHasHardwareKeyboard` runs a `navigator.keyboard` + first-keydown probe, and `useShouldShowMobileChrome` shows the touch trigger when `isTouch && (phoneLayout || (isTablet && !hasKeyboard))`.
 
 [`regex`]: https://docs.rs/regex/latest/regex/

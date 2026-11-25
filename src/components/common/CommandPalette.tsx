@@ -83,10 +83,10 @@ import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { isCancellation } from '@/lib/app-error'
 import type { SearchBlockRow } from '@/lib/bindings'
@@ -203,8 +203,9 @@ export function PaletteBody({
   actionMenuOpenRef: React.RefObject<boolean>
 }): React.ReactElement {
   const { t } = useTranslation()
-  // A phone has its own escalation button and no palette key footer.
-  const isMobile = useIsMobile()
+  // The sheet's own contents (recent terms, the escalation button, no key
+  // hints), by the rule that makes the palette a sheet (`useDialogOrSheet`).
+  const phoneLayout = usePhoneLayout()
   const keyboardHints = useKeyboardHints()
   const inputRef = useRef<HTMLInputElement>(null)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -499,9 +500,9 @@ export function PaletteBody({
   // only: desktop search already has the find-in-files history surface.
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- reads the recent-terms list from localStorage when the viewport crosses the mobile breakpoint; `rememberSearch` also writes it; see #4407
-    if (isMobile) setRecentSearches(getRecentSearches())
-  }, [isMobile])
+    // oxlint-disable-next-line react/set-state-in-effect -- reads the recent-terms list from localStorage when the palette becomes a phone's sheet; `rememberSearch` also writes it; see #4407
+    if (phoneLayout) setRecentSearches(getRecentSearches())
+  }, [phoneLayout])
 
   // #131 — record a run term so it shows up next time. Called on
   // escalation (the user committed to this query) and when tapping a
@@ -510,7 +511,7 @@ export function PaletteBody({
     const trimmed = term.trim()
     if (trimmed.length === 0) return
     addRecentSearch(trimmed)
-    if (isMobile) setRecentSearches(getRecentSearches())
+    if (phoneLayout) setRecentSearches(getRecentSearches())
   }
 
   function handleRecentSearchClick(term: string): void {
@@ -858,7 +859,7 @@ export function PaletteBody({
   // #131 — recent search terms, mobile-only. Same relaxed gate as
   // `showRecents` above (#2853).
   const showRecentSearches =
-    isMobile &&
+    phoneLayout &&
     mode === 'search' &&
     !linkMode &&
     (query.length === 0 || (loading && groups.length === 0)) &&
@@ -896,7 +897,7 @@ export function PaletteBody({
   // CTA on a non-empty query hid it exactly when a cold-open user most
   // needs to discover those features. Mobile-only — desktop keeps the
   // query-gated inline cmdk footer (`showEscalationFooter`).
-  const showMobileEscalation = mode === 'search' && !linkMode && isMobile
+  const showMobileEscalation = mode === 'search' && !linkMode && phoneLayout
 
   return (
     // shouldFilter={false} — debounced FTS + Rust-side ranking already
@@ -968,7 +969,7 @@ export function PaletteBody({
           {t('palette.noResults', { query: trimmedQuery })}
         </output>
       )}
-      {showWelcomeEmpty && !isMobile && (
+      {showWelcomeEmpty && !phoneLayout && (
         // Above the list for the same reason, with the Navigate commands below it.
         <p className="px-3 py-3 text-sm text-muted-foreground" data-testid="palette-welcome-empty">
           {t('palette.welcomeEmpty')}
@@ -1005,7 +1006,7 @@ export function PaletteBody({
               />
             )}
             {showWelcomeEmpty &&
-              (isMobile ? (
+              (phoneLayout ? (
                 <CommandEmpty data-testid="palette-welcome-empty">
                   {t('palette.welcomeEmpty')}
                 </CommandEmpty>
@@ -1051,7 +1052,7 @@ export function PaletteBody({
                 t={t}
               />
             )}
-            {showEscalationFooter && !isMobile && (
+            {showEscalationFooter && !phoneLayout && (
               <>
                 <CommandSeparator />
                 <CommandGroup>
@@ -1078,7 +1079,9 @@ export function PaletteBody({
       </CommandList>
       {/* The footer surfaces the open / new-tab / close keyboard chips: not on a phone's search
           sheet, and only where there is a keyboard to press them (`useKeyboardHints`). */}
-      {mode === 'search' && !linkMode && !isMobile && keyboardHints && <PaletteFooterHint t={t} />}
+      {mode === 'search' && !linkMode && !phoneLayout && keyboardHints && (
+        <PaletteFooterHint t={t} />
+      )}
       {actionMenu != null && (
         <PaletteActionMenu
           anchor={actionMenu.rect}

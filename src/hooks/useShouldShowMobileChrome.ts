@@ -1,33 +1,24 @@
 /**
- * UseShouldShowMobileChrome — composite gate.
+ * useShouldShowMobileChrome — whether the touch-only entry points show
+ * (`SearchSheetTrigger`, the quick-capture button, the gesture coach-mark).
  *
- * `useIsMobile()` returns true only below 768 px (phone). That leaves
- * iPad portrait (768 px) and tablet-with-keyboard cases in a UX dead
- * zone for touch-only entry points like `SearchSheetTrigger`: the icon
- * doesn't render, and on a touch-only iPad there's no keyboard
- * shortcut either.
+ * On a touch device only (`useIsTouch()`): a narrow mouse window keeps the
+ * desktop chrome.
  *
- * This hook composes the existing breakpoint with a hardware-keyboard
- * probe, on a touch device only (`useIsTouch()`): a narrow mouse window
- * keeps the desktop chrome.
+ *   - A phone (`usePhoneLayout`): always.
+ *   - A tablet (under 1024 px wide): only while no hardware keyboard has been
+ *     detected this session.
+ *   - Wider: never.
  *
- *   - Phones (< 768 px): always show the mobile chrome.
- *   - Tablets (768 ≤ width < 1024): show the mobile chrome ONLY if no
- *     hardware keyboard has been detected this session.
- *   - Desktop (≥ 1024 px): never show the mobile chrome — the keyboard
- *     probe is irrelevant; the device is desktop-shaped.
- *
- * `useIsMobile` stays single-purpose (it's consumed by 20+ sites for
- * pure layout decisions like Dialog ↔ Sheet swap). This hook is
- * dedicated to entry-point discoverability — mount-or-not gates for
- * touch-only triggers.
+ * The 1024 px bound is a tablet's, not a phone's, so it stays out of
+ * `usePhoneLayout`: a tablet keeps its dialogs and its pinned sidebar.
  */
 
 import { useEffect, useState } from 'react'
 
 import { useHasHardwareKeyboard } from '@/hooks/useHasHardwareKeyboard'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 
 const TABLET_BREAKPOINT = 1024
 
@@ -37,13 +28,11 @@ function readIsTablet(): boolean {
 
 export function useShouldShowMobileChrome(): boolean {
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const hasKeyboard = useHasHardwareKeyboard()
   const [isTablet, setIsTablet] = useState<boolean>(readIsTablet)
 
-  // Track the tablet breakpoint with the same matchMedia pattern that
-  // `useIsMobile` uses for its 768 px breakpoint. Separate state from
-  // `isMobile` because they have different thresholds (768 vs 1024).
+  // The tablet breakpoint, tracked as `useIsMobile` tracks its own.
   useEffect(() => {
     const mql = window.matchMedia(`(max-width: ${TABLET_BREAKPOINT - 1}px)`)
     const onChange = () => setIsTablet(readIsTablet())
@@ -51,5 +40,5 @@ export function useShouldShowMobileChrome(): boolean {
     return () => mql.removeEventListener('change', onChange)
   }, [])
 
-  return isTouch && (isMobile || (isTablet && !hasKeyboard))
+  return isTouch && (phoneLayout || (isTablet && !hasKeyboard))
 }

@@ -12,8 +12,8 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -22,9 +22,9 @@ export function GlobalDateControls(): React.ReactElement | null {
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const setView = useNavigationStore((s) => s.setView)
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
-  if (isTouch && isMobile) return null
+  if (isTouch && phoneLayout) return null
 
   function handleToday() {
     setView('journal')

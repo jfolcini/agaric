@@ -79,9 +79,12 @@ test.describe('Tasks in the drawer @mobile @journal', () => {
 })
 
 // #6532 — a phone on its side is wider than the mobile breakpoint, but a
-// pinned sidebar beside 360 px of height leaves the notes a sliver.
+// pinned sidebar beside 360 px of height leaves the notes a sliver. `screen`
+// too: the rule reads the screen's height (`usePhoneLayout`), and the
+// project's desktop descriptor leaves a 1080 px one.
 test.describe('a touch screen under 500 px tall gets the drawer @mobile', () => {
-  test.use({ viewport: { width: 863, height: 360 } })
+  const LANDSCAPE = { width: 863, height: 360 }
+  test.use({ viewport: LANDSCAPE, screen: LANDSCAPE })
 
   test('a phone in landscape', async ({ page }) => {
     await waitForBoot(page)

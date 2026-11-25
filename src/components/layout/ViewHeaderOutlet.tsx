@@ -32,8 +32,8 @@
 import type React from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { cn } from '@/lib/utils'
 
 interface ViewHeaderOutletContextValue {
@@ -91,7 +91,7 @@ export function ViewHeaderOutletSlot({
 }: ViewHeaderOutletSlotProps): React.ReactElement | null {
   const ctx = useContext(ViewHeaderOutletContext)
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   // If the slot is used outside a provider we silently render an empty host —
   // the consumer warnings will surface the real problem (a <ViewHeader> with
   // no outlet).
@@ -105,7 +105,7 @@ export function ViewHeaderOutletSlot({
     },
     [setOutlet],
   )
-  if (insideScroller !== (isTouch && isMobile)) return null
+  if (insideScroller !== (isTouch && phoneLayout)) return null
   return (
     <div
       ref={refCallback}

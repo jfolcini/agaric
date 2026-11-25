@@ -1,6 +1,6 @@
 /**
  * useDialogOrSheet — returns a `Dialog` (or `AlertDialog`) on desktop and a
- * `Sheet` (`side="bottom"`) on mobile.
+ * `Sheet` (`side="bottom"`) on a phone (`usePhoneLayout`).
  *
  * Both Radix primitives share the same `open` / `onOpenChange` controlled
  * API, so a caller can swap them at the structural level: `<Root>`,
@@ -21,8 +21,8 @@
  *    Escape without consequence (BugReportDialog, RenameDialog,
  *    WelcomeModal, QuickCaptureDialog, PdfViewerDialog).
  *
- * The mobile path is always `Sheet` regardless of `kind` — phones < 768 px
- * benefit from the same bottom-sheet ergonomics whether the surface is a
+ * The mobile path is always `Sheet` regardless of `kind` — a phone
+ * benefits from the same bottom-sheet ergonomics whether the surface is a
  * form or a confirmation. The desktop discriminant only swaps Radix's
  * AlertDialog (auto-close action buttons, more restrictive focus trap) for
  * regular Dialog (manual close, lighter modal semantics).
@@ -54,7 +54,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 
 export type DialogKind = 'alert' | 'dialog'
 
@@ -103,8 +103,7 @@ interface MobileParts {
 export type DialogOrSheetParts = DesktopAlertParts | DesktopDialogParts | MobileParts
 
 export function useDialogOrSheet(kind: DialogKind = 'alert'): DialogOrSheetParts {
-  const isMobile = useIsMobile()
-  if (isMobile) {
+  if (usePhoneLayout()) {
     return {
       isMobile: true,
       kind,

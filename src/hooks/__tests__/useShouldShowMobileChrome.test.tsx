@@ -71,6 +71,16 @@ describe('useShouldShowMobileChrome', () => {
     expect(getByTestId('probe').textContent).toBe('mobile')
   })
 
+  it('a phone on its side (915 wide, a short screen) keeps the mobile chrome with a keyboard', () => {
+    setInnerWidth(915)
+    installMatchMedia(
+      (q) => q.includes('max-width: 1023px') || q.includes('max-device-height: 499px'),
+    )
+    const { getByTestId } = render(<Probe />)
+    fireEvent.keyDown(document, { key: 'a' })
+    expect(getByTestId('probe').textContent).toBe('mobile')
+  })
+
   it('iPad portrait (768) with NO keyboard shows mobile chrome', () => {
     setInnerWidth(768)
     installMatchMedia((q) => q.includes('max-width: 1023px'))

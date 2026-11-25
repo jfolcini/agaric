@@ -21,8 +21,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { getActiveEditor } from '@/editor/active-editor'
-import { useIsMobile } from '@/hooks/useIsMobile'
-import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 
 export interface ReferenceEntry {
@@ -65,8 +64,7 @@ export function ReferenceSheet({
   sections,
 }: ReferenceSheetProps): React.ReactElement {
   const { t } = useTranslation()
-  const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const [filter, setFilter] = useState('')
   const opener = useRef<Element | null>(null)
   const filterRef = useRef<HTMLInputElement>(null)
@@ -87,7 +85,7 @@ export function ReferenceSheet({
       }}
     >
       <SheetContent
-        side={isTouch && isMobile ? 'bottom' : 'right'}
+        side={phoneLayout ? 'bottom' : 'right'}
         data-editor-portal=""
         // The filter takes focus with no ring: the user did not put it there.
         onOpenAutoFocus={(e) => {

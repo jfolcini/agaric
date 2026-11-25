@@ -8,8 +8,8 @@ import type React from 'react'
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { announce } from '@/lib/announcer'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { pageLinkIdAt } from '@/lib/link-chip'
@@ -24,7 +24,7 @@ export type OpenInBackgroundTab = (pageId: string, title: string, blockId?: stri
 export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const openInBackgroundTab = useTabsStore((s) => s.openInBackgroundTab)
   const open = useCallback<OpenInBackgroundTab>(
     (pageId, title, blockId) => {
@@ -34,7 +34,7 @@ export function useOpenInBackgroundTab(): OpenInBackgroundTab | undefined {
     },
     [openInBackgroundTab, t],
   )
-  return isTouch && isMobile ? undefined : open
+  return isTouch && phoneLayout ? undefined : open
 }
 
 /** Opens a link chip's target in a new tab behind the active one, on the block a `((ref))` names. */

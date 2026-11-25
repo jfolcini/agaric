@@ -755,7 +755,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   // Tabs — after the TabBar is shell-wide on desktop, so the
   // tab-management shortcuts apply everywhere, not just inside the editor.
   // The `desktopOnly` condition matches the runtime gate in App.tsx: off on a
-  // touch phone (`useIsTouch() && useIsMobile()`), on in a narrow mouse window.
+  // touch phone (`useIsTouch() && usePhoneLayout()`), on in a narrow mouse window.
   {
     id: 'openInNewTab',
     keys: 'Ctrl + T',

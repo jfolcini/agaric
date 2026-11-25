@@ -26,7 +26,7 @@
  * wording that names no key. An `agaric://capture?text=…` link opens it
  * holding the link's text (#6555); the link never saves by itself.
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog
+ * On a phone (`usePhoneLayout`) the dialog
  * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
  * sit within thumb reach. The desktop path keeps the regular Radix
  * `Dialog` (not `AlertDialog`) so dismiss-on-outside-click / Escape

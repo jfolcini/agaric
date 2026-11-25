@@ -122,7 +122,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 ## Dialogs, popovers, sheets
 
-All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on viewports below the mobile breakpoint. Popovers anchored from inside the editor must set `data-editor-portal=""` on their outermost element.
+All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on a phone (`usePhoneLayout`). Popovers anchored from inside the editor must set `data-editor-portal=""` on their outermost element.
 
 | Dialog / popover                          | Trigger                                                                |
 | --- | --- |
