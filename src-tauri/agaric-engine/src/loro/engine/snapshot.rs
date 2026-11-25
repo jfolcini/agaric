@@ -362,9 +362,9 @@ impl LoroEngine {
     ///
     /// `LoroDoc::import_batch` (loro-internal's `import_blobs_as_batch`)
     /// force-detaches the doc for the whole batch (`set_detached(true)` while
-    /// holding the txn mutex), runs `import_without_emitting` per blob — which
-    /// appends to the `OpLog` ONLY, since a detached doc does not update
-    /// `DocState` — and then re-attaches exactly once in
+    /// holding the txn mutex), imports each blob — which appends to the
+    /// `OpLog` ONLY, since a detached doc does not update `DocState` — and
+    /// then re-attaches exactly once in
     /// `BatchImportGuard::finish`. The diff this method subscribes to is
     /// therefore emitted **for the whole batch**, not once per blob, and the
     /// caller projects a single union set. (A snapshot that leads a batch into

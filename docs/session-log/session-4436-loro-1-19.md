@@ -1,0 +1,9 @@
+# Session 4436 — Loro 1.18.0 → 1.19.1, an ordinary dependency
+
+**Ask.** The maintainer wants Loro treated like every other dependency: the newest 1.19.x under a plain caret requirement, the release-age cooldown waived for this bump, and CI as the check.
+
+**What changed.** `loro = "1.19.1"` in `agaric-engine` and `agaric-sync`; session 4431's exact pins on `loro` and `loro-internal`, and the cargo-machete entry for the second, are gone. `cargo update -p loro` moves `loro` to 1.19.1, `loro-internal` to 1.19.2, `loro-common` and `loro-delta` to 1.19.0 and `loro-kv-store` to 1.19.1 in both lockfiles, and nothing else. It also re-resolved `data-encoding-macro-internal` from `syn` 1 to `syn` 3 in the root lock; that edge is put back by hand. No source change; two comments that named upstream internals 1.19 renamed (the batch import's per-blob function, the re-attach event's trigger kind) no longer name them.
+
+**1.19.0 and 1.19.1 against Agaric's use.** The binary update and snapshot formats are unchanged. A multi-blob `import_batch` now reports its event as an import, not a checkout; nothing reads that. An update whose tree create or move names a parent outside the op's own history is refused; the engine writes none. Memory budgets are off unless set.
+
+**Ran.** `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo nextest run --workspace -E 'test(loro) | package(agaric-engine) | package(agaric-sync) | test(head_boots_the_vault) | test(the_released_vault)'`: 2,483 passed. Session 4431's throwaway cross-version harness again, 1.13.6 against 1.19.2: the same state in every writer and reader pairing, and all 90 blobs byte-identical to 1.18.0's. Not run: the whole suite (CI's) and `just measure-loro`, so `docs/architecture/operations.md` § Loro engine cost still holds the 1.18.0 figures.
