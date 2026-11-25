@@ -684,14 +684,16 @@ describe('ToggleGroup', () => {
     expect(group.className).toContain('border-input')
   })
 
-  it('item includes coarse pointer touch-target class', () => {
+  it('item is compact on a coarse pointer, its 44 px target an invisible hit area', () => {
     render(
       <ToggleGroup type="single" aria-label="Modes">
         <ToggleGroupItem value="a">A</ToggleGroupItem>
       </ToggleGroup>,
     )
     const item = screen.getByRole('radio', { name: 'A' })
-    expect(item.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(item.className).toContain('[@media(pointer:coarse)]:h-9')
+    expect(item.className).toContain('touch-hit-area')
+    expect(item.className).not.toContain('[@media(pointer:coarse)]:min-h-11')
   })
 
   it('merges custom className on group and item', () => {

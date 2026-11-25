@@ -87,14 +87,14 @@ export function PropertyChip({
       onClick={onKeyClick}
       aria-label={t('property.editKeyLabel', { key: displayName })}
     >
-      {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
+      {Icon && <Icon className="h-2.5 w-2.5 shrink-0 [@media(pointer:coarse)]:size-3" />}
       {displayName}:
     </button>
   ) : (
     <span
       className={cn('property-key-label font-normal', Icon && 'inline-flex items-center gap-0.5')}
     >
-      {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
+      {Icon && <Icon className="h-2.5 w-2.5 shrink-0 [@media(pointer:coarse)]:size-3" />}
       {displayName}:
     </span>
   )
@@ -103,7 +103,7 @@ export function PropertyChip({
     <button
       type="button"
       className={cn(
-        'property-chip-value cursor-pointer hover:underline rounded-sm',
+        'property-chip-value cursor-pointer hover:underline rounded-sm touch-hit-area',
         'focus-ring-visible',
       )}
       // #1498: keep the editor focused through the click, so the value-edit
@@ -154,7 +154,7 @@ export function PropertyChip({
         // PropertyChip overrides: Badge has no `muted` tone, and the chip uses a
         // tighter gap/padding than the default Badge. twMerge (via `cn`) resolves
         // these against the recipe's tokens deterministically (last wins).
-        'gap-0.5 px-1.5 leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
+        'gap-0.5 leading-none select-none',
         unfit
           ? 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground'
           : 'bg-muted text-muted-foreground',

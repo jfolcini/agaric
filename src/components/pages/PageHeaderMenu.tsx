@@ -42,7 +42,7 @@ export interface MoveTargetSpace {
 }
 
 export const MENU_ITEM_CLASS =
-  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
+  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent active:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
 
 const SHORTCUT_HINT_CLASS =
   'ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden'
@@ -278,7 +278,7 @@ export function PageHeaderMenu({
 
   const triggerButton = (
     <Button ref={kebabRef} variant="ghost" size="icon-sm" aria-label={t('pageHeader.pageActions')}>
-      <MoreVertical className="h-4 w-4" />
+      <MoreVertical />
     </Button>
   )
   const trigger = (

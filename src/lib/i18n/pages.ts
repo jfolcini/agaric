@@ -64,6 +64,7 @@ export const pages: Record<string, string> = {
   'journal.configureTemplate': 'Configure journal template',
   'journal.templatePickerLabel': 'Pick a journal template',
   'journal.newTemplate': 'New journal template',
+  'journal.openTemplate': 'Open journal template',
   'journal.templatePageTitle': 'Journal template',
 
   // Translators: Journal header navigation: tooltips and aria-labels of the previous / next arrows

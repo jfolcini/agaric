@@ -107,7 +107,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         // focus and hover are visually distinct (WCAG 2.4.7).
         // #1232 — `text-left`: <button> defaults to text-align:center, which
         // the flex-1 label span inherits; force left so labels align left.
-        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
+        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
         item.indented && (item.nested ? 'pl-12' : 'pl-7'),
         item.className,
       )}

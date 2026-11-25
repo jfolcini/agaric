@@ -405,6 +405,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "archery"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ca55ee147b1926dbea904f50fe4902494e97bc742205abbbf10c709e43815f"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -807,15 +813,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "bitmaps"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "031043d04099746d8db04daf1fa424b2bc8bd69d92b25962dcde24da39ab64a2"
-dependencies = [
- "typenum",
 ]
 
 [[package]]
@@ -2635,9 +2632,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.10.7"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0c1bce85c110ab718fd139e0cc89c51b63bd647b14a767e24bdfc77c83df79b"
+checksum = "81c1f4752b6bdab6bb44ef67e713ddb2373ed04f73b1772ddf98294259c2fe0b"
 dependencies = [
  "arref",
  "heapless 0.9.3",
@@ -3402,21 +3399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "im"
-version = "15.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0acd33ff0285af998aaf9b57342af478078f53492322fafc47450e09397e0e9"
-dependencies = [
- "bitmaps",
- "rand_core 0.6.4",
- "rand_xoshiro",
- "serde",
- "sized-chunks",
- "typenum",
- "version_check",
-]
-
-[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3429,6 +3411,28 @@ dependencies = [
  "png",
  "tiff",
 ]
+
+[[package]]
+name = "imbl"
+version = "7.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46bad832b9b463ed9398b8506488cc2e3b897a9d44f13af115f382aac71f4fec"
+dependencies = [
+ "archery",
+ "equivalent",
+ "imbl-sized-chunks",
+ "rand_core 0.9.5",
+ "rand_xoshiro",
+ "serde_core",
+ "version_check",
+ "wide",
+]
+
+[[package]]
+name = "imbl-sized-chunks"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a0813be332553f857953298749fa19549e8b61b80589757c29b4e2a804fa9c6"
 
 [[package]]
 name = "indexmap"
@@ -4160,10 +4164,11 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.13.6"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "221b567f34e3a7b38d05345b17797a7ca252d28e1fae479b4bb55c1a19616ddc"
+checksum = "f310fb0c57a01a6de7e233926dbf19b25d49630b4f33b4ea55f47cfad825389c"
 dependencies = [
+ "bytes",
  "enum-as-inner 0.6.1",
  "generic-btree",
  "loro-common",
@@ -4176,9 +4181,9 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.13.1"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b51042936156a1d537df8a38938ec8ed24b45de14530af933c1d02de39c9e056"
+checksum = "2bc76e378b98f08fd308eeff42461d60566053076f4884a881d3429a29081e0e"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -4189,14 +4194,15 @@ dependencies = [
  "serde",
  "serde_columnar",
  "serde_json",
+ "smallvec",
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "loro-delta"
-version = "1.13.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96f381e7fb5d4bf5605b4f4a9241f3adf61403ded978d757552004c8302cccbb"
+checksum = "8c36a724d99ddb1ec26036545db181c2b623c78d356385016a73f93e98c8d38d"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -4206,9 +4212,9 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.13.6"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb15cd83866965b50b4893246699312624808a1f2e2d205432237287d947b822"
+checksum = "d55e9581255de97cf6e66fafff019f79fa0fb005fdb5197195bc6f5048381b74"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -4219,7 +4225,7 @@ dependencies = [
  "enum_dispatch",
  "generic-btree",
  "getrandom 0.2.17",
- "im",
+ "imbl",
  "itertools 0.12.1",
  "leb128",
  "loom",
@@ -4234,8 +4240,6 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parking_lot 0.12.5",
- "pest",
- "pest_derive",
  "postcard",
  "pretty_assertions",
  "rand 0.8.6",
@@ -4253,9 +4257,9 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.13.1"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "950cc8bcc64dcff536e949fbc56ccc3d0759646fa441c7f76b3cd7c3eafa2096"
+checksum = "3a169f32c2d2d6ffe67d03603b61bd17d8d90b1a7f8c2f2585304f3181be8089"
 dependencies = [
  "bytes",
  "ensure-cov",
@@ -4287,9 +4291,9 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro_fractional_index"
-version = "1.13.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aca7180674d0273ddf37049a5efcde4547fd5330d24abb7519bb9d9eb6780d5b"
+checksum = "ab66fa924d1686474de690d7842dc27a19aed96fd35308d3d6d4355c27d3f4d3"
 dependencies = [
  "once_cell",
  "rand 0.8.6",
@@ -6373,11 +6377,11 @@ dependencies = [
 
 [[package]]
 name = "rand_xoshiro"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f97cdb2a36ed4183de61b2f824cc45c9f1037f28afe0a322e9fff4c108b5aaa"
+checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
 dependencies = [
- "rand_core 0.6.4",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -6780,6 +6784,15 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "safe_arch"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "same-file"
@@ -7299,16 +7312,6 @@ name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
-
-[[package]]
-name = "sized-chunks"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d69225bde7a69b235da73377861095455d298f2b970996eec25ddbb42b3d1e"
-dependencies = [
- "bitmaps",
- "typenum",
-]
 
 [[package]]
 name = "slab"
@@ -9662,6 +9665,16 @@ dependencies = [
  "libredox",
  "objc2-system-configuration",
  "web-sys",
+]
+
+[[package]]
+name = "wide"
+version = "0.7.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]

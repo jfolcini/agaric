@@ -101,11 +101,11 @@ export function PageTagSection({
             {tag.name}
             <button
               type="button"
-              className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2"
+              className="-mr-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible touch-hit-area"
               onClick={() => onRemoveTag(tag.id)}
               aria-label={t('pageHeader.removeTag', { name: tag.name })}
             >
-              <X className="h-3 w-3" />
+              <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
             </button>
           </Badge>
         ),

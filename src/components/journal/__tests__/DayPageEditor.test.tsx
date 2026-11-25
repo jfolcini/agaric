@@ -260,6 +260,33 @@ describe('DayPageEditor', () => {
       expect(await screen.findByTestId('block-tree')).toBeInTheDocument()
       expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
     })
+
+    it('holds the journal template’s row, which opens the template and closes the menu', async () => {
+      const template = makeBlock({ id: 'TMPL', content: 'Daily template', block_type: 'page' })
+      stubInvoke({
+        query_by_property: (args) => ({
+          items: (args['request'] as { key: string }).key === 'journal-template' ? [template] : [],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+      })
+      const onNavigateToPage = vi.fn()
+      const user = userEvent.setup()
+      render(
+        <PageBlockStoreProvider pageId={DAY}>
+          <DayPageEditor pageId={DAY} onAddBlock={vi.fn()} onNavigateToPage={onNavigateToPage} />
+        </PageBlockStoreProvider>,
+      )
+
+      const menu = await openMenu(user)
+      await user.click(within(menu).getByRole('menuitem', { name: t('journal.openTemplate') }))
+
+      expect(onNavigateToPage).toHaveBeenCalledWith('TMPL', 'Daily template')
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+      })
+    })
   })
 
   it('Ctrl+E opens page mode on the block being edited, and back saves first, then shows the blocks', async () => {

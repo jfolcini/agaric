@@ -658,7 +658,7 @@ export function GraphView(): React.ReactElement {
             ariaLabel={withShortcut(t('graph.zoomIn'), 'graphZoomIn')}
             shortcut={getShortcutKeys('graphZoomIn')}
           >
-            <Plus className="h-4 w-4" />
+            <Plus />
           </IconButton>
           <IconButton
             variant="outline"
@@ -667,7 +667,7 @@ export function GraphView(): React.ReactElement {
             ariaLabel={withShortcut(t('graph.zoomOut'), 'graphZoomOut')}
             shortcut={getShortcutKeys('graphZoomOut')}
           >
-            <Minus className="h-4 w-4" />
+            <Minus />
           </IconButton>
           <IconButton
             variant="outline"
@@ -676,7 +676,7 @@ export function GraphView(): React.ReactElement {
             ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
             shortcut={getShortcutKeys('graphZoomReset')}
           >
-            <Maximize2 className="h-4 w-4" />
+            <Maximize2 />
           </IconButton>
         </div>
       </div>

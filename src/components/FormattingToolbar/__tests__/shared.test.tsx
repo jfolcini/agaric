@@ -136,6 +136,25 @@ describe('renderConfigButton activation contract', () => {
     const btn = screen.getByRole('button', { name: 'Save' })
     fireEvent.pointerDown(btn, { button: 0, pointerType: 'touch' })
     fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
+    fireEvent.click(btn, { detail: 1 })
+    expect(action).toHaveBeenCalledTimes(1)
+  })
+
+  it('a finger acts on its release’s click, so that click cannot land on what the action opens (#7040)', () => {
+    const action = vi.fn()
+    render(
+      <button type="button" {...toolbarPressHandlers(action)}>
+        Block actions
+      </button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Block actions' })
+    fireEvent.pointerDown(btn, { button: 0, pointerType: 'touch' })
+    fireEvent.pointerUp(btn, { button: 0, pointerType: 'touch' })
+    expect(action).not.toHaveBeenCalled()
+    fireEvent.click(btn, { detail: 1 })
+    expect(action).toHaveBeenCalledTimes(1)
+    // A later stray click with no finger lift before it does nothing.
+    fireEvent.click(btn, { detail: 1 })
     expect(action).toHaveBeenCalledTimes(1)
   })
 

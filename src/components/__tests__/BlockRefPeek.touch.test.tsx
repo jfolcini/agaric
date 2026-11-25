@@ -164,9 +164,7 @@ describe('BlockRefPeek on a touch phone (#6746)', () => {
     render(<Chip onNavigate={vi.fn()} />)
     const sheet = await openSheet()
     for (const name of [t('refPeek.open'), t('refPeek.copyReference')]) {
-      expect(within(sheet).getByRole('button', { name })).toHaveClass(
-        '[@media(pointer:coarse)]:h-11',
-      )
+      expect(within(sheet).getByRole('button', { name })).toHaveClass('touch-hit-area')
     }
   })
 

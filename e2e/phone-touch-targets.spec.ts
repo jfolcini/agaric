@@ -85,6 +85,23 @@ test.describe('phone touch targets @mobile', () => {
     }
   })
 
+  // On a desktop pointer the same buttons draw 16 px glyphs (`icon-button-sizes.spec.ts`).
+  test("an icon button's glyph grows to 20 px with its 44 px box", async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, 'Getting Started')
+    const glyph = (button: Locator) =>
+      button.locator('svg').evaluate((icon) => {
+        const { width, height } = icon.getBoundingClientRect()
+        return `${width}x${height}`
+      })
+    const search = page.getByTestId('search-sheet-trigger')
+    const pageActions = page.getByRole('button', { name: 'Page actions', exact: true })
+    await expect44(search, 'search (icon-xs)')
+    await expect44(pageActions, 'page actions (icon-sm)')
+    expect(await glyph(search)).toBe('20x20')
+    expect(await glyph(pageActions)).toBe('20x20')
+  })
+
   test('the Tags and Templates name inputs', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')

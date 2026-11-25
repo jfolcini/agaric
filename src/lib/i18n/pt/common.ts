@@ -703,7 +703,6 @@ export const common: Record<string, string> = {
   'searchSheet.escalateCtaHint': 'Abrir pesquisa completa',
   'searchSheet.escalateCtaTitle': 'Filtros e regex',
   'searchSheet.escalateLabel': 'Abrir a pesquisa completa para filtros, regex e histórico',
-  'searchSheet.dragHandleLabel': 'Arraste para baixo para fechar a pesquisa',
   'searchSheet.scopePinHint': 'Mantenha um escopo pressionado para fixá-lo como padrão',
   'searchSheet.scopePinnedBadge': 'Padrão fixado',
   'searchSheet.recentSearchesTitle': 'Pesquisas recentes',

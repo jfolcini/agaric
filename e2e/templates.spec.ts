@@ -363,11 +363,11 @@ test.describe('Journal template button @editor @pages', () => {
 
     await navigateToView(page, 'Journal')
     await page.getByRole('button', { name: 'Configure journal template' }).click()
-    await expect(activePopover(page).getByRole('button')).toHaveText([
+    await expect(activePopover(page).getByRole('menuitem')).toHaveText([
       'Meeting Notes Template',
       'New journal template',
     ])
-    await activePopover(page).getByRole('button', { name: 'Meeting Notes Template' }).click()
+    await activePopover(page).getByRole('menuitem', { name: 'Meeting Notes Template' }).click()
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
 
     await navigateToView(page, 'Journal')
@@ -540,7 +540,7 @@ test.describe('The recording placeholder in a journal day @editor @pages @journa
 
     await navigateToView(page, 'Journal')
     await page.getByRole('button', { name: 'Configure journal template' }).click()
-    await activePopover(page).getByRole('button', { name: 'Meeting Notes Template' }).click()
+    await activePopover(page).getByRole('menuitem', { name: 'Meeting Notes Template' }).click()
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
 
     await navigateToView(page, 'Journal')

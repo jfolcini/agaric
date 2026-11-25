@@ -52,7 +52,7 @@ function DropdownSelector<T extends string>({
           type="button"
           className={cn(
             'inline-flex items-center gap-1 rounded-md bg-muted focus-ring-visible',
-            'px-2.5 py-1 text-xs hover:bg-accent cursor-pointer [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:text-sm',
+            'px-2.5 py-1 text-xs hover:bg-accent cursor-pointer [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:text-sm touch-hit-area',
           )}
           aria-label={t(label)}
         >

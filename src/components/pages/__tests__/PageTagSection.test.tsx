@@ -343,13 +343,12 @@ describe('PageTagSection interaction', () => {
 })
 
 describe('PageTagSection ', () => {
-  it('remove-tag button has 44 px coarse-pointer touch target', () => {
+  it('remove-tag button keeps the chip’s size, its 44 px target an invisible hit area', () => {
     render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1]} />)
 
     const removeBtn = screen.getByRole('button', { name: /remove tag urgent/i })
-    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:w-11')
-    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:p-2')
+    expect(removeBtn.className).toContain('touch-hit-area')
+    expect(removeBtn.className).not.toContain('[@media(pointer:coarse)]:h-11')
   })
 
   it('remove-tag button keeps focus-visible ring tokens', () => {

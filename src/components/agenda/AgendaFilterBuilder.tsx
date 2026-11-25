@@ -409,7 +409,9 @@ export function AgendaFilterBuilder({
           : t('agendaFilter.filtersApplied', { count: filters.length })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* On touch a wrapped line sits far enough below the chips that its controls'
+          44 px hit areas do not take the chips' lower edge. */}
+      <div className="flex flex-wrap items-center gap-1.5 [@media(pointer:coarse)]:gap-y-4">
         <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 
         {filters.length > 0 && (
@@ -456,7 +458,7 @@ export function AgendaFilterBuilder({
                     >
                       <button
                         type="button"
-                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
+                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 [@media(pointer:coarse)]:py-1 hover:bg-accent cursor-pointer focus-ring-visible"
                         // #1746 — keep the chip clickable/removable, but flag it
                         // as inert to AT, with the reason in its name.
                         aria-disabled={isSubsumed || undefined}
@@ -478,13 +480,13 @@ export function AgendaFilterBuilder({
                     </EditFilterPopover>
                     <button
                       type="button"
-                      className="ml-0.5 inline-flex items-center justify-center rounded-sm p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
+                      className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible touch-hit-area"
                       onClick={() => handleRemove(idx)}
                       aria-label={t('agendaFilter.removeFilterLabel', {
                         label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
                       })}
                     >
-                      <X className="h-3 w-3 [@media(pointer:coarse)]:size-5" />
+                      <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
                     </button>
                   </Badge>
                   {isSubsumed && (

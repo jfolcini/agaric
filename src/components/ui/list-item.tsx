@@ -30,7 +30,7 @@ const listRowVariants = cva(
         compact: 'py-1.5',
       },
       interactive: {
-        true: 'hover:bg-accent/50 focus-ring-visible',
+        true: 'hover:bg-accent/50 active:bg-accent focus-ring-visible',
         false: '',
       },
     },
