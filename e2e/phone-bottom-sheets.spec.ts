@@ -5,8 +5,8 @@
  * page ⋮ menu are bottom-sheet lists. Each must sit on the bottom edge and span
  * the width, and a tall one stops at the header. Toasts sit at the bottom too,
  * clear of the header, the floating capture button, the soft keyboard and the
- * field being typed in. The search sheet keeps one close button and a 44 px
- * drag handle (#5930).
+ * field being typed in. The search sheet keeps one close button (#5930), and
+ * no sheet has a grab bar (#7040).
  *
  * A sheet's bottom is the viewport's: `SheetContent` anchors at `bottom-0` and
  * Chromium reports no safe-area inset.
@@ -62,8 +62,8 @@ async function openBlockMenu(page: Page): Promise<Locator> {
   return activeMenu(page)
 }
 
-/** The open sheet is square, edge to edge, and opens on a 44 px grab handle. */
-async function expectGrabbable(page: Page): Promise<void> {
+/** The open sheet is square, edge to edge, with no grab bar (#7040). */
+async function expectSquareNoHandle(page: Page): Promise<void> {
   const sheet = activeSheet(page)
   await expect(sheet).toBeVisible()
   const corners = await sheet.evaluate((el) => {
@@ -71,20 +71,7 @@ async function expectGrabbable(page: Page): Promise<void> {
     return [s.borderTopLeftRadius, s.borderTopRightRadius]
   })
   expect(corners).toEqual(['0px', '0px'])
-  const handle = await box(sheet.locator('[data-slot="sheet-drag-handle"]'))
-  expect(handle.height).toBe(TOUCH_FLOOR)
-}
-
-/** Drag from the open sheet's grab handle straight down by `dy`. */
-async function pullHandle(page: Page, dy: number): Promise<void> {
-  const { x, y } = await centerOf(
-    activeSheet(page).locator('[data-slot="sheet-drag-handle"]'),
-    'drag handle',
-  )
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  await page.mouse.move(x, y + dy, { steps: 5 })
-  await page.mouse.up()
+  await expect(sheet.locator('[data-slot="sheet-drag-handle"]')).toHaveCount(0)
 }
 
 /** `row` takes the `accent` fill while pressed, and not at rest. */
@@ -233,25 +220,23 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await expectBottomSheet(page, page.getByTestId('date-picker-popup'))
   })
 
-  test('the search sheet has one close button and a 44 px drag handle', async ({ page }) => {
+  test('the search sheet has one close button and no grab bar', async ({ page }) => {
     await page.getByTestId('search-sheet-trigger').tap()
     const sheet = page.getByTestId('search-sheet')
     await expect(sheet.getByTestId('in-page-find-input')).toBeVisible()
     await expect(sheet.getByRole('button', { name: /^Close/ })).toHaveCount(1)
-    const handle = await box(sheet.locator('[data-slot="sheet-drag-handle"]'))
-    expect(handle.height).toBeGreaterThanOrEqual(TOUCH_FLOOR)
-    expect(handle.width).toBeGreaterThanOrEqual(TOUCH_FLOOR)
+    await expectSquareNoHandle(page)
   })
 
   // One of each kind: a MenuSheet, a plain Sheet, and a `useDialogOrSheet` dialog.
-  test('each kind of bottom sheet is square and opens on a 44 px grab handle', async ({ page }) => {
+  test('each kind of bottom sheet is square, with no grab bar', async ({ page }) => {
     await openBlockMenu(page)
-    await expectGrabbable(page)
+    await expectSquareNoHandle(page)
     await activeMenu(page)
       .getByRole('menuitem', { name: /Properties/ })
       .tap()
     await expect(page.getByRole('dialog', { name: 'Block properties' })).toBeVisible()
-    await expectGrabbable(page)
+    await expectSquareNoHandle(page)
     await page.keyboard.press('Escape')
     await navigateMobile(page, 'Pages')
     await page
@@ -259,19 +244,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
       .getByRole('button', { name: 'New page', exact: true })
       .tap()
     await expect(page.getByTestId('new-page-dialog')).toBeVisible()
-    await expectGrabbable(page)
-  })
-
-  test('a pull down from the grab handle closes the sheet; a short one springs back', async ({
-    page,
-  }) => {
-    await openBlockMenu(page)
-    const sheet = activeSheet(page)
-    await pullHandle(page, 30)
-    await expectBottomSheet(page, sheet)
-    await pullHandle(page, 160)
-    await expect(sheet).toHaveCount(0)
-    await expect(activeMenu(page)).toHaveCount(0)
+    await expectSquareNoHandle(page)
   })
 
   test('menu rows and list rows fill while pressed', async ({ page }) => {

@@ -574,19 +574,4 @@ describe('SearchSheet', () => {
       }
     })
   })
-
-  describe('#133 pull-to-dismiss handle', () => {
-    it("a pull down on the sheet's grab handle closes it", () => {
-      useSearchSheetStore.getState().open$('all-pages')
-      render(<SearchSheet />)
-      const handle = screen
-        .getByTestId('search-sheet')
-        .querySelector<HTMLElement>('[data-slot="sheet-drag-handle"]')
-      if (handle === null) throw new Error('no drag handle')
-      fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 })
-      fireEvent.pointerMove(handle, { clientY: 300, pointerId: 1 })
-      fireEvent.pointerUp(handle, { clientY: 300, pointerId: 1 })
-      expect(useSearchSheetStore.getState().open).toBe(false)
-    })
-  })
 })
