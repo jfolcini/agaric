@@ -292,6 +292,8 @@ updates:
   #   • tauri      — `tauri`, `tauri-build`, every `tauri-plugin-*`,
   #                   and `tauri-utils` must share a major. Mixed
   #                   versions break the IPC ABI.
+  #   • specta     — `specta`, `tauri-specta` and `specta-typescript`
+  #                   move together; the PR regenerates `bindings.ts`.
   #   • sqlx       — `sqlx` + `sqlx-cli` move together; the `.sqlx/`
   #                   offline cache regenerates on the next prepare.
   #   • tokio      — `tokio` + every `tokio-*` adapter (rustls,
@@ -309,13 +311,6 @@ updates:
   #                   tied to a specific chrono major).
   #   • minor-and-patch — catch-all for everything else; majors stay
   #                   individual PRs.
-  #
-  # Ignore rationale: `specta` and `tauri-specta` are intentionally
-  # pinned to exact `=2.0.0-rc.24` (AGENTS.md § Coupled Dependency
-  # Updates). Auto-bumping either crate regenerates `src/lib/
-  # bindings.ts` with incompatible types and breaks the IPC surface.
-  # Patch updates are also blocked because the rc.* line is not
-  # semver-stable. The ignore covers every semver level explicitly.
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
@@ -340,6 +335,17 @@ updates:
           - 'tauri-build'
           - 'tauri-plugin-*'
           - 'tauri-utils'
+      # specta, tauri-specta and specta-typescript move as one (AGENTS.md
+      # § Coupled Dependency Updates): their rc and 0.0.x lines break
+      # between releases. No `update-types`, so a new rc arrives too. The
+      # PR fails `ts_bindings_up_to_date` until `just gen-bindings`
+      # regenerates `src/lib/bindings.ts` on its branch.
+      specta:
+        patterns:
+          - 'specta'
+          - 'specta-*'
+          - 'tauri-specta'
+          - 'tauri-specta-*'
       sqlx:
         patterns:
           - 'sqlx'
@@ -409,16 +415,6 @@ updates:
           - minor
           - patch
     ignore:
-      - dependency-name: 'specta'
-        update-types:
-          - 'version-update:semver-patch'
-          - 'version-update:semver-minor'
-          - 'version-update:semver-major'
-      - dependency-name: 'tauri-specta'
-        update-types:
-          - 'version-update:semver-patch'
-          - 'version-update:semver-minor'
-          - 'version-update:semver-major'
       # loro is held at 1.13.6 (#3161). 1.13.7 makes find_common_ancestor
       # (loro-internal/src/dag.rs) quadratic in document history once the
       # frontier is wider than one: measured 215x at 1000 rounds, with a
