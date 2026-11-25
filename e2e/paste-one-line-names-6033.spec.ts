@@ -91,7 +91,7 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
     await expect.poll(() => pagesTitled(page, 'Fresh page')).toHaveLength(1)
     await reopenPage(page, PAGE)
     const [id] = await pagesTitled(page, 'Fresh page')
-    expect(await storedContent(page, GS1)).toBe(`Hello see [[${id}]] nowworld`)
+    await expect.poll(() => storedContent(page, GS1)).toBe(`Hello see [[${id}]] nowworld`)
     expect(await childIds(page)).toEqual(before)
   })
 
@@ -103,7 +103,9 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
     await expect.poll(() => pagesTitled(page, 'Fresh page')).toHaveLength(1)
     await reopenPage(page, PAGE)
     const [id] = await pagesTitled(page, 'Fresh page')
-    expect(await storedContent(page, GS1)).toBe(`Hello [[${id}|alias]] or [[${id}|other]] world`)
+    await expect
+      .poll(() => storedContent(page, GS1))
+      .toBe(`Hello [[${id}|alias]] or [[${id}|other]] world`)
   })
 
   test('a #tag pasted alone becomes the tag', async ({ page }) => {
@@ -122,7 +124,7 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
       return tags.find((t) => t.name === 'freshtag')?.tag_id
     }
     await expect.poll(freshTagId).toBeDefined()
-    expect(await storedContent(page, GS1)).toBe(`Hello #[${await freshTagId()}] world`)
+    await expect.poll(() => storedContent(page, GS1)).toBe(`Hello #[${await freshTagId()}] world`)
   })
 
   // The splice would cut the table in two, so the line goes in at the caret,
@@ -134,11 +136,12 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
 
     await pasteText(editor, ' see [[Fresh page]]')
 
+    await expect(editor).toContainText('one see [[Fresh page]]')
     await expect(editor.locator('table')).toHaveCount(1)
     await reopenPage(page, PAGE)
-    expect(await storedContent(page, GS1)).toBe(
-      '| A | B |\n| --- | --- |\n| one see \\[\\[Fresh page\\]\\] | two |',
-    )
+    await expect
+      .poll(() => storedContent(page, GS1))
+      .toBe('| A | B |\n| --- | --- |\n| one see \\[\\[Fresh page\\]\\] | two |')
     expect(await pagesTitled(page, 'Fresh page')).toEqual([])
   })
 
@@ -151,7 +154,7 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
 
     await expect(editor).toContainText('Hello x ')
     await reopenPage(page, PAGE)
-    expect(await storedContent(page, GS1)).toBe('Hello x ==y==world')
+    await expect.poll(() => storedContent(page, GS1)).toBe('Hello x ==y==world')
   })
 
   test('a copy of text holding ^^ literally pastes back byte for byte', async ({ page }) => {
@@ -178,7 +181,7 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
     await reopenPage(page, PAGE)
     const copy = (await childIds(page)).filter((id) => !before.includes(id))
     expect(copy).toHaveLength(1)
-    expect(await storedContent(page, GS1)).toBe(escaped)
+    await expect.poll(() => storedContent(page, GS1)).toBe(escaped)
     expect(await storedContent(page, copy[0] as string)).toBe(escaped)
   })
 
@@ -209,6 +212,6 @@ test.describe('One pasted line reads its names as a block paste does (#6033) @ed
     await expect(
       page.locator(`li[data-block-id="${GS1}"] [data-testid="embed-container"]`),
     ).toContainText('the note body')
-    expect(await storedContent(page, GS1)).toBe(embed)
+    await expect.poll(() => storedContent(page, GS1)).toBe(embed)
   })
 })
