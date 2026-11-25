@@ -1,0 +1,13 @@
+# Session 4422 — desktop integration crates past the Dependabot batch
+
+**Ask.** The library updates #7042 left out, desktop share: the Tauri stack to the newest 2.x past the 7-day gate, notify-rust 4.19, rfd 0.18.
+
+**Shipped.** wry 0.57.0 → 0.57.2 and tao 0.37.1 → 0.37.2, lock-only. Nothing else in the Tauri stack is past the gate: tauri 2.12.7 and its tauri-build/-codegen/-macros/-plugin/-runtime/-runtime-wry/-utils siblings and `@tauri-apps/cli` 2.12.6 were published on 2026-11-18, under seven days before this run; #7042 already took 2.12.6 and every plugin's newest release. wry 0.57.3 and tao 0.37.3 are cooling too.
+
+**Android.** wry 0.57.1–0.57.2 change only its generated Kotlin and ProGuard rules on Android: crash fixes (a main-pipe message after the activity is destroyed, cookies for a URL with none, `__wryActivityId` read only when present), an `evaluate_script` leak, keep rules for `getCookies`/`clearAllBrowsingData`, and the IPC URL of a page's first call. None touches `JNI_OnLoad` or tao's `ndk_context` install, which `agaric-sync/src/android_context.rs` relies on. tao 0.37.2 changes no Android source. CI never launches the APK; the nightly `android-launch` lane is the launch check. wry 0.57.2 pulls `dom_query` 0.29 on Android while `tauri-utils` stays on 0.28, so the html5ever/selectors/phf stack is built twice for an Android build (`cargo deny check bans` duplicates 65 → 79, all Android-only). Desktop builds are unchanged.
+
+**Skipped, with evidence.**
+- notify-rust 4.19.0: its changes are macOS-only APIs plus zbus 6, and our direct use is Linux-only. With zbus 6.3.0 (the newest past the gate; 6.4/6.5 are cooling) it adds five crates (zbus, zbus_macros 6.3, zbus_utils, zcheapstr, zruntime), two more duplicates (zbus, zbus_macros), and a 13 MB zbus rlib in a release build, beside zbus 5, which opener and single-instance keep. No behaviour gained, so the duplicate is not worth it. The zvariant waivers RUSTSEC-2026-0370/0371/0372 would stay either way: zbus 5 keeps zvariant 5.
+- rfd 0.18.0: its `gtk3` backend moved to gtk-sys 0.19 / glib-sys 0.22, and Cargo refuses a second `links = "gdk-3"` beside wry's gtk 0.18. Taking the `xdg-portal` backend instead would change Linux behaviour. Tauri 3 (alpha.6) stays on wry 0.57 / gtk 0.18 but offers an optional `gtk4` feature on gtk4 0.11, the version rfd 0.18's new `gtk4` backend uses, so rfd moves with a GTK4 Tauri.
+
+**Ran.** `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo deny check`, `cargo nextest run --workspace`. `just e2e-related` selects the whole WebdriverIO lane for a `Cargo.lock` change; CI runs it.
