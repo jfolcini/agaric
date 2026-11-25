@@ -11,7 +11,15 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, ipc, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
+import {
+  expect,
+  expect44,
+  ipc,
+  navigateToView,
+  seedSearchBlocks,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const VIEWPORT = { width: 360, height: 780 }
 const iPhone = devices['iPhone 13']
@@ -83,6 +91,10 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     await expect(firstRow).toBeVisible()
     expect((await rect(firstRow)).top).toBeLessThan(FIRST_ROW_LIMIT)
     await expect(page.getByRole('heading', { name: 'Pages', exact: true })).toHaveCount(1)
+    // The pane is the column, so the outlet's hairline runs edge to edge (S4, #7040).
+    const outlet = page.getByTestId('view-header-outlet')
+    await expect(outlet).toHaveCSS('border-bottom-width', '1px')
+    await expect(outlet.locator('> *').first()).toHaveCSS('border-bottom-width', '0px')
 
     // Search, sort, ⋮ and New page share one row.
     const header = page.locator('.page-browser-header')
@@ -113,6 +125,20 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     expect((await rect(page.getByTestId('page-browser-filter-row'))).bottom).toBeLessThanOrEqual(
       (await rect(page.getByTestId('view-header-outlet'))).bottom,
     )
+  })
+
+  // P5 (#7040): the capture button is the one filled "create" on a phone.
+  test('Pages: New page is a ghost icon button beside the filled capture button', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Pages')
+    const newPage = page.locator('.page-browser-header').getByRole('button', {
+      name: 'New page',
+      exact: true,
+    })
+    await expect(newPage).toBeVisible()
+    await expect(newPage).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect44(newPage, 'New page')
   })
 
   test('Agenda: no nested scroll box, the header scrolls away, the list stays windowed', async ({

@@ -1187,3 +1187,29 @@ test.describe('responsive @pages', () => {
     await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
   })
 })
+
+// ===========================================================================
+// 16. New page button
+// ===========================================================================
+test.describe('new page button @pages', () => {
+  // A phone gives it a ghost icon (`phone-view-headers.spec.ts`): the desktop
+  // header has room for the labelled, filled button.
+  test('is a labelled, filled button on a desktop', async ({ page }) => {
+    await bootPages(page)
+    const newPage = page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+    await expect(newPage).toHaveText('New page')
+    await expect(newPage).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  })
+
+  test('stays filled in a narrow mouse window, which has no capture button', async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 900 })
+    await bootPages(page)
+    const newPage = page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+    await expect(newPage).toBeVisible()
+    await expect(newPage).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  })
+})

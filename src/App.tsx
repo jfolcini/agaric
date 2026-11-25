@@ -756,14 +756,11 @@ function App() {
               <TabBar />
             </FeatureErrorBoundary>
             {/*
-             * Part B (#83 recents-only): desktop-only quick-access
-             * bar — the MRU recents scroller. The former destinations cluster
-             * (Pages / Tags / Graph / Search) was removed (#83) as it
-             * duplicated the left sidebar. Mounted between the hoisted TabBar
-             * above and the ViewHeaderOutletSlot below. #927 f6: now renders on
-             * mobile too — the recents strip is the mobile page-switch
-             * affordance (TabBar is hidden on a touch phone, no bottom-nav). Returns null
-             * when there are no recents, and on Settings.
+             * Part B (#83 recents-only): the MRU recents strip, between the
+             * hoisted TabBar above and the ViewHeaderOutletSlot below. It
+             * gives way to the tab bar (the chips would repeat the open tabs)
+             * and to a touch phone, and returns null with no recents or on
+             * Settings.
              */}
             <FeatureErrorBoundary name="Quick access" nameKey="errorBoundary.section.quickAccess">
               <QuickAccessBar />
@@ -774,7 +771,9 @@ function App() {
              * height: there the slot inside the scroller serves instead, and
              * the header scrolls away with the content.
              */}
-            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 py-3 space-y-2" />
+            {/* The hairline is the header's own (each is a centred column), so it runs
+                the column's width, not the window's. */}
+            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 space-y-2 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-3" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"

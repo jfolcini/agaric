@@ -279,7 +279,7 @@ export function TabBar(): React.ReactElement | null {
   }
 
   return (
-    // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
+    // Left edge matches the ViewHeaderOutletSlot rows below so the
     // chrome stack aligns vertically. The hairline is drawn twice, under the
     // caret and on the tablist, because each tab overlaps the tablist's own.
     <div className="flex min-w-0 bg-muted/30">

@@ -32,15 +32,16 @@ test('the tab bar, the recents strip and the filter row keep no scrollbar while 
     await page.getByText(title, { exact: true }).click()
     await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
   }
+  // The strip is up while there is one tab, and gone once the tab bar shows.
+  const recents = await bars(
+    page.getByTestId('quick-access-bar').locator('[data-slot="scroll-area-viewport"]'),
+  )
   await page.keyboard.down('Control')
   await page.keyboard.press('t')
   await page.keyboard.up('Control')
   await expect(page.getByRole('tab')).toHaveCount(2)
 
   const tabs = await bars(page.getByRole('tablist'))
-  const recents = await bars(
-    page.getByTestId('quick-access-bar').locator('[data-slot="scroll-area-viewport"]'),
-  )
   // Below the phone breakpoint the filter row scrolls sideways, a mouse window's too.
   // Pages opens first: at 700 px the sidebar that holds its button collapses.
   await navigateToView(page, 'Pages')

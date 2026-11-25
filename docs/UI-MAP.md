@@ -47,8 +47,8 @@ App
 │   ├── NoPeersPairing           (lazy NoPeersDialog → PairingDialog, sync-empty fallback)
 │   └── SidebarInset
 │       ├── Header bar           (view-specific controls)
-│       ├── TabBar               (hoisted; desktop & multi-tab only)
-│       ├── RecentPagesStrip     (desktop chip grid)
+│       ├── TabBar               (hoisted; 2+ tabs, not on a touch phone)
+│       ├── QuickAccessBar       (recents strip; not on a phone or with 2+ tabs)
 │       ├── ViewHeaderOutletSlot (sticky page header outlet)
 │       └── ScrollArea
 │           └── ViewDispatcher → one of the Views below

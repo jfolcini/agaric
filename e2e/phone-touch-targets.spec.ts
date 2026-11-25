@@ -17,6 +17,7 @@ import {
   ipc,
   navigateToView,
   openMobileSidebar,
+  openPage,
   openPageMobile,
   openSettingsTab,
   test,
@@ -121,10 +122,12 @@ test.describe('phone touch targets @mobile', () => {
     await expect44(toggle, 'sort direction')
   })
 
-  test("the recent-pages strip's chips are as tall as a button", async ({ page }) => {
+  // A phone keeps no strip (S4, #7040); a touch tablet at one tab still does.
+  test("a touch tablet's recent-pages strip has chips as tall as a button", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 })
     await waitForBoot(page)
-    await openPageMobile(page, 'Projects')
-    await openPageMobile(page, 'Getting Started')
+    await openPage(page, 'Projects')
+    await openPage(page, 'Getting Started')
     const chip = page.getByTestId('quick-access-bar').getByRole('button', { name: 'Projects' })
     expect((await chip.boundingBox())?.height).toBe(36)
     await expect44(chip, 'recent page chip')
