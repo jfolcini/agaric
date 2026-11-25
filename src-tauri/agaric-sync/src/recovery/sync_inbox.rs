@@ -41,9 +41,8 @@ use agaric_engine::materializer::Materializer;
 ///
 /// This does not weaken #535 ("a slot is deleted IFF its projection
 /// committed"): the union projection and ALL of the batch's slot DELETEs share
-/// one transaction, which commits or rolls back as a unit, and the (non-
-/// transactional) engine import happens strictly before that transaction
-/// opens — so an import failure clears nothing at all. See
+/// one transaction, which commits or rolls back as a unit, and an engine
+/// import that fails clears no slot, whatever part of it landed. See
 /// `crate::sync_protocol::loro_sync::replay_inbox_batch` for the full
 /// argument and for the per-slot fallback that keeps one poison blob from
 /// stranding its space's other slots.
@@ -832,6 +831,116 @@ mod tests {
         assert_eq!(
             projected, block_ids,
             "every cleared slot's block is in SQL, and the poison slot's is not"
+        );
+    }
+
+    /// The same failed batch, where the blob that did import purges a page this
+    /// device holds. The purge reaches SQL, and a block written here that the
+    /// purging device never received is kept in the Trash (#6561), as when the
+    /// purge arrives alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_that_fails_after_importing_a_purge_purges_and_keeps() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let (page, old, new) = (block_id_for(1), block_id_for(2), block_id_for(3));
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+
+        let mut peer = LoroEngine::with_peer_id("device-A").expect("engine");
+        peer.apply_create_block(&page, "page", "Trip notes", None, 0)
+            .expect("create page");
+        peer.apply_create_block(&old, "content", "both have this", Some(&page), 0)
+            .expect("create block");
+        seed_inbox(
+            &pool,
+            space.as_str(),
+            &peer.export_snapshot().expect("export"),
+            None,
+        )
+        .await;
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "this device holds the peer's page");
+
+        registry
+            .for_space(&space, "device-B")
+            .expect("engine")
+            .engine_mut()
+            .apply_create_block(&new, "content", "written on B", Some(&page), 1)
+            .expect("create the local block");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'written on B', ?, 1)",
+        )
+        .bind(&new)
+        .bind(&page)
+        .execute(&pool)
+        .await
+        .expect("seed the local block's row");
+
+        let before_purge = peer.version_vector();
+        peer.apply_purge_block(&page).expect("purge");
+        let purge = peer.export_update_since(&before_purge).expect("export");
+        // A second delivery of the purge with a byte of the header's checksum
+        // flipped. Its metadata still decodes, and declares a frontier the
+        // first delivery reaches: a slot is not cleared on the word of a blob
+        // that failed.
+        let mut poison = purge.clone();
+        poison[18] ^= 0xFF;
+        seed_inbox(&pool, space.as_str(), &purge, None).await;
+        seed_inbox(&pool, space.as_str(), &poison, None).await;
+
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a poison slot must never fail the boot walk");
+        assert_eq!(replayed, 1, "the purge's slot replays");
+        let survivors: Vec<Vec<u8>> = sqlx::query_scalar("SELECT bytes FROM loro_sync_inbox")
+            .fetch_all(&pool)
+            .await
+            .expect("survivors");
+        assert_eq!(survivors, [poison], "only the poison slot is left");
+
+        crate::sync_protocol::loro_sync::sweep_deferred_purges(&pool, &registry)
+            .await
+            .expect("sweep");
+        let purged_rows: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM blocks WHERE id IN (?, ?) ORDER BY id")
+                .bind(&page)
+                .bind(&old)
+                .fetch_all(&pool)
+                .await
+                .expect("purged rows");
+        assert_eq!(
+            purged_rows,
+            Vec::<String>::new(),
+            "what the peer purged has no row"
+        );
+
+        let (kept_page, in_trash) = {
+            let mut guard = registry.for_space(&space, "device-B").expect("engine");
+            let engine = guard.engine_mut();
+            let kept_page = engine
+                .read_parent(&new)
+                .expect("the local block is still in the engine")
+                .expect("under a page");
+            let in_trash = engine
+                .read_deleted_at(&kept_page)
+                .expect("read deleted_at")
+                .is_some();
+            (kept_page, in_trash)
+        };
+        assert!(in_trash, "that page is in the Trash");
+        let row: (Option<String>, String) =
+            sqlx::query_as("SELECT parent_id, content FROM blocks WHERE id = ?")
+                .bind(&new)
+                .fetch_one(&pool)
+                .await
+                .expect("the local block's row");
+        assert_eq!(
+            row,
+            (Some(kept_page), "written on B".to_owned()),
+            "and its row sits under that page"
         );
     }
 

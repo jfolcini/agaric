@@ -2217,6 +2217,67 @@ mod tests {
         );
     }
 
+    /// A device upgrading from Agaric 0.26.0 boots from `loro_doc_delta` rows
+    /// that loro 1.13.6 wrote. The release vault the upgrade test opens was
+    /// closed by a snapshot pass, so it holds none.
+    ///
+    /// The fixture is the row 0.26.0 saves for one write to a new space:
+    /// `LoroEngine::capturing_delta` over the creates, the edit, the property
+    /// and the delete read back below, run once by a throwaway test in a
+    /// worktree of the last commit on loro 1.13.6 (7105736).
+    #[tokio::test]
+    async fn a_delta_row_written_by_loro_1_13_6_rehydrates() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let row = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/loro_1_13_6_delta_row.bin"
+        ));
+        let mut conn = pool.acquire().await.expect("conn");
+        crate::loro::delta::insert_delta(&mut conn, &space, row)
+            .await
+            .expect("save the row");
+        drop(conn);
+        crate::loro::delta::set_boots_from_saved_rows(&pool, true)
+            .await
+            .expect("set the marker");
+
+        let booted = LoroEngineRegistry::new();
+        let rehydrated = rehydrate_registry(&pool, &booted, "device-1")
+            .await
+            .expect("rehydrate");
+        assert_eq!(rehydrated, 1, "the row's space");
+
+        let id = |n: usize| format!("01HZ{n:0>22}");
+        let (page, first, second) = (id(1), id(2), id(3));
+        let read = booted
+            .with_engine(&space, "device-1", |engine| {
+                let block = |id: &str| {
+                    let block = engine.read_block(id).unwrap().expect("the block");
+                    (block.block_type, block.content, block.parent_id)
+                };
+                (
+                    block(&page),
+                    block(&first),
+                    block(&second),
+                    engine.read_property_typed(&first, "effort").unwrap(),
+                    engine.read_deleted_at(&second).unwrap(),
+                )
+            })
+            .expect("engine");
+        let text = |s: &str| s.to_owned();
+        assert_eq!(
+            read,
+            (
+                (text("page"), text("Written by Agaric 0.26.0"), None),
+                (text("content"), text("edited block"), Some(page.clone())),
+                (text("content"), text("second block"), Some(page)),
+                Some(PropertyValue::Str(text("3"))),
+                Some(text("1700000000000")),
+            )
+        );
+    }
+
     /// #6521 — a rehydrate that migrates a pre-#400 snapshot's sibling order
     /// writes the engine, and saves what it wrote.
     #[tokio::test]

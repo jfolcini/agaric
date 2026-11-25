@@ -1638,8 +1638,7 @@ fn project_space_block_first(
 /// projection or a projection outlives its slot — the two halves of #535 —
 /// because SQLite gives us no way to observe a partial tx. The only failure
 /// that batching genuinely widens is the ENGINE import (outside any tx), and
-/// that is handled upstream by importing before this tx and returning early
-/// on error.
+/// that is handled upstream: a failed import clears no slot.
 /// #3194: `clearable_ids`, not `inbox_ids` — a slot whose blob's declared end
 /// frontier the op-log never reached keeps its row (its content is in neither
 /// the op-log nor this projection), which is the same #535 rule the tx
@@ -2365,11 +2364,10 @@ fn import_payload_into_engine(
                 }
                 // #3164: N blobs, ONE diff event, ONE resolved delta — see
                 // `import_batch_with_changed_purged_tagscope` for the loro
-                // citation. An `Err` here means an UNKNOWN subset landed in
-                // the engine, so the caller must return before any slot is
-                // deleted; its `?` does exactly that, leaving every slot for the
-                // caller's per-row retry (#535 unharmed: nothing projected,
-                // nothing deleted).
+                // citation. A blob that fails leaves the others imported: the
+                // delta describes them and carries the error, so the caller
+                // projects them and deletes no slot, leaving every slot for
+                // its per-row retry.
                 agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
                     engine.import_batch_with_changed_purged_tagscope(blobs)
                 }
@@ -2602,6 +2600,11 @@ async fn clear_trusted_noop_slots(
 
 /// [`import_and_project`]'s body. `unsaved_delta` holds what the import added
 /// to the engine from the import until a transaction has saved it.
+///
+/// An import can fail after part of it landed (a replay batch keeps what its
+/// other blobs imported). That part is projected here as any import is, its
+/// purges and kept blocks included, because no retry imports it again; no slot
+/// is cleared, and the import's error is returned in place of `Ok`.
 #[allow(clippy::too_many_arguments)]
 async fn import_and_project_saving(
     pool: &SqlitePool,
@@ -2679,6 +2682,7 @@ async fn import_and_project_saving(
         // (a pending change is exactly one the op-log did not advance over).
         pending: pending_changes,
         kept,
+        failed,
     } = imported?;
 
     save_kept_blocks(pool, registry, &kept).await?;
@@ -2687,7 +2691,8 @@ async fn import_and_project_saving(
         registry,
         device_id,
         space_id,
-        inbox_ids,
+        // A failed import clears no slot.
+        if failed.is_some() { &[] } else { inbox_ids },
         require_covered,
         &pending_changes,
     )?;
@@ -2710,7 +2715,7 @@ async fn import_and_project_saving(
         let trusted = noop_import_is_trusted(pool, space_id, inbox_ids, delivery).await?;
         if trusted {
             clear_trusted_noop_slots(pool, space_id, unsaved_delta, &clearable_ids).await?;
-            return Ok((changed_blocks, kept));
+            return failed.map_or(Ok((changed_blocks, kept)), Err);
         }
         healing_fallback_delta(registry, device_id, space_id)?
     } else {
@@ -2767,7 +2772,8 @@ async fn import_and_project_saving(
 
     refresh_tag_inheritance(pool, tag_scope, &tagged).await;
 
-    Ok((with_reprojected(changed_blocks, retyped, healed), kept))
+    let changed_blocks = with_reprojected(changed_blocks, retyped, healed);
+    failed.map_or(Ok((changed_blocks, kept)), Err)
 }
 
 /// Boot-recovery entry point: re-run `import_and_project` for a single
@@ -3212,13 +3218,12 @@ async fn gate_replay_slots(
 /// landed, all N slots survive for a later boot). There is no third outcome.
 ///
 /// The one step batching genuinely widens is the ENGINE import, which is not
-/// transactional: `import_batch` can partially apply and still return `Err`.
-/// That is handled by ordering — the import happens before the projection tx
-/// opens, so an import error returns with **zero** slots deleted. The engine
-/// being ahead of SQL with the slots still present is precisely the state #535
-/// was designed for, and the retry below (and, failing that, the next boot)
-/// heals it: re-import is idempotent and `RecoveryReplay` forces the
-/// full-projection fallback.
+/// transactional: `import_batch` can fail and keep what its other blobs
+/// imported. `import_and_project` projects that part, the blocks it purged and
+/// kept included, and returns the error with **zero** slots deleted. The retry
+/// below then finds those ops in the engine: its re-import is a no-op that
+/// resolves no purge, and `RecoveryReplay` forces the full-projection
+/// fallback before the slot clears.
 ///
 /// ## Poison isolation
 ///
@@ -3241,10 +3246,9 @@ async fn gate_replay_slots(
 /// which is the SINGLE accounting point for both arms. Exactly one charge per
 /// slot per boot: a slot reaches either the batch-success probe or the per-row
 /// fallback, never both, because the fallback runs only after the batch returned
-/// `Err`, and an `Err` means the projection tx never committed and no slot was
-/// cleared. Once the budget is spent the slot is MOVED to `loro_sync_quarantine`
-/// and stops being fetched by the walk at all — see
-/// [`super::loro_sync_quarantine`].
+/// `Err`, and an `Err` means no slot was cleared. Once the budget is spent the
+/// slot is MOVED to `loro_sync_quarantine` and stops being fetched by the walk
+/// at all — see [`super::loro_sync_quarantine`].
 ///
 /// `Ok` no longer means "cleared", so both the batch arm and the per-row
 /// fallback arm below probe `loro_sync_inbox` before counting a slot as
@@ -3314,8 +3318,7 @@ pub async fn replay_inbox_batch(
             Ok(out)
         }
         Err(batch_err) => {
-            // Nothing was deleted (the projection tx never committed) and
-            // nothing was projected — fall back to the per-row path so one
+            // No slot was deleted — fall back to the per-row path so one
             // poison blob cannot strand the rest of this space's slots.
             tracing::warn!(
                 space_id,
