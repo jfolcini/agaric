@@ -582,15 +582,15 @@ async function listsAbove(upper: string, lower: string): Promise<boolean> {
   return at !== -1 && titles.includes(lower) && at < titles.indexOf(lower)
 }
 
-/** The Delete button of `key`'s row in Settings › Properties. */
-const deletePropertyButton = (key: string) => `button[aria-label="Delete property ${key}"]`
+/** `key`'s row button in Settings › Properties, which opens its sheet. */
+const propertyRowButton = (key: string) => `button[aria-label="Edit property ${key}"]`
 
 /** The value type badge of `key`'s row in Settings › Properties, or null when it is not listed. */
 function listedType(key: string): Promise<string | null> {
   return browser.execute((selector: string) => {
     const row = document.querySelector(selector)?.closest('[data-slot="list-item"]')
     return row?.querySelector('[data-slot="badge"]')?.textContent ?? null
-  }, deletePropertyButton(key))
+  }, propertyRowButton(key))
 }
 
 /** Settings › Properties, opened from another view so it lists afresh. */
@@ -1432,7 +1432,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
 
         await reopenProperties()
         await expectAbsent(
-          deletePropertyButton(SYNCED_KEY),
+          propertyRowButton(SYNCED_KEY),
           'a definition before the peer declared one',
         )
         await device.createPropertyDef(SYNCED_KEY, 'date')

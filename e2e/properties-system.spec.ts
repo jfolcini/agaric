@@ -13,6 +13,7 @@ import {
   getConsoleErrors,
   navigateToView,
   openPage,
+  openPropertySheet,
   openSettingsTab,
   reopenPage,
   switchToSpace,
@@ -397,13 +398,8 @@ test.describe('Property definitions view @editor', () => {
     // references, and both `context` and `project` are carried by seeded
     // blocks. This spec used to delete `context` and passed only because the
     // mock had no such guard; against the real backend that flow refuses.
-    const reviewerRow = settingsPanel.locator('ul > li', { hasText: 'reviewer' })
-    await expect(reviewerRow).toBeVisible()
-    await reviewerRow.hover()
-
-    const deleteBtn = reviewerRow.getByRole('button', { name: 'Delete property reviewer' })
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    const sheet = await openPropertySheet(page, 'reviewer')
+    await sheet.getByRole('button', { name: 'Delete property', exact: true }).click()
 
     // The confirmation is a Radix AlertDialog; scope to the
     // active alert-dialog-content so a stale AlertDialog from a previous
@@ -457,7 +453,7 @@ test.describe('Property definitions view @editor', () => {
       .toEqual({ size: 'large' })
   })
 
-  test('select-type property shows Edit options button', async ({ page }) => {
+  test("a select property's sheet shows its options", async ({ page }) => {
     // Properties live under Settings → Properties tab (the old sidebar
     // Properties item was merged into Settings).
     await page
@@ -469,11 +465,9 @@ test.describe('Property definitions view @editor', () => {
       page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
     ).toBeVisible()
 
-    // The "project" definition (type: select) should have an "Edit options" button
-    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
-    const projectRow = settingsPanel.locator('ul > li', { hasText: 'project' })
-    await expect(projectRow).toBeVisible()
-    await expect(projectRow.getByRole('button', { name: 'Edit options' })).toBeVisible()
+    // The "project" definition (type: select) lists its options in its sheet.
+    const sheet = await openPropertySheet(page, 'project')
+    await expect(sheet.getByRole('button', { name: 'Rename option alpha' })).toBeVisible()
   })
 
   // #5841 — built-in definitions are fixed: a lock, and no edit or delete.
@@ -492,8 +486,7 @@ test.describe('Property definitions view @editor', () => {
         .locator('ul > li')
         .filter({ has: page.getByTestId(`builtin-lock-${key}`) })
       await expect(row).toHaveCount(1)
-      await expect(row.getByRole('button', { name: 'Edit options' })).toHaveCount(0)
-      await expect(row.getByRole('button', { name: /^Delete property/ })).toHaveCount(0)
+      await expect(row.getByRole('button', { name: /^Edit property / })).toHaveCount(0)
     }
     const projectRow = settingsPanel.locator('ul > li', { hasText: 'project' })
     await expect(projectRow.getByTestId('builtin-lock-project')).toHaveCount(0)
@@ -626,9 +619,13 @@ test.describe('Per-space property definitions @editor @spaces @settings', () => 
 
   test('copies a definition to another space, where it stays', async ({ page }) => {
     let panel = await openPropertiesSettings(page)
-    await panel.getByRole('button', { name: 'Copy project to another space' }).click()
+    const sheet = await openPropertySheet(page, 'project')
+    await sheet.getByRole('button', { name: 'Copy to another space…' }).click()
     await activePopover(page).getByRole('button', { name: 'Work', exact: true }).click()
     await expect(page.getByText('Copied project to Work')).toBeVisible()
+    // The copied property's sheet stays open; close it to leave the view.
+    await sheet.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(sheet).toBeHidden()
 
     // Leave the view and come back: the copy is in Work's stored definitions.
     await navigateToView(page, 'Journal')
@@ -674,7 +671,11 @@ test.describe('Property definitions view usage count @editor @settings', () => {
     panel = await openPropertiesSettings(page)
     await expect(panel.getByTestId('property-usage-stage')).toHaveText('1 use')
 
-    await panel.getByRole('button', { name: 'Delete property stage' }).click()
+    await (
+      await openPropertySheet(page, 'stage')
+    )
+      .getByRole('button', { name: 'Delete property', exact: true })
+      .click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(
       page.getByText(

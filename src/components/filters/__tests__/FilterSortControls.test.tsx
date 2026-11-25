@@ -173,10 +173,14 @@ describe('FilterSortControls', () => {
     expect(onSortChange).toHaveBeenCalledWith({ type: 'PropertyDate', key: 'due_date', dir: 'Asc' })
   })
 
-  it('keeps a 44 px touch target on the toggle', () => {
+  // Its height against the picker's, and the 44 px tap, are measured in
+  // e2e/phone-touch-targets.spec.ts.
+  it('paints the field picker’s height on touch and keeps a 44 px target', () => {
     renderControls()
 
-    expect(directionButton('ascending').className).toContain('[@media(pointer:coarse)]:size-11')
+    const toggle = directionButton('ascending')
+    expect(toggle).toHaveClass('[@media(pointer:coarse)]:size-9', 'touch-hit-area')
+    expect(toggle.className).not.toContain('[@media(pointer:coarse)]:size-11')
   })
 
   it('loads no property definitions until asked', () => {

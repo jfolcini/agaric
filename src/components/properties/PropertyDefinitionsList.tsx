@@ -10,7 +10,7 @@
  */
 
 import { skipToken, useQuery } from '@tanstack/react-query'
-import { Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
+import { ChevronRight, Lock, Plus, Search, Settings2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,18 +18,13 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
-import { ChangePropertyType } from '@/components/properties/ChangePropertyType'
-import { CopyDefinitionToSpace } from '@/components/properties/CopyDefinitionToSpace'
-import { EditSelectOptions } from '@/components/properties/EditSelectOptions'
-import { MergePropertyDefinition } from '@/components/properties/MergePropertyDefinition'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
-import { RenamePropertyDefinition } from '@/components/properties/RenamePropertyDefinition'
+import { PropertyDefinitionSheet } from '@/components/properties/PropertyDefinitionSheet'
 import { UnfitPropertyValues } from '@/components/properties/UnfitPropertyValues'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { IconButton } from '@/components/ui/icon-button'
 import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -357,22 +352,38 @@ export function PropertyDefinitionsList(): React.ReactElement {
           filteredDefs.length > 0 ? (
             <ul className={listCardVariants()}>
               {filteredDefs.map((def) => {
-                // A built-in's options are fixed (#5841); `todo_state` keeps the cell for
-                // its cycle help.
-                const hasOptionsCell =
-                  def.value_type === 'select' && (!def.builtin || def.key === 'todo_state')
+                const name = formatPropertyName(def.key)
+                const editable = !def.builtin && spaceId !== null
                 return (
-                  // On a phone the options take a second line, flush with the name, while
-                  // Delete or Built-in stays on the name's line; one row when wider (#5925).
-                  // Tab order follows the DOM (name, options, Delete), which is the wide row's
-                  // left-to-right order; on a phone Delete is drawn above the options, so the
-                  // two swap. Matching them would put Delete before the options on desktop.
+                  // A user property's row is one button, its name stretched over the row
+                  // (`after:inset-0`), that opens the property's sheet; the unfit-values
+                  // badge sits above it. On a phone todo_state's cycle help takes a second
+                  // line, flush with the name, while Built-in stays on the name's line (#5925).
                   <ListItem
                     key={def.key}
-                    className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
+                    className="relative max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 [@media(pointer:coarse)]:min-h-11">
-                      <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
+                      {editable ? (
+                        <PropertyDefinitionSheet
+                          definition={def}
+                          spaceId={spaceId}
+                          definitions={definitions}
+                          onChanged={reload}
+                          onDelete={() => setDeleteTarget(def.key)}
+                          trigger={
+                            <button
+                              type="button"
+                              className="text-left text-sm font-medium outline-hidden after:absolute after:inset-0 after:rounded-[inherit] after:content-[''] focus-visible:after:ring-[3px] focus-visible:after:ring-ring"
+                              aria-label={t('propertiesView.editLabel', { key: def.key })}
+                            >
+                              {name}
+                            </button>
+                          }
+                        />
+                      ) : (
+                        <span className="font-medium text-sm">{name}</span>
+                      )}
                       <Badge tone="secondary">{valueTypeLabel(def, t)}</Badge>
                       {usage?.has(def.key) && (
                         <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
@@ -389,23 +400,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         />
                       )}
                     </div>
-                    {hasOptionsCell && (
-                      <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
-                        {def.key === 'todo_state' && (
-                          <InfoPopover
-                            variant="icon"
-                            data-testid="todo-state-cycle-help"
-                            ariaLabel={t('propertiesView.taskCycleHelpLabel')}
-                            content={t('propertiesView.taskCycleHelpContent')}
-                          />
-                        )}
-                        {!def.builtin && spaceId !== null && (
-                          <EditSelectOptions
-                            definition={def}
-                            spaceId={spaceId}
-                            onChanged={reload}
-                          />
-                        )}
+                    {def.key === 'todo_state' && (
+                      <div className="flex items-center max-sm:col-span-2 sm:ml-auto">
+                        <InfoPopover
+                          variant="icon"
+                          data-testid="todo-state-cycle-help"
+                          ariaLabel={t('propertiesView.taskCycleHelpLabel')}
+                          content={t('propertiesView.taskCycleHelpContent')}
+                        />
                       </div>
                     )}
                     {def.builtin ? (
@@ -414,59 +416,17 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         data-testid={`builtin-lock-${def.key}`}
                         className={cn(
                           'shrink-0 text-xs text-muted-foreground max-sm:col-start-2 max-sm:row-start-1',
-                          !hasOptionsCell && 'sm:ml-auto',
+                          def.key !== 'todo_state' && 'sm:ml-auto',
                         )}
                       >
                         <Lock aria-hidden="true" />
                         {t('propertiesView.builtIn')}
                       </Badge>
                     ) : (
-                      <div
-                        className={cn(
-                          'flex shrink-0 items-center max-sm:col-start-2 max-sm:row-start-1',
-                          !hasOptionsCell && 'sm:ml-auto',
-                        )}
-                      >
-                        {spaceId !== null && (
-                          <>
-                            <RenamePropertyDefinition
-                              definition={def}
-                              spaceId={spaceId}
-                              definitions={definitions}
-                              onChanged={reload}
-                              className="text-muted-foreground"
-                            />
-                            <MergePropertyDefinition
-                              definition={def}
-                              spaceId={spaceId}
-                              definitions={definitions}
-                              onChanged={reload}
-                              className="text-muted-foreground"
-                            />
-                            <ChangePropertyType
-                              definition={def}
-                              spaceId={spaceId}
-                              onChanged={reload}
-                              className="text-muted-foreground"
-                            />
-                            <CopyDefinitionToSpace
-                              definition={def}
-                              fromSpaceId={spaceId}
-                              className="text-muted-foreground"
-                            />
-                          </>
-                        )}
-                        <IconButton
-                          variant="ghost"
-                          size="icon-xs"
-                          tooltip={t('propertiesView.deleteTooltip')}
-                          ariaLabel={t('properties.deleteDefinition', { key: def.key })}
-                          className="[@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                          onClick={() => setDeleteTarget(def.key)}
-                        >
-                          <Trash2 />
-                        </IconButton>
-                      </div>
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground max-sm:col-start-2 max-sm:row-start-1 sm:ml-auto"
+                      />
                     )}
                   </ListItem>
                 )

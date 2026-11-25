@@ -214,7 +214,8 @@ export function UnfitPropertyValues({
       <Badge
         asChild
         tone="outline"
-        className="touch-hit-area cursor-pointer border-alert-warning-border bg-alert-warning text-alert-warning-foreground hover:bg-alert-warning/80"
+        // Above the row's own button, which covers the row in Settings › Properties.
+        className="relative z-10 touch-hit-area cursor-pointer border-alert-warning-border bg-alert-warning text-alert-warning-foreground hover:bg-alert-warning/80"
       >
         <button
           ref={triggerRef}

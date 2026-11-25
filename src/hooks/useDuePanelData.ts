@@ -337,8 +337,9 @@ export function useDuePanelData({
     }
   }, [isToday, date, invalidationKey, currentSpaceId])
 
-  // #7040 — open tasks scheduled before today whose due date has not passed:
-  // what the journal's old Unfinished tasks section listed beyond Overdue.
+  // #7040 — open tasks scheduled before today and due after every window the
+  // panel lists: what the journal's old Unfinished tasks section listed beyond
+  // Overdue, today's due list and Upcoming, so no task shows twice.
   useEffect(() => {
     if (!isToday) {
       // oxlint-disable-next-line react/set-state-in-effect -- drops the list when the panel leaves today; its rows only ever arrive from the `listUnfinishedTasks` IPC below; see #4407
@@ -348,27 +349,36 @@ export function useDuePanelData({
     const spaceId = currentSpaceId
     if (spaceId == null) return
     const scope = requireActiveScope(spaceId)
+    const lastListedDue = new Date(`${date}T00:00:00`)
+    lastListedDue.setDate(lastListedDue.getDate() + Math.max(warningDays, 0))
+    const lastListedDueStr = formatDate(lastListedDue)
     let stale = false
 
     async function fetchScheduledEarlier() {
       try {
-        // One bounded page, as the overdue fetch takes: TODO and DOING rows
-        // whose due or scheduled date precedes `date`, the latest first.
-        const resp = unwrap(
-          await commands.listUnfinishedTasks(
-            date,
-            ['TODO', 'DOING'],
-            null,
-            paginationLimit(200),
-            scope,
-          ),
-        )
-        if (stale) return
-        const rows = resp.items.filter(
+        // Every page of the TODO and DOING rows whose due or scheduled date
+        // precedes `date`: an old backlog can hold more than one page.
+        const items: BlockRow[] = []
+        let cursor: string | null = null
+        do {
+          const resp: PageResponse<BlockRow> = unwrap(
+            await commands.listUnfinishedTasks(
+              date,
+              ['TODO', 'DOING'],
+              cursor,
+              paginationLimit(200),
+              scope,
+            ),
+          )
+          if (stale) return
+          items.push(...resp.items)
+          cursor = resp.next_cursor
+        } while (cursor != null)
+        const rows = items.filter(
           (b) =>
             b.scheduled_date != null &&
             b.scheduled_date < date &&
-            !(b.due_date != null && b.due_date < date) &&
+            !(b.due_date != null && b.due_date <= lastListedDueStr) &&
             b.content?.trim(),
         )
         setScheduledEarlierBlocks(rows)
@@ -390,7 +400,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, date, invalidationKey, currentSpaceId])
+  }, [isToday, date, warningDays, invalidationKey, currentSpaceId])
 
   // Fetch upcoming blocks (deadline approaching within warningDays)
   useEffect(() => {

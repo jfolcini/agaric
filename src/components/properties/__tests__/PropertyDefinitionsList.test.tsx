@@ -79,6 +79,28 @@ function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
 const PERSONAL = { id: SEED_IDS.SPACE_PERSONAL, name: 'Personal', accent_color: null }
 const WORK = { id: SEED_IDS.SPACE_WORK, name: 'Work', accent_color: null }
 
+type User = ReturnType<typeof userEvent.setup>
+
+/** Open `key`'s property sheet from its row (#7040). */
+async function openSheet(user: User, key: string): Promise<HTMLElement> {
+  await user.click(
+    await screen.findByRole('button', { name: t('propertiesView.editLabel', { key }) }),
+  )
+  return screen.findByRole('dialog')
+}
+
+/** Press Delete property on `key`'s sheet, which asks to confirm. */
+async function pressDelete(user: User, key: string): Promise<void> {
+  const sheet = await openSheet(user, key)
+  await user.click(within(sheet).getByRole('button', { name: t('propertiesView.deleteAction') }))
+}
+
+/** Press Copy to another space… on `key`'s sheet, which opens the space menu. */
+async function pressCopy(user: User, key: string): Promise<void> {
+  const sheet = await openSheet(user, key)
+  await user.click(within(sheet).getByRole('button', { name: t('propertiesView.copyAction') }))
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   useSpaceStore.setState({ currentSpaceId: PERSONAL.id, availableSpaces: [PERSONAL] })
@@ -110,7 +132,7 @@ describe('PropertyDefinitionsList', () => {
     expect(await screen.findByText('Status')).toBeInTheDocument()
     expect(screen.queryByText('Is Space')).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: t('properties.deleteDefinition', { key: 'is_space' }) }),
+      screen.queryByRole('button', { name: t('propertiesView.editLabel', { key: 'is_space' }) }),
     ).not.toBeInTheDocument()
   })
 
@@ -317,8 +339,7 @@ describe('PropertyDefinitionsList', () => {
 
     expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
-    const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
-    await user.click(deleteBtn)
+    await pressDelete(user, 'to-delete')
 
     expect(await screen.findByText('Delete this property definition?')).toBeInTheDocument()
     expect(screen.getByText(t('propertiesView.deleteDesc'))).toBeInTheDocument()
@@ -332,7 +353,7 @@ describe('PropertyDefinitionsList', () => {
 
     render(<PropertyDefinitionsList />)
 
-    await user.click(await screen.findByRole('button', { name: /Delete property to-delete/i }))
+    await pressDelete(user, 'to-delete')
 
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     expect(confirmBtn).toHaveClass('bg-destructive')
@@ -349,8 +370,7 @@ describe('PropertyDefinitionsList', () => {
 
     stubInvoke({ delete_property_def: () => withOps(makePropDef('to-delete', 'text')) })
 
-    const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
-    await user.click(deleteBtn)
+    await pressDelete(user, 'to-delete')
 
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
@@ -362,7 +382,8 @@ describe('PropertyDefinitionsList', () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Property definition deleted')
   })
 
-  it('shows edit options button for select-type properties', async () => {
+  it("a select property's sheet lists its options; another type's lists none", async () => {
+    const user = userEvent.setup()
     stubDefs(
       pageOf([
         makePropDef('status', 'select', '["open","closed"]'),
@@ -372,18 +393,14 @@ describe('PropertyDefinitionsList', () => {
 
     render(<PropertyDefinitionsList />)
 
-    expect(await screen.findByText('Status')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
-  })
-
-  it('Edit options comes before Delete in the tab order, as drawn on desktop', async () => {
-    stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
-
-    render(<PropertyDefinitionsList />)
-
-    const edit = await screen.findByRole('button', { name: /Edit options/i })
-    const del = screen.getByRole('button', { name: /Delete property/i })
-    expect(edit.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    let sheet = await openSheet(user, 'status')
+    expect(
+      within(sheet).getByRole('button', { name: t('properties.renameOption', { option: 'open' }) }),
+    ).toBeInTheDocument()
+    await user.click(within(sheet).getByRole('button', { name: t('action.cancel') }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    sheet = await openSheet(user, 'priority')
+    expect(within(sheet).queryByText(t('propertiesView.optionsLabel'))).not.toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------
@@ -484,8 +501,7 @@ describe('PropertyDefinitionsList', () => {
 
     stubInvoke({ delete_property_def: () => Promise.reject(new Error('Not found')) })
 
-    const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
-    await user.click(deleteBtn)
+    await pressDelete(user, 'to-delete')
 
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
@@ -517,7 +533,7 @@ describe('PropertyDefinitionsList', () => {
     }
     stubInvoke({ delete_property_def: () => Promise.reject(inUse) })
 
-    await user.click(screen.getByRole('button', { name: 'Delete property project' }))
+    await pressDelete(user, 'project')
     await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
 
     await waitFor(() => {
@@ -533,8 +549,7 @@ describe('PropertyDefinitionsList', () => {
 
     render(<PropertyDefinitionsList />)
 
-    expect(await screen.findByText('Status')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Edit options/i }))
+    await openSheet(user, 'status')
 
     stubInvoke({
       update_property_def_options: () => Promise.reject(new Error('backend down')),
@@ -545,20 +560,18 @@ describe('PropertyDefinitionsList', () => {
         name: t('pageProperty.removeOptionLabel', { option: 'closed' }),
       }),
     )
-    await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.errorUpdate'))
     })
-    // A failed save keeps the editor open on the draft.
+    // A failed save keeps the sheet open on the draft.
     expect(
       screen.queryByRole('button', {
         name: t('pageProperty.removeOptionLabel', { option: 'closed' }),
       }),
     ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('dialog', { name: t('pageProperty.editOptionsLabel', { key: 'status' }) }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Status' })).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
@@ -623,17 +636,15 @@ describe('PropertyDefinitionsList', () => {
       const lock = screen.getByTestId(`builtin-lock-${key}`)
       expect(lock).toHaveTextContent(t('propertiesView.builtIn'))
       expect(
-        screen.queryByRole('button', { name: t('properties.deleteDefinition', { key }) }),
+        screen.queryByRole('button', { name: t('propertiesView.editLabel', { key }) }),
       ).not.toBeInTheDocument()
     }
     expect(screen.queryByTestId('builtin-lock-custom-field')).not.toBeInTheDocument()
-    // The one Edit options button is the user's select, not priority's.
-    expect(
-      screen.getAllByRole('button', { name: t('propertiesView.editOptionsTooltip') }),
-    ).toHaveLength(1)
+    // The one row that opens a sheet is the user's select.
+    expect(screen.getAllByRole('button', { name: /^Edit property / })).toHaveLength(1)
     expect(
       screen.getByRole('button', {
-        name: t('properties.deleteDefinition', { key: 'custom-field' }),
+        name: t('propertiesView.editLabel', { key: 'custom-field' }),
       }),
     ).toBeInTheDocument()
   })
@@ -694,34 +705,17 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.getByText('No properties match your search')).toBeInTheDocument()
   })
 
-  it('delete button has aria-label for tooltip accessibility', async () => {
+  it("a user property's row is one button that shows its name and names the property", async () => {
     stubDefs(pageOf([makePropDef('my-prop', 'text')]))
 
     render(<PropertyDefinitionsList />)
 
-    expect(await screen.findByText('My Prop')).toBeInTheDocument()
-
-    const deleteBtn = screen.getByRole('button', { name: /Delete property my-prop/i })
-    expect(deleteBtn).toBeInTheDocument()
-    expect(deleteBtn).toHaveAttribute('aria-label', 'Delete property my-prop')
-  })
-
-  // Delete button must be reachable on desktop without hovering
-  // the row. Pin the visibility so a future "hide-until-hover" regression
-  // is caught at test time.
-  it('delete button is always visible (no opacity-0 / group-hover gating)', async () => {
-    stubDefs(pageOf([makePropDef('my-prop', 'text')]))
-
-    render(<PropertyDefinitionsList />)
-
-    const deleteBtn = await screen.findByRole('button', {
-      name: t('properties.deleteDefinition', { key: 'my-prop' }),
+    const row = await screen.findByRole('button', {
+      name: t('propertiesView.editLabel', { key: 'my-prop' }),
     })
-    expect(deleteBtn).toBeInTheDocument()
-
-    const className = deleteBtn.className
-    expect(className).not.toMatch(/(^|\s)opacity-0(\s|$)/)
-    expect(className).not.toMatch(/group-hover:opacity-100/)
+    expect(row).toHaveTextContent('My Prop')
+    // Shown at rest, not only on hover.
+    expect(row.className).not.toMatch(/(^|\s)opacity-0(\s|$)/)
   })
 
   // Explain WHY the todo_state cycle is fixed via an ⓘ on the todo_state row
@@ -759,40 +753,25 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // ── PopoverContent labelled for screen-reader users ─────
-  describe('Edit options popover aria-label', () => {
-    it('labels the open popover with the key it edits', async () => {
+  // ── The property sheet, labelled for screen-reader users ─────
+  describe('property sheet', () => {
+    it("is labelled with the property's name", async () => {
       const user = userEvent.setup()
       stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
       render(<PropertyDefinitionsList />)
 
-      expect(await screen.findByText('Status')).toBeInTheDocument()
-
-      await user.click(screen.getByRole('button', { name: /Edit options/i }))
-
-      expect(
-        await screen.findByRole('dialog', {
-          name: t('pageProperty.editOptionsLabel', { key: 'status' }),
-        }),
-      ).toBeInTheDocument()
+      expect(await openSheet(user, 'status')).toHaveAccessibleName('Status')
     })
 
-    it('axe is clean with the Edit options popover open', async () => {
+    it('axe is clean with the sheet open', async () => {
       const user = userEvent.setup()
       stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
 
-      const { container } = render(<PropertyDefinitionsList />)
+      render(<PropertyDefinitionsList />)
 
-      expect(await screen.findByText('Status')).toBeInTheDocument()
-      await user.click(screen.getByRole('button', { name: /Edit options/i }))
-      // Wait for the portalled PopoverContent so axe runs against a settled DOM.
-      await screen.findByRole('dialog', {
-        name: t('pageProperty.editOptionsLabel', { key: 'status' }),
-      })
-
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+      const sheet = await openSheet(user, 'status')
+      expect(await axe(sheet)).toHaveNoViolations()
     })
   })
 
@@ -800,8 +779,6 @@ describe('PropertyDefinitionsList', () => {
   describe('per-space definitions', () => {
     const spacePicker = () =>
       screen.getByRole('combobox', { name: t('propertiesView.definitionsIn') })
-    const copyButton = (key: string) =>
-      screen.getByRole('button', { name: t('propertiesView.copyToSpaceLabel', { key }) })
 
     /** The mock backend, with a Work space declaring `budget` as a number. */
     function seedTwoSpaces(): void {
@@ -858,9 +835,7 @@ describe('PropertyDefinitionsList', () => {
       const user = userEvent.setup()
       seedTwoSpaces()
       render(<PropertyDefinitionsList />)
-      await screen.findByText('Project')
-
-      await user.click(copyButton('project'))
+      await pressCopy(user, 'project')
       await user.click(await screen.findByRole('button', { name: WORK.name }))
 
       await waitFor(() => {
@@ -869,6 +844,9 @@ describe('PropertyDefinitionsList', () => {
           expect.anything(),
         )
       })
+      // The sheet stays open on the copied property.
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
         spaceId: WORK.id,
         key: 'project',
@@ -890,9 +868,7 @@ describe('PropertyDefinitionsList', () => {
         created_at: '2026-01-01T00:00:00.000Z',
       })
       render(<PropertyDefinitionsList />)
-      await screen.findByText('Project')
-
-      await user.click(copyButton('project'))
+      await pressCopy(user, 'project')
       await user.click(await screen.findByRole('button', { name: WORK.name }))
 
       await waitFor(() => {
@@ -916,9 +892,7 @@ describe('PropertyDefinitionsList', () => {
         create_property_def: () => Promise.reject(refusal),
       })
       render(<PropertyDefinitionsList />)
-      await screen.findByText('Year')
-
-      await user.click(copyButton('year'))
+      await pressCopy(user, 'year')
       await user.click(await screen.findByRole('button', { name: WORK.name }))
 
       await waitFor(() => {
@@ -927,14 +901,18 @@ describe('PropertyDefinitionsList', () => {
     })
 
     it('offers no copy when there is no other space, nor on a built-in', async () => {
+      const user = userEvent.setup()
       stubDefs(pageOf([makePropDef('project'), makeBuiltinDef('priority', 'select', '["1"]')]))
       render(<PropertyDefinitionsList />)
-      await screen.findByText('Project')
-
+      await screen.findByText('Priority')
+      // A built-in opens no sheet at all.
       expect(
-        screen.queryByRole('button', {
-          name: t('propertiesView.copyToSpaceLabel', { key: 'project' }),
-        }),
+        screen.queryByRole('button', { name: t('propertiesView.editLabel', { key: 'priority' }) }),
+      ).not.toBeInTheDocument()
+
+      const sheet = await openSheet(user, 'project')
+      expect(
+        within(sheet).queryByRole('button', { name: t('propertiesView.copyAction') }),
       ).not.toBeInTheDocument()
     })
 
@@ -942,14 +920,7 @@ describe('PropertyDefinitionsList', () => {
       const user = userEvent.setup()
       seedTwoSpaces()
       const { container } = render(<PropertyDefinitionsList />)
-      await screen.findByText('Project')
-      expect(
-        screen.queryByRole('button', {
-          name: t('propertiesView.copyToSpaceLabel', { key: 'priority' }),
-        }),
-      ).not.toBeInTheDocument()
-
-      await user.click(copyButton('project'))
+      await pressCopy(user, 'project')
       await screen.findByRole('button', { name: WORK.name })
 
       const results = await axe(container)
@@ -1064,7 +1035,7 @@ describe('PropertyDefinitionsList', () => {
         expect(usageBadge('stage')).toHaveTextContent('0 uses')
       })
 
-      await user.click(screen.getByRole('button', { name: 'Delete property stage' }))
+      await pressDelete(user, 'stage')
       await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
 
       // The backend's own count stays, followed by why it differs from the badge.
@@ -1091,7 +1062,7 @@ describe('PropertyDefinitionsList', () => {
         expect(usageBadge('estimate')).toHaveTextContent('0 uses')
       })
 
-      await user.click(screen.getByRole('button', { name: 'Delete property reviewer' }))
+      await pressDelete(user, 'reviewer')
       await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
       await waitFor(() => {
         expect(usageBadge('reviewer')).not.toBeInTheDocument()
@@ -1159,7 +1130,7 @@ describe('Undo after a definition write', () => {
     const user = userEvent.setup()
     seedMock()
     render(<PropertyDefinitionsList />)
-    await user.click(await screen.findByRole('button', { name: 'Delete property reviewer' }))
+    await pressDelete(user, 'reviewer')
     await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
     await waitFor(() => {
       expect(screen.queryByText('Reviewer')).not.toBeInTheDocument()
@@ -1192,15 +1163,13 @@ describe('Undo after a definition write', () => {
     seedMock()
     const before = spacePropertyDefs(PERSONAL.id).get('project')?.['options']
     render(<PropertyDefinitionsList />)
-    await screen.findByText('Project')
-    const row = screen.getByText('Project').closest('li') as HTMLElement
-    await user.click(within(row).getByRole('button', { name: /Edit options/i }))
+    await openSheet(user, 'project')
     await user.click(
       await screen.findByRole('button', {
         name: t('pageProperty.removeOptionLabel', { option: 'gamma' }),
       }),
     )
-    await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
     await waitFor(() => {
       expect(spacePropertyDefs(PERSONAL.id).get('project')?.['options']).toBe('["alpha","beta"]')
     })
@@ -1216,12 +1185,7 @@ describe('Undo after a definition write', () => {
     const user = userEvent.setup()
     seedMock()
     render(<PropertyDefinitionsList />)
-    await screen.findByText('Project')
-    await user.click(
-      screen.getByRole('button', {
-        name: t('propertiesView.copyToSpaceLabel', { key: 'project' }),
-      }),
-    )
+    await pressCopy(user, 'project')
     await user.click(await screen.findByRole('button', { name: WORK.name }))
     await waitFor(() => {
       expect(spacePropertyDefs(WORK.id).has('project')).toBe(true)
@@ -1246,7 +1210,7 @@ describe('Undo after a definition write', () => {
       undo_ops: () => Promise.reject(new Error('already reversed')),
     })
     render(<PropertyDefinitionsList />)
-    await user.click(await screen.findByRole('button', { name: /Delete property to-delete/i }))
+    await pressDelete(user, 'to-delete')
     await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalled()

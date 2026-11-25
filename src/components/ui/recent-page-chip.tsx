@@ -34,12 +34,10 @@ const chipClass = cn(
   'inline-flex h-7 min-w-0 max-w-[160px] shrink-0 items-center gap-1.5',
   'rounded-md border px-2.5 text-xs',
   'transition-colors',
-  // touch — AGENTS.md "Mandatory patterns" 44 px floor on coarse pointers.
-  // The strip is also gated by `useIsMobile()` (returns null on mobile),
-  // but hybrid pointer devices (touch laptops, tablets in desktop mode)
-  // pass that gate while still reporting `pointer: coarse`. Scale the
-  // chip explicitly so the touch target stays compliant.
-  '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:px-3',
+  // touch — the buttons' one 36 px height and 14 px label, and room for that
+  // label; the rest of the 44 px target is invisible, inside the strip's
+  // vertical padding.
+  '[@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:max-w-48 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm touch-hit-area',
   // rest state — visible chrome
   'border-border/60 bg-secondary/40 text-muted-foreground',
   // hover — clearer interactive state

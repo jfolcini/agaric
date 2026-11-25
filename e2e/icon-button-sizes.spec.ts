@@ -7,14 +7,7 @@
 
 import type { Locator } from '@playwright/test'
 
-import {
-  createPageFromPagesView,
-  expect,
-  navigateToView,
-  openSettingsTab,
-  test,
-  waitForBoot,
-} from './helpers'
+import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } from './helpers'
 
 const iconSize = (button: Locator) =>
   button.locator('svg').evaluate((icon) => {
@@ -51,12 +44,6 @@ test('icon buttons across the app render their icons at the asked size @pages @s
   expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(0.5)
   const treeDelete = page.getByRole('button', { name: 'Delete work/project-a', exact: true })
   expect(await iconSize(treeDelete)).toBe('16x16')
-
-  await navigateToView(page, 'Settings')
-  await openSettingsTab(page, 'Properties')
-  const deleteContext = page.getByRole('button', { name: 'Delete property context' })
-  await expect(deleteContext).toBeVisible()
-  expect(await iconSize(deleteContext)).toBe('16x16')
 
   // A tag row's actions ask for 14 px, the size of the row's color swatch.
   await page

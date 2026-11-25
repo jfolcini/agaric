@@ -4,6 +4,7 @@ import {
   activeAlertDialog,
   expect,
   navigateToView,
+  openPropertySheet,
   openSettingsTab,
   test,
   waitForBoot,
@@ -29,7 +30,11 @@ test.describe('Undo a property definition change @settings', () => {
     await openProperties(page)
     const panel = page.locator('[data-testid="settings-panel-properties"]')
     const reviewerRow = panel.locator('ul > li', { hasText: 'reviewer' })
-    await reviewerRow.getByRole('button', { name: 'Delete property reviewer' }).click()
+    await (
+      await openPropertySheet(page, 'reviewer')
+    )
+      .getByRole('button', { name: 'Delete property', exact: true })
+      .click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(reviewerRow).toHaveCount(0)
 

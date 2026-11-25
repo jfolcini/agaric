@@ -456,10 +456,23 @@ export const properties: Record<string, string> = {
   'propertiesView.optionsSaved': 'Options saved',
   'propertiesView.undoFailed': 'Could not undo the change to the property definition',
 
-  // Translators: Settings › Properties: "Edit options" button of a select property (one with a
-  // fixed list of choices); duplicateKey = error under the key box when that key already exists.
-  'propertiesView.editOptions': 'Edit options',
+  // Translators: Settings › Properties: error under a key box (a new property's, or the Name of a
+  // property's sheet) when that key already exists.
   'propertiesView.duplicateKey': 'A property with this key already exists',
+
+  // Translators: Settings › Properties: screen-reader label of a user property's row, which opens
+  // its sheet; the line under the sheet's title (the property's name), its field labels, and its
+  // buttons. {{key}} = property key. The … buttons each open a dialog of their own.
+  'propertiesView.editLabel': 'Edit property {{key}}',
+  'propertiesView.editDescription':
+    'Rename it, change its type or options, or merge, copy or delete it.',
+  'propertiesView.nameLabel': 'Name',
+  'propertiesView.typeLabel': 'Type',
+  'propertiesView.optionsLabel': 'Options',
+  'propertiesView.changeTypeAction': 'Change type…',
+  'propertiesView.mergeAction': 'Merge into another property…',
+  'propertiesView.copyAction': 'Copy to another space…',
+  'propertiesView.deleteAction': 'Delete property',
 
   // Translators: Settings › Tasks & reminders: setting row (label + description) taking a number of
   // days. "Upcoming" = the Agenda section of that name.
@@ -472,26 +485,20 @@ export const properties: Record<string, string> = {
   'propertiesView.builtIn': 'Built-in',
   'propertiesView.definitionsIn': 'Definitions in',
 
-  // Translators: Settings › Properties, copy icon button (tooltip + screen-reader label) opening a
-  // menu of the other spaces, and its toasts. {{key}} = property key, {{space}} = space name,
+  // Translators: Settings › Properties, the menu of the other spaces that a property's "Copy to
+  // another space…" opens, and its toasts. {{key}} = property key, {{space}} = space name,
   // {{type}} = the type already defined there, an English code like "number".
-  'propertiesView.copyToSpaceTooltip': 'Copy to space…',
-  'propertiesView.copyToSpaceLabel': 'Copy {{key}} to another space',
   'propertiesView.copyToSpaceMenuLabel': 'Spaces to copy {{key}} to',
   'propertiesView.copiedToSpace': 'Copied {{key}} to {{space}}',
   'propertiesView.copyKeptExisting':
     '{{space}} already defines {{key}} as {{type}}; its definition was kept',
   'propertiesView.copyFailed': 'Failed to copy the property definition',
 
-  // Translators: Settings › Properties, rename icon button, its dialog (title, body, key box) and
-  // toasts. {{key}} / {{from}} / {{to}} = property keys; reservedKey = error for a key the app
-  // keeps for itself.
-  'propertiesView.renameTooltip': 'Rename property',
-  'propertiesView.renameLabel': 'Rename property {{key}}',
-  'propertiesView.renameTitle': 'Rename {{key}}',
+  // Translators: Settings › Properties, renaming a property in its sheet: the hint under its Name
+  // and toasts. {{key}} / {{from}} / {{to}} = property keys; reservedKey = error for a key the
+  // app keeps for itself.
   'propertiesView.renameDescription':
     'Every block in this space that has {{key}}, the Trash included, gets the new key.',
-  'propertiesView.renameInputLabel': 'New property key',
   'propertiesView.reservedKey': '{{key}} is used by the app',
   'propertiesView.renamed': 'Renamed {{from}} to {{to}}',
   'propertiesView.renameFailed': 'Failed to rename the property',
@@ -501,12 +508,10 @@ export const properties: Record<string, string> = {
   'propertiesView.optionRenamed': 'Renamed {{from}} to {{to}} in {{key}}',
   'propertiesView.renameOptionFailed': 'Failed to rename the option',
 
-  // Translators: Settings › Properties, "Merge into…" icon button and dialog: pick another
+  // Translators: Settings › Properties, the dialog of a property's "Merge into…": pick another
   // property; counts preview what moves and what is dropped. {{key}} / {{from}} = the property
   // merged away, {{into}} = the target property; mergeCountsChanged = alert when the counts
   // changed meanwhile.
-  'propertiesView.mergeTooltip': 'Merge into…',
-  'propertiesView.mergeLabel': 'Merge {{key}} into…',
   'propertiesView.mergeTitle': 'Merge {{key}} into another property',
   'propertiesView.mergeDescription':
     '{{key}} is removed from this space; its values move to the property you pick.',
@@ -525,10 +530,8 @@ export const properties: Record<string, string> = {
   'propertiesView.mergeFailed': 'Failed to merge the properties',
   'propertiesView.mergePreviewFailed': 'Could not count the values to merge',
 
-  // Translators: Settings › Properties, "Change type…" icon button and dialog: title, body, and the
+  // Translators: Settings › Properties, the dialog of a property's "Change type…": title, body, and the
   // screen-reader label of the new-type dropdown. {{key}} = property key.
-  'propertiesView.typeChangeTooltip': 'Change type…',
-  'propertiesView.typeChangeLabel': 'Change the type of {{key}}',
   'propertiesView.typeChangeTitle': 'Change the type of {{key}}',
   'propertiesView.typeChangeDescription':
     "Each value of {{key}} in this space is converted to the new type. A value that doesn't fit is kept as text and no longer counts as that type: the Agenda, for example, skips a value that isn't a date.",
@@ -657,10 +660,8 @@ export const properties: Record<string, string> = {
   'propertiesView.movePreviewFailed': 'Could not count the values to move',
 
   // Translators: Settings › Properties: screen-reader label of the search box's clear button,
-  // tooltips of the delete and edit-options buttons, and the no-match empty state.
+  // and the no-match empty state.
   'propertiesView.clearSearch': 'Clear search',
-  'propertiesView.deleteTooltip': 'Delete property',
-  'propertiesView.editOptionsTooltip': 'Edit options',
   'propertiesView.noFilterResults': 'No properties match your search',
 
   // Translators: Settings › Properties, screen-reader label of the ⓘ beside the built-in task-state
@@ -669,9 +670,6 @@ export const properties: Record<string, string> = {
   'propertiesView.taskCycleHelpLabel': 'Task cycle help',
   'propertiesView.taskCycleHelpContent':
     'Task states cycle in a fixed order: TODO → DOING → DONE → CANCELLED → none. The order puts the common terminal (DONE) immediately after work begins (DOING); CANCELLED is the abandon-without-completing escape hatch at the end.',
-
-  // Translators: Settings › Properties: screen-reader label of a property's delete button.
-  'properties.deleteDefinition': 'Delete property {{key}}',
 
   // Translators: Page picker of a property that links to a page: empty state (title + hint) and a
   // button creating a page with the searched name ({{name}}).

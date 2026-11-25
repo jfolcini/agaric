@@ -37,18 +37,26 @@ async function setReviewer(blockId: string, text: string): Promise<void> {
   await dispatch('set_property', { blockId, key: 'reviewer', value: { value_text: text } })
 }
 
-function mergeButton(key: string): HTMLElement | null {
-  return screen.queryByRole('button', { name: t('propertiesView.mergeLabel', { key }) })
+/** `key`'s property sheet, opened from its row. */
+async function openSheet(key: string, title: string): Promise<HTMLElement> {
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('button', { name: t('propertiesView.editLabel', { key }) }),
+  )
+  return screen.findByRole('dialog', { name: title })
 }
 
-/** Open `context`'s merge dialog and pick `reviewer`. */
+function mergeButton(sheet: HTMLElement): HTMLElement | null {
+  return within(sheet).queryByRole('button', { name: t('propertiesView.mergeAction') })
+}
+
+/** Open `context`'s merge dialog from its sheet and pick `reviewer`. */
 async function pickReviewer(): Promise<HTMLElement> {
   const user = userEvent.setup()
-  await waitFor(() => {
-    expect(mergeButton('context')).toBeInTheDocument()
+  await user.click(mergeButton(await openSheet('context', 'Context')) as HTMLElement)
+  const dialog = await screen.findByRole('dialog', {
+    name: t('propertiesView.mergeTitle', { key: 'context' }),
   })
-  await user.click(mergeButton('context') as HTMLElement)
-  const dialog = await screen.findByRole('dialog')
   await user.selectOptions(
     within(dialog).getByRole('combobox', { name: t('propertiesView.mergeTargetLabel') }),
     'reviewer',
@@ -73,12 +81,13 @@ describe('MergePropertyDefinition', () => {
       valueType: 'number',
       options: null,
     })
+    const user = userEvent.setup()
     render(<PropertyDefinitionsList />)
-    await waitFor(() => {
-      expect(mergeButton('context')).toBeInTheDocument()
-    })
-    expect(screen.getByText('Estimate')).toBeInTheDocument()
-    expect(mergeButton('estimate')).not.toBeInTheDocument()
+    const sheet = await openSheet('context', 'Context')
+    expect(mergeButton(sheet)).toBeInTheDocument()
+    await user.click(within(sheet).getByRole('button', { name: t('action.cancel') }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mergeButton(await openSheet('estimate', 'Estimate'))).not.toBeInTheDocument()
   })
 
   it('previews the counts and merges with them acknowledged', async () => {

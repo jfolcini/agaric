@@ -6,13 +6,11 @@
  * overwritten.
  */
 
-import { Copy } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
-import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
@@ -27,13 +25,14 @@ export interface CopyDefinitionToSpaceProps {
   definition: PropertyDefinition
   /** The space the definition is listed in, never offered as a target. */
   fromSpaceId: string
-  className?: string
+  /** What opens the space menu: Settings' property sheet gives a text button. */
+  trigger: React.ReactElement
 }
 
 export function CopyDefinitionToSpace({
   definition,
   fromSpaceId,
-  className,
+  trigger,
 }: CopyDefinitionToSpaceProps): React.ReactElement | null {
   const { t } = useTranslation()
   const spaces = useSpaceStore((s) => s.availableSpaces)
@@ -76,17 +75,7 @@ export function CopyDefinitionToSpace({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <IconButton
-          variant="ghost"
-          size="icon-xs"
-          tooltip={t('propertiesView.copyToSpaceTooltip')}
-          ariaLabel={t('propertiesView.copyToSpaceLabel', { key })}
-          className={className}
-        >
-          <Copy />
-        </IconButton>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <MenuPopoverContent align="end" className="w-56">
         <ul
           className="m-0 flex list-none flex-col gap-0.5 p-0"

@@ -585,6 +585,19 @@ export function activeSheet(page: Page): Locator {
 }
 
 /**
+ * Open a user property's sheet from its Settings › Properties row (#7040), and
+ * return it: a dialog on a wide screen, a bottom sheet on a phone. It holds the
+ * property's Name, its options, Change type…, Merge into another property…,
+ * Copy to another space… and Delete property.
+ */
+export async function openPropertySheet(page: Page, key: string): Promise<Locator> {
+  await page.getByRole('button', { name: `Edit property ${key}`, exact: true }).click()
+  const sheet = activeDialog(page).or(activeSheet(page))
+  await expect(sheet).toBeVisible()
+  return sheet
+}
+
+/**
  * Active `role="dialog"` node. Matches Radix Dialog / Sheet / AlertDialog
  * (all apply role="dialog" internally) as well as hand-rolled pickers such
  * as `TemplatePicker` that set the role manually. Use `activeDialog` /
