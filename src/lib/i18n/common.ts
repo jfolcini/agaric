@@ -1300,7 +1300,6 @@ export const common: Record<string, string> = {
   // Translators: screen-reader label of the grab bar at the top of the phone search sheet.
   // #899 mobile-search polish batch.
   // #133 — pull-to-dismiss grab handle.
-  'searchSheet.dragHandleLabel': 'Drag down to close search',
 
   // Translators: phone search sheet: long-pressing a tab makes it the default. Screen-reader hint,
   // toasts ({{scope}} = "This page" or "All pages"), and the pin icon's screen-reader label.

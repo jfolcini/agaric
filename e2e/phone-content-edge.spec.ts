@@ -57,6 +57,32 @@ function block(page: Page, text: string): Locator {
   return page.locator('[data-testid="block-static"]', { hasText: text })
 }
 
+/** Outline, opened on a phone: its title and body sit on the view's gutter. */
+async function expectSheetOnGutter(page: Page): Promise<void> {
+  await openPageMobile(page, 'Getting Started')
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Open outline', exact: true }).click()
+  const sheet = activeSheet(page)
+  await expect(sheet).toBeVisible()
+
+  await expect
+    .poll(() => textLeft(sheet.locator('[data-slot="sheet-title"]'), sheet), 'sheet title')
+    .toBe(GUTTER)
+  const bodyContent = sheet.locator('[data-slot="sheet-body"] [data-radix-scroll-area-viewport]')
+  await expect
+    .poll(
+      () =>
+        bodyContent.evaluate((el) => {
+          const sheetEl = el.closest('[data-slot="sheet-content"]') as HTMLElement
+          const inner =
+            el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft)
+          return Math.round(inner - sheetEl.getBoundingClientRect().left - sheetEl.clientLeft)
+        }),
+      'sheet body content',
+    )
+    .toBe(GUTTER)
+}
+
 test.describe('One left edge on a phone (#5929) @mobile @journal @pages @settings', () => {
   test.use(PHONE)
 
@@ -100,28 +126,7 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
   })
 
   test('a sheet insets its title and body by the gutter', async ({ page }) => {
-    await openPageMobile(page, 'Getting Started')
-    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Open outline', exact: true }).click()
-    const sheet = activeSheet(page)
-    await expect(sheet).toBeVisible()
-
-    await expect
-      .poll(() => textLeft(sheet.locator('[data-slot="sheet-title"]'), sheet), 'sheet title')
-      .toBe(GUTTER)
-    const bodyContent = sheet.locator('[data-slot="sheet-body"] [data-radix-scroll-area-viewport]')
-    await expect
-      .poll(
-        () =>
-          bodyContent.evaluate((el) => {
-            const sheetEl = el.closest('[data-slot="sheet-content"]') as HTMLElement
-            const inner =
-              el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft)
-            return Math.round(inner - sheetEl.getBoundingClientRect().left - sheetEl.clientLeft)
-          }),
-        'sheet body content',
-      )
-      .toBe(GUTTER)
+    await expectSheetOnGutter(page)
   })
 
   test('Settings: a card groups its controls on the gutter, without a second inset', async ({
@@ -143,5 +148,20 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
     await expect
       .poll(async () => (await tile.boundingBox())?.x, 'metric tile left edge')
       .toBe(GUTTER)
+  })
+})
+
+// The app keeps the phone gutter, and picks sheets over dialogs, up to 768 px
+// (`useIsMobile`, `p-4 md:p-6`); a sheet's own gutter once widened at 640.
+test.describe('One left edge in a 700 px touch window @mobile @pages', () => {
+  test.use({ ...PHONE, viewport: { width: 700, height: 900 } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+  })
+
+  test('a sheet insets its title and body by the gutter', async ({ page }) => {
+    await expectSheetOnGutter(page)
   })
 })

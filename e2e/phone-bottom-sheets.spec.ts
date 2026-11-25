@@ -17,6 +17,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   activeMenu,
   activeSheet,
+  centerOf,
   emitMockEvent,
   expect,
   focusBlock,
@@ -30,6 +31,8 @@ import {
 const iPhone13 = devices['iPhone 13']
 const PAGE = 'Getting Started'
 const TOUCH_FLOOR = 44
+/** `--radius-xl`, the modal tier a bottom sheet's free edge takes (docs/UX.md). */
+const SHEET_RADIUS = 12
 
 interface Edges {
   left: number
@@ -59,6 +62,54 @@ async function openBlockMenu(page: Page): Promise<Locator> {
     .getAttribute('data-block-id')
   await touchLongPress(page, `[data-testid="block-static"][data-block-id="${id}"]`)
   return activeMenu(page)
+}
+
+/** The open sheet rises on a rounded top, from a 44 px grab handle. */
+async function expectGrabbable(page: Page): Promise<void> {
+  const sheet = activeSheet(page)
+  await expect(sheet).toBeVisible()
+  const corners = await sheet.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return [s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomLeftRadius]
+  })
+  expect(corners).toEqual([`${SHEET_RADIUS}px`, `${SHEET_RADIUS}px`, '0px'])
+  const handle = await box(sheet.locator('[data-slot="sheet-drag-handle"]'))
+  expect(handle.height).toBe(TOUCH_FLOOR)
+}
+
+/** Drag from the open sheet's grab handle straight down by `dy`. */
+async function pullHandle(page: Page, dy: number): Promise<void> {
+  const { x, y } = await centerOf(
+    activeSheet(page).locator('[data-slot="sheet-drag-handle"]'),
+    'drag handle',
+  )
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x, y + dy, { steps: 5 })
+  await page.mouse.up()
+}
+
+/** `row` takes the `accent` fill while pressed, and not at rest. */
+async function expectPressedFill(page: Page, row: Locator, accent: string): Promise<void> {
+  const fill = () => row.evaluate((el) => getComputedStyle(el).backgroundColor)
+  expect(await fill()).not.toBe(accent)
+  const { x, y } = await centerOf(row, 'row')
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await expect.poll(fill).toBe(accent)
+  await page.mouse.up()
+}
+
+/** `--accent`, resolved by the browser to the colour a pressed row should show. */
+function accentColor(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement('div')
+    probe.className = 'bg-accent'
+    document.body.append(probe)
+    const color = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    return color
+  })
 }
 
 /** Simulate the soft keyboard: on Android the webview ends at its top (#6790), so the viewport shrinks by `height`. */
@@ -189,9 +240,64 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     const sheet = page.getByTestId('search-sheet')
     await expect(sheet.getByTestId('in-page-find-input')).toBeVisible()
     await expect(sheet.getByRole('button', { name: /^Close/ })).toHaveCount(1)
-    const handle = await box(sheet.getByTestId('search-sheet-drag-handle'))
+    const handle = await box(sheet.locator('[data-slot="sheet-drag-handle"]'))
     expect(handle.height).toBeGreaterThanOrEqual(TOUCH_FLOOR)
     expect(handle.width).toBeGreaterThanOrEqual(TOUCH_FLOOR)
+  })
+
+  // One of each kind: a MenuSheet, a plain Sheet, and a `useDialogOrSheet` dialog.
+  test('each kind of bottom sheet rises on a rounded top with a 44 px grab handle', async ({
+    page,
+  }) => {
+    await openBlockMenu(page)
+    await expectGrabbable(page)
+    await activeMenu(page)
+      .getByRole('menuitem', { name: /Properties/ })
+      .tap()
+    await expect(page.getByRole('dialog', { name: 'Block properties' })).toBeVisible()
+    await expectGrabbable(page)
+    await page.keyboard.press('Escape')
+    await navigateMobile(page, 'Pages')
+    await page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+      .tap()
+    await expect(page.getByTestId('new-page-dialog')).toBeVisible()
+    await expectGrabbable(page)
+  })
+
+  test('a pull down from the grab handle closes the sheet; a short one springs back', async ({
+    page,
+  }) => {
+    await openBlockMenu(page)
+    const sheet = activeSheet(page)
+    await pullHandle(page, 30)
+    await expectBottomSheet(page, sheet)
+    await pullHandle(page, 160)
+    await expect(sheet).toHaveCount(0)
+    await expect(activeMenu(page)).toHaveCount(0)
+  })
+
+  test('menu rows and list rows fill while pressed', async ({ page }) => {
+    const accent = await accentColor(page)
+    // The journal mode menu (`PopoverMenuItem`).
+    await page.getByRole('button', { name: /^Journal view mode/ }).tap()
+    await expectPressedFill(page, page.getByRole('button', { name: 'Week', exact: true }), accent)
+    // The block menu (`menu-row`).
+    const menu = await openBlockMenu(page)
+    await expectPressedFill(page, menu.getByRole('menuitem', { name: 'Turn into' }), accent)
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    // The page menu (`MENU_ITEM_CLASS`).
+    await page.getByRole('button', { name: 'Page actions' }).tap()
+    const pageMenu = page.getByRole('menu', { name: 'Page actions' })
+    await expectPressedFill(page, pageMenu.getByRole('menuitem', { name: 'Open outline' }), accent)
+    await expect(page.getByRole('dialog', { name: 'Outline' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(activeSheet(page)).toHaveCount(0)
+    // A Pages row (`ListItem`), not the one the list cursor rests on.
+    await navigateMobile(page, 'Pages')
+    await expectPressedFill(page, page.locator('[data-page-item]').nth(2), accent)
   })
 
   // Raised on Search, where a toast once covered the search field.

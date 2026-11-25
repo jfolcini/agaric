@@ -91,7 +91,7 @@ export function DayPageEditor({
               trigger={
                 <SheetTrigger asChild>
                   <Button variant="ghost" size="icon-sm" aria-label={t('pageHeader.pageActions')}>
-                    <MoreVertical className="h-4 w-4" />
+                    <MoreVertical />
                   </Button>
                 </SheetTrigger>
               }

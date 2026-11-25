@@ -98,7 +98,7 @@ export function SpaceDeleteButton({
           aria-label={t('space.deleteSpaceLabel')}
           onClick={() => setConfirmOpen(true)}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 />
         </Button>
       ) : (
         <>
@@ -109,7 +109,7 @@ export function SpaceDeleteButton({
             aria-label={t('space.deleteSpaceLabel')}
             disabled
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 />
           </Button>
           {!reasonShownBelow && (
             <InfoPopover

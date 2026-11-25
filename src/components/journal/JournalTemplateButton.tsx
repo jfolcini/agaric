@@ -107,7 +107,7 @@ export function JournalTemplateButton({
             void openJournalTemplateOrPicker()
           }}
         >
-          <Settings2 className="h-4 w-4" />
+          <Settings2 />
         </IconButton>
       </PopoverTrigger>
       <MenuPopoverContent align="end" aria-label={t('journal.templatePickerLabel')}>

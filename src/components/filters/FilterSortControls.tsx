@@ -135,7 +135,7 @@ export function FilterSortControls({
         onClick={() => onSortChange({ ...current, dir: ascending ? 'Desc' : 'Asc' })}
         data-testid="backlink-sort-direction"
       >
-        <DirectionIcon className="size-4" aria-hidden="true" />
+        <DirectionIcon aria-hidden="true" />
       </IconButton>
     </div>
   )

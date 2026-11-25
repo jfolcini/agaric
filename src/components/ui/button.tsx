@@ -29,10 +29,14 @@ const buttonVariants = cva(
         xs: 'h-6 gap-1 rounded-md px-2 text-xs [:where(&)_svg]:size-3 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:px-3',
         sm: 'h-8 gap-1.5 rounded-md px-3 [@media(pointer:coarse)]:h-11',
         lg: 'h-10 rounded-md px-6 [@media(pointer:coarse)]:h-11',
-        icon: 'size-9 [@media(pointer:coarse)]:size-11',
-        'icon-xs': 'size-6 rounded-md [@media(pointer:coarse)]:size-11',
-        'icon-sm': 'size-8 [@media(pointer:coarse)]:size-11',
-        'icon-lg': 'size-10 [@media(pointer:coarse)]:size-11',
+        // An icon button's touch box grows to 44 px, and its glyph to 20 px with it.
+        icon: 'size-9 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
+        'icon-xs':
+          'size-6 rounded-md [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
+        'icon-sm':
+          'size-8 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
+        'icon-lg':
+          'size-10 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
       },
     },
     defaultVariants: {

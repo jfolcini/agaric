@@ -242,7 +242,7 @@ export function JournalControls(): React.ReactElement {
               onClick={goPrev}
               disabled={!canGoPrev}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft />
             </IconButton>
             {/* The date IS the calendar trigger. It used to be inert text
                 with a separate calendar IconButton pinned to the end of the
@@ -289,7 +289,7 @@ export function JournalControls(): React.ReactElement {
               onClick={goNext}
               disabled={!canGoNext}
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight />
             </IconButton>
           </>
         )}
@@ -332,7 +332,7 @@ export function JournalControls(): React.ReactElement {
             aria-haspopup="dialog"
             onClick={() => setCalendarOpen((o) => !o)}
           >
-            <CalendarIcon className="h-4 w-4" />
+            <CalendarIcon />
           </IconButton>
         )}
         {calendarOpen && (

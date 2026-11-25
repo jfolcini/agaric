@@ -216,13 +216,13 @@ function MobileSidebarTriggerButton(): ReactElement {
         // stack. A mouse header has no such padding, so there the trigger
         // centres like the controls beside it. The negative margin puts the
         // icon, not the button, on the header's 16px content edge.
-        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3.5 [@media(pointer:coarse)]:self-start"
+        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3 [@media(pointer:coarse)]:self-start"
       >
         {paired && (
           // On the icon's top-right corner, as on the sidebar's Sync icon.
           <span
             className={cn(
-              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2.5 [@media(pointer:coarse)]:right-2.5',
+              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2 [@media(pointer:coarse)]:right-2',
               syncDotClass(syncState, true),
             )}
             data-testid="mobile-sync-status-dot"

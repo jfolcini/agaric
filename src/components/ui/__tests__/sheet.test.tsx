@@ -6,7 +6,7 @@
  *  - ref forwarding for styled sub-components (Header, Footer)
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -23,6 +23,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { DEFAULT_DISMISS_THRESHOLD } from '@/hooks/usePullToDismiss'
 
 const BOTTOM_CAP = 'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]'
 
@@ -146,7 +147,10 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'sm:p-6')
+    // `md`, where `useIsMobile` stops picking sheets, not `sm`: from 640 to
+    // 767 px a sheet's text would sit 24 px in against a 16 px view gutter.
+    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'md:p-6')
+    expect(dialog).not.toHaveClass('sm:p-6')
   })
 
   it.each([
@@ -184,7 +188,9 @@ describe('SheetContent base classes', () => {
     expect(dialog).not.toHaveClass(BOTTOM_CAP)
   })
 
-  it.each(['top', 'right', 'bottom', 'left'] as const)('%s sheets have square corners', (side) => {
+  // Only a bottom sheet has a free edge on screen: it takes the modal radius
+  // there (docs/UX.md). Edge-to-edge sheets stay square.
+  it.each(['top', 'right', 'left'] as const)('%s sheets have square corners', (side) => {
     render(
       <Sheet open>
         <SheetContent side={side} aria-describedby={undefined}>
@@ -195,6 +201,20 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     expect(screen.getByRole('dialog').className).not.toMatch(/\brounded/)
+  })
+
+  it('a bottom sheet rounds its top corners only', () => {
+    render(
+      <Sheet open>
+        <SheetContent side="bottom" aria-describedby={undefined}>
+          <SheetHeader>
+            <SheetTitle>Bottom Sheet</SheetTitle>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>,
+    )
+    const rounding = screen.getByRole('dialog').className.match(/\brounded\S*/g)
+    expect(rounding).toEqual(['rounded-t-xl'])
   })
 
   // Both side-anchored arms, not just one: they are `h-full` already, so the
@@ -221,6 +241,83 @@ describe('SheetContent base classes', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Drag handle — every bottom sheet closes on a pull down from its handle
+// ---------------------------------------------------------------------------
+
+function BottomSheet({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  return (
+    <Sheet open onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" aria-describedby={undefined}>
+        <SheetTitle>Pull me</SheetTitle>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function dragHandle(): HTMLElement {
+  const handle = screen
+    .getByRole('dialog')
+    .querySelector<HTMLElement>('[data-slot="sheet-drag-handle"]')
+  if (handle === null) throw new Error('no drag handle')
+  return handle
+}
+
+describe('SheetContent drag handle', () => {
+  it('a bottom sheet opens on a handle hidden from assistive tech', async () => {
+    const { container } = render(<BottomSheet onOpenChange={vi.fn()} />)
+    const handle = dragHandle()
+    expect(handle).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByRole('dialog').firstElementChild).toBe(handle)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it.each(['top', 'right', 'left'] as const)('a %s sheet has no handle', (side) => {
+    render(
+      <Sheet open onOpenChange={vi.fn()}>
+        <SheetContent side={side} aria-describedby={undefined}>
+          <SheetTitle>{side}</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    )
+    expect(screen.getByRole('dialog').querySelector('[data-slot="sheet-drag-handle"]')).toBeNull()
+  })
+
+  it('the sheet follows a pull, and a pull past the threshold closes it', () => {
+    const onOpenChange = vi.fn()
+    render(<BottomSheet onOpenChange={onOpenChange} />)
+    const handle = dragHandle()
+    fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientY: 140, pointerId: 1 })
+    expect(screen.getByRole('dialog').style.transform).toBe('translateY(40px)')
+    fireEvent.pointerMove(handle, { clientY: 100 + DEFAULT_DISMISS_THRESHOLD + 1, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientY: 100 + DEFAULT_DISMISS_THRESHOLD + 1, pointerId: 1 })
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+  })
+
+  it('a short pull springs back and leaves the sheet open', () => {
+    const onOpenChange = vi.fn()
+    render(<BottomSheet onOpenChange={onOpenChange} />)
+    const handle = dragHandle()
+    fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientY: 130, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientY: 130, pointerId: 1 })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog').style.transform).toBe('')
+  })
+
+  it('a pull on the body does not move the sheet', () => {
+    const onOpenChange = vi.fn()
+    render(<BottomSheet onOpenChange={onOpenChange} />)
+    const title = screen.getByText('Pull me')
+    fireEvent.pointerDown(title, { clientY: 100, pointerId: 1 })
+    fireEvent.pointerMove(title, { clientY: 300, pointerId: 1 })
+    fireEvent.pointerUp(title, { clientY: 300, pointerId: 1 })
+    expect(screen.getByRole('dialog').style.transform).toBe('')
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // SheetBody — scrollable slot
 // ---------------------------------------------------------------------------
 
@@ -244,7 +341,7 @@ describe('SheetBody', () => {
     // assert the height contract.
     const scrollRoot = child.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'sm:-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'md:-mx-6')
   })
 
   it('viewport carries the shared gutter and Radix width workaround classes', () => {
@@ -263,7 +360,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-4', 'sm:px-6', '[&>div]:!block')
+    expect(viewport).toHaveClass('px-4', 'md:px-6', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {

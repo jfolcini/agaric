@@ -136,7 +136,7 @@ export function DiagramViewer({
           onClick={stop}
           data-testid="diagram-expand"
         >
-          <Expand className="h-4 w-4" />
+          <Expand />
         </IconButton>
       </DialogTrigger>
       <DialogContent
