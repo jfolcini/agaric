@@ -284,6 +284,8 @@ pub async fn list_page_history(
 /// tie group at a time
 /// (`LAST 2 TERMS OF ORDER BY`). `pagination::tests::global_history_keyset_5424`
 /// pins both plans, and keeps the pre-#5424 query as the oracle for the rows.
+/// The first page names the index: from SQLite 3.54 the planner otherwise
+/// scans the whole log and sorts it, even with `ANALYZE` statistics.
 async fn list_global_history(
     pool: &SqlitePool,
     op_type_filter: Option<&str>,
@@ -311,7 +313,7 @@ async fn global_history_first_page(
         "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
                 ol.is_replicated AS \"is_replicated!: bool\", \
                 CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
-         FROM op_log ol \
+         FROM op_log ol INDEXED BY idx_op_log_created \
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
                 EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \

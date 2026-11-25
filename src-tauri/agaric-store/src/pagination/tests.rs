@@ -6355,7 +6355,7 @@ mod global_history_keyset_5424 {
     const FIRST_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
             ol.is_replicated AS \"is_replicated!: bool\", \
             CASE WHEN ol.origin LIKE 'agent:%' THEN substr(ol.origin, 7) END AS \"agent?: String\" \
-     FROM op_log ol \
+     FROM op_log ol INDEXED BY idx_op_log_created \
      WHERE (?1 IS NULL OR ol.op_type = ?1) \
        AND (?2 IS NULL OR ( \
             EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
