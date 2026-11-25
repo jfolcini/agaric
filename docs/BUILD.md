@@ -273,7 +273,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | D2 | `cargo test --doc --workspace` | Only if Rust changed |
 | E | `cargo sqlx prepare --workspace --check` against `src-tauri/.sqlx` | Only if the range can have changed a query (`scripts/lib/sqlx-query-range.mjs`): a `.rs` hunk overlapping a query macro, a `.sql`, `.sqlx/`, Cargo manifest or `sqlx.toml` change, or a `macro_rules!` wrapping a query macro; force with `PRE_PUSH_SQLX_CHECK=1` |
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
-| G | `cargo audit` + `npm audit signatures` (warn-only here; both block in CI) | Always |
+| G | `cargo audit` + `npm audit signatures` (warn-only here; CI blocks on them when a dependency manifest changes, and on every run that is not a PR) | Always |
 
 **Playwright runs only the few specs the range can affect** (Phase C2, `just e2e-related --run` for uncommitted work): a selection that is the whole lane, or more than six specs, prints "CI runs the whole lane" and runs nothing, so run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --workspace --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
 
