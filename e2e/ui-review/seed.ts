@@ -9,7 +9,7 @@ type Invoke = (cmd: string, args?: unknown) => Promise<unknown>
 /**
  * Data for the tour, on top of the mock's seed, written through the app's own
  * commands: "Product Roadmap Q1" holds headings, a nested list, every task
- * state, P1–P3, due, overdue and scheduled dates, tags, properties, a callout,
+ * state, P1–P3, due, overdue, scheduled and past-scheduled dates, tags, properties, a callout,
  * a quote, a table, code, math and a long paragraph; a dozen pages give the
  * lists volume (namespaces included), and two trashed pages fill the Trash.
  */
@@ -107,6 +107,7 @@ export async function seedShowcase(page: Page): Promise<void> {
         scheduled: 0,
         tag: tagDesign,
       })
+      await task(roadmap, 'Write the onboarding checklist', { state: 'TODO', scheduled: -2 })
       await task(roadmap, 'Pick the accent colour', { state: 'DONE' })
       await task(roadmap, 'Replace the custom date picker', { state: 'CANCELLED' })
       await task(roadmap, 'Fix the overdue badge colour', {
