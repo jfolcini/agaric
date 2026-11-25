@@ -1035,7 +1035,7 @@ jobs:
         run: bash scripts/pins.sh github-output
 
       - name: Install cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
@@ -1287,7 +1287,7 @@ jobs:
         # PINNED (#3393): the shard counts above are derived from per-mutant
         # costs measured under 27.1.0, and shards must agree on how the mutant
         # list is divided — a floating version can change either.
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-mutants@${{ steps.pins.outputs.cargo_mutants }},cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
@@ -3152,7 +3152,7 @@ jobs:
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the
         # whole suite; zizmor/taplo/typos/sqruff/shellcheck/shfmt are invoked by prek hooks.
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: prek@${{ steps.pins.outputs.prek }},zizmor@${{ steps.pins.outputs.zizmor }},taplo-cli@${{ steps.pins.outputs.taplo_cli }},typos-cli@${{ steps.pins.outputs.typos_cli }},shellcheck@${{ steps.pins.outputs.shellcheck }},shfmt@${{ steps.pins.outputs.shfmt }}
@@ -3163,7 +3163,7 @@ jobs:
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete/cargo-audit are invoked by prek Rust hooks.
         # No cargo-nextest: no prek hook runs it.
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-deny@${{ steps.pins.outputs.cargo_deny }},cargo-machete@${{ steps.pins.outputs.cargo_machete }},cargo-audit@${{ steps.pins.outputs.cargo_audit }}
@@ -3366,7 +3366,7 @@ jobs:
         run: bash scripts/pins.sh github-output
 
       - name: Install cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           # Versions: pins.txt, read by the "Read pins.txt" step.
           tool: cargo-nextest@${{ steps.pins.outputs.cargo_nextest }}
