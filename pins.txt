@@ -17,9 +17,16 @@
 #   lock:<crate>     the version of <crate> in src-tauri/Cargo.lock
 #   temurin:<major>  newest Temurin JDK release of that major
 #   android-emulator newest stable-channel emulator build
+#   android-sdk:<pkg>;<major>   newest stable <pkg> release of that major
+#   tauri-bundler:<tool>   the name tauri-bundler's prepare_tools fetches at the
+#                    Tauri CLI tag package-lock.json resolves; any difference
+#                    is stale
 #   rust-nightly     today's nightly; flagged once the pin is 28 days old
-#   -                not checked: the version is fixed by another tool (Tauri)
-#                    or upstream publishes no usable release line
+# Every pin names an upstream (scripts/pins.test.mjs). Left floating on
+# purpose: runner images, apt and brew packages; the Android platform and
+# emulator system image, which follow the app's target and test SDK levels
+# (`platforms;android-<N>`, `api-level`), not a release line; and the Gradle
+# files `cargo tauri android init` generates.
 # Platforms: linux-x86_64 linux-aarch64 darwin-x86_64 darwin-arm64 windows-x86_64
 
 # --- Hook and CI tools (taiki-e/install-action in CI, setup-hooks.sh locally) ---
@@ -93,14 +100,16 @@ asset   syft windows-x86_64  0a10e03ffd124c304fd7e7491262dba2e5f68eb12378b106d75
 # tauri-bundler's AppImage tools. The first two versions are fixed by the
 # Tauri CLI (`prepare_tools` in tauri-bundler's linux/appimage/linuxdeploy.rs);
 # the plugin's only release line besides the rolling `continuous` is tagged.
-version apprun        old      -
+version apprun        old      tauri-bundler:apprun
 asset   apprun linux-x86_64  f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f https://github.com/tauri-apps/binary-releases/releases/download/apprun-{version}/AppRun-x86_64
-version linuxdeploy   07333c6  -
+version linuxdeploy   07333c6  tauri-bundler:linuxdeploy
 asset   linuxdeploy linux-x86_64  36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62 https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-{version}/linuxdeploy-x86_64.AppImage
-version linuxdeploy-plugin-appimage 1-alpha-20250213-1 -
+version linuxdeploy-plugin-appimage 1-alpha-20250213-1 github:linuxdeploy/linuxdeploy-plugin-appimage
 asset   linuxdeploy-plugin-appimage linux-x86_64  992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/{version}/linuxdeploy-plugin-appimage-x86_64.AppImage
 
 # --- Toolchains whose installers take no hash (exact version is the pin) ---
 version temurin       17.0.21+9   temurin:17
 version android-emulator 16970787 android-emulator
+version android-ndk   27.2.12479018 android-sdk:ndk;27
+version android-build-tools 36.0.0 android-sdk:build-tools;36
 version rust-nightly  2026-11-10  rust-nightly

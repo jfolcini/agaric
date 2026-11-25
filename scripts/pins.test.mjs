@@ -10,10 +10,12 @@ import { describe, it } from 'node:test'
 // even when the test fails, so there is nothing to await.
 
 import {
+  FILE_PINS,
   UPSTREAMS,
   bumpText,
   compareVersions,
   expandUrl,
+  filePinVersion,
   parsePins,
   staleMarkdown,
   staleRows,
@@ -27,7 +29,7 @@ const FIXTURE = `# comment kept
 version tool 1.0.0 crate:tool
 asset   tool linux-x86_64 ${sha('a')} https://example.com/v{version}/tool-linux.tgz
 asset   tool darwin-arm64 ${sha('b')} https://example.com/v{version}/tool-mac.tgz
-version other 2.0.0 -
+version other 2.0.0 crate:other
 asset   other any ${sha('c')} https://example.com/other-{version}.sh
 `
 
@@ -47,20 +49,27 @@ void describe('parsePins', () => {
   void it('rejects an asset with no version line, a bad sha256 and a non-https url', () => {
     assert.throws(() => parsePins(`asset x any ${sha('a')} https://e.com/x`), /has no version line/)
     assert.throws(
-      () => parsePins(`version x 1 -\nasset x any abc https://e.com/x`),
+      () => parsePins(`version x 1 crate:x\nasset x any abc https://e.com/x`),
       /is not a sha256/,
     )
     assert.throws(
-      () => parsePins(`version x 1 -\nasset x any ${sha('a')} http://e.com/x`),
+      () => parsePins(`version x 1 crate:x\nasset x any ${sha('a')} http://e.com/x`),
       /is not https/,
     )
-    assert.throws(() => parsePins('version x 1 -\nversion x 2 -'), /two version lines/)
+    assert.throws(() => parsePins('version x 1 crate:x\nversion x 2 crate:x'), /two version lines/)
     assert.throws(() => parsePins('pin x 1 -'), /unknown line kind/)
   })
 
   void it('accepts the real pins.txt', () => {
     const { versions, assets } = parsePins(PINS)
     assert.ok(versions.size > 0 && assets.length > 0)
+  })
+
+  void it('gives every real pin an upstream the stale lane can read', () => {
+    const { versions } = parsePins(PINS)
+    for (const p of [...versions.values(), ...FILE_PINS]) {
+      assert.ok(p.upstream.split(':')[0] in UPSTREAMS, `${p.name}: upstream ${p.upstream}`)
+    }
   })
 })
 
@@ -165,6 +174,51 @@ void describe('upstream readers', () => {
     assert.equal((await UPSTREAMS['android-emulator']('', http)).version, '123')
   })
 
+  void it('tauri-bundler reads the AppImage tool names prepare_tools pins at the Tauri CLI tag', async () => {
+    const packageLock = { packages: { 'node_modules/@tauri-apps/cli': { version: '2.12.4' } } }
+    const http = fakeHttp({
+      'tauri/@tauri-apps/cli-v2.12.4/crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs':
+        '  const LINUXDEPLOY_COMMIT_HASH: &str = "abc1234";\n' +
+        '  "https://github.com/tauri-apps/binary-releases/releases/download/apprun-new/AppRun-{arch}"\n',
+    })
+    assert.deepEqual(await UPSTREAMS['tauri-bundler']('linuxdeploy', http, { packageLock }), {
+      version: 'abc1234',
+      exact: true,
+    })
+    assert.equal((await UPSTREAMS['tauri-bundler']('apprun', http, { packageLock })).version, 'new')
+    await assert.rejects(UPSTREAMS['tauri-bundler']('nope', http, { packageLock }), /nope/)
+  })
+
+  void it('android-sdk takes the newest stable release of the package line, skipping release candidates', async () => {
+    const pkg = (path, channel = 0) =>
+      `<remotePackage path="${path}"><channelRef ref="channel-${channel}"/></remotePackage>`
+    const http = fakeHttp({
+      'repository2-3.xml':
+        pkg('ndk;28.0.1') +
+        pkg('ndk;27.3.1375', 2) +
+        pkg('ndk;27.2.1247') +
+        pkg('ndk;27.10.1') +
+        pkg('build-tools;36.2.0-rc1') +
+        pkg('build-tools;36.1.0'),
+    })
+    assert.equal((await UPSTREAMS['android-sdk']('ndk;27', http)).version, '27.10.1')
+    assert.equal((await UPSTREAMS['android-sdk']('build-tools;36', http)).version, '36.1.0')
+    await assert.rejects(UPSTREAMS['android-sdk']('ndk;26', http), /no stable ndk;26/)
+  })
+
+  void it('pypi reads the newest version and its upload time', async () => {
+    const http = fakeHttp({
+      'pypi.org/pypi/tool/json': {
+        info: { version: '2.4.0' },
+        releases: { '2.4.0': [{ upload_time_iso_8601: '2026-10-01T00:00:00Z' }] },
+      },
+    })
+    assert.deepEqual(await UPSTREAMS.pypi('tool', http), {
+      version: '2.4.0',
+      publishedAt: '2026-10-01T00:00:00Z',
+    })
+  })
+
   void it('lock reads the highest version of the crate in Cargo.lock', () => {
     const cargoLock = 'name = "sqlx"\nversion = "0.8.6"\n\nname = "sqlx"\nversion = "0.9.0"\n'
     assert.equal(UPSTREAMS.lock('sqlx', null, { cargoLock }).version, '0.9.0')
@@ -184,21 +238,26 @@ void describe('staleRows', () => {
     },
     'crates/same': { crate: { max_stable_version: '1.0.0' }, versions: [] },
     'nightly-date.txt': '2026-11-17\n',
+    'cli-v2.0.0/crates/tauri-bundler': 'const LINUXDEPLOY_COMMIT_HASH: &str = "0abc";',
   })
+  const ctx = {
+    packageLock: { packages: { 'node_modules/@tauri-apps/cli': { version: '2.0.0' } } },
+  }
   void it('flags a release past the cooldown, holds one inside it, and fails closed on errors', async () => {
     const rows = await staleRows(
       [
         { name: 'old', version: '1.0.0', upstream: 'crate:old' },
         { name: 'fresh', version: '1.0.0', upstream: 'crate:fresh' },
         { name: 'same', version: '1.0.0', upstream: 'crate:same' },
-        { name: 'tauri', version: 'x', upstream: '-' },
+        { name: 'ld-moved', version: '9fff', upstream: 'tauri-bundler:linuxdeploy' },
+        { name: 'ld-same', version: '0abc', upstream: 'tauri-bundler:linuxdeploy' },
         { name: 'broken', version: '1', upstream: 'crate:missing' },
         { name: 'bogus', version: '1', upstream: 'nope:x' },
         { name: 'nightly-old', version: '2026-10-01', upstream: 'rust-nightly' },
         { name: 'nightly-new', version: '2026-11-10', upstream: 'rust-nightly' },
       ],
       http,
-      { now: NOW },
+      { now: NOW, ctx },
     )
     assert.deepEqual(
       rows.map((r) => [r.name, r.status]),
@@ -206,14 +265,50 @@ void describe('staleRows', () => {
         ['old', 'stale'],
         ['fresh', 'cooling'],
         ['same', 'current'],
-        ['tauri', 'unchecked'],
+        ['ld-moved', 'stale'],
+        ['ld-same', 'current'],
         ['broken', 'error'],
         ['bogus', 'error'],
         ['nightly-old', 'stale'],
         ['nightly-new', 'current'],
       ],
     )
-    assert.match(staleMarkdown(rows), /Pins behind upstream: 4/)
+    const md = staleMarkdown(rows)
+    assert.match(md, /Pins behind upstream: 5/)
+    assert.match(md, /^just pin-bump old 2\.0\.0$/m)
+    assert.match(md, /^just pin-bump ld-moved 0abc$/m)
+    assert.doesNotMatch(md, /pin-bump (fresh|same|ld-same|broken) /)
+  })
+
+  void it('names the file to edit for a stale pin pin-bump cannot write', () => {
+    const md = staleMarkdown([
+      { name: 'rust', pinned: '1.0.0', latest: '1.1.0', upstream: 'rust-stable', status: 'stale' },
+    ])
+    assert.match(md, /^# rust: edit rust-toolchain\.toml and its lockstep copies to 1\.1\.0$/m)
+  })
+})
+
+void describe('file pins', () => {
+  void it('read the version each tool reads natively', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pins-file-'))
+    try {
+      writeFileSync(join(dir, '.nvmrc'), '24.1.0\n')
+      writeFileSync(join(dir, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.90.0"\n')
+      writeFileSync(
+        join(dir, '.mcp.json'),
+        '{"mcpServers":{"g":{"command":"uvx","args":["code-review-graph@2.3.8","serve"]}}}',
+      )
+      assert.deepEqual(
+        FILE_PINS.map((p) => [p.name, filePinVersion(p, dir)]),
+        [
+          ['node', '24.1.0'],
+          ['rust', '1.90.0'],
+          ['code-review-graph', '2.3.8'],
+        ],
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -294,7 +389,7 @@ void describe('workflows read versions from pins.txt', () => {
       }
     }
   })
-  void it('hard-codes no version of a pinned tool in a `tool:` list, java-version or emulator-build', () => {
+  void it('hard-codes no version of a pinned tool in a `tool:` list, java-version, emulator-build or Android SDK package', () => {
     for (const f of files) {
       for (const line of readFileSync(join(ROOT, f), 'utf8').split('\n')) {
         const tool = line.match(/^\s*tool:\s*(.*)$/)?.[1]
@@ -303,7 +398,7 @@ void describe('workflows read versions from pins.txt', () => {
           if (versions.has(name))
             assert.match(version ?? '', /steps\.pins\.outputs/, `${f}: ${entry.trim()}`)
         }
-        if (/^\s*(java-version|emulator-build):/.test(line))
+        if (/^\s*(java-version|emulator-build):|\b(ndk|build-tools)[;/]\d/.test(line))
           assert.match(line, /steps\.pins\.outputs/, `${f}: ${line.trim()}`)
       }
     }

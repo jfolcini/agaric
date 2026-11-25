@@ -315,8 +315,8 @@ jobs:
           log-accepted-android-sdk-licenses: false
           packages: >
             platforms;android-36
-            build-tools;36.0.0
-            ndk;27.2.12479018
+            build-tools;${{ steps.pins.outputs.android_build_tools }}
+            ndk;${{ steps.pins.outputs.android_ndk }}
 
       - name: Install Node.js
         uses: ./.github/actions/setup-node
@@ -378,7 +378,7 @@ jobs:
           fi
           rm -rf "$OVERRIDES"
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
         run: bash scripts/patch-android-build.sh
@@ -389,7 +389,7 @@ jobs:
           set -o pipefail
           npm run tauri -- android build --target x86_64 --debug 2>&1 | tee "$RUNNER_TEMP/android-debug.log"
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Regenerate Gradle verification metadata (verification failed)
         # A Tauri, plugin or Android toolchain bump changes the Gradle
@@ -410,7 +410,7 @@ jobs:
           bash scripts/update-gradle-verification.sh
           echo "regenerated=true" >> "$GITHUB_OUTPUT"
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       - name: Upload regenerated Gradle verification metadata
         if: failure() && steps.regen.outputs.regenerated == 'true'
@@ -472,7 +472,7 @@ jobs:
       - name: Build Android APK (aarch64 release, unsigned)
         run: npm run tauri -- android build --target aarch64
         env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
 
       # Same assertion for the ABI that actually ships, placed before the
       # upload so a misaligned APK never becomes an artifact.

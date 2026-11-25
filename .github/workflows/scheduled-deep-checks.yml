@@ -107,12 +107,13 @@ name: Scheduled deep checks
 #                    `release.yml`). Only a release build reproduces
 #                    `panic = "abort"`, which 0.15.0 crashed on while CI was
 #                    green.
-#   stale-pins     — pins.txt, .nvmrc and rust-toolchain.toml against their
-#                    upstreams (`node scripts/pins.mjs stale`). Dependabot
-#                    cannot see these pins, so this is how one that fell
-#                    behind, a tool's security release included, gets noticed.
-#                    Red: a newer release past the 7-day cooldown, or an
-#                    upstream that could not be read. Weekly only.
+#   stale-pins     — pins.txt, .nvmrc, rust-toolchain.toml and .mcp.json
+#                    against their upstreams (`node scripts/pins.mjs stale`).
+#                    Dependabot cannot see these pins, so this is how one that
+#                    fell behind, a tool's security release included, gets
+#                    noticed. Red: a newer release past the 7-day cooldown, or
+#                    an upstream that could not be read; the summary ends with
+#                    the `just pin-bump` line for each stale pin. Weekly only.
 #   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
