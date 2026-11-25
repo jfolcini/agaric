@@ -40,6 +40,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font);
   padding-left: max(16px, env(safe-area-inset-left, 0px));
@@ -149,7 +150,9 @@ function buttons() {
 }
 
 function visible(set) {
-  return DATA.entries.filter((e) => e.set === set && (state.status === 'all' || e.status === state.status))
+  const list = DATA.entries.filter((e) => e.set === set && (state.status === 'all' || e.status === state.status))
+  // Changed shots: the biggest change first.
+  return state.status === 'changed' ? list.toSorted((a, b) => b.ratio - a.ratio) : list
 }
 
 function thumb(src, caption) {
@@ -190,7 +193,8 @@ function open(i, from) { opener = from; state.index = i; $('viewer').hidden = fa
 function close() { $('viewer').hidden = true; opener?.focus() }
 function show() {
   const e = state.list[state.index]
-  const has = { side: Boolean(e.img.before && e.img.after), before: Boolean(e.img.before), after: Boolean(e.img.after), diff: Boolean(e.img.diff) }
+  const has = { side: Boolean(e.img.before && e.img.after), before: Boolean(e.img.before), after: Boolean(e.img.after), diff: Boolean(e.img.diff || (e.img.before && e.img.after)) }
+  if (state.mode === 'diff' && !e.img.diff && has.diff) { drawDiff(e).then(show, (err) => { $('vnote').textContent = `No diff: ${err}` }); return }
   if (!has[state.mode]) state.mode = has.side ? 'side' : has.after ? 'after' : 'before'
   $('vtitle').textContent = `${state.index + 1} / ${state.list.length} · ${e.set} · ${e.scene} · ${e.name}${e.ratio > 0 ? ` · ${pct(e.ratio)} changed` : ''}`
   $('vnote').textContent = [e.failed && `Failed: ${e.failed}`, e.baseFailed && `Failed on the base: ${e.baseFailed}`].filter(Boolean).join('\n')
@@ -202,6 +206,28 @@ function show() {
   }))
   const figure = (kind) => el('figure', {}, el('img', { src: e.img[kind], alt: `${e.name}, ${kind}` }), el('figcaption', { textContent: kind }))
   $('stage').replaceChildren(...(state.mode === 'side' ? [figure('before'), figure('after')] : e.img[state.mode] ? [figure(state.mode)] : []))
+}
+// A copy of the report without its diff files (a shared one) draws the diff
+// here; a page opened from disk cannot read its images' pixels, so the
+// generator writes them.
+async function drawDiff(e) {
+  const load = (src) => new Promise((done, fail) => { const img = new Image(); img.onload = () => done(img); img.onerror = () => fail(new Error(src)); img.src = src })
+  const [a, b] = await Promise.all([load(e.img.before), load(e.img.after)])
+  const canvas = Object.assign(document.createElement('canvas'), { width: b.naturalWidth, height: b.naturalHeight })
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  ctx.drawImage(a, 0, 0)
+  const pa = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+  ctx.drawImage(b, 0, 0)
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const pb = frame.data
+  // Higher than the generator's 24: these are lossy WebP copies.
+  for (let i = 0; i < pb.length; i += 4) {
+    const delta = Math.max(Math.abs(pa[i] - pb[i]), Math.abs(pa[i + 1] - pb[i + 1]), Math.abs(pa[i + 2] - pb[i + 2]))
+    if (delta > 40) pb.set([230, 30, 40, 255], i)
+    else { const faded = 255 - (255 - (pb[i] + pb[i + 1] + pb[i + 2]) / 3) * 0.25; pb.set([faded, faded, faded, 255], i) }
+  }
+  ctx.putImageData(frame, 0, 0)
+  e.img.diff = canvas.toDataURL('image/png')
 }
 function step(d) { state.index = (state.index + d + state.list.length) % state.list.length; show() }
 $('prev').onclick = () => step(-1)
