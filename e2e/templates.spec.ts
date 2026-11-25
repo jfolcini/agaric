@@ -2,11 +2,13 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   activeRoleDialog,
+  chooseSelectOption,
   expect,
   focusBlock,
   ipc,
   navigateToView,
   openPage,
+  openSettingsTab,
   test,
   typeSlashCommand,
   waitForBoot,
@@ -331,10 +333,22 @@ test.describe('Journal template toggle @editor @pages', () => {
 })
 
 // ===========================================================================
-// 7. Journal template from the journal (#5373)
+// 7. Journal template from Settings › General (#5373, #7040)
 // ===========================================================================
 
-test.describe('Journal template button @editor @pages', () => {
+/** Pick `name` as the space's journal template in Settings › General, then open it. */
+async function pickJournalTemplate(
+  page: import('@playwright/test').Page,
+  name: string,
+): Promise<void> {
+  await navigateToView(page, 'Settings')
+  await openSettingsTab(page, 'General')
+  await chooseSelectOption(page, 'Journal template', name)
+  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText(name)
+}
+
+test.describe('Journal template setting @editor @pages @settings', () => {
   const SPACE_SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
   const BLOCK_TMPL_ATTENDEES = '0000000000000000000B10CK20'
   const NESTED = 'Nested under attendees'
@@ -349,7 +363,7 @@ test.describe('Journal template button @editor @pages', () => {
     await waitForBoot(page)
   })
 
-  test('a template page picked from the journal seeds a new day with its nested blocks', async ({
+  test('a template page picked in Settings seeds a new day with its nested blocks', async ({
     page,
   }) => {
     await ipc(page, 'create_block', {
@@ -361,14 +375,7 @@ test.describe('Journal template button @editor @pages', () => {
       blockId: null,
     })
 
-    await navigateToView(page, 'Journal')
-    await page.getByRole('button', { name: 'Configure journal template' }).click()
-    await expect(activePopover(page).getByRole('menuitem')).toHaveText([
-      'Meeting Notes Template',
-      'New journal template',
-    ])
-    await activePopover(page).getByRole('menuitem', { name: 'Meeting Notes Template' }).click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
+    await pickJournalTemplate(page, 'Meeting Notes Template')
 
     await navigateToView(page, 'Journal')
     await page.getByRole('button', { name: 'Next day' }).click()
@@ -538,10 +545,7 @@ test.describe('The recording placeholder in a journal day @editor @pages @journa
       blockId: null,
     })
 
-    await navigateToView(page, 'Journal')
-    await page.getByRole('button', { name: 'Configure journal template' }).click()
-    await activePopover(page).getByRole('menuitem', { name: 'Meeting Notes Template' }).click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
+    await pickJournalTemplate(page, 'Meeting Notes Template')
 
     await navigateToView(page, 'Journal')
     await page.getByRole('button', { name: 'Next day' }).click()
