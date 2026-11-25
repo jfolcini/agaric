@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import { activePopover, expect, navigateToView, openPage, test, waitForBoot } from './helpers'
 
@@ -11,7 +11,7 @@ import { activePopover, expect, navigateToView, openPage, test, waitForBoot } fr
  *
  * Seed data (tauri-mock): "Getting Started" opens with `BLOCK_GS_1` (below);
  * "Meeting Notes Template" is a page template whose first block is
- * "## Attendees".
+ * "## Attendees", which the preview shows rendered, without its Markdown.
  */
 
 const GS_FIRST_BLOCK = 'Welcome to Agaric! This is your personal knowledge base.'
@@ -44,6 +44,34 @@ test('lists a journal template with its first block and the journal badge @edito
   await expect(journal.getByText('Journal template', { exact: true })).toBeVisible()
 
   const meeting = templateRow(page, 'Meeting Notes Template')
-  await expect(meeting.getByText('## Attendees', { exact: true })).toBeVisible()
+  await expect(meeting.getByText('Attendees', { exact: true })).toBeVisible()
+  await expect(meeting).not.toContainText('##')
   await expect(meeting.getByText('Page template', { exact: true })).toBeVisible()
+})
+
+// The Create button sat under the input at full width on a phone (#7040).
+test.describe('Templates view on a phone @pages @mobile', () => {
+  const pixel = devices['Pixel 7']
+  test.use({
+    viewport: { width: 412, height: 915 },
+    hasTouch: true,
+    isMobile: true,
+    userAgent: pixel.userAgent,
+  })
+
+  test('the Create template button sits on the name input row', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Templates')
+    const input = page.getByPlaceholder('New template name...')
+    const create = page.getByRole('button', { name: 'Create template' })
+    await expect(create).toBeDisabled()
+    await input.fill('Standup')
+    await expect(create).toBeEnabled()
+    const [inputBox, createBox] = await Promise.all([input.boundingBox(), create.boundingBox()])
+    if (!inputBox || !createBox) throw new Error('the create form is not laid out')
+    expect(
+      Math.abs(createBox.y + createBox.height / 2 - (inputBox.y + inputBox.height / 2)),
+    ).toBeLessThanOrEqual(1)
+    expect(createBox.x).toBeGreaterThanOrEqual(inputBox.x + inputBox.width)
+  })
 })

@@ -90,8 +90,6 @@ export const references: Record<string, string> = {
   'unlinkedRefs.loading': 'Chargement…',
   'unlinkedRefs.loadingDots': 'Chargement...',
   'unlinkedRefs.loadFailed': 'Échec du chargement des références non liées',
-  'unlinkedRefs.retry': 'Réessayer',
-  'unlinkedRefs.retryLabel': 'Réessayer de charger les références non liées',
   'unlinkedRefs.linkFailed': 'Impossible de lier la référence',
   'unlinkedRefs.noResults': 'Aucune référence non liée trouvée.',
   'unlinkedRefs.untitled': 'Sans titre',

@@ -28,7 +28,6 @@
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 
 import { pageSortWireFor, type SortOption } from '@/hooks/usePageBrowserSort'
 import { usePageDelete } from '@/hooks/usePageDelete'
@@ -54,8 +53,8 @@ import { ValidationCode } from '@/lib/search-query/validation-codes'
  * cursor. The cursor format bumped from v1 → v2 alongside the new sort
  * modes, so a session that started before the new build emitted a stale
  * cursor will round-trip safely on the next page load. If the cursorless
- * retry also fails, the original error propagates and
- * `usePaginatedQuery`'s `onError` toast fires (existing behaviour).
+ * retry also fails, the original error propagates to the query's error
+ * state, which `PageBrowser` paints as its error card.
  */
 async function withCursorRecovery<T>(
   call: (cursor?: string) => Promise<T>,
@@ -76,7 +75,7 @@ async function withCursorRecovery<T>(
  * with an `InvalidFilter`-coded validation error (#2251 — a structured
  * `code` field, formerly an `InvalidFilter:` message prefix). Without
  * explicit recognition this falls through to the generic
- * `t('pageBrowser.loadFailed')` toast, which misleads the user into
+ * `pageBrowser.loadFailed` error card, which misleads the user into
  * thinking the list itself failed to load rather than that a filter chip
  * is invalid.
  */
@@ -114,8 +113,9 @@ interface UsePageBrowserDataResult {
   pages: PageWithMetadataRow[]
   loading: boolean
   /**
-   * #3306 — the last load SETTLED IN FAILURE and there is nothing cached to
-   * fall back on.
+   * #3306 — the last load SETTLED IN FAILURE. `PageBrowser` paints it as the
+   * error card, above any rows still cached, and nothing else reports it: no
+   * toast (#7040). An invalid filter is not one: it toasts its own reason.
    *
    * The hook previously exposed only `pages` and `loading`, so a failed
    * `list_pages_with_metadata` produced exactly the same observable state as an
@@ -124,10 +124,9 @@ interface UsePageBrowserDataResult {
    * 5,000 pages was told their vault was empty and invited to start over, the
    * only error signal being a ~4s toast.
    *
-   * Gated on `!isFetching` for the same reason the toast is: a failure
-   * invalidates the query, so a remount goes straight into `isFetching`, and a
-   * stale cached failure must not paint the error card before the fresh fetch
-   * settles (#2639).
+   * Gated on `!isFetching`: a failure invalidates the query, so a remount goes
+   * straight into `isFetching`, and a stale cached failure must not paint the
+   * error card before the fresh fetch settles (#2639).
    */
   isError: boolean
   hasMore: boolean
@@ -146,8 +145,6 @@ export function usePageBrowserData({
   wireFilters,
   wireFiltersKey,
 }: UsePageBrowserDataParams): UsePageBrowserDataResult {
-  const { t } = useTranslation()
-
   // The query key IS the (space, sort, filters) tuple the old `queryFn`
   // `useCallback` closed over — the stale-guard. `wireFilters` is `useMemo`'d
   // on `[filters]`, so its identity only changes on a real chip add/remove;
@@ -167,7 +164,6 @@ export function usePageBrowserData({
     isFetching,
     isError,
     error,
-    errorUpdatedAt,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -207,10 +203,9 @@ export function usePageBrowserData({
           // E18 — a malformed/disallowed compound filter rejects with an
           // `InvalidFilter`-coded error. Surface a specific toast (the
           // offending filter, not the list, is the problem) and re-throw a
-          // cancellation-shaped error so the `onError` effect below swallows
-          // it silently instead of also firing the generic `loadFailed`
-          // toast (double-toast). The specific toast already told the user
-          // what's wrong.
+          // cancellation-shaped error, which `isError` leaves out, so the
+          // generic `loadFailed` card does not report it a second time. The
+          // specific toast already told the user what's wrong.
           if (isInvalidFilterError(err)) {
             notify.error(i18nT('pageBrowser.filter.invalidFilter'))
             const suppressed: TypedAppError = { kind: 'cancelled', message: err.message }
@@ -320,25 +315,6 @@ export function usePageBrowserData({
   // whenever that cursor page's required null was the final response.
   const firstPageTotal = data?.pages[0]?.total_count
   const totalCount = firstPageTotal == null ? undefined : firstPageTotal
-
-  // Reproduce the old `onError: t('pageBrowser.loadFailed')` toast.
-  // usePaginatedQuery called `notify.error` from its catch on EACH non-cancelled
-  // failed load. TanStack keeps `isError` latched across consecutive same-key
-  // failures, so `errorUpdatedAt` (which advances per failure) is the
-  // fire-once-per-load signal. A cancellation-shaped rejection (the suppressed
-  // `InvalidFilter` re-throw) must NOT toast — the specific toast already fired.
-  // The `!isFetching` gate makes a cached error safe on remount: a failure
-  // invalidates the query, so a remount goes straight into `isFetching` while it
-  // re-validates, and a stale cached failure can't toast before the fresh fetch
-  // settles — only a genuinely settled error does (#2639). The first-render ref
-  // still de-dupes the same settled error across unrelated re-renders.
-  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
-  useEffect(() => {
-    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
-      lastToastedErrorAtRef.current = errorUpdatedAt
-      if (!isCancellation(error)) notify.error(t('pageBrowser.loadFailed'))
-    }
-  }, [isError, isFetching, errorUpdatedAt, error, t])
 
   // Drops rows from the cached `InfiniteData` (the delete path filters one
   // out), keeping each page's pagination so `loadMore` still resolves the next
@@ -452,7 +428,7 @@ export function usePageBrowserData({
   return {
     pages,
     loading,
-    isError: isError && !isFetching,
+    isError: isError && !isFetching && !isCancellation(error),
     hasMore,
     loadMore,
     reload,

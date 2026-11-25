@@ -172,23 +172,33 @@ export function getPayloadRawContent(entry: HistoryEntry): string | null {
 
 /**
  * Extract property key/value from set_property or delete_property payloads.
- * A list op's value is its items joined (#6741).
+ * The value is whichever typed slot (`value_text`, `value_num`, …) the op
+ * filled, a list op's items joined (#6741); a ref is returned as the id it
+ * names (`ref`), for the caller to name.
  * Returns null when the payload is invalid or not a property operation.
  */
-export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: string } | null {
+export function getPropertyPayload(
+  entry: HistoryEntry,
+): { key: string; value?: string; ref?: string } | null {
   if (entry.op_type !== 'set_property' && entry.op_type !== 'delete_property') {
     return null
   }
   const parsed = parsePayloadObject(entry.payload)
-  if (parsed !== null && typeof parsed['key'] === 'string') {
-    const list = parsed['value_list']
-    const value = Array.isArray(list) ? list.map(String).join(', ') : parsed['value']
-    return {
-      key: parsed['key'],
-      ...(typeof value === 'string' ? { value } : {}),
-    }
-  }
-  return null
+  if (parsed === null || typeof parsed['key'] !== 'string') return null
+  const key = parsed['key']
+  const list = parsed['value_list']
+  if (Array.isArray(list)) return { key, value: list.map(String).join(', ') }
+  const ref = parsed['value_ref']
+  if (typeof ref === 'string') return { key, ref }
+  const value = [
+    parsed['value_text'],
+    parsed['value_date'],
+    parsed['value_num'],
+    parsed['value_bool'],
+  ].find(
+    (slot) => typeof slot === 'string' || typeof slot === 'number' || typeof slot === 'boolean',
+  )
+  return value === undefined ? { key } : { key, value: String(value) }
 }
 
 /** `getPayloadRawContent`, with a created page's title as `displayPageTitle` shows it. */

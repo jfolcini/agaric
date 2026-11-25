@@ -20,6 +20,7 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { formatTimestamp, truncateId } from '@/lib/format'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 
 vi.mock('@/lib/logger', () => ({
@@ -152,7 +153,9 @@ describe('HistoryItemCore', () => {
 
   it('renders property-payload preview with key and value', () => {
     renderCore(
-      <HistoryItemCore entry={makeEntry(1, 'set_property', { key: 'priority', value: 'high' })} />,
+      <HistoryItemCore
+        entry={makeEntry(1, 'set_property', { key: 'priority', value_text: 'high' })}
+      />,
     )
     // `formatPropertyName` title-cases the key (`priority` → `Priority`)
     // and the value is rendered as a separate text node in the same
@@ -163,6 +166,33 @@ describe('HistoryItemCore', () => {
     expect(preview).toBeDefined()
     expect(preview?.textContent).toContain('Priority')
     expect(preview?.textContent).toContain('→ high')
+  })
+
+  // #7040 — "Set property · Space" said nothing: the space is a ref, named here.
+  it('names the space a set_property op moved the block to', () => {
+    useSpaceStore.setState({
+      availableSpaces: [
+        { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null },
+        { id: 'SPACE_WORK', name: 'Work', accent_color: null },
+      ],
+    })
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'set_property', { key: 'space', value_ref: 'SPACE_WORK' })}
+      />,
+    )
+    expect(document.querySelector('.history-item-preview')).toHaveTextContent('Space → Work')
+  })
+
+  it('names another ref by its resolved title, or its short id until it resolves', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'set_property', { key: 'reviewer', value_ref: 'PAGE00000000ALICE' })}
+      />,
+    )
+    expect(document.querySelector('.history-item-preview')).toHaveTextContent(
+      `Reviewer → ${truncateId('PAGE00000000ALICE')}`,
+    )
   })
 
   // -- #4335 review items 4 & 5: attachment rows show a filename, as plain

@@ -16,7 +16,7 @@
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -74,59 +74,51 @@ export function TrashView(): React.ReactElement {
   // `render()` tests need no wrapper). `listTrash`
   // takes no AbortSignal, so — as before migration — none is forwarded.
   const queryKey = useMemo(() => ['trash', currentSpaceId], [currentSpaceId])
-  const {
-    data,
-    isFetching,
-    isError,
-    errorUpdatedAt,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-    refetch,
-  } = useInfiniteQuery(
-    {
-      queryKey,
-      queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
-        // Trash is scoped to the active space (each space owns its own deletion
-        // set). #2248 — with no active space there is nothing to list, so resolve
-        // to an empty page locally instead of passing an empty-string sentinel to
-        // the backend (which now rejects a malformed `Active('')` scope rather
-        // than treating it as a no-match).
-        if (currentSpaceId == null) {
-          return { items: [], next_cursor: null, has_more: false, total_count: null }
-        }
-        return unwrap(
-          await commands.listTrash(
-            pageParam ?? null,
-            PAGINATION_LIMIT,
-            requireActiveScope(currentSpaceId),
-          ),
-        )
+  const { data, isFetching, isError, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
+    useInfiniteQuery(
+      {
+        queryKey,
+        queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+          // Trash is scoped to the active space (each space owns its own deletion
+          // set). #2248 — with no active space there is nothing to list, so resolve
+          // to an empty page locally instead of passing an empty-string sentinel to
+          // the backend (which now rejects a malformed `Active('')` scope rather
+          // than treating it as a no-match).
+          if (currentSpaceId == null) {
+            return { items: [], next_cursor: null, has_more: false, total_count: null }
+          }
+          return unwrap(
+            await commands.listTrash(
+              pageParam ?? null,
+              PAGINATION_LIMIT,
+              requireActiveScope(currentSpaceId),
+            ),
+          )
+        },
+        initialPageParam: undefined as string | undefined,
+        getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+        // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
+        refetchOnMount: 'always',
+        // #2639 — space switching is an in-place `setCurrentSpace` (no route
+        // remount), so `refetchOnMount` alone doesn't re-hit the backend on an
+        // A→B→A switch: TanStack would serve space A's cached, possibly-stale trash
+        // (a block deleted from another view / device sync landed in trash while we
+        // showed B). `staleTime: 0` marks each key immediately stale, so
+        // re-observing a cached space triggers a background refetch — restoring the
+        // old always-refetch-on-basis-change freshness. Window/reconnect refetch
+        // stay off (client defaults), so this adds no time-based churn.
+        staleTime: 0,
+        // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
+        // the cursor but NEVER cleared `items` — only a successful response
+        // overwrote them, so the trash list stayed visible during a refetch. With
+        // the space now in the key, a space switch would otherwise blank the list to
+        // a skeleton until the refetch resolves; `keepPreviousData` retains the
+        // prior key's pages until the new fetch resolves (per-key cache writes are
+        // unchanged, so the stale-guard still holds).
+        placeholderData: keepPreviousData,
       },
-      initialPageParam: undefined as string | undefined,
-      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
-      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
-      refetchOnMount: 'always',
-      // #2639 — space switching is an in-place `setCurrentSpace` (no route
-      // remount), so `refetchOnMount` alone doesn't re-hit the backend on an
-      // A→B→A switch: TanStack would serve space A's cached, possibly-stale trash
-      // (a block deleted from another view / device sync landed in trash while we
-      // showed B). `staleTime: 0` marks each key immediately stale, so
-      // re-observing a cached space triggers a background refetch — restoring the
-      // old always-refetch-on-basis-change freshness. Window/reconnect refetch
-      // stay off (client defaults), so this adds no time-based churn.
-      staleTime: 0,
-      // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
-      // the cursor but NEVER cleared `items` — only a successful response
-      // overwrote them, so the trash list stayed visible during a refetch. With
-      // the space now in the key, a space switch would otherwise blank the list to
-      // a skeleton until the refetch resolves; `keepPreviousData` retains the
-      // prior key's pages until the new fetch resolves (per-key cache writes are
-      // unchanged, so the stale-guard still holds).
-      placeholderData: keepPreviousData,
-    },
-    queryClient,
-  )
+      queryClient,
+    )
 
   const blocks = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
   // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial
@@ -161,24 +153,6 @@ export function TrashView(): React.ReactElement {
     },
     [queryKey],
   )
-
-  // Reproduce the old `onError: t('trash.loadFailed')` toast. usePaginatedQuery
-  // called `notify.error` from its catch on EACH failed load. TanStack keeps
-  // `isError` latched across consecutive same-key failures, so keying on it alone
-  // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
-  // once per failed load. The `!isFetching` gate is what makes a cached error
-  // safe on remount: `refetchOnMount:'always'` puts the query
-  // straight into `isFetching` while it re-validates, so a stale cached failure
-  // can't toast before the fresh fetch settles — only a genuinely settled error
-  // does (#2639). The first-render ref still de-dupes the same settled error
-  // across unrelated re-renders.
-  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
-  useEffect(() => {
-    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
-      lastToastedErrorAtRef.current = errorUpdatedAt
-      notify.error(t('trash.loadFailed'))
-    }
-  }, [isError, isFetching, errorUpdatedAt, t])
 
   // ── Filter state (extracted hook) ────────────────────────────────
   const { filterText, setFilterText, debouncedFilter, filteredBlocks, clearFilter } =
@@ -634,9 +608,9 @@ export function TrashView(): React.ReactElement {
         blocks={blocks}
         filteredBlocks={filteredBlocks}
         loading={loading}
-        // #3306 — mirror the toast's gating (`isError && !isFetching`) so a
-        // stale cached failure doesn't paint the error card while the
-        // `refetchOnMount:'always'` re-validation is still in flight.
+        // #3306 — gated on `!isFetching` so a stale cached failure doesn't
+        // paint the error card while the `refetchOnMount:'always'`
+        // re-validation is still in flight.
         loadError={isError && !isFetching && t('trash.loadFailed')}
         onRetryLoad={reload}
         debouncedFilter={debouncedFilter}

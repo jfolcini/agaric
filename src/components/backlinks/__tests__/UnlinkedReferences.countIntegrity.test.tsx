@@ -338,16 +338,35 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
       // re-querying each time; no explicit timeout, the suite's 8 s
       // `asyncUtilTimeout` already covers a loaded box.
       await waitFor(() =>
-        expect(screen.getByTestId('unlinked-references-error')).toHaveTextContent(
+        expect(screen.getByTestId('list-error-state')).toHaveTextContent(
           t('unlinkedRefs.loadFailed'),
         ),
       )
-      expect(screen.getByTestId('unlinked-references-error')).toHaveAttribute('role', 'alert')
-      expect(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') })).toBeInTheDocument()
+      expect(screen.getByTestId('list-error-state')).toHaveAttribute('role', 'alert')
+      expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
       // THE property: the panel never asserts an emptiness nobody measured.
       expect(screen.queryByText(t('unlinkedRefs.noResults'))).not.toBeInTheDocument()
       // …and the count it did measure is still the one on the header.
       expect(screen.getByRole('button', { name: new RegExp(twelve, 'i') })).toBeInTheDocument()
+    })
+
+    it('reports the failed expand once, in its alert and not as a toast', async () => {
+      const { toast } = await import('sonner')
+      const user = userEvent.setup()
+      mockFailingExpand()
+
+      renderPanel()
+      await screen.findByRole('button', {
+        name: new RegExp(t('unlinkedRefs.header', { count: 12 }), 'i'),
+      })
+      await expand(user)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('list-error-state')).toHaveTextContent(
+          t('unlinkedRefs.loadFailed'),
+        ),
+      )
+      expect(toast.error).not.toHaveBeenCalled()
     })
 
     it('Retry re-runs the fetch and the rows arrive', async () => {
@@ -364,15 +383,15 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
         name: new RegExp(t('unlinkedRefs.header', { count: 12 }), 'i'),
       })
       await expand(user)
-      await screen.findByTestId('unlinked-references-error')
+      await screen.findByTestId('list-error-state')
 
       expandFails = false
-      await user.click(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') }))
+      await user.click(screen.getByRole('button', { name: t('action.retry') }))
 
       await waitFor(() => {
         expect(rowCount(container)).toBe(2)
       })
-      expect(screen.queryByTestId('unlinked-references-error')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('list-error-state')).not.toBeInTheDocument()
     })
   })
 

@@ -5,7 +5,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -64,7 +63,6 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 })
 
 const mockedInvoke = vi.mocked(invoke)
-const mockedToastError = vi.mocked(toast.error)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -388,12 +386,12 @@ describe('PageBrowser', () => {
     })
 
     // ── T-F2 — withCursorRecovery: retry-also-fails propagates error ───
-    it('T-F2: when the cursorless retry also fails, the original error surfaces (load-failed toast)', async () => {
+    it('T-F2: when the cursorless retry also fails, the original error surfaces (load-failed card)', async () => {
       // Page 1 resolves with a next_cursor so auto-load fires a cursor
       // page. The cursor-bearing call rejects with the `RequiresRefresh` code, so
       // `withCursorRecovery` retries once with no cursor — and THAT retry
-      // also rejects. The error must propagate to `usePaginatedQuery`'s
-      // onError, firing the load-failed toast.
+      // also rejects. The error must propagate to the query's error state,
+      // which paints the load-failed card above the rows already loaded.
       let cursoredAttempts = 0
       let cursorlessRetries = 0
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
@@ -436,12 +434,11 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       // The cursor-bearing call rejected → recovery retried cursorless →
-      // that retry also rejected → the load-failed toast fired.
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to load pages'),
-        )
-      })
+      // that retry also rejected → the load-failed card shows over the kept rows.
+      expect(await screen.findByTestId('page-browser-error-state')).toHaveTextContent(
+        'Failed to load pages',
+      )
+      expect(screen.getByText('Apple')).toBeInTheDocument()
       expect(cursoredAttempts).toBeGreaterThanOrEqual(1)
       expect(cursorlessRetries).toBeGreaterThanOrEqual(1)
     })

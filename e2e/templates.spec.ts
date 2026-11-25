@@ -184,8 +184,9 @@ test.describe('Template picker via slash command @editor @pages', () => {
     // Should show "Select a template" heading
     await expect(dialog.getByText('Select a template')).toBeVisible()
 
-    // Preview text from first child block should be visible
-    await expect(dialog.getByText('## Attendees')).toBeVisible()
+    // The first child block's text, rendered without its Markdown (#7040)
+    await expect(dialog.getByText('Attendees', { exact: true })).toBeVisible()
+    await expect(dialog).not.toContainText('##')
   })
 
   test('Escape closes the template picker', async ({ page }) => {

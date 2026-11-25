@@ -252,7 +252,6 @@ export const properties: Record<string, string> = {
   'property.unfitReview': '{{value}} ne correspond pas à {{key}}\u00A0: vérifiez ses valeurs',
   'property.unfitChipLabel': '{{key}}\u00A0: {{value}}, non conforme',
   'property.selectProperty': 'Sélectionner une propriété...',
-  'property.errorLoad': 'Échec du chargement des définitions de propriétés',
   'property.errorCreate': 'Impossible de créer la définition de propriété',
   'property.errorUpdate': 'Impossible de mettre à jour les options',
   'property.errorDelete': 'Impossible de supprimer la définition de propriété',

@@ -14,6 +14,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { expectToastCloseInside } from './domain'
 import {
   activeMenu,
   activeSheet,
@@ -283,8 +284,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     expect(fab.x - (t.x + t.width)).toBeGreaterThanOrEqual(0)
     expect(fab.x - (t.x + t.width)).toBeLessThanOrEqual(12)
 
-    // The 20 px close button answers a tap anywhere in a 44 px square around
-    // it, as far as the screen edge it overhangs.
+    // The 24 px close button answers a tap anywhere in a 44 px square around it.
     const close = toast.locator('[data-close-button]')
     const c = await box(close)
     const cx = c.x + c.width / 2
@@ -302,6 +302,11 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
       )
       expect(hit, `tap at ${Math.round(x)},${Math.round(y)} reaches the close button`).toBe(true)
     }
+  })
+
+  test("a toast's close button sits inside it, on its text's line", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expectToastCloseInside(await toastOnSearch(page))
   })
 
   test('with the keyboard up, a toast sits above it and off the focused input', async ({

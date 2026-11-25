@@ -28,6 +28,7 @@
  * empty query; loading a saved view folds it.
  */
 
+import { SearchX } from 'lucide-react'
 import type React from 'react'
 import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -359,7 +360,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           )}
 
           {!loading && !error && isEmpty && (
-            <EmptyState message={t('advancedQuery.noResults')} compact />
+            <EmptyState icon={SearchX} message={t('advancedQuery.noResults')} compact />
           )}
 
           {/* Results — kept visible (dimmed + aria-busy) during a refetch rather

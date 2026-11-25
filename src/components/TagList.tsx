@@ -101,9 +101,11 @@ function rowAt(rows: readonly TagRow[], index: number): TagRow {
 interface TagListProps {
   /** Called when a tag name is clicked. */
   onTagClick?: (tagId: string, tagName: string) => void
+  /** Rendered under the list while the space has a tag (the Tags view's tag filter). */
+  children?: React.ReactNode
 }
 
-export function TagList({ onTagClick }: TagListProps): React.ReactElement {
+export function TagList({ onTagClick, children }: TagListProps): React.ReactElement {
   const { t } = useTranslation()
   const [tags, setTags] = useState<TagCacheRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -158,13 +160,12 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       if (seq !== loadSeqRef.current) return
       logger.error('TagList', 'failed to load tags', undefined, error)
       setLoadError(true)
-      notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
     }
     setLoading(false)
-  }, [currentSpaceId, t])
+  }, [currentSpaceId])
 
   useEffect(() => {
-    // `loadTags` toasts its own failure; never rejects.
+    // `loadTags` shows its own failure inline; never rejects.
     void loadTags()
   }, [loadTags])
 
@@ -338,14 +339,14 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           // `handleCreateTag` toasts its own failure; never rejects.
           void handleCreateTag()
         }}
-        className="flex flex-col sm:flex-row sm:items-center gap-2"
+        className="flex items-center gap-2"
       >
         <Input
           value={newTagName}
           onChange={(e) => setNewTagName(e.target.value)}
           placeholder={t('tagList.newTagPlaceholder')}
           aria-label={t('tagList.newTagLabel')}
-          className="sm:flex-1"
+          className="min-w-0 flex-1"
         />
         <Button type="submit" variant="outline" disabled={!newTagName.trim() || isCreating}>
           <Plus className="h-4 w-4" /> {t('tag.addTag')}
@@ -500,6 +501,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           </ScrollArea>
         )}
       </ListViewState>
+
+      {tags.length > 0 && children}
 
       {/* Rename dialog */}
       <RenameDialog

@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { ListViewState } from '@/components/common/ListViewState'
+import { t } from '@/lib/i18n'
 
 interface Item {
   id: string
@@ -561,13 +562,17 @@ describe('ListViewState', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
 
-    it('keeps already-loaded items visible when a refresh fails', () => {
-      // A failed reload must not blank a list the user is reading.
+    it('keeps already-loaded items visible above which a failed refresh shows its alert', async () => {
+      // A failed reload must not blank a list the user is reading, and the
+      // alert is its one report: the lists on this state raise no toast.
+      const user = userEvent.setup()
+      const onRetry = vi.fn()
       render(
         <ListViewState
           loading={false}
           items={[{ id: '1', name: 'Alpha' }]}
           error
+          onRetry={onRetry}
           empty={<p>No pages yet</p>}
         >
           {(items) => (
@@ -581,7 +586,9 @@ describe('ListViewState', () => {
       )
 
       expect(screen.getByText('Alpha')).toBeInTheDocument()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent(t('error.loadFailed'))
+      await user.click(screen.getByTestId('list-error-state-retry'))
+      expect(onRetry).toHaveBeenCalledTimes(1)
     })
 
     it('prefers the skeleton while a retry is in flight', () => {

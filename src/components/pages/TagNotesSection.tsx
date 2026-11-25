@@ -10,10 +10,12 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
+import { NotebookPen } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -120,13 +122,24 @@ export function TagNotesSection({
         <TagNotesTree pageId={pageId} onNavigateToPage={onNavigateToPage} />
       )}
       {pageId === null && (
-        <div className="flex flex-wrap items-center gap-3">
-          <p className="text-xs text-muted-foreground">{t('tagNotes.empty')}</p>
-          <Button variant="outline" size="sm" disabled={creating} onClick={() => void addNotes()}>
-            {creating && <Spinner />}
-            {t('tagNotes.add')}
-          </Button>
-        </div>
+        <EmptyState
+          compact
+          icon={NotebookPen}
+          headingLevel="p"
+          message={t('tagNotes.empty')}
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              disabled={creating}
+              onClick={() => void addNotes()}
+            >
+              {creating && <Spinner />}
+              {t('tagNotes.add')}
+            </Button>
+          }
+        />
       )}
     </section>
   )

@@ -16,7 +16,7 @@
  * keeps owning device-info / toggle state.
  */
 
-import { Undo2 } from 'lucide-react'
+import { Activity, Undo2 } from 'lucide-react'
 import type React from 'react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -236,7 +236,12 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     <div className="space-y-2">
       <h2 className="text-sm font-medium">{t('agentAccess.activityLabel')}</h2>
       {entries.length === 0 ? (
-        <EmptyState message={t('agentAccess.activityEmpty')} compact headingLevel="p" />
+        <EmptyState
+          icon={Activity}
+          message={t('agentAccess.activityEmpty')}
+          compact
+          headingLevel="p"
+        />
       ) : (
         <ScrollArea className="h-[280px] rounded-md border" data-testid="mcp-activity-feed">
           {/*

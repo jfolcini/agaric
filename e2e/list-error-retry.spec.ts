@@ -2,7 +2,7 @@
  * A list that failed to load shows a red alert with a Retry button (#7040). The
  * button's edge must stand out from the alert's fill by WCAG 1.4.11's 3:1 in
  * every shipped theme; an outline button's grey edge and translucent fill sank
- * into the red.
+ * into the red. The alert is the failure's one report, with no toast beside it.
  */
 
 import { clearConsoleErrors, expect, navigateToView, test, waitForBoot } from './helpers'
@@ -62,3 +62,22 @@ for (const theme of THEMES) {
     expect(ratio).toBeGreaterThanOrEqual(3)
   })
 }
+
+test('a failed list load is reported once, by its alert and no toast @pages', async ({ page }) => {
+  await waitForBoot(page)
+  await page.evaluate(() =>
+    (window as unknown as MockErrorWindow).__injectMockError(
+      'list_all_tags_in_space',
+      'database is locked',
+    ),
+  )
+  await navigateToView(page, 'Tags')
+  await expect(page.getByTestId('list-error-state')).toContainText('Failed to load tags')
+  clearConsoleErrors(page)
+  // Sonner mounts a toast a task after it is raised: let that task run, then
+  // read once (a retrying `toHaveCount(0)` would pass before it mounts).
+  await page.evaluate(
+    () => new Promise((resolve) => setTimeout(() => requestAnimationFrame(resolve), 0)),
+  )
+  expect(await page.locator('[data-sonner-toast]').count()).toBe(0)
+})

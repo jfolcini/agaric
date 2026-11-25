@@ -14,7 +14,7 @@
  *  - Batch restore calls restoreBlock for each selected
  *  - Batch purge shows confirmation dialog
  *  - Original location breadcrumbs render with parent page title
- *  - Breadcrumbs show "(deleted page)" when parent is missing
+ *  - Breadcrumbs name a page in the Trash too, and say "a deleted page" when it is gone
  *  - a11y compliance
  */
 
@@ -660,10 +660,8 @@ describe('TrashView', () => {
       screen.queryByText(/Nothing in trash\. Deleted items will appear here\./),
     ).not.toBeInTheDocument()
 
-    // The toast still fires — the card is an addition, not a replacement.
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load trash')
-    })
+    // The card is the failure's one report: no toast beside it (#7040).
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('retries the failed trash load when Retry is clicked', async () => {
@@ -1210,7 +1208,7 @@ describe('TrashView', () => {
     expect(breadcrumb).toHaveTextContent('from: My Parent Page')
   })
 
-  it('shows "(deleted page)" when the owning page is deleted', async () => {
+  it('names the owning page, marked deleted, when it is in the Trash too', async () => {
     const blocks = [
       makeBlock({
         id: 'B1',
@@ -1230,10 +1228,10 @@ describe('TrashView', () => {
     render(<TrashView />)
 
     const breadcrumb = await screen.findByTestId('trash-item-breadcrumb')
-    expect(breadcrumb).toHaveTextContent('from: (deleted page)')
+    expect(breadcrumb).toHaveTextContent('from: Old Page (deleted)')
   })
 
-  it('shows "(deleted page)" when the owning page is not found in batch resolve', async () => {
+  it('says "a deleted page" when the owning page is not found in batch resolve', async () => {
     const blocks = [
       makeBlock({
         id: 'B1',
@@ -1251,7 +1249,7 @@ describe('TrashView', () => {
     render(<TrashView />)
 
     const breadcrumb = await screen.findByTestId('trash-item-breadcrumb')
-    expect(breadcrumb).toHaveTextContent('from: (deleted page)')
+    expect(breadcrumb).toHaveTextContent('from: a deleted page')
   })
 
   it('does not render breadcrumb when block has no page_id', async () => {

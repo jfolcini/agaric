@@ -94,7 +94,7 @@ interface PageBrowserProps {
 }
 
 /**
- * What to paint once the page list has SETTLED with nothing in it.
+ * What to paint once the page list has SETTLED with nothing in it, or failed.
  *
  * #3306 — "settled with nothing in it" used to mean exactly one thing to this
  * view: an empty vault. A failed `list_pages_with_metadata` produces the same
@@ -652,7 +652,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
       )}
 
-      {spaceIsReady && !loading && pages.length === 0 && (
+      {/* A failure shows its card above any rows still cached: it is the one report (#7040). */}
+      {spaceIsReady && !loading && (isError || pages.length === 0) && (
         <PageBrowserSettledEmptyState
           isError={isError}
           isFiltering={isFiltering}

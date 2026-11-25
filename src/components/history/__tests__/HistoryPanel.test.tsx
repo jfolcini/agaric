@@ -674,7 +674,7 @@ describe('HistoryPanel', () => {
         makeHistoryEntry(
           1,
           'set_property',
-          { key: 'due_date', value: '2026-04-15' },
+          { key: 'due_date', value_date: '2026-04-15' },
           1736942400000,
         ),
       ],

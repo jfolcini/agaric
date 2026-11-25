@@ -39,7 +39,6 @@ import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categor
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { ALL_PAGES_HISTORY_ID } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type HistoryPageScope, useNavigationStore } from '@/stores/navigation'
@@ -98,7 +97,6 @@ export function HistoryView(): React.ReactElement {
     isFetching,
     isError,
     error: queryError,
-    errorUpdatedAt,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -192,30 +190,6 @@ export function HistoryView(): React.ReactElement {
   const reload = useCallback(() => {
     void refetch()
   }, [refetch])
-
-  // Reproduce usePaginatedQuery's `onError: t('history.loadFailed')` toast, which
-  // fired `notify.error` from its catch on EACH failed load (initial and every
-  // load-more). TanStack keeps `isError` latched across consecutive same-key
-  // failures, so keying only on `isError` would toast just once; `errorUpdatedAt`
-  // advances on every error occurrence, firing the toast once per failed load.
-  // The `!isFetching` gate makes a cached error safe on
-  // remount: `refetchOnMount: 'always'` puts the query straight into `isFetching`
-  // while it re-validates, so a stale cached failure can't toast before the fresh
-  // fetch settles — only a genuinely settled error does (#2639). The first-render
-  // ref still de-dupes the same settled error across unrelated re-renders. Mirrors
-  // HistoryPanel's shared toast.
-  const lastToastedErrorAtRef = useRef(errorUpdatedAt)
-  useEffect(() => {
-    if (
-      isError &&
-      errorCategory !== null &&
-      !isFetching &&
-      errorUpdatedAt !== lastToastedErrorAtRef.current
-    ) {
-      lastToastedErrorAtRef.current = errorUpdatedAt
-      notify.error(t('history.loadFailed'))
-    }
-  }, [isError, errorCategory, isFetching, errorUpdatedAt, t])
 
   // ── Selection (multi-select with shift-range) ────────────────────
   const {

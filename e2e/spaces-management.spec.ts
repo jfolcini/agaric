@@ -248,6 +248,27 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     ).toHaveCount(1)
   })
 
+  // #7040 — a space with no open page lands on its journal for today, not on
+  // an empty page editor saying "No page open".
+  test('switching to a space never opened lands on its journal for today @journal', async ({
+    page,
+  }) => {
+    await clickPagesNav(page)
+    await switchToSpace(page, 'Work')
+
+    const today = await page.evaluate(() =>
+      new Date().toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+    )
+    await expect(page.locator('[data-testid="date-display"]')).toHaveText(today)
+    await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
+    await expect(page.getByText('No page open', { exact: true })).toHaveCount(0)
+  })
+
   test('Alt+2 switches to the second space by alphabetical index', async ({ page }) => {
     // "Personal" < "Work" alphabetically, so Personal is Alt+1 (current
     // space, no-op — see keyboard-collisions.spec.ts) and Work is Alt+2.

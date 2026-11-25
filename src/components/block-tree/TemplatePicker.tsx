@@ -9,7 +9,9 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { isTabKey } from '@/lib/keyboard-config/keys'
 
 export interface TemplatePickerProps {
@@ -56,6 +58,7 @@ export function TemplatePicker({
   onClose,
 }: TemplatePickerProps): React.ReactElement {
   const { t } = useTranslation()
+  const richCallbacks = useRichContentCallbacks()
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -138,7 +141,9 @@ export function TemplatePicker({
             >
               <span className="font-medium">{tp.content || t('block.untitled')}</span>
               {tp.preview && (
-                <span className="block text-xs text-muted-foreground truncate">{tp.preview}</span>
+                <span className="block text-xs text-muted-foreground truncate">
+                  {renderRichContent(tp.preview, { inline: true, ...richCallbacks })}
+                </span>
               )}
             </button>
           ))}

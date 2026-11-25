@@ -99,16 +99,23 @@ describe('EmptyState', () => {
     expect(wrapper.className).not.toContain('p-6')
   })
 
-  it('renders the icon inside a muted circle and the section has no border', () => {
+  it('renders a 24 px icon in a 48 px muted circle and the section has no border', () => {
     const { container } = render(<EmptyState icon={TestIcon} message="No items found" />)
     const section = container.firstElementChild as HTMLElement
     const circle = screen.getByTestId('test-icon').parentElement as HTMLElement
 
-    expect(circle).toHaveClass('size-8', 'rounded-full', 'bg-muted')
+    expect(circle).toHaveClass('size-12', '[&>svg]:size-6', 'rounded-full', 'bg-muted')
     expect(circle.parentElement).toBe(section)
     // `toHaveClass` matches whole tokens, so each border utility is named.
     expect(section).not.toHaveClass('border')
     expect(section).not.toHaveClass('border-dashed')
+  })
+
+  it('renders a 20 px icon in a 40 px circle when compact', () => {
+    render(<EmptyState icon={TestIcon} message="No items found" compact />)
+    const circle = screen.getByTestId('test-icon').parentElement as HTMLElement
+
+    expect(circle).toHaveClass('size-10', '[&>svg]:size-5', 'rounded-full', 'bg-muted')
   })
 
   it('does not render icon when not provided', () => {
