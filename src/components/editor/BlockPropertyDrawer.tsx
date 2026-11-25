@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/sheet'
 import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { useSuggestedProperties } from '@/hooks/useSuggestedProperties'
 import { announce } from '@/lib/announcer'
@@ -63,7 +63,7 @@ export function BlockPropertyDrawer({
   onOpenChange,
 }: BlockPropertyDrawerProps): React.ReactElement {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
@@ -343,7 +343,7 @@ export function BlockPropertyDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side={isMobile ? 'bottom' : 'right'}>
+      <SheetContent side={phoneLayout ? 'bottom' : 'right'}>
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
           <SheetDescription>{t('property.drawerDescription')}</SheetDescription>

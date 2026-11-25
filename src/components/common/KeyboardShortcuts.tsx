@@ -22,7 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -154,7 +154,7 @@ export function KeyboardShortcuts({
   const [filter, setFilter] = useState('')
   const filterRef = useRef<HTMLInputElement>(null)
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -212,8 +212,8 @@ export function KeyboardShortcuts({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent
-        side={isMobile ? 'bottom' : 'right'}
-        className={isMobile ? undefined : 'sm:max-w-lg'}
+        side={phoneLayout ? 'bottom' : 'right'}
+        className={phoneLayout ? undefined : 'sm:max-w-lg'}
         // The filter takes focus with no ring: the user did not put it there.
         onOpenAutoFocus={(e) => {
           e.preventDefault()

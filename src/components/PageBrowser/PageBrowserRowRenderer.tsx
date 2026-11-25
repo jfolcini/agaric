@@ -16,9 +16,9 @@ import { useTranslation } from 'react-i18next'
 import { PageRow } from '@/components/PageBrowser/PageRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
 import { listHeaderVariants } from '@/components/ui/list-item'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { PageWithMetadataRow } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -151,8 +151,8 @@ function TreePageRow({
   // A touch phone's `PageRow` hides its checkbox and star, so the gutter
   // that mirrors them would push the tree a third of the screen in.
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
-  const touchSelect = isTouch && isMobile
+  const phoneLayout = usePhoneLayout()
+  const touchSelect = isTouch && phoneLayout
   // In selection mode a phone's row shows its checkbox again (no star), so
   // the tree steps in by that one cell.
   const gutter = !touchSelect

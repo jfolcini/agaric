@@ -49,8 +49,8 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { type PeekKind, useBlockRefPeek } from '@/hooks/useBlockRefPeek'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
@@ -196,9 +196,9 @@ function keepEditorFocus(event: React.MouseEvent): void {
 export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactElement | null {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   // A touch phone: a long press opens the peek as a bottom sheet (#6746).
-  const onPhone = isTouch && isMobile
+  const onPhone = isTouch && phoneLayout
   const {
     refId,
     kind,

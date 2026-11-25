@@ -12,7 +12,7 @@
  *  - Caps length at MAX_RENAME_LENGTH (64) characters.
  * Errors are shown inline via aria-invalid + a text-destructive message.
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog
+ * On a phone (`usePhoneLayout`) the dialog
  * renders as a bottom Sheet so the form input + footer buttons sit within
  * thumb reach. The desktop path keeps the regular Radix `Dialog` (not
  * `AlertDialog`) so dismiss-on-outside-click / Escape works without

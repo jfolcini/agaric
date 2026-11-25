@@ -540,7 +540,7 @@ export function PdfViewerDialog({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, numPages, goToPrev, goToNext, goToPage])
 
-  // On phones < 768 px render as a bottom Sheet so the page
+  // On a phone render as a bottom Sheet so the page
   // navigation controls sit within thumb reach. `'dialog'` kind keeps regular
   // Dialog (not AlertDialog) on desktop.
   const parts = useDialogOrSheet('dialog')

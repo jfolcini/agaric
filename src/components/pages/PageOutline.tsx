@@ -19,7 +19,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { cn } from '@/lib/utils'
@@ -68,7 +68,7 @@ export interface PageOutlineProps {
 
 export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlineProps) {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const blocks = usePageBlockStore((s) => s.blocks)
   const headings = extractHeadings(blocks)
   // Not `useBlockResolvers`: the outline mounts from `PageHeader`, outside the
@@ -89,7 +89,7 @@ export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlin
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side={isMobile ? 'bottom' : 'right'} onCloseAutoFocus={onCloseAutoFocus}>
+      <SheetContent side={phoneLayout ? 'bottom' : 'right'} onCloseAutoFocus={onCloseAutoFocus}>
         <SheetHeader>
           <SheetTitle>{t('outline.title')}</SheetTitle>
           <SheetDescription className="sr-only">{t('outline.navLabel')}</SheetDescription>

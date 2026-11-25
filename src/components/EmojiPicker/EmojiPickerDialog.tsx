@@ -34,7 +34,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 
 export interface EmojiPickerDialogProps {
   open: boolean
@@ -52,7 +52,7 @@ export function EmojiPickerDialog({
   closeOnSelect = true,
 }: EmojiPickerDialogProps) {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
   const handleSelect = useCallback(
     (char: string) => {
@@ -62,7 +62,7 @@ export function EmojiPickerDialog({
     [onSelect, closeOnSelect, onOpenChange],
   )
 
-  if (isMobile) {
+  if (phoneLayout) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="bottom" data-editor-portal="">

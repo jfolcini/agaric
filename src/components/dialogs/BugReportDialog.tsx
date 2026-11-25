@@ -368,7 +368,7 @@ export function BugReportDialog({
 
   const previewSectionId = 'bug-report-preview'
 
-  // On phones < 768 px render as a bottom Sheet — `'dialog'`
+  // On a phone render as a bottom Sheet — `'dialog'`
   // kind keeps regular Dialog parts on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts

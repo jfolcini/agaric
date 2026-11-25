@@ -26,8 +26,8 @@ import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 
 type IconSize = 'icon-xs' | 'icon-sm' | 'icon'
 
@@ -78,8 +78,8 @@ const IconButton = ({
   ...rest
 }: IconButtonProps) => {
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
-  const showShortcut = shortcut !== undefined && !(isTouch && isMobile)
+  const phoneLayout = usePhoneLayout()
+  const showShortcut = shortcut !== undefined && !(isTouch && phoneLayout)
   return (
     // #1735: opt into the press-and-hold tooltip fallback. Radix hover tooltips
     // never open on a coarse-pointer tap, so this is the only way the visible

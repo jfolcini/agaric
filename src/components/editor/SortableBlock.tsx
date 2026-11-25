@@ -56,6 +56,7 @@ import { isOnBlockRefChip } from '@/hooks/useBlockRefPeek'
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
 import { useIsBlockBeingRead } from '@/hooks/useReadAloud'
 import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
@@ -703,7 +704,8 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
-  const isPhone = isTouchDevice && isMobile
+  const phoneLayout = usePhoneLayout()
+  const isPhone = isTouchDevice && phoneLayout
   const isBeingRead = useIsBlockBeingRead(blockId)
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`

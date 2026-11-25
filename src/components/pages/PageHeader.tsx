@@ -26,11 +26,11 @@ import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { useEditModeShortcut } from '@/editor/page-mode/use-page-mode'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { spaceMoveFailureMessage, useSpaceMove } from '@/hooks/useSpaceMove'
 import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
 import { unwrap, validationCode } from '@/lib/app-error'
@@ -96,8 +96,8 @@ export function PageHeader({
   const ownKebabRef = useRef<HTMLButtonElement>(null)
   const kebab = kebabRef ?? ownKebabRef
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
-  const onPhone = isTouch && isMobile
+  const phoneLayout = usePhoneLayout()
+  const onPhone = isTouch && phoneLayout
   useEditModeShortcut(editMode ?? 'blocks', onEditModeChange)
 
   // --- Page-delete flow (Part A) ---

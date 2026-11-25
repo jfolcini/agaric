@@ -3,6 +3,8 @@
  *
  * Returns `true` when the viewport is narrower than `MOBILE_BREAKPOINT`. The
  * value is reactive: it re-renders when the viewport crosses the breakpoint.
+ * For how much fits on a row only: a phone's surfaces (sheet or dialog, the
+ * drawer, the phone header) follow `usePhoneLayout`.
  *
  * SSR-safe: returns `false` when `window` is undefined (matching the guard in
  * `useIsTouch`) and only attaches the `matchMedia` listener inside `useEffect`.

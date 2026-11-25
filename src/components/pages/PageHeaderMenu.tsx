@@ -32,9 +32,9 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { TruncatedText } from '@/components/ui/truncated-text'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { EditMode } from '@/lib/preferences'
 
 /** A space shown in the "Move to space" sub-menu. */
@@ -173,11 +173,11 @@ export function PageHeaderMenu({
   onMoveToSpace,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const isTouch = useIsTouch()
   const keyboardHints = useKeyboardHints()
   // A touch phone has no tab bar (`TabBar`), so a new tab there could never be seen.
-  const offersNewTab = onOpenInNewTab != null && !(isTouch && isMobile)
+  const offersNewTab = onOpenInNewTab != null && !(isTouch && phoneLayout)
 
   // Phase 2 — the `t('space.moveTo')` entry expands inline (no nested
   // Radix popover) to keep focus management simple and the a11y tree
@@ -286,7 +286,7 @@ export function PageHeaderMenu({
   const trigger = (
     <Tooltip>
       <TooltipTrigger asChild>
-        {isMobile ? (
+        {phoneLayout ? (
           <SheetTrigger asChild>{triggerButton}</SheetTrigger>
         ) : (
           <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
@@ -554,7 +554,7 @@ export function PageHeaderMenu({
 
   // A phone gets the rows as a bottom sheet: the dropdown covered most of
   // the screen (#5931).
-  if (isMobile) {
+  if (phoneLayout) {
     return (
       <MenuSheet
         open={kebabOpen}

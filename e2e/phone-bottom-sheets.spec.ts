@@ -325,3 +325,178 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     expect(overlaps(await box(toast), await box(input))).toBe(false)
   })
 })
+
+// A phone on its side is wider than 768 px and still a phone: one rule
+// (`usePhoneLayout`) picks every surface below, as it picks the drawer (#7040).
+test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @editor @pages @journal', () => {
+  const LANDSCAPE = { width: 915, height: 412 }
+  // `screen` too: the rule reads the screen's height, and the project's desktop
+  // descriptor leaves a 1080 px one.
+  test.use({
+    viewport: LANDSCAPE,
+    screen: LANDSCAPE,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+  })
+
+  test('a dialog (New page) opens as a bottom sheet', async ({ page }) => {
+    await navigateMobile(page, 'Pages')
+    await page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+      .tap()
+    await expectBottomSheet(page, page.getByTestId('new-page-dialog'))
+  })
+
+  test('the block menu is a bottom-sheet list, and Properties and History bottom sheets', async ({
+    page,
+  }) => {
+    const menu = await openBlockMenu(page)
+    await expectBottomSheet(page, menu)
+    await menu.getByRole('menuitem', { name: /Properties/ }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block properties' }))
+    await page.keyboard.press('Escape')
+    await expect(activeSheet(page)).toHaveCount(0)
+    await (await openBlockMenu(page)).getByRole('menuitem', { name: /History/ }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Block history' }))
+  })
+
+  test('the page ⋮ menu is a bottom-sheet list holding the editing mode, and Outline a bottom sheet', async ({
+    page,
+  }) => {
+    await openPageMobile(page, PAGE)
+    // The Blocks | Page switch is a row of the menu, as on a phone held upright.
+    await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Page actions' }).tap()
+    const menu = page.getByRole('menu', { name: 'Page actions' })
+    await expectBottomSheet(page, menu)
+    await expect(menu.getByRole('menuitem', { name: 'Edit as page' })).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Open outline' }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Outline' }))
+  })
+
+  test('keyboard shortcuts open as a bottom sheet', async ({ page }) => {
+    await page.keyboard.type('?')
+    await expect(page.getByTestId('shortcuts-table')).toBeVisible()
+    await expectBottomSheet(page, activeSheet(page))
+  })
+
+  test('the header is the phone header, and the journal day has its ⋮ menu', async ({ page }) => {
+    const header = page.locator('header').first()
+    await expect(page.getByTestId('mobile-sidebar-trigger')).toBeVisible()
+    await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeHidden()
+    await expect(header.getByTestId('search-sheet-trigger')).toBeVisible()
+    // Room for the 44 px targets (`min-h-14`).
+    expect((await box(header)).height).toBeGreaterThanOrEqual(56)
+    await page.getByRole('button', { name: 'Page actions' }).tap()
+    await expectBottomSheet(page, page.getByRole('menu', { name: 'Page actions' }))
+  })
+
+  test('a view header scrolls with its view, edge to edge', async ({ page }) => {
+    await navigateMobile(page, 'Pages')
+    const outlet = page.locator('[data-slot="main-content"] [data-testid="view-header-outlet"]')
+    await expect(outlet.getByPlaceholder('Search pages...')).toBeVisible()
+    const edges = await outlet.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const scroller = el.closest('[data-slot="main-content"]')?.getBoundingClientRect()
+      return { left: r.left, right: r.right, top: r.top - (scroller?.top ?? 0) }
+    })
+    expect(edges).toEqual({ left: 0, right: LANDSCAPE.width, top: 0 })
+  })
+
+  test('the calendar and the emoji picker are bottom sheets, and a page offers no new tab', async ({
+    page,
+  }) => {
+    await page
+      .locator('header')
+      .first()
+      .getByRole('button', { name: /Open calendar picker$/ })
+      .tap()
+    await expectBottomSheet(page, page.getByTestId('calendar-legend'))
+    await page.keyboard.press('Escape')
+    await expect(activeSheet(page)).toHaveCount(0)
+    await openPageMobile(page, PAGE)
+    await page.getByRole('button', { name: 'Page actions' }).tap()
+    const menu = page.getByRole('menu', { name: 'Page actions' })
+    // No tab bar on a phone, so nowhere for a new tab to show.
+    await expect(menu.getByRole('menuitem', { name: 'Copy app link' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Open in new tab' })).toHaveCount(0)
+    await menu.getByRole('menuitem', { name: 'Insert emoji' }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Insert emoji' }))
+  })
+
+  test('Pages rows show no checkbox, the header no Today, and Tasks no scroll box of its own', async ({
+    page,
+  }) => {
+    await navigateMobile(page, 'Pages')
+    await expect(page.locator('[data-page-item]').first()).toBeVisible()
+    await expect(page.locator('[data-testid^="page-select-"]').first()).toBeHidden()
+    await expect(
+      page.locator('header').first().getByRole('button', { name: 'Go to today' }),
+    ).toHaveCount(0)
+    await navigateMobile(page, 'Tasks')
+    await expect(page.getByTestId('agenda-results-item').first()).toBeVisible()
+    await expect(page.locator('.agenda-results-scroll')).toHaveCount(0)
+  })
+
+  test('a toast sits beside the floating button, not under it', async ({ page }) => {
+    const toast = await toastOnSearch(page)
+    const fab = await box(page.getByTestId('quick-capture-fab'))
+    await expect.poll(async () => overlaps(await box(toast), fab)).toBe(false)
+    const t = await box(toast)
+    expect(fab.x - (t.x + t.width)).toBeGreaterThanOrEqual(0)
+  })
+})
+
+// On Android the soft keyboard shrinks the webview (#6790), so a tablet on its
+// side is left with a viewport under 500 px tall: its screen is no shorter, and
+// the dialog being typed in must not be swapped for a sheet, which would drop
+// the text and the focus.
+test.describe('A tablet stays a tablet with its keyboard up (#7040) @mobile @pages', () => {
+  const tablet = devices['Galaxy Tab S9 landscape']
+  const KEYBOARD = 300
+  test.use({
+    viewport: tablet.viewport,
+    hasTouch: tablet.hasTouch,
+    isMobile: tablet.isMobile,
+    deviceScaleFactor: tablet.deviceScaleFactor,
+    userAgent: tablet.userAgent,
+  })
+
+  test('typing in a dialog keeps the dialog and the text', async ({ page }) => {
+    await waitForBoot(page)
+    await page.getByRole('button', { name: 'Pages', exact: true }).tap()
+    await page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+      .tap()
+    const dialog = page.getByTestId('new-page-dialog')
+    const title = dialog.getByRole('textbox').first()
+    await title.fill('Typed before the keyboard')
+    await expect(dialog).toHaveAttribute('data-slot', 'dialog-content')
+
+    // `page.setViewportSize` would shrink the emulated screen with the viewport.
+    const cdp = await page.context().newCDPSession(page)
+    const { width, height } = tablet.viewport
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height: height - KEYBOARD,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: tablet.deviceScaleFactor,
+      mobile: true,
+    })
+    await expect.poll(() => page.evaluate(() => window.innerHeight)).toBe(height - KEYBOARD)
+
+    await expect(dialog).toHaveAttribute('data-slot', 'dialog-content')
+    await expect(title).toHaveValue('Typed before the keyboard')
+    await expect(page.locator('[data-slot="sidebar"]:not([data-mobile])')).toBeInViewport()
+  })
+})
