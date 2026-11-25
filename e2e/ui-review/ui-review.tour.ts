@@ -454,6 +454,12 @@ async function states({ page, profile, shot }: Scene): Promise<void> {
     await page.locator('#theme-select').click()
   })
   await dismiss(page)
+  await shot('settings-property-sheet', async () => {
+    await navigateToView(page, 'Settings')
+    await openSettingsTab(page, 'Properties')
+    await page.getByRole('button', { name: 'Edit property project', exact: true }).click()
+  })
+  await dismiss(page)
   await shot('error-tags', async () => {
     await page.evaluate(() =>
       (window as unknown as Hooks).__injectMockError(
