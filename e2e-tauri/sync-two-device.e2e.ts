@@ -142,7 +142,7 @@ const NEWER_PAGE = 'peer newer page'
 const TAG = 'marigold'
 const DUE_PANEL = '[data-testid="due-panel"]'
 const DONE_PANEL = '.done-panel'
-const UNFINISHED = '[data-testid="unfinished-tasks"]'
+const OVERDUE = '[data-testid="due-panel"] .overdue-section'
 const TITLE = '[aria-label="Page title"]'
 const TAB_LIST = '[role="tablist"][aria-label="Editor tabs"]'
 const SEARCH_INPUT = '[aria-label="Search blocks"]'
@@ -537,14 +537,6 @@ async function openJournalMode(mode: 'daily' | 'weekly'): Promise<void> {
     timeout: NAV_TIMEOUT,
     timeoutMsg: `the ${mode} journal tab never became selected`,
   })
-}
-
-/** Expand Unfinished tasks if it renders collapsed (its default). */
-async function expandUnfinished(): Promise<void> {
-  const header = $(`${UNFINISHED} button[aria-expanded]`)
-  if ((await header.isExisting()) && (await header.getAttribute('aria-expanded')) === 'false') {
-    await header.click()
-  }
 }
 
 /**
@@ -1230,7 +1222,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       )
     })
 
-    it('an overdue task the peer marks DONE leaves Unfinished tasks (#5256)', async () => {
+    it('an overdue task the peer marks DONE leaves Overdue (#5256)', async () => {
       if (peer === undefined) throw new Error('the pairing test failed')
       const device = peer
       const yesterday = await localDate(-1)
@@ -1243,11 +1235,8 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       })
       await waitInFreshView(
         () => openJournalMode('daily'),
-        async () => {
-          await expandUnfinished()
-          return (await textOf(UNFINISHED)).includes(LATE_TASK)
-        },
-        "Unfinished tasks never listed the peer's overdue task",
+        async () => (await textOf(OVERDUE)).includes(LATE_TASK),
+        "Overdue never listed the peer's overdue task",
       )
 
       await pullPeerWrites(device, () => device.setTodoState(taskId, 'DONE'))
@@ -1255,8 +1244,8 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       await waitInOpenView(
         async () =>
           (await textOf(DONE_PANEL)).includes(LATE_TASK) &&
-          !(await textOf(UNFINISHED)).includes(LATE_TASK),
-        () => 'the open journal still lists the done task under Unfinished tasks',
+          !(await textOf(OVERDUE)).includes(LATE_TASK),
+        () => 'the open journal still lists the done task under Overdue',
       )
     })
 
