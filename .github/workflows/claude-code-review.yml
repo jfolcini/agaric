@@ -78,7 +78,7 @@ jobs:
         # gh verbs below. The prompt's untrusted-input rule is guidance, not a
         # security boundary; the boundary is that nothing here holds
         # contents:write.
-        uses: anthropics/claude-code-action@d1f58ad5e6f4d2b79547e63e37c2116064135896 # v1.0.277
+        uses: anthropics/claude-code-action@e5812cd75691ca7bbfc57c0ecf4441db3a1ab7dd # v1.0.281
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token || github.token }}
