@@ -153,9 +153,9 @@ test("a journal block added after a space switch is the new space's @spaces", as
   }
   const line = (text: string) => page.locator('[data-testid="block-static"]', { hasText: text })
 
-  // Work's today is new: opening the journal makes it with one empty block, focused.
+  // Work's today is new: switching to it opens the journal (#7040), which makes
+  // the day with one empty block, focused.
   await switchToSpace(page, 'Work')
-  await navigateToView(page, 'Journal')
   await expect(rows).toHaveCount(1)
   await expect(lastEditor()).toBeFocused()
   await typeLine('work line')

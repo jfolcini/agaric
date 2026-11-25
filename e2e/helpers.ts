@@ -2081,10 +2081,16 @@ export function streamSyncProgress(page: Page, update: unknown): Promise<void> {
   }, update)
 }
 
-/** Switch the active space through the sidebar SpaceSwitcher. */
+/**
+ * Switch the active space through the sidebar SpaceSwitcher. Returns once its list has closed:
+ * while the list plays its exit animation it is still a layer, and takes the next Escape.
+ */
 export async function switchToSpace(page: Page, name: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+  const switcher = page.getByRole('combobox', { name: 'Switch space', exact: true })
+  await switcher.click()
   await page.getByRole('option', { name, exact: true }).click()
+  // The switcher's own list, not any listbox: the view switched to may hold one (query results).
+  await expect(switcher).toHaveAttribute('aria-expanded', 'false')
 }
 
 /** Pair one device as the mock completes a pairing: it appears a few reads after the confirm. */

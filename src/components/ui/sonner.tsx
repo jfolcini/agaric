@@ -30,9 +30,8 @@ const Toaster = ({ ref, ...props }: ToasterProps & { ref?: React.Ref<HTMLElement
       } as React.CSSProperties
     }
     // Sonner's stylesheet is unlayered, so a layered utility needs `!` to beat
-    // its hardcoded `0 4px 12px` shadow. Its 20 px close button gets a 44 px
-    // coarse-pointer hit area (#5930); its own `position: absolute` still wins
-    // over the utility's `relative`, which only anchors the hit area.
+    // its hardcoded `0 4px 12px` shadow. The close button, laid out inside the
+    // toast by `index.css`, gets a 44 px coarse-pointer hit area (#5930).
     toastOptions={{
       classNames: { toast: 'shadow-(--shadow-floating)!', closeButton: 'touch-hit-area' },
     }}

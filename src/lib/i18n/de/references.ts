@@ -89,8 +89,6 @@ export const references: Record<string, string> = {
   'unlinkedRefs.loading': 'Wird geladen…',
   'unlinkedRefs.loadingDots': 'Wird geladen...',
   'unlinkedRefs.loadFailed': 'Nicht verknüpfte Verweise konnten nicht geladen werden',
-  'unlinkedRefs.retry': 'Erneut versuchen',
-  'unlinkedRefs.retryLabel': 'Laden der nicht verknüpften Verweise erneut versuchen',
   'unlinkedRefs.linkFailed': 'Verweis konnte nicht verknüpft werden',
   'unlinkedRefs.noResults': 'Keine nicht verknüpften Verweise gefunden.',
   'unlinkedRefs.untitled': 'Ohne Titel',

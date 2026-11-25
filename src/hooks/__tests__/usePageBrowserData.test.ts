@@ -121,18 +121,20 @@ describe('usePageBrowserData', () => {
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 
-  it('surfaces the invalid-filter toast and suppresses the generic loadFailed toast', async () => {
+  it('surfaces the invalid-filter toast and suppresses the generic loadFailed card', async () => {
     mockedList.mockRejectedValueOnce({
       kind: 'validation',
       code: 'InvalidFilter',
       message: 'bad chip',
     })
 
-    renderHook(() => usePageBrowserData(BASE))
+    const { result } = renderHook(() => usePageBrowserData(BASE))
 
-    // Exactly one toast — the specific invalidFilter one; the suppressed
-    // (cancelled-shaped) re-throw stops usePaginatedQuery's loadFailed.
+    // Exactly one report — the specific invalidFilter toast; the suppressed
+    // (cancelled-shaped) re-throw keeps `isError`, the generic card, off.
     await waitFor(() => expect(mockedToastError).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.isError).toBe(false)
   })
 
   it('retains the first-page total across a cursor page returning null', async () => {
@@ -288,7 +290,7 @@ describe('usePageBrowserData', () => {
       deleteAdapter.onRestored?.('A')
     })
 
-    await waitFor(() => expect(mockedToastError).toHaveBeenCalled())
+    await waitFor(() => expect(result.current.isError).toBe(true))
     expect(mockedList).toHaveBeenCalledTimes(2)
     expect(result.current.pages.map((row) => row.id)).toEqual(['B'])
     expect(result.current.displayTotalCount).toBe(1)

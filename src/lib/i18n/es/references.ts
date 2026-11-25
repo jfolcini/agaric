@@ -89,8 +89,6 @@ export const references: Record<string, string> = {
   'unlinkedRefs.loading': 'Cargando…',
   'unlinkedRefs.loadingDots': 'Cargando...',
   'unlinkedRefs.loadFailed': 'No se han podido cargar las referencias sin enlazar',
-  'unlinkedRefs.retry': 'Reintentar',
-  'unlinkedRefs.retryLabel': 'Reintentar la carga de referencias sin enlazar',
   'unlinkedRefs.linkFailed': 'No se ha podido enlazar la referencia',
   'unlinkedRefs.noResults': 'No se han encontrado referencias sin enlazar.',
   'unlinkedRefs.untitled': 'Sin título',

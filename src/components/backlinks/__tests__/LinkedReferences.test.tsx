@@ -927,8 +927,8 @@ describe('LinkedReferences', () => {
     ).toBeInTheDocument()
   })
 
-  // 17. error handling: shows toast on fetch error
-  it('error handling: shows toast on fetch error', async () => {
+  // 17. error handling: a fetch error shows the inline alert, not a toast
+  it('error handling: shows the inline alert, not a toast, on fetch error', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') throw new Error('network failure')
       if (cmd === 'batch_resolve') return []
@@ -939,12 +939,8 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load references',
-        expect.objectContaining({ id: 'references-load-failed' }),
-      )
-    })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load references')
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   // 18. refetches when targetId changes
@@ -1622,12 +1618,12 @@ describe('LinkedReferences', () => {
   // Error path tests (mockRejectedValue coverage)
   // ---------------------------------------------------------------------------
 
-  // 35. initial backlinks load failure: toast AND the retry card. The panel used
+  // 35. initial backlinks load failure: the retry card, no toast. The panel used
   // to suppress itself here (empty panels are clutter), but a failed read is
   // indistinguishable from an empty one at the DOM, so vanishing told the reader
   // "nothing links to this page" — the one conclusion a failure must not license
   // (#4962).
-  it('error: initial backlinks load failure shows the toast and a retry card', async () => {
+  it('error: initial backlinks load failure shows a retry card and no toast', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
       if (cmd === 'batch_resolve') return []
@@ -1637,14 +1633,6 @@ describe('LinkedReferences', () => {
     })
 
     const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
-
-    // Toast fires with the translated error message
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load references',
-        expect.objectContaining({ id: 'references-load-failed' }),
-      )
-    })
 
     // Loading finishes — no skeletons remain
     await waitFor(() => {
@@ -1707,8 +1695,8 @@ describe('LinkedReferences', () => {
     expect(backlinkCalls).toBe(2)
   })
 
-  // 36. pagination failure: shows toast and preserves existing groups
-  it('error: pagination failure preserves existing groups and shows toast', async () => {
+  // 36. pagination failure: shows its alert and preserves existing groups
+  it('error: pagination failure preserves existing groups and shows its alert, no toast', async () => {
     const user = userEvent.setup()
     const page1 = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'first block' }])],
@@ -1741,13 +1729,9 @@ describe('LinkedReferences', () => {
     // Click "Load more" — this will trigger the rejected second call
     await user.click(loadMoreBtn)
 
-    // Toast fires for the pagination failure
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load references',
-        expect.objectContaining({ id: 'references-load-failed' }),
-      )
-    })
+    // The pagination failure shows its alert above the kept groups, not a toast
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load references')
+    expect(toast.error).not.toHaveBeenCalled()
 
     // Existing groups are still rendered (not wiped out)
     expect(screen.getByText('first block')).toBeInTheDocument()
@@ -1812,9 +1796,9 @@ describe('LinkedReferences', () => {
     },
   )
 
-  // 39. simultaneous failures: backlinks toast; property-keys
+  // 39. simultaneous failures: the backlinks alert; property-keys
   // Failure is now handled silently by the shared cache.
-  it('error: simultaneous failures show the backlinks toast (property keys handled by shared cache)', async () => {
+  it('error: simultaneous failures show the backlinks alert and no toast (property keys handled by shared cache)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
       if (cmd === 'list_property_keys') return Promise.reject(new Error('properties failed'))
@@ -1824,17 +1808,10 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load references',
-        expect.objectContaining({ id: 'references-load-failed' }),
-      )
-    })
-
-    // One toast fired; the property-keys failure is logged
-    // (logger.warn) by `usePropertyKeysCache` instead of toasted.
-    expect(toast.error).toHaveBeenCalledTimes(1)
-    expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load references')
+    // No toast: the property-keys failure is logged (logger.warn) by
+    // `usePropertyKeysCache` instead of toasted.
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   // #5445 — the tag list belongs to the add-filter row, which loads it on open.

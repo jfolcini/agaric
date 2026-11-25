@@ -63,9 +63,8 @@ beforeEach(() => {
   // that doesn't explicitly exercise that behaviour. `currentViewBySpace`
   // is seeded for both fixture spaces too: switching `currentSpaceId`
   // fires `navigationSlice`'s own space-change reconcile (unrelated to
-  // this hook), which defaults a never-visited space's view to
-  // 'page-editor' — seeding it keeps that pre-existing mechanism from
-  // leaking into these space/title assertions.
+  // this hook), which picks a never-visited space's view — seeding it keeps
+  // that mechanism from leaking into these space/title assertions.
   useNavigationStore.setState({
     currentView: 'journal',
     currentViewBySpace: { [SEED_IDS.SPACE_PERSONAL]: 'journal', [SEED_IDS.SPACE_WORK]: 'journal' },

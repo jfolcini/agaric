@@ -52,7 +52,7 @@ import {
   valueTypeLabel,
 } from '@/lib/property-utils'
 import { queryClient } from '@/lib/query-client'
-import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -119,14 +119,17 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setDefinitions(defs)
     } catch (error) {
       if (seq !== loadSeq.current) return
-      // Replace bespoke `String(error)` toast with the unified
-      // helper — error detail goes to the structured log; the user sees
-      // the localized message.
+      // The list's inline alert is the user's one report (#7040).
       setLoadError(true)
-      reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t, { spaceId })
+      logger.error(
+        'PropertyDefinitionsList',
+        'failed to load property definitions',
+        { spaceId },
+        error,
+      )
     }
     setLoading(false)
-  }, [spaceId, t])
+  }, [spaceId])
 
   // What an Undo changed, read again: both loads report their own failure.
   const reload = useCallback(() => {
@@ -135,7 +138,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
   }, [loadDefinitions, refreshUsage])
 
   useEffect(() => {
-    // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
+    // `loadDefinitions` reports its own failure inline; never rejects.
     // oxlint-disable-next-line react/set-state-in-effect -- kicks off the `list_property_defs` IPC load; `loadDefinitions` sets loading/error state around that await, which no render-time derivation can replace; see #4407
     void loadDefinitions()
   }, [loadDefinitions])

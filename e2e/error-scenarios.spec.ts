@@ -1,3 +1,4 @@
+import { expectToastCloseInside } from './domain'
 import { clearConsoleErrors, deleteBlockViaContextMenu, expect, test } from './helpers'
 
 interface MockErrorWindow extends Window {
@@ -71,6 +72,22 @@ test.describe('Error scenarios @boot', () => {
 
     // Verify error feedback appears (toast or error message)
     await expect(page.getByText(/failed|error/i)).toBeVisible()
+  })
+
+  test("an error toast's close button sits inside it, on its text's line", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await openGettingStarted(page)
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__injectMockError?.(
+        'create_block',
+        'Validation failed',
+      )
+    })
+    await page.getByRole('button', { name: /add block/i }).click()
+
+    const toast = page.locator('[data-sonner-toast]', { hasText: 'Failed to create block' })
+    await expect(toast).toBeVisible()
+    await expectToastCloseInside(toast)
   })
 
   test('a full disk is named once, however many commands fail on it (#6554)', async ({ page }) => {

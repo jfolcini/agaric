@@ -407,19 +407,15 @@ describe('PropertyDefinitionsList', () => {
   // Error path tests
   // ---------------------------------------------------------------------------
 
-  it('shows toast error when loading definitions fails', async () => {
+  it('reports a failed definitions load once, in the inline alert and not as a toast', async () => {
     stubInvoke({ list_property_defs: () => Promise.reject(new Error('DB error')) })
 
     render(<PropertyDefinitionsList />)
 
-    // Error reporting now goes through reportIpcError —
-    // toast carries only the localized message; the Error detail
-    // is logged separately, not surfaced in the toast string.
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to load property definitions'),
-      )
-    })
+    expect(await screen.findByTestId('list-error-state')).toHaveTextContent(
+      t('property.loadFailed'),
+    )
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
   it('shows toast error when creating a definition fails', async () => {

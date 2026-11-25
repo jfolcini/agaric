@@ -436,7 +436,6 @@ export const properties: Record<string, string> = {
 
   // Translators: Settings › Properties: error toasts when loading, creating, editing the options
   // of, or deleting a property definition (a property's declared type and options).
-  'property.errorLoad': 'Failed to load property definitions',
   'property.errorCreate': 'Failed to create property definition',
   'property.errorUpdate': 'Failed to update options',
   'property.errorDelete': 'Failed to delete property definition',

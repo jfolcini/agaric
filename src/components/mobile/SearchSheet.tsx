@@ -21,6 +21,7 @@ import { useShallow } from 'zustand/react/shallow'
 // Imported, not lazy: a segment that loaded after the sheet opened grew the
 // sheet and moved the scope toggle out from under a tap already on its way.
 import { PaletteBody } from '@/components/common/CommandPalette'
+import { EmptyState } from '@/components/common/EmptyState'
 import { InPageFind } from '@/components/query/InPageFind'
 import { Button } from '@/components/ui/button'
 import {
@@ -197,20 +198,23 @@ export function SearchSheet(): React.ReactElement | null {
         <SheetBody>
           {mode === 'in-page' ? (
             inPageContainer == null ? (
-              <div
-                className="flex flex-col items-center gap-3 py-8 text-center"
-                data-testid="search-sheet-in-page-empty"
-              >
-                <FileSearch aria-hidden className="size-8 text-muted-foreground/60" />
-                <p className="text-sm text-muted-foreground">{t('searchSheet.emptyInPage')}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setMode('all-pages')}
-                  data-testid="search-sheet-in-page-empty-switch"
-                >
-                  {t('searchSheet.emptyInPageSwitchCta')}
-                </Button>
+              <div data-testid="search-sheet-in-page-empty">
+                <EmptyState
+                  icon={FileSearch}
+                  headingLevel="p"
+                  message={t('searchSheet.emptyInPage')}
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => setMode('all-pages')}
+                      data-testid="search-sheet-in-page-empty-switch"
+                    >
+                      {t('searchSheet.emptyInPageSwitchCta')}
+                    </Button>
+                  }
+                />
               </div>
             ) : (
               // `onCloseRequest` routes the toolbar's Escape to the SHEET (not

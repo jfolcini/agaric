@@ -185,9 +185,10 @@ export function selectCurrentViewForSpace(state: NavigationState, spaceId: strin
 }
 
 /**
- * Per-space slice of the view. A switch to a never-visited space opens the
- * page editor, but the first `__legacy__` → real space hydration is the space
- * store waking up, not a switch, and keeps the current view.
+ * Per-space slice of the view. A switch to a never-visited space, which has no
+ * open page, opens its journal on today (#7040), but the first `__legacy__` →
+ * real space hydration is the space store waking up, not a switch, and keeps
+ * the current view.
  */
 const navigationSlice = createPerSpaceSlice<NavigationState, View>({
   readMirror: (state) => state.currentView,
@@ -196,7 +197,7 @@ const navigationSlice = createPerSpaceSlice<NavigationState, View>({
   setSlice: (state, key, value) => ({
     currentViewBySpace: { ...state.currentViewBySpace, [key]: value },
   }),
-  fallback: ({ prevKey, current }) => (prevKey === LEGACY_SPACE_KEY ? current : 'page-editor'),
+  fallback: ({ prevKey, current }) => (prevKey === LEGACY_SPACE_KEY ? current : 'journal'),
 })
 
 export const useNavigationStore = create<NavigationStore>()(

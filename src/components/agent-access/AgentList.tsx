@@ -4,7 +4,7 @@
  * agent access is on, since agents are set up before a client connects.
  */
 
-import { Trash2 } from 'lucide-react'
+import { Bot, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -131,6 +131,7 @@ export function AgentList({ bridge }: AgentListProps): React.ReactElement {
         <EmptyState
           compact
           headingLevel="p"
+          icon={Bot}
           message={t('agentAccess.agents.empty')}
           description={t('agentAccess.agents.emptyDescription')}
           action={<div className="mt-3">{addButton}</div>}

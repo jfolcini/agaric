@@ -220,14 +220,15 @@ export function UnlinkedReferences({
     }
   }, [groups])
 
-  // Error toast parity: the old `fetchGroups` catch surfaced a single deduped
-  // toast on any fetch failure. The `{ id }` coalesces repeats. The
-  // observability `logger.error` now lives in the hook's queryFn.
+  // A failed fetch is reported once: the open panel shows its alert, so only
+  // the shut panel's count fetch, which has nowhere to show one, toasts
+  // (#7040). The `{ id }` coalesces repeats. The `logger.error` lives in the
+  // hook's queryFn.
   useEffect(() => {
-    if (isError) {
+    if (isError && collapsed) {
       notify.error(t('unlinkedRefs.loadFailed'), { id: 'unlinked-refs-load-failed' })
     }
-  }, [isError, t])
+  }, [isError, collapsed, t])
 
   // Groups default to expanded (`expandedGroups[page_id] ?? true` +
   // `CollapsibleGroupList defaultExpanded`), so a reset clears overrides rather
@@ -537,27 +538,9 @@ export function UnlinkedReferences({
             // (making it vanish under the click that expanded it is worse), so
             // the body has to be honest instead: say the load failed and offer
             // the retry, rather than assert an emptiness nobody measured.
-            empty={
-              isError ? (
-                <div
-                  className="unlinked-references-error flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
-                  role="alert"
-                  data-testid="unlinked-references-error"
-                >
-                  <span>{t('unlinkedRefs.loadFailed')}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={refetch}
-                    aria-label={t('unlinkedRefs.retryLabel')}
-                  >
-                    {t('unlinkedRefs.retry')}
-                  </Button>
-                </div>
-              ) : (
-                <EmptyState compact message={t('unlinkedRefs.noResults')} />
-              )
-            }
+            error={isError && t('unlinkedRefs.loadFailed')}
+            onRetry={refetch}
+            empty={<EmptyState compact message={t('unlinkedRefs.noResults')} />}
           >
             {() => (
               <>

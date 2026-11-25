@@ -9,6 +9,7 @@
  * fetching, filtering, and passing down blocks.
  */
 
+import { CalendarCheck, FilterX } from 'lucide-react'
 import type React from 'react'
 import type { RefObject } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -365,6 +366,7 @@ export function AgendaResults({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> only permits phrasing content; this wraps the block-level <EmptyState>, so keep role="status" on the div
       <div role="status">
         <EmptyState
+          icon={FilterX}
           message={t('agenda.noMatch')}
           action={
             <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-2">
@@ -376,7 +378,7 @@ export function AgendaResults({
     ) : (
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> only permits phrasing content; this wraps the block-level <EmptyState>, so keep role="status" on the div
       <div role="status">
-        <EmptyState message={t('agenda.noTasks')} />
+        <EmptyState icon={CalendarCheck} message={t('agenda.noTasks')} />
       </div>
     )
     if (projectedEntries.length === 0) return emptyState

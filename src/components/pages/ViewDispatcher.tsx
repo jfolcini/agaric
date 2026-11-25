@@ -9,6 +9,7 @@
  * - `useHeaderLabel` — used by the App shell header.
  */
 
+import { FileText } from 'lucide-react'
 import { type ReactElement, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -196,6 +197,7 @@ function JournalFallback(): ReactElement {
   return (
     <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
       <EmptyState
+        icon={FileText}
         message={t('pageEditor.empty.message')}
         description={t('pageEditor.empty.description')}
         action={

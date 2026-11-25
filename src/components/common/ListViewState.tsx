@@ -123,15 +123,14 @@ export function ListViewState<T>({
     return <>{skeleton}</>
   }
 
-  // 2. Settled in failure with nothing to show → error card + retry.
-  //    Checked BEFORE the empty branch: that ordering is the fix. Items
-  //    already on screen are kept (a refresh that fails should not blank the
-  //    list), so the branch is gated on there being nothing to fall back to.
-  if (!loading && error && items.length === 0) {
-    return (
-      <ListErrorState message={typeof error === 'string' ? error : undefined} onRetry={onRetry} />
-    )
-  }
+  // 2. Settled in failure → error card + retry, the failure's one report: a
+  //    list on this state raises no toast for it (#7040). Checked BEFORE the
+  //    empty branch: that ordering is the fix. Items already on screen are
+  //    kept under the card (a refresh that fails should not blank the list).
+  const errorCard = !loading && error && (
+    <ListErrorState message={typeof error === 'string' ? error : undefined} onRetry={onRetry} />
+  )
+  if (errorCard && items.length === 0) return errorCard
 
   // 3. Done loading, no error, no items → show empty state
   if (!loading && !error && items.length === 0) {
@@ -140,7 +139,12 @@ export function ListViewState<T>({
 
   // 4. Items available (possibly still loading more) → render children
   if (items.length > 0) {
-    return <>{children(items)}</>
+    return (
+      <>
+        {errorCard && <div className="mb-2">{errorCard}</div>}
+        {children(items)}
+      </>
+    )
   }
 
   return null

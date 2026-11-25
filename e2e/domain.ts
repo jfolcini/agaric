@@ -86,3 +86,24 @@ export async function openQueryForm(page: Page): Promise<void> {
   if ((await edit.getAttribute('aria-expanded')) === 'false') await edit.click()
   await expect(edit).toHaveAttribute('aria-expanded', 'true')
 }
+
+/**
+ * The toast's close button sits inside the toast, centred on its title's line (#7040). Call it
+ * under `reducedMotion: 'reduce'`, so the toast is not measured mid-slide.
+ */
+export async function expectToastCloseInside(toast: Locator): Promise<void> {
+  const box = async (loc: Locator) => {
+    const b = await loc.boundingBox()
+    if (!b) throw new Error('element has no box')
+    return b
+  }
+  const t = await box(toast)
+  const close = await box(toast.locator('[data-close-button]'))
+  const title = await box(toast.locator('[data-title]'))
+  expect(close.x).toBeGreaterThanOrEqual(t.x)
+  expect(close.y).toBeGreaterThanOrEqual(t.y)
+  expect(close.x + close.width).toBeLessThanOrEqual(t.x + t.width)
+  expect(close.y + close.height).toBeLessThanOrEqual(t.y + t.height)
+  expect(close.x).toBeGreaterThanOrEqual(title.x + title.width)
+  expect(Math.abs(close.y + close.height / 2 - (title.y + title.height / 2))).toBeLessThanOrEqual(1)
+}

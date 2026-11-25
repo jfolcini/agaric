@@ -2553,10 +2553,9 @@ describe('App', () => {
     })
 
     it('rebinds --accent-current and re-stamps the title when the active space changes', async () => {
-      // #2944 — seed a per-space view mapping for Work so the
-      // (unrelated) space-change reconcile in `navigation.ts` doesn't
-      // default the never-visited space to 'page-editor', which would
-      // otherwise strip the view prefix from the expected title below.
+      // #2944 — seed a per-space view mapping for Work, so the title below
+      // does not depend on the (unrelated) space-change reconcile in
+      // `navigation.ts` and its default view for a never-visited space.
       useNavigationStore.setState({
         currentView: 'journal',
         currentViewBySpace: { [PERSONAL.id]: 'journal', [WORK.id]: 'journal' },

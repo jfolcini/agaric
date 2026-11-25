@@ -2455,7 +2455,7 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().currentViewBySpace['space-1']).toBe('search')
     })
 
-    it('switching to a fresh space defaults to page-editor', () => {
+    it('switching to a fresh space opens its journal', () => {
       // space-1 has a recorded view; space-2 has never been visited.
       useSpaceStore.setState({
         currentSpaceId: 'space-1',
@@ -2470,8 +2470,8 @@ describe('useNavigationStore', () => {
       // Switch to fresh space-2.
       useSpaceStore.setState({ currentSpaceId: 'space-2' })
 
-      // Default for fresh spaces is `page-editor` per the spec.
-      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      // A fresh space has no open page, so it lands on its journal (#7040).
+      expect(useNavigationStore.getState().currentView).toBe('journal')
     })
 
     it('setView in space-A does not bleed into space-B', () => {
