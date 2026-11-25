@@ -389,6 +389,8 @@ export const references: Record<string, string> = {
   'tagList.color.slate': 'Ardósia',
   'tagList.color.orange': 'Laranja',
   'tagList.customColorLabel': 'Cor personalizada',
+  'tagList.hexColorLabel': 'Cor hexadecimal',
+  'tagList.hexColorInvalid': 'Digite uma cor hexadecimal, como #3b82f6',
   'tagList.clearColor': 'Remover cor',
   'backlink.filtersLegend': 'Filtros de backlinks',
   'backlink.filtersApplied_one': '{{count}} filtro aplicado',

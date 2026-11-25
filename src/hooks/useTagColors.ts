@@ -21,9 +21,9 @@ export interface TagColors {
   /** The tag whose colour picker is open, or null. */
   colorPickerOpen: string | null
   setColorPickerOpen: (tagId: string | null) => void
-  /** Colours the tag and closes the picker. Never rejects. */
+  /** Colours the tag, leaving the picker open. Never rejects. */
   setColor: (tagId: string, color: string) => Promise<void>
-  /** Uncolours the tag and closes the picker. Never rejects. */
+  /** Uncolours the tag, leaving the picker open. Never rejects. */
   clearColor: (tagId: string) => Promise<void>
 }
 
@@ -39,7 +39,6 @@ export function useTagColors(): TagColors {
   const setColor = useCallback(async (tagId: string, color: string) => {
     setTagColor(tagId, color)
     setLocalColors((prev) => ({ ...prev, [tagId]: color }))
-    setColorPickerOpen(null)
     try {
       unwrap(
         await commands.setProperty(tagId, 'color', {
@@ -68,7 +67,6 @@ export function useTagColors(): TagColors {
       delete next[tagId]
       return next
     })
-    setColorPickerOpen(null)
     try {
       unwrap(await commands.deleteProperty(tagId, 'color'))
       useResolveStore.getState().setSyncedTagColor(tagId, null)

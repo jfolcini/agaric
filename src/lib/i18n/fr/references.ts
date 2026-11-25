@@ -395,6 +395,8 @@ export const references: Record<string, string> = {
   'tagList.color.slate': 'Ardoise',
   'tagList.color.orange': 'Orange',
   'tagList.customColorLabel': 'Couleur personnalisée',
+  'tagList.hexColorLabel': 'Couleur hexadécimale',
+  'tagList.hexColorInvalid': 'Tapez une couleur hexadécimale, comme #3b82f6',
   'tagList.clearColor': 'Effacer la couleur',
   'backlink.filtersLegend': 'Filtres des rétroliens',
   'backlink.filtersApplied_one': '{{count}} filtre appliqué',

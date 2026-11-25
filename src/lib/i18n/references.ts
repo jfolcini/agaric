@@ -768,9 +768,12 @@ export const references: Record<string, string> = {
   'tagList.color.slate': 'Slate',
   'tagList.color.orange': 'Orange',
 
-  // Translators: Tags view color picker: label of the custom color input, and a button that removes
-  // the tag's color.
+  // Translators: Tags view color picker: a toggle that shows the custom color picker, the label of
+  // its hex color field, the error shown under that field for a value that is not a hex color, and a
+  // button that removes the tag's color.
   'tagList.customColorLabel': 'Custom color',
+  'tagList.hexColorLabel': 'Hex color',
+  'tagList.hexColorInvalid': 'Enter a hex color, like #3b82f6',
   'tagList.clearColor': 'Clear color',
 
   // Translators: References panel filters: screen-reader legend, and a live announcement of the

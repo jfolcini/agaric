@@ -473,7 +473,7 @@ test.describe('Tag colour from the synced property (#6544) @pages', () => {
 
     await row.hover()
     await row.getByRole('button', { name: 'Set tag color' }).click()
-    await activePopover(page).getByRole('button', { name: 'Rose' }).click()
+    await activePopover(page).getByRole('radio', { name: 'Rose' }).click()
     await expect.poll(colour).toBe(rose)
 
     // Only the property can keep the colour now.

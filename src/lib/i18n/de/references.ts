@@ -393,6 +393,8 @@ export const references: Record<string, string> = {
   'tagList.color.slate': 'Schiefer',
   'tagList.color.orange': 'Orange',
   'tagList.customColorLabel': 'Eigene Farbe',
+  'tagList.hexColorLabel': 'Hex-Farbe',
+  'tagList.hexColorInvalid': 'Gib eine Hex-Farbe ein, etwa #3b82f6',
   'tagList.clearColor': 'Farbe entfernen',
   'backlink.filtersLegend': 'Backlink-Filter',
   'backlink.filtersApplied_one': '{{count}} Filter angewendet',

@@ -392,6 +392,8 @@ export const references: Record<string, string> = {
   'tagList.color.slate': 'Pizarra',
   'tagList.color.orange': 'Naranja',
   'tagList.customColorLabel': 'Color personalizado',
+  'tagList.hexColorLabel': 'Color hexadecimal',
+  'tagList.hexColorInvalid': 'Escribe un color hexadecimal, como #3b82f6',
   'tagList.clearColor': 'Quitar el color',
   'backlink.filtersLegend': 'Filtros de retroenlaces',
   'backlink.filtersApplied_one': '{{count}} filtro aplicado',
