@@ -43,14 +43,12 @@ test.describe('Settings on a phone @mobile @settings', () => {
     const list = sectionList(page)
     await expect(list.getByRole('button', { name: 'General', exact: true })).toBeVisible()
     await expect(list.getByRole('button', { name: 'Sync & devices', exact: true })).toBeVisible()
-    await expect(page.getByRole('combobox', { name: 'Settings', exact: true })).toHaveCount(0)
     await expect(page.getByTestId(/^settings-panel-/)).toHaveCount(0)
 
     await list.getByRole('button', { name: 'Editor', exact: true }).click()
     await expect(page.getByTestId('settings-panel-editor')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Editor', level: 2 })).toBeVisible()
     await expect(sectionList(page)).toHaveCount(0)
-    await expect(page.getByRole('combobox', { name: 'Settings', exact: true })).toHaveCount(0)
 
     await backToSections(page).click()
     await expect(

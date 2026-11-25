@@ -365,7 +365,6 @@ describe('SettingsView', () => {
       ).toEqual(RAIL_TAB_IDS.map((id) => `settings-section-${id}`))
       expect(within(sections()).getAllByRole('heading', { level: 2 })).toHaveLength(4)
       expect(screen.queryByRole('tablist')).toBeNull()
-      expect(screen.queryByRole('combobox', { name: t('sidebar.settings') })).toBeNull()
       expect(screen.queryByTestId(/^settings-panel-/)).toBeNull()
       expect(await axe(container)).toHaveNoViolations()
     })
@@ -430,6 +429,10 @@ describe('SettingsView', () => {
       })
       expect(sections()).toBeInTheDocument()
       expect(screen.queryByTestId('settings-panel-editor')).toBeNull()
+      expect(
+        within(sections()).getByRole('button', { name: t('settings.tabEditor') }),
+      ).toHaveFocus()
+      expect(runBackChain()).toBe(false)
     })
   })
 

@@ -158,3 +158,19 @@ test.describe('Settings at a desktop width @settings', () => {
     expect(new Set(looks).size, looks.join('\n')).toBe(1)
   })
 })
+
+test.describe('The Settings rail on a touch tablet @settings @mobile', () => {
+  test.use({ viewport: { width: 1280, height: 736 }, hasTouch: true })
+
+  // Pinned in a window shorter than itself, the rail would show its last tabs
+  // only once the panel is scrolled to its end.
+  test('the rail pins only in a window tall enough for its touch-sized tabs', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Settings')
+    const rail = page.locator(':has(> [data-testid="settings-tab-rail"])')
+    await expect(rail).toBeVisible()
+    await expect(rail).toHaveCSS('position', 'static')
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(rail).toHaveCSS('position', 'sticky')
+  })
+})

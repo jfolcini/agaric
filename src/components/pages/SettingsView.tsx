@@ -183,10 +183,11 @@ export function SettingsView(): React.ReactElement {
   useEffect(() => {
     if (!phoneLayout || listOpen) return
     return registerBackHandler(() => {
+      focusAfterSwitch.current = `settings-section-${activeTab}`
       setListOpen(true)
       return true
     }, BACK_PRIORITY_ZOOM)
-  }, [phoneLayout, listOpen])
+  }, [phoneLayout, listOpen, activeTab])
 
   // #734 — consume the pending-tab handoff slot. The deep-link router and
   // the welcome modal's actions write it before flipping the view to
@@ -330,12 +331,13 @@ export function SettingsView(): React.ReactElement {
             tabs so screen-reader users hear the grouping without the tabs
             losing their flat `role="tab"` membership. Arrow keys select as
             they move, as in the app sidebar. The rail stays in view while the
-            panel scrolls, where the window is tall enough to hold all of it. */}
+            panel scrolls, where the window is tall enough to hold all of it:
+            a touch rail's 44 px tabs need a taller window. */}
         <Tabs
           variant="vertical"
           value={activeTab}
           onValueChange={(tab) => setActiveTab(tab as SettingsTab)}
-          className="w-48 shrink-0 [@media(min-height:44rem)]:sticky [@media(min-height:44rem)]:top-0"
+          className="w-48 shrink-0 [@media(min-height:44rem)_and_(pointer:fine)]:sticky [@media(min-height:48rem)]:sticky top-0"
         >
           <TabsList
             aria-label={t('sidebar.settings')}
