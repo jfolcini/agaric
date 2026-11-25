@@ -467,7 +467,7 @@ function BlockListItemInner({
   // passes `isFocused`: the focused row is the single tab stop (`0`) and the
   // rest rove out of the Tab order (`-1`), so the list has exactly one tab
   // stop instead of one per row. Consumers WITHOUT a roving model omit
-  // `isFocused` entirely (e.g. UnfinishedTasks) — for those, absent
+  // `isFocused` entirely — for those, absent
   // `isFocused` keeps every row tab-reachable (`0`) so keyboard users aren't
   // stranded. Only an explicit `isFocused === false` removes a row from the
   // Tab order.

@@ -22,13 +22,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
-  vi.hoisted(() => ({
-    mockedListBlocks: vi.fn(),
-    mockedBatchResolve: vi.fn(),
-    mockedQueryByProperty: vi.fn(),
-    mockedListProjectedAgenda: vi.fn(),
-  }))
+const {
+  mockedListBlocks,
+  mockedBatchResolve,
+  mockedQueryByProperty,
+  mockedListProjectedAgenda,
+  mockedListUnfinishedTasks,
+} = vi.hoisted(() => ({
+  mockedListBlocks: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+  mockedQueryByProperty: vi.fn(),
+  mockedListProjectedAgenda: vi.fn(),
+  mockedListUnfinishedTasks: vi.fn(),
+}))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -41,6 +47,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
       queryByProperty: (...args: unknown[]) =>
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listUnfinishedTasks: (...args: unknown[]) =>
+        mockedListUnfinishedTasks(...args).then((data: unknown) => ({ status: 'ok', data })),
       listProjectedAgenda: (...args: unknown[]) =>
         mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -108,6 +116,7 @@ beforeEach(() => {
     total_count: null,
   })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
+  mockedListUnfinishedTasks.mockResolvedValue(emptyResponse)
   // Freeze Date only (not setTimeout/setInterval — waitFor and
   // renderHook rely on real timers). Prevents midnight-boundary flakes
   // where the test's `new Date()` crosses a day boundary mid-assertion.
@@ -669,6 +678,56 @@ describe('useDuePanelData', () => {
   it('extractUlidRefs returns empty array for content without refs', () => {
     expect(extractUlidRefs('plain text content')).toHaveLength(0)
     expect(extractUlidRefs('')).toHaveLength(0)
+  })
+
+  it('lists open tasks scheduled before today and not yet due, and none past due (#7040)', async () => {
+    const dayStr = (offset: number) => {
+      const d = new Date()
+      d.setDate(d.getDate() + offset)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    mockedListUnfinishedTasks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'S1', todo_state: 'TODO', scheduled_date: dayStr(-2), due_date: null }),
+        makeBlock({
+          id: 'S2',
+          todo_state: 'DOING',
+          scheduled_date: dayStr(-1),
+          due_date: dayStr(3),
+        }),
+        makeBlock({
+          id: 'S3',
+          todo_state: 'TODO',
+          scheduled_date: dayStr(-2),
+          due_date: dayStr(-1),
+        }),
+        makeBlock({ id: 'S4', todo_state: 'TODO', scheduled_date: null, due_date: dayStr(-1) }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['S1', 'S2'])
+    })
+    expect(mockedListUnfinishedTasks).toHaveBeenCalledWith(
+      dayStr(0),
+      ['TODO', 'DOING'],
+      null,
+      200,
+      expect.anything(),
+    )
+  })
+
+  it('fetches no earlier-scheduled tasks for a day other than today', async () => {
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-01-15', sourceFilter: null }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(mockedListUnfinishedTasks).not.toHaveBeenCalled()
+    expect(result.current.scheduledEarlierBlocks).toEqual([])
   })
 
   it('overdue batchResolve includes content ULIDs (B-55)', async () => {

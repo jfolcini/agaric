@@ -1,7 +1,8 @@
 /**
  * useDuePanelData — data fetching hook for DuePanel.
  *
- * Encapsulates the 3 data fetches (blocks, overdue, upcoming, projected)
+ * Encapsulates the data fetches (blocks, overdue, scheduled earlier, upcoming,
+ * projected)
  * and their state management. Returns fetched data, loading states,
  * page titles, and a loadMore function.
  *
@@ -9,10 +10,10 @@
  *
  * #2256 — deliberately NOT migrated onto `usePaginatedQuery`. Unlike the
  * other paginated panels (HistoryView / HistoryPanel / DonePanel each drive a
- * single cursor list, and UnfinishedTasks drains one), this hook is a
+ * single cursor list), this hook is a
  * multi-source coordinator, not a thin cursor wrapper:
- *  - It runs FOUR distinct fetches (main due blocks + overdue + upcoming +
- *    projected agenda), merging all of their parent-title resolutions into a
+ *  - It runs distinct fetches (main due blocks, overdue, scheduled earlier,
+ *    upcoming, projected agenda), merging all of their parent-title resolutions into a
  *    single shared `pageTitles` map.
  *  - The main list is post-filtered client-side (`applySourceFilter` drops
  *    `property:`-source and empty-content rows per page), so its
@@ -203,6 +204,8 @@ export interface UseDuePanelDataReturn {
   projectedEntries: ActiveProjectedAgendaEntry[]
   projectedLoading: boolean
   overdueBlocks: BlockRow[]
+  /** Today's open tasks scheduled before today whose due date has not passed. */
+  scheduledEarlierBlocks: BlockRow[]
   upcomingBlocks: BlockRow[]
   isToday: boolean
   warningDays: number
@@ -248,6 +251,7 @@ export function useDuePanelData({
   // 30s-TTL cache for the rest of the session, defeating.
   const prevInvalidationKeyRef = useRef(invalidationKey)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
+  const [scheduledEarlierBlocks, setScheduledEarlierBlocks] = useState<BlockRow[]>([])
   const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
 
   const warningDays = useMemo(() => readPreference(PREFERENCES.deadlineWarningDays), [])
@@ -328,6 +332,61 @@ export function useDuePanelData({
     }
 
     void fetchOverdue()
+    return () => {
+      stale = true
+    }
+  }, [isToday, date, invalidationKey, currentSpaceId])
+
+  // #7040 — open tasks scheduled before today whose due date has not passed:
+  // what the journal's old Unfinished tasks section listed beyond Overdue.
+  useEffect(() => {
+    if (!isToday) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the list when the panel leaves today; its rows only ever arrive from the `listUnfinishedTasks` IPC below; see #4407
+      setScheduledEarlierBlocks([])
+      return
+    }
+    const spaceId = currentSpaceId
+    if (spaceId == null) return
+    const scope = requireActiveScope(spaceId)
+    let stale = false
+
+    async function fetchScheduledEarlier() {
+      try {
+        // One bounded page, as the overdue fetch takes: TODO and DOING rows
+        // whose due or scheduled date precedes `date`, the latest first.
+        const resp = unwrap(
+          await commands.listUnfinishedTasks(
+            date,
+            ['TODO', 'DOING'],
+            null,
+            paginationLimit(200),
+            scope,
+          ),
+        )
+        if (stale) return
+        const rows = resp.items.filter(
+          (b) =>
+            b.scheduled_date != null &&
+            b.scheduled_date < date &&
+            !(b.due_date != null && b.due_date < date) &&
+            b.content?.trim(),
+        )
+        setScheduledEarlierBlocks(rows)
+        if (rows.length > 0) {
+          await resolveAndMergeTitles(
+            collectResolveIds(rows),
+            currentSpaceId,
+            () => stale,
+            setPageTitles,
+          )
+        }
+      } catch (err) {
+        logger.warn('useDuePanelData', 'scheduled-earlier fetch failed', { date }, err)
+        if (!stale) setScheduledEarlierBlocks([])
+      }
+    }
+
+    void fetchScheduledEarlier()
     return () => {
       stale = true
     }
@@ -638,6 +697,13 @@ export function useDuePanelData({
       excludePageId ? overdueBlocks.filter((b) => b.page_id !== excludePageId) : overdueBlocks,
     [overdueBlocks, excludePageId],
   )
+  const filteredScheduledEarlierBlocks = useMemo(
+    () =>
+      excludePageId
+        ? scheduledEarlierBlocks.filter((b) => b.page_id !== excludePageId)
+        : scheduledEarlierBlocks,
+    [scheduledEarlierBlocks, excludePageId],
+  )
   const filteredUpcomingBlocks = useMemo(
     () =>
       excludePageId ? upcomingBlocks.filter((b) => b.page_id !== excludePageId) : upcomingBlocks,
@@ -661,6 +727,7 @@ export function useDuePanelData({
     projectedEntries: filteredProjectedEntries,
     projectedLoading,
     overdueBlocks: filteredOverdueBlocks,
+    scheduledEarlierBlocks: filteredScheduledEarlierBlocks,
     upcomingBlocks: filteredUpcomingBlocks,
     isToday,
     warningDays,

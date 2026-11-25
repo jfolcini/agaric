@@ -290,6 +290,11 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'La semana empieza el',
   'settings.weekStartMonday': 'Lunes',
   'settings.weekStartSunday': 'Domingo',
+  'settings.journalTemplateLabel': 'Plantilla del diario',
+  'settings.journalTemplateHelp':
+    'Un día nuevo en este espacio empieza como una copia de esta página.',
+  'settings.journalTemplateNone': 'Ninguna',
+  'settings.journalTemplateOpen': 'Abrir',
   'settings.journalDateFormatLabel': 'Formato de fecha del diario',
   'settings.journalDateFormatHelp':
     'Cómo se muestran los títulos del diario. Las páginas siempre se guardan como YYYY-MM-DD, así que cambiar esto nunca afecta a los diarios existentes.',

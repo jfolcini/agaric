@@ -643,8 +643,8 @@ export function UnlinkedReferences({
                         </button>
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
+                          size="xs"
+                          className="link-it-button shrink-0 text-muted-foreground hover:text-primary"
                           onClick={() => void handleLinkIt(block.id, block.content ?? '')}
                           aria-label={t('backlinks.linkMention', {
                             text: (block.content ?? '').slice(0, 40),

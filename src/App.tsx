@@ -17,6 +17,7 @@ import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
 import { StorageFailureBanner } from '@/components/common/StorageFailureBanner'
 import { NoPeersPairing } from '@/components/dialogs/NoPeersPairing'
+import { usePinnedToolbarShown } from '@/components/FormattingToolbar/pinned-toolbar'
 import { ViewToolbarSlot } from '@/components/FormattingToolbar/view-toolbar'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
 import { AppSidebar, syncDotClass } from '@/components/layout/AppSidebar'
@@ -143,23 +144,27 @@ function preloadSearchOverlays(): void {
 }
 
 /**
- * A phone shows toasts at the bottom centre, in thumb reach and clear of the
- * header and the search field under it (#5931). Bottom-right first moved to
- * the top because it sat on the system navigation bar; the safe-area inset
- * keeps that covered. The offset sets a toast 0.5rem above the floating
- * capture button (1rem up, 3.5rem tall), which also clears the formatting
- * toolbar pinned on the soft keyboard: the screen's foot is then the
- * keyboard's top (#6790).
+ * A phone shows toasts at the bottom, in thumb reach and clear of the header
+ * and the search field under it (#5931), on the floating capture button's
+ * line and ending 0.5rem left of it (1rem from the edge, 3.5rem wide), so a
+ * toast costs width instead of height. With the formatting toolbar pinned on
+ * the soft keyboard the button hides and a toast sits 1rem above the toolbar
+ * instead: the screen's foot is then the keyboard's top (#6790).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   const isMobile = useIsMobile()
-  const bottom = 'calc(5rem + var(--safe-area-bottom))'
+  const toolbarPinned = usePinnedToolbarShown()
+  const mobile = {
+    bottom: `calc(${toolbarPinned ? '5rem' : '1rem'} + var(--safe-area-bottom))`,
+    left: '1rem',
+    right: '5rem',
+  }
   return (
     <Toaster
-      position={isMobile ? 'bottom-center' : 'bottom-right'}
+      position={isMobile ? 'bottom-left' : 'bottom-right'}
       // `mobileOffset` applies up to sonner's own 600 px breakpoint, `offset`
-      // above it, so a phone in landscape gets the same clearance.
-      {...(isMobile ? { offset: { bottom }, mobileOffset: { bottom } } : {})}
+      // above it, so a phone in landscape gets the same placement.
+      {...(isMobile ? { offset: mobile, mobileOffset: mobile } : {})}
       theme={isDark ? 'dark' : 'light'}
       richColors
       closeButton

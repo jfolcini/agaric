@@ -3,9 +3,8 @@
  * (#5691). It opens in page mode where a page view would (`usePageMode`: the
  * *Edit pages as* setting or the Blocks | Page switch, a page within the cap),
  * the switch ending the day's row of actions (on a phone, a *Page actions* menu
- * holding the switch's row and the journal template's rows instead, so the
- * row fits one line and the journal header needs none); otherwise in block
- * mode's tree with its Add block button. The week and stream views mount
+ * holding the switch's row instead, so the row fits one line); otherwise in
+ * block mode's tree with its Add block button. The week and stream views mount
  * a tree per day and stay in block mode.
  */
 
@@ -16,11 +15,6 @@ import { useTranslation } from 'react-i18next'
 
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
-import {
-  type JournalTemplateChoices,
-  JournalTemplateItems,
-  loadJournalTemplateChoices,
-} from '@/components/journal/JournalTemplateButton'
 import { EditModeItem } from '@/components/pages/EditModeItem'
 import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { MENU_ITEM_CLASS } from '@/components/pages/PageHeaderMenu'
@@ -59,7 +53,6 @@ export function DayPageEditor({
   const isMobile = useIsMobile()
   const onPhone = isTouch && isMobile
   const [menuOpen, setMenuOpen] = useState(false)
-  const [templateChoices, setTemplateChoices] = useState<JournalTemplateChoices | null>(null)
   const pageMode = usePageMode(pageId)
   useEditModeShortcut(pageMode.mode, pageMode.changeMode)
   // #6746 — page mode's reference count opens block mode zoomed on its block.
@@ -93,17 +86,7 @@ export function DayPageEditor({
           {onPhone ? (
             <MenuSheet
               open={menuOpen}
-              onOpenChange={(next) => {
-                if (!next || onNavigateToPage == null) {
-                  setMenuOpen(next)
-                  return
-                }
-                // Opens once the template rows are read, so the sheet does not grow under the finger.
-                void loadJournalTemplateChoices(t).then((choices) => {
-                  setTemplateChoices(choices)
-                  setMenuOpen(true)
-                })
-              }}
+              onOpenChange={setMenuOpen}
               title={t('pageHeader.pageActions')}
               trigger={
                 <SheetTrigger asChild>
@@ -124,16 +107,6 @@ export function DayPageEditor({
                     pageMode.changeMode(mode)
                   }}
                 />
-                {templateChoices && onNavigateToPage && (
-                  <>
-                    <hr className="my-1 h-px border-none bg-border" />
-                    <JournalTemplateItems
-                      choices={templateChoices}
-                      onNavigateToPage={onNavigateToPage}
-                      onClose={() => setMenuOpen(false)}
-                    />
-                  </>
-                )}
               </div>
             </MenuSheet>
           ) : (

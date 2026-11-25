@@ -71,7 +71,7 @@ export function PairingWaitingState({
         variant="outline"
         size="sm"
         onClick={onCancel}
-        className="pairing-waiting-cancel-btn mt-2 touch-target"
+        className="pairing-waiting-cancel-btn mt-2"
       >
         {t('pairing.cancelButton')}
       </Button>

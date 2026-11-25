@@ -421,7 +421,6 @@ export function PageBrowserFilterRow({
         <Button
           variant="ghost"
           size="xs"
-          className="h-7 text-xs"
           onClick={onClearAll}
           aria-label={t('pageBrowser.filter.clearAllLabel')}
         >

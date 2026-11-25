@@ -663,7 +663,6 @@ export function GraphFilterBar({
           <Button
             variant="outline"
             size="xs"
-            className="h-7 gap-1 text-xs"
             aria-label={t('graph.filter.addFilter')}
             aria-expanded={popoverOpen}
           >
@@ -689,7 +688,6 @@ export function GraphFilterBar({
         <Button
           variant="ghost"
           size="xs"
-          className="h-7 text-xs"
           onClick={handleClearAll}
           aria-label={t('graph.filter.clearAll')}
         >

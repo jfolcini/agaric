@@ -253,8 +253,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            className="diff-hunk-prev px-2 text-xs"
+            size="xs"
+            className="diff-hunk-prev px-2"
             data-testid="diff-prev-hunk-btn"
             onClick={handlePrevHunk}
             disabled={atFirstHunk}
@@ -266,8 +266,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            className="diff-hunk-next px-2 text-xs"
+            size="xs"
+            className="diff-hunk-next px-2"
             data-testid="diff-next-hunk-btn"
             onClick={handleNextHunk}
             disabled={atLastHunk}
@@ -282,8 +282,8 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
         <Button
           type="button"
           variant="ghost"
-          size="sm"
-          className="diff-toggle-btn mt-1 text-xs"
+          size="xs"
+          className="diff-toggle-btn mt-1"
           data-testid="diff-toggle-btn"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}

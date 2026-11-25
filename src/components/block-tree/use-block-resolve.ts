@@ -97,7 +97,7 @@ export interface UseBlockResolveReturn {
    *  2. THE REST CANNOT REGISTER — they did not forget to.
    *     `useBlockResolve()` has exactly one caller (`BlockTree`), and every
    *     other site sits above or beside it: `useJournalBlockCreation` (via
-   *     `JournalPage`/`StreamView`), `JournalTemplateButton`, the App-level
+   *     `JournalPage`/`StreamView`), `JournalTemplateRow`, the App-level
    *     New page dialog (`usePageCreation`), `TemplatesView`, and
    *     `WelcomeModal`'s `ensureSamplePage`. A paste's `[[Name]]` now creates
    *     its page in the backend's `paste_blocks` (#5140), which the paste

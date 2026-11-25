@@ -28,13 +28,19 @@ import { t } from '@/lib/i18n'
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
 // envelope, so the spies resolve raw data and the mock wraps it.
-const { mockedListBlocks, mockedBatchResolve, mockedQueryByProperty, mockedListProjectedAgenda } =
-  vi.hoisted(() => ({
-    mockedListBlocks: vi.fn(),
-    mockedBatchResolve: vi.fn(),
-    mockedQueryByProperty: vi.fn(),
-    mockedListProjectedAgenda: vi.fn(),
-  }))
+const {
+  mockedListBlocks,
+  mockedBatchResolve,
+  mockedQueryByProperty,
+  mockedListProjectedAgenda,
+  mockedListUnfinishedTasks,
+} = vi.hoisted(() => ({
+  mockedListBlocks: vi.fn(),
+  mockedBatchResolve: vi.fn(),
+  mockedQueryByProperty: vi.fn(),
+  mockedListProjectedAgenda: vi.fn(),
+  mockedListUnfinishedTasks: vi.fn(),
+}))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -51,6 +57,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
       listProjectedAgenda: (...args: unknown[]) =>
         mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listUnfinishedTasks: (...args: unknown[]) =>
+        mockedListUnfinishedTasks(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -144,6 +152,7 @@ beforeEach(() => {
     total_count: null,
   })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
+  mockedListUnfinishedTasks.mockResolvedValue(emptyResponse)
   useNavigationStore.setState({
     currentView: 'journal',
     selectedBlockId: null,
@@ -1665,6 +1674,38 @@ describe('DuePanel', () => {
 
       expect(await screen.findByText(t('duePanel.overdueTitle'))).toBeInTheDocument()
       expect(screen.getByText(/Overdue task/)).toBeInTheDocument()
+    })
+
+    it('shows open tasks scheduled before today, with how long ago, under Scheduled earlier (#7040)', async () => {
+      const day = (offset: number) => {
+        const d = new Date()
+        d.setDate(d.getDate() + offset)
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      }
+      mockedListUnfinishedTasks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'SCHED1',
+            content: 'Plan the offsite',
+            parent_id: 'P1',
+            page_id: 'P1',
+            todo_state: 'TODO',
+            scheduled_date: day(-2),
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { container } = render(<DuePanel date={day(0)} />)
+
+      expect(await screen.findByText(t('duePanel.scheduledEarlierTitle'))).toBeInTheDocument()
+      expect(screen.getByText(/Plan the offsite/)).toBeInTheDocument()
+      expect(
+        screen.getByText(`(${t('duePanel.scheduledDaysAgo', { count: 2 })})`),
+      ).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
     })
 
     it('does not show overdue section for non-today dates', async () => {

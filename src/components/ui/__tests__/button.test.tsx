@@ -3,9 +3,8 @@
  *
  * Validates:
  *  - Each size variant renders correctly
- *  - Coarse pointer media query classes are present for touch-target sizing
- *    on EVERY size variant — lg/icon-lg are h-10/size-10 (40px), below the
- *    44px AGENTS.md touch-target mandate, so they bump to 44px too (#759)
+ *  - On a coarse pointer every text size paints one height with a 44 px hit
+ *    area, and every icon size a 44 px box (#759, #7040)
  *  - a11y compliance via axe audit
  */
 
@@ -20,7 +19,7 @@ import { Button } from '@/components/ui/button'
 
 /** Helper: render a Button with a given size and return the DOM element. */
 function renderButton(
-  size: 'default' | 'xs' | 'sm' | 'lg' | 'icon' | 'icon-xs' | 'icon-sm' | 'icon-lg',
+  size: 'default' | 'xs' | 'sm' | 'icon' | 'icon-xs' | 'icon-sm',
   label = 'Click',
 ) {
   render(<Button size={size}>{label}</Button>)
@@ -39,19 +38,13 @@ describe('Button', () => {
   it('renders xs size variant', () => {
     const btn = renderButton('xs')
     expect(btn).toBeInTheDocument()
-    expect(btn.className).toContain('h-6')
+    expect(btn.className).toContain('h-7')
   })
 
   it('renders sm size variant', () => {
     const btn = renderButton('sm')
     expect(btn).toBeInTheDocument()
     expect(btn.className).toContain('h-8')
-  })
-
-  it('renders lg size variant', () => {
-    const btn = renderButton('lg')
-    expect(btn).toBeInTheDocument()
-    expect(btn.className).toContain('h-10')
   })
 
   it('renders icon size variant', () => {
@@ -72,32 +65,27 @@ describe('Button', () => {
     expect(btn.className).toContain('size-8')
   })
 
-  it('renders icon-lg size variant', () => {
-    const btn = renderButton('icon-lg')
-    expect(btn).toBeInTheDocument()
-    expect(btn.className).toContain('size-10')
-  })
-
   // -- Coarse pointer media query overrides -----------------------------------
 
   // Below lg, a coarse pointer grows the label one step and the 44 px target
   // is an invisible hit area, so a row of buttons does not paint 44 px tall.
-  it.each([
-    ['default', '[@media(pointer:coarse)]:h-10'],
-    ['sm', '[@media(pointer:coarse)]:h-9'],
-    ['xs', '[@media(pointer:coarse)]:h-8'],
-  ] as const)('%s size grows one step on a coarse pointer, with a hit area', (size, height) => {
-    const btn = renderButton(size)
-    expect(btn.className).toContain(height)
-    expect(btn.className).toContain('touch-hit-area')
-    expect(btn.className).not.toContain('[@media(pointer:coarse)]:h-11')
-  })
+  // One height on a coarse pointer, the default's 36 px; the 44 px target is
+  // an invisible hit area, so a row of buttons does not paint 44 px tall.
+  it.each(['xs', 'sm'] as const)(
+    '%s size paints 36 px on a coarse pointer, with a hit area',
+    (size) => {
+      const btn = renderButton(size)
+      expect(btn.className).toContain('[@media(pointer:coarse)]:h-9')
+      expect(btn.className).toContain('[@media(pointer:coarse)]:text-sm')
+      expect(btn.className).toContain('touch-hit-area')
+    },
+  )
 
-  // #759: lg is h-10 (40px) — below the 44px touch-target mandate, so it
-  // gets the same coarse-pointer bump as every other sub-44px size.
-  it('lg size includes coarse pointer height override (h-10 is only 40px)', () => {
-    const btn = renderButton('lg')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+  it('default size is 36 px everywhere, with a hit area on a coarse pointer', () => {
+    const btn = renderButton('default')
+    expect(btn.className).toContain('h-9')
+    expect(btn.className).not.toMatch(/\[@media\(pointer:coarse\)\]:h-/)
+    expect(btn.className).toContain('touch-hit-area')
   })
 
   it('icon size includes coarse pointer size override', () => {
@@ -115,18 +103,12 @@ describe('Button', () => {
     expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
-  // #759: icon-lg is size-10 (40px) — below the 44px touch-target mandate.
-  it('icon-lg size includes coarse pointer size override (size-10 is only 40px)', () => {
-    const btn = renderButton('icon-lg')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
-  })
-
   // -- active-press scale (#1012) ---------------------------------------------
 
   // #1012: the press-compress scale lives once in the cva base; icon
   // variants no longer re-declare it.
   it('applies active:scale-[0.97] from the base on every size', () => {
-    for (const size of ['default', 'sm', 'icon', 'icon-sm', 'icon-lg'] as const) {
+    for (const size of ['default', 'sm', 'icon', 'icon-sm'] as const) {
       render(<Button size={size}>{`press-${size}`}</Button>)
       const btn = screen.getByRole('button', { name: `press-${size}` })
       expect(btn.className).toContain('active:scale-[0.97]')
@@ -148,7 +130,7 @@ describe('Button', () => {
 
   // The `xs` size keeps its own `size-3`; tailwind-merge must drop the base
   // `size-4` for them.
-  it('sizes icons at size-4, and size-3 on the xs text button', () => {
+  it('sizes icons at size-4, and size-3 on the xs text button on a fine pointer', () => {
     const iconRule = '[:where(&)_svg]:size-'
     for (const size of ['default', 'icon-xs'] as const) {
       const btn = renderButton(size, `icons-${size}`)
@@ -157,7 +139,8 @@ describe('Button', () => {
     }
     const xs = renderButton('xs', 'icons-xs')
     expect(xs.className).toContain(`${iconRule}3`)
-    expect(xs.className).not.toContain(`${iconRule}4`)
+    // On a coarse pointer the xs button is the others' height, so its icon is too.
+    expect(xs.className).toContain(`[@media(pointer:coarse)]:${iconRule}4`)
   })
 
   // -- palette icons (#5368) ---------------------------------------------------

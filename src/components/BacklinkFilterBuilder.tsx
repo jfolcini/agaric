@@ -210,7 +210,7 @@ export function BacklinkFilterBuilder({
           ref={addFilterButtonRef}
           variant="outline"
           size="xs"
-          className="add-filter-button h-7 gap-1 text-xs"
+          className="add-filter-button"
           onClick={() => setShowAddRow(true)}
           aria-label={t('backlink.addFilterLabel')}
         >
@@ -221,7 +221,7 @@ export function BacklinkFilterBuilder({
           <Button
             variant="ghost"
             size="xs"
-            className="clear-all-button h-7 text-xs"
+            className="clear-all-button"
             onClick={handleClearAll}
             aria-label={t('backlink.clearAllLabel')}
           >

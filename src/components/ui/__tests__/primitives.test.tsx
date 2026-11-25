@@ -691,7 +691,7 @@ describe('ToggleGroup', () => {
       </ToggleGroup>,
     )
     const item = screen.getByRole('radio', { name: 'A' })
-    expect(item.className).toContain('[@media(pointer:coarse)]:h-9')
+    expect(item.className).toContain('[@media(pointer:coarse)]:h-8')
     expect(item.className).toContain('touch-hit-area')
     expect(item.className).not.toContain('[@media(pointer:coarse)]:min-h-11')
   })

@@ -57,14 +57,10 @@ export const pages: Record<string, string> = {
   // Translators: Error toast (brief pop-up message) when adding a block to a journal day fails.
   'journal.addBlockFailed': 'Failed to add block',
 
-  // Translators: Journal header: the journal-template icon button (tooltip and aria-label) and the
-  // popover it opens, which lists template pages to choose from (popover aria-label) and ends with
-  // a "New journal template" menu item. journal.templatePageTitle is the title given to the page
-  // that item creates, so it becomes a real page title.
-  'journal.configureTemplate': 'Configure journal template',
-  'journal.templatePickerLabel': 'Pick a journal template',
+  // Translators: Settings › General › Journal template: the button that creates a journal template
+  // page. journal.templatePageTitle is the title given to the page it creates, so it becomes a real
+  // page title.
   'journal.newTemplate': 'New journal template',
-  'journal.openTemplate': 'Open journal template',
   'journal.templatePageTitle': 'Journal template',
 
   // Translators: Journal header navigation: tooltips and aria-labels of the previous / next arrows

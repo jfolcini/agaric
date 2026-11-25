@@ -311,8 +311,8 @@ export function DeviceManagement(): React.ReactElement {
                   </p>
                   <Button
                     variant="outline"
-                    size="sm"
-                    className="internet-facing-bind-dismiss mt-2 h-7 text-xs"
+                    size="xs"
+                    className="internet-facing-bind-dismiss mt-2"
                     onClick={() => setAcknowledgedBindAddress(unacknowledgedBind.address)}
                     aria-label={t('device.internetFacingBindAckLabel')}
                     data-testid="internet-facing-bind-dismiss"

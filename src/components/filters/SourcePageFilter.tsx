@@ -167,8 +167,8 @@ export function SourcePageFilter({
           {hasFilters && (
             <Button
               variant="ghost"
-              size="sm"
-              className="source-page-filter-clear w-full text-xs"
+              size="xs"
+              className="source-page-filter-clear w-full"
               onClick={handleClearAll}
             >
               {t('sourceFilter.clearAllButton')}

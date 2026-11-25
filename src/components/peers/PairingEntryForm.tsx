@@ -145,18 +145,13 @@ export function PairingEntryForm({
 
       {/* Action buttons */}
       <div className="flex justify-between gap-2 mb-4">
-        <Button
-          variant="outline"
-          onClick={onCancel}
-          disabled={pairLoading}
-          className="touch-target"
-        >
+        <Button variant="outline" onClick={onCancel} disabled={pairLoading}>
           {t('pairing.cancelButton')}
         </Button>
         <Button
           onClick={onPair}
           disabled={pairLoading || words.some((w) => w === '') || isExpired}
-          className="pairing-pair-btn touch-target"
+          className="pairing-pair-btn"
         >
           {pairLoading && <Spinner className="mr-1" />}
           {t('pairing.pairButton')}

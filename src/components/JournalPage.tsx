@@ -20,7 +20,6 @@ import { useShallow } from 'zustand/react/shallow'
 import { AgendaView } from '@/components/journal/AgendaView'
 import { DailyView } from '@/components/journal/DailyView'
 import { journalPanelId, journalTabId } from '@/components/journal/JournalControls'
-import { JournalTemplateButton } from '@/components/journal/JournalTemplateButton'
 import { MonthlyView } from '@/components/journal/MonthlyView'
 import { StreamView } from '@/components/journal/StreamView'
 import { WeeklyView } from '@/components/journal/WeeklyView'
@@ -28,8 +27,6 @@ import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
-import { useIsMobile } from '@/hooks/useIsMobile'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalAutoCreate } from '@/hooks/useJournalAutoCreate'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
@@ -72,9 +69,6 @@ export function JournalPage({
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
   const { t } = useTranslation()
-  const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
-  const onPhone = isTouch && isMobile
   const { mode, currentDate, scrollToDate, scrollToPanel, clearScrollTarget } = useJournalStore(
     useShallow((s) => ({
       mode: s.mode,
@@ -204,18 +198,11 @@ export function JournalPage({
           shell header renders `<JournalControls />` instead of a label for
           journal mode. Agenda mode skips it: `AgendaView` renders the title
           inside its `ViewHeader`, above the sticky filter/sort bar, so it is
-          the only `<h1>` there. A phone keeps the journal template's menu in
-          the day's Page actions sheet: with the title hidden, the menu alone
-          took a row. */}
+          the only `<h1>` there. */}
       {mode !== 'agenda' && (
         <FeaturePageHeader
           title={dailyEntry?.displayDate ?? t('sidebar.journal')}
           className="journal-page-header"
-          {...(!loading &&
-            !onPhone &&
-            onNavigateToPage != null && {
-              kebab: <JournalTemplateButton onNavigateToPage={onNavigateToPage} />,
-            })}
         />
       )}
 

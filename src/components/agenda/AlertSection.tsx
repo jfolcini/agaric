@@ -2,7 +2,9 @@
  * AlertSection — shared list component for overdue/upcoming alert blocks.
  *
  * Parameterized by variant, title, and optional priority Badge display.
- * Used by OverdueSection (destructive) and UpcomingSection (pending).
+ * Used by OverdueSection (destructive), UpcomingSection (pending) and the Due
+ * panel's open tasks scheduled before today (scheduled), which date by their
+ * scheduled date instead of their due date.
  *
  * Extracted to eliminate near-duplication between the two sections (#).
  */
@@ -24,7 +26,7 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatCompactDate } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 
-type AlertVariant = 'destructive' | 'pending'
+type AlertVariant = 'destructive' | 'pending' | 'scheduled'
 
 const variantConfig: Record<
   AlertVariant,
@@ -33,6 +35,9 @@ const variantConfig: Record<
     titleColor: SectionTitleColor
     keyPrefix: string
     dateColor: string
+    row: 'destructive' | 'pending'
+    dateField: 'due_date' | 'scheduled_date'
+    ageKey: 'duePanel.daysOverdue' | 'duePanel.scheduledDaysAgo'
   }
 > = {
   destructive: {
@@ -40,12 +45,27 @@ const variantConfig: Record<
     titleColor: 'overdue',
     keyPrefix: 'overdue',
     dateColor: 'text-alert-error-foreground',
+    row: 'destructive',
+    dateField: 'due_date',
+    ageKey: 'duePanel.daysOverdue',
   },
   pending: {
     sectionClass: 'upcoming-section mb-3',
     titleColor: 'pending',
     keyPrefix: 'upcoming',
     dateColor: 'text-muted-foreground',
+    row: 'pending',
+    dateField: 'due_date',
+    ageKey: 'duePanel.daysOverdue',
+  },
+  scheduled: {
+    sectionClass: 'scheduled-earlier-section mb-3',
+    titleColor: 'pending',
+    keyPrefix: 'scheduled',
+    dateColor: 'text-muted-foreground',
+    row: 'pending',
+    dateField: 'scheduled_date',
+    ageKey: 'duePanel.scheduledDaysAgo',
   },
 }
 
@@ -119,17 +139,18 @@ export function AlertSection({
       <SectionTitle color={config.titleColor} label={title} count={blocks.length} />
       <ul className="space-y-1">
         {blocks
-          .toSorted((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
+          .toSorted((a, b) => (a[config.dateField] ?? '').localeCompare(b[config.dateField] ?? ''))
           .map((block) => {
             const pageTitle = block.page_id ? pageTitles.get(block.page_id) : undefined
-            const dueDate = block.due_date ? new Date(`${block.due_date}T00:00:00`) : null
-            const daysOverdue = dueDate
-              ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+            const day = block[config.dateField]
+            const date = day ? new Date(`${day}T00:00:00`) : null
+            const daysAgo = date
+              ? Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
               : 0
             return (
               <AlertListRow
                 key={`${config.keyPrefix}-${block.id}`}
-                variant={variant}
+                variant={config.row}
                 tabIndex={0}
                 onClick={() => {
                   if (block.page_id && onNavigateToPage) {
@@ -164,10 +185,10 @@ export function AlertSection({
                   )}
                 </span>
                 <span className={cn('shrink-0 truncate text-xs', config.dateColor)}>
-                  <span>{block.due_date && formatCompactDate(block.due_date)}</span>
-                  {daysOverdue > 0 && (
+                  <span>{day && formatCompactDate(day)}</span>
+                  {daysAgo > 0 && (
                     <span className="text-muted-foreground ml-1">
-                      ({t('duePanel.daysOverdue', { count: daysOverdue })})
+                      ({t(config.ageKey, { count: daysAgo })})
                     </span>
                   )}
                 </span>

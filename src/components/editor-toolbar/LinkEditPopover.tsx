@@ -170,7 +170,6 @@ export function LinkEditPopover({
         </div>
         <Button
           size="xs"
-          className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleApplyBlockLinkLabel}
         >
@@ -227,19 +226,13 @@ export function LinkEditPopover({
         </p>
       )}
       <div className="flex items-center gap-2">
-        <Button
-          size="xs"
-          className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={handleApply}
-        >
+        <Button size="xs" onPointerDown={(e) => e.preventDefault()} onClick={handleApply}>
           {isEditing ? t('linkEdit.update') : t('linkEdit.apply')}
         </Button>
         {isEditing && (
           <Button
             size="xs"
             variant="destructive"
-            className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
             onPointerDown={(e) => e.preventDefault()}
             onClick={handleRemove}
           >

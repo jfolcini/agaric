@@ -78,8 +78,7 @@ export function BlockBatchActionMenu({
             <Button
               key={label}
               variant="outline"
-              size="sm"
-              className="h-7 text-xs"
+              size="xs"
               disabled={batchInProgress}
               onClick={() => void onBatchSetTodo(state)}
             >
@@ -93,8 +92,7 @@ export function BlockBatchActionMenu({
         {onBatchSetPriority ? (
           <Button
             variant="outline"
-            size="sm"
-            className="h-7 text-xs"
+            size="xs"
             disabled={batchInProgress}
             onClick={() => void onBatchSetPriority()}
           >

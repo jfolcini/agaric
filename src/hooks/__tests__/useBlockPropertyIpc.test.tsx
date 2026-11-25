@@ -152,8 +152,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   // `tauri.ts` wrapper the hook delegates to (`list_property_defs` accepts
   // `cursor`/`limit`). This drives the loop directly against that wrapper with
   // a cursor-conditional `mockImplementation`, asserting both IPC invocations
-  // chain the cursor correctly and the loop terminates on `has_more=false`
-  // (pattern: UnfinishedTasks.test.tsx).
+  // chain the cursor correctly and the loop terminates on `has_more=false`.
   it('iterates through paginated results, chaining next_cursor until has_more=false', async () => {
     const pageA = {
       items: [

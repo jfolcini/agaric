@@ -84,9 +84,6 @@ const EXEMPT_FILES = Object.freeze(
     // Legacy-format auto-detection transform (canonical FilterPredicate[]
     // vs. pre-migration GraphFilter[]) embedded in the read path.
     'src/components/graph/GraphFilterBar.tsx',
-    // One-time legacy default resolver for a useLocalStoragePreference-
-    // backed key; not a store this guard's contract targets.
-    'src/components/journal/UnfinishedTasks.tsx',
     // The guarded persist-storage wrapper itself (#2925): this IS the
     // localStorage-access layer that hardens zustand's `persist` middleware
     // against setItem throws. It is the sanctioned home for the raw calls

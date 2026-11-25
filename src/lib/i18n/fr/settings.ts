@@ -290,6 +290,11 @@ export const settings: Record<string, string> = {
   'settings.weekStartLabel': 'Premier jour de la semaine',
   'settings.weekStartMonday': 'Lundi',
   'settings.weekStartSunday': 'Dimanche',
+  'settings.journalTemplateLabel': 'Modèle de journal',
+  'settings.journalTemplateHelp':
+    'Un nouveau jour dans cet espace commence comme une copie de cette page.',
+  'settings.journalTemplateNone': 'Aucun',
+  'settings.journalTemplateOpen': 'Ouvrir',
   'settings.journalDateFormatLabel': 'Format de date du journal',
   'settings.journalDateFormatHelp':
     'La façon dont les titres du journal sont affichés. Les pages sont toujours stockées au format AAAA-MM-JJ, ce réglage n’affecte donc jamais les journaux existants.',

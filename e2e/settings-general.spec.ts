@@ -1,6 +1,6 @@
 /**
  * Settings › General: the week start and the journal date format change what
- * the journal shows (#5741).
+ * the journal shows (#5741), and the journal template is picked there (#7040).
  *
  * Both preferences are localStorage-backed and read by the journal views, so
  * the mock-backed build shows the whole effect: the weekly view's first day
@@ -10,9 +10,11 @@
 
 import type { Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   chooseSelectOption,
   expect,
+  ipc,
   navigateToView,
   openSettingsTab,
   test,
@@ -66,5 +68,41 @@ test.describe('Settings › General journal preferences @settings @journal', () 
     await expect(page.getByRole('combobox', { name: 'Journal date format' })).toHaveText(
       'Month D, YYYY (e.g. June 17, 2026)',
     )
+  })
+
+  test('the journal template is picked in General, and the pick is kept', async ({ page }) => {
+    const journalTemplateIds = async () =>
+      (
+        await ipc<{ items: Array<{ id: string }> }>(page, 'query_by_property', {
+          request: {
+            key: 'journal-template',
+            valueText: 'true',
+            valueDate: null,
+            operator: null,
+            cursor: null,
+            limit: 10,
+            excludeParentId: null,
+            contentNonEmpty: null,
+            blockType: 'page',
+            valueTextIn: null,
+            valueDateRange: null,
+            excludeTodoStates: null,
+          },
+          scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+        })
+      ).items.map((row) => row.id)
+    expect(await journalTemplateIds()).toEqual([])
+
+    await openGeneral(page)
+    await chooseSelectOption(page, 'Journal template', 'Meeting Notes Template')
+    await expect.poll(journalTemplateIds).toEqual([SEED_IDS.PAGE_TMPL_MEETING])
+
+    await navigateToView(page, 'Journal')
+    await openGeneral(page)
+    await expect(page.getByRole('combobox', { name: 'Journal template' })).toHaveText(
+      'Meeting Notes Template',
+    )
+    await page.getByRole('button', { name: 'Open', exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
   })
 })

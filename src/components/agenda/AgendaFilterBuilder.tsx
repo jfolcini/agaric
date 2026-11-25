@@ -212,7 +212,6 @@ function AddFilterPopover({
           ref={triggerRef}
           variant="outline"
           size="xs"
-          className="h-7 gap-1 text-xs"
           aria-label={t('agendaFilter.addFilter')}
         >
           <Plus className="h-3 w-3" />
@@ -282,7 +281,6 @@ function AddFilterPopover({
             <ValuePicker dimension={dimension} selected={values} onChange={setValues} />
             <Button
               size="xs"
-              className="h-7 text-xs"
               disabled={values.length === 0}
               onClick={handleApply}
               aria-label={t('agendaFilter.applyFilter')}
@@ -326,7 +324,6 @@ function EditFilterPopover({
           <Button
             variant="destructive"
             size="xs"
-            className="h-7 text-xs"
             onClick={() => {
               onRemove()
               setOpen(false)

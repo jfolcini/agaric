@@ -1,6 +1,6 @@
 /**
- * GeneralTab — language, week start, journal date format, and the
- * desktop-only launch-on-login row.
+ * GeneralTab — language, week start, journal date format, the space's
+ * journal template, and the desktop-only launch-on-login row.
  *
  * Each preference goes through its shared localStorage-backed hook; the
  * AutostartRow owns its own state + IPC.
@@ -11,6 +11,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AutostartRow } from '@/components/settings/AutostartRow'
+import { JournalTemplateRow } from '@/components/settings/JournalTemplateRow'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -152,6 +153,8 @@ export function GeneralTab(): React.ReactElement {
             </SelectContent>
           </Select>
         </SettingRow>
+
+        <JournalTemplateRow />
 
         <AutostartRow />
       </CardContent>

@@ -616,7 +616,7 @@ describe('BacklinkFilterBuilder', () => {
     // `Button size="xs"` coarse-pointer height bump. Without an explicit
     // `[@media(pointer:coarse)]:h-11` the buttons render at 28 px on touch,
     // below the 44 px minimum touch target.
-    it('Apply and Cancel buttons carry [@media(pointer:coarse)]:h-11 (44 px touch target)', async () => {
+    it('Apply and Cancel buttons take the one touch height, their 44 px target a hit area', async () => {
       const user = userEvent.setup()
       renderBuilder()
 
@@ -627,8 +627,10 @@ describe('BacklinkFilterBuilder', () => {
       const applyBtn = screen.getByRole('button', { name: /Apply filter/i })
       const cancelBtn = screen.getByRole('button', { name: /Cancel adding filter/i })
 
-      expect(applyBtn.className).toContain('[@media(pointer:coarse)]:h-11')
-      expect(cancelBtn.className).toContain('[@media(pointer:coarse)]:h-11')
+      for (const btn of [applyBtn, cancelBtn]) {
+        expect(btn).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
+        expect(btn.className).not.toContain('[@media(pointer:coarse)]:h-11')
+      }
     })
   })
 

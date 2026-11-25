@@ -49,8 +49,8 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
-          className="h-7 w-full justify-start text-xs font-normal"
+          size="xs"
+          className="w-full justify-start font-normal"
           onClick={handleOpen}
           aria-label={ariaLabel}
         >
@@ -115,7 +115,7 @@ function RefPickerEmpty({ search, hasCreateNewPage, onCreateNewPage }: RefPicker
       <Button
         variant="ghost"
         size="xs"
-        className="mt-2 gap-1 text-muted-foreground"
+        className="mt-2 text-muted-foreground"
         onClick={onCreateNewPage}
         data-testid="ref-picker-create-page"
       >

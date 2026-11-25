@@ -15,11 +15,11 @@ stepper and date display while keeping the calendar picker available:
 | **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
-The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (on a touch phone, the *Edit as page* / *Edit as blocks* row of the *Page actions* menu there, a ⋮ that also holds the journal template's rows, which a wider screen opens from the ⋮ beside the journal's title), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
+The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (on a touch phone, the *Edit as page* / *Edit as blocks* row of the *Page actions* menu there), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 
-A new day is born with the space's journal template, whichever way it is created — the journal, Quick Capture, a date link or picker, or an agent (see [spaces.md](spaces.md)). An existing day is never filled in after the fact.
+A new day is born with the space's journal template (picked, created or opened in Settings › General › *Journal template*), whichever way it is created — the journal, Quick Capture, a date link or picker, or an agent (see [spaces.md](spaces.md)). An existing day is never filled in after the fact.
 
 ## Navigation
 
@@ -41,6 +41,7 @@ The Due Panel surfaces today's tasks that have a due / scheduled / property-deri
 - **Source filter pills**: *All / Due / Scheduled / Properties*. Click one to narrow the list to that source only.
 - **Hide-before-scheduled toggle**: hides scheduled tasks whose scheduled date hasn't arrived yet (useful if you only want what's actionable now).
 - **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
+- **Scheduled earlier**: on today, the open tasks (TODO or DOING) whose scheduled date has passed and whose due date has not, each with *(Xd ago)*; a task past its due date is under Overdue only. Together they list every open task carried over from before today, once (#7040).
 - **Task checkbox**: each task row, overdue and upcoming ones too, carries the block's own checkbox, which steps the task's state as a click in the block does.
 
 ## Done Panel (Daily mode)

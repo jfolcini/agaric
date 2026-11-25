@@ -4,7 +4,7 @@
  * block date picker are bottom sheets, and the block long-press menu and the
  * page ⋮ menu are bottom-sheet lists. Each must sit on the bottom edge and span
  * the width, and a tall one stops at the header. Toasts sit at the bottom too,
- * clear of the header, the floating capture button, the soft keyboard and the
+ * beside the floating capture button and clear of the soft keyboard and the
  * field being typed in. The search sheet keeps one close button (#5930), and
  * no sheet has a grab bar (#7040).
  *
@@ -270,7 +270,7 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
   })
 
   // Raised on Search, where a toast once covered the search field.
-  test('a toast sits above the floating button, clear of the header, with a 44 px close', async ({
+  test('a toast sits beside the floating button, on its line, with a 44 px close', async ({
     page,
   }) => {
     const toast = await toastOnSearch(page)
@@ -278,9 +278,10 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     const fab = await box(page.getByTestId('quick-capture-fab'))
     await expect.poll(async () => (await box(toast)).y).toBeGreaterThan(header.y + header.height)
     const t = await box(toast)
-    // Just above it, not floating halfway up the screen.
-    expect(fab.y - (t.y + t.height)).toBeGreaterThanOrEqual(0)
-    expect(fab.y - (t.y + t.height)).toBeLessThanOrEqual(12)
+    // On the button's bottom line and just left of it: it costs width, not height.
+    expect(Math.abs(t.y + t.height - (fab.y + fab.height))).toBeLessThanOrEqual(1)
+    expect(fab.x - (t.x + t.width)).toBeGreaterThanOrEqual(0)
+    expect(fab.x - (t.x + t.width)).toBeLessThanOrEqual(12)
 
     // The 20 px close button answers a tap anywhere in a 44 px square around
     // it, as far as the screen edge it overhangs.

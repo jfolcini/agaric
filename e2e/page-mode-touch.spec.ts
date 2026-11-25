@@ -150,6 +150,12 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     await openInPageModeFromMarkdown(page, 'Touch reorder', 3)
 
     await tapInto(page, ids[1])
+    // A finger sliding over a block moves a pointer there, which brings the
+    // grip on a desktop; a phone shows no drag handle (#7040).
+    const block = await blockText(page, ids[1]).boundingBox()
+    await page.mouse.move((block?.x ?? 0) + 20, (block?.y ?? 0) + 6)
+    await page.mouse.move((block?.x ?? 0) + 30, (block?.y ?? 0) + 8)
+    await expect(page.locator('.page-grip')).toBeHidden()
     // The menu opens on the finger's lift, not under it, where the lift's click would hit a row.
     await fingerTap(page, blockActions(page))
     const menu = page.getByRole('menu', { name: 'Block actions' })
@@ -282,11 +288,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
 
     await row.getByRole('button', { name: 'Page actions', exact: true }).tap()
     const menu = page.getByRole('menu', { name: 'Page actions' })
-    await expect(menu.getByRole('menuitem')).toHaveText([
-      'Edit as blocks',
-      'Meeting Notes Template',
-      'New journal template',
-    ])
+    await expect(menu.getByRole('menuitem')).toHaveText(['Edit as blocks'])
     await menu.getByRole('menuitem', { name: 'Edit as blocks' }).tap()
     await expect(day).toHaveCount(0)
     await expect(

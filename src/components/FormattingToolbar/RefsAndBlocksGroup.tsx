@@ -232,13 +232,7 @@ export function renderTableOpsButton({
 }: TableOpsButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
     return (
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-hidden
-        tabIndex={-1}
-        className="h-7 gap-1 px-1.5 text-xs"
-      >
+      <Button variant="ghost" size="xs" aria-hidden tabIndex={-1} className="px-1.5">
         <Table2 />
         <span className="font-medium">{t('toolbar.tableOps')}</span>
       </Button>
@@ -261,9 +255,9 @@ export function renderTableOpsButton({
       // Its name is on it, so it needs no tooltip.
       <Button
         variant="ghost"
-        size="sm"
+        size="xs"
         aria-label={t('toolbar.tableOps')}
-        className="h-7 gap-1 px-1.5 text-xs"
+        className="px-1.5"
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Table2 />

@@ -485,6 +485,14 @@ export const settings: Record<string, string> = {
   'settings.weekStartMonday': 'Monday',
   'settings.weekStartSunday': 'Sunday',
 
+  // Translators: Settings › General: "Journal template" row: a dropdown of the space's template
+  // pages (or None) that a new journal day is copied from, an Open button for the one set, and a
+  // button that creates a new journal template page.
+  'settings.journalTemplateLabel': 'Journal template',
+  'settings.journalTemplateHelp': 'A new day in this space starts as a copy of this page.',
+  'settings.journalTemplateNone': 'None',
+  'settings.journalTemplateOpen': 'Open',
+
   // Translators: Settings › General: "Journal date format" dropdown. Each option shows a pattern
   // and an example; the order of the parts is fixed (only month and weekday names follow the
   // app language), so keep that order.

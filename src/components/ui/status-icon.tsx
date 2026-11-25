@@ -7,8 +7,7 @@
  *   CANCELLED  -> XCircle     (text-task-cancelled / muted)
  *   TODO       -> Circle      (text-muted-foreground)
  *
- * When `showDone` is false, returns null for DONE state
- * (used by UnfinishedTasks which only shows TODO/DOING).
+ * When `showDone` is false, returns null for DONE state.
  *
  * `size` (`sm` | `md` | `lg`, default `md`) scales the icon for dense list
  * rows or larger header chips. Modeled after `Spinner`'s CVA size variants.

@@ -41,9 +41,10 @@ const SelectTrigger = ({
     className={cn(
       SHARED_INPUT_CLASSES,
       'border-input data-[placeholder]:text-muted-foreground [&>span]:truncate flex w-full max-w-full items-center text-start justify-between gap-2 rounded-md border bg-transparent py-2 shadow-xs whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50',
-      size === 'sm'
-        ? 'h-7 px-2 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:text-base'
-        : 'h-9 px-3 text-sm [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:text-base',
+      // On a coarse pointer a trigger is a button and takes the buttons' one
+      // height (`Button`): 36 px painted, the 44 px target invisible.
+      size === 'sm' ? 'h-7 px-2 text-xs' : 'h-9 px-3 text-sm',
+      '[@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:text-sm touch-hit-area',
       className,
     )}
     {...props}
