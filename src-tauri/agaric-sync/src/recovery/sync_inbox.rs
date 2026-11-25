@@ -397,10 +397,9 @@ mod tests {
     /// siblings — a shape production cannot reach: frontier width tracks the
     /// number of concurrent PEERS, not the number of queued messages, and
     /// real inbox leftovers come from one or two peers inside the #535 crash
-    /// window. That artificial shape put `find_common_ancestor` (superlinear
-    /// in frontier width) and the sibling reprojection (#3162) at their worst
-    /// case, so the test's runtime was dominated by its own seeding rather
-    /// than by the walk it asserts (#3161).
+    /// window. That artificial shape put Loro's import and the sibling
+    /// reprojection (#3162) at their worst case, so the test's runtime was
+    /// dominated by its own seeding rather than by the walk it asserts.
     ///
     /// ## Why the chunk-boundary assertion is unweakened
     ///
@@ -553,13 +552,12 @@ mod tests {
     /// transaction then FAILS.
     ///
     /// The author's partial-failure test relies on `import_batch`'s up-front
-    /// `decode_import_blob_meta` pass rejecting the whole batch
-    /// (`loro-internal-1.13.6/src/loro.rs:1409`), so in that test nothing ever
-    /// reaches the engine and the tx never opens. This test drives the other
-    /// half of claim 4: the engine is genuinely AHEAD of SQL (all blobs
-    /// imported) when the Phase-2 tx aborts. #535 requires that ZERO slots be
-    /// cleared — the engine-ahead-of-SQL state with every slot still present is
-    /// exactly what a later boot heals.
+    /// `decode_import_blob_meta` pass rejecting the whole batch, so in that
+    /// test nothing ever reaches the engine and the tx never opens. This test
+    /// drives the other half of claim 4: the engine is genuinely AHEAD of SQL
+    /// (all blobs imported) when the Phase-2 tx aborts. #535 requires that ZERO
+    /// slots be cleared — the engine-ahead-of-SQL state with every slot still
+    /// present is exactly what a later boot heals.
     ///
     /// The abort is injected with a `BEFORE INSERT ON blocks` trigger, which
     /// fails Pass A of the projection *inside* the tx, after the import.

@@ -360,27 +360,30 @@ impl LoroEngine {
     ///
     /// ## Why this collapses the projection, not just the decode
     ///
-    /// `LoroDoc::import_batch` (`loro-internal-1.13.6/src/loro.rs:1397-1488`)
+    /// `LoroDoc::import_batch` (loro-internal's `import_blobs_as_batch`)
     /// force-detaches the doc for the whole batch (`set_detached(true)` while
-    /// holding the txn mutex), runs `_import_with` per blob — which appends to
-    /// the `OpLog` ONLY, since a detached doc does not update `DocState` — and
-    /// then re-attaches exactly once via `_checkout_to_latest_with_guard`. The
-    /// `DiffEvent` this method subscribes to is therefore emitted **once for
-    /// the whole batch**, not once per blob, so the resolver below sees a
-    /// single union diff and the caller projects a single union set. (The
-    /// `bytes.len() == 1` early return at `loro.rs:1402` delegates straight to
-    /// `import`, so a one-blob batch is bit-identical to the single path.)
+    /// holding the txn mutex), runs `import_without_emitting` per blob — which
+    /// appends to the `OpLog` ONLY, since a detached doc does not update
+    /// `DocState` — and then re-attaches exactly once in
+    /// `BatchImportGuard::finish`. The diff this method subscribes to is
+    /// therefore emitted **for the whole batch**, not once per blob, and the
+    /// caller projects a single union set. (A snapshot that leads a batch into
+    /// an empty doc initialises its state and queues an event of its own,
+    /// delivered with the re-attach's; the subscriber adds up every event. The
+    /// `bytes.len() == 1` early return delegates straight to `import`, so a
+    /// one-blob batch is bit-identical to the single path.)
     ///
     /// ## Error shape callers must handle
     ///
     /// `import_batch` is NOT atomic: a per-blob failure is *remembered* and
-    /// returned after the re-attach (`loro.rs:1459-1478`), so blobs that
-    /// decoded fine have already landed in the oplog and the state. An `Err`
+    /// returned after the re-attach, so blobs that decoded fine have already
+    /// landed in the oplog and the state. An `Err`
     /// here therefore means "an unknown subset was imported" — callers must
     /// treat it as "project nothing, delete nothing" and retry per blob.
+    /// (Only a failure of the closing re-attach rolls the whole batch back.)
     ///
     /// `import_batch` also SORTS the blobs (by export mode, then descending
-    /// change count — `loro.rs:1411-1415`). That is safe: every blob is
+    /// change count). That is safe: every blob is
     /// appended to the oplog before the single re-attach, and loro buffers a
     /// blob whose deps have not arrived yet in `pending_changes`, so the final
     /// oplog (and hence the union diff) does not depend on the input order.
@@ -938,7 +941,7 @@ pub struct ImportDelta {
     pub def_keys: Vec<String>,
     /// #3194 — changes loro could NOT apply and parked in `pending_changes`
     /// because their dependencies are missing, as `(peer, start, end)` counter
-    /// ranges (`ImportStatus::pending`, `loro-internal-1.13.6/src/encoding.rs:228-231`).
+    /// ranges (`ImportStatus::pending`).
     ///
     /// Empty on the overwhelmingly common fully-applied import. A non-empty
     /// value means `import` / `import_batch` returned `Ok` while part of the

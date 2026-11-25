@@ -353,9 +353,9 @@ impl LoroEngine {
     /// The narrowing is well targeted — `decode_updates_blob_meta` only records
     /// a dep in `start_frontiers` when the dep's peer either starts LATER in
     /// this blob (in which case `partial_start_vv` already demands strictly
-    /// more, so half 2 adds nothing) or is absent from the blob entirely
-    /// (`fast_snapshot.rs:456-467`). Only that second, genuinely cross-peer
-    /// case is newly rejected, and it is exactly the #3189 hole.
+    /// more, so half 2 adds nothing) or is absent from the blob entirely.
+    /// Only that second, genuinely cross-peer case is newly rejected, and it
+    /// is exactly the #3189 hole.
     ///
     /// ## #792 / #3190 — the own-peer fork guard, batch form
     ///
@@ -451,14 +451,12 @@ impl LoroEngine {
     ///
     /// The base advances by `partial_end_vv`, which ASSUMES each blob's
     /// per-peer counter range is contiguous. A merged or hand-crafted blob with
-    /// an internal gap breaks that assumption and would over-claim. (loro's own
-    /// encoder will not produce one: asking `ExportMode::updates_in_range` for
-    /// two non-adjacent spans of one peer panics in
-    /// `loro-internal/src/oplog/change_store.rs` — "counter should be
-    /// continuous" — at EXPORT time, and the poisoned doc mutex then turns the
-    /// unwind into a destructor panic and SIGABRT. So the gapped shape needs a
-    /// corrupt or third-party blob, and the parked-`pending_changes` case below
-    /// is the reachable half of this.) The gate's
+    /// an internal gap breaks that assumption and would over-claim. (Agaric
+    /// exports only `ExportMode::updates` and `ExportMode::Snapshot`, which are
+    /// contiguous per peer; `ExportMode::updates_in_range` can write a gap and
+    /// nothing here calls it. So the gapped shape needs a corrupt or
+    /// third-party blob, and the parked-`pending_changes` case below is the
+    /// reachable half of this.) The gate's
     /// admission logic is deliberately unchanged; instead every `Accept` hands
     /// the caller the end frontier the blob claims, so the caller can refuse to
     /// delete the durable inbox slot until the post-import `oplog_vv()`
@@ -584,9 +582,9 @@ impl LoroEngine {
 ///
 /// Returns `Some(reason)` iff the blob is update-shaped and some part of its
 /// causal base is not covered. Snapshot-shaped blobs (`meta.mode.is_snapshot()`,
-/// which covers `Snapshot`, `ShallowSnapshot` and `OutdatedSnapshot` —
-/// `loro-internal-1.13.6/src/encoding.rs:507-517`) are self-contained: they
-/// carry their own causal base, and are never reachability-checked — the same
+/// which covers `Snapshot`, `ShallowSnapshot` and `OutdatedSnapshot`) are
+/// self-contained: they carry their own causal base, and are never
+/// reachability-checked — the same
 /// carve-out [`LoroEngine::unreachable_update_in_blob`] and the live
 /// `apply_remote` gate make.
 ///
@@ -594,16 +592,15 @@ impl LoroEngine {
 ///
 /// Not merely an optimisation: for a snapshot blob `start_frontiers` does not
 /// mean "dependencies" at all. `decode_snapshot_blob_meta` sets it to the
-/// snapshot's `shallow_since_frontiers`
-/// (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:404-419`) — the point
-/// its history was TRUNCATED at, ops the receiver by definition does not hold.
+/// snapshot's `shallow_since_frontiers` — the point its history was TRUNCATED
+/// at, ops the receiver by definition does not hold.
 /// Running the half-2 check on it would report every shallow snapshot
 /// unreachable and drop its slot. Pinned by
 /// `gate_replay_blobs_accepts_shallow_snapshot_despite_start_frontiers_3189`.
 /// (Only `Snapshot` / `ShallowSnapshot` / `Updates` can actually reach here:
 /// `decode_import_blob_meta` returns `ImportUnsupportedEncodingMode` for the
-/// two `Outdated*` modes — `encoding.rs:546-553` — which the caller treats as
-/// a decode failure and accepts ungated.)
+/// two `Outdated*` modes, which the caller treats as a decode failure and
+/// accepts ungated.)
 ///
 /// Two INDEPENDENT halves of an update blob's base are checked:
 ///
@@ -613,8 +610,7 @@ impl LoroEngine {
 ///   ops and is trivially reachable.
 /// * `start_frontiers` (#3189) — the blob's CROSS-peer dependencies: the op ids
 ///   its changes depend on that the blob does NOT itself carry. loro builds this
-///   in `decode_updates_blob_meta`
-///   (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:456-467`) by pushing
+///   in `decode_updates_blob_meta` by pushing
 ///   every change dep whose peer either starts later in this blob than the dep,
 ///   or does not appear in the blob at all. `partial_start_vv` never sees the
 ///   second (genuinely cross-peer) case, which is exactly the #3189 hole.
@@ -623,16 +619,16 @@ impl LoroEngine {
 ///
 /// A `Frontiers` entry is an `ID { peer, counter }` whose counter is the LAST
 /// op's counter (INCLUSIVE); a `VersionVector` counter is an EXCLUSIVE end.
-/// Verified in `loro-internal` 1.13.6 (the version pinned in `Cargo.lock`):
+/// Verified in `loro-internal`'s source, at the version `Cargo.lock` pins:
 ///
-/// * `version.rs:171-173` — `last_id_to_vv_end(id) = id.counter + 1`, the sole
+/// * `last_id_to_vv_end(id) = id.counter + 1`, the sole
 ///   conversion used by `VersionVector::set_last` /
-///   `extend_to_include_last_id` (`version.rs:265-289`) when folding a frontier
+///   `extend_to_include_last_id` when folding a frontier
 ///   id into a vv.
-/// * `version.rs:290-296` — `VersionVector::includes_id(id)` is
+/// * `VersionVector::includes_id(id)` is
 ///   `vv[id.peer] > id.counter`, i.e. an id is covered only once the vv end has
 ///   passed it.
-/// * `oplog/loro_dag.rs:1228-1250` — `vv_to_frontiers` round-trips the other
+/// * `vv_to_frontiers` round-trips the other
 ///   way as `ID::new(peer, vv_counter - 1)`.
 ///
 /// So a dep `ID { peer, counter }` is covered iff `base[peer] >= counter + 1`.
@@ -678,9 +674,9 @@ fn replay_base_miss(
         if dep.counter < 0 {
             // Defensive only — NOT reachable from any blob loro can encode: a
             // change dep is a real op id, and even loro's `ID::NONE_ID`
-            // sentinel uses counter `0` (`loro-common-1.13.1/src/id.rs:117`).
+            // sentinel uses counter `0`.
             // Note this SKIPS (treats as covered), which is the opposite of
-            // loro's `VersionVector::includes_id` (`version.rs:290-296`), where
+            // loro's `VersionVector::includes_id`, where
             // a negative counter is never included. Skipping is chosen
             // deliberately: on the #535 crash-recovery path a bogus
             // `counter + 1` requirement derived from an impossible input would

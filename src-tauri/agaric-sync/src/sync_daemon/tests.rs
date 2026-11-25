@@ -11408,6 +11408,25 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     // deliberately kept OUT of the op_log (so the advertised head stays
     // `{RESP: 1}` for the covering check) and are wiped by the snapshot apply.
     let snap_space = agaric_store::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX");
+    // The claim extends the responder's own lineage: the initiator's engine
+    // starts from what the responder holds, so the catch-up snapshot is a
+    // prefix of it. Loro refuses a merge of two histories that put different
+    // ops at the same ids.
+    let resp_lineage = resp
+        .state
+        .registry
+        .for_space(&snap_space, RESP_DEV)
+        .expect("responder space")
+        .engine_mut()
+        .export_snapshot()
+        .expect("responder lineage");
+    init.state
+        .registry
+        .for_space(&snap_space, RESP_DEV)
+        .expect("initiator space")
+        .engine_mut()
+        .import(&resp_lineage)
+        .expect("initiator holds the responder's lineage");
     for i in 0..6 {
         agaric_engine::merge::engine_apply(
             &format!("{RESP_DEV}/{}", i + 1),
