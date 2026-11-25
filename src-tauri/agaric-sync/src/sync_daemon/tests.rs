@@ -2550,8 +2550,14 @@ async fn a_snapshot_from_a_peer_that_forked_its_own_history_is_coded_7065() {
         Arc::new(RecordingEventSink::new()),
         Arc::new(AtomicBool::new(false)),
     );
-    let (events, failures) =
-        dial_responder_from(&harness, responder, make_peer_ref(PEER), pool, materializer).await;
+    let (events, failures) = dial_responder_from(
+        &harness,
+        responder,
+        make_peer_ref(PEER),
+        pool.clone(),
+        materializer,
+    )
+    .await;
     peer_materializer.shutdown();
 
     assert_eq!(
@@ -2575,6 +2581,14 @@ async fn a_snapshot_from_a_peer_that_forked_its_own_history_is_coded_7065() {
         "the text, which keys the once-per-streak report, carries no operation id"
     );
     assert_eq!(failures, 1, "and booked like any failure");
+    let kept_for_replay: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .expect("count inbox");
+    assert_eq!(
+        kept_for_replay, 0,
+        "no replay can import the refused snapshot, and each retry would keep another"
+    );
 }
 
 /// #6523 — a dial that times out against a paired peer mDNS is not announcing,
