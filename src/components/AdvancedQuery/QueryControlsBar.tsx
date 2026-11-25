@@ -1,7 +1,7 @@
 /**
  * QueryControlsBar — the #1280 D2 advanced-query controls.
  *
- * Sits above the flat chip-row builder and exposes the engine capabilities that
+ * Sits under the filter builder in the query form and exposes the engine capabilities that
  * were already shipped but unreachable from the UI:
  *
  *   - Full-text term (debounced) → `AdvancedQueryRequest.fulltext`.
@@ -14,7 +14,7 @@
  *   - Aggregates → `AdvancedQueryRequest.aggregates` (op + optional column target).
  *   - View (#6542): list or board; the board only for a group key that has one.
  *
- * Controls are always-visible inline form rows (not behind a popover) so they
+ * Controls are inline form rows (not behind a popover) so they
  * stay keyboard-reachable and screen-reader-labelled; every control owns an
  * explicit `<Label htmlFor>`. State lives in the per-space advanced-query store;
  * this component is a controlled view over that working set.
@@ -282,14 +282,9 @@ export function QueryControlsBar({
 
       {/* Sort */}
       <div className="flex flex-col gap-1" data-testid="advanced-query-sort">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground" id={`${fulltextId}-sort`}>
-            {t('advancedQuery.sort.label')}
-          </span>
-          <Button variant="outline" size="xs" onClick={addSortKey}>
-            {t('advancedQuery.sort.add')}
-          </Button>
-        </div>
+        <span className="text-xs font-medium text-muted-foreground" id={`${fulltextId}-sort`}>
+          {t('advancedQuery.sort.label')}
+        </span>
         <ul aria-labelledby={`${fulltextId}-sort`} className="flex flex-col gap-1">
           {sort.map((key, index) => {
             const sourceVal = sortSourceValue(key.source)
@@ -339,6 +334,10 @@ export function QueryControlsBar({
             )
           })}
         </ul>
+        {/* Under its rows, at the column's start, as a group's Add filter is. */}
+        <Button variant="outline" size="xs" onClick={addSortKey} className="self-start">
+          {t('advancedQuery.sort.add')}
+        </Button>
       </div>
 
       {/* Group-by */}
@@ -434,27 +433,24 @@ export function QueryControlsBar({
 
       {/* Aggregates */}
       <div className="flex flex-col gap-1" data-testid="advanced-query-aggregates">
-        <div className="flex items-center justify-between">
-          <span
-            className="text-xs font-medium text-muted-foreground"
-            id={`${fulltextId}-aggregates`}
-          >
-            {t('advancedQuery.aggregate.label')}
-          </span>
-          <Button variant="outline" size="xs" onClick={addAggregate}>
-            {t('advancedQuery.aggregate.add')}
-          </Button>
-        </div>
+        <span className="text-xs font-medium text-muted-foreground" id={`${fulltextId}-aggregates`}>
+          {t('advancedQuery.aggregate.label')}
+        </span>
         <ul aria-labelledby={`${fulltextId}-aggregates`} className="flex flex-col gap-1">
           {aggregates.map((spec, index) => (
             <li
               // oxlint-disable-next-line react/no-array-index-key -- engine-typed `AggregateSpec[]` (no id, can hold duplicate op/target pairs); rows are positional and the whole array is replaced on edit, so index is the stable identity here
               key={index}
-              className="flex items-center gap-2"
+              className="flex flex-wrap items-center gap-2"
               data-testid="advanced-query-aggregate-row"
             >
               <Select value={spec.op} onValueChange={(v) => setAggOp(index, v)}>
-                <SelectTrigger size="sm" aria-label={t('advancedQuery.aggregate.opLabel')}>
+                <SelectTrigger
+                  size="sm"
+                  // Shares the first line, so the row's wrap moves only the key down.
+                  className="min-w-0 flex-1"
+                  aria-label={t('advancedQuery.aggregate.opLabel')}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -466,7 +462,11 @@ export function QueryControlsBar({
                 </SelectContent>
               </Select>
               <Select value={aggTargetValue(spec)} onValueChange={(v) => setAggTarget(index, v)}>
-                <SelectTrigger size="sm" aria-label={t('advancedQuery.aggregate.targetLabel')}>
+                <SelectTrigger
+                  size="sm"
+                  className="min-w-0 flex-1"
+                  aria-label={t('advancedQuery.aggregate.targetLabel')}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -489,7 +489,8 @@ export function QueryControlsBar({
               </Select>
               {spec.target?.type === 'Property' && (
                 <Input
-                  className="h-8 w-28 text-xs"
+                  // Below `sm` the key takes a line of its own, under the two pickers.
+                  className="h-8 w-28 text-xs max-sm:order-last max-sm:w-full"
                   value={spec.target.key}
                   onChange={(e) => setAggTargetKey(index, e.target.value)}
                   placeholder={t('advancedQuery.aggregate.propertyKeyPlaceholder')}
@@ -507,6 +508,9 @@ export function QueryControlsBar({
             </li>
           ))}
         </ul>
+        <Button variant="outline" size="xs" onClick={addAggregate} className="self-start">
+          {t('advancedQuery.aggregate.add')}
+        </Button>
       </div>
     </fieldset>
   )

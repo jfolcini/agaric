@@ -1,3 +1,4 @@
+import { Calendar, FileText, Pilcrow, Tag } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -6,9 +7,10 @@ import {
   QueryResultRowContent,
   useRefTitleResolver,
 } from '@/components/query/QueryResultRowContent'
+import { listRowVariants } from '@/components/ui/list-item'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockRow } from '@/lib/bindings'
-import { displayPageTitle } from '@/lib/date-utils'
+import { displayPageTitle, isDateFormattedPage } from '@/lib/date-utils'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 import { cn } from '@/lib/utils'
 
@@ -23,6 +25,32 @@ export interface QueryResultListProps {
   resolveBlockTitle?: ((id: string) => string) | undefined
   /** Called when an item is selected via keyboard. */
   onItemSelect?: ((index: number) => void) | undefined
+  /** The list's card (`listCardVariants`), where the list is not already inside one. */
+  className?: string | undefined
+}
+
+/** The sidebar's icons for a journal page, a page and a tag; the editor's Turn into icon for a block. */
+const RESULT_TYPE_ICONS = { journal: Calendar, page: FileText, tag: Tag, block: Pilcrow } as const
+
+/** What a result is, as its row's icon shows it. A task shows its checkbox instead. */
+function ResultTypeIcon({ block }: { block: BlockRow }): React.ReactElement {
+  const type =
+    block.block_type === 'tag'
+      ? 'tag'
+      : block.block_type === 'page'
+        ? isDateFormattedPage(block.content ?? '')
+          ? 'journal'
+          : 'page'
+        : 'block'
+  const Icon = RESULT_TYPE_ICONS[type]
+  return (
+    <Icon
+      className="size-4 shrink-0 text-muted-foreground"
+      aria-hidden="true"
+      data-testid="query-result-type"
+      data-type={type}
+    />
+  )
 }
 
 export function QueryResultList({
@@ -31,6 +59,7 @@ export function QueryResultList({
   onNavigate,
   resolveBlockTitle,
   onItemSelect,
+  className,
 }: QueryResultListProps): React.ReactElement {
   const { t } = useTranslation()
   // #4719 — the CHIP's resolver, not the optional `resolveBlockTitle` prop:
@@ -50,7 +79,7 @@ export function QueryResultList({
 
   return (
     <div
-      className="divide-y divide-border"
+      className={className}
       tabIndex={0}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom listbox driven by aria-activedescendant + roving focus; <datalist>/<select> can't host the clickable result-row divs
       role="listbox"
@@ -84,7 +113,10 @@ export function QueryResultList({
           <div
             key={block.id}
             id={`query-result-${block.id}`}
-            className="query-result-item"
+            className={cn(
+              listRowVariants({ className: 'query-result-item cursor-pointer text-sm' }),
+              index === focusedIndex && 'list-cursor',
+            )}
             data-testid="query-result-item"
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable result-row div of the custom listbox; native <option> can't host the rich row content + click navigation
             role="option"
@@ -106,35 +138,32 @@ export function QueryResultList({
               }
             }}
           >
-            <div
-              className={cn(
-                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors cursor-pointer [@media(pointer:coarse)]:py-3',
-                index === focusedIndex && 'list-cursor',
+            {/* The block's checkbox, drawn but not a control: a button may
+                not sit inside a listbox option (#6544). The row's name
+                carries the state. */}
+            {block.todo_state ? (
+              <TaskCheckbox state={block.todo_state} />
+            ) : (
+              <ResultTypeIcon block={block} />
+            )}
+            <span className="min-w-0 flex-1 truncate">
+              {displayMarkdown !== null ? (
+                <QueryResultRowContent content={displayMarkdown} />
+              ) : (
+                title
               )}
-            >
-              {/* The block's checkbox, drawn but not a control: a button may
-                  not sit inside a listbox option (#6544). The row's name
-                  carries the state. */}
-              {block.todo_state && <TaskCheckbox state={block.todo_state} />}
-              <span className="flex-1 truncate">
-                {displayMarkdown !== null ? (
-                  <QueryResultRowContent content={displayMarkdown} />
-                ) : (
-                  title
-                )}
+            </span>
+            {pageTitle && block.parent_id && (
+              // #4737 — plain text, not `PageLink`: a `role="option"` may
+              // not contain a focusable widget (axe `nested-interactive`),
+              // and `PageLink`'s link role was never reachable from this
+              // listbox's roving `tabIndex={-1}` rows anyway. The row's own
+              // click/Enter handler already opens this same page via
+              // `handleBlockNavigation`, so the target stays reachable.
+              <span className="max-w-[120px] shrink-0 truncate text-xs text-muted-foreground">
+                {pageTitle}
               </span>
-              {pageTitle && block.parent_id && (
-                // #4737 — plain text, not `PageLink`: a `role="option"` may
-                // not contain a focusable widget (axe `nested-interactive`),
-                // and `PageLink`'s link role was never reachable from this
-                // listbox's roving `tabIndex={-1}` rows anyway. The row's own
-                // click/Enter handler already opens this same page via
-                // `handleBlockNavigation`, so the target stays reachable.
-                <span className="shrink-0 text-xs text-muted-foreground truncate max-w-[120px]">
-                  {pageTitle}
-                </span>
-              )}
-            </div>
+            )}
           </div>
         )
       })}

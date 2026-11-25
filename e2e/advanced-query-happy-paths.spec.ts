@@ -8,6 +8,7 @@
  */
 import type { Locator, Page } from '@playwright/test'
 
+import { openQueryForm } from './domain'
 import {
   activePopover,
   chooseSelectOption,
@@ -125,6 +126,8 @@ test('a two-character full-text term is found alone and beside a longer word (#6
   await expect(async () => {
     await navigateToView(page, 'Journal')
     await navigateToView(page, 'Advanced query')
+    // From the second pass the term has run, and the form opens folded (#7040).
+    await openQueryForm(page)
     await term.fill('qz')
     await expect(total).toHaveText('2 matching blocks', { timeout: 2_000 })
   }).toPass()

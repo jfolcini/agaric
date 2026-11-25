@@ -214,6 +214,18 @@ export const properties: Record<string, string> = {
   'advancedQuery.group.countLabel_one': '{{count}} block',
   'advancedQuery.group.countLabel_other': '{{count}} blocks',
 
+  // Translators: Advanced Query view: the one-line summary of the query above the results, and the
+  // button under which the query form folds away. {{term}} = a condition or a parenthesised group;
+  // "and" / "or" join conditions mid-sentence (lowercase); {{text}} = the full-text term; {{keys}} =
+  // sort fields, each followed by an arrow; {{key}} = what the results are grouped by.
+  'advancedQuery.summary.not': 'NOT {{term}}',
+  'advancedQuery.summary.and': 'and',
+  'advancedQuery.summary.or': 'or',
+  'advancedQuery.summary.text': 'text “{{text}}”',
+  'advancedQuery.summary.sort': 'sorted by {{keys}}',
+  'advancedQuery.summary.group': 'grouped by {{key}}',
+  'advancedQuery.form.edit': 'Edit query',
+
   // Translators: Advanced Query filter builder (nested AND / OR groups of conditions), also in the
   // Build Query dialog's Advanced tab. "Filter" / "Filter group" are screen-reader names of the
   // top and nested groups; "Match" names the All / Any toggle (how a group combines its

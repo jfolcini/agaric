@@ -113,6 +113,23 @@ describe('QueryResultList', () => {
     expect(screen.queryByTestId(/^task-checkbox-/)).not.toBeInTheDocument()
   })
 
+  it('marks a tag, a page, a journal page and a block with its type icon, a task with neither (#7040)', () => {
+    const results = [
+      makeBlock({ id: 'B1', content: 'work', block_type: 'tag' }),
+      makeBlock({ id: 'B2', content: 'Roadmap', block_type: 'page' }),
+      makeBlock({ id: 'B3', content: '2031-04-05', block_type: 'page' }),
+      makeBlock({ id: 'B4', content: 'A note' }),
+      makeBlock({ id: 'B5', content: 'A task', todo_state: 'TODO' }),
+    ]
+
+    render(<QueryResultList results={results} pageTitles={new Map()} />)
+
+    const types = screen
+      .getAllByRole('option')
+      .map((row) => within(row).queryByTestId('query-result-type')?.getAttribute('data-type'))
+    expect(types).toEqual(['tag', 'page', 'journal', 'block', undefined])
+  })
+
   it('calls onNavigate when clicking a result with page_id', async () => {
     const onNavigate = vi.fn()
     const results = [makeBlock({ id: 'B1', content: 'Click me', parent_id: 'P1', page_id: 'P1' })]
@@ -242,17 +259,17 @@ describe('QueryResultList', () => {
     const options = screen.getAllByRole('option')
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
     expect(options[1]).toHaveAttribute('aria-selected', 'false')
-    // The visible cursor is `list-cursor` on the row body (tint and edge bar at rest, ring
+    // The visible cursor is `list-cursor` on the row (tint and edge bar at rest, ring
     // gated in CSS on the listbox's keyboard focus — not evaluable in jsdom).
-    expect(options[0]?.firstElementChild).toHaveClass('list-cursor')
-    expect(options[1]?.firstElementChild).not.toHaveClass('list-cursor')
+    expect(options[0]).toHaveClass('list-cursor')
+    expect(options[1]).not.toHaveClass('list-cursor')
 
     // ArrowDown moves to second item
     await user.keyboard('{ArrowDown}')
     expect(options[0]).toHaveAttribute('aria-selected', 'false')
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
-    expect(options[1]?.firstElementChild).toHaveClass('list-cursor')
-    expect(options[0]?.firstElementChild).not.toHaveClass('list-cursor')
+    expect(options[1]).toHaveClass('list-cursor')
+    expect(options[0]).not.toHaveClass('list-cursor')
 
     // ArrowDown again moves to third item
     await user.keyboard('{ArrowDown}')
