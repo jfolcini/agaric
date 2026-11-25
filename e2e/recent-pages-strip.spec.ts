@@ -81,10 +81,6 @@ test('the strip gives way to the tab bar while tabs are open @pages @tabs', asyn
   await recentChip(page, 'Getting Started').click({ button: 'middle' })
   await expect(tabs(page)).toHaveCount(2)
   await expect(page.getByTestId('quick-access-bar')).toHaveCount(0)
-  await page.screenshot({
-    path: test.info().outputPath('tabs-no-strip.png'),
-    animations: 'disabled',
-  })
 
   await tabs(page).nth(1).locator('[data-tab-close]').click()
   await expect(tabs(page)).toHaveCount(0)
@@ -132,10 +128,6 @@ test.describe('on a phone @mobile @pages', () => {
       await openPageMobile(page, title)
       await expect(pageTitle(page)).toHaveText(title)
     }
-    await page.screenshot({
-      path: test.info().outputPath('phone-no-strip.png'),
-      animations: 'disabled',
-    })
     await expect(page.getByTestId('quick-access-bar')).toHaveCount(0)
 
     // The page left behind is still a recent: the sheet's empty state offers it.

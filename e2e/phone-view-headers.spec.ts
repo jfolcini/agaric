@@ -139,10 +139,6 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     await expect(newPage).toBeVisible()
     await expect(newPage).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect44(newPage, 'New page')
-    await page.screenshot({
-      path: test.info().outputPath('phone-pages-header.png'),
-      animations: 'disabled',
-    })
   })
 
   test('Agenda: no nested scroll box, the header scrolls away, the list stays windowed', async ({
