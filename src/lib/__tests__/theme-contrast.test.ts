@@ -402,6 +402,8 @@ const THEME_PAIRS = [
   // Graph nodes are the buttons you pick out; the accent marks the current page (#5429).
   { pair: 'graph node', fg: 'graph-node', bg: 'background', min: NON_TEXT },
   { pair: 'graph current-page accent', fg: 'graph-accent', bg: 'background', min: NON_TEXT },
+  // Journal pages are a kind of their own (#7040).
+  { pair: 'graph journal node', fg: 'graph-journal', bg: 'background', min: NON_TEXT },
   // The selected tab's bar, on the document tab bar and every tab strip (#5924).
   { pair: 'selected tab bar', fg: 'tab-indicator', bg: 'background', min: NON_TEXT },
   // Query builder and Pair device put a tab strip on a dialog (#5920).

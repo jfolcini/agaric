@@ -536,47 +536,44 @@ export function GraphView(): React.ReactElement {
     )
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+      {/* A plain bar above the canvas, so it covers none of the graph (#7040).
+          Wrapped in FeatureErrorBoundary so a crash in the filter bar doesn't
+          blank the entire GraphView (UX Tier 3). */}
+      <div className="flex flex-wrap items-center gap-1.5" data-testid="graph-tag-filter">
+        <FeatureErrorBoundary name="GraphFilterBar">
+          <GraphFilterBar
+            filters={filters}
+            onFiltersChange={setFilters}
+            allTags={tags}
+            totalCount={nodes.length}
+            filteredCount={filteredNodes.length}
+            /* #2298 — the notice says "Showing N of M links", so N must be
+               the edge count that survives client-side dimension filtering
+               (`filteredEdges`), not the raw fetched set: with a status/
+               priority/has-* filter active, `edges.length` would overstate
+               what is on screen. Mirrors `filteredCount` above, which also
+               reports the post-filter (but pre-local-mode) count. */
+            edgesShown={filteredEdges.length}
+            edgesTotal={edgesTotal}
+            edgesTruncated={edgesTruncated}
+          />
+        </FeatureErrorBoundary>
+        {/* #1429 — per-page local-graph toggle + hop-depth control. */}
+        <LocalGraphControl
+          active={localMode}
+          onToggle={setLocalMode}
+          hops={localHops}
+          onHopsChange={setLocalHops}
+          seedLabel={localSeedLabel}
+          originLabel={walkedFromSeed ? seedLabel : null}
+          onReturnToOrigin={() => setSelectedPageId(null)}
+        />
+      </div>
       <div
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
         data-testid="graph-view"
       >
-        {/* Multi-dimension filter bar.
-            Wrapped in FeatureErrorBoundary so a crash in the filter / cytoscape
-            integration doesn't blank the entire GraphView (UX Tier 3). */}
-        <div
-          className="absolute top-2 left-2 right-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-start gap-1.5"
-          data-testid="graph-tag-filter"
-        >
-          <FeatureErrorBoundary name="GraphFilterBar">
-            <GraphFilterBar
-              filters={filters}
-              onFiltersChange={setFilters}
-              allTags={tags}
-              totalCount={nodes.length}
-              filteredCount={filteredNodes.length}
-              /* #2298 — the notice says "Showing N of M links", so N must be
-                 the edge count that survives client-side dimension filtering
-                 (`filteredEdges`), not the raw fetched set: with a status/
-                 priority/has-* filter active, `edges.length` would overstate
-                 what is on screen. Mirrors `filteredCount` above, which also
-                 reports the post-filter (but pre-local-mode) count. */
-              edgesShown={filteredEdges.length}
-              edgesTotal={edgesTotal}
-              edgesTruncated={edgesTruncated}
-            />
-          </FeatureErrorBoundary>
-          {/* #1429 — per-page local-graph toggle + hop-depth control. */}
-          <LocalGraphControl
-            active={localMode}
-            onToggle={setLocalMode}
-            hops={localHops}
-            onHopsChange={setLocalHops}
-            seedLabel={localSeedLabel}
-            originLabel={walkedFromSeed ? seedLabel : null}
-            onReturnToOrigin={() => setSelectedPageId(null)}
-          />
-        </div>
         {/*
          * `position: absolute; inset: 0` is required for the SVG to fill
          * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG
@@ -584,7 +581,7 @@ export function GraphView(): React.ReactElement {
          * it falls back to the SVG's intrinsic 150 px default height, which was
          * the symptom (nodes clustered in the top 150 px of an 800 px container).
          * All other children of `.graph-view` are already absolutely positioned
-         * (filter bar, truncated badge, zoom buttons); this keeps every child in
+         * (the no-matches overlay, zoom buttons); this keeps every child in
          * the same layout model and stacks via source order (SVG first → z-0,
          * overlays after → above).
          */}
