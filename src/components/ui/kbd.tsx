@@ -41,7 +41,13 @@ const ARROW_GLYPHS: Record<string, string> = {
   'Arrow Right': '→',
 }
 
-const MAC_MODIFIER_GLYPHS: Record<string, string> = { Ctrl: '⌘', Alt: '⌥', Shift: '⇧' }
+// `Ctrl` is the catalog's mod key; `Control` is the Control key itself.
+const MAC_MODIFIER_GLYPHS: Record<string, string> = {
+  Ctrl: '⌘',
+  Control: '⌃',
+  Alt: '⌥',
+  Shift: '⇧',
+}
 
 /** One alternative (`Ctrl + Shift + Arrow Up`) as this platform writes it. */
 function formatChord(chord: string): string {

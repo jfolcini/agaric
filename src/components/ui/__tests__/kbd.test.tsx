@@ -11,6 +11,7 @@ import { axe } from 'vitest-axe'
 
 import { Kbd } from '@/components/ui/kbd'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+import { acceleratorToKeys } from '@/lib/quick-capture-shortcut'
 
 function setPlatform(platform: string): void {
   __resetPlatformCacheForTests()
@@ -26,6 +27,23 @@ beforeEach(() => {
 
 afterEach(() => {
   __resetPlatformCacheForTests()
+})
+
+describe('a saved quick-capture accelerator, drawn', () => {
+  const draw = (accelerator: string) =>
+    keycaps(render(<Kbd keys={acceleratorToKeys(accelerator)} />).container)
+
+  it('on macOS keeps the Control key apart from Command', () => {
+    setPlatform('MacIntel')
+    expect(draw('Ctrl+Alt+N')).toEqual(['⌃⌥N'])
+    expect(draw('Cmd+Alt+N')).toEqual(['⌘⌥N'])
+    expect(draw('CommandOrControl+Shift+Space')).toEqual(['⌘⇧Space'])
+  })
+
+  it('elsewhere draws Control and CommandOrControl as Ctrl', () => {
+    expect(draw('Ctrl+Alt+N')).toEqual(['Ctrl+Alt+N'])
+    expect(draw('CommandOrControl+Shift+Space')).toEqual(['Ctrl+Shift+Space'])
+  })
 })
 
 describe('Kbd', () => {
