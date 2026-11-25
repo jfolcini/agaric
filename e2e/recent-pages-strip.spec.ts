@@ -68,7 +68,7 @@ for (const [trigger, click] of BACKGROUND_TAB_CLICKS) {
 
 // S4 (#7040): the open tabs already list these pages, so with more than one
 // the strip is gone, and it returns with the last tab closed.
-test('the strip gives way to the tab bar while tabs are open @pages @tabs', async ({ page }) => {
+test('the strip gives way to the tab bar while tabs are open @pages', async ({ page }) => {
   await waitForBoot(page)
   for (const title of ['Getting Started', 'Quick Notes']) {
     await openPage(page, title)
