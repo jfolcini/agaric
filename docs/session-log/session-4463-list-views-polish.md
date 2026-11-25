@@ -10,7 +10,7 @@ Part of the #7040 UI review: item S9's remaining part, P10 and D7.
   - The bug report's switches use `ToggleRow`, the Settings row: switch right of its label, hint as the description.
 - **History on a phone.**
   - A row with no content is one line, the device name in Diff's place: a `:not(:has(...))` rule in `history-row-cell`.
-  - On a coarse pointer the list's max height leaves room for the ↑/↓ pill, which used to sit pinned over a row by the scroller's bottom padding.
+  - On a coarse pointer the list's max height leaves room for the ↑/↓ pill, which used to sit pinned over a row by the scroller's bottom padding; never under 12rem, so a landscape phone keeps three rows.
 - **Trash origin** reads "from: Old Page (deleted)" when the page is in the Trash too, "from: a deleted page" when it is gone, and "Untitled" for a live page with no title.
 - **Templates.**
   - Two placeholder chips plus "+8 more"; the ⓘ lists all ten.
@@ -34,7 +34,7 @@ Part of the #7040 UI review: item S9's remaining part, P10 and D7.
   - `templates-view` and `templates`: the preview with no `##`; Create on the input's row.
   - `tag-page-notes`: one heading style, Add notes in the empty state.
   - `bug-report-dialog`: the switch right of its label.
-  - `list-rows-phone`: the pill covers no row; a content-less row is one line.
+  - `list-rows-phone`: the pill covers no row; a content-less row is one line; a landscape phone keeps three rows.
 - vitest: `history-utils` typed slots and refs; `HistoryItemCore` names; `useTrashBreadcrumbs`; `TagList` children; `TemplatesView` preview, badge and chips; `TagNotesSection`.
 - Each was shown red before the fix, and the CSS, max-height and picker fixes again by mutation.
 - The mock's space ops carry no value, so the history label is pinned in vitest only.

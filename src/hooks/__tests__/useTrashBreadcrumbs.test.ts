@@ -108,7 +108,7 @@ describe('useTrashBreadcrumbs', () => {
     })
   })
 
-  // #7040 — a page in the Trash too still has its title; "(deleted page)" hid it.
+  // #7040 — a page in the Trash too keeps its title.
   it('names a page that is in the Trash too, marked deleted', async () => {
     mockedBatchResolve.mockResolvedValueOnce([
       { id: 'P1', title: 'Project Alpha', block_type: 'page', deleted: true },

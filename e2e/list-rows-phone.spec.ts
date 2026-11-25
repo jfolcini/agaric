@@ -168,6 +168,19 @@ test.describe('List rows on a phone @pages @mobile', () => {
     await expect(card).toHaveCSS('border-top-left-radius', '8px')
   })
 
+  // The room the touch list leaves for the ↑/↓ pill is most of a landscape
+  // phone's height; without a floor the list shrank to its bottom padding.
+  test('the History list does not collapse on a landscape phone', async ({ page }) => {
+    await openPagesView(page)
+    await createPageFromPagesView(page, 'Row one')
+    await navigateToView(page, 'History')
+    const grid = page.getByRole('grid')
+    await expect(grid).toBeVisible()
+    await page.setViewportSize({ width: 844, height: 390 })
+    expect(await grid.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+    expect(await grid.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(3 * TOUCH_TARGET_PX)
+  })
+
   // The touch ↑/↓ pill floats at the bottom of the view; the last row must
   // clear it once the list is scrolled to its end (#7040).
   test.describe('on a 412×915 phone', () => {
