@@ -201,6 +201,11 @@ test.describe('Pages keyboard affordances at rest @pages', () => {
   })
 
   test('the search field App focuses draws no ring, and Tab draws one', async ({ page }) => {
+    // A first visit right after boot can mount the lazy view after App's
+    // one-frame focus pass (`new-page-dialog.spec.ts`), so focus is checked on
+    // an entry with it loaded.
+    await navigateToView(page, 'Journal')
+    await navigateToView(page, 'Pages')
     const search = page.getByLabel('Search pages...', { exact: true })
     await expect(search).toBeFocused()
     expect(await search.evaluate((el) => el.matches(':focus-visible'))).toBe(false)
