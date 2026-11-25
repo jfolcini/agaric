@@ -6591,6 +6591,279 @@ mod page_heavy {
     }
 }
 
+// ===========================================================================
+// The Loro engine: what a boot, a save and a sync wait on
+// ===========================================================================
+
+/// One space's Loro engine where a user waits on it: the export a save and a
+/// snapshot catch-up write, the rehydrate boot runs per space, the cold first
+/// sync one dispatch must finish inside `HANDSHAKE_TIMEOUT`, and two devices
+/// editing one block between syncs. The 100K scale, the heap and snapshot
+/// sizes, the attachment scan and the pulled vault stay unbudgeted criterion
+/// groups in `engine_bench` (`loro_snapshot`, `pulled_vault`).
+mod loro_engine {
+    use super::*;
+    use agaric_engine::loro::engine::LoroEngine;
+    use agaric_sync::sync_protocol::loro_sync::{ApplyOutcome, apply_remote};
+    use agaric_sync::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage,
+    };
+    use criterion::SamplingMode;
+    use std::hint::black_box;
+
+    const DEVICE_A: &str = "01SLOLORODEVICEA0000000001";
+    const DEVICE_B: &str = "01SLOLORODEVICEB0000000001";
+    const SPACE: &str = "01SLOLOROSPACE000000000001";
+    /// `loro_snapshot_bench`'s 10K scale after ten rounds of one edit to every
+    /// block, so the history outweighs the live text. Its 100K scale costs a
+    /// cold first sync of about half a minute a sample, too long for this lane.
+    const BLOCKS: usize = 10_000;
+    const EDIT_ROUNDS: usize = 10;
+    const SCALE: &str = "10Kx10";
+    const BLOCKS_PER_PAGE: usize = 100;
+    const EDIT: &str = "word ";
+    /// Sync rounds of the merge probe. The probe keeps the block's text a fixed
+    /// size, so a round costs the same at any history unless the merge itself
+    /// grows with it; at this many rounds such growth outweighs the constant
+    /// cost of a round many times over.
+    const MERGE_ROUNDS: usize = 1_000;
+
+    fn block_id(i: usize) -> String {
+        format!("01SLOLOROBLOCK{i:012}")
+    }
+
+    /// A's engine holding [`BLOCKS`] blocks after [`EDIT_ROUNDS`] edits to each,
+    /// written through the engine's create and edit paths.
+    fn seed_engine() -> (LoroEngine, Vec<String>) {
+        let mut engine = LoroEngine::with_peer_id(DEVICE_A).expect("engine");
+        let ids: Vec<String> = (0..BLOCKS).map(block_id).collect();
+        for (i, id) in ids.iter().enumerate() {
+            let slot = i % BLOCKS_PER_PAGE;
+            if slot == 0 {
+                engine
+                    .apply_create_block_at(id, "page", "page", None, i / BLOCKS_PER_PAGE)
+                    .expect("seed page");
+            } else {
+                let page = &ids[i - slot];
+                engine
+                    .apply_create_block_at(id, "content", "block content", Some(page), slot - 1)
+                    .expect("seed block");
+            }
+        }
+        for _ in 0..EDIT_ROUNDS {
+            for id in &ids {
+                engine.apply_edit_content(id, 0, 0, EDIT).expect("edit");
+            }
+        }
+        (engine, ids)
+    }
+
+    /// Boot's rehydrate of one space on B, ending with one block read so a
+    /// lazily decoded doc pays its decode here.
+    fn rehydrate(snapshot: &[u8], read_id: &str) -> LoroEngine {
+        let mut engine = LoroEngine::with_peer_id(DEVICE_B).expect("engine");
+        engine.import_deferring_index(snapshot).expect("import");
+        engine.rebuild_index_after_import();
+        black_box(engine.read_block(read_id).expect("read"));
+        engine
+    }
+
+    /// A vault on B that has never seen the space: a fresh database and no
+    /// engine. The `TempDir` must outlive the pool.
+    struct ColdVault {
+        pool: SqlitePool,
+        registry: LoroEngineRegistry,
+        _dir: TempDir,
+    }
+
+    async fn cold_vault() -> ColdVault {
+        let dir = TempDir::new().unwrap();
+        let pool = fresh_pool(&dir, "slo_loro_cold").await;
+        ColdVault {
+            pool,
+            registry: LoroEngineRegistry::new(),
+            _dir: dir,
+        }
+    }
+
+    /// One sync dispatch carrying the whole space: the inbox write, the import
+    /// and the SQL projection of every block.
+    async fn cold_first_sync(vault: &ColdVault, snapshot: &[u8]) {
+        let msg = LoroSyncMessage::Snapshot {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: SpaceId::from_trusted(SPACE),
+            bytes: snapshot.to_vec(),
+        };
+        let outcome = apply_remote(&vault.pool, &vault.registry, DEVICE_B, msg)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "the snapshot imports, got {outcome:?}"
+        );
+    }
+
+    /// Export, rehydrate and cold first sync of the seeded space.
+    pub(super) fn bench_loro_space_paths(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (engine, ids) = seed_engine();
+        // A content block, not a page: `BLOCKS / 2` starts a page.
+        let read_id = ids[BLOCKS / 2 + 1].clone();
+        let snapshot = engine.export_snapshot().expect("export snapshot");
+
+        // Shape probe: the rehydrated doc holds every block, with every edit.
+        let probe = rehydrate(&snapshot, &read_id);
+        assert_eq!(
+            probe.read_block_content(&read_id).expect("read").as_deref(),
+            Some(format!("{}block content", EDIT.repeat(EDIT_ROUNDS)).as_str())
+        );
+        assert_eq!(
+            ids.iter().filter(|id| probe.contains_block(id)).count(),
+            BLOCKS,
+            "the rehydrated index holds every seeded block"
+        );
+        drop(probe);
+
+        // Shape probe: a cold first sync projects every block into SQL.
+        let projected: i64 = rt.block_on(async {
+            let vault = cold_vault().await;
+            cold_first_sync(&vault, &snapshot).await;
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+                .fetch_one(&vault.pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(
+            projected, BLOCKS as i64,
+            "a cold first sync projects every block"
+        );
+
+        let (export, rehydrated, cold) = (Acc::new(), Acc::new(), Acc::new());
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        // A cold first sync takes seconds; linear sampling would run it 55 times.
+        group.sampling_mode(SamplingMode::Flat);
+        group.bench_function(format!("loro export @ {SCALE}"), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(engine.export_snapshot().expect("export snapshot"));
+                }
+                let elapsed = start.elapsed();
+                export.record(elapsed, iters);
+                elapsed
+            });
+        });
+        group.bench_function(format!("loro rehydrate @ {SCALE}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let start = Instant::now();
+                    let engine = rehydrate(&snapshot, &read_id);
+                    total += start.elapsed();
+                    drop(engine);
+                }
+                rehydrated.record(total, iters);
+                total
+            });
+        });
+        group.bench_function(format!("loro cold_first_sync @ {SCALE}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let vault = rt.block_on(cold_vault());
+                    let start = Instant::now();
+                    rt.block_on(cold_first_sync(&vault, &snapshot));
+                    total += start.elapsed();
+                }
+                cold.record(total, iters);
+                total
+            });
+        });
+        group.finish();
+
+        report_measurement_only(&format!("loro export @ {SCALE}"), &export);
+        report_measurement_only(&format!("loro rehydrate @ {SCALE}"), &rehydrated);
+        report_measurement_only(&format!("loro cold_first_sync @ {SCALE}"), &cold);
+    }
+
+    /// A and B, both holding one block whose text is two words.
+    fn merge_pair() -> (LoroEngine, LoroEngine) {
+        let mut a = LoroEngine::with_peer_id(DEVICE_A).expect("engine");
+        let page = block_id(0);
+        a.apply_create_block_at(&page, "page", "page", None, 0)
+            .expect("page");
+        a.apply_create_block_at(&block_id(1), "content", "a b", Some(&page), 0)
+            .expect("block");
+        let mut b = LoroEngine::with_peer_id(DEVICE_B).expect("engine");
+        b.import(&a.export_snapshot().expect("export"))
+            .expect("import");
+        (a, b)
+    }
+
+    /// [`MERGE_ROUNDS`] syncs between A and B. Before each, A rewrites the
+    /// block's first word and B its last, through the edit path an `EditBlock`
+    /// takes; then each exports what the other lacks and imports the other's
+    /// update through the path a received sync message takes.
+    fn merge_rounds(a: &mut LoroEngine, b: &mut LoroEngine) {
+        let id = block_id(1);
+        for round in 0..MERGE_ROUNDS {
+            let text = a.read_block_content(&id).expect("read").expect("block");
+            let (_, last) = text.split_once(' ').expect("two words");
+            a.apply_edit_via_diff_splice(&id, &format!("a{round} {last}"))
+                .expect("edit on A");
+            let text = b.read_block_content(&id).expect("read").expect("block");
+            let (first, _) = text.split_once(' ').expect("two words");
+            b.apply_edit_via_diff_splice(&id, &format!("{first} b{round}"))
+                .expect("edit on B");
+            let to_b = a
+                .export_update_since(&b.version_vector())
+                .expect("export A");
+            let to_a = b
+                .export_update_since(&a.version_vector())
+                .expect("export B");
+            a.import_with_changed_purged_tagscope(&to_a)
+                .expect("import on A");
+            b.import_with_changed_purged_tagscope(&to_b)
+                .expect("import on B");
+        }
+    }
+
+    /// Two devices editing the same block between syncs, the shape whose cost
+    /// grew with its history in loro 1.13.7.
+    pub(super) fn bench_loro_concurrent_edit_merge(c: &mut Criterion) {
+        let cmd = format!("loro concurrent_edit_merge @ {MERGE_ROUNDS} rounds");
+
+        // Shape probe: every round merged both edits, on both devices.
+        let (mut a, mut b) = merge_pair();
+        merge_rounds(&mut a, &mut b);
+        let last = MERGE_ROUNDS - 1;
+        let merged = Some(format!("a{last} b{last}"));
+        assert_eq!(a.read_block_content(&block_id(1)).expect("read"), merged);
+        assert_eq!(b.read_block_content(&block_id(1)).expect("read"), merged);
+
+        let acc = Acc::new();
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        group.sampling_mode(SamplingMode::Flat);
+        group.bench_function(&cmd, |bencher| {
+            bencher.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let (mut a, mut b) = merge_pair();
+                    let start = Instant::now();
+                    merge_rounds(&mut a, &mut b);
+                    total += start.elapsed();
+                }
+                acc.record(total, iters);
+                total
+            });
+        });
+        group.finish();
+        report_measurement_only(&cmd, &acc);
+    }
+}
+
 criterion_group!(
     slo_green,
     bench_get_block,
@@ -6651,6 +6924,9 @@ criterion_group!(
     mcp_reads::bench_mcp_search,
     // #6527 — the page-heavy vault's page-sensitive probes; no budget yet.
     page_heavy::bench_page_heavy_vault,
+    // The Loro engine at 10K blocks, and two devices editing one block between syncs.
+    loro_engine::bench_loro_space_paths,
+    loro_engine::bench_loro_concurrent_edit_merge,
 );
 
 criterion_group!(
