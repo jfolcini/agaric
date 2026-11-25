@@ -5,6 +5,7 @@ import {
   activeSheet,
   clearConsoleErrors,
   expect,
+  expect44,
   getConsoleErrors,
   navigateToView,
   openSettingsTab,
@@ -192,9 +193,12 @@ test.describe('at phone width @sync @mobile', () => {
     const retry = dialog.getByRole('button', { name: 'Retry camera', exact: true })
     await expect(retry).toBeFocused()
     const typePassphrase = dialog.getByRole('tab', { name: 'Type passphrase', exact: true })
-    for (const button of [retry, typePassphrase]) {
+    for (const [button, name] of [
+      [retry, 'Retry'],
+      [typePassphrase, 'Type passphrase'],
+    ] as const) {
       await expect(button).toBeInViewport()
-      expect((await button.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+      await expect44(button, name)
     }
 
     await typePassphrase.tap()
