@@ -6,7 +6,7 @@
 // `e2e/` suite uses. The specs that import these helpers target exactly the
 // bug class the #3082 umbrella wants dead: mock-vs-real drift and "durable
 // state vanishes after navigation/reload". Factoring the app-ready wait, the
-// view navigation, and the block-create flow here keeps the weekly job's
+// view navigation, and the block-create flow here keeps the lane's
 // failure output legible (one named helper per interaction).
 //
 // `browser`, `$`, and `expect` are provided as GLOBALS by @wdio/globals at
@@ -131,9 +131,9 @@ import path from 'node:path'
 export const APP_READY_TIMEOUT = 60_000
 // Runs 30061419172 / 30059678579 measured MARGINAL timeouts on the shared CI
 // runner: failed durable-read asserts had their element in the DOM by the
-// time the afterTest diagnostics captured it seconds later. This is a weekly
-// non-blocking lane — generous waits cost nothing when green, so every
-// interaction gets the full boot-scale budget.
+// time the afterTest diagnostics captured it seconds later. Generous waits
+// cost nothing when green, so every interaction gets the full boot-scale
+// budget.
 export const NAV_TIMEOUT = 60_000
 export const ACTION_TIMEOUT = 60_000
 

@@ -130,7 +130,7 @@ on:
     # Mondays 04:17 UTC, every lane — off-peak, odd minute to avoid the
     # top-of-hour scheduler stampede. Weekly is enough for trend/triage tooling.
     #
-    # e2e-tauri-weekly is deliberately scheduled earlier (02:43 Mon) so it
+    # e2e-tauri-weekly is deliberately scheduled earlier (02:43 nightly) so it
     # drains before this lane starts; the two used to share this exact minute
     # and contended for the same runner pool. See #3168.
     - cron: '17 4 * * 1'

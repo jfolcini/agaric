@@ -13,7 +13,7 @@ name: CodeQL
 # the Security tab up to a week after the code merged, which is the accepted
 # trade; this is not a required context.
 #   * schedule (weekly): Tuesday 06:00 UTC, staggered from scorecard.yml's
-#     Monday and clear of `e2e-tauri-weekly.yml` (Mon 02:43) and
+#     Monday and clear of `e2e-tauri-weekly.yml` (nightly 02:43) and
 #     `scheduled-deep-checks.yml` (daily 04:17). Also rescans against updated
 #     CodeQL query packs when the code is idle.
 #   * workflow_dispatch: manual re-run for debugging.

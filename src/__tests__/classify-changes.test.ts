@@ -200,7 +200,7 @@ describe('classify-changes.sh', () => {
     })
   })
 
-  it('e2e-tauri plus any app path runs both browser suites whole', () => {
+  it('e2e-tauri plus any app path runs both browser suites whole, and only the changed smoke spec', () => {
     const out = classifyWith(
       ['e2e-tauri/history.e2e.ts'],
       ['e2e-tauri/history.e2e.ts', 'e2e-tauri/helpers.test.ts', 'src/lib/date-utils.ts'],
@@ -211,7 +211,7 @@ describe('classify-changes.sh', () => {
       playwright: 'true',
       playwright_specs: '',
       real_backend: 'true',
-      real_backend_specs: '',
+      real_backend_specs: 'e2e-tauri/history.e2e.ts',
     })
   })
 
@@ -240,14 +240,13 @@ describe('classify-changes.sh', () => {
   })
 
   it.each(['src/test-setup.ts', 'src/lib/tauri-mock/__tests__/conformance-coverage.test.ts'])(
-    'shared test infrastructure %s runs every lane, whole',
+    'shared test infrastructure %s runs every mock-backed lane whole, and no smoke lane',
     (path) => {
       expect(classify([path])).toMatchObject({
         vitest: 'true',
         playwright: 'true',
         playwright_specs: '',
-        real_backend: 'true',
-        real_backend_specs: '',
+        real_backend: 'false',
       })
     },
   )
@@ -468,7 +467,6 @@ describe('classify-changes.sh', () => {
       backend: 'true',
       rust_tests: 'true',
       desktop: 'true',
-      real_backend: 'true',
     })
   })
 
@@ -547,7 +545,7 @@ describe('classify-changes.sh', () => {
 
   it('src/commands/tests/ also builds under the test-util feature, so it is not test-only', () => {
     const out = classify(['src-tauri/src/commands/tests/common.rs'])
-    expect(out).toMatchObject({ desktop: 'true', real_backend: 'true' })
+    expect(out).toMatchObject({ desktop: 'true' })
   })
 
   it('an unclassifiable path runs the full set', () => {
@@ -562,17 +560,69 @@ describe('classify-changes.sh', () => {
     })
   })
 
+  // One path per class of `real_backend_re`, each a failure only the binary shows.
   it.each([
+    'src-tauri/capabilities/desktop.json',
+    'src-tauri/tauri.conf.json',
+    'src-tauri/build.rs',
+    'src-tauri/Cargo.toml',
+    'src-tauri/Cargo.lock',
+    'package.json',
+    'package-lock.json',
+    'src-tauri/agaric-sync/src/sync_daemon/mod.rs',
+    'src-tauri/agaric-sync/src/transport/identity.rs',
+    'src-tauri/src/sync_host.rs',
+    'src-tauri/src/sync_event_sinks.rs',
+    'src-tauri/src/commands/sync_cmds.rs',
+    'src-tauri/diagnostics/src/bin/e2e_sync_peer.rs',
+    'src-tauri/src/mcp/server.rs',
+    'src-tauri/src/bin/agaric-mcp.rs',
+    'src-tauri/src/commands/mcp.rs',
+    'src-tauri/src/commands/mcp_agents.rs',
+    'src-tauri/src/mirror/mod.rs',
+    'src-tauri/src/commands/mirror.rs',
+    'src-tauri/src/lib.rs',
+    'src-tauri/src/main.rs',
+    'src-tauri/src/app_paths.rs',
+    'src-tauri/src/main_thread.rs',
+    'src-tauri/src/db/recovery.rs',
+    'src-tauri/src/db/snapshot_restore.rs',
+    'src-tauri/src/db/daily_snapshot.rs',
+    'src-tauri/src/commands/recovery.rs',
+    'src-tauri/src/commands/daily_snapshot.rs',
+    'src-tauri/agaric-sync/src/recovery/draft_recovery.rs',
+    'src-tauri/src/maintenance.rs',
+    'src-tauri/src/reminders.rs',
+    'src-tauri/src/commands/notifier.rs',
+    'src-tauri/src/appimage_integration.rs',
+    'src-tauri/scripts/appimage-xdg-open.sh',
+    'src/components/attachments/voice-recorder.ts',
+    'src/components/attachments/voice-capture-worklet.ts',
+    'src/components/attachments/voice-recording.ts',
+    'src/components/attachments/ogg-opus.ts',
+    'src/components/peers/QrScanner.tsx',
     'wdio.conf.ts',
+    'e2e-tauri/helpers.ts',
+    '.github/workflows/e2e-tauri-weekly.yml',
+  ])('%s runs the smoke lane, every spec', (path) => {
+    expect(classify([path])).toMatchObject({ real_backend: 'true', real_backend_specs: '' })
+  })
+
+  // The bridge lane runs these per PR; the smoke lane, nightly and on tags.
+  it.each([
+    'src/App.tsx',
+    'src/components/attachments/VoiceNoteDialog.tsx',
     'index.html',
     'vite.config.ts',
     'tsconfig.app.json',
-    'package.json',
-    'package-lock.json',
     'public/sw.js',
-    '.github/workflows/e2e-tauri-weekly.yml',
-  ])('%s is built or run by the real lane', (path) => {
-    expect(classify([path])['real_backend']).toBe('true')
+    'src-tauri/src/commands/blocks/crud.rs',
+    'src-tauri/agaric-store/src/fts/mod.rs',
+    'src-tauri/agaric-engine/src/materializer/consumer.rs',
+    'src-tauri/src/headless.rs',
+    'src-tauri/agaric-sync/src/sync_daemon/tests.rs',
+  ])('%s does not run the smoke lane', (path) => {
+    expect(classify([path])).toMatchObject({ real_backend: 'false', bridge: 'true' })
   })
 
   it.each([

@@ -1,65 +1,29 @@
 # =============================================================================
-# WebdriverIO + tauri-driver real-backend E2E (issue #155)
+# The real-binary smoke lane: WebdriverIO + tauri-driver (#155, #6926)
 # =============================================================================
-# This workflow runs on every pull request and gates it: its `e2e-tauri-gate`
-# job is a required status-check context (#4671), pinned with `dco` and
-# `validate / validate-all` by `branch-protection-assert.yml`. It stays a
-# separate workflow, not a job of `_validate.yml`, so the real-backend build
-# does not sit in `validate-all`'s `needs`.
+# It runs nightly, on every release tag, and on a PR whose diff touches what
+# only the binary shows (`real_backend` in `scripts/classify-changes.sh`). On
+# every PR its `e2e-tauri-gate` job reports, as a required status-check context
+# (#4671), pinned with `dco` and `validate / validate-all` by
+# `branch-protection-assert.yml`. It stays a separate workflow, not a job of
+# `_validate.yml`, so the real-backend build does not sit in `validate-all`'s
+# `needs`. `release.yml` calls it on every tag and `publish-release` requires
+# it, so a red run leaves the release a draft.
 #
-# A release is the exception: `release.yml` calls this workflow on every tag
-# and `publish-release` requires it, so a red run leaves the release a draft.
-#
-# Unlike the Playwright `e2e/` suite (which drives the app in headless Chromium
-# against the JS Tauri mock), this lane builds the REAL Agaric debug binary and
-# drives it in a real WebKitWebView via `tauri-driver`, exercising the genuine
-# Rust backend over real Tauri IPC. `src/main.tsx` only installs the mock when
-# `window.__TAURI_INTERNALS__` is absent; the real binary provides it, so the
-# app uses live IPC automatically — hence the binary is a plain (non-VITE_E2E)
-# debug build.
+# It builds the REAL Agaric debug binary and drives it in a real WebKitWebView
+# via `tauri-driver`, over real Tauri IPC. `src/main.tsx` only installs the JS
+# mock when `window.__TAURI_INTERNALS__` is absent; the real binary provides
+# it, so the binary is a plain (non-VITE_E2E) debug build.
 #
 # `tauri-driver` is a CARGO binary (built by the `build` job and shipped to the
-# shards with the app), not an npm package. On Linux it proxies
+# specs job with the app), not an npm package. On Linux it proxies
 # `WebKitWebDriver` from the `webkit2gtk-driver` apt package.
 # Docs: https://v2.tauri.app/develop/tests/webdriver/ . Running it on a dev
 # box: e2e-tauri/AGENTS.md § Running.
 #
-# -----------------------------------------------------------------------------
-# SPEC SCOPE — why this lane runs `e2e-tauri/*.e2e.ts` and NOT the 100+ specs
-# under `e2e/`.
-# -----------------------------------------------------------------------------
-# `wdio.conf.ts` already globs `e2e-tauri/**/*.e2e.ts`, so there is no
-# allowlist here to widen: this lane runs EVERY real-backend spec that exists.
-# The set is small because the specs themselves are what is scarce, not the
-# runner configuration — a new `e2e-tauri/<name>.e2e.ts` is picked up with no
-# workflow edit.
-#
-# The `e2e/` Playwright specs CANNOT be pointed at this lane's real backend.
-# They are a different harness end to end, not a different flag:
-#   * Playwright drives headless CHROMIUM over CDP against a `vite preview`
-#     build on http://localhost:5173 (see `playwright.config.ts`). The real
-#     app renders in a WebKitGTK WebView driven by `WebKitWebDriver` (W3C
-#     WebDriver) through `tauri-driver` — different engine, different wire
-#     protocol. There is no Playwright browser/adapter that attaches to it.
-#   * The `e2e/` build is produced with `VITE_E2E=1` specifically so the JS
-#     mock survives tree-shaking (`src/main.tsx`); this lane builds WITHOUT
-#     `VITE_E2E` precisely so no mock is present. The two builds are mutually
-#     exclusive by construction.
-#   * `page.*` / `expect(locator)` (Playwright) vs `$`/`waitForExist`
-#     (WebdriverIO) means every spec body has to be re-authored, not re-pointed
-#     — which is exactly what `e2e-tauri/helpers.ts` exists to make cheap.
-# Additionally `wdio.conf.ts` pins `maxInstances: 1`: real-backend specs run
-# serially against ONE app process sharing ONE real SQLite database, so any
-# ported spec must be self-cleaning/order-independent. The Playwright suite
-# relies on `fullyParallel` + a per-context mock reset and is not written to
-# that constraint.
-#
-# So widening coverage here is a TEST-AUTHORING task (port high-value specs to
-# `e2e-tauri/`, one at a time, each validated by a scheduled/dispatch run),
-# tracked by #155 — not a CI-configuration change. Mock↔backend divergence in
-# the meantime is guarded by the `conformance/fixtures/*.json` harness, which
-# replays the same op sequences against BOTH the real backend and the mock
-# (see `e2e/AGENTS.md`).
+# SPEC SCOPE: one spec per failure class the bridge cannot show
+# (e2e-tauri/AGENTS.md). A scenario the bridge can run goes in `e2e/` on
+# `REAL_BACKEND_SPECS`, which `_validate.yml`'s `bridge-specs` runs per PR.
 # =============================================================================
 
 # The display name drops "weekly", which stopped being true here. The FILENAME
@@ -68,15 +32,14 @@ name: e2e-tauri
 
 on:
   schedule:
-    # Weekly, Mondays 02:43 UTC — off-peak and a non-:00 minute so this heavy
-    # job does not pile onto the top-of-hour cron rush on GitHub's shared runners.
+    # Nightly, 02:43 UTC — off-peak and a non-:00 minute so this heavy job
+    # does not pile onto the top-of-hour cron rush on GitHub's shared runners.
     #
-    # Deliberately staggered ~1.5h ahead of scheduled-deep-checks (04:17 Mon):
-    # this lane takes ~17 min, so it drains well before that far heavier lane
-    # (~40 min full-suite + ~26 min bench-slo + fuzz + mutants) starts. Running
-    # both on the same minute made the two heaviest lanes contend for the same
-    # runner pool. Keep these two crons apart when changing either. See #3168.
-    - cron: '43 2 * * 1'
+    # Deliberately staggered ahead of scheduled-deep-checks (daily 04:17), so
+    # this lane drains before that far heavier one starts. Running both on the
+    # same minute made the two heaviest lanes contend for the same runner pool.
+    # Keep these two crons apart when changing either. See #3168.
+    - cron: '43 2 * * *'
   workflow_dispatch: {}
   # Every PR to main, with no `paths:` filter: a `paths`-skipped workflow
   # produces no check run at all, and a required context that never reports
@@ -107,14 +70,13 @@ env:
 
 jobs:
   # Is this diff relevant to the lane? `scripts/classify-changes.sh`'s
-  # `real_backend`: could the change alter what this lane BUILDS or RUNS (the
-  # Rust app minus test-only files, the frontend bundle, the specs and their
-  # runner, the manifests). One serial native build tells a docs-only or
-  # Rust-tests-only PR nothing. Schedule, dispatch and `release.yml`'s call
-  # (a tag push) have no diff and run every spec. When the lane's only paths
-  # are `e2e-tauri/*.e2e.ts` specs, `real_backend_specs` lists the changed ones
+  # `real_backend`: does the change touch what only the binary shows (its
+  # classes are listed beside `real_backend_re`)? Everything else is the
+  # bridge's per PR. Schedule, dispatch and `release.yml`'s call (a tag push)
+  # have no diff and run every spec. When the lane's only paths are
+  # `e2e-tauri/*.e2e.ts` specs, `real_backend_specs` lists the changed ones
   # still on disk and the run step passes just those (#5853); helpers,
-  # `wdio.conf.ts` or the app empty it and every spec runs.
+  # `wdio.conf.ts` or any other lane path empties it and every spec runs.
   detect:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -135,10 +97,8 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
 
-  # Build once, then run the specs in four shards from the build's binaries
-  # (#5849): a build per shard would cost each shard minutes of compile for a
-  # few minutes of specs. Every spec file boots the app on its own vault, so a
-  # file runs the same in any shard (e2e-tauri/AGENTS.md § Rules).
+  # Build in one job, run the specs from its binaries in another (#5849): the
+  # specs job installs only the runtime packages.
   build:
     name: Build the real-backend binaries
     needs: detect
@@ -190,8 +150,8 @@ jobs:
 
       - name: Rust cache (mcp-tests' entry, read-only)
         # `mcp-tests` compiles the same dev profile of the same dependency graph
-        # and stays the key's only writer. This lane's own key never hit: only
-        # main saved it, and main runs this lane only weekly (#5853). Cargo's
+        # and stays the key's only writer. This lane's own key never hit while
+        # only main's weekly run saved it (#5853). Cargo's
         # fingerprints decide what rebuilds; tauri and everything above it
         # always do, because this build adds tauri's `custom-protocol`.
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -212,8 +172,8 @@ jobs:
         run: npm ci
 
       - name: Install tauri-driver
-        # A cargo binary with no prebuilt release; the shards run this build of
-        # it from the artifact below.
+        # A cargo binary with no prebuilt release; the specs job runs this
+        # build of it from the artifact below.
         run: cargo install tauri-driver --version "$(bash scripts/pins.sh version tauri-driver)" --locked
 
       - name: Build the app, the sync peer and the agaric-mcp bridge
@@ -249,22 +209,16 @@ jobs:
             src-tauri/target/debug/e2e_sync_peer
             src-tauri/target/debug/tauri-driver
           if-no-files-found: error
-          # Read only by this run's shards.
+          # Read only by this run's specs job.
           retention-days: 1
 
   specs:
     name: Real-backend specs
     needs: [detect, build]
     runs-on: ubuntu-24.04
-    # apt on a slow mirror (a cache miss) plus a shard of specs, which the
-    # slowest files can make uneven.
+    # apt on a slow mirror (a cache miss) plus every spec file, each booting
+    # the app.
     timeout-minutes: 40
-    strategy:
-      # Every shard runs to the end, so a run reports every failing spec.
-      fail-fast: false
-      matrix:
-        # One leg for a spec-only diff: it runs just the changed specs.
-        shard: ${{ fromJSON(needs.detect.outputs.real_backend_specs == '' && '[1, 2, 3, 4]' || '[1]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -296,9 +250,8 @@ jobs:
 
       - name: Run WebdriverIO real-backend specs (Xvfb)
         # The binaries come from `build`, so tell wdio.conf.ts to skip its
-        # own onPrepare build. wdio.conf.ts deals the spec files by their CI times
-        # over the `--shard` total; `--shard 1/1`, the spec-only leg's, selects
-        # every spec it is given. xvfb-run gives the WebKitWebView a display and
+        # own onPrepare build; an empty SPECS runs every spec it globs.
+        # xvfb-run gives the WebKitWebView a display and
         # dbus-run-session a session bus (#4444: without one every worker boot
         # stalled a flat 30 s, consistent with the 25 s dbus default timeout),
         # the composition release.yml uses for its boot smoke. Bare Xvfb has no
@@ -317,10 +270,9 @@ jobs:
         env:
           WDIO_SKIP_TAURI_BUILD: '1'
           TAURI_DRIVER_PATH: ${{ github.workspace }}/src-tauri/target/debug/tauri-driver
-          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           SPECS: ${{ needs.detect.outputs.real_backend_specs }}
         run: |
-          args=(--shard "$SHARD")
+          args=()
           for spec in $SPECS; do args+=(--spec "$spec"); done
           xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri -- "$@"' bash "${args[@]}"
 
@@ -347,7 +299,7 @@ jobs:
         # pattern because `path: |` is a literal block scalar: a `#` line
         # inside it is DATA handed to the globber, not a comment.
         #
-        # The evidence that does exist is in `e2e-tauri-diagnostics-<shard>`
+        # The evidence that does exist is in `e2e-tauri-diagnostics`
         # below: wdio.conf.ts now copies the app's own
         # `<AGARIC_DATA_DIR>/logs/agaric.log*` into `e2e-tauri/artifacts/`
         # before the throwaway vault that holds it is deleted — from
@@ -357,7 +309,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-tauri-logs-${{ matrix.shard }}
+          name: e2e-tauri-logs
           path: |
             logs/
             wdio-logs*/
@@ -374,7 +326,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-tauri-diagnostics-${{ matrix.shard }}
+          name: e2e-tauri-diagnostics
           path: e2e-tauri/artifacts/
           if-no-files-found: ignore
           retention-days: 14
@@ -382,7 +334,7 @@ jobs:
   # The one stable context this workflow emits on every PR, so it can become a
   # required check (#4671). `if: always()` is load-bearing: a skipped required
   # check counts as passing. Mirrors `validate-all`: `detect` must succeed, the
-  # build and every shard must succeed, and a skipped job is accepted only when
+  # build and the specs must succeed, and a skipped job is accepted only when
   # `detect` said the diff is not relevant. A failed build skips `specs`, which
   # then fails here too.
   gate:
@@ -397,10 +349,10 @@ jobs:
           DETECT: ${{ needs.detect.result }}
           RELEVANT: ${{ needs.detect.outputs.real_backend }}
           BUILD: ${{ needs.build.result }}
-          SHARDS: ${{ needs.specs.result }}
+          SPECS: ${{ needs.specs.result }}
         run: |
           set -euo pipefail
-          echo "detect=$DETECT real_backend=${RELEVANT:-<empty>} build=$BUILD specs=$SHARDS"
+          echo "detect=$DETECT real_backend=${RELEVANT:-<empty>} build=$BUILD specs=$SPECS"
           if [ "$DETECT" != "success" ]; then
             echo "::error::detect result=$DETECT; failing closed."
             exit 1
@@ -419,4 +371,4 @@ jobs:
             esac
           }
           check build "$BUILD"
-          check specs "$SHARDS"
+          check specs "$SPECS"
