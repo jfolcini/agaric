@@ -1,4 +1,4 @@
-# Session 4438 — Review notes from #7064 and #7072: a failed import keeps its purges
+# Session 4439 — Review notes from #7064 and #7072: a failed import keeps its purges
 
 **Ask.** One follow-up PR for the two Loro upgrade PRs: the data-integrity defect session 4431 left open ("a purge or a kept local block inside such a half-imported batch"), a committed test for a `loro_doc_delta` row loro 1.13.6 wrote, and two review notes.
 
