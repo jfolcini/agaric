@@ -1,4 +1,4 @@
-# Session 4449 — colour roles: today in ink, a priority scale, due-today amber, and dark floating surfaces
+# Session 4451 — colour roles: today in ink, a priority scale, due-today amber, and dark floating surfaces
 
 Part of the #7040 UI review, items S1 and K1–K6, built on the maintainer's 2026-11-25 decision that today is drawn in ink.
 

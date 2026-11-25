@@ -266,7 +266,8 @@ export function getCalendarMonthRange(date: Date): { startDate: string; endDate:
  *
  * Past → alert-error (overdue), today → the due-date amber, apart from the
  * ink P2 chip beside it (#7040), future → neutral, like the scheduled chip:
- * only overdue and today carry a hue. `secondary`, not `muted`: muted text on `--muted` is under 4.5:1.
+ * only overdue and today carry a hue. `secondary`, not `muted`: muted text
+ * on `--muted` is under 4.5:1.
  * Used by the inline due-date chip in `BlockInlineControls` and the agenda
  * results list.
  */
