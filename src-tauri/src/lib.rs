@@ -3516,6 +3516,14 @@ mod specta_tests {
             .constant("EVENT_BLOCKS_CHANGED", EVENT_BLOCKS_CHANGED)
             .constant("EVENT_SYNC_LOCAL_TEXT_KEPT", EVENT_SYNC_LOCAL_TEXT_KEPT)
             .dangerously_cast_bigints_to_number()
+            // tauri-specta rc.26 made both of these opt-outs. Every caller reads
+            // the `{ status, data | error }` result, so a throwing command would
+            // bypass its error handling. Phase-split export renames most types
+            // `_Serialize` / `_Deserialize` and emits an unbound
+            // `PageResponse_Serialize<T>`; no command takes and returns a type
+            // whose two directions differ, so one shape per type is exact.
+            .error_handling(tauri_specta::ErrorHandlingMode::Result)
+            .disable_serde_phases()
     }
 
     /// Verify the generated TypeScript bindings match the committed file.

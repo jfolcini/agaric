@@ -15,8 +15,9 @@
 // ─── The rule ─────────────────────────────────────────────────────────
 //
 // A test file that calls `vi.mock('@tauri-apps/api/core', …)` must build
-// its `invoke` mock as `vi.fn(strictInvokeFallback)` (imported from
-// `src/__tests__/helpers/invoke.ts`, which needs an `async` factory).
+// its `invoke` mock as `ignoreUnsetOptions(vi.fn(strictInvokeFallback))`
+// (imported from `src/__tests__/helpers/invoke.ts`, which needs an `async`
+// factory).
 // Re-mocking the module is legitimate — e.g. to add `convertFileSrc` — but
 // dropping the strict fallback is not. ANY opt-out fails the guard, naming
 // file and line; there is no baseline.
@@ -232,9 +233,11 @@ function runGuard() {
     console.error('')
     console.error(`    vi.mock('${CORE_MODULE}', async () => {`)
     console.error(
-      "      const { strictInvokeFallback } = await import('@/__tests__/helpers/invoke')",
+      "      const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')",
     )
-    console.error('      return { invoke: vi.fn(strictInvokeFallback), convertFileSrc: vi.fn() }')
+    console.error(
+      '      return { invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)), convertFileSrc: vi.fn() }',
+    )
     console.error('    })')
     process.exit(1)
   }

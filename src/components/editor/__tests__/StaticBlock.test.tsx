@@ -45,10 +45,13 @@ vi.mock('@/components/dialogs/PdfViewerDialog', () => ({
   ),
 }))
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+    convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
+  }
+})
 
 // StaticBlock now reads attachments from the
 // BatchAttachmentsProvider context instead of `useBlockAttachments`.

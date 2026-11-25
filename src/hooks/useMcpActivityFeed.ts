@@ -64,7 +64,7 @@ export interface UseMcpActivityFeedResult {
 }
 
 /**
- * Normalize a wire `ActivityEntry_Serialize` (from `get_mcp_recent_activity`)
+ * Normalize a generated `bindings.ts` `ActivityEntry` (from `get_mcp_recent_activity`)
  * into this hook's `ActivityEntry` shape — the two are structurally the
  * same except the generated binding's optional fields carry `null` where
  * this hook (matching the live-event payload) uses `undefined`.

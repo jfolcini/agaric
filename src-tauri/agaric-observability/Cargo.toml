@@ -62,7 +62,7 @@ url = "2"
 # `ingest`'s `FrontendSpan` / `FrontendSpanAttr` (the `ingest_otel_spans`
 # command arg types) derive `serde::Deserialize` + `specta::Type`.
 serde = { version = "1", features = ["derive"] }
-specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+specta = { version = "=2.0.0-rc.28", features = ["derive", "chrono"] }
 
 [dev-dependencies]
 # Test-only OTel feature: the InMemory{Span,Log,Metric}Exporters the pipeline

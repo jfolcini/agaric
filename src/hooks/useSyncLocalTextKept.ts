@@ -14,14 +14,14 @@
 import { useRef } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
-import { EVENT_SYNC_LOCAL_TEXT_KEPT, type SyncEvent_Serialize } from '@/lib/bindings'
+import { EVENT_SYNC_LOCAL_TEXT_KEPT, type SyncEvent } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { clampText } from '@/lib/text-utils'
 import { useNavigationStore } from '@/stores/navigation'
 
-type LocalTextKept = Extract<SyncEvent_Serialize, { type: 'local_text_kept' }>
+type LocalTextKept = Extract<SyncEvent, { type: 'local_text_kept' }>
 
 const LOCAL_TEXT_KEPT_TOAST_ID = 'sync-local-text-kept'
 

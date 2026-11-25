@@ -65,9 +65,12 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+  }
+})
 
 const mockedInvoke = vi.mocked(invoke)
 const JOURNAL_PAGE_ID = '01JOURNALPAGE0000000000000'

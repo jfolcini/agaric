@@ -10,9 +10,12 @@ import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+  }
+})
 
 /** Target of the `[[…]]` link in the #4719 rows below. */
 const LINKED_PAGE_ID = '01KP36KDG2ABCDEFGHJKMNPQRS'
