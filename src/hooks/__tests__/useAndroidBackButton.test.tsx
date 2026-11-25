@@ -35,10 +35,13 @@ const mocks = vi.hoisted(() => ({
   isAndroid: vi.fn(() => true),
 }))
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-  addPluginListener: mocks.addPluginListener,
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+    addPluginListener: mocks.addPluginListener,
+  }
+})
 vi.mock('@tauri-apps/plugin-process', () => ({
   exit: mocks.exit,
 }))

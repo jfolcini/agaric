@@ -7,9 +7,12 @@ import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+  }
+})
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 
 const mockedInvoke = vi.mocked(invoke)

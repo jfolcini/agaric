@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   answerInvokeFromMock,
+  ignoreUnsetOptions,
   mockInvokeCommands,
   pageRowInvokeFallback,
   strictInvokeFallback,
@@ -68,6 +69,25 @@ describe('strict invoke fallback', () => {
 
     expect(unwrap(await commands.deleteBlock('BLOCK_1'))).toBeUndefined()
     expect(takeUnstubbedInvokes()).toEqual([])
+  })
+})
+
+describe('ignoreUnsetOptions', () => {
+  it('records a binding call without the options the app left unset', async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    await commands.deleteBlock('BLOCK_1')
+
+    expect(vi.mocked(invoke).mock.calls).toEqual([['delete_block', { blockId: 'BLOCK_1' }]])
+  })
+
+  it('keeps options the caller did set', () => {
+    const mock = vi.fn()
+    const headers = { 'x-test': '1' }
+
+    ignoreUnsetOptions(mock)('delete_block', { blockId: 'BLOCK_1' }, { headers })
+
+    expect(mock.mock.calls).toEqual([['delete_block', { blockId: 'BLOCK_1' }, { headers }]])
   })
 })
 

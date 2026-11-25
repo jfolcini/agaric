@@ -49,7 +49,7 @@ uuid = { version = "1.23.2", features = ["v4"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", "net", "io-util", "io-std"] }
 # iroh — QUIC transport for peer sync (#78, plan #3464). Pinned EXACTLY (`=`),
 # matching this repo's convention for versions that must not move on their own
-# (`specta = "=2.0.0-rc.25"`). A bare `"1.0.3"` is a caret range and would let
+# (`specta = "=2.0.0-rc.28"`). A bare `"1.0.3"` is a caret range and would let
 # any 1.x resolve, which is precisely the event that matters here: the LAN-only
 # posture we depend on (no relays, no address-lookup services) is a
 # *configuration* iroh defaults against, so a minor bump is the most likely way
@@ -94,7 +94,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `sync_events::SyncProgressUpdate` + `snapshot_fallback_metrics` derive
 # `specta::Type`; `chrono` feature matches the app crate.
-specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+specta = { version = "=2.0.0-rc.28", features = ["derive", "chrono"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 tracing = { version = "0.1.44", features = ["attributes"] }
 blake3 = "1.8.5"

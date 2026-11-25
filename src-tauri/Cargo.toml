@@ -241,9 +241,9 @@ aho-corasick = "1"
 base64 = "0.23.0"
 # #695 — "chrono" lets `ActivityEntry.timestamp: DateTime<Utc>` derive
 # `specta::Type` for the `get_mcp_recent_activity` command bindings.
-specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
-specta-typescript = "0.0.12"
-tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+specta = { version = "=2.0.0-rc.28", features = ["derive", "chrono"] }
+specta-typescript = "0.0.15"
+tauri-specta = { version = "=2.0.0-rc.29", features = ["derive", "typescript"] }
 # `parking_lot` moved with `loro/registry.rs` into `agaric-engine` (#2621, wave
 # E1) — the `arc_lock` owned-guard sharding lives there now; the app crate no
 # longer references it directly.

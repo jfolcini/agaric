@@ -62,7 +62,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 # `draft::Draft` derives `specta::Type` (frontend binding generation). Version/
 # features mirror the app crate exactly for cargo feature-unification.
-specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+specta = { version = "=2.0.0-rc.28", features = ["derive", "chrono"] }
 # The Loro CRDT crate — `LoroEngine` wraps `LoroDoc`, `Frontiers`, tree/map
 # containers. This is the workspace's owning entry since #3120 (the app crate
 # no longer depends on it); agaric-sync mirrors it. Not part of any coupled

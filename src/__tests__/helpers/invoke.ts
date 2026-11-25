@@ -84,6 +84,22 @@ export function strictInvokeFallback(command: string): Promise<never> {
   return Promise.reject(new Error(unstubbedInvokeMessage(command)))
 }
 
+/**
+ * Wrap an `invoke` mock so it records calls without their trailing
+ * `undefined` arguments. The generated bindings pass every command an
+ * `options` argument the app never sets; assertions name the command and its
+ * arguments, as the backend receives them. A real `options` is still recorded.
+ */
+export function ignoreUnsetOptions<F extends (...args: never[]) => unknown>(mock: F): F {
+  return new Proxy(mock, {
+    apply: (target, thisArg, args: unknown[]) => {
+      let end = args.length
+      while (end > 0 && args[end - 1] === undefined) end--
+      return Reflect.apply(target, thisArg, args.slice(0, end))
+    },
+  })
+}
+
 /** Drain the recorded unstubbed commands (deduped, in first-call order). */
 export function takeUnstubbedInvokes(): string[] {
   const seen = record()

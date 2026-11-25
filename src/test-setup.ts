@@ -393,16 +393,19 @@ class MockChannel<T> {
 // The factory is async so it can `await import` the helper: `vi.mock` calls
 // are hoisted above the file's imports, and a lazily-awaited import inside
 // the factory is the supported way to reach module code from one.
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-  Channel: MockChannel,
-  // #716: `useAndroidBackButton` imports `addPluginListener` (Android
-  // back-button plugin event). The hook never calls it under tests (the
-  // Android + `__TAURI_INTERNALS__` guards bail first), but the named
-  // export must exist on the shared mock or vitest's missing-export
-  // guard trips at import time for every test that renders App.
-  addPluginListener: vi.fn().mockResolvedValue({ unregister: vi.fn() }),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+    Channel: MockChannel,
+    // #716: `useAndroidBackButton` imports `addPluginListener` (Android
+    // back-button plugin event). The hook never calls it under tests (the
+    // Android + `__TAURI_INTERNALS__` guards bail first), but the named
+    // export must exist on the shared mock or vitest's missing-export
+    // guard trips at import time for every test that renders App.
+    addPluginListener: vi.fn().mockResolvedValue({ unregister: vi.fn() }),
+  }
+})
 
 // Shared mock for `@tauri-apps/plugin-clipboard-manager` — `src/lib/clipboard.ts`
 // dynamically imports this; without a global mock, jsdom-running tests would

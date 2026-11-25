@@ -27,7 +27,7 @@ import {
   EVENT_BLOCKS_CHANGED,
   EVENT_SYNC_COMPLETE,
   EVENT_SYNC_ERROR,
-  type SyncEvent_Serialize,
+  type SyncEvent,
 } from '@/lib/bindings'
 import { RELEASES_URL } from '@/lib/config'
 import { i18n } from '@/lib/i18n'
@@ -45,8 +45,8 @@ import { useUndoStore } from '@/stores/undo'
 
 // The payloads and event names are generated from Rust (`SyncEvent`,
 // `BlocksChangedEvent`, `sync_events.rs`), where each field is documented.
-type SyncComplete = Extract<SyncEvent_Serialize, { type: 'complete' }>
-type SyncError = Extract<SyncEvent_Serialize, { type: 'error' }>
+type SyncComplete = Extract<SyncEvent, { type: 'complete' }>
+type SyncError = Extract<SyncEvent, { type: 'error' }>
 
 /**
  * Peers whose sync the user pressed and is waiting on: `useSyncTrigger` holds a

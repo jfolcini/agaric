@@ -36,9 +36,12 @@ import {
   seedBlocks,
 } from '@/lib/tauri-mock/seed'
 
-vi.mock('@tauri-apps/api/core', async () => ({
-  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
-}))
+vi.mock('@tauri-apps/api/core', async () => {
+  const { ignoreUnsetOptions, strictInvokeFallback } = await import('@/__tests__/helpers/invoke')
+  return {
+    invoke: ignoreUnsetOptions(vi.fn(strictInvokeFallback)),
+  }
+})
 
 const SPACE = 'SPACE_EQ'.padStart(26, '0')
 const OTHER_SPACE = 'SPACE_OTH'.padStart(26, '0')
