@@ -422,7 +422,16 @@ async fn merge_one_snapshot(
     // Merge semantics: `apply_remote` imports the snapshot into our engine
     // (preserving unsynced local content) and reprojects the changed blocks into
     // SQL inside its own transaction.
-    match loro_sync::apply_remote(pool, engine.registry, engine.device_id, loro_msg).await? {
+    let merged = loro_sync::apply_remote(pool, engine.registry, engine.device_id, loro_msg)
+        .await
+        .map_err(|e| {
+            if agaric_engine::loro::engine::is_used_op_id(&e) {
+                AppError::InvalidOperation(format!("{PEER_HISTORY_FORK} ({e})"))
+            } else {
+                e
+            }
+        })?;
+    match merged {
         ApplyOutcome::Imported {
             changed_blocks,
             changed_page_ids: touched,
@@ -473,6 +482,18 @@ const OWN_HISTORY_FORK: &str =
 /// device's own history, which no retry heals (#6523).
 pub(super) fn is_own_history_fork(error: &AppError) -> bool {
     matches!(error, AppError::InvalidOperation(message) if message.starts_with(OWN_HISTORY_FORK))
+}
+
+/// How the catch-up's error opens when Loro refuses a peer's snapshot for
+/// reusing op ids this device holds with other content: the peer's history
+/// forked from the one this device holds of it (#7065).
+const PEER_HISTORY_FORK: &str =
+    "loro-snapshot catch-up: the peer's snapshot comes from a history that forked";
+
+/// Whether `error` is the catch-up turning away a snapshot from a peer whose
+/// history forked, which no retry heals (#7065).
+pub(super) fn is_peer_history_fork(error: &AppError) -> bool {
+    matches!(error, AppError::InvalidOperation(message) if message.starts_with(PEER_HISTORY_FORK))
 }
 
 /// #5712: the catch-up carried every space's snapshot, so it ends the pull the
@@ -541,7 +562,11 @@ async fn next_snapshot_frame(recv: &mut RecvStream) -> Result<(LoroSyncMessage, 
 /// `apply_remote` returns `SnapshotFallbackRequested`. A pure merge cannot heal
 /// that without an engine-only reset (not yet implemented); it surfaces as an
 /// error ([`is_own_history_fork`]) so the session records a failure and tells
-/// the user why, rather than silently corrupting state.
+/// the user why, rather than silently corrupting state. The peer of such a
+/// device meets the same fork from the other side: the snapshot it is offered
+/// reuses op ids it holds with other content, Loro refuses the import and
+/// leaves the doc as it was, and that surfaces as its own error
+/// ([`is_peer_history_fork`], #7065).
 ///
 /// `_send` is unused — this phase only reads; every message it consumes is
 /// pushed by the responder and none is acknowledged. It is taken so every

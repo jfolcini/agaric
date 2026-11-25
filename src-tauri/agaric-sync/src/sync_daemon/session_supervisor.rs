@@ -1450,6 +1450,15 @@ fn session_failure_message(e: &impl std::fmt::Display) -> String {
 pub(super) const OWN_HISTORY_FORK_MESSAGE: &str = "Sync failed: the peer holds more of this device's own history than this device does, \
      and a snapshot cannot merge that";
 
+/// The log text of a session whose catch-up snapshot comes from a peer that
+/// forked its own history (#7065). The frontend words it from
+/// [`SyncErrorCode::PeerHistoryFork`].
+///
+/// A constant, like [`OWN_HISTORY_FORK_MESSAGE`]: the text is the suppression
+/// key, and the error's own text names the first reused operation id.
+pub(super) const PEER_HISTORY_FORK_MESSAGE: &str = "Sync failed: the peer's snapshot reuses operation ids this device holds with other content, \
+     and a snapshot cannot merge that";
+
 /// The refusal to sync at all because a different key is announcing this peer's
 /// name (#4203). A constant, so it is exactly stable as a suppression key.
 const IDENTITY_MISMATCH_MESSAGE: &str =
@@ -2307,6 +2316,11 @@ async fn record_session_failure(
             (
                 OWN_HISTORY_FORK_MESSAGE.to_owned(),
                 Some(ReportAs::Code(SyncErrorCode::OwnHistoryFork)),
+            )
+        } else if snapshot_transfer::is_peer_history_fork(&e) {
+            (
+                PEER_HISTORY_FORK_MESSAGE.to_owned(),
+                Some(ReportAs::Code(SyncErrorCode::PeerHistoryFork)),
             )
         } else {
             (
