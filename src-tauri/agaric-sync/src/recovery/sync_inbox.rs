@@ -787,6 +787,56 @@ mod tests {
         }
     }
 
+    /// #535 — the batch failure the test above does not reach: a blob that
+    /// passes `import_batch`'s up-front metadata decode and then fails its own
+    /// import (a wrong checksum). The batch keeps what its other blobs
+    /// imported and returns the error, so the per-slot retry finds their ops
+    /// already in the engine. Their slots may clear only with their blocks
+    /// projected.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_that_fails_after_importing_part_projects_what_it_clears() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let (_parent_id, mut block_ids, mut blobs) = chained_update_blobs(4);
+        let mut poison = blobs.pop().expect("four blobs");
+        // A byte of the header's checksum: the metadata still decodes.
+        poison[18] ^= 0xFF;
+        let poisoned_block = block_ids.pop().expect("four blocks");
+
+        seed_inbox(&pool, space.as_str(), &blobs[0], None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[1], None).await;
+        seed_inbox(&pool, space.as_str(), &poison, None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[2], None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a poison slot must never fail the boot walk");
+        assert_eq!(replayed, 3, "the three healthy slots replay");
+
+        let survivors: Vec<Vec<u8>> = sqlx::query_scalar("SELECT bytes FROM loro_sync_inbox")
+            .fetch_all(&pool)
+            .await
+            .expect("survivors");
+        assert_eq!(survivors, [poison], "only the poison slot is left");
+
+        let projected: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM blocks WHERE id IN (?, ?, ?, ?) ORDER BY id")
+                .bind(&block_ids[0])
+                .bind(&block_ids[1])
+                .bind(&block_ids[2])
+                .bind(&poisoned_block)
+                .fetch_all(&pool)
+                .await
+                .expect("projected blocks");
+        assert_eq!(
+            projected, block_ids,
+            "every cleared slot's block is in SQL, and the poison slot's is not"
+        );
+    }
+
     /// #3164 — rows of DIFFERENT spaces in the same chunk are batched
     /// separately; a batch must never import one space's blob into another's
     /// engine, and every space's slots must clear.

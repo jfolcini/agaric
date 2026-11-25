@@ -402,7 +402,13 @@ impl LoroEngine {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
-        let (cap, pending) = self.import_payload_capturing_diff(payload)?;
+        let imported = self.import_payload_capturing_diff(payload);
+        if imported.is_err() && self.doc.oplog_frontiers() != before_frontiers {
+            // A failed batch keeps what its other blobs imported, and the
+            // caller's retry reads the tree through the index.
+            self.rebuild_index();
+        }
+        let (cap, pending) = imported?;
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
