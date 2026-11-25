@@ -6627,6 +6627,11 @@ mod loro_engine {
     /// grows with it; at this many rounds such growth outweighs the constant
     /// cost of a round many times over.
     const MERGE_ROUNDS: usize = 1_000;
+    const EXPORT_BUDGET_MS: f64 = 10.0;
+    const REHYDRATE_BUDGET_MS: f64 = 500.0;
+    /// Far inside the `HANDSHAKE_TIMEOUT` a dispatch must finish in.
+    const COLD_FIRST_SYNC_BUDGET_MS: f64 = 10_000.0;
+    const MERGE_BUDGET_MS: f64 = 500.0;
 
     fn block_id(i: usize) -> String {
         format!("01SLOLOROBLOCK{i:012}")
@@ -6782,9 +6787,17 @@ mod loro_engine {
         });
         group.finish();
 
-        report_measurement_only(&format!("loro export @ {SCALE}"), &export);
-        report_measurement_only(&format!("loro rehydrate @ {SCALE}"), &rehydrated);
-        report_measurement_only(&format!("loro cold_first_sync @ {SCALE}"), &cold);
+        assert_under_budget(&format!("loro export @ {SCALE}"), &export, EXPORT_BUDGET_MS);
+        assert_under_budget(
+            &format!("loro rehydrate @ {SCALE}"),
+            &rehydrated,
+            REHYDRATE_BUDGET_MS,
+        );
+        assert_under_budget(
+            &format!("loro cold_first_sync @ {SCALE}"),
+            &cold,
+            COLD_FIRST_SYNC_BUDGET_MS,
+        );
     }
 
     /// A and B, both holding one block whose text is two words.
@@ -6860,7 +6873,7 @@ mod loro_engine {
             });
         });
         group.finish();
-        report_measurement_only(&cmd, &acc);
+        assert_under_budget(&cmd, &acc, MERGE_BUDGET_MS);
     }
 }
 
