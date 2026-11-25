@@ -3389,22 +3389,25 @@ jobs:
       # #6529 — the `real-backend` Playwright project: the specs
       # `playwright.config.ts` lists, on the real commands through the `bridge`
       # bin. Here because this job has already compiled the workspace, so the
-      # bin costs a link and no runner of its own; shard 2 for the reason the
-      # doc-tests are. `!cancelled()`: a red nextest must not hide a red spec.
+      # bin costs a link and no runner of its own. Split across both legs:
+      # the config's `globalTimeout` is sized for one shard, and the whole
+      # project in one process ran out of it on a slow runner.
+      # `!cancelled()`: a red nextest must not hide a red spec.
       - name: Build the bridge (real-backend Playwright)
-        if: ${{ !cancelled() && matrix.shard == 2 }}
+        if: ${{ !cancelled() }}
         working-directory: src-tauri
         run: cargo build -p agaric-diagnostics --features bridge --bin bridge
 
       - name: Playwright setup (browser, system deps)
-        if: ${{ !cancelled() && matrix.shard == 2 }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/playwright-setup
 
       - name: Playwright on the real backend
-        if: ${{ !cancelled() && matrix.shard == 2 }}
+        if: ${{ !cancelled() }}
         env:
           AGARIC_E2E_BRIDGE: ${{ github.workspace }}/src-tauri/target/debug/bridge
-        run: npx playwright test
+          SHARD: ${{ matrix.shard }}
+        run: npx playwright test --shard "$SHARD/2"
 
   full-suite:
     # The one job `report-scheduled-failures` needs for this lane (#3394): it

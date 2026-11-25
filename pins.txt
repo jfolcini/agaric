@@ -102,5 +102,5 @@ asset   linuxdeploy-plugin-appimage linux-x86_64  992d502a248e14ab185448ddf6f6e7
 
 # --- Toolchains whose installers take no hash (exact version is the pin) ---
 version temurin       17.0.21+9   temurin:17
-version android-emulator 16740729 android-emulator
+version android-emulator 16970787 android-emulator
 version rust-nightly  2026-11-10  rust-nightly
