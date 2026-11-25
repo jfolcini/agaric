@@ -667,7 +667,7 @@ export function PdfViewerDialog({
               disabled={currentPage <= 1}
               aria-label={t('pdfViewer.previousPageLabel')}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft />
             </Button>
             <span className="text-sm text-muted-foreground" data-testid="pdf-page-indicator">
               {t('pdfViewer.pageIndicator', { current: currentPage, total: numPages })}
@@ -679,7 +679,7 @@ export function PdfViewerDialog({
               disabled={currentPage >= numPages}
               aria-label={t('pdfViewer.nextPageLabel')}
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight />
             </Button>
           </div>
         )}

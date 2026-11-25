@@ -574,13 +574,4 @@ describe('SearchSheet', () => {
       }
     })
   })
-
-  describe('#133 pull-to-dismiss handle', () => {
-    it('renders a grab handle with an accessible label', () => {
-      useSearchSheetStore.getState().open$('all-pages')
-      render(<SearchSheet />)
-      const handle = screen.getByTestId('search-sheet-drag-handle')
-      expect(handle).toHaveAttribute('aria-label')
-    })
-  })
 })

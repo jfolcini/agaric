@@ -401,7 +401,7 @@ export function HistoryView(): React.ReactElement {
             disabled={focusedIndex <= 0}
             onClick={() => setFocusedIndex((idx) => (idx > 0 ? idx - 1 : 0))}
           >
-            <ChevronUp className="h-4 w-4" />
+            <ChevronUp />
           </IconButton>
           <IconButton
             type="button"
@@ -414,7 +414,7 @@ export function HistoryView(): React.ReactElement {
               setFocusedIndex((idx) => (idx < entries.length - 1 ? idx + 1 : entries.length - 1))
             }
           >
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown />
           </IconButton>
         </div>
       )}

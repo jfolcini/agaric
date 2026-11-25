@@ -33,7 +33,6 @@ import {
 } from '@/components/ui/sheet'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useLongPress } from '@/hooks/useLongPress'
-import { usePullToDismiss } from '@/hooks/usePullToDismiss'
 import { useSearchSheetBridge } from '@/hooks/useSearchSheetBridge'
 import { haptic } from '@/lib/haptics'
 import {
@@ -74,11 +73,6 @@ export function SearchSheet(): React.ReactElement | null {
   )
 
   useSearchSheetBridge(open, mode)
-
-  // #133 — pull-to-dismiss wired to the grab handle only (declared
-  // before the early return so hook order stays stable; harmless when
-  // the sheet is closed).
-  const { dragY, dragging, handlers: dragHandlers } = usePullToDismiss({ onDismiss: () => close() })
 
   // #135 — long-press a scope segment to pin/unpin it as the default.
   // Toggling: long-pressing the already-pinned scope clears the pin.
@@ -140,31 +134,7 @@ export function SearchSheet(): React.ReactElement | null {
           if (actionMenuOpenRef.current) e.preventDefault()
         }}
         data-testid="search-sheet"
-        // #133 — translate the sheet under the finger during a
-        // pull-to-dismiss drag (rubber-band feel); spring back via a
-        // transition when the gesture ends below threshold.
-        style={
-          dragY > 0
-            ? { transform: `translateY(${dragY}px)`, transition: dragging ? 'none' : undefined }
-            : undefined
-        }
       >
-        {/* #133 — grab handle. The ONLY pull-to-dismiss initiator: a
-            downward drag here closes the sheet, while the scrollable
-            body below keeps its native scroll. `touch-none` stops the
-            browser claiming the gesture for scroll/zoom so the pointer
-            stream reaches our handlers. 44 px tall for the thumb, with
-            negative margins so the visible bar keeps its place. */}
-        <button
-          type="button"
-          {...dragHandlers}
-          tabIndex={-1}
-          aria-label={t('searchSheet.dragHandleLabel')}
-          data-testid="search-sheet-drag-handle"
-          className="mx-auto -mt-5 -mb-2 flex h-11 w-full max-w-[8rem] cursor-grab touch-none items-center justify-center"
-        >
-          <span aria-hidden className="h-1.5 w-10 rounded-full bg-muted-foreground/30" />
-        </button>
         <SheetHeader>
           {/* The segment control directly below is the visible title;
               keeping a separate Sheet title would chew vertical space

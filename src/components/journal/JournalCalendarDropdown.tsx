@@ -287,7 +287,7 @@ export function JournalCalendarDropdown({
       <Sheet open onOpenChange={(open) => !open && onClose()}>
         <SheetContent
           side="bottom"
-          className="px-2 sm:px-2"
+          className="px-2"
           aria-busy={loading}
           aria-describedby={undefined}
         >

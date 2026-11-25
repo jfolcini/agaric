@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agaric UI review</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Written by scripts/ui-review.mjs: one card per shot, grouped by scene, a
+   set switcher and a status filter; a card opens the shot full size with its
+   before, after and diff. */
+:root {
+  --bg: oklch(0.985 0.004 70);
+  --surface: oklch(0.955 0.006 70);
+  --line: oklch(0.89 0.008 70);
+  --fg: oklch(0.22 0.01 70);
+  --muted: oklch(0.5 0.02 70);
+  --accent: oklch(0.52 0.19 28.7);
+  --changed: oklch(0.55 0.15 60);
+  --new: oklch(0.5 0.13 150);
+  --failed: oklch(0.5 0.19 22);
+  --scrim: oklch(0.15 0.01 70 / 0.94);
+  --on-scrim: oklch(0.96 0.005 70);
+  --font: system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(0.19 0.006 70); --surface: oklch(0.235 0.006 70); --line: oklch(0.31 0.008 70);
+    --fg: oklch(0.95 0.005 70); --muted: oklch(0.72 0.012 70); --accent: oklch(0.7 0.17 28.7);
+    --changed: oklch(0.78 0.14 75); --new: oklch(0.75 0.14 150); --failed: oklch(0.7 0.17 25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(0.19 0.006 70); --surface: oklch(0.235 0.006 70); --line: oklch(0.31 0.008 70);
+  --fg: oklch(0.95 0.005 70); --muted: oklch(0.72 0.012 70); --accent: oklch(0.7 0.17 28.7);
+  --changed: oklch(0.78 0.14 75); --new: oklch(0.75 0.14 150); --failed: oklch(0.7 0.17 25);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 64px;
+}
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; gap: 20px; }
+h1 { margin: 0; font-size: 1.6rem; line-height: 1.2; letter-spacing: -0.01em; }
+.summary { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font: 12px/1.4 var(--mono); }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+.bar button { font: 500 13px/1 var(--font); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; min-height: 34px; cursor: pointer; }
+.bar button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.bar .n { font-family: var(--mono); opacity: 0.7; margin-left: 6px; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 10px; }
+h2 { margin: 0; font-size: 1rem; display: flex; gap: 8px; align-items: baseline; }
+h2 small { font: 12px var(--mono); color: var(--muted); }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(var(--cell), 1fr)); }
+.grid.phone { --cell: 170px; }
+.grid.desktop { --cell: 300px; }
+.card { display: grid; gap: 6px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: zoom-in; min-width: 0; }
+.card.both { grid-column: span 2; }
+.thumbs { display: grid; gap: 6px; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); }
+.thumbs figure { margin: 0; display: grid; gap: 2px; }
+.thumbs figcaption { font: 11px var(--mono); color: var(--muted); }
+.thumbs img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.label { display: flex; gap: 6px; align-items: baseline; font: 12px/1.35 var(--mono); color: var(--muted); min-width: 0; }
+.label span:first-child { overflow-wrap: anywhere; }
+.badge { font: 600 11px/1 var(--font); padding: 3px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.badge.changed { color: var(--changed); }
+.badge.new { color: var(--new); }
+.badge.gone, .badge.failed { color: var(--failed); }
+.note { font: 12px/1.4 var(--mono); color: var(--failed); overflow-wrap: anywhere; }
+.change { font: 13px/1.4 var(--font); overflow-wrap: anywhere; }
+.change.where { font-size: 12px; color: var(--muted); }
+.empty { color: var(--muted); }
+.viewer { position: fixed; inset: 0; z-index: 20; background: var(--scrim); display: grid; grid-template-rows: auto auto 1fr; gap: 8px; color: var(--on-scrim);
+  padding: calc(10px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px)); }
+.viewer .top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.viewer .title { flex: 1; min-width: 12rem; font: 13px/1.3 var(--mono); overflow-wrap: anywhere; }
+.viewer button { font: 500 13px/1 var(--font); color: var(--on-scrim); background: oklch(1 0 0 / 0.08); border: 1px solid oklch(1 0 0 / 0.2); border-radius: 6px; padding: 9px 12px; min-height: 36px; cursor: pointer; }
+.viewer button[aria-pressed="true"] { background: var(--on-scrim); color: oklch(0.2 0.01 70); }
+.viewer button:disabled { opacity: 0.35; cursor: default; }
+.viewer .vnote { font: 12px/1.4 var(--mono); color: oklch(0.8 0.12 40); white-space: pre-wrap; }
+.stage { min-height: 0; display: grid; gap: 10px; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); place-items: center; overflow: auto; }
+.stage figure { margin: 0; display: grid; gap: 4px; justify-items: center; min-height: 0; max-height: 100%; }
+.stage figcaption { font: 12px var(--mono); opacity: 0.8; }
+.stage img { max-width: 100%; max-height: calc(100dvh - 140px); object-fit: contain; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Agaric UI review</h1>
+    <div class="summary" id="summary"></div>
+  </header>
+  <div class="bar">
+    <div class="row" id="sets" aria-label="Profile and theme"></div>
+    <div class="row" id="statuses" aria-label="Status"></div>
+  </div>
+  <main id="main"></main>
+</div>
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Shot" hidden>
+  <div class="top">
+    <button type="button" id="prev" aria-label="Previous shot">←</button>
+    <button type="button" id="next" aria-label="Next shot">→</button>
+    <span class="title" id="vtitle"></span>
+    <span class="row" id="modes"></span>
+    <button type="button" id="close">Close</button>
+  </div>
+  <div class="vnote" id="vnote"></div>
+  <div class="stage" id="stage"></div>
+</div>
+<script>
+const DATA = __UI_REVIEW_DATA__
+const SCENES = ['views', 'shell', 'editor', 'editing', 'states', 'first-run']
+const STATUS_LABEL = { changed: 'Changed', new: 'New', gone: 'Gone', failed: 'Failed', same: 'Same', shot: 'Shot' }
+const MODES = [['side', 'Side by side', 's'], ['before', 'Before', 'b'], ['after', 'After', 'a'], ['diff', 'Diff', 'd']]
+const sets = [...new Set(DATA.entries.map((e) => e.set))].sort((a, b) => (a.startsWith('phone') === b.startsWith('phone') ? a.localeCompare(b) : a.startsWith('phone') ? -1 : 1))
+const statuses = DATA.hasBase ? ['all', 'changed', 'new', 'gone', 'failed', 'same'] : ['all', 'failed']
+const state = { set: sets[0], status: DATA.hasBase && DATA.entries.some((e) => e.status === 'changed') ? 'changed' : 'all', list: [], index: 0, mode: 'side' }
+const $ = (id) => document.getElementById(id)
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n }
+const pct = (r) => (r === null ? '' : r === 1 ? 'size changed' : `${(r * 100).toFixed(r < 0.001 ? 3 : 2)}%`)
+
+function summary() {
+  const n = (s) => DATA.entries.filter((e) => e.status === s).length
+  const parts = [`${DATA.entries.length} shots`, `${sets.length} profile × theme sets`]
+  if (DATA.hasBase) parts.push(`${n('changed')} changed`, `${n('new')} new`, `${n('gone')} gone`, `${n('same')} same`)
+  parts.push(`${n('failed')} failed`)
+  $('summary').replaceChildren(...parts.map((p) => el('span', { textContent: p })))
+}
+
+function buttons() {
+  $('sets').replaceChildren(...sets.map((s) => {
+    const b = el('button', { type: 'button', textContent: s.replace('-', ' · ') }, el('span', { className: 'n', textContent: String(visible(s).length) }))
+    b.setAttribute('aria-pressed', String(s === state.set))
+    b.onclick = () => { state.set = s; render() }
+    return b
+  }))
+  $('statuses').replaceChildren(...statuses.map((s) => {
+    const count = DATA.entries.filter((e) => e.set === state.set && (s === 'all' || e.status === s)).length
+    const b = el('button', { type: 'button', textContent: s === 'all' ? 'All' : STATUS_LABEL[s] }, el('span', { className: 'n', textContent: String(count) }))
+    b.setAttribute('aria-pressed', String(s === state.status))
+    b.onclick = () => { state.status = s; render() }
+    return b
+  }))
+}
+
+function visible(set) {
+  const list = DATA.entries.filter((e) => e.set === set && (state.status === 'all' || e.status === state.status))
+  // Changed shots: the biggest change first.
+  return state.status === 'changed' ? list.toSorted((a, b) => b.ratio - a.ratio) : list
+}
+
+function thumb(src, caption) {
+  return el('figure', {}, el('img', { src, alt: caption, loading: 'lazy' }), el('figcaption', { textContent: caption }))
+}
+
+function render() {
+  buttons()
+  state.list = visible(state.set)
+  const kind = state.set.startsWith('phone') ? 'phone' : 'desktop'
+  const main = $('main')
+  main.replaceChildren()
+  if (!state.list.length) { main.append(el('p', { className: 'empty', textContent: 'No shots here.' })); return }
+  const scenes = [...new Set(state.list.map((e) => e.scene))].sort((a, b) => SCENES.indexOf(a) - SCENES.indexOf(b))
+  for (const scene of scenes) {
+    const grid = el('div', { className: `grid ${kind}` })
+    for (const entry of state.list.filter((e) => e.scene === scene)) {
+      const i = state.list.indexOf(entry)
+      const both = entry.img.before && entry.img.after
+      const figs = both ? [thumb(entry.img.before, 'before'), thumb(entry.img.after, 'after')] : [thumb(entry.img.after ?? entry.img.before, entry.img.after ? 'after' : 'before')]
+      const thumbs = el('div', { className: 'thumbs' }, ...(entry.img.after || entry.img.before ? figs : []))
+      thumbs.style.setProperty('--cols', both ? '2' : '1')
+      const label = el('div', { className: 'label' }, el('span', { textContent: entry.name }))
+      if (entry.status !== 'same' && entry.status !== 'shot') {
+        label.append(el('span', { className: `badge ${entry.status}`, textContent: entry.status === 'changed' ? pct(entry.ratio) : STATUS_LABEL[entry.status] }))
+      }
+      const card = el('button', { type: 'button', className: `card${both ? ' both' : ''}` }, thumbs, label)
+      if (entry.note || entry.where) card.append(el('div', { className: `change${entry.note ? '' : ' where'}`, textContent: entry.note ?? entry.where }))
+      if (entry.failed) card.append(el('div', { className: 'note', textContent: entry.failed.split('\n')[0] }))
+      card.onclick = () => open(i, card)
+      grid.append(card)
+    }
+    main.append(el('section', {}, el('h2', { textContent: scene }, el('small', { textContent: String(grid.children.length) })), grid))
+  }
+}
+
+let opener = null
+function open(i, from) { opener = from; state.index = i; $('viewer').hidden = false; show(); $('close').focus() }
+function close() { $('viewer').hidden = true; opener?.focus() }
+function show() {
+  const e = state.list[state.index]
+  const has = { side: Boolean(e.img.before && e.img.after), before: Boolean(e.img.before), after: Boolean(e.img.after), diff: Boolean(e.img.diff || (e.img.before && e.img.after)) }
+  if (state.mode === 'diff' && !e.img.diff && has.diff) { drawDiff(e).then(show, (err) => { $('vnote').textContent = `No diff: ${err}` }); return }
+  if (!has[state.mode]) state.mode = has.side ? 'side' : has.after ? 'after' : 'before'
+  $('vtitle').textContent = `${state.index + 1} / ${state.list.length} · ${e.set} · ${e.scene} · ${e.name}${e.ratio > 0 ? ` · ${pct(e.ratio)} changed` : ''}`
+  $('vnote').textContent = [e.note ?? e.where, e.failed && `Failed: ${e.failed}`, e.baseFailed && `Failed on the base: ${e.baseFailed}`].filter(Boolean).join('\n')
+  $('modes').replaceChildren(...MODES.map(([id, text, key]) => {
+    const b = el('button', { type: 'button', textContent: text, disabled: !has[id], title: key.toUpperCase() })
+    b.setAttribute('aria-pressed', String(id === state.mode))
+    b.onclick = () => { state.mode = id; show() }
+    return b
+  }))
+  const figure = (kind) => el('figure', {}, el('img', { src: e.img[kind], alt: `${e.name}, ${kind}` }), el('figcaption', { textContent: kind }))
+  $('stage').replaceChildren(...(state.mode === 'side' ? [figure('before'), figure('after')] : e.img[state.mode] ? [figure(state.mode)] : []))
+}
+// A copy of the report without its diff files (a shared one) draws the diff
+// here; a page opened from disk cannot read its images' pixels, so the
+// generator writes them.
+async function drawDiff(e) {
+  const load = (src) => new Promise((done, fail) => { const img = new Image(); img.onload = () => done(img); img.onerror = () => fail(new Error(src)); img.src = src })
+  const [a, b] = await Promise.all([load(e.img.before), load(e.img.after)])
+  const canvas = Object.assign(document.createElement('canvas'), { width: b.naturalWidth, height: b.naturalHeight })
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  ctx.drawImage(a, 0, 0)
+  const pa = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+  ctx.drawImage(b, 0, 0)
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const pb = frame.data
+  // Higher than the generator's 24: these are lossy WebP copies.
+  for (let i = 0; i < pb.length; i += 4) {
+    const delta = Math.max(Math.abs(pa[i] - pb[i]), Math.abs(pa[i + 1] - pb[i + 1]), Math.abs(pa[i + 2] - pb[i + 2]))
+    if (delta > 40) pb.set([230, 30, 40, 255], i)
+    else { const faded = 255 - (255 - (pb[i] + pb[i + 1] + pb[i + 2]) / 3) * 0.25; pb.set([faded, faded, faded, 255], i) }
+  }
+  ctx.putImageData(frame, 0, 0)
+  e.img.diff = canvas.toDataURL('image/png')
+}
+function step(d) { state.index = (state.index + d + state.list.length) % state.list.length; show() }
+$('prev').onclick = () => step(-1)
+$('next').onclick = () => step(1)
+$('close').onclick = close
+document.addEventListener('keydown', (ev) => {
+  if ($('viewer').hidden) return
+  if (ev.key === 'Escape') close()
+  else if (ev.key === 'ArrowLeft') step(-1)
+  else if (ev.key === 'ArrowRight') step(1)
+  else {
+    const mode = MODES.find(([, , key]) => key === ev.key.toLowerCase())
+    if (mode) { state.mode = mode[0]; show() }
+  }
+})
+summary()
+render()
+</script>
+</body>
+</html>

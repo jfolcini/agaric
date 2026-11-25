@@ -80,20 +80,17 @@ describe('Button', () => {
 
   // -- Coarse pointer media query overrides -----------------------------------
 
-  it('default size includes coarse pointer height override', () => {
-    const btn = renderButton('default')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
-  })
-
-  it('xs size includes coarse pointer height and padding overrides', () => {
-    const btn = renderButton('xs')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:px-3')
-  })
-
-  it('sm size includes coarse pointer height override', () => {
-    const btn = renderButton('sm')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+  // Below lg, a coarse pointer grows the label one step and the 44 px target
+  // is an invisible hit area, so a row of buttons does not paint 44 px tall.
+  it.each([
+    ['default', '[@media(pointer:coarse)]:h-10'],
+    ['sm', '[@media(pointer:coarse)]:h-9'],
+    ['xs', '[@media(pointer:coarse)]:h-8'],
+  ] as const)('%s size grows one step on a coarse pointer, with a hit area', (size, height) => {
+    const btn = renderButton(size)
+    expect(btn.className).toContain(height)
+    expect(btn.className).toContain('touch-hit-area')
+    expect(btn.className).not.toContain('[@media(pointer:coarse)]:h-11')
   })
 
   // #759: lg is h-10 (40px) — below the 44px touch-target mandate, so it

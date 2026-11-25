@@ -30,7 +30,7 @@ export function SearchSheetTrigger(): React.ReactElement | null {
       size="icon-xs"
       // The icon, not the button, on the header's 16px content edge, like the
       // hamburger's at the other end.
-      className="-mr-1 [@media(pointer:coarse)]:-mr-3.5"
+      className="-mr-1 [@media(pointer:coarse)]:-mr-3"
       aria-label={t('searchSheet.openButton')}
       data-testid="search-sheet-trigger"
       onClick={() => {

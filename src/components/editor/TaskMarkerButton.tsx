@@ -71,7 +71,10 @@ export function TaskCheckbox({ state }: { state: string | null | undefined }) {
   const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
   return (
     <div
-      className={cn('task-checkbox size-[1em] rounded border-2', style.className)}
+      className={cn(
+        'task-checkbox size-[1em] rounded border-2 [@media(pointer:coarse)]:size-[1.125em]',
+        style.className,
+      )}
       data-testid={style.testId}
     >
       {style.icon?.()}
@@ -98,7 +101,9 @@ export function TaskMarkerButton({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="task-marker flex-shrink-0 p-0.5 focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+          // The 44 px target is invisible (`touch-hit-area`): as a 44 px box it
+          // pushed the text away and hung the box below its line.
+          className="task-marker flex flex-shrink-0 items-center justify-center p-0.5 focus-ring-visible active:scale-95 touch-hit-area"
           data-testid="task-marker"
           // #1498: keep editor focus on click (see collapse-toggle note).
           onMouseDown={(e) => e.preventDefault()}

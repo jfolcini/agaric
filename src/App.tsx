@@ -146,13 +146,14 @@ function preloadSearchOverlays(): void {
  * A phone shows toasts at the bottom centre, in thumb reach and clear of the
  * header and the search field under it (#5931). Bottom-right first moved to
  * the top because it sat on the system navigation bar; the safe-area inset
- * keeps that covered. The offset clears the floating capture button (5rem up,
- * 56 px tall), and with the soft keyboard up, the formatting toolbar pinned on
- * top of it: the screen's foot is then the keyboard's top (#6790).
+ * keeps that covered. The offset sets a toast 0.5rem above the floating
+ * capture button (1rem up, 3.5rem tall), which also clears the formatting
+ * toolbar pinned on the soft keyboard: the screen's foot is then the
+ * keyboard's top (#6790).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   const isMobile = useIsMobile()
-  const bottom = 'calc(9rem + var(--safe-area-bottom))'
+  const bottom = 'calc(5rem + var(--safe-area-bottom))'
   return (
     <Toaster
       position={isMobile ? 'bottom-center' : 'bottom-right'}
@@ -216,13 +217,13 @@ function MobileSidebarTriggerButton(): ReactElement {
         // stack. A mouse header has no such padding, so there the trigger
         // centres like the controls beside it. The negative margin puts the
         // icon, not the button, on the header's 16px content edge.
-        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3.5 [@media(pointer:coarse)]:self-start"
+        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3 [@media(pointer:coarse)]:self-start"
       >
         {paired && (
           // On the icon's top-right corner, as on the sidebar's Sync icon.
           <span
             className={cn(
-              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2.5 [@media(pointer:coarse)]:right-2.5',
+              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2 [@media(pointer:coarse)]:right-2',
               syncDotClass(syncState, true),
             )}
             data-testid="mobile-sync-status-dot"

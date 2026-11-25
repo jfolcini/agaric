@@ -126,7 +126,7 @@ export function SearchHeader({
               tooltip={t('search.helpButtonLabel')}
               data-testid="search-help-button"
             >
-              <HelpCircle className="h-4 w-4" aria-hidden="true" />
+              <HelpCircle aria-hidden="true" />
             </IconButton>
           ) : null}
           {searchLoading ? (

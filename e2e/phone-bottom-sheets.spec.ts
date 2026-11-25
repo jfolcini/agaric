@@ -5,8 +5,8 @@
  * page ⋮ menu are bottom-sheet lists. Each must sit on the bottom edge and span
  * the width, and a tall one stops at the header. Toasts sit at the bottom too,
  * clear of the header, the floating capture button, the soft keyboard and the
- * field being typed in. The search sheet keeps one close button and a 44 px
- * drag handle (#5930).
+ * field being typed in. The search sheet keeps one close button (#5930), and
+ * no sheet has a grab bar (#7040).
  *
  * A sheet's bottom is the viewport's: `SheetContent` anchors at `bottom-0` and
  * Chromium reports no safe-area inset.
@@ -17,6 +17,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   activeMenu,
   activeSheet,
+  centerOf,
   emitMockEvent,
   expect,
   focusBlock,
@@ -59,6 +60,41 @@ async function openBlockMenu(page: Page): Promise<Locator> {
     .getAttribute('data-block-id')
   await touchLongPress(page, `[data-testid="block-static"][data-block-id="${id}"]`)
   return activeMenu(page)
+}
+
+/** The open sheet is square, edge to edge, with no grab bar (#7040). */
+async function expectSquareNoHandle(page: Page): Promise<void> {
+  const sheet = activeSheet(page)
+  await expect(sheet).toBeVisible()
+  const corners = await sheet.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return [s.borderTopLeftRadius, s.borderTopRightRadius]
+  })
+  expect(corners).toEqual(['0px', '0px'])
+  await expect(sheet.locator('[data-slot="sheet-drag-handle"]')).toHaveCount(0)
+}
+
+/** `row` takes the `accent` fill while pressed, and not at rest. */
+async function expectPressedFill(page: Page, row: Locator, accent: string): Promise<void> {
+  const fill = () => row.evaluate((el) => getComputedStyle(el).backgroundColor)
+  expect(await fill()).not.toBe(accent)
+  const { x, y } = await centerOf(row, 'row')
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await expect.poll(fill).toBe(accent)
+  await page.mouse.up()
+}
+
+/** `--accent`, resolved by the browser to the colour a pressed row should show. */
+function accentColor(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement('div')
+    probe.className = 'bg-accent'
+    document.body.append(probe)
+    const color = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    return color
+  })
 }
 
 /** Simulate the soft keyboard: on Android the webview ends at its top (#6790), so the viewport shrinks by `height`. */
@@ -184,14 +220,53 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await expectBottomSheet(page, page.getByTestId('date-picker-popup'))
   })
 
-  test('the search sheet has one close button and a 44 px drag handle', async ({ page }) => {
+  test('the search sheet has one close button and no grab bar', async ({ page }) => {
     await page.getByTestId('search-sheet-trigger').tap()
     const sheet = page.getByTestId('search-sheet')
     await expect(sheet.getByTestId('in-page-find-input')).toBeVisible()
     await expect(sheet.getByRole('button', { name: /^Close/ })).toHaveCount(1)
-    const handle = await box(sheet.getByTestId('search-sheet-drag-handle'))
-    expect(handle.height).toBeGreaterThanOrEqual(TOUCH_FLOOR)
-    expect(handle.width).toBeGreaterThanOrEqual(TOUCH_FLOOR)
+    await expectSquareNoHandle(page)
+  })
+
+  // One of each kind: a MenuSheet, a plain Sheet, and a `useDialogOrSheet` dialog.
+  test('each kind of bottom sheet is square, with no grab bar', async ({ page }) => {
+    await openBlockMenu(page)
+    await expectSquareNoHandle(page)
+    await activeMenu(page)
+      .getByRole('menuitem', { name: /Properties/ })
+      .tap()
+    await expect(page.getByRole('dialog', { name: 'Block properties' })).toBeVisible()
+    await expectSquareNoHandle(page)
+    await page.keyboard.press('Escape')
+    await navigateMobile(page, 'Pages')
+    await page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: 'New page', exact: true })
+      .tap()
+    await expect(page.getByTestId('new-page-dialog')).toBeVisible()
+    await expectSquareNoHandle(page)
+  })
+
+  test('menu rows and list rows fill while pressed', async ({ page }) => {
+    const accent = await accentColor(page)
+    // The journal mode menu (`PopoverMenuItem`).
+    await page.getByRole('button', { name: /^Journal view mode/ }).tap()
+    await expectPressedFill(page, page.getByRole('button', { name: 'Week', exact: true }), accent)
+    // The block menu (`menu-row`).
+    const menu = await openBlockMenu(page)
+    await expectPressedFill(page, menu.getByRole('menuitem', { name: 'Turn into' }), accent)
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    // The page menu (`MENU_ITEM_CLASS`).
+    await page.getByRole('button', { name: 'Page actions' }).tap()
+    const pageMenu = page.getByRole('menu', { name: 'Page actions' })
+    await expectPressedFill(page, pageMenu.getByRole('menuitem', { name: 'Open outline' }), accent)
+    await expect(page.getByRole('dialog', { name: 'Outline' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(activeSheet(page)).toHaveCount(0)
+    // A Pages row (`ListItem`), not the one the list cursor rests on.
+    await navigateMobile(page, 'Pages')
+    await expectPressedFill(page, page.locator('[data-page-item]').nth(2), accent)
   })
 
   // Raised on Search, where a toast once covered the search field.
@@ -203,7 +278,9 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     const fab = await box(page.getByTestId('quick-capture-fab'))
     await expect.poll(async () => (await box(toast)).y).toBeGreaterThan(header.y + header.height)
     const t = await box(toast)
-    expect(t.y + t.height).toBeLessThanOrEqual(fab.y)
+    // Just above it, not floating halfway up the screen.
+    expect(fab.y - (t.y + t.height)).toBeGreaterThanOrEqual(0)
+    expect(fab.y - (t.y + t.height)).toBeLessThanOrEqual(12)
 
     // The 20 px close button answers a tap anywhere in a 44 px square around
     // it, as far as the screen edge it overhangs.

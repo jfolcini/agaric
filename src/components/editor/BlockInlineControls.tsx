@@ -511,6 +511,10 @@ export const BlockInlineControls = React.memo(
           // `min-h-block-line` is the first text line box, so the checkbox
           // centres on the first line of a wrapped block (#5332).
           'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+          // Touch: the checkbox starts on the text edge of a plain line (the text box's
+          // `px-3`), and the row's gap is all that parts it from the text box, so the
+          // editing frame starts clear of it.
+          isTouch && task !== null && 'pl-3.5 [&>.task-marker]:pr-0',
         )}
       >
         {task !== null && (

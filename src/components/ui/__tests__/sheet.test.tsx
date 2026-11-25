@@ -146,7 +146,10 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'sm:p-6')
+    // `md`, where `useIsMobile` stops picking sheets, not `sm`: from 640 to
+    // 767 px a sheet's text would sit 24 px in against a 16 px view gutter.
+    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'md:p-6')
+    expect(dialog).not.toHaveClass('sm:p-6')
   })
 
   it.each([
@@ -184,6 +187,8 @@ describe('SheetContent base classes', () => {
     expect(dialog).not.toHaveClass(BOTTOM_CAP)
   })
 
+  // A sheet spans the screen from edge to edge, so a radius would curve away
+  // from the screen's own corner (docs/UX.md).
   it.each(['top', 'right', 'bottom', 'left'] as const)('%s sheets have square corners', (side) => {
     render(
       <Sheet open>
@@ -244,7 +249,7 @@ describe('SheetBody', () => {
     // assert the height contract.
     const scrollRoot = child.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'sm:-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'md:-mx-6')
   })
 
   it('viewport carries the shared gutter and Radix width workaround classes', () => {
@@ -263,7 +268,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-4', 'sm:px-6', '[&>div]:!block')
+    expect(viewport).toHaveClass('px-4', 'md:px-6', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {

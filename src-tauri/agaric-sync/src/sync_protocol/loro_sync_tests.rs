@@ -5289,6 +5289,14 @@ async fn replay_batch_keeps_slots_whose_end_frontier_the_import_never_reached_31
     };
 
     let registry = LoroEngineRegistry::new();
+    // The receiver holds a block of its own. Batched into an empty doc the
+    // shallow snapshot would initialise it, and A's blocks would settle.
+    registry
+        .for_space(&space, "device-R")
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block(BLOCK_D, "content", "local", None, 0)
+        .expect("r local");
     // Precondition: the gate ADMITS both blobs — this test is about the delete
     // condition, not the admission rule.
     {
@@ -5354,13 +5362,16 @@ async fn replay_batch_keeps_slots_whose_end_frontier_the_import_never_reached_31
         outcome.errors
     );
 
-    let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+    let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?, ?)")
+        .bind(BLOCK_A)
+        .bind(BLOCK_B)
+        .bind(BLOCK_C)
         .fetch_one(&pool)
         .await
         .expect("count blocks");
     assert_eq!(
         projected, 0,
-        "nothing settled, so nothing may be projected either"
+        "nothing of either blob settled, so none of it may be projected either"
     );
 }
 

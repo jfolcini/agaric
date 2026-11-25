@@ -3501,5 +3501,35 @@ describe('JournalPage', () => {
         screen.queryByRole('button', { name: t('journal.configureTemplate') }),
       ).not.toBeInTheDocument()
     })
+
+    it('stays out of the header on a phone, where the day’s menu holds it', async () => {
+      mockEmptyResponses()
+      const desktopWidth = window.innerWidth
+      const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) =>
+          ({
+            matches: query === '(pointer: coarse)',
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }) as unknown as MediaQueryList,
+      )
+      const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+      try {
+        renderJournal({ onNavigateToPage: vi.fn() })
+        await waitFor(() => {
+          expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+        })
+
+        expect(
+          screen.queryByRole('button', { name: t('journal.configureTemplate') }),
+        ).not.toBeInTheDocument()
+      } finally {
+        matchMedia.mockRestore()
+        touchPoints.mockRestore()
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+      }
+    })
   })
 })
