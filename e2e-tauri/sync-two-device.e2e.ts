@@ -437,16 +437,34 @@ async function syncIdle(): Promise<boolean> {
   return (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false'
 }
 
-/** Write on the peer, then press the sidebar's Sync, which leaves the open view mounted. */
-async function pullPeerWrites<T>(device: SyncPeer, writes: () => Promise<T>): Promise<T> {
-  const written = await writes()
+/** Press the sidebar's Sync, which leaves the open view mounted, and wait for the app's pull. */
+async function pullFromPeer(device: SyncPeer): Promise<void> {
   await browser.waitUntil(syncIdle, {
     timeout: ACTION_TIMEOUT,
     timeoutMsg: 'the app never finished the sync it was running',
   })
   await $(SYNC_BUTTON).click()
   await device.waitPulled()
+}
+
+/** Write on the peer, then pull from it. */
+async function pullPeerWrites<T>(device: SyncPeer, writes: () => Promise<T>): Promise<T> {
+  const written = await writes()
+  await pullFromPeer(device)
   return written
+}
+
+/**
+ * Keep the peer out of every session until its `releaseSync`, for a peer write
+ * that must not have seen the app's (`SyncPeer.holdSync`). A sidebar sync still
+ * running would be refused as busy and toast its failure, so it ends first.
+ */
+async function holdPeer(device: SyncPeer): Promise<void> {
+  await browser.waitUntil(syncIdle, {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: 'the app never finished the sync it was running',
+  })
+  await device.holdSync()
 }
 
 /**
@@ -805,29 +823,33 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       // its own before the peer writes and the two meet in the merge. An edit
       // still in the editor when the pull lands is the next test's.
       await reopenSharedPage()
-      await editBlock(peerBlockId)
-      await caretToEnd()
-      // One key per call: WebKit coalesces identical adjacent keys sent together.
-      for (const ch of ` ${APP_TAIL}`) {
-        await browser.keys([ch])
-        await browser.pause(40)
-      }
-      await browser.waitUntil(async () => (await $(EDITOR).getText()) === appText, {
-        timeout: ACTION_TIMEOUT,
-        timeoutMsg: `the appended text never landed intact in the editor; expected ${appText}`,
-      })
-      await browser.keys(['Escape'])
+      await holdPeer(peer)
+      try {
+        await editBlock(peerBlockId)
+        await caretToEnd()
+        // One key per call: WebKit coalesces identical adjacent keys sent together.
+        for (const ch of ` ${APP_TAIL}`) {
+          await browser.keys([ch])
+          await browser.pause(40)
+        }
+        await browser.waitUntil(async () => (await $(EDITOR).getText()) === appText, {
+          timeout: ACTION_TIMEOUT,
+          timeoutMsg: `the appended text never landed intact in the editor; expected ${appText}`,
+        })
+        await browser.keys(['Escape'])
 
-      // The peer prepends to the copy it holds, which must still lack the app's
-      // edit: neither edit has seen the other. The peer dials unprompted only on
-      // an mDNS sighting inside its pairing window.
-      const held = (await peer.getBlock(peerBlockId)).content
-      if (held !== PEER_EDIT) {
-        throw new Error(
-          `the peer pulled the app's edit before writing its own, so the edits were not concurrent: it holds ${JSON.stringify(held)}`,
-        )
+        // The peer prepends to the copy it holds, which must still lack the
+        // app's edit: neither edit has seen the other. Held, it has pulled none.
+        const held = (await peer.getBlock(peerBlockId)).content
+        if (held !== PEER_EDIT) {
+          throw new Error(
+            `the peer pulled the app's edit before writing its own, so the edits were not concurrent: it holds ${JSON.stringify(held)}`,
+          )
+        }
+        await peer.editBlock(peerBlockId, `${PEER_HEAD} ${PEER_EDIT}`)
+      } finally {
+        await peer.releaseSync()
       }
-      await peer.editBlock(peerBlockId, `${PEER_HEAD} ${PEER_EDIT}`)
 
       // Each pulls the other's edit, and the two splices merge into one text.
       await peer.sync()
@@ -1387,8 +1409,10 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
     // #5841 — the app holds a value under a key no definition declares, so it is
     // stored as text: today's date, on a page of its own (the Due panel leaves
     // out the day's own blocks). The peer then declares the key a `date` in the
-    // Personal space, which both vaults share. The setup is not under test, so
-    // it goes through the real IPC.
+    // Personal space, which both vaults share. It would refuse to with the
+    // app's text value in its vault, so it is held from before the app writes
+    // the value until it has declared. The setup is not under test, so it goes
+    // through the real IPC.
     it("lists the peer's property definition, and reads the value the app held as a date (#5841)", async () => {
       if (peer === undefined) throw new Error('the pairing test failed')
       const device = peer
@@ -1408,19 +1432,24 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
         scope: { kind: 'active', space_id: personal },
         blockId: null,
       })
-      await invoke('set_property', {
-        blockId: holder.id,
-        key: SYNCED_KEY,
-        value: { value_text: await localDate(0) },
-      })
+      await holdPeer(device)
+      try {
+        await invoke('set_property', {
+          blockId: holder.id,
+          key: SYNCED_KEY,
+          value: { value_text: await localDate(0) },
+        })
 
-      await reopenProperties()
-      await expectAbsent(
-        deletePropertyButton(SYNCED_KEY),
-        'a definition before the peer declared one',
-      )
-
-      await pullPeerWrites(device, () => device.createPropertyDef(SYNCED_KEY, 'date'))
+        await reopenProperties()
+        await expectAbsent(
+          deletePropertyButton(SYNCED_KEY),
+          'a definition before the peer declared one',
+        )
+        await device.createPropertyDef(SYNCED_KEY, 'date')
+      } finally {
+        await device.releaseSync()
+      }
+      await pullFromPeer(device)
 
       let seen: string | null = null
       await browser
