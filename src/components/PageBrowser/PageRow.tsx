@@ -23,10 +23,10 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { listRowVariants } from '@/components/ui/list-item'
 import { TruncatedText } from '@/components/ui/truncated-text'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLongPress } from '@/hooks/useLongPress'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { cn } from '@/lib/utils'
 
@@ -292,8 +292,8 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
   // press selects it (Material's list multi-select), and the batch toolbar
   // that appears carries bookmark and delete. The release after the hold is
   // no tap, so its click is swallowed.
-  const isMobile = useIsMobile()
-  const touchSelect = isTouch && isMobile
+  const phoneLayout = usePhoneLayout()
+  const touchSelect = isTouch && phoneLayout
   const pressRef = useRef<React.PointerEvent | null>(null)
   const heldRef = useRef(false)
   const longPress = useLongPress({

@@ -43,11 +43,11 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { TruncatedText } from '@/components/ui/truncated-text'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { delegatedMiddleClickProps } from '@/hooks/useOpenInBackgroundTab'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { formatJournalTitle, isDateFormattedPage } from '@/lib/date-utils'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { getPageDisplayName } from '@/lib/page-display'
@@ -201,7 +201,7 @@ export function TabBar(): React.ReactElement | null {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
   const { handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
     itemCount: tabs.length,
@@ -221,7 +221,7 @@ export function TabBar(): React.ReactElement | null {
   // A touch phone has no tab bar: it navigates through the sidebar and
   // breadcrumbs, and every opener of a new tab is withheld there
   // (`useOpenInBackgroundTab`). A narrow mouse window keeps its tabs.
-  if (isTouch && isMobile) return null
+  if (isTouch && phoneLayout) return null
 
   // Per decision: autohide guard preserved by explicit user direction
   // in session 461.

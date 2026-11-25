@@ -6,7 +6,7 @@
  * a tree of AND and OR over its tokens (`filterToQueryText`), and a `v2:`
  * payload otherwise.
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * On a phone (`usePhoneLayout`) the dialog renders as a
  * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — reachable from
  * the `/query` slash command on mobile too. Both paths share the same
  * controlled `open` / `onOpenChange` API.

@@ -27,8 +27,8 @@ import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import {
   type AgendaGroup,
@@ -169,16 +169,16 @@ export function AgendaResults({
   // flat-row container, while keyboard arrow keys still target the
   // outer `listRef`.
   const scrollParentRef = useRef<HTMLDivElement>(null)
-  // Below `md` the list has no scroller of its own (#5927): a box nested in
-  // the page's scroll trapped the swipe and kept the header pinned. The
-  // virtualizer windows against App's main scroller instead, offset by where
-  // the list sits in it.
-  const isMobile = useIsMobile()
+  // In the phone layout the list has no scroller of its own (#5927): a box
+  // nested in the page's scroll trapped the swipe and kept the header pinned.
+  // The virtualizer windows against App's main scroller instead, offset by
+  // where the list sits in it.
+  const phoneLayout = usePhoneLayout()
   const [listEl, setListEl] = useState<HTMLUListElement | null>(null)
   const [listOffset, setListOffset] = useState(0)
   useLayoutEffect(() => {
     const scroller = MAIN_SCROLLER.current
-    if (!isMobile || listEl == null || scroller == null) return
+    if (!phoneLayout || listEl == null || scroller == null) return
     const measure = () =>
       setListOffset(
         Math.round(
@@ -193,8 +193,8 @@ export function AgendaResults({
     const observer = new ResizeObserver(measure)
     observer.observe(scroller.firstElementChild ?? scroller)
     return () => observer.disconnect()
-  }, [isMobile, listEl])
-  const scrollMargin = isMobile ? listOffset : 0
+  }, [phoneLayout, listEl])
+  const scrollMargin = phoneLayout ? listOffset : 0
 
   // Sort once for the flat (no-group) display path. The grouping helpers
   // (groupByDate / groupByPriority / groupByState / groupByPage) all re-sort
@@ -308,7 +308,7 @@ export function AgendaResults({
     headerHeight: 36,
     itemHeight: 56,
     focusedIndex,
-    scrollParentRef: isMobile ? MAIN_SCROLLER : scrollParentRef,
+    scrollParentRef: phoneLayout ? MAIN_SCROLLER : scrollParentRef,
     scrollMargin,
   })
 
@@ -566,7 +566,7 @@ export function AgendaResults({
               </output>
             )}
 
-            {isMobile ? (
+            {phoneLayout ? (
               resultsList
             ) : (
               <ScrollArea

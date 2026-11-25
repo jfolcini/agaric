@@ -17,7 +17,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 
 export interface HistorySheetProps {
   blockId: string | null
@@ -31,7 +31,7 @@ export function HistorySheet({
   onOpenChange,
 }: HistorySheetProps): React.ReactElement {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       {/* A phone gets a bottom sheet (#5931). `sm:max-w-lg` (≈512 px) overrides the Sheet primitive's default
@@ -42,8 +42,8 @@ export function HistorySheet({
           diff hunks readable. Per-call override; other Sheet consumers
           keep the default width. */}
       <SheetContent
-        side={isMobile ? 'bottom' : 'right'}
-        className={isMobile ? undefined : 'sm:max-w-lg'}
+        side={phoneLayout ? 'bottom' : 'right'}
+        className={phoneLayout ? undefined : 'sm:max-w-lg'}
       >
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>

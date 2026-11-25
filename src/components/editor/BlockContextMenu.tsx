@@ -50,9 +50,9 @@ import { useReadAloudRow } from '@/components/editor/block-context-menu/read-alo
 import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
 import { MenuSheet } from '@/components/ui/menu-sheet'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -744,7 +744,7 @@ export function BlockContextMenu({
   const { t } = useTranslation()
   // The sheet brings its own dismissal and placement: the outside-press and
   // Escape listeners and floating-ui below are the dropdown's.
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
   // A2 (#1020) — the per-block action callbacks arrive as a single cohesive
   // `actions` bag. Each entry is optional; a missing key gates its menu item
@@ -816,7 +816,7 @@ export function BlockContextMenu({
   // Event that opened the menu does not immediately close it (
   // mirrors `suggestion-renderer.ts` and `BlockPropertyEditor.tsx`).
   useEffect(() => {
-    if (isMobile) return
+    if (phoneLayout) return
     const handlePointerDown = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         handleCloseWithFocus()
@@ -831,11 +831,11 @@ export function BlockContextMenu({
       if (frameId !== null) cancelAnimationFrame(frameId)
       document.removeEventListener('pointerdown', handlePointerDown, true)
     }
-  }, [handleCloseWithFocus, isMobile])
+  }, [handleCloseWithFocus, phoneLayout])
 
   // ── Close on Escape ──────────────────────────────────────────────
   useEffect(() => {
-    if (isMobile) return
+    if (phoneLayout) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -844,7 +844,7 @@ export function BlockContextMenu({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [handleCloseWithFocus, isMobile])
+  }, [handleCloseWithFocus, phoneLayout])
 
   // ── Compute position with floating-ui ─────────────────────────────
   // Uses `autoUpdate` so the menu reflows on scroll/resize while open,
@@ -859,7 +859,7 @@ export function BlockContextMenu({
 
   useEffect(() => {
     const el = menuRef.current
-    if (!el || isMobile) return
+    if (!el || phoneLayout) return
 
     const triggerEl = triggerRef?.current ?? null
 
@@ -922,7 +922,7 @@ export function BlockContextMenu({
     }
 
     return autoUpdate(virtualEl, el, updatePosition)
-  }, [position, triggerRef, blockId, isMobile])
+  }, [position, triggerRef, blockId, phoneLayout])
 
   // Fix 6 — "bulk" mode: the menu was opened on a block that is part of an
   // active multi-selection of >1 block. In that case Delete / TODO / Priority /
@@ -1102,11 +1102,11 @@ export function BlockContextMenu({
       aria-label={t('contextMenu.blockActions')}
       className={cn(
         'block-context-menu',
-        !isMobile &&
+        !phoneLayout &&
           'fixed z-50 min-w-[160px] rounded-md border bg-popover p-1 shadow-(--shadow-floating)',
-        !isMobile && (positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0'),
+        !phoneLayout && (positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0'),
       )}
-      style={isMobile ? undefined : { left: computedPos.x, top: computedPos.y }}
+      style={phoneLayout ? undefined : { left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
       data-editor-portal=""
     >
@@ -1159,7 +1159,7 @@ export function BlockContextMenu({
   // the user can't do anything but dismiss it. Short-circuit so the menu
   // simply never appears.
   if (visibleItems.length === 0) return null
-  if (isMobile) {
+  if (phoneLayout) {
     return (
       <MenuSheet
         open

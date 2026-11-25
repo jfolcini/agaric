@@ -138,9 +138,9 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBlockRefCounts } from '@/hooks/useBlockRefCounts'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
@@ -441,7 +441,7 @@ function PageModeDocument({
   // On touch the toolbar pins to the screen's foot, over the quick-capture button: as block
   // mode's, it shows only while the text is edited, by block mode's rule for leaving it.
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const [editing, setEditing] = useState(false)
   const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
@@ -1199,7 +1199,7 @@ function PageModeDocument({
             // A phone's lane is narrower (`index.css`).
             className={cn(
               'relative rounded-md focus-ring-visible',
-              isTouch && isMobile && 'page-mode-phone',
+              isTouch && phoneLayout && 'page-mode-phone',
             )}
             onFocus={isTouch ? () => setEditing(true) : undefined}
             {...{ [SURFACE]: '' }}

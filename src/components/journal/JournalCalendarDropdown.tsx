@@ -8,7 +8,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -117,7 +117,7 @@ export function JournalCalendarDropdown({
 }: JournalCalendarDropdownProps): React.ReactElement {
   const { t } = useTranslation()
   const { weekStartsOn } = useWeekStart()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
   const { invalidationKey } = useBlockPropertyEvents()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const calRef = useRef<HTMLDivElement>(null)
@@ -199,7 +199,7 @@ export function JournalCalendarDropdown({
 
   // Escape key closes the calendar; the bottom sheet closes itself on Escape.
   useEffect(() => {
-    if (isMobile) return
+    if (phoneLayout) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -208,7 +208,7 @@ export function JournalCalendarDropdown({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, isMobile])
+  }, [onClose, phoneLayout])
 
   // Check if calendar overflows viewport and flip above / shift horizontally
   useEffect(() => {
@@ -250,7 +250,7 @@ export function JournalCalendarDropdown({
         components={{ DayButton: CalendarDayButton }}
         className={cn(
           'transition-opacity',
-          isMobile && 'mx-auto w-fit p-0',
+          phoneLayout && 'mx-auto w-fit p-0',
           loading && 'opacity-70',
         )}
       />
@@ -282,7 +282,7 @@ export function JournalCalendarDropdown({
 
   // A phone is narrower than the anchored panel (#5925): it opens as a bottom
   // sheet instead, edge to edge so the 44 px day cells still fit.
-  if (isMobile) {
+  if (phoneLayout) {
     return (
       <Sheet open onOpenChange={(open) => !open && onClose()}>
         <SheetContent

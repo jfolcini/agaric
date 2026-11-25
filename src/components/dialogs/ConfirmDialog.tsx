@@ -36,7 +36,7 @@
  * created brittle interaction timing for every existing destructive-
  * dialog test in the suite.
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog
+ * On a phone (`usePhoneLayout`) the dialog
  * renders as a bottom Sheet so action buttons sit within thumb reach.
  * Both paths share the same controlled `open` / `onOpenChange` API and
  * the same a11y semantics (Radix Dialog + AlertDialog both trap focus

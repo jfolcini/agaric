@@ -146,8 +146,8 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     const dialog = screen.getByRole('dialog')
-    // `md`, where `useIsMobile` stops picking sheets, not `sm`: from 640 to
-    // 767 px a sheet's text would sit 24 px in against a 16 px view gutter.
+    // `md`, where the view's own gutter widens, not `sm`: from 640 to 767 px
+    // a sheet's text would sit 24 px in against a 16 px view gutter.
     expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'md:p-6')
     expect(dialog).not.toHaveClass('sm:p-6')
   })

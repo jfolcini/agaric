@@ -11,7 +11,7 @@
  *while monospace token identifiers (filter prefixes, regex
  * syntax) render verbatim as code.
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * On a phone (`usePhoneLayout`) the dialog renders as a
  * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — search is
  * reachable from the mobile search panel too. Both paths share the same
  * controlled `open` / `onOpenChange` API.

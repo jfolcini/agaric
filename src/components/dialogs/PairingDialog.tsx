@@ -25,7 +25,7 @@
  *
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  *
- * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * On a phone (`usePhoneLayout`) the dialog renders as a
  * bottom Sheet via `useDialogOrSheet('dialog')` — pairing is a core
  * phone-first flow (#2665), so this matters more here than for most
  * dialogs. Both paths share the same controlled `open` / `onOpenChange`
