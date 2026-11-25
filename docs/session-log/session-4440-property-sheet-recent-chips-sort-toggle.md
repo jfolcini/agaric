@@ -1,4 +1,4 @@
-# Session 4438 — A property's one sheet, recent-page chips and the sort toggle at the buttons' height
+# Session 4440 — A property's one sheet, recent-page chips and the sort toggle at the buttons' height
 
 **Ask.** The maintainer's fourth pass over the UI review (#7040), after #7067 merged:
 
