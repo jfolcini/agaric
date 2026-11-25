@@ -30,14 +30,15 @@
 //! rows whose files are all present: the stat of every attachment the receive
 //! phase of every sync session pays before it requests any file.
 //!
-//! Measurement only: no budget. Each case's effect is asserted once, untimed,
-//! before its timed loop. A timing prints as its median with the lowest and
-//! highest sample and the sample count: that range is the noise band, and a
-//! difference inside it is not a difference.
+//! No budget here: `interactive_slo`'s `loro_engine` module gates export,
+//! rehydrate and the cold first sync at 10K × 10. Each case's effect is
+//! asserted once, untimed, before its timed loop. A timing prints as its median
+//! with the lowest and highest sample and the sample count: that range is the
+//! noise band, and a difference inside it is not a difference.
 //!
 //! `LORO_SNAPSHOT_MAX_BLOCKS=<n>` skips the scales above `n`, for a run that
-//! must fit a short budget. `just measure-loro` regenerates the numbers in
-//! `docs/architecture/operations.md` § Loro engine cost.
+//! must fit a short budget. The numbers in `docs/architecture/operations.md`
+//! § Loro engine cost come from this group, by the command there.
 
 use std::cell::RefCell;
 use std::hint::black_box;
