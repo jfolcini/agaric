@@ -464,6 +464,7 @@ export function QueryResult({
               pageTitles={pageTitles}
               onNavigate={onNavigate}
               resolveBlockTitle={resolveBlockTitle}
+              density="compact"
             />
           )}
           {!loading && !error && results.length > 0 && tableMode && (

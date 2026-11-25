@@ -27,6 +27,8 @@ export interface QueryResultListProps {
   onItemSelect?: ((index: number) => void) | undefined
   /** The list's card (`listCardVariants`), where the list is not already inside one. */
   className?: string | undefined
+  /** Row density: `compact` for a query block, whose rows sit among a page's blocks. */
+  density?: 'default' | 'compact' | undefined
 }
 
 /** The sidebar's icons for a journal page, a page and a tag; the editor's Turn into icon for a block. */
@@ -45,7 +47,8 @@ function ResultTypeIcon({ block }: { block: BlockRow }): React.ReactElement {
   const Icon = RESULT_TYPE_ICONS[type]
   return (
     <Icon
-      className="size-4 shrink-0 text-muted-foreground"
+      // The task checkbox's size, so the text starts at one edge on every row.
+      className="size-[1em] shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-[1.125em]"
       aria-hidden="true"
       data-testid="query-result-type"
       data-type={type}
@@ -60,6 +63,7 @@ export function QueryResultList({
   resolveBlockTitle,
   onItemSelect,
   className,
+  density = 'default',
 }: QueryResultListProps): React.ReactElement {
   const { t } = useTranslation()
   // #4719 — the CHIP's resolver, not the optional `resolveBlockTitle` prop:
@@ -114,7 +118,7 @@ export function QueryResultList({
             key={block.id}
             id={`query-result-${block.id}`}
             className={cn(
-              listRowVariants({ className: 'query-result-item cursor-pointer text-sm' }),
+              listRowVariants({ density, className: 'query-result-item cursor-pointer text-sm' }),
               index === focusedIndex && 'list-cursor',
             )}
             data-testid="query-result-item"

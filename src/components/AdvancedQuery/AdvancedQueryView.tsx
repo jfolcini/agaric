@@ -29,7 +29,7 @@
  */
 
 import type React from 'react'
-import { useId, useMemo, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
@@ -157,6 +157,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   // A query that has run opens on its results, its form folded under the summary.
   const [formOpen, setFormOpen] = useState(() => isEmptyQuery(builder, controls))
   const formId = useId()
+  const editRef = useRef<HTMLButtonElement>(null)
   const summary = useResolveStore((s) =>
     querySummary(builder, controls, t, (primitive) =>
       builderLeafLabel(primitive, t, s.resolveTitle),
@@ -215,6 +216,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
             {summary}
           </p>
           <Button
+            ref={editRef}
             variant="outline"
             size="sm"
             aria-expanded={formOpen}
@@ -279,7 +281,14 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
                 {t('advancedQuery.savedViews.save')}
               </Button>
             </div>
-            <SavedViews spaceKey={spaceKey} onLoad={() => setFormOpen(false)} />
+            <SavedViews
+              spaceKey={spaceKey}
+              onLoad={() => {
+                setFormOpen(false)
+                // The Load button folds away with the form; keep focus on the page.
+                editRef.current?.focus()
+              }}
+            />
           </div>
         </div>
 

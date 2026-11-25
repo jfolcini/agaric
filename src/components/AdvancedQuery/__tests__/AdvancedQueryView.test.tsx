@@ -1083,6 +1083,8 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
       }),
     )
     expect(edit).toHaveAttribute('aria-expanded', 'false')
+    // The Load button folded away with the form; focus moves to Edit query.
+    expect(edit).toHaveFocus()
   })
 
   it('refuses a name a page of the space holds, and stamps nothing', async () => {
