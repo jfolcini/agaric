@@ -116,6 +116,7 @@ export const pages: Record<string, string> = {
   'templates.variablesHintIntro':
     'Schreibe diese an beliebiger Stelle in eine Vorlage; jeder wird beim Einfügen der Vorlage ausgefüllt.',
   'templates.variablesHintInfoLabel': 'Über Platzhalter',
+  'templates.variablesMore': '+{{n}} weitere',
   'templates.variableToday': 'Aktuelles Datum (YYYY-MM-DD)',
   'templates.variableTime': 'Aktuelle Uhrzeit (HH:MM)',
   'templates.variableDatetime': 'Aktuelles Datum und Uhrzeit',

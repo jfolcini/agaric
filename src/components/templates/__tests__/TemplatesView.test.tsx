@@ -7,7 +7,7 @@
  *  - Renders template list with preview
  *  - Filters templates by search input
  *  - Navigates to template on click
- *  - Removes template status on X click
+ *  - Removes template status from its row's remove button
  *  - Shows journal template badge
  *  - a11y compliance
  */
@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { emptyPage } from '@/__tests__/fixtures'
+import { emptyPage, makeBlockRow } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import {
   type CommandReturns,
@@ -127,12 +127,12 @@ describe('TemplatesView', () => {
     render(<TemplatesView />)
 
     // The hint row lives outside `ListViewState`, so it renders even with
-    // zero templates. Each of the four `expandTemplateVariables` tokens
-    // appears verbatim under its testid.
+    // zero templates. #7040 — it shows the first two tokens verbatim and
+    // counts the rest, which the ⓘ lists, instead of ten monospace chips.
     expect(await screen.findByTestId('template-variable-today')).toHaveTextContent('<% today %>')
     expect(screen.getByTestId('template-variable-time')).toHaveTextContent('<% time %>')
-    expect(screen.getByTestId('template-variable-datetime')).toHaveTextContent('<% datetime %>')
-    expect(screen.getByTestId('template-variable-page-title')).toHaveTextContent('<% page title %>')
+    expect(screen.queryByTestId('template-variable-datetime')).not.toBeInTheDocument()
+    expect(screen.getByText(t('templates.variablesMore', { n: 8 }))).toBeInTheDocument()
     expect(screen.getByText(t('templates.variablesHintLabel'))).toBeInTheDocument()
   })
 
@@ -164,16 +164,6 @@ describe('TemplatesView', () => {
     const description = screen.getByText(t('templates.description'))
     const hint = await screen.findByText(t('templates.variablesHintLabel'))
     expect(description.compareDocumentPosition(hint)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-  })
-
-  it('lists the `<% recording %>` placeholder among the variables (#5364)', async () => {
-    stubTemplates()
-
-    render(<TemplatesView />)
-
-    expect(await screen.findByTestId('template-variable-recording')).toHaveTextContent(
-      '<% recording %>',
-    )
   })
 
   it('renders template list with preview', async () => {
@@ -218,6 +208,28 @@ describe('TemplatesView', () => {
     expect(firstChildCalls[0]?.[1]).toEqual({ blockIds: ['T1', 'T2'] })
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
     expect(listBlocksCalls).toHaveLength(0)
+  })
+
+  // #7040 — the preview showed the first block's Markdown, `## Attendees`.
+  it('renders the preview as rich text, without its Markdown', async () => {
+    stubTemplates({
+      query_by_property: (args) =>
+        (args as { request: { key: string } }).request.key === 'template'
+          ? {
+              ...emptyPage,
+              items: [makeBlockRow({ id: 'T1', block_type: 'page', content: 'Meeting Notes' })],
+            }
+          : emptyPage,
+      first_child_for_blocks: () => ({
+        T1: makeBlockRow({ id: 'C1', content: '## Attendees', parent_id: 'T1' }),
+      }),
+    })
+
+    const { container } = render(<TemplatesView />)
+
+    expect(await screen.findByText('Attendees')).toBeInTheDocument()
+    expect(screen.queryByText(/##/)).not.toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('filters templates by search input', async () => {
@@ -324,7 +336,7 @@ describe('TemplatesView', () => {
     ])
   })
 
-  it('removes template status on X click', async () => {
+  it('removes template status from its row', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
@@ -656,9 +668,11 @@ describe('TemplatesView', () => {
 
     await screen.findByText('Meeting Notes')
 
-    // The non-journal template shows a single "Page template" badge.
+    // The non-journal template shows a single "Page template" badge, a quiet
+    // label rather than the bordered one that read as a button (#7040).
     const pageBadges = screen.getAllByText('Page template')
     expect(pageBadges).toHaveLength(1)
+    expect(pageBadges[0]).toHaveAttribute('data-variant', 'ghost')
     // The journal template keeps its own badge (and is not double-badged).
     expect(screen.getByText('Journal template')).toBeInTheDocument()
   })

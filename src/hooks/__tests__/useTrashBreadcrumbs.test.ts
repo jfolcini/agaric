@@ -37,6 +37,7 @@ vi.mock('@/lib/logger', () => ({
 import { makeBlock } from '@/__tests__/fixtures'
 import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
 import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
@@ -103,7 +104,36 @@ describe('useTrashBreadcrumbs', () => {
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
     await waitFor(() => {
-      expect(result.current(blocks[0] as BlockRow)).toBe('(deleted page)')
+      expect(result.current(blocks[0] as BlockRow)).toBe(t('trash.deletedPage'))
+    })
+  })
+
+  // #7040 — a page in the Trash too still has its title; "(deleted page)" hid it.
+  it('names a page that is in the Trash too, marked deleted', async () => {
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: 'P1', title: 'Project Alpha', block_type: 'page', deleted: true },
+    ] satisfies ResolvedBlock[])
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
+
+    const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
+
+    await waitFor(() => {
+      expect(result.current(blocks[0] as BlockRow)).toBe(
+        t('trash.deletedPageNamed', { page: 'Project Alpha' }),
+      )
+    })
+  })
+
+  it('calls a live page without a title untitled, not deleted', async () => {
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: 'P1', title: null, block_type: 'page', deleted: false },
+    ] satisfies ResolvedBlock[])
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
+
+    const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
+
+    await waitFor(() => {
+      expect(result.current(blocks[0] as BlockRow)).toBe(t('common.untitled'))
     })
   })
 

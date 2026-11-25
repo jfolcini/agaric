@@ -421,12 +421,39 @@ describe('getPayloadRawContent', () => {
 })
 
 describe('getPropertyPayload', () => {
+  /** A `set_property` payload as the backend writes it: every value slot, one filled. */
+  const setPayload = (key: string, fields: Record<string, unknown>) =>
+    JSON.stringify({
+      block_id: 'B1',
+      key,
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+      ...fields,
+    })
+
   it('extracts key and value from set_property', () => {
-    const entry = makeEntry(
-      JSON.stringify({ key: 'due_date', value: '2026-04-15' }),
-      'set_property',
-    )
+    const entry = makeEntry(setPayload('due_date', { value_date: '2026-04-15' }), 'set_property')
     expect(getPropertyPayload(entry)).toEqual({ key: 'due_date', value: '2026-04-15' })
+  })
+
+  // #7040 — the payload holds typed slots, never a `value`, so every set read as its key alone.
+  it.each([
+    ['text', { value_text: 'draft' }, 'draft'],
+    ['number', { value_num: 3 }, '3'],
+    ['zero', { value_num: 0 }, '0'],
+    ['true', { value_bool: true }, 'true'],
+    ['false', { value_bool: false }, 'false'],
+  ])('reads a %s value from its typed slot', (_name, fields, value) => {
+    const entry = makeEntry(setPayload('effort', fields), 'set_property')
+    expect(getPropertyPayload(entry)).toEqual({ key: 'effort', value })
+  })
+
+  it('returns a ref value as the id it names, for the caller to resolve', () => {
+    const entry = makeEntry(setPayload('space', { value_ref: 'SPACE_WORK' }), 'set_property')
+    expect(getPropertyPayload(entry)).toEqual({ key: 'space', ref: 'SPACE_WORK' })
   })
 
   // #6741 — a list op's value is its items joined.
@@ -454,12 +481,12 @@ describe('getPropertyPayload', () => {
   })
 
   it('returns null when key is missing', () => {
-    const entry = makeEntry(JSON.stringify({ value: '2026-04-15' }), 'set_property')
+    const entry = makeEntry(JSON.stringify({ value_date: '2026-04-15' }), 'set_property')
     expect(getPropertyPayload(entry)).toBeNull()
   })
 
-  it('excludes value from the result when present but not a string', () => {
-    const entry = makeEntry(JSON.stringify({ key: 'due_date', value: 42 }), 'set_property')
+  it('returns the key alone when every value slot is empty', () => {
+    const entry = makeEntry(setPayload('due_date', {}), 'set_property')
     expect(getPropertyPayload(entry)).toEqual({ key: 'due_date' })
   })
 })

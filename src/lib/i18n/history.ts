@@ -221,10 +221,11 @@ export const history: Record<string, string> = {
   'trash.listLabel': 'Trash items',
 
   // Translators: Line under each Trash row naming the page the block was deleted from: {{page}} =
-  // the page title, or trash.deletedPage when that page is deleted too (inserted as {{page}}, so
-  // lowercase in parentheses).
+  // the page title; trash.deletedPageNamed when that page is in the Trash too ({{page}} = its
+  // title), trash.deletedPage when it is gone for good (both inserted as {{page}}, so lowercase).
   'trash.fromPage': 'from: {{page}}',
-  'trash.deletedPage': '(deleted page)',
+  'trash.deletedPage': 'a deleted page',
+  'trash.deletedPageNamed': '{{page}} (deleted)',
 
   // Translators: Toasts after restoring or purging the ticked Trash rows ("purged" = deleted for
   // good). {{count}} = blocks. batchPurgeStale: the list was outdated, so nothing was purged and

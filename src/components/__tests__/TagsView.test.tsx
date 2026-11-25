@@ -9,6 +9,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -17,11 +18,22 @@ import { t } from '@/lib/i18n'
 
 // Sub-components are mocked: this test pins composition + wiring, not the
 // internals of TagList / TagFilterPanel (which have their own suites).
+// The mock renders what TagList shows under its list as if the space has a tag;
+// TagList.test.tsx pins that it shows it only then.
 vi.mock('@/components/TagList', () => ({
-  TagList: ({ onTagClick }: { onTagClick: (id: string, name: string) => void }) => (
-    <button type="button" data-testid="tag-list-mock" onClick={() => onTagClick('T1', 'work')}>
-      tag-list
-    </button>
+  TagList: ({
+    onTagClick,
+    children,
+  }: {
+    onTagClick: (id: string, name: string) => void
+    children: ReactNode
+  }) => (
+    <>
+      <button type="button" data-testid="tag-list-mock" onClick={() => onTagClick('T1', 'work')}>
+        tag-list
+      </button>
+      {children}
+    </>
   ),
 }))
 vi.mock('@/components/filters/TagFilterPanel', () => ({

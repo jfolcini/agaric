@@ -9,10 +9,9 @@
  * so the existing IPC + redaction logic in `BugReportDialog.tsx` (and
  * `src-tauri/src/commands/bug_report.rs`) stays untouched.
  *
- * Accessibility is preserved verbatim: labels keep their original `htmlFor`
- * targets, the redact switch keeps its disabled-when-logs-off styling, and
- * the dialog focus trap continues to discover every interactive element via
- * the same DOM order as the pre-refactor markup.
+ * The two switches are `ToggleRow`s, as in Settings: the label keeps its
+ * `htmlFor` target, the hint describes the switch, and the redact switch is
+ * disabled while logs are off.
  */
 
 import type React from 'react'
@@ -20,9 +19,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
+import { ToggleRow } from '@/components/ui/toggle-row'
 
 export interface BugReportFormProps {
   title: string
@@ -74,44 +72,23 @@ export function BugReportForm({
         />
       </div>
 
-      <div className="flex items-start gap-3">
-        <Switch
-          id="bug-report-include-logs"
-          checked={includeLogs}
-          onCheckedChange={onIncludeLogsChange}
-          aria-label={t('bugReport.includeLogsLabel')}
-        />
-        <div className="space-y-0.5">
-          <Label htmlFor="bug-report-include-logs" muted={false}>
-            {t('bugReport.includeLogsLabel')}
-          </Label>
-          <p className="text-xs text-muted-foreground">{t('bugReport.includeLogsHint')}</p>
-        </div>
-      </div>
-
-      {/* Redact is a sibling row at the same indent as Include
-            logs (not nested under it) so it's always visible. When
-            Include logs is OFF the underlying Switch is disabled —
-            Radix forwards `disabled` to the native disabled
-            attribute and the Switch primitive applies
-            `disabled:opacity-50 disabled:cursor-not-allowed`. We
-            additionally mute the label + hint so the dependency on
-            Include logs is obvious at a glance. */}
-      <div className="flex items-start gap-3">
-        <Switch
-          id="bug-report-redact"
-          checked={redact}
-          onCheckedChange={onRedactChange}
-          disabled={!includeLogs}
-          aria-label={t('bugReport.redactLabel')}
-        />
-        <div className={cn('space-y-0.5', !includeLogs && 'opacity-50')}>
-          <Label htmlFor="bug-report-redact" muted={false}>
-            {t('bugReport.redactLabel')}
-          </Label>
-          <p className="text-xs text-muted-foreground">{t('bugReport.redactHint')}</p>
-        </div>
-      </div>
+      {/* Switch rows as Settings lays them out, the switch right of its label
+          (#7040). Redact stays visible, disabled while Include logs is off. */}
+      <ToggleRow
+        id="bug-report-include-logs"
+        label={t('bugReport.includeLogsLabel')}
+        description={t('bugReport.includeLogsHint')}
+        checked={includeLogs}
+        onCheckedChange={onIncludeLogsChange}
+      />
+      <ToggleRow
+        id="bug-report-redact"
+        label={t('bugReport.redactLabel')}
+        description={t('bugReport.redactHint')}
+        checked={redact}
+        onCheckedChange={onRedactChange}
+        disabled={!includeLogs}
+      />
     </div>
   )
 }

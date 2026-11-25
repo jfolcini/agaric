@@ -5,7 +5,7 @@
  * first child block, and allows navigating to or removing template status.
  */
 
-import { LayoutTemplate, Plus, Search, X } from 'lucide-react'
+import { LayoutTemplate, ListMinus, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,8 +14,10 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,6 +25,7 @@ import { ListItem, listCardVariants } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -47,8 +50,8 @@ interface TemplateItem {
 /**
  * #215 — the dynamic template variables expanded by
  * `expandTemplateVariables` (`template-utils.ts`). Surfaced as a low-chrome
- * hint row beneath the create form so users discover them without reading
- * source comments. `token` is the literal syntax; `descKey` names the i18n
+ * hint row beneath the list so users discover them without reading source
+ * comments: the first `SHOWN_VARIABLES` verbatim and a count of the rest. `token` is the literal syntax; `descKey` names the i18n
  * description shown in the ⓘ popover. Keep in sync with the `LEGACY_RESOLVERS`
  * token → resolver map in `expandTemplateVariables` (#1450 Phase 1), plus the
  * `<% recording %>` placeholder, which `insertTemplateBlocks` reads.
@@ -65,9 +68,11 @@ const TEMPLATE_VARIABLES: ReadonlyArray<{ token: string; descKey: string }> = [
   { token: '<% isoweek %>', descKey: 'templates.variableIsoweek' },
   { token: '<% recording %>', descKey: 'templates.variableRecording' },
 ]
+const SHOWN_VARIABLES = 2
 
 export function TemplatesView(): React.ReactElement {
   const { t } = useTranslation()
+  const richCallbacks = useRichContentCallbacks()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -224,7 +229,7 @@ export function TemplatesView(): React.ReactElement {
           // `handleCreateTemplate` reports its own failure; never rejects.
           void handleCreateTemplate()
         }}
-        className="flex flex-col sm:flex-row sm:items-center gap-2"
+        className="flex items-center gap-2"
       >
         <Label htmlFor="new-template-name" className="sr-only">
           {t('templates.newTemplateInputLabel')}
@@ -234,7 +239,7 @@ export function TemplatesView(): React.ReactElement {
           value={newTemplateName}
           onChange={(e) => setNewTemplateName(e.target.value)}
           placeholder={t('templates.newTemplatePlaceholder')}
-          className="sm:flex-1"
+          className="min-w-0 flex-1"
         />
         <Button
           type="submit"
@@ -285,7 +290,7 @@ export function TemplatesView(): React.ReactElement {
                           <span className="text-sm font-medium truncate">{tpl.content}</span>
                           {tpl.preview && (
                             <span className="text-xs text-muted-foreground truncate">
-                              {tpl.preview}
+                              {renderRichContent(tpl.preview, { inline: true, ...richCallbacks })}
                             </span>
                           )}
                         </button>
@@ -297,13 +302,13 @@ export function TemplatesView(): React.ReactElement {
                     {/* #215 — scope badge. Every template carries a scope
                         indicator so a journal template is distinguishable from
                         a regular page template at a glance. Journal templates
-                        keep the `secondary` tone; page templates use the calmer
-                        `outline` tone so the journal flag stays the louder one.
+                        keep the `secondary` tone; page templates are a quiet
+                        muted label, as a bordered badge read as a button (#7040).
                         The ⓘ beside it says what the scope does (#6895). */}
                     <span className="inline-flex shrink-0 items-center gap-1">
                       <Badge
-                        tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
-                        className="text-xs"
+                        tone={tpl.isJournalTemplate ? 'secondary' : 'ghost'}
+                        className={cn('text-xs', !tpl.isJournalTemplate && 'text-muted-foreground')}
                       >
                         {tpl.isJournalTemplate
                           ? t('templates.journalIndicator')
@@ -319,20 +324,18 @@ export function TemplatesView(): React.ReactElement {
                         }
                       />
                     </span>
-                    <Button
+                    {/* It removes the template status, not the page: a "remove
+                        from list" glyph, named in its tooltip (#7040). */}
+                    <IconButton
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
-                      className={cn(
-                        'shrink-0',
-                        'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
-                        '[@media(pointer:coarse)]:opacity-100',
-                        'touch-target [@media(pointer:coarse)]:min-w-[44px]',
-                      )}
+                      ariaLabel={t('templates.removeTemplateLabel', { name: tpl.content })}
+                      tooltip={t('templates.removeTemplateLabel', { name: tpl.content })}
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
                       onClick={() => setPendingRemoval({ id: tpl.id, name: tpl.content ?? '' })}
                     >
-                      <X />
-                    </Button>
+                      <ListMinus />
+                    </IconButton>
                   </ListItem>
                 ))}
               </ul>
@@ -375,7 +378,7 @@ export function TemplatesView(): React.ReactElement {
             }
           />
         </span>
-        {TEMPLATE_VARIABLES.map(({ token }) => (
+        {TEMPLATE_VARIABLES.slice(0, SHOWN_VARIABLES).map(({ token }) => (
           <code
             key={token}
             className="rounded bg-muted px-1 py-0.5 font-mono text-xs"
@@ -387,6 +390,9 @@ export function TemplatesView(): React.ReactElement {
             {token}
           </code>
         ))}
+        <span>
+          {t('templates.variablesMore', { n: TEMPLATE_VARIABLES.length - SHOWN_VARIABLES })}
+        </span>
       </p>
       <ConfirmDialog
         open={pendingRemoval !== null}
