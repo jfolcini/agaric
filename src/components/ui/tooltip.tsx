@@ -215,17 +215,17 @@ const TooltipContent = ({
       data-slot="tooltip-content"
       sideOffset={sideOffset}
       className={cn(
-        // A dark label in light themes (inverted surface) and the lifted popover in dark
-        // ones, where an inverted tooltip is a near-white glare. Children inherit the text
+        // Inverted in every theme, the text colour as its fill: in dark the popover fill
+        // vanished over the card it opened on (#7040). Children inherit the text
         // colour: dim a secondary line with `opacity-90`; a fixed token
         // (`text-muted-foreground`) or `opacity-80` falls below 4.5:1 on some themes.
-        'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-in rounded-md border border-transparent bg-foreground px-3 py-1.5 text-xs text-balance text-background shadow-(--shadow-floating) dark:border-border dark:bg-popover dark:text-popover-foreground fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+        'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-in rounded-md border border-transparent bg-foreground px-3 py-1.5 text-xs text-balance text-background shadow-(--shadow-floating) fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
         className,
       )}
       {...props}
     >
       {children}
-      <TooltipPrimitive.Arrow className="z-50 size-2 sm:size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-sm bg-foreground fill-foreground dark:border-r dark:border-b dark:bg-popover dark:fill-popover" />
+      <TooltipPrimitive.Arrow className="z-50 size-2 sm:size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-sm bg-foreground fill-foreground" />
     </TooltipPrimitive.Content>
   </TooltipPrimitive.Portal>
 )

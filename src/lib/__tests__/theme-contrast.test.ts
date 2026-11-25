@@ -21,6 +21,7 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { dueDateColor, getTodayString } from '@/lib/date-utils'
 import { HIGHLIGHT_COLORS } from '@/lib/highlight-colors'
 
 type Oklch = readonly [L: number, C: number, h: number]
@@ -372,8 +373,7 @@ function resolveDeclaration(theme: Theme, highContrast: boolean, token: string):
 const THEME_PAIRS = [
   { pair: 'focus ring on the page', fg: 'ring', bg: 'background', min: NON_TEXT },
   // --brand is inherited from :root / .dark by every theme (#5332).
-  { pair: 'brand mark label (today, FAB)', fg: 'brand-foreground', bg: 'brand', min: AA_NORMAL },
-  { pair: 'brand numeral on the page', fg: 'brand', bg: 'background', min: AA_NORMAL },
+  { pair: 'brand mark label (FAB)', fg: 'brand-foreground', bg: 'brand', min: AA_NORMAL },
   // Every theme: Button and Badge paint the fill opaque in dark themes too.
   {
     pair: 'destructive button label',
@@ -391,7 +391,7 @@ const THEME_PAIRS = [
     min: AA_NORMAL,
   },
   {
-    pair: 'today due chip and search match',
+    pair: 'search match',
     fg: 'status-pending-foreground',
     bg: 'status-pending',
     min: AA_NORMAL,
@@ -486,6 +486,151 @@ describe('focus ring, chips, hover surfaces and graph nodes clear WCAG in every 
       resolveToken(theme, highContrast, bg),
     )
     expect(ratio).toBeGreaterThanOrEqual(min)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Priority is its own scale (#7040): solid P1, tinted P2, neutral P3, all in
+// ink, so no level shares a hue with overdue and destructive (red), due today
+// (amber), in progress and focus (blue) or the search match (yellow).
+// ─────────────────────────────────────────────────────────────────────────
+
+const PRIORITY_CASES = [false, true].flatMap((highContrast) =>
+  THEMES.map((theme) => ({
+    theme,
+    highContrast,
+    label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+  })),
+)
+
+describe('priority is an ink scale apart from every status hue (#7040)', () => {
+  it.each(PRIORITY_CASES)(
+    '$label — P1, P2 and P3 carry no hue and step down from solid',
+    ({ theme, highContrast }) => {
+      const page = resolveToken(theme, highContrast, 'background')
+      const levels = ['priority-urgent', 'priority-high', 'priority-normal'].map((token) =>
+        resolveToken(theme, highContrast, token),
+      )
+      for (const [, chroma] of levels) expect(chroma).toBeLessThanOrEqual(0.04)
+      const [p1, p2, p3] = levels.map(([lightness]) => Math.abs(lightness - page[0]))
+      expect(p1).toBeGreaterThan(p2 ?? Infinity)
+      expect(p2).toBeGreaterThan(p3 ?? Infinity)
+    },
+  )
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Colour roles stay apart in every theme (#7040).
+//
+// A role is the tokens that paint it (a chip's fill and text); its signature
+// is the more chromatic of them, where its hue lives. Two roles that the user
+// must tell apart by colour are distinct when one has no hue and the other
+// does, or when both have a hue and the hues sit 30° or more apart: the
+// collisions #7040 found were 0–15° apart (P2 and the yellow due chip at 90°,
+// P1 and overdue at 25°, P3, DOING and focus at 250–265°), while the roles that
+// do read apart (done green, in-progress blue, overdue red) sit 60° or more
+// apart. "No hue" is chroma 0.04 or less, the ceiling of the warm-stone and
+// Solarized base neutrals. Brand and destructive keep one red, so they are
+// told apart by lightness: 0.08 or more, four OKLab just-noticeable steps
+// (~0.02 each). The dark popover sits 0.03 or more above the card it opens
+// over, the order of the step between the dark surfaces (page to card 0.045).
+// ─────────────────────────────────────────────────────────────────────────
+
+const NO_HUE = 0.04
+const MIN_HUE_GAP = 30
+const MIN_LIGHTNESS_GAP = 0.08
+const MIN_SURFACE_STEP = 0.03
+
+/** The tokens `dueDateColor` paints a date due today with (`bg-x text-x-foreground`). */
+const DUE_TODAY = [...dueDateColor(getTodayString()).matchAll(/(?:bg|text)-([\w-]+)/g)].map(
+  (m) => m[1] ?? '',
+)
+
+const HUE_ROLES = {
+  P1: ['priority-urgent', 'priority-urgent-foreground'],
+  P2: ['priority-high', 'priority-high-foreground'],
+  P3: ['priority-normal', 'priority-normal-foreground'],
+  overdue: ['alert-error', 'alert-error-foreground'],
+  destructive: ['destructive'],
+  'due today': DUE_TODAY,
+  'DOING / in progress': ['status-active', 'status-active-foreground'],
+  'focus ring': ['ring'],
+  // Month's today disc (`MonthlyDayCell`) and the date picker's outline are ink.
+  today: ['foreground'],
+  brand: ['brand'],
+} as const satisfies Record<string, readonly string[]>
+
+type HueRole = keyof typeof HUE_ROLES
+
+const HUE_PAIRS: ReadonlyArray<readonly [HueRole, HueRole]> = [
+  ['P1', 'overdue'],
+  ['P1', 'destructive'],
+  ['P2', 'due today'],
+  ['P3', 'DOING / in progress'],
+  ['P3', 'focus ring'],
+  ['today', 'brand'],
+  ['today', 'destructive'],
+]
+
+function signature(theme: Theme, highContrast: boolean, role: HueRole): Oklch {
+  const colors = HUE_ROLES[role].map((token) => resolveToken(theme, highContrast, token))
+  return colors.reduce((a, b) => (b[1] > a[1] ? b : a))
+}
+
+function hueGap(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360
+  return Math.min(d, 360 - d)
+}
+
+const ROLE_CASES = [false, true].flatMap((highContrast) =>
+  THEMES.flatMap((theme) =>
+    HUE_PAIRS.map(([a, b]) => ({
+      a,
+      b,
+      theme,
+      highContrast,
+      label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+    })),
+  ),
+)
+
+const LIGHTNESS_CASES = [false, true].flatMap((highContrast) =>
+  THEMES.map((theme) => ({
+    theme,
+    highContrast,
+    label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+  })),
+)
+
+describe('colour roles stay distinguishable in every theme (#7040)', () => {
+  it('reads the due-today tokens from dueDateColor', () => {
+    expect(DUE_TODAY).toHaveLength(2)
+  })
+
+  it.each(ROLE_CASES)('$label — $a vs $b', ({ a, b, theme, highContrast }) => {
+    const [, chromaA, hueA] = signature(theme, highContrast, a)
+    const [, chromaB, hueB] = signature(theme, highContrast, b)
+    const huedA = chromaA > NO_HUE
+    const huedB = chromaB > NO_HUE
+    // Two neutrals have nothing to tell them apart by colour.
+    expect(huedA || huedB, 'one of them carries a hue').toBe(true)
+    if (huedA && huedB) expect(hueGap(hueA, hueB)).toBeGreaterThanOrEqual(MIN_HUE_GAP)
+  })
+
+  it.each(LIGHTNESS_CASES)(
+    '$label — brand vs destructive by lightness',
+    ({ theme, highContrast }) => {
+      const [brand] = resolveToken(theme, highContrast, 'brand')
+      const [destructive] = resolveToken(theme, highContrast, 'destructive')
+      expect(Math.abs(brand - destructive)).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP - 1e-9)
+    },
+  )
+
+  it('Dark — a popover sits above the card it opens over', () => {
+    const dark = THEMES[1]
+    const [popover] = resolveToken(dark, false, 'popover')
+    const [card] = resolveToken(dark, false, 'card')
+    expect(popover - card).toBeGreaterThanOrEqual(MIN_SURFACE_STEP)
   })
 })
 

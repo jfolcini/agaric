@@ -244,7 +244,7 @@ describe('dueDateColor', () => {
   it('returns amber classes for today', () => {
     const now = new Date()
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    expect(dueDateColor(today)).toContain('text-status-pending-foreground')
+    expect(dueDateColor(today)).toContain('text-date-due-foreground')
   })
 
   it('returns neutral classes for future dates', () => {

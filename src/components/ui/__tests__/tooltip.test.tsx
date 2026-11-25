@@ -96,10 +96,10 @@ describe('TooltipContent', () => {
     expect(content).toBeInTheDocument()
   })
 
-  // Tooltips are transient labels, not mini-popovers: inverted surface in light
-  // themes, the lifted popover in dark ones; the arrow must take the same fill
+  // Tooltips are transient labels, not mini-popovers: an inverted surface in
+  // every theme, dark ones included (#7040); the arrow must take the same fill
   // or it reads as a stray wedge.
-  it('renders an inverted surface with a matching arrow, popover in dark', () => {
+  it('renders an inverted surface with a matching arrow in every theme', () => {
     const { baseElement } = render(
       <TooltipProvider delayDuration={0}>
         <Tooltip open>
@@ -113,16 +113,12 @@ describe('TooltipContent', () => {
     expect(content.classList.contains('bg-foreground')).toBe(true)
     expect(content.classList.contains('text-background')).toBe(true)
     expect(content.classList.contains('border-transparent')).toBe(true)
-    expect(content.classList.contains('bg-popover')).toBe(false)
-    expect(content.classList.contains('dark:bg-popover')).toBe(true)
-    expect(content.classList.contains('dark:text-popover-foreground')).toBe(true)
+    expect(content.className).not.toContain('popover')
 
     const arrow = q(content as HTMLElement, 'svg')
     expect(arrow.classList.contains('bg-foreground')).toBe(true)
     expect(arrow.classList.contains('fill-foreground')).toBe(true)
-    expect(arrow.classList.contains('bg-popover')).toBe(false)
-    expect(arrow.classList.contains('fill-popover')).toBe(false)
-    expect(arrow.classList.contains('dark:fill-popover')).toBe(true)
+    expect(arrow.getAttribute('class')).not.toContain('popover')
   })
 
   it('has no a11y violations', async () => {

@@ -88,6 +88,41 @@ test.describe('In-page find (Ctrl+F) @pages @search', () => {
     await expect.poll(() => highlightSize(page, 'find-match-current')).toBe(1)
   })
 
+  test('matches paint the search match’s yellow pair and the current match that pair inverted', async ({
+    page,
+  }) => {
+    await openFind(page)
+    await page.getByTestId('in-page-find-input').fill('block')
+    await expect.poll(() => highlightSize(page, 'find-match-current')).toBe(1)
+
+    // Not the hover fill, which a hovered row hid, nor the primary, a white slab in dark (#7040).
+    const paint = await page.evaluate(() => {
+      const highlights = (window.CSS as unknown as { highlights?: Map<string, Iterable<Range>> })
+        .highlights
+      const fill = (name: string) => {
+        const [range] = [...(highlights?.get(name) ?? [])]
+        const el = range?.startContainer.parentElement
+        return el ? getComputedStyle(el, `::highlight(${name})`).backgroundColor : null
+      }
+      const token = (name: string) => {
+        const probe = document.createElement('span')
+        probe.style.backgroundColor = `var(${name})`
+        document.body.append(probe)
+        const color = getComputedStyle(probe).backgroundColor
+        probe.remove()
+        return color
+      }
+      return {
+        match: fill('find-match'),
+        current: fill('find-match-current'),
+        pair: token('--status-pending'),
+        pairText: token('--status-pending-foreground'),
+      }
+    })
+    expect(paint.match).toBe(paint.pair)
+    expect(paint.current).toBe(paint.pairText)
+  })
+
   test('next/previous navigation moves the active match and wraps', async ({ page }) => {
     await openFind(page)
     const input = page.getByTestId('in-page-find-input')

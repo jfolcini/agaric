@@ -1113,7 +1113,7 @@ describe('mutation coverage: groupByPriority routing and className', () => {
     expect(p1?.blocks.map((b) => b.id)).toEqual(['valid'])
   })
 
-  it('assigns the destructive/pending/active classes by level index, and muted for No priority', () => {
+  it('leaves the level headers ink, and mutes No priority', () => {
     const blocks = [
       makeBlock({ id: 'p1', priority: '1' }),
       makeBlock({ id: 'p2', priority: '2' }),
@@ -1122,9 +1122,9 @@ describe('mutation coverage: groupByPriority routing and className', () => {
     ]
     const groups = groupByPriority(blocks)
     expect(groups.map((g) => g.className)).toEqual([
-      'text-destructive',
-      'text-status-pending-foreground',
-      'text-status-active-foreground',
+      undefined,
+      undefined,
+      undefined,
       'text-muted-foreground',
     ])
   })
@@ -1690,19 +1690,6 @@ describe('mutation coverage: formatGroupDate malformed input fallback', () => {
  *      `groupLabel(lv) for lv of levels` plus `NO_PRIORITY`, and
  *      `TASK_STATE_SORT_ORDER` (which covers every `TodoState` `isTodoState`
  *      admits) plus `NO_STATE`. `Map.get` therefore never returns undefined.
- *
- * 355:66 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — the `?? ''` in
- *      `classForLevel`)
- *      Unreachable, hence uncovered: the one call site passes
- *      `label.replace(/^P/, '')` where `label` is `` `P${lv}` `` for an
- *      `lv` from `levels`, so `idx >= 0` and the clamped index is always in
- *      range. Kept for `noUncheckedIndexedAccess` (#3790 finding 1).
- *
- * 362:85 [Regex] "/P/"  (`label.replace(/^P/, '')`)
- *      Dropping the anchor cannot change the result: the ternary one line up
- *      routes `NO_PRIORITY` elsewhere, so every label reaching this branch is
- *      `` `P${lv}` `` and its first `P` IS at index 0 — which is the only
- *      occurrence a non-global `replace` touches.
  *
  * 542:9  [ConditionalExpression] "true" (×2 — whole condition and the
  *        `titleA !== null` operand)

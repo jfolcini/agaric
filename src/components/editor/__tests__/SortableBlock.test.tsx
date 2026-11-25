@@ -2504,8 +2504,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-status-pending')
-    expect(chip?.className).toContain('text-status-pending-foreground')
+    expect(chip?.className).toContain('bg-date-due')
+    expect(chip?.className).toContain('text-date-due-foreground')
   })
 
   it('renders all three indicators simultaneously', () => {

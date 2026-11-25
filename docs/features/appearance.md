@@ -47,7 +47,7 @@ Colour:
 - `--muted`, `--muted-foreground`: quiet surfaces and secondary text
 - `--accent`, `--accent-foreground`: hovered and selected rows
 - `--destructive`, `--destructive-foreground`: delete and error
-- `--brand`, `--brand-foreground`: the logo red on the journal's today marks and the capture button
+- `--brand`, `--brand-foreground`: the logo red on the capture button and the graph's current page
 - `--border`, `--input`, `--ring`: borders, input borders, focus rings
 - `--sidebar`, `--sidebar-foreground`, `--sidebar-border`, `--sidebar-accent`, `--sidebar-accent-foreground`: the sidebar
 

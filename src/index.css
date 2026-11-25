@@ -27,8 +27,9 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  /* The logo red. Only the journal "today" marks and the quick-capture FAB
-   * wear it (#5332); everything else is ink, so the red stays a signature. */
+  /* The logo red. Only the quick-capture FAB and the graph's current page wear
+   * it (#5332, #7040); everything else, today included, is ink, so the red
+   * stays a signature. */
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-border: var(--border);
@@ -191,9 +192,10 @@
    * and selected toggle read as an error (#5332). */
   --accent: oklch(0.93 0.008 70);
   --accent-foreground: oklch(0.2 0.01 70);
-  /* Crimson, darker than the brand red so it is unmistakably a warning:
-   * 6.5:1 as text on --background, 6.4:1 under --destructive-foreground. */
-  --destructive: oklch(0.5 0.19 22);
+  /* Crimson, a lightness step darker than the brand red so the capture button
+   * never reads as a delete (#7040): 8.6:1 as text on --background, 8.5:1
+   * under --destructive-foreground. */
+  --destructive: oklch(0.43 0.17 22);
   --destructive-foreground: oklch(0.985 0.004 70);
   --brand: oklch(0.52 0.19 28.7);
   --brand-foreground: oklch(0.985 0.004 70);
@@ -202,18 +204,18 @@
   /* Blue, not the brand red, so focus and selection never read as an error.
    * Painted opaque: 4.2:1 on --background. */
   --ring: oklch(0.58 0.17 255);
-  /* Ink, the parent's own color: red is the today marks and blue is focus
+  /* Ink, the parent's own color: red is the capture button and blue is focus
    * (#5332), so only the alternate themes give icons a palette color. */
   --icon: currentColor;
   /* Graph view, inherited by every theme (#5428, #5429). Nodes are a mid tone
    * apart from the text, 3.5:1 or more on each theme's --background; edges are
    * that tone drawn at 0.2–0.45 opacity, so they recede; the current page is
-   * red like the today marks, and the focus ring stays blue. */
+   * red like the capture button, and the focus ring stays blue. */
   --graph-node: oklch(0.6 0.01 70);
   --graph-edge: var(--graph-node);
   --graph-accent: var(--brand);
   /* The selected tab's 2 px bar, shared by every tab strip: ink, not the
-   * today red or the focus blue, and 3:1 or more on each theme's --background. */
+   * brand red or the focus blue, and 3:1 or more on each theme's --background. */
   --tab-indicator: var(--primary);
   --radius: 0.5rem;
   --sidebar: oklch(0.975 0.005 70);
@@ -233,13 +235,15 @@
   --conflict-text-foreground: oklch(0.45 0.1 70);
   --conflict-move: oklch(0.93 0.05 310);
   --conflict-move-foreground: oklch(0.35 0.1 310);
-  /* Soft chips with dark text: white on the solid P1 / P3 chips was 3.7:1. */
-  --priority-urgent: oklch(0.94 0.05 25);
-  --priority-urgent-foreground: oklch(0.45 0.18 25);
-  --priority-high: oklch(0.95 0.08 90);
-  --priority-high-foreground: oklch(0.42 0.1 70);
-  --priority-normal: oklch(0.94 0.04 265);
-  --priority-normal-foreground: oklch(0.45 0.18 265);
+  /* Priority is an ink scale (#7040): solid P1, tinted P2, neutral P3, so no
+   * level shares a hue with overdue and destructive (red), due today (amber),
+   * in progress and focus (blue). Each theme sets its own P2 tint. */
+  --priority-urgent: var(--foreground);
+  --priority-urgent-foreground: var(--background);
+  --priority-high: oklch(0.88 0.01 70);
+  --priority-high-foreground: var(--foreground);
+  --priority-normal: var(--secondary);
+  --priority-normal-foreground: var(--secondary-foreground);
   /* #929 — paired foreground for the DONE checkbox glyph (was a hardcoded
      text-white). White reads on the light themes' darker green; the dark
      themes lift --task-done, so `.dark` gives them a dark glyph (#6528). */
@@ -253,9 +257,10 @@
   --op-move-foreground: oklch(0.5 0.17 303);
   --op-tag: oklch(0.97 0.02 85);
   --op-tag-foreground: oklch(0.55 0.16 55);
-  /* Date source colors */
+  /* Date source colors. The due amber is also what `dueDateColor` gives a date
+   * due today, apart from the overdue red and the yellow search match (#7040). */
   --date-due: oklch(0.95 0.04 75);
-  --date-due-foreground: oklch(0.48 0.14 46);
+  --date-due-foreground: oklch(0.47 0.1 62);
   --date-scheduled: oklch(0.96 0.04 157);
   --date-scheduled-foreground: oklch(0.39 0.12 153);
   --date-property: oklch(0.95 0.03 307);
@@ -283,8 +288,8 @@
   --task-custom: oklch(0.67 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
-  /* Black, the colour `<mark>` took from the browser before it had a token; the
-   * dark themes keep --highlight light enough to carry it (#6528). */
+  /* Black, the colour `<mark>` took from the browser before it had a token. The
+   * dark themes draw a dark wash under light text instead (#7040). */
   --highlight-foreground: oklch(0 0 0);
   /* Highlight colours (#6759), Obsidian's six; each on black, as --highlight is. */
   --highlight-red: oklch(0.89 0.08 25);
@@ -373,12 +378,13 @@
    * neutral ground as light (#5332). */
   --background: oklch(0.19 0.005 70);
   --foreground: oklch(0.955 0.004 70);
-  /* #1097: lift card/popover one tonal step above --background so floating
+  /* #1097: lift card/popover tonal steps above --background so floating
    * surfaces read as elevated on a dark ground (where shadow alone is weak).
-   * Sits between --background (L 0.19) and --muted (L 0.3). */
+   * The popover sits a step above the card it opens over (#7040); both stay
+   * below --muted (L 0.3). */
   --card: oklch(0.235 0.006 70);
   --card-foreground: oklch(0.955 0.004 70);
-  --popover: oklch(0.235 0.006 70);
+  --popover: oklch(0.27 0.006 70);
   --popover-foreground: oklch(0.955 0.004 70);
   /* Ink inverts: light controls with near-black labels, held below the text's
    * near-white so a filled button is not the brightest thing on screen. 11.8:1. */
@@ -391,9 +397,9 @@
   --muted-foreground: oklch(0.72 0.012 70);
   --accent: oklch(0.32 0.008 70);
   --accent-foreground: oklch(0.955 0.004 70);
-  /* Crimson lifted for the dark ground (5.9:1 as text on --background), so
-   * its label is dark too: a near-white one would sit at 2.8:1. */
-  --destructive: oklch(0.68 0.19 22);
+  /* Crimson lifted a lightness step above the brand red (#7040), 8.1:1 as
+   * text on --background, so its label is dark too. */
+  --destructive: oklch(0.76 0.14 22);
   --destructive-foreground: oklch(0.17 0.03 22);
   --brand: oklch(0.68 0.18 28.7);
   --brand-foreground: oklch(0.17 0.02 28.7);
@@ -425,20 +431,16 @@
   --conflict-text-foreground: oklch(0.82 0.08 80);
   --conflict-move: oklch(0.25 0.04 310);
   --conflict-move-foreground: oklch(0.8 0.06 310);
-  --priority-urgent: oklch(0.3 0.08 25);
-  --priority-urgent-foreground: oklch(0.85 0.1 25);
-  --priority-high: oklch(0.3 0.06 85);
-  --priority-high-foreground: oklch(0.88 0.12 90);
-  --priority-normal: oklch(0.3 0.07 265);
-  --priority-normal-foreground: oklch(0.85 0.09 265);
-  /* Operation type colors */
-  --op-create: oklch(0.19 0.02 163);
+  --priority-high: oklch(0.4 0.008 70);
+  /* Operation type colors: lifted off --background, or the badge is a hole in
+   * its row (#7040). */
+  --op-create: oklch(0.26 0.04 163);
   --op-create-foreground: oklch(0.77 0.18 163);
-  --op-edit: oklch(0.19 0.02 260);
+  --op-edit: oklch(0.26 0.04 260);
   --op-edit-foreground: oklch(0.71 0.17 255);
-  --op-move: oklch(0.19 0.03 304);
+  --op-move: oklch(0.26 0.04 304);
   --op-move-foreground: oklch(0.71 0.17 302);
-  --op-tag: oklch(0.19 0.02 85);
+  --op-tag: oklch(0.26 0.04 85);
   --op-tag-foreground: oklch(0.83 0.19 84);
   /* Date source colors */
   --date-due: oklch(0.22 0.04 55);
@@ -447,19 +449,20 @@
   --date-scheduled-foreground: oklch(0.82 0.15 156);
   --date-property: oklch(0.22 0.04 305);
   --date-property-foreground: oklch(0.8 0.11 304);
-  /* Notification/alert colors */
-  --alert-info: oklch(0.28 0.09 268);
+  /* Notification/alert colors: every border at one lightness and chroma, in
+   * gamut, and quiet fills, so a success toast is no louder than an error (#7040). */
+  --alert-info: oklch(0.28 0.04 268);
   --alert-info-foreground: oklch(0.88 0.06 254);
-  --alert-info-border: oklch(0.42 0.2 266);
-  --alert-warning: oklch(0.32 0.06 58);
+  --alert-info-border: oklch(0.5 0.11 266);
+  --alert-warning: oklch(0.32 0.04 58);
   --alert-warning-foreground: oklch(0.95 0.13 102);
-  --alert-warning-border: oklch(0.55 0.14 66);
-  --alert-tip: oklch(0.28 0.07 152);
+  --alert-warning-border: oklch(0.5 0.11 66);
+  --alert-tip: oklch(0.28 0.04 152);
   --alert-tip-foreground: oklch(0.88 0.08 142);
-  --alert-tip-border: oklch(0.42 0.17 152);
-  --alert-error: oklch(0.28 0.07 25);
+  --alert-tip-border: oklch(0.5 0.11 152);
+  --alert-error: oklch(0.28 0.04 25);
   --alert-error-foreground: oklch(0.88 0.08 25);
-  --alert-error-border: oklch(0.45 0.2 25);
+  --alert-error-border: oklch(0.5 0.11 25);
   --alert-note: oklch(0.25 0 0);
   --alert-note-foreground: oklch(0.85 0 0);
   --alert-note-border: oklch(0.45 0 0);
@@ -470,14 +473,24 @@
   --task-doing: oklch(0.7 0.18 260);
   --task-cancelled: oklch(0.55 0.012 70);
   --task-custom: oklch(0.7 0.18 53);
-  /* Highlight/search */
-  --highlight: oklch(0.57 0.14 66);
-  --highlight-red: oklch(0.64 0.15 25);
-  --highlight-orange: oklch(0.66 0.14 60);
-  --highlight-yellow: oklch(0.7 0.13 95);
-  --highlight-green: oklch(0.64 0.13 145);
-  --highlight-blue: oklch(0.64 0.12 245);
-  --highlight-purple: oklch(0.64 0.14 305);
+  /* Highlight/search: a dark wash under light text, not a bright sticker under
+   * black (#7040). Inherited by every dark theme; the text is Dark's near-white,
+   * not each theme's --foreground, which in Solarized Dark and One Dark Pro is
+   * too dim for the wash. */
+  --highlight: oklch(0.42 0.08 95);
+  --highlight-foreground: oklch(0.955 0.004 70);
+  --highlight-red: oklch(0.42 0.08 25);
+  --highlight-orange: oklch(0.42 0.08 60);
+  --highlight-yellow: oklch(0.42 0.08 95);
+  --highlight-green: oklch(0.42 0.08 145);
+  --highlight-blue: oklch(0.42 0.08 245);
+  --highlight-purple: oklch(0.42 0.08 305);
+  --highlight-red-foreground: oklch(0.955 0.004 70);
+  --highlight-orange-foreground: oklch(0.955 0.004 70);
+  --highlight-yellow-foreground: oklch(0.955 0.004 70);
+  --highlight-green-foreground: oklch(0.955 0.004 70);
+  --highlight-blue-foreground: oklch(0.955 0.004 70);
+  --highlight-purple-foreground: oklch(0.955 0.004 70);
   /* Block reference chip */
   --block-ref: oklch(0.3 0.06 293);
   --block-ref-foreground: oklch(0.78 0.14 293);
@@ -505,15 +518,17 @@
   /* Elevation tier values (#1098) — dark theme. A 10%-black shadow vanishes
    * on a near-black ground, so dark tiers run much denser, and the floating
    * and overlay tiers add a 1px inset top highlight: the lit edge is what
-   * reads as "raised" once the shadow itself has nothing to darken. The
-   * other dark themes inherit these through `.dark`. */
+   * reads as "raised" once the shadow itself has nothing to darken. They also
+   * ring the surface in a light edge, since its --border hairline is no
+   * lighter than the surface (#7040). The other dark themes inherit these
+   * through `.dark`. */
   --elevation-resting: 0 1px 2px 0 rgb(0 0 0 / 0.35);
   --elevation-floating:
-    inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 2px 4px -2px rgb(0 0 0 / 0.4),
-    0 12px 24px -6px rgb(0 0 0 / 0.5);
+    inset 0 1px 0 0 rgb(255 255 255 / 0.08), 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 2px 4px -2px rgb(0 0 0 / 0.4), 0 12px 24px -6px rgb(0 0 0 / 0.5);
   --elevation-overlay:
-    inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 8px 16px -8px rgb(0 0 0 / 0.5),
-    0 32px 64px -16px rgb(0 0 0 / 0.7);
+    inset 0 1px 0 0 rgb(255 255 255 / 0.1), 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 8px 16px -8px rgb(0 0 0 / 0.5), 0 32px 64px -16px rgb(0 0 0 / 0.7);
 }
 
 /* ── Solarized Light theme ────────────────────────────────── */
@@ -540,7 +555,8 @@
   --muted-foreground: oklch(0.5 0.02 210);
   --accent: oklch(0.93 0.04 235); /* base2 tinted blue */
   --accent-foreground: oklch(0.45 0.13 235);
-  --destructive: oklch(0.52 0.2 30); /* red, darkened so its light label clears AA */
+  /* Red, a lightness step below the inherited brand red (#7040). */
+  --destructive: oklch(0.44 0.17 30);
   --destructive-foreground: oklch(0.97 0.02 85);
   --border: oklch(0.9 0.03 85);
   --input: oklch(0.93 0.03 85);
@@ -564,12 +580,7 @@
   --conflict-text-foreground: oklch(0.5 0.18 40);
   --conflict-move: oklch(0.9 0.06 295);
   --conflict-move-foreground: oklch(0.44 0.14 285);
-  --priority-urgent: oklch(0.92 0.06 30);
-  --priority-urgent-foreground: oklch(0.48 0.19 30);
-  --priority-high: oklch(0.93 0.08 85);
-  --priority-high-foreground: oklch(0.45 0.11 75);
-  --priority-normal: oklch(0.92 0.05 235);
-  --priority-normal-foreground: oklch(0.45 0.13 235);
+  --priority-high: oklch(0.87 0.035 85);
   /* Operation type colors */
   --op-create: oklch(0.93 0.05 155);
   --op-create-foreground: oklch(0.45 0.14 135);
@@ -580,8 +591,8 @@
   --op-tag: oklch(0.93 0.07 85);
   --op-tag-foreground: oklch(0.5 0.14 80);
   /* Date source colors */
-  --date-due: oklch(0.93 0.08 55);
-  --date-due-foreground: oklch(0.52 0.18 40);
+  --date-due: oklch(0.93 0.06 80);
+  --date-due-foreground: oklch(0.5 0.1 75);
   --date-scheduled: oklch(0.92 0.07 155);
   --date-scheduled-foreground: oklch(0.48 0.14 135);
   --date-property: oklch(0.92 0.06 295);
@@ -647,8 +658,8 @@
   --muted-foreground: oklch(0.69 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
-  /* Light enough to clear 4.5:1 as text on the lifted --card (#6528). */
-  --destructive: oklch(0.67 0.19 30);
+  /* A lightness step above the inherited brand red (#7040). */
+  --destructive: oklch(0.76 0.14 30);
   /* Dark label: Button/Badge paint the fill opaque, and a light label on
      this red was 3.3:1. */
   --destructive-foreground: oklch(0.18 0.04 210);
@@ -672,12 +683,9 @@
   --conflict-text-foreground: oklch(0.78 0.14 55);
   --conflict-move: oklch(0.3 0.06 295);
   --conflict-move-foreground: oklch(0.76 0.14 285);
-  --priority-urgent: oklch(0.3 0.08 30);
-  --priority-urgent-foreground: oklch(0.82 0.12 30);
-  --priority-high: oklch(0.3 0.06 85);
-  --priority-high-foreground: oklch(0.84 0.13 85);
-  --priority-normal: oklch(0.3 0.06 235);
-  --priority-normal-foreground: oklch(0.8 0.11 235);
+  --priority-high: oklch(0.4 0.04 210);
+  /* base1 is too dim for the tint. */
+  --priority-high-foreground: oklch(0.85 0.01 195);
   /* Operation type colors */
   --op-create: oklch(0.28 0.05 135);
   --op-create-foreground: oklch(0.78 0.14 135);
@@ -688,8 +696,8 @@
   --op-tag: oklch(0.3 0.06 85);
   --op-tag-foreground: oklch(0.82 0.14 85);
   /* Date source colors */
-  --date-due: oklch(0.3 0.07 55);
-  --date-due-foreground: oklch(0.78 0.14 55);
+  --date-due: oklch(0.3 0.06 72);
+  --date-due-foreground: oklch(0.78 0.13 72);
   --date-scheduled: oklch(0.28 0.06 135);
   --date-scheduled-foreground: oklch(0.78 0.14 135);
   --date-property: oklch(0.28 0.06 295);
@@ -715,8 +723,6 @@
   --task-doing: oklch(0.65 0.13 235);
   --task-cancelled: oklch(0.55 0.02 200);
   --task-custom: oklch(0.65 0.19 40);
-  /* Highlight/search */
-  --highlight: oklch(0.57 0.14 85);
   /* Block reference chip */
   --block-ref: oklch(0.32 0.06 295);
   --block-ref-foreground: oklch(0.76 0.14 285);
@@ -790,12 +796,7 @@
   --conflict-text-foreground: oklch(0.82 0.12 70);
   --conflict-move: oklch(0.35 0.08 335);
   --conflict-move-foreground: oklch(0.82 0.18 335);
-  --priority-urgent: oklch(0.36 0.09 25);
-  --priority-urgent-foreground: oklch(0.86 0.12 25);
-  --priority-high: oklch(0.36 0.07 70);
-  --priority-high-foreground: oklch(0.88 0.11 70);
-  --priority-normal: oklch(0.36 0.08 295);
-  --priority-normal-foreground: oklch(0.85 0.11 295);
+  --priority-high: oklch(0.46 0.03 275);
   /* Operation type colors */
   --op-create: oklch(0.32 0.08 145);
   --op-create-foreground: oklch(0.87 0.23 145);
@@ -833,8 +834,6 @@
   --task-doing: oklch(0.72 0.18 295);
   --task-cancelled: oklch(0.52 0.09 275);
   --task-custom: oklch(0.82 0.12 70);
-  /* Highlight/search */
-  --highlight: oklch(0.6 0.16 110);
   /* Block reference chip */
   --block-ref: oklch(0.37 0.08 335);
   --block-ref-foreground: oklch(0.82 0.18 335);
@@ -873,8 +872,8 @@
   --muted-foreground: oklch(0.73 0.02 260);
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
-  /* Red, light enough to clear 4.5:1 as text on the lifted --card (#6528). */
-  --destructive: oklch(0.72 0.16 25);
+  /* Red, a lightness step above the inherited brand red (#7040). */
+  --destructive: oklch(0.76 0.14 22);
   --destructive-foreground: oklch(0.29 0.02 260);
   --border: oklch(0.35 0.02 260);
   --input: oklch(0.35 0.02 260);
@@ -896,12 +895,9 @@
   --conflict-text-foreground: oklch(0.72 0.11 60);
   --conflict-move: oklch(0.33 0.07 300);
   --conflict-move-foreground: oklch(0.71 0.17 300);
-  --priority-urgent: oklch(0.35 0.07 25);
-  --priority-urgent-foreground: oklch(0.82 0.11 25);
-  --priority-high: oklch(0.35 0.06 80);
-  --priority-high-foreground: oklch(0.85 0.11 80);
-  --priority-normal: oklch(0.35 0.06 235);
-  --priority-normal-foreground: oklch(0.82 0.1 235);
+  --priority-high: oklch(0.45 0.02 260);
+  /* The theme's text is too dim for the tint. */
+  --priority-high-foreground: oklch(0.88 0.02 255);
   /* Operation type colors */
   --op-create: oklch(0.32 0.05 135);
   --op-create-foreground: oklch(0.77 0.13 135);
@@ -939,8 +935,6 @@
   --task-doing: oklch(0.73 0.13 235);
   --task-cancelled: oklch(0.52 0.02 260);
   --task-custom: oklch(0.72 0.11 60);
-  /* Highlight/search */
-  --highlight: oklch(0.58 0.13 80);
   /* Block reference chip */
   --block-ref: oklch(0.35 0.07 300);
   --block-ref-foreground: oklch(0.73 0.17 300);
@@ -1437,7 +1431,8 @@
    muted and smaller than block mode's: text, not pills. Muted by the token, as
    a closed task is; the priority and an overdue or today date keep their colour
    (`dueDateColor` gives a later date `bg-secondary`). The badge keeps its line
-   box, which the empty row's height below counts on. */
+   box, which the empty row's height below counts on. A solid P1 keeps its fill:
+   its label is the page colour. */
 .page-mode-editor .page-block-metadata {
   @apply select-none;
 }
@@ -1455,6 +1450,9 @@
   .page-block-metadata
   :is(.due-date-chip.bg-secondary, .scheduled-chip, .repeat-indicator) {
   @apply text-muted-foreground;
+}
+.page-mode-editor .page-block-metadata .priority-badge > .bg-priority-urgent {
+  @apply bg-priority-urgent px-1;
 }
 /* Its property chips, attachment badge and reference count show on the block the pointer, the
    caret or the focus is in, as the chevron does (`COLLAPSE_TOGGLE_HIDDEN_AT_REST`):
@@ -2320,11 +2318,11 @@ mark[data-highlight-color='purple'] {
 
   /* Token-coverage gap. Until this block landed, the
    * `prefers-contrast: more` query only re-keyed the per-space accent
-   * palette; the StatusBadge / PriorityBadge / scheduled+repeat
-   * indicator chips kept their normal-contrast values. The result was
-   * that users in high-contrast mode saw boosted accents but the same
-   * washed-out status / priority / indicator surfaces as everyone
-   * else. Boost chroma and push lightness toward the extremes (darker
+   * palette; the StatusBadge / scheduled+repeat indicator chips kept
+   * their normal-contrast values. The result was that users in
+   * high-contrast mode saw boosted accents but the same washed-out
+   * status / indicator surfaces as everyone else. (Priority needs no
+   * override: its scale is ink, #7040.) Boost chroma and push lightness toward the extremes (darker
    * fg / lighter bg in light mode, lighter fg / brighter bg in dark
    * mode) — same `oklch()` recipe as the accent block above, hue
    * preserved so the semantic mapping (green = done, blue = active,
@@ -2344,13 +2342,6 @@ mark[data-highlight-color='purple'] {
     --indicator-scheduled-foreground: oklch(0.36 0.24 303);
     --indicator-repeat: oklch(0.88 0.08 272);
     --indicator-repeat-foreground: oklch(0.34 0.3 277);
-
-    --priority-urgent: oklch(0.9 0.08 25);
-    --priority-urgent-foreground: oklch(0.35 0.2 25);
-    --priority-high: oklch(0.92 0.12 90);
-    --priority-high-foreground: oklch(0.33 0.1 70);
-    --priority-normal: oklch(0.9 0.07 265);
-    --priority-normal-foreground: oklch(0.35 0.22 265);
   }
 
   /* Dark theme — push backgrounds slightly brighter (away from the
@@ -2367,13 +2358,6 @@ mark[data-highlight-color='purple'] {
     --indicator-scheduled-foreground: oklch(0.85 0.24 302);
     --indicator-repeat: oklch(0.3 0.08 279);
     --indicator-repeat-foreground: oklch(0.82 0.26 274);
-
-    --priority-urgent: oklch(0.34 0.12 25);
-    --priority-urgent-foreground: oklch(0.94 0.07 25);
-    --priority-high: oklch(0.34 0.1 90);
-    --priority-high-foreground: oklch(0.95 0.1 95);
-    --priority-normal: oklch(0.34 0.12 265);
-    --priority-normal-foreground: oklch(0.93 0.07 265);
   }
 
   /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that
@@ -2512,9 +2496,8 @@ mark[data-highlight-color='purple'] {
     --task-cancelled: oklch(0.75 0.04 260);
     --task-custom: oklch(0.82 0.22 53);
 
-    /* Search highlight — saturate the marker so it reads as a band
-     * rather than a tint against the dark surface. */
-    --highlight: oklch(0.7 0.22 66);
+    /* Search highlight — a deeper wash under the light text. */
+    --highlight: oklch(0.36 0.075 95);
 
     /* Block-reference chip. */
     --block-ref: oklch(0.36 0.12 293);

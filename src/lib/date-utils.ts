@@ -264,16 +264,16 @@ export function getCalendarMonthRange(date: Date): { startDate: string; endDate:
 /**
  * Color classes for a YYYY-MM-DD due-date string.
  *
- * Past → alert-error (overdue), today → status-pending (warning),
- * future → neutral, like the scheduled chip: only overdue and today carry a
- * hue. `secondary`, not `muted`: muted text on `--muted` is under 4.5:1.
+ * Past → alert-error (overdue), today → the due-date amber, apart from the
+ * ink P2 chip beside it (#7040), future → neutral, like the scheduled chip:
+ * only overdue and today carry a hue. `secondary`, not `muted`: muted text on `--muted` is under 4.5:1.
  * Used by the inline due-date chip in `BlockInlineControls` and the agenda
  * results list.
  */
 export function dueDateColor(dateStr: string): string {
   const todayStr = getTodayString()
   if (dateStr < todayStr) return 'bg-alert-error text-alert-error-foreground'
-  if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
+  if (dateStr === todayStr) return 'bg-date-due text-date-due-foreground'
   return 'bg-secondary text-secondary-foreground'
 }
 

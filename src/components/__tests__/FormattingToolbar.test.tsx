@@ -545,34 +545,35 @@ describe('FormattingToolbar', () => {
       expect(btn).toHaveAttribute('aria-pressed', 'false')
     })
 
-    it('shows "P1" with red dot for priority 1', () => {
+    it('shows "P1" with a solid ink dot for priority 1', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="1" />)
       const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P1')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-urgent-foreground')
+      expect(dot?.className).toContain('bg-priority-urgent')
+      expect(dot?.className).not.toContain('bg-priority-urgent/')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
 
-    it('shows "P2" with yellow dot for priority 2', () => {
+    it('shows "P2" with a half ink dot for priority 2', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="2" />)
       const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P2')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-high-foreground')
+      expect(dot?.className).toContain('bg-priority-urgent/50')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
     })
 
-    it('shows "P3" with blue dot for priority 3', () => {
+    it('shows "P3" with a faint ink dot for priority 3', () => {
       render(<FormattingToolbar editor={makeEditor()} currentPriority="3" />)
       const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toContain('P3')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-normal-foreground')
+      expect(dot?.className).toContain('bg-priority-urgent/20')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
     })
 

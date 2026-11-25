@@ -36,21 +36,22 @@ const HIGHLIGHT_CURRENT = 'find-match-current'
 /**
  * Styles for the two named highlights. Injected once at runtime (see the
  * module docstring for why these don't live in `src/index.css`). Every match
- * takes the neutral `--accent` pair, so it stays distinct from an amber user
- * highlight (`--highlight`) in the same text. The current-match
- * pseudo wins on overlap because it's registered after the all-matches
- * highlight and carries the heavier (underlined) style. `::highlight()`
+ * takes the search match's soft yellow pair (`--status-pending`, as Search's
+ * `.search-result-mark`), not the hover fill, and the current match the same
+ * pair inverted (#7040); neither is the user highlight (`--highlight`). The
+ * current-match pseudo wins on overlap because it's registered after the
+ * all-matches highlight and carries the heavier (underlined) style. `::highlight()`
  * paints over text without inserting boxes, so there's no reflow as the
  * match set changes while typing.
  */
 const HIGHLIGHT_STYLES = `
 ::highlight(${HIGHLIGHT_ALL}) {
-  background-color: var(--accent);
-  color: var(--accent-foreground);
+  background-color: var(--status-pending);
+  color: var(--status-pending-foreground);
 }
 ::highlight(${HIGHLIGHT_CURRENT}) {
-  background-color: var(--primary);
-  color: var(--primary-foreground);
+  background-color: var(--status-pending-foreground);
+  color: var(--status-pending);
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 2px;

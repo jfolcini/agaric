@@ -122,7 +122,7 @@ export function BlockDatePicker({
           className="p-0"
           classNames={{
             // Calmer "today" marker than the shared accent fill.
-            today: 'rounded-md font-semibold text-brand ring-1 ring-inset ring-brand/40',
+            today: 'rounded-md font-semibold ring-1 ring-inset ring-foreground',
           }}
         />
       </div>
