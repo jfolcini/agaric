@@ -167,3 +167,20 @@ It judges `position: absolute` children against their CSS containing block, not 
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts
 AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts
 ```
+
+## UI review tour
+
+`e2e/ui-review/` shoots every view, overlay and state on a phone (a Pixel 7 user agent) and a 1440 px desktop, in light and dark, for a person to judge (#7040). It asserts nothing, and neither this suite nor CI runs it: its `*.tour.ts` file and own config match no `testMatch` of theirs.
+
+```sh
+just ui-review                                   # shoot this checkout
+just ui-review --base origin/main                # shoot that ref too: what changed, side by side
+just ui-review --base origin/main -- --grep "phone light"   # after --: playwright test arguments
+just ui-review --report-only                     # rebuild the report from the last shots
+```
+
+`scripts/ui-review.mjs` builds each tree with the mock (`VITE_E2E=1`), the base in a temporary worktree that borrows this checkout's `node_modules`, serves each on a free port and tours both with this checkout's tour, so a screen the base lacks shows as new. `ui-review-out/report/index.html` holds every shot by profile, theme and scene: a changed one shows its before, after and a diff (the share of pixels that moved), and a failed one says why.
+
+- Add a screen with a `shot(name, open)` line in its scene in `ui-review.tour.ts`; `open` puts the app in the state to shoot. A new scene is an entry in `SCENES`, a device or window an entry in `PROFILES`. The data is the mock seed plus `seed.ts`.
+- A shot whose `open` throws leaves `<name>.failed.txt` and goes on, so a selector the app outgrew costs one shot, and the run lists it.
+- The clock is fixed (`NOW`), so one build shoots the same pixels twice; a toast's timing can still differ between runs.
