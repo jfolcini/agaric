@@ -221,6 +221,7 @@ runs:
         # only a new runner helps (job 135071285274: after an update that returned
         # 0, every universe package was "Unable to locate"). `indextargets` lists
         # only the indexes that are on disk.
+        # Twin in `.github/actions/playwright-setup` (its install-deps script): fix both.
         archive_indexed() {
           local component files f codename missing=0
           codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)"

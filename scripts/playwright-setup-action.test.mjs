@@ -123,16 +123,18 @@ function runScript({
   }
 }
 
-void test('packages that cannot resolve because apt holds no universe index is infra, exit 75', () => {
-  const run = runScript({
-    errors: MISSING_PACKAGE_ERRORS,
-    indexes: { main: ['noble_main_Packages'] },
+for (const error of MISSING_PACKAGE_ERRORS) {
+  void test(`"${error}" with no universe index is infra, exit 75`, () => {
+    const run = runScript({
+      errors: [error],
+      indexes: { main: ['noble_main_Packages'] },
+    })
+    assert.equal(run.status, 75, run.stdout + run.stderr)
+    assert.match(run.stdout, /AGARIC_APT_INFRA/)
+    assert.match(run.stdout, /universe: none/)
+    assert.equal(run.installs, 2)
   })
-  assert.equal(run.status, 75, run.stdout + run.stderr)
-  assert.match(run.stdout, /AGARIC_APT_INFRA/)
-  assert.match(run.stdout, /universe: none/)
-  assert.equal(run.installs, 2)
-})
+}
 
 void test('packages that cannot resolve against a full set of indexes fail with the plain exit 1', () => {
   const run = runScript({ errors: MISSING_PACKAGE_ERRORS })
