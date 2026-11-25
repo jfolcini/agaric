@@ -200,13 +200,11 @@ describe('DuePanelFilters', () => {
   })
 
   // Touch-target sizing — ToggleGroupItem owns the 44px coarse-pointer minimum.
-  it('source segments include a 44px min-height on coarse pointer', () => {
+  it('source segments take a 44 px hit area on a coarse pointer', () => {
     render(<DuePanelFilters {...defaultProps} />)
 
     for (const name of ['All', 'Due', 'Scheduled', 'Properties']) {
-      expect(screen.getByRole('radio', { name }).className).toContain(
-        '[@media(pointer:coarse)]:min-h-11',
-      )
+      expect(screen.getByRole('radio', { name }).className).toContain('touch-hit-area')
     }
   })
 

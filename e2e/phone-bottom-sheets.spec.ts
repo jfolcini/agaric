@@ -305,7 +305,9 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     const fab = await box(page.getByTestId('quick-capture-fab'))
     await expect.poll(async () => (await box(toast)).y).toBeGreaterThan(header.y + header.height)
     const t = await box(toast)
-    expect(t.y + t.height).toBeLessThanOrEqual(fab.y)
+    // Just above it, not floating halfway up the screen.
+    expect(fab.y - (t.y + t.height)).toBeGreaterThanOrEqual(0)
+    expect(fab.y - (t.y + t.height)).toBeLessThanOrEqual(12)
 
     // The 20 px close button answers a tap anywhere in a 44 px square around
     // it, as far as the screen edge it overhangs.

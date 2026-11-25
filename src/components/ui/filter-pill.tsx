@@ -59,7 +59,9 @@ export function FilterPill({
       <TruncatedText>{label}</TruncatedText>
       <button
         type="button"
-        className="ml-0.5 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
+        // `-mr-0.5` cancels its own padding: the glyph sits as far from the
+        // pill's edge as the label does, and the 44 px target is invisible.
+        className="-mr-0.5 inline-flex shrink-0 items-center justify-center rounded-sm p-0.5 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible touch-hit-area"
         onClick={onRemove}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -69,7 +71,7 @@ export function FilterPill({
         }}
         aria-label={removeAriaLabel}
       >
-        <X className="h-3 w-3 [@media(pointer:coarse)]:size-5" />
+        <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
       </button>
     </Badge>
   )

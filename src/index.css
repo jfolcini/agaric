@@ -380,8 +380,9 @@
   --card-foreground: oklch(0.955 0.004 70);
   --popover: oklch(0.235 0.006 70);
   --popover-foreground: oklch(0.955 0.004 70);
-  /* Ink inverts: near-white controls with near-black labels. 14.7:1. */
-  --primary: oklch(0.93 0.005 70);
+  /* Ink inverts: light controls with near-black labels, held below the text's
+   * near-white so a filled button is not the brightest thing on screen. 11.8:1. */
+  --primary: oklch(0.86 0.008 70);
   --primary-foreground: oklch(0.2 0.006 70);
   --secondary: oklch(0.3 0.007 70);
   --secondary-foreground: oklch(0.955 0.004 70);
@@ -1035,13 +1036,13 @@
   :root {
     --block-tree-task-shift: 0px;
   }
-}
-/* In block mode a coarse pointer's checkbox is a 44 px box, taller than the
- * first line's slot (`min-h-block-line`): an even overhang above and below
- * centres it on that line, as the slot centres a mouse's. */
-@media (pointer: coarse) {
-  .inline-controls > .task-marker {
-    margin-block: calc((var(--block-first-line) + 0.5rem - 44px) / 2);
+  /* Block mode's checkbox sits on the text edge (`BlockInlineControls`); its hit
+   * area ends where the text box starts, so a tap just left of the text edits
+   * the block instead of cycling the task. */
+  .inline-controls > .task-marker::before {
+    left: auto;
+    right: calc(-1 * var(--block-gap));
+    transform: translateY(-50%);
   }
 }
 
@@ -2684,7 +2685,10 @@ mark[data-highlight-color='purple'] {
  * narrower than 44 px, or their hit areas overlap. */
 @utility touch-hit-area {
   @media (pointer: coarse) {
-    position: relative;
+    /* At no specificity, so a control that is `absolute` or `fixed` stays so. */
+    :where(&) {
+      position: relative;
+    }
 
     &::before {
       content: '';

@@ -146,12 +146,12 @@ describe('FilterPill', () => {
 
   // -- Touch-target sizing (44 px coarse-pointer minimum) ---------------------
 
-  it('remove button declares 44 px coarse-pointer minimum on both axes', () => {
+  it('remove button keeps the pill’s size, its 44 px target an invisible hit area', () => {
     render(<FilterPill {...defaultProps} />)
 
     const removeBtn = screen.getByRole('button', { name: 'Remove filter status = TODO' })
-    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
-    expect(removeBtn.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    expect(removeBtn.className).toContain('touch-hit-area')
+    expect(removeBtn.className).not.toContain('[@media(pointer:coarse)]:min-h-[44px]')
   })
 
   it('remove button uses normalized focus-visible ring classes', () => {
@@ -163,13 +163,13 @@ describe('FilterPill', () => {
 
   // The visible X icon scales up on coarse pointers so the tap area
   // matches the 44 px button (visual–affordance mismatch fix).
-  it('inner X icon scales to size-5 on coarse pointers', () => {
+  it('inner X icon grows a step on coarse pointers', () => {
     const { container } = render(<FilterPill {...defaultProps} />)
 
     const svg = container.querySelector('button svg')
     expect(svg).toBeInTheDocument()
     const cls = svg?.getAttribute('class') ?? ''
-    expect(cls).toContain('[@media(pointer:coarse)]:size-5')
+    expect(cls).toContain('[@media(pointer:coarse)]:size-3.5')
   })
 
   // -- Prop forwarding (#1091) ------------------------------------------------

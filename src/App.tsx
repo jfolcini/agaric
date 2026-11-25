@@ -146,13 +146,14 @@ function preloadSearchOverlays(): void {
  * A phone shows toasts at the bottom centre, in thumb reach and clear of the
  * header and the search field under it (#5931). Bottom-right first moved to
  * the top because it sat on the system navigation bar; the safe-area inset
- * keeps that covered. The offset clears the floating capture button (5rem up,
- * 56 px tall), and with the soft keyboard up, the formatting toolbar pinned on
- * top of it: the screen's foot is then the keyboard's top (#6790).
+ * keeps that covered. The offset sets a toast 0.5rem above the floating
+ * capture button (1rem up, 3.5rem tall), which also clears the formatting
+ * toolbar pinned on the soft keyboard: the screen's foot is then the
+ * keyboard's top (#6790).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   const isMobile = useIsMobile()
-  const bottom = 'calc(9rem + var(--safe-area-bottom))'
+  const bottom = 'calc(5rem + var(--safe-area-bottom))'
   return (
     <Toaster
       position={isMobile ? 'bottom-center' : 'bottom-right'}

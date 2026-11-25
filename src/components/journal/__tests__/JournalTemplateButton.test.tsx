@@ -60,13 +60,13 @@ function trigger(): HTMLElement {
   return screen.getByRole('button', { name: t('journal.configureTemplate') })
 }
 
-async function openPicker(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+async function openMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   await user.click(trigger())
-  return screen.findByRole('dialog', { name: t('journal.templatePickerLabel') })
+  return screen.findByRole('menu', { name: t('journal.configureTemplate') })
 }
 
 describe('JournalTemplateButton', () => {
-  it('renders an icon button named for the journal template', async () => {
+  it('renders a menu button named for the journal template', async () => {
     const { container } = renderButton()
 
     expect(trigger()).toBeInTheDocument()
@@ -75,31 +75,41 @@ describe('JournalTemplateButton', () => {
     })
   })
 
-  it('opens the space’s journal template page without showing the picker', async () => {
+  it('offers only to open the space’s journal template, and opens it', async () => {
     const user = userEvent.setup()
     await markJournalTemplate(SEED_IDS.PAGE_TMPL_MEETING)
     const { onNavigateToPage } = renderButton()
 
-    await user.click(trigger())
+    const menu = await openMenu(user)
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([t('journal.openTemplate')])
+    expect(onNavigateToPage).not.toHaveBeenCalled()
+    await user.click(items[0] as HTMLElement)
 
+    expect(onNavigateToPage).toHaveBeenCalledWith(SEED_IDS.PAGE_TMPL_MEETING, MEETING_TEMPLATE)
     await waitFor(() => {
-      expect(onNavigateToPage).toHaveBeenCalledWith(SEED_IDS.PAGE_TMPL_MEETING, MEETING_TEMPLATE)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('lists only the space’s template pages, plus the New action', async () => {
+  it('lists only the space’s template pages, under the picker’s label, plus the New action', async () => {
     const user = userEvent.setup()
     renderButton()
 
-    const picker = await openPicker(user)
+    const menu = await openMenu(user)
 
-    const items = within(picker).getAllByRole('button')
+    const items = within(menu).getAllByRole('menuitem')
     expect(items.map((item) => item.textContent)).toEqual([
       MEETING_TEMPLATE,
       t('journal.newTemplate'),
     ])
-    expect(await axe(picker)).toHaveNoViolations()
+    const picker = within(menu).getByRole('group', { name: t('journal.templatePickerLabel') })
+    expect(
+      within(picker)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual([MEETING_TEMPLATE])
+    expect(await axe(menu)).toHaveNoViolations()
   })
 
   it('offers only the New action when the space has no template pages', async () => {
@@ -107,18 +117,19 @@ describe('JournalTemplateButton', () => {
     unwrap(await commands.deleteProperty(SEED_IDS.PAGE_TMPL_MEETING, 'template'))
     renderButton()
 
-    const picker = await openPicker(user)
+    const menu = await openMenu(user)
 
-    const items = within(picker).getAllByRole('button')
+    const items = within(menu).getAllByRole('menuitem')
     expect(items.map((item) => item.textContent)).toEqual([t('journal.newTemplate')])
+    expect(within(menu).queryByRole('group')).not.toBeInTheDocument()
   })
 
   it('marks a picked template page as the journal template and opens it', async () => {
     const user = userEvent.setup()
     const { onNavigateToPage } = renderButton()
 
-    const picker = await openPicker(user)
-    await user.click(within(picker).getByRole('button', { name: MEETING_TEMPLATE }))
+    const menu = await openMenu(user)
+    await user.click(within(menu).getByRole('menuitem', { name: MEETING_TEMPLATE }))
 
     await waitFor(() => {
       expect(onNavigateToPage).toHaveBeenCalledWith(SEED_IDS.PAGE_TMPL_MEETING, MEETING_TEMPLATE)
@@ -131,8 +142,8 @@ describe('JournalTemplateButton', () => {
     const user = userEvent.setup()
     const { onNavigateToPage } = renderButton()
 
-    const picker = await openPicker(user)
-    await user.click(within(picker).getByRole('button', { name: t('journal.newTemplate') }))
+    const menu = await openMenu(user)
+    await user.click(within(menu).getByRole('menuitem', { name: t('journal.newTemplate') }))
 
     await waitFor(() => {
       expect(onNavigateToPage).toHaveBeenCalledTimes(1)
@@ -151,8 +162,8 @@ describe('JournalTemplateButton', () => {
     )
     const { onNavigateToPage } = renderButton()
 
-    const picker = await openPicker(user)
-    await user.click(within(picker).getByRole('button', { name: MEETING_TEMPLATE }))
+    const menu = await openMenu(user)
+    await user.click(within(menu).getByRole('menuitem', { name: MEETING_TEMPLATE }))
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageHeader.journalTemplateFailed'))

@@ -259,7 +259,7 @@ export function JournalControls(): React.ReactElement {
               // the date text, which truncates. That is what makes "no
               // horizontal overflow" structural instead of a pixel budget
               // that a longer locale string could blow.
-              className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0! [@media(pointer:coarse)]:min-w-11"
+              className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0! [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11"
               aria-label={`${dateDisplay} · ${t('journal.openCalendar')}`}
               aria-expanded={calendarOpen}
               aria-haspopup="dialog"
@@ -303,7 +303,7 @@ export function JournalControls(): React.ReactElement {
             <Button
               variant="outline"
               size="xs"
-              className="max-md:border-transparent! max-md:bg-transparent! max-md:shadow-none! max-md:active:bg-accent/80! [@media(pointer:coarse)]:min-w-11"
+              className="max-md:border-transparent! max-md:bg-transparent! max-md:shadow-none! max-md:active:bg-accent/80! [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11"
               onClick={goToToday}
               aria-label={t('journal.goToToday')}
               aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}

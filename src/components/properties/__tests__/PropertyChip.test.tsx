@@ -61,14 +61,14 @@ describe('PropertyChip', () => {
 
   // #1678: PropertyChip overrides the Badge default padding/gap with its own
   // tighter tokens (twMerge resolves the conflict so only the override remains).
-  it('keeps the chip-specific tighter padding and gap', () => {
+  it('takes the Badge’s padding and keeps its own tighter gap', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
     const chip = container.querySelector('.property-chip')
-    expect(chip?.className).toContain('px-1.5')
+    expect(chip?.className).toMatch(/(^|\s)px-2(\s|$)/)
+    expect(chip?.className).toMatch(/(^|\s)py-0\.5(\s|$)/)
     expect(chip?.className).toContain('gap-0.5')
-    // The Badge default `px-2`/`gap-1` must not survive the twMerge override.
-    expect(chip?.className).not.toMatch(/(^|\s)px-2(\s|$)/)
+    // The Badge default `gap-1` must not survive the twMerge override.
     expect(chip?.className).not.toMatch(/(^|\s)gap-1(\s|$)/)
   })
 

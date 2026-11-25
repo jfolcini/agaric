@@ -140,6 +140,26 @@ async function typeInNewBlock(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text, { delay: 30 })
 }
 
+/** Switch the open page or journal day between block mode and page mode. */
+async function editAs(page: Page, profile: Profile, mode: 'Blocks' | 'Page'): Promise<void> {
+  if (profile === 'phone') {
+    await page.getByRole('button', { name: 'Page actions' }).click()
+    await page
+      .getByRole('menuitem', { name: mode === 'Page' ? 'Edit as page' : 'Edit as blocks' })
+      .click()
+    return
+  }
+  await page
+    .getByRole('radiogroup', { name: 'Editing mode' })
+    .getByRole('radio', { name: mode })
+    .click()
+}
+
+/** Put page mode's caret in the paragraph that starts with `text`. */
+async function caretIn(page: Page, text: string): Promise<void> {
+  await page.locator('[data-testid="page-mode-editor"]').getByText(text).first().click()
+}
+
 type Hooks = Window & {
   __setMockLatency: (ms: number) => void
   __injectMockError: (cmd: string, error: string) => void
@@ -359,6 +379,41 @@ async function editor({ page, profile, shot }: Scene): Promise<void> {
   })
 }
 
+/**
+ * The frame around what is being edited, and how the row around it holds up:
+ * block mode's one editing block and page mode's whole page, on a page and on
+ * the journal's day.
+ */
+async function editing({ page, profile, shot }: Scene): Promise<void> {
+  await seedShowcase(page)
+  await goToPage(page, profile, 'Product Roadmap Q1')
+  await shot('heading-focused', () => focusBlock(page, 0))
+  await shot('task-chips-focused', () => focusBlock(page, 6))
+  await shot('properties-focused', () => focusBlock(page, 7))
+  await shot('nested-focused', () => focusBlock(page, 11))
+  await dismiss(page)
+  await shot('page-mode', () => editAs(page, profile, 'Page'))
+  await shot('page-mode-paragraph', () => caretIn(page, 'Ship a'))
+  await shot('page-mode-task', () => caretIn(page, 'Audit every screen'))
+  await shot('page-mode-nested', () => caretIn(page, 'Most participants'))
+  await dismiss(page)
+  await editAs(page, profile, 'Blocks')
+  await navigateToView(page, 'Journal')
+  await shot('day-paragraph-focused', () => focusBlock(page, 0))
+  await shot('day-task-focused', () => focusBlock(page, 2))
+  await dismiss(page)
+  await shot('day-menu', () =>
+    page
+      .getByRole('button', {
+        name: profile === 'phone' ? 'Page actions' : 'Configure journal template',
+      })
+      .click(),
+  )
+  await dismiss(page)
+  await shot('day-page-mode', () => editAs(page, profile, 'Page'))
+  await shot('day-page-mode-task', () => caretIn(page, 'Buy groceries'))
+}
+
 async function states({ page, profile, shot }: Scene): Promise<void> {
   await shot('empty-space-journal', () => switchSpace(page, profile, 'Work'))
   await shot('empty-pages', () => navigateToView(page, 'Pages'))
@@ -432,6 +487,7 @@ const SCENES: Record<string, { run: (scene: Scene) => Promise<void>; firstRun?: 
   views: { run: views },
   shell: { run: shell },
   editor: { run: editor },
+  editing: { run: editing },
   states: { run: states },
   'first-run': { run: firstRun, firstRun: true },
 }

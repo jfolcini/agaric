@@ -7,6 +7,7 @@
 //   node scripts/ui-review.mjs --base origin/main   # shoot both, report the change
 //   node scripts/ui-review.mjs --report-only        # rebuild the report from the shots
 //   node scripts/ui-review.mjs --base main -- --grep "phone light"
+//   node scripts/ui-review.mjs --report-only --notes notes.json
 //
 // Each tree is built with the e2e mock (`VITE_E2E=1 vite build`), served by
 // `vite preview` on a free port and toured by `e2e/ui-review/ui-review.tour.ts`
@@ -17,6 +18,11 @@
 // Output, in `ui-review-out/` (gitignored; `--out` moves it):
 //   shots/before|after/<profile>-<theme>/<scene>/<shot>.png   the raw shots
 //   report/index.html   every shot, side by side where it changed, with a diff
+//
+// Under each changed pair the report says in one line what changed: the first
+// pattern in the `--notes` JSON file (`{ "<set>/<scene>/<shot>": "<line>" }`,
+// `*` matching within one path segment) that matches the shot, or else where
+// on the screen the changed pixels are.
 // ─────────────────────────────────────────────────────────────────────
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -41,7 +47,7 @@ const CONFIG = 'e2e/ui-review/playwright.config.ts'
 const CLOUD_CHROMIUM = '/opt/pw-browsers/chromium'
 
 function parseArgs(argv) {
-  const opts = { base: null, out: 'ui-review-out', reportOnly: false, playwright: [] }
+  const opts = { base: null, out: 'ui-review-out', notes: null, reportOnly: false, playwright: [] }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--') {
@@ -50,12 +56,13 @@ function parseArgs(argv) {
     }
     if (arg === '--base') opts.base = argv[++i]
     else if (arg === '--out') opts.out = argv[++i]
+    else if (arg === '--notes') opts.notes = argv[++i]
     else if (arg === '--report-only') opts.reportOnly = true
     else
       throw new Error(`ui-review: unknown argument ${arg} (arguments for Playwright go after --)`)
   }
-  if (opts.base === undefined || opts.out === undefined) {
-    throw new Error('ui-review: --base and --out each take a value')
+  if (opts.base === undefined || opts.out === undefined || opts.notes === undefined) {
+    throw new Error('ui-review: --base, --out and --notes each take a value')
   }
   return opts
 }
@@ -193,10 +200,16 @@ async function compareInPage({ before, after }) {
     before: a && webp(a.canvas),
     after: b && webp(b.canvas),
     diff: null,
+    box: null,
+    sizes: null,
   }
   if (!a || !b) return result
   if (a.canvas.width !== b.canvas.width || a.canvas.height !== b.canvas.height) {
     result.ratio = 1
+    result.sizes = [
+      [a.canvas.width, a.canvas.height],
+      [b.canvas.width, b.canvas.height],
+    ]
     return result
   }
   const { width, height } = b.canvas
@@ -204,6 +217,7 @@ async function compareInPage({ before, after }) {
   const pb = b.ctx.getImageData(0, 0, width, height).data
   const out = b.ctx.createImageData(width, height)
   let changed = 0
+  const box = { top: height, bottom: 0, left: width, right: 0 }
   for (let i = 0; i < pb.length; i += 4) {
     const delta = Math.max(
       Math.abs(pa[i] - pb[i]),
@@ -212,6 +226,12 @@ async function compareInPage({ before, after }) {
     )
     if (delta > 24) {
       changed++
+      const x = (i / 4) % width
+      const y = Math.floor(i / 4 / width)
+      box.top = Math.min(box.top, y)
+      box.bottom = Math.max(box.bottom, y + 1)
+      box.left = Math.min(box.left, x)
+      box.right = Math.max(box.right, x + 1)
       out.data.set([230, 30, 40, 255], i)
     } else {
       const grey = (pb[i] + pb[i + 1] + pb[i + 2]) / 3
@@ -223,10 +243,44 @@ async function compareInPage({ before, after }) {
   if (changed > 0) {
     b.ctx.putImageData(out, 0, 0)
     result.diff = webp(b.canvas)
+    result.box = {
+      top: box.top / height,
+      bottom: box.bottom / height,
+      left: box.left / width,
+      right: box.right / width,
+    }
   } else {
     result.before = null
   }
   return result
+}
+
+/** `--notes` as [matcher, line] pairs, in the file's order. */
+function readNotes(file) {
+  if (file === null) return []
+  const notes = JSON.parse(readFileSync(resolve(ROOT, file), 'utf8'))
+  return Object.entries(notes).map(([pattern, line]) => {
+    const source = pattern
+      .split('*')
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^/]*')
+    return [new RegExp(`^${source}$`), String(line)]
+  })
+}
+
+/** Where on the screen a change is, for a pair nobody wrote a note for. */
+function describeChange({ box, sizes }) {
+  if (sizes) {
+    const [[w0, h0], [w1, h1]] = sizes
+    return `The shot's size changed: ${w0}×${h0} → ${w1}×${h1} px.`
+  }
+  if (!box) return null
+  const pct = (f) => Math.round(f * 100)
+  let across = 'in the middle'
+  if (box.right - box.left > 0.8) across = 'across the width'
+  else if (box.left >= 0.5) across = 'on the right'
+  else if (box.right <= 0.5) across = 'on the left'
+  return `Pixels changed ${pct(box.top)}–${pct(box.bottom)}% down the screen, ${across}.`
 }
 
 async function launchBrowser() {
@@ -238,7 +292,7 @@ async function launchBrowser() {
   }
 }
 
-async function writeReport(out, hasBase) {
+async function writeReport(out, hasBase, notes) {
   const before = hasBase ? readShots(join(out, 'shots', 'before')) : new Map()
   const after = readShots(join(out, 'shots', 'after'))
   const reportDir = join(out, 'report')
@@ -278,6 +332,11 @@ async function writeReport(out, hasBase) {
       img,
       failed: a?.failed ?? null,
       baseFailed: b?.failed ?? null,
+      note:
+        status === 'changed' || status === 'new'
+          ? (notes.find(([re]) => re.test(key))?.[1] ?? null)
+          : null,
+      where: status === 'changed' ? describeChange(cmp) : null,
     })
   }
   await browser.close()
@@ -304,7 +363,11 @@ async function main() {
     build(ROOT, join(out, 'build', 'after'))
     status = await tour(join(out, 'build', 'after'), join(out, 'shots', 'after'), opts.playwright)
   }
-  const entries = await writeReport(out, opts.base !== null || (opts.reportOnly && hasBase))
+  const entries = await writeReport(
+    out,
+    opts.base !== null || (opts.reportOnly && hasBase),
+    readNotes(opts.notes),
+  )
   const count = (s) => entries.filter((e) => e.status === s).length
   console.log(
     `ui-review: ${entries.length} shots — ${count('changed')} changed, ${count('new')} new, ` +
