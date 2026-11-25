@@ -64,7 +64,7 @@
 //     rejecting async plugin round-trips this guard exists for, so a
 //     component calling them needs the same error-path coverage. The bare
 //     `@/lib/platform` barrel is deliberately NOT matched — it exports only
-//     synchronous capability detection (`isMac`, `modKey`,
+//     synchronous capability detection (`isMac`, `isAndroid`,
 //     `isMobilePlatform`), which cannot reject;
 //   - `import { invoke } from '@tauri-apps/api/core'` — direct IPC
 //     bypass of the typed binding surface.

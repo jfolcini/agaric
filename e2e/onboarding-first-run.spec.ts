@@ -36,7 +36,11 @@ test('Welcome modal shows on first run, dismisses, and stays dismissed on the ne
 
   const welcome = page.getByRole('dialog', { name: 'Welcome to Agaric' })
   await expect(welcome).toBeVisible()
-  await welcome.getByRole('button', { name: 'Get started' }).click()
+  // Get started holds the focus, so Enter dismisses, but draws no ring before the user has acted.
+  const getStarted = welcome.getByRole('button', { name: 'Get started' })
+  await expect(getStarted).toBeFocused()
+  expect(await getStarted.evaluate((el) => el.matches(':focus-visible'))).toBe(false)
+  await getStarted.click()
   await expect(welcome).toHaveCount(0)
 
   // Next launch: a fresh boot sharing this browser's storage.

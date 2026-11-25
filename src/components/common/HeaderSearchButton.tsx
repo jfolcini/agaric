@@ -13,7 +13,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -44,12 +44,10 @@ export function HeaderSearchButton(): React.ReactElement {
         <div className="flex flex-col gap-1">
           <span>
             {label} {/* aria-keyshortcuts already announces this chord. */}
-            <span aria-hidden="true">
-              <KbdChord keys={paletteKeys} className="ml-1" />
-            </span>
+            <Kbd keys={paletteKeys} className="ml-1" aria-hidden="true" />
           </span>
           <span>
-            {t('findInPage.toolbarLabel')} <KbdChord keys={findKeys} className="ml-1" />
+            {t('findInPage.toolbarLabel')} <Kbd keys={findKeys} className="ml-1" />
           </span>
         </div>
       </TooltipContent>

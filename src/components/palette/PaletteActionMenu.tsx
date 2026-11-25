@@ -25,7 +25,7 @@
 import type React from 'react'
 import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 /** Gap between the anchor row and the menu edge, in px. */
@@ -189,9 +189,9 @@ export function PaletteActionMenu({
           {a.hint != null && (
             // #1005 — canonical chip; legible on the menu item's focus/hover
             // accent fill. Decorative within an interactive row → aria-hidden.
-            // `KbdChord` shows `Ctrl` as this platform's mod key.
+            // `Kbd` shows `Ctrl` as this platform's mod key.
             <span aria-hidden="true" data-testid={`palette-action-${a.id}-hint`}>
-              <KbdChord keys={a.hint} />
+              <Kbd keys={a.hint} />
             </span>
           )}
         </button>

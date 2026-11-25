@@ -100,18 +100,15 @@ describe('PaletteActionMenu', () => {
 
   // The catalog's `Ctrl` is the platform mod key (#6548).
   it.each([
-    ['Linux x86_64', 'Ctrl'],
-    ['Win32', 'Ctrl'],
-    ['MacIntel', '⌘'],
-  ])('renders the optional hint chip as decorative (aria-hidden) on %s', (platform, mod) => {
+    ['Linux x86_64', 'Ctrl+Enter'],
+    ['Win32', 'Ctrl+Enter'],
+    ['MacIntel', '⌘Enter'],
+  ])('renders the optional hint chip as decorative (aria-hidden) on %s', (platform, keys) => {
     setPlatform(platform)
     renderMenu()
 
     const hint = screen.getByTestId('palette-action-open-hint')
-    expect(Array.from(hint.querySelectorAll('kbd')).map((k) => k.textContent)).toEqual([
-      mod,
-      'Enter',
-    ])
+    expect(Array.from(hint.querySelectorAll('kbd')).map((k) => k.textContent)).toEqual([keys])
     expect(hint).toHaveAttribute('aria-hidden', 'true')
   })
 

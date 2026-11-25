@@ -7,9 +7,10 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { type ReferenceEntry, ReferenceSheet } from '@/components/editor/ReferenceSheet'
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { pageSlashCommandCatalog } from '@/editor/page-mode/page-slash-commands'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 
 /** The i18n key of command `id`'s one-line description: `repeat-.+daily` → `…repeatFromDoneDaily`. */
@@ -42,6 +43,7 @@ export function SlashCommandReferenceSheet({
   onOpenChange,
 }: SlashCommandReferenceSheetProps): React.ReactElement {
   const { t } = useTranslation()
+  const keyboardHints = useKeyboardHints()
   const sections = new Map<string, { id: string; heading: string; entries: ReferenceEntry[] }>()
   for (const command of pageSlashCommandCatalog()) {
     const category = command.category ?? ''
@@ -50,12 +52,12 @@ export function SlashCommandReferenceSheet({
       section = { id: category, heading: t(category), entries: [] }
       sections.set(category, section)
     }
-    const keys = shortcutOf(command)
+    const keys = keyboardHints ? shortcutOf(command) : ''
     section.entries.push({
       id: command.id,
       name: commandName(command),
       description: t(slashCommandDescriptionKey(command.id)),
-      ...(keys !== '' && { aside: <KbdChord keys={keys} className="shrink-0" /> }),
+      ...(keys !== '' && { aside: <Kbd keys={keys} className="shrink-0" /> }),
     })
   }
   return (

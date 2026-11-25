@@ -1756,14 +1756,11 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
       await waitFor(() => {
         expect(screen.getByTestId('palette-cmd-search-everywhere')).toBeInTheDocument()
       })
-      // search-everywhere is wired to `focusSearch` (Ctrl+Shift+F) → 3 tokens.
-      const chips = screen.getByTestId('palette-cmd-shortcut-focusSearch')
-      expect(chips).toBeInTheDocument()
-      const kbds = chips.querySelectorAll('kbd')
-      expect(kbds.length).toBe(3)
-      // `Ctrl` is the platform mod key; the other tokens are spelled out.
-      const labels = Array.from(kbds).map((k) => k.textContent)
-      expect(labels).toEqual([mod, 'Shift', 'F'])
+      // search-everywhere is wired to `focusSearch` (Ctrl+Shift+F): one keycap.
+      const chip = screen.getByTestId('palette-cmd-shortcut-focusSearch')
+      // `Ctrl` is the platform mod key.
+      expect(chip.tagName).toBe('KBD')
+      expect(chip).toHaveTextContent(mod === '⌘' ? '⌘⇧F' : 'Ctrl+Shift+F')
     },
   )
 
@@ -1795,10 +1792,9 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
       await waitFor(() => {
         expect(screen.getByTestId('palette-cmd-shortcut-focusSearch')).toBeInTheDocument()
       })
-      const labels = Array.from(
-        screen.getByTestId('palette-cmd-shortcut-focusSearch').querySelectorAll('kbd'),
-      ).map((k) => k.textContent)
-      expect(labels).toEqual([mod, 'Alt', 'K'])
+      expect(screen.getByTestId('palette-cmd-shortcut-focusSearch')).toHaveTextContent(
+        mod === '⌘' ? '⌘⌥K' : 'Ctrl+Alt+K',
+      )
     },
   )
 

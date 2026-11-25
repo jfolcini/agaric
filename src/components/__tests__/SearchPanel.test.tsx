@@ -230,11 +230,12 @@ describe('SearchPanel', () => {
   it('describes the input with the filter-syntax hint, kept while typing, with no toast', () => {
     render(<SearchPanel />)
     const input = screen.getByLabelText(t('search.searchLabel'))
-    expect(input).toHaveAccessibleDescription(t('search.filterSyntaxIntro'))
+    const hint = `${t('search.filterSyntaxIntro')} ${t('search.filterHelpKey')}`
+    expect(input).toHaveAccessibleDescription(hint)
 
     fireEvent.change(input, { target: { value: 'tag:#work' } })
 
-    expect(input).toHaveAccessibleDescription(t('search.filterSyntaxIntro'))
+    expect(input).toHaveAccessibleDescription(hint)
     expect(vi.mocked(toast)).not.toHaveBeenCalled()
   })
 

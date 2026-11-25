@@ -10,9 +10,10 @@ import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { KbdChord } from '@/components/ui/kbd'
+import { Kbd } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TruncatedText } from '@/components/ui/truncated-text'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { cn } from '@/lib/utils'
@@ -128,6 +129,7 @@ export const SuggestionList = ({
   onActiveDescendantChange,
 }: SuggestionListProps) => {
   const { t } = useTranslation()
+  const keyboardHints = useKeyboardHints()
   const listRef = useRef<HTMLDivElement>(null)
 
   const selectItem = useCallback(
@@ -299,17 +301,17 @@ export const SuggestionList = ({
   // catalog binding (`shortcutId`, picks up rebinds); falls back to a static
   // `keys` string for marks with no catalog entry (Bold/Italic). Returns null
   // when neither is set so non-mark rows keep their existing layout. #211 P0-5.
-  // `KbdChord` shows the catalog's `Ctrl` as this platform's mod key.
+  // Keyboard-only, like the footer (`useKeyboardHints`).
   const renderShortcut = (item: PickerItem) => {
     const keys = item.shortcutId ? getShortcutKeys(item.shortcutId) : (item.keys ?? '')
-    if (keys.length === 0) return null
+    if (keys.length === 0 || !keyboardHints) return null
     return (
       <span
         className="ml-auto inline-flex items-center pl-2"
         aria-hidden="true"
         data-testid={`suggestion-shortcut-${item.id}`}
       >
-        <KbdChord keys={keys} size="sm" />
+        <Kbd keys={keys} />
       </span>
     )
   }
@@ -409,30 +411,21 @@ export const SuggestionList = ({
             : items.map((item, index) => renderItem(item, index))}
         </div>
       </ScrollArea>
-      {/* #1006 — the footer is pointer-conditional, not width-conditional: a
-          large tablet is still touch. Fine pointers keep the keyboard hints
-          (↑↓ / ↵⇥ / Esc — meaningless on touch); coarse pointers get touch
-          copy. Both share identical chrome (`px-2 py-1 text-xs … border-t`);
-          only the text differs. The strip is non-interactive, so no touch
-          target padding. Decorative → `aria-hidden`. */}
-      <div
-        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden items-center gap-2 [@media(pointer:fine)]:flex"
-        data-testid="suggestion-list-footer"
-        aria-hidden="true"
-      >
-        <span>{t('suggestion.footer.navigate')}</span>
-        <span className="text-border">·</span>
-        <span>{t('suggestion.footer.select')}</span>
-        <span className="text-border">·</span>
-        <span>{t('suggestion.footer.close')}</span>
-      </div>
-      <div
-        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden items-center gap-2 [@media(pointer:coarse)]:flex"
-        data-testid="suggestion-list-footer-touch"
-        aria-hidden="true"
-      >
-        <span>{t('suggestion.footer.touch.select')}</span>
-      </div>
+      {/* Keyboard-only (`useKeyboardHints`): a touch screen without a hardware
+          keyboard has no keys to press. Decorative → `aria-hidden`. */}
+      {keyboardHints && (
+        <div
+          className="flex items-center gap-2 border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none"
+          data-testid="suggestion-list-footer"
+          aria-hidden="true"
+        >
+          <span>{t('suggestion.footer.navigate')}</span>
+          <span className="text-border">·</span>
+          <span>{t('suggestion.footer.select')}</span>
+          <span className="text-border">·</span>
+          <span>{t('suggestion.footer.close')}</span>
+        </div>
+      )}
     </div>
   )
 }

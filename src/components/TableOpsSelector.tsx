@@ -35,6 +35,7 @@ import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
 import {
   moveTableColumnTo,
@@ -43,6 +44,7 @@ import {
   type TableCaret,
   tableCaret,
 } from '@/editor/table-edit'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { cn } from '@/lib/utils'
 
 /** Which operations a menu shows: a handle's row or column, or all of them. */
@@ -184,6 +186,7 @@ export function TableOpsSelector({
   scope = 'table',
 }: TableOpsSelectorProps): React.ReactElement {
   const { t } = useTranslation()
+  const keyboardHints = useKeyboardHints()
   const at = tableCaret(editor.state)
   const ops = scope === 'table' ? TABLE_OPS : TABLE_OPS.filter((op) => op.scope === scope)
   const firstDestructiveIndex = ops.findIndex((op) => op.destructive)
@@ -214,10 +217,8 @@ export function TableOpsSelector({
             >
               <Icon className="h-4 w-4 shrink-0" />
               {t(op.labelKey)}
-              {op.shortcutId !== undefined && (
-                <span className="ml-auto pl-4 text-xs text-muted-foreground">
-                  {shortcutHint(op.shortcutId)}
-                </span>
+              {op.shortcutId !== undefined && keyboardHints && (
+                <Kbd keys={shortcutHint(op.shortcutId)} className="ml-auto" />
               )}
             </Button>
           </div>

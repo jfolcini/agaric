@@ -249,15 +249,15 @@ describe('SpaceSwitcher', () => {
     expect(chips[1]?.textContent).toBe('Alt+2')
   })
 
-  // #6548 — macOS names the same key the chord's own way, not as `⌥1`.
-  it('spells the hint chip out on macOS too', () => {
+  // #7040 — one renderer: macOS draws the modifier as its glyph.
+  it('draws the hint chip with the Option glyph on macOS', () => {
     const originalPlatform = navigator.platform
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
     __resetPlatformCacheForTests()
     try {
       seedSpaces([PERSONAL, WORK])
       render(<SpaceSwitcher />)
-      expect(screen.getByTestId('space-hotkey-hint-1').textContent).toBe('Alt+1')
+      expect(screen.getByTestId('space-hotkey-hint-1').textContent).toBe('⌥1')
     } finally {
       Object.defineProperty(navigator, 'platform', { value: originalPlatform, configurable: true })
       __resetPlatformCacheForTests()
@@ -424,7 +424,9 @@ describe('SpaceSwitcher', () => {
     // first (alphabetical), Work second.
     await waitFor(
       async () => {
-        const personalHint = await screen.findAllByText(/Alt\+1\s+Personal/)
+        const personalHint = await screen.findAllByText(
+          (_, el) => el?.tagName === 'SPAN' && el.textContent === 'Alt+1 Personal',
+        )
         expect(personalHint.length).toBeGreaterThanOrEqual(1)
         // The tooltip surface is inverted: a fixed `text-muted-foreground` is
         // unreadable on it, so the dim rows use opacity instead.
@@ -432,7 +434,9 @@ describe('SpaceSwitcher', () => {
           expect(row.classList.contains('opacity-90')).toBe(true)
           expect(row.classList.contains('text-muted-foreground')).toBe(false)
         }
-        const workHint = await screen.findAllByText(/Alt\+2\s+Work/)
+        const workHint = await screen.findAllByText(
+          (_, el) => el?.tagName === 'SPAN' && el.textContent === 'Alt+2 Work',
+        )
         expect(workHint.length).toBeGreaterThanOrEqual(1)
       },
       { timeout: 3000 },

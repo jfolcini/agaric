@@ -98,10 +98,9 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText(t('keyboard.createNewPage'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.collapseExpandChildren'))).toBeInTheDocument()
 
-    // Verify key labels (keys are now split into individual <kbd> elements)
+    // Verify key labels (one keycap per chord)
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Arrow Right').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Shift').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Ctrl+Shift+→').length).toBeGreaterThanOrEqual(1)
     // #214 Phase 3: bare `@` and `[[` now also appear in the Essential
     // group's trigger kbds, so there can be more than one match.
     expect(screen.getAllByText('@').length).toBeGreaterThanOrEqual(1)
@@ -257,16 +256,15 @@ describe('KeyboardShortcuts', () => {
     expect(cell.className).toContain('bg-popover')
   })
 
-  it('individual keys are rendered as separate kbd elements', () => {
+  it('each chord is one kbd element', () => {
     render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const kbds = screen.getByTestId('shortcuts-table').querySelectorAll('kbd')
     expect(kbds.length).toBeGreaterThanOrEqual(15)
 
     const kbdTexts = Array.from(kbds).map((el) => el.textContent)
-    expect(kbdTexts).toContain('Shift')
-    expect(kbdTexts).toContain('Arrow Right')
-    expect(kbdTexts).toContain('Ctrl')
+    expect(kbdTexts).toContain('Ctrl+Shift+→')
+    expect(kbdTexts).toContain('Ctrl+Z')
     expect(kbdTexts).toContain('Enter')
   })
 
@@ -302,8 +300,7 @@ describe('KeyboardShortcuts', () => {
 
     // Within that row, verify the custom keybinding keys are shown
     const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-    expect(kbdTexts).toContain('Ctrl')
-    expect(kbdTexts).toContain('G')
+    expect(kbdTexts).toContain('Ctrl+G')
 
     // The original default key 'F' should NOT appear in that row
     expect(kbdTexts).not.toContain('F')
@@ -319,9 +316,9 @@ describe('KeyboardShortcuts', () => {
         screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
       ).map((el) => el.textContent)
 
-      expect(kbdTexts).toContain('\u2318')
+      expect(kbdTexts).toContain('\u2318Z')
       // "Ctrl" should not appear anywhere in the rendered kbd labels.
-      expect(kbdTexts).not.toContain('Ctrl')
+      expect(kbdTexts.join(' ')).not.toContain('Ctrl')
     })
 
     it('still shows "Ctrl" on non-mac platforms', () => {
@@ -332,8 +329,8 @@ describe('KeyboardShortcuts', () => {
         screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
       ).map((el) => el.textContent)
 
-      expect(kbdTexts).toContain('Ctrl')
-      expect(kbdTexts).not.toContain('\u2318')
+      expect(kbdTexts).toContain('Ctrl+Z')
+      expect(kbdTexts.join(' ')).not.toContain('\u2318')
     })
   })
 
@@ -346,7 +343,7 @@ describe('KeyboardShortcuts', () => {
     const strikethroughLabel = screen.getByText(t('keyboard.strikethrough'))
     const row = strikethroughLabel.closest('tr') as HTMLElement
     const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-    expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'S'])
+    expect(kbdTexts).toEqual(['Ctrl+Shift+S'])
   })
 
   // CloseOverlays shortcut dispatches a window CustomEvent;
@@ -490,9 +487,9 @@ describe('KeyboardShortcuts', () => {
       const row = actionLabel.closest('tr') as HTMLElement
       expect(row).toBeTruthy()
 
-      // Linux/Windows default: Ctrl+Alt+N → rendered as three <kbd>s.
+      // Linux/Windows default: Ctrl+Alt+N → one keycap.
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-      expect(kbdTexts).toEqual(['Ctrl', 'Alt', 'N'])
+      expect(kbdTexts).toEqual(['Ctrl+Alt+N'])
     })
 
     it('renders the macOS default chord with the ⌘ glyph on macOS', () => {
@@ -503,9 +500,8 @@ describe('KeyboardShortcuts', () => {
       const row = actionLabel.closest('tr') as HTMLElement
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
       // `loadQuickCaptureShortcut()` returns `Cmd+Alt+N` on mac and
-      // `normaliseAccelerator` rewrites `Cmd` → `Ctrl` so `renderKeys`
-      // substitutes the platform mod glyph.
-      expect(kbdTexts).toEqual(['⌘', 'Alt', 'N'])
+      // `acceleratorToKeys` rewrites `Cmd` → `Ctrl`, which `Kbd` draws as ⌘.
+      expect(kbdTexts).toEqual(['⌘⌥N'])
     })
 
     it('reflects the user-customised chord persisted in localStorage', () => {
@@ -516,7 +512,7 @@ describe('KeyboardShortcuts', () => {
       const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
       const row = actionLabel.closest('tr') as HTMLElement
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-      expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'J'])
+      expect(kbdTexts).toEqual(['Ctrl+Shift+J'])
     })
   })
 
@@ -594,7 +590,7 @@ describe('KeyboardShortcuts', () => {
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       expect(row).toBeTruthy()
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-      expect(kbdTexts).toEqual(['Ctrl', 'Z'])
+      expect(kbdTexts).toEqual(['Ctrl+Z'])
     })
 
     it('reflects a rebound undo chord in the essential entry', () => {
@@ -607,7 +603,7 @@ describe('KeyboardShortcuts', () => {
       expect(row).toBeTruthy()
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
       // The Essential chip now mirrors the rebind, not the hardcoded default.
-      expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'U'])
+      expect(kbdTexts).toEqual(['Ctrl+Shift+U'])
     })
 
     it('reflects a rebound search chord in the essential entry', () => {
@@ -619,8 +615,7 @@ describe('KeyboardShortcuts', () => {
       const row = screen.getByText(t('keyboard.essential.search')).closest('tr') as HTMLElement
       expect(row).toBeTruthy()
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-      expect(kbdTexts).toEqual(['Ctrl', 'G'])
-      expect(kbdTexts).not.toContain('F')
+      expect(kbdTexts).toEqual(['Ctrl+G'])
     })
 
     it('substitutes the platform mod glyph (⌘) for an essential chord on macOS', () => {
@@ -629,7 +624,7 @@ describe('KeyboardShortcuts', () => {
 
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-      expect(kbdTexts).toEqual(['⌘', 'Z'])
+      expect(kbdTexts).toEqual(['⌘Z'])
     })
   })
 
@@ -648,9 +643,7 @@ describe('KeyboardShortcuts', () => {
 
       const row = screen.getByText('Search your notes').closest('tr') as HTMLElement
       expect(Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)).toEqual([
-        'Ctrl',
-        'Shift',
-        'F',
+        'Ctrl+Shift+F',
       ])
     })
 

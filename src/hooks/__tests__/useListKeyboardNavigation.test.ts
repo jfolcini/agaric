@@ -16,8 +16,8 @@
  *  - resolveNavOptions applies defaults and preserves explicit values
  */
 
-import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   resolveNavOptions,
@@ -844,6 +844,47 @@ describe('resolveNavOptions', () => {
   it('leaves onSelect undefined when not provided', () => {
     const resolved = resolveNavOptions({ itemCount: 5 })
     expect(resolved.onSelect).toBeUndefined()
+  })
+})
+
+describe('cursor paint (data-list-cursor)', () => {
+  const painted = () => document.documentElement.hasAttribute('data-list-cursor')
+
+  // Earlier tests' keys painted it; a pointer press starts each test at rest.
+  beforeEach(() => {
+    fireEvent.pointerDown(document.body)
+  })
+  afterEach(() => {
+    fireEvent.pointerDown(document.body)
+  })
+
+  it('stays unpainted at rest and after Enter, paints on a key that moves the cursor', () => {
+    const onSelect = vi.fn()
+    const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, onSelect }))
+    expect(painted()).toBe(false)
+    act(() => {
+      result.current.handleKeyDown(keyEvent('Enter'))
+    })
+    expect(onSelect).toHaveBeenCalledWith(0)
+    expect(painted()).toBe(false)
+    act(() => {
+      result.current.handleKeyDown(keyEvent('ArrowDown'))
+    })
+    expect(painted()).toBe(true)
+  })
+
+  it('a pointer press unpaints it, and the next key paints it again', () => {
+    const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, vim: true }))
+    act(() => {
+      result.current.handleKeyDown(keyEvent('j'))
+    })
+    expect(painted()).toBe(true)
+    fireEvent.pointerDown(document.body)
+    expect(painted()).toBe(false)
+    act(() => {
+      result.current.handleKeyDown(keyEvent('k'))
+    })
+    expect(painted()).toBe(true)
   })
 })
 

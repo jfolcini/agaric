@@ -90,6 +90,6 @@ test.describe('toolbar labels on desktop @editor', () => {
     await button.hover()
     const tip = page.locator('[data-slot="tooltip-content"]')
     await expect(tip).toContainText('New line')
-    await expect(tip.locator('kbd')).toHaveText('Shift + Enter')
+    await expect(tip.locator('kbd')).toHaveText('Shift+Enter')
   })
 })

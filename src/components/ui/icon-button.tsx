@@ -92,11 +92,7 @@ const IconButton = ({
       </TooltipTrigger>
       <TooltipContent>
         {tooltip}
-        {showShortcut && (
-          <Kbd className="ml-1" aria-hidden="true">
-            {shortcut}
-          </Kbd>
-        )}
+        {showShortcut && <Kbd keys={shortcut} className="ml-1" aria-hidden="true" />}
       </TooltipContent>
     </Tooltip>
   )

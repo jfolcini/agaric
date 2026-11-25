@@ -93,8 +93,11 @@ export interface PaletteCommandSpec {
   shortcutId?: string
   /** Side-effect for the command. Receives a context so the same spec works in/outside the palette. */
   run: (ctx: PaletteCommandContext) => void
-  /** Offered only where *Read aloud* can speak (`speech`), or only while it reads (`reading`). */
-  requires?: 'speech' | 'reading'
+  /**
+   * Offered only where *Read aloud* can speak (`speech`), only while it reads (`reading`), or only
+   * where there is a keyboard (`keyboard`, `useKeyboardHints`).
+   */
+  requires?: 'speech' | 'reading' | 'keyboard'
 }
 
 // #2942 — the `go-<view>` entries mirror every `NAV_ITEMS` destination
@@ -420,6 +423,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     // `SHOW_SHORTCUTS_EVENT`, so it works whether or not an editor is focused.
     // The chip still advertises the `?` chord for the non-editing case.
     shortcutId: 'showShortcuts',
+    requires: 'keyboard',
     run: ({ onClose }) => {
       window.dispatchEvent(new CustomEvent(SHOW_SHORTCUTS_EVENT))
       onClose()

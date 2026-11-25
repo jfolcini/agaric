@@ -77,8 +77,8 @@ describe('HistoryNavButtons', () => {
 
   // #6895: the binding is IconButton's `shortcut`, after the name in the tooltip.
   it.each([
-    ['Back', 'Ctrl + Alt + Arrow Left'],
-    ['Forward', 'Ctrl + Alt + Arrow Right'],
+    ['Back', 'Ctrl+Alt+←'],
+    ['Forward', 'Ctrl+Alt+→'],
   ])('%s shows its name and binding on hover', async (name, keys) => {
     const user = userEvent.setup()
     render(<HistoryNavButtons />)

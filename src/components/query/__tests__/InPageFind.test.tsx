@@ -316,11 +316,11 @@ describe('InPageFind — close + a11y', () => {
 // the binding sits in the tooltip after the name.
 describe('InPageFind — icon button tooltips', () => {
   it.each([
-    ['in-page-find-toggle-replace', 'Replace', 'Ctrl + H'],
+    ['in-page-find-toggle-replace', 'Replace', 'Ctrl+H'],
     ['in-page-find-toggle-case', 'Match case (Aa)', null],
     ['in-page-find-toggle-word', 'Match whole word (Ab|)', null],
     ['in-page-find-toggle-regex', 'Regular expression (.*)', null],
-    ['in-page-find-previous', 'Previous match', 'Shift + F3'],
+    ['in-page-find-previous', 'Previous match', 'Shift+F3'],
     ['in-page-find-next', 'Next match', 'F3'],
     ['in-page-find-close', 'Close', 'Esc'],
   ])('%s shows %s and its shortcut on hover', async (testId, name, shortcut) => {

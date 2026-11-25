@@ -17,7 +17,7 @@ function setPlatform(value: string): void {
   __resetPlatformCacheForTests()
 }
 
-/** The chips beside the new-tab label, in order. */
+/** The keycaps beside the new-tab label, in order. */
 function newTabChips(): string[] {
   const label = screen.getByText(t('palette.footerHintNewTab'))
   return Array.from(label.closest('span')?.querySelectorAll('kbd') ?? []).map(
@@ -33,14 +33,14 @@ describe('PaletteFooterHint', () => {
   it.each(['Linux x86_64', 'Win32'])('names Ctrl, with no Mac glyph, on %s', (platform) => {
     setPlatform(platform)
     render(<PaletteFooterHint t={t} />)
-    expect(newTabChips()).toEqual(['Ctrl', 'Enter'])
+    expect(newTabChips()).toEqual(['Ctrl+Enter'])
     expect(screen.getByTestId('palette-footer-hint').textContent).not.toMatch(/[⌘⌃⌥⇧]/)
   })
 
   it('names ⌘ on macOS', () => {
     setPlatform('MacIntel')
     render(<PaletteFooterHint t={t} />)
-    expect(newTabChips()).toEqual(['⌘', 'Enter'])
+    expect(newTabChips()).toEqual(['⌘Enter'])
   })
 
   it('has no a11y violations', async () => {

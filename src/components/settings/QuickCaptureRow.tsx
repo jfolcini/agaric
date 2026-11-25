@@ -43,6 +43,7 @@ import { notify } from '@/lib/notify'
 import { isMobilePlatform } from '@/lib/platform'
 import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/platform/global-shortcut'
 import {
+  acceleratorToKeys,
   defaultQuickCaptureShortcut,
   loadQuickCaptureShortcut,
   QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
@@ -170,9 +171,11 @@ export function QuickCaptureRow(): React.ReactElement | null {
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
-            <Kbd size="md" data-testid="quick-capture-shortcut-binding">
-              {shortcut}
-            </Kbd>
+            <Kbd
+              keys={acceleratorToKeys(shortcut)}
+              size="md"
+              data-testid="quick-capture-shortcut-binding"
+            />
             <Button
               variant="outline"
               size="sm"

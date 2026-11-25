@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -98,6 +99,12 @@ const TAB_GROUPS: readonly TabGroup[] = [
 
 const TAB_IDS: readonly string[] = TAB_GROUPS.flatMap((group) => group.tabs)
 
+/** The rail where there is no keyboard (`useKeyboardHints`): no Keyboard tab. */
+const TOUCH_TAB_GROUPS: readonly TabGroup[] = TAB_GROUPS.map((group) => ({
+  ...group,
+  tabs: group.tabs.filter((tab) => tab !== 'keyboard'),
+}))
+
 /** The Edit history tab became a row in Data (#5629), so its old links land there. */
 const RETIRED_HISTORY_TAB = 'history'
 
@@ -139,7 +146,10 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
 
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
-  const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
+  const [chosenTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
+  const keyboardHints = useKeyboardHints()
+  const tabGroups = keyboardHints ? TAB_GROUPS : TOUCH_TAB_GROUPS
+  const activeTab = !keyboardHints && chosenTab === 'keyboard' ? 'general' : chosenTab
   // Held here, not in the App health tab that runs it, so Help's Report a bug
   // can carry the latest result (#5360).
   const integrity = useReconciliationReport('SettingsView')
@@ -208,7 +218,7 @@ export function SettingsView(): React.ReactElement {
           </SelectTrigger>
           {/* Every tab fits on a phone; the shared 24rem cap would hide the last ones. */}
           <SelectContent className="max-h-(--radix-select-content-available-height)">
-            {TAB_GROUPS.map((group) => (
+            {tabGroups.map((group) => (
               <SelectGroup key={group.id}>
                 <SelectLabel className="text-sm font-semibold text-foreground">
                   {t(group.labelKey)}
@@ -237,7 +247,7 @@ export function SettingsView(): React.ReactElement {
             className="gap-4"
             data-testid="settings-tab-rail"
           >
-            {TAB_GROUPS.map((group) => (
+            {tabGroups.map((group) => (
               // role="presentation" makes the group wrapper transparent to the
               // accessibility tree so the `tab` buttons remain DIRECT children
               // of the `tablist` (WAI-ARIA requires tablist→tab parentage —

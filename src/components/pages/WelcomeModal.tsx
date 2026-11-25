@@ -206,6 +206,7 @@ export function WelcomeModal() {
   // callback that produced it, so it reads the latest one out of a ref
   // instead of referencing itself (which no `useCallback` can do).
   const retryCreateRef = useRef<() => void>(() => {})
+  const getStartedRef = useRef<HTMLButtonElement>(null)
 
   const handleCreateSamplePages = useCallback(async () => {
     setCreating(true)
@@ -300,7 +301,16 @@ export function WelcomeModal() {
         if (!value) handleDismiss()
       }}
     >
-      <Content data-testid="welcome-modal">
+      <Content
+        data-testid="welcome-modal"
+        // Get started takes focus, not Radix's first tabbable (the secondary
+        // "Create sample pages"), so Enter on open dismisses. No ring: it opens
+        // before the user has done anything.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          getStartedRef.current?.focus({ focusVisible: false })
+        }}
+      >
         <Header>
           <Title>{t('welcome.title')}</Title>
           <Description>{t('welcome.description')}</Description>
@@ -315,8 +325,7 @@ export function WelcomeModal() {
             {creating && <Spinner />}
             {t('welcome.createSamplePages')}
           </Button>
-          {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- Radix would otherwise focus the first tabbable, the secondary "Create sample pages", so Enter on open would create pages instead of dismissing */}
-          <Button autoFocus onClick={handleDismiss}>
+          <Button ref={getStartedRef} onClick={handleDismiss}>
             {t('welcome.getStarted')}
           </Button>
         </Footer>

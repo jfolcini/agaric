@@ -5,7 +5,7 @@ Every action in Agaric is keyboard-reachable. The catalog below lists the shortc
 
 ## Where to customise
 
-Settings → Keyboard. Each row shows the action, then its current keys, then an edit button that opens a field for typing the new binding (`Ctrl + Alt + K`). A binding Agaric cannot read is flagged as you type; one that clashes with another shortcut is flagged on its row once saved. A customised row also has *Reset to default*, and *Reset all to defaults* resets every row. Customisations persist in local storage and propagate live to other open tabs / windows.
+Settings → Keyboard. On a touch device the tab, the Quick reference (`?`) and the shortcut hints across the app appear once a hardware keyboard has been used. Each row shows the action, then its current keys, then an edit button that opens a field for typing the new binding (`Ctrl + Alt + K`). A binding Agaric cannot read is flagged as you type; one that clashes with another shortcut is flagged on its row once saved. A customised row also has *Reset to default*, and *Reset all to defaults* resets every row. Customisations persist in local storage and propagate live to other open tabs / windows.
 
 ## What's not rebindable
 

@@ -125,6 +125,8 @@ interface KeyRule {
   ) => void
   /** If true, call `e.preventDefault()` before applying. Only set for PageUp/PageDown today. */
   preventDefault?: boolean
+  /** Enter / Space act on the cursor's row instead of moving the cursor. */
+  selects?: boolean
 }
 
 function isPrevKey(key: string, o: ResolvedNavOptions): boolean {
@@ -196,8 +198,24 @@ const KEY_RULES: readonly KeyRule[] = [
     matches: (e, o) =>
       (e.key === 'Enter' || e.key === ' ') && o.onSelect !== undefined && !e.defaultPrevented,
     apply: (_setIndex, o, focusedIndex) => o.onSelect?.(focusedIndex),
+    selects: true,
   },
 ]
+
+/**
+ * Paints every list's cursor (`list-cursor`, `src/index.css`) from a key that
+ * moves it until the next pointer press: at rest the cursor sits unseen on row
+ * 0, where a tint and a bar would read as a selection.
+ */
+export function showListCursor(): void {
+  const root = document.documentElement
+  if (root.hasAttribute('data-list-cursor')) return
+  root.setAttribute('data-list-cursor', '')
+  document.addEventListener('pointerdown', () => root.removeAttribute('data-list-cursor'), {
+    capture: true,
+    once: true,
+  })
+}
 
 export function useListKeyboardNavigation(
   options: UseListKeyboardNavigationOptions,
@@ -259,6 +277,7 @@ export function useListKeyboardNavigation(
       if (!rule.matches(e, opts)) continue
       if (rule.preventDefault) e.preventDefault()
       rule.apply(setFocusedIndex, opts, focusedIndex)
+      if (!rule.selects) showListCursor()
       if (!document.activeElement?.closest(OVERLAY_SELECTOR)) {
         options.listRef?.current?.focus({ preventScroll: true })
       }

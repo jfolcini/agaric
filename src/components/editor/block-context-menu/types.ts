@@ -125,7 +125,10 @@ export interface MenuItem {
   icon: React.ReactNode
   action: (() => void | Promise<void>) | undefined
   className?: string
+  /** The row's shortcut, in the catalog's `Ctrl + K` format, drawn by `Kbd`. */
   shortcut?: string
+  /** When the shortcut applies, after it: "(when empty)". */
+  shortcutNote?: string
   /** #264 — marks the active block type inside the "Turn into" group. */
   active?: boolean
   /**

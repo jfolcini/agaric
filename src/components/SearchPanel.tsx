@@ -405,7 +405,8 @@ export function SearchPanel(): React.ReactElement {
   const searchInputRef = useRef<HTMLInputElement>(null)
   useRegisterPrimaryFocus(searchInputRef)
   useLayoutEffect(() => {
-    searchInputRef.current?.focus()
+    // No ring for a focus the user did not make (`usePrimaryFocus`).
+    searchInputRef.current?.focus({ focusVisible: false })
   }, [])
 
   // Combobox a11y for the input. History and autocomplete are

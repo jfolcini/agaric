@@ -119,6 +119,8 @@ test.describe('List rows on a phone @pages @mobile', () => {
     await expect(grid.locator('[data-history-item]').nth(2)).toBeVisible()
     const card = page.locator('[data-slot="scroll-area"]').filter({ has: grid })
     await grid.focus()
+    // At rest the cursor sits on the first row unpainted, so the corner stays round.
+    await expect(card).toHaveCSS('border-top-left-radius', '8px')
     await page.keyboard.press('Home')
     const row = grid.locator('.list-cursor')
     await expect(row).toHaveCount(1)

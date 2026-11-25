@@ -78,6 +78,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command'
+import { Kbd } from '@/components/ui/kbd'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
@@ -91,6 +92,7 @@ import type { SearchBlockRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { isDateFormattedPage } from '@/lib/date-utils'
 import { searchBlocksPartitioned } from '@/lib/ipc-helpers'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openNewPageDialog } from '@/lib/overlay-events'
@@ -200,10 +202,7 @@ export function PaletteBody({
   actionMenuOpenRef: React.RefObject<boolean>
 }): React.ReactElement {
   const { t } = useTranslation()
-  // Strip the "Ctrl+Shift+F" suffix from the escalation footer when
-  // we're rendering on a touch viewport — the keybinding is
-  // meaningless there. Same mobile-only signal everything else uses
-  // (`useIsMobile`).
+  // A phone has its own escalation button and no palette key footer.
   const isMobile = useIsMobile()
   const inputRef = useRef<HTMLInputElement>(null)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -1061,6 +1060,11 @@ export function PaletteBody({
                     className="text-muted-foreground"
                   >
                     {t('palette.escalateLabel')}
+                    <Kbd
+                      keys={getShortcutKeys('focusSearch')}
+                      className="ml-auto"
+                      aria-hidden="true"
+                    />
                   </CommandItem>
                 </CommandGroup>
               </>

@@ -124,9 +124,9 @@ describe('FormatMenu', () => {
   // #6895 — IconButtons, so a touch press-and-hold shows the name; the
   // shortcut follows it, from the keyboard catalog (Bold's too).
   it.each([
-    ['toolbar.bold', 'Ctrl + B'],
-    ['toolbar.underline', 'Ctrl + U'],
-    ['toolbar.code', 'Ctrl + Shift + K'],
+    ['toolbar.bold', 'Ctrl+B'],
+    ['toolbar.underline', 'Ctrl+U'],
+    ['toolbar.code', 'Ctrl+Shift+K'],
   ])('the %s toggle is an IconButton whose tooltip shows the name, then %s', (label, keys) => {
     render(<FormatMenu editor={makeEditor()} />)
     const btn = screen.getByRole('button', { name: t(label) })

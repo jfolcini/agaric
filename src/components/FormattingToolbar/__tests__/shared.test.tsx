@@ -205,7 +205,7 @@ describe('renderConfigButton inline tooltip', () => {
     expect(btn).toHaveAttribute('data-slot', 'icon-button')
     const tip = screen.getByTestId('tooltip-content')
     expect(tip.firstChild?.textContent).toBe(t('toolbar.boldTip'))
-    expect(within(tip).getByText('Ctrl + B').tagName).toBe('KBD')
+    expect(within(tip).getByText('Ctrl+B').tagName).toBe('KBD')
   })
 
   it('shows the name alone for a button with no shortcut', () => {

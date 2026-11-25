@@ -8,8 +8,8 @@ import type React from 'react'
 import { useMemo } from 'react'
 import type { useTranslation } from 'react-i18next'
 
-import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
+import { Kbd } from '@/components/ui/kbd'
 import { getCurrentShortcuts } from '@/lib/keyboard-config/storage'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
@@ -77,16 +77,7 @@ export function HelpModeBody({
             >
               <HelpCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="flex-1 truncate">{t(s.description)}</span>
-              {/* Use the shared `renderKeys` helper because catalog
-                  bindings include `/`-alternatives (e.g. `Arrow Up /
-                  Left`) and multi-word tokens (`Arrow Up`) that the
-                  glyph-mapping `ShortcutChips` does not handle. The
-                  styling matches the standalone KeyboardShortcuts
-                  dialog so users moving between surfaces see one
-                  consistent chord layout. */}
-              <span className="ml-auto inline-flex items-center" aria-hidden="true">
-                {renderKeys(s.keys)}
-              </span>
+              <Kbd keys={s.keys} className="ml-auto" aria-hidden="true" />
             </CommandItem>
           ))}
         </CommandGroup>

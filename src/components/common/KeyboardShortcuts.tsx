@@ -6,13 +6,13 @@
  */
 
 import { ChevronRight, Keyboard, Settings as SettingsIcon } from 'lucide-react'
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
 import {
   Sheet,
   SheetBody,
@@ -26,7 +26,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
-import { loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
+import { acceleratorToKeys, loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
 import { useNavigationStore } from '@/stores/navigation'
 
 interface ShortcutDef {
@@ -34,22 +34,6 @@ interface ShortcutDef {
   condition?: string
   description: string
   isCustom?: boolean
-}
-
-/**
- * Normalise an accelerator string from `tauri-plugin-global-shortcut` format
- * (`Ctrl+Alt+N`, `Cmd+Alt+N`, `Option+Space`) into the space-padded `Ctrl + …`
- * tokens that {@link renderKeys} understands. `Cmd` collapses to `Ctrl` so
- * `renderKeys` substitutes the platform mod key (⌘ on macOS, Ctrl elsewhere);
- * `Option` collapses to `Alt` for the same reason.
- */
-function normaliseAccelerator(accelerator: string): string {
-  return accelerator
-    .split('+')
-    .map((part) => part.trim())
-    .map((part) => (part === 'Cmd' || part === 'Command' ? 'Ctrl' : part))
-    .map((part) => (part === 'Option' ? 'Alt' : part))
-    .join(' + ')
 }
 
 function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[] {
@@ -71,7 +55,7 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
   // sheet announces the OS-global hotkey alongside the in-app bindings.
   groupMap.set('keyboard.category.quickCapture', [
     {
-      keys: normaliseAccelerator(loadQuickCaptureShortcut()),
+      keys: acceleratorToKeys(loadQuickCaptureShortcut()),
       description: 'keyboard.quickCapture.openDialog',
     },
   ])
@@ -88,7 +72,7 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
 // resolve live from the keybinding registry (`getShortcutKeys`), keeping the
 // cheat sheet in sync with user rebinds — exactly like the catalog list below
 // and like `CommandsModeBody`/`BlockContextMenu`. The platform mod key (⌘ vs
-// Ctrl) is substituted at render time by `renderKeys`. The remaining entries
+// Ctrl) is substituted at render time by `Kbd`. The remaining entries
 // are literal characters a user types in the editor (`/`, `[[`, `@`), which
 // are not rebindable shortcuts, so they keep their literal `keys`.
 interface EssentialEntry {
@@ -168,6 +152,7 @@ export function KeyboardShortcuts({
 }: KeyboardShortcutsProps): React.ReactElement {
   const [internalOpen, setInternalOpen] = useState(false)
   const [filter, setFilter] = useState('')
+  const filterRef = useRef<HTMLInputElement>(null)
   const { t } = useTranslation()
   const isMobile = useIsMobile()
 
@@ -229,6 +214,11 @@ export function KeyboardShortcuts({
       <SheetContent
         side={isMobile ? 'bottom' : 'right'}
         className={isMobile ? undefined : 'sm:max-w-lg'}
+        // The filter takes focus with no ring: the user did not put it there.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          filterRef.current?.focus({ focusVisible: false })
+        }}
       >
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
@@ -237,6 +227,7 @@ export function KeyboardShortcuts({
           </SheetTitle>
           <SheetDescription>{t('keyboard.sheetDescription')}</SheetDescription>
           <Input
+            ref={filterRef}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t('keyboard.filterPlaceholder')}
@@ -317,7 +308,7 @@ export function KeyboardShortcuts({
                 <tr key={entry.description} className="border-b last:border-0">
                   <td className="py-3 pr-4">
                     <span className="inline-flex flex-wrap items-center gap-1">
-                      {renderKeys(essentialKeys(entry))}
+                      <Kbd keys={essentialKeys(entry)} size="md" />
                     </span>
                   </td>
                   <td className="py-3 text-muted-foreground">{t(entry.description)}</td>
@@ -360,7 +351,7 @@ export function KeyboardShortcuts({
                     >
                       <td className="py-3 pr-4">
                         <span className="inline-flex flex-wrap items-center gap-1">
-                          {renderKeys(shortcut.keys)}
+                          <Kbd keys={shortcut.keys} size="md" />
                           {shortcut.condition && (
                             <small className="text-xs text-muted-foreground font-normal">
                               {t(shortcut.condition)}

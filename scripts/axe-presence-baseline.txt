@@ -18,7 +18,6 @@ src/components/block-tree/__tests__/use-block-resolvers.test.tsx
 src/components/block-tree/__tests__/use-block-tree-context-bags.test.tsx
 src/components/common/__tests__/CommandPalette.mobileSearch.test.tsx
 src/components/common/__tests__/VirtualizedBlockList.styleCache.test.tsx
-src/components/common/__tests__/render-keyboard-shortcut.test.tsx
 src/components/dialogs/__tests__/HistoryRestoreDialog.test.tsx
 src/components/dialogs/__tests__/HistoryRevertDialog.test.tsx
 src/components/editor/__tests__/BlockListRendererDragRerender.test.tsx

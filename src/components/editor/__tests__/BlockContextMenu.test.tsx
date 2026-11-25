@@ -141,6 +141,13 @@ type MenuOverrides = { [K in keyof StructuralOverrides]?: StructuralOverrides[K]
  * content-copy and bulk-mode suites to supply a `PageBlockContext`; every other
  * call site renders the menu bare.
  */
+/** A menu row's trailing hint, by its whole text: its keycaps and any note. */
+function rowHint(menu: HTMLElement, text: string): HTMLElement | null {
+  return within(menu).queryByText(
+    (_, el) => el?.parentElement?.getAttribute('role') === 'menuitem' && el.textContent === text,
+  )
+}
+
 function renderMenu(
   overrides: MenuOverrides = {},
   wrap: (children: React.ReactElement) => React.ReactElement = (c) => c,
@@ -505,12 +512,12 @@ describe('BlockContextMenu', () => {
     const menu = screen.getByRole('menu')
     // Hints on rows that stay top-level (tasks, view, history, delete).
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Enter/Ctrl+L')).toBeInTheDocument()
+    expect(rowHint(menu, 'Ctrl+Enter/Ctrl+L')).toBeInTheDocument()
     // #976 (item 19) — alternation notation, no longer the ambiguous "1-3".
-    expect(within(menu).getByText('Ctrl+Shift+1/2/3')).toBeInTheDocument()
-    expect(within(menu).queryByText('Ctrl+Shift+1-3')).not.toBeInTheDocument()
+    expect(rowHint(menu, 'Ctrl+Shift+1/2/3')).toBeInTheDocument()
+    expect(rowHint(menu, 'Ctrl+Shift+1-3')).not.toBeInTheDocument()
     // #976 (item 16) — delete hint (positional: Backspace when empty).
-    expect(within(menu).getByText('Backspace (when empty)')).toBeInTheDocument()
+    expect(rowHint(menu, 'Backspace (when empty)')).toBeInTheDocument()
     // #976 (item 18) — zoom-in hint (Alt+.).
     expect(within(menu).getByText('Alt+.')).toBeInTheDocument()
     // #976 (item 15) — block-history keyboard binding hint.
@@ -557,7 +564,7 @@ describe('BlockContextMenu', () => {
     })
 
     it('uses the ⌘ glyph for the Ctrl modifier on macOS', () => {
-      // Spoof macOS via UA-CH so `modKey()` resolves to ⌘ (mirrors platform.test.ts).
+      // Spoof macOS via UA-CH so `isMac()` holds and `Kbd` draws ⌘ (mirrors platform.test.ts).
       Object.defineProperty(navigator, 'userAgentData', {
         value: { platform: 'macOS' },
         configurable: true,
@@ -567,8 +574,8 @@ describe('BlockContextMenu', () => {
       expect(isMac()).toBe(true)
       renderMenu()
       const menu = screen.getByRole('menu')
-      // Collapse/expand hint becomes ⌘+. instead of Ctrl+.
-      expect(within(menu).getByText('⌘+.')).toBeInTheDocument()
+      // Collapse/expand hint becomes ⌘. instead of Ctrl+.
+      expect(within(menu).getByText('⌘.')).toBeInTheDocument()
       expect(within(menu).queryByText('Ctrl+.')).not.toBeInTheDocument()
     })
   })
@@ -584,14 +591,14 @@ describe('BlockContextMenu', () => {
     // Collapsed: the nested hints are not yet rendered.
     expect(within(menu).queryByText('Ctrl+Shift+↑')).not.toBeInTheDocument()
     expect(within(menu).queryByText('Ctrl+Shift+↓')).not.toBeInTheDocument()
-    expect(within(menu).queryByText('Backspace (at start)')).not.toBeInTheDocument()
+    expect(rowHint(menu, 'Backspace (at start)')).not.toBeInTheDocument()
 
     await expandMoveArrange(user)
 
     expect(within(menu).getByText('Ctrl+Shift+↑')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
     // #976 (item 17) — merge hint (positional: Backspace at block start).
-    expect(within(menu).getByText('Backspace (at start)')).toBeInTheDocument()
+    expect(rowHint(menu, 'Backspace (at start)')).toBeInTheDocument()
   })
 
   // #976 (item 13) — Duplicate action: present in the menu and dispatches.

@@ -338,7 +338,8 @@ export const references: Record<string, string> = {
   'searchQuery.notBeforeFilter': 'NOT kann keinen Filter negieren; verwende seine not-Form',
   'searchQuery.emptyGroup': 'leere Klammern',
   'search.filterSyntaxIntro':
-    'Filtere mit tag:#name oder path:Journal/* oder verwende “Filter hinzufügen”. Drücke ? für Hilfe.',
+    'Filtere mit tag:#name oder path:Journal/* oder verwende “Filter hinzufügen”.',
+  'search.filterHelpKey': 'Drücke ? für Hilfe.',
   'search.searchTags': 'Tags suchen...',
   'search.searchPages': 'Seiten suchen...',
   'search.noTagsFound': 'Keine Tags gefunden',
@@ -485,7 +486,7 @@ export const references: Record<string, string> = {
   'palette.titleMatchTag': 'im Titel',
   'palette.linkModeBadge': 'Seite verlinken — Enter fügt ein',
   'palette.noPageMatch': 'Keine Seite namens “{{query}}”. Tippe weiter, um einzugrenzen.',
-  'palette.escalateLabel': 'In allen Seiten mit Schaltern suchen → Ctrl+Shift+F',
+  'palette.escalateLabel': 'In allen Seiten mit Schaltern suchen',
   'palette.groupMatchesLabel': 'Treffer in {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} weiterer auf dieser Seite',
   'palette.moreInThisPage_other': '+{{count}} weitere auf dieser Seite',

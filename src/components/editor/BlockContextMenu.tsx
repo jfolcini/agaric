@@ -51,6 +51,7 @@ import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-
 import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
@@ -155,9 +156,9 @@ function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
       // "(when empty)" condition rather than implying Backspace always deletes.
       // Suppressed in bulk mode, where the batch-delete has no single-key chord.
       // #1728 — the key is sourced from the `deleteBlock` catalog entry
-      // (positional, documentation-only); the "(when empty)" condition stays
-      // appended verbatim.
-      ...(isBulk ? {} : { shortcut: `${shortcutHint('deleteBlock')} (when empty)` }),
+      // (positional, documentation-only); the "(when empty)" condition follows
+      // it as the row's `shortcutNote`.
+      ...(isBulk ? {} : { shortcut: shortcutHint('deleteBlock'), shortcutNote: '(when empty)' }),
     },
   ]
 }
@@ -236,7 +237,8 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.merge'),
             icon: <Merge className="h-3.5 w-3.5" />,
             action: () => handleAction(onMerge),
-            shortcut: `${shortcutHint('mergeWithPrevious')} (at start)`,
+            shortcut: shortcutHint('mergeWithPrevious'),
+            shortcutNote: '(at start)',
             indented: true,
             disclosureId: moveArrangeGroupId,
             disclosureLabel,
@@ -1030,6 +1032,7 @@ export function BlockContextMenu({
   // ── Keyboard navigation ──────────────────────────────────────────
   // `resetKey`: opening a disclosure adds rows below its toggle, so the cursor
   // keeps its index instead of jumping back to the first row.
+  const keyboardHints = useKeyboardHints()
   const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
     itemCount: visibleItems.length,
     wrap: true,
@@ -1078,6 +1081,7 @@ export function BlockContextMenu({
       focusedIndex,
       itemRefs,
       nextIndex: () => itemIndex++,
+      keyboardHints,
     })
   // #4406 — `itemRefs` (a raw ref object) is handed to `renderItem` below
   // (via `groups.map`), which passes it on to `renderMenuItem`; that

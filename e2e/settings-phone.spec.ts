@@ -140,3 +140,43 @@ test('Settings at a desktop width shows the tab rail, not the tab Select @mobile
   await expect(select).toHaveCount(1)
   await expect(select).toBeHidden()
 })
+
+/**
+ * #7040 — a phone shows no keyboard-only UI until a hardware keyboard shows
+ * itself with a key press: no Keyboard tab in Settings, no "Press ? for help"
+ * under Search. The emulated phone runs on desktop Chromium, whose Keyboard Map
+ * API reports the host's keyboard; a real phone's browser has no such API, so
+ * it is taken away here.
+ */
+test.describe('Keyboard-only UI on a phone with no keyboard (#7040) @mobile @settings @search', () => {
+  test.use({
+    viewport: { width: 412, height: 915 },
+    ...phone,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(Navigator.prototype, 'keyboard')
+    })
+    await waitForBoot(page)
+  })
+
+  test('Settings offers no Keyboard tab until a hardware key is pressed', async ({ page }) => {
+    await navigateMobile(page, 'Settings')
+    const select = page.getByRole('combobox', { name: 'Settings', exact: true })
+    await select.click()
+    await expect(page.getByRole('option', { name: 'Editor', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Keyboard', exact: true })).toHaveCount(0)
+
+    // A Bluetooth keyboard: its first key (Escape, closing the list) brings the tab back.
+    await page.keyboard.press('Escape')
+    await select.click()
+    await expect(page.getByRole('option', { name: 'Keyboard', exact: true })).toBeVisible()
+  })
+
+  test('Search names its filter syntax with no key to press', async ({ page }) => {
+    await navigateMobile(page, 'Search')
+    const hint = page.locator('#search-filter-hint')
+    await expect(hint).toHaveText('Filter with tag:#name or path:Journal/*, or use Add filter.')
+  })
+})
