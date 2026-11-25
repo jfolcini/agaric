@@ -206,7 +206,6 @@ export function QrScanner({ onScan }: QrScannerProps) {
             setScanning(true)
             setAttempt((n) => n + 1)
           }}
-          className="touch-target"
         >
           {t('qrScanner.retryCameraButton')}
         </Button>

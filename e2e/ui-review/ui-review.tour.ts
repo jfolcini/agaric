@@ -402,14 +402,10 @@ async function editing({ page, profile, shot }: Scene): Promise<void> {
   await shot('day-paragraph-focused', () => focusBlock(page, 0))
   await shot('day-task-focused', () => focusBlock(page, 2))
   await dismiss(page)
-  await shot('day-menu', () =>
-    page
-      .getByRole('button', {
-        name: profile === 'phone' ? 'Page actions' : 'Configure journal template',
-      })
-      .click(),
-  )
-  await dismiss(page)
+  if (profile === 'phone') {
+    await shot('day-menu', () => page.getByRole('button', { name: 'Page actions' }).click())
+    await dismiss(page)
+  }
   await shot('day-page-mode', () => editAs(page, profile, 'Page'))
   await shot('day-page-mode-task', () => caretIn(page, 'Buy groceries'))
 }

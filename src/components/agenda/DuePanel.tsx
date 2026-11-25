@@ -15,6 +15,7 @@ import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AlertSection } from '@/components/agenda/AlertSection'
 import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
 import { OverdueSection } from '@/components/agenda/OverdueSection'
 import { ProjectedEntriesSection } from '@/components/agenda/ProjectedEntries'
@@ -88,6 +89,7 @@ export function DuePanel({
     projectedEntries,
     projectedLoading,
     overdueBlocks,
+    scheduledEarlierBlocks,
     upcomingBlocks,
     isToday,
     loadMore,
@@ -114,8 +116,15 @@ export function DuePanel({
 
   // Combined items array for ListViewState empty detection
   const allDisplayItems = useMemo(
-    () => [...blocks, ...overdueBlocks, ...upcomingBlocks, ...projectedEntries] as unknown[],
-    [blocks, overdueBlocks, upcomingBlocks, projectedEntries],
+    () =>
+      [
+        ...blocks,
+        ...overdueBlocks,
+        ...scheduledEarlierBlocks,
+        ...upcomingBlocks,
+        ...projectedEntries,
+      ] as unknown[],
+    [blocks, overdueBlocks, scheduledEarlierBlocks, upcomingBlocks, projectedEntries],
   )
 
   // #1540 — Date-equality breakdown heuristic, NOT an authoritative per-source
@@ -322,6 +331,17 @@ export function DuePanel({
                 {isToday && (
                   <OverdueSection
                     blocks={overdueBlocks}
+                    pageTitles={pageTitles}
+                    onNavigateToPage={onNavigateToPage}
+                  />
+                )}
+
+                {/* Open tasks scheduled before today, not yet overdue (#7040) */}
+                {isToday && (
+                  <AlertSection
+                    variant="scheduled"
+                    title={t('duePanel.scheduledEarlierTitle')}
+                    blocks={scheduledEarlierBlocks}
                     pageTitles={pageTitles}
                     onNavigateToPage={onNavigateToPage}
                   />

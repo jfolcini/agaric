@@ -30,21 +30,19 @@ const buttonVariants = cva(
           'border border-current bg-transparent text-current hover:bg-current/10 active:bg-current/15',
       },
       size: {
-        // On a coarse pointer a text button stays a compact shape and takes its
-        // 44 px target invisibly (`touch-hit-area`): painted at 44 px, a 12 px
-        // label floated in a tall slab. `lg` is the 44 px button.
-        default: 'h-9 gap-1.5 px-4 py-2 [@media(pointer:coarse)]:h-10 touch-hit-area',
-        xs: 'h-6 gap-1 rounded-md px-2 text-xs [:where(&)_svg]:size-3 [@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:px-3 touch-hit-area',
-        sm: 'h-8 gap-1.5 rounded-md px-3 [@media(pointer:coarse)]:h-9 touch-hit-area',
-        lg: 'h-10 rounded-md px-6 [@media(pointer:coarse)]:h-11',
+        // Three heights on a fine pointer (28, 32, 36 px) and one on a coarse
+        // pointer: every text size paints 36 px with a 14 px label, and takes
+        // the rest of its 44 px target invisibly (`touch-hit-area`), so a row
+        // of buttons reads as one height however long each label is.
+        default: 'h-9 gap-1.5 px-4 py-2 touch-hit-area',
+        sm: 'h-8 gap-1.5 rounded-md px-3 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:text-sm touch-hit-area',
+        xs: 'h-7 gap-1 rounded-md px-2.5 text-xs [:where(&)_svg]:size-3 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:[:where(&)_svg]:size-4 touch-hit-area',
         // An icon button's touch box grows to 44 px, and its glyph to 20 px with it.
         icon: 'size-9 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
         'icon-xs':
           'size-6 rounded-md [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
         'icon-sm':
           'size-8 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
-        'icon-lg':
-          'size-10 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
       },
     },
     defaultVariants: {

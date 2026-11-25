@@ -225,16 +225,14 @@ test.describe('Reading width, desktop (#5332, #5354) @editor @mobile', () => {
     }) => {
       await setSidebar(page, sidebar)
       const panel = page.getByRole('tabpanel')
-      const templateButton = page.getByRole('button', {
-        name: 'Configure journal template',
-        exact: true,
-      })
+      // The day's Blocks | Page switch ends its row of actions.
+      const modeSwitch = page.getByRole('radiogroup', { name: 'Editing mode' })
 
       await page.getByRole('tab', { name: 'Daily view' }).click()
-      await expect(templateButton).toBeVisible()
+      await expect(modeSwitch).toBeVisible()
       expect((await box(panel)).width).toBe(READING_WIDTH)
       await expectCentredInPane(panel, 'daily column')
-      await expectEndsAtRightEdge(templateButton, panel, 'journal template button')
+      await expectEndsAtRightEdge(modeSwitch, panel, 'editing mode switch')
 
       await page.getByRole('tab', { name: 'Continuous stream view' }).click()
       const stream = page.getByTestId('journal-stream')

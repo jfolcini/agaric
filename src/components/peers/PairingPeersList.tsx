@@ -149,7 +149,7 @@ export function PairingPeersList({
                       variant="outline"
                       size="sm"
                       onClick={() => onUnpair(peer.peer_id)}
-                      className="pairing-unpair-btn shrink-0 touch-target"
+                      className="pairing-unpair-btn shrink-0"
                     >
                       {t('device.unpairButton')}
                     </Button>

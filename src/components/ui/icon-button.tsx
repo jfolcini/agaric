@@ -11,7 +11,7 @@
  * Reference pattern: `BlockGutterControls.GutterButton` (Tooltip-wrapped
  * icon button with bespoke gutter positioning). `IconButton` generalises
  * that pattern on top of the existing `Button` primitive so the entire
- * Button size/variant matrix (icon-xs through icon-lg, ghost / outline /
+ * Button size/variant matrix (icon-xs through icon, ghost / outline /
  * destructive / …) is available without re-implementing chrome.
  *
  * The tooltip relies on the app-level `<TooltipProvider>` mounted once in
@@ -29,7 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 
-type IconSize = 'icon-xs' | 'icon-sm' | 'icon' | 'icon-lg'
+type IconSize = 'icon-xs' | 'icon-sm' | 'icon'
 
 export interface IconButtonProps extends Omit<
   React.ComponentProps<typeof Button>,

@@ -277,6 +277,12 @@ export const agenda: Record<string, string> = {
   'duePanel.projectedBadge': 'Projected',
   'due.projected': 'Projected',
   'duePanel.upcomingTitle': 'Upcoming',
+  // Translators: DuePanel section heading on today's Journal page: open tasks whose scheduled date
+  // (planned start) has passed and whose due date has not; after each, inside parentheses, how many
+  // days ago it was scheduled ("d" = days, very short).
+  'duePanel.scheduledEarlierTitle': 'Scheduled earlier',
+  'duePanel.scheduledDaysAgo_one': '{{count}}d ago',
+  'duePanel.scheduledDaysAgo_other': '{{count}}d ago',
 
   // Translators: DonePanel (tasks completed on a Journal day) empty state.
   'donePanel.empty': 'No completed items yet.',
@@ -303,38 +309,9 @@ export const agenda: Record<string, string> = {
   'datePicker.scheduledTitle': 'Scheduled date',
   'datePicker.clearDate': 'Clear date',
 
-  // Translators: UnfinishedTasks, the collapsible section on today's Journal page listing tasks
-  // from previous days that are not done: heading, screen-reader name, empty state, and group
-  // headings by age. "→" separates a page title from the task (keep an arrow pointing in your
-  // reading direction); "Untitled" = name shown for a page with no title.
-  'unfinished.title': 'Unfinished tasks',
-  'unfinished.sectionLabel': 'Unfinished tasks from previous days',
-  'unfinished.empty': 'No unfinished tasks — you\u2019re all caught up!',
-  'unfinished.yesterday': 'Yesterday',
-  'unfinished.thisWeek': 'This week',
-  'unfinished.older': 'Older',
-  'unfinished.untitled': 'Untitled',
-  'unfinished.breadcrumbArrow': '\u2192',
-
   // Translators: A Journal day that has no blocks yet: screen-reader-only text and the "+" button
   // that adds the first block (screen-reader label and tooltip); {{date}} = the day's title, a
   // date in the user's chosen format.
   'agenda.day.empty': 'No blocks for {{date}}.',
   'agenda.day.addBlock': 'Add block',
-
-  // Translators: UnfinishedTasks (open tasks from previous days, on today's Journal page): its
-  // screen-reader loading text; "{{n}}+" = short count next to the heading when not all are
-  // loaded, e.g. "50+"; the two following strings are its screen-reader versions, before and
-  // after the section is expanded. Then error lines, and a Retry button with its screen-reader
-  // label. {{n}} = tasks loaded.
-  'unfinished.loading': 'Loading unfinished tasks',
-  'unfinished.countPartial': '{{n}}+',
-  'unfinished.countPartialLabel': 'At least {{n}} unfinished tasks — expand to load the rest',
-  // #3703 item 1 — the same qualifier for a panel that is ALREADY open, where
-  // "expand to load the rest" names an action the listener has already taken.
-  'unfinished.countPartialLabelExpanded': 'At least {{n}} unfinished tasks loaded so far',
-  'unfinished.loadError': 'Could not load unfinished tasks.',
-  'unfinished.partialLoadError': 'Some unfinished tasks could not be loaded.',
-  'unfinished.retry': 'Retry',
-  'unfinished.retryLabel': 'Retry loading unfinished tasks',
 }

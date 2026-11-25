@@ -1407,6 +1407,11 @@
 .page-mode-phone [data-page-block]::before {
   @apply w-14;
 }
+/* And no grip: a tap brought it to the tapped block, a drag handle a phone
+   does without; the toolbar's Block actions opens the menu it would (#7040). */
+.page-mode-phone .page-grip {
+  display: none;
+}
 /* What a collapsed block hides (`page-collapse.ts`). */
 .page-mode-editor [data-page-block].page-block-hidden {
   display: none;
@@ -2667,6 +2672,15 @@ mark[data-highlight-color='purple'] {
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
     @apply outline-hidden ring-2 ring-inset ring-ring;
+  }
+}
+
+/* A phone's toasts end left of the floating capture button (`AppToaster`):
+   sonner sizes a toast as the screen less twice its left offset, which would
+   run it under the button, so its right offset is honoured here. */
+@media (max-width: 600px) {
+  [data-sonner-toaster][data-x-position='left'] [data-sonner-toast] {
+    width: calc(100% - var(--mobile-offset-left) - var(--mobile-offset-right));
   }
 }
 

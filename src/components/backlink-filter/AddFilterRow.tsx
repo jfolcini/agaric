@@ -329,7 +329,7 @@ export function AddFilterRow({
           type="button"
           variant="default"
           size="xs"
-          className="h-7 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-full"
+          className="[@media(pointer:coarse)]:w-full"
           onClick={handleApply}
           aria-label={t('backlink.applyFilterLabel')}
         >
@@ -340,7 +340,7 @@ export function AddFilterRow({
         type="button"
         variant="ghost"
         size="xs"
-        className="h-7 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-full"
+        className="[@media(pointer:coarse)]:w-full"
         onClick={onCancel}
         aria-label={t('backlink.cancelAddingFilterLabel')}
       >

@@ -254,9 +254,8 @@ export function FilterHelperPopover({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
+          size="xs"
           type="button"
-          className="h-7 gap-1 text-xs"
           data-testid="add-filter-button"
           aria-label={t('search.addFilter')}
           // Keeps the search input focused: its blur closes the history

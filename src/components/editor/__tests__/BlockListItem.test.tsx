@@ -461,7 +461,7 @@ describe('BlockListItem', () => {
   })
 
   // 14. A11y: li is tab-reachable (tabIndex=0) when `isFocused` is omitted.
-  // #1520 — consumers without a roving model (e.g. UnfinishedTasks) omit
+  // #1520 — consumers without a roving model omit
   // `isFocused`, and those rows MUST stay reachable so keyboard users aren't
   // stranded. Only an explicit `isFocused === false` removes a row from the
   // Tab order (the roving case — see the "roving tabindex" describe below).

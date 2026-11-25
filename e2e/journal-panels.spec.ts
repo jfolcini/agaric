@@ -1,8 +1,10 @@
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   focusBlockById,
   getInvokeCalls,
   installIpcRecorder,
+  ipc,
   navigateToView,
   replaceEditorText,
   test,
@@ -11,9 +13,9 @@ import {
 
 /**
  * E2E tests for journal daily-view panels that agenda-advanced.spec.ts never
- * exercised (#2708): the Done panel, the UnfinishedTasks rollover section, the
- * RescheduleDropZone (native HTML5 drag target in weekly view), and projected
- * repeat occurrences.
+ * exercised (#2708): the Done panel, the Due panel's open tasks from before
+ * today, the RescheduleDropZone (native HTML5 drag target in weekly view), and
+ * projected repeat occurrences.
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`) relevant here:
  *   PAGE_PROJECTS ("Projects") — BLOCK_PROJ_3 "Update dependencies", DONE,
@@ -21,11 +23,8 @@ import {
  *     parent is PAGE_PROJECTS, not today's own daily page), so it is the
  *     one seeded item the Done panel is expected to show without any setup.
  *   PAGE_PROJECTS also owns BLOCK_OVERDUE_1 "Submit report" — TODO, P1,
- *     due_date = yesterday. `list_unfinished_tasks` (handlers.ts) matches
- *     TODO/DOING blocks whose due/scheduled date is before today, so this is
- *     the one seeded item UnfinishedTasks is expected to roll over into
- *     today's "Yesterday" group, and the block this file drags onto the
- *     RescheduleDropZone.
+ *     due_date = yesterday: the one seeded item under today's Overdue, and the
+ *     block this file drags onto the RescheduleDropZone.
  *
  * Both panels only render in daily mode (DaySection.tsx: `mode === 'daily'`),
  * and the JournalPage mounts exactly one mode's view at a time (daily /
@@ -75,32 +74,42 @@ test.describe('Done panel @journal', () => {
 })
 
 // ===========================================================================
-// 2. Unfinished-task rollover
+// 2. Open tasks from before today
 // ===========================================================================
 
-test.describe('Unfinished tasks rollover @journal', () => {
+test.describe('Open tasks from before today @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test("yesterday's unfinished TODO appears in today's Unfinished Tasks section", async ({
+  // The Due panel lists them once each (#7040): past due under Overdue, past
+  // scheduled and not yet due under Scheduled earlier.
+  test('a task scheduled yesterday is under Scheduled earlier, an overdue one only under Overdue', async ({
     page,
   }) => {
-    const section = page.getByTestId('unfinished-tasks')
-    await expect(section).toBeVisible({ timeout: 5000 })
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    const row = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content: 'Plan the offsite',
+      parentId: SEED_IDS.PAGE_PROJECTS,
+      index: null,
+      scope,
+    })
+    await ipc(page, 'set_todo_state', { blockId: row.id, state: 'TODO' })
+    await ipc(page, 'set_scheduled_date', { blockId: row.id, date: localDateStr(yesterday) })
+    await navigateToView(page, 'Pages')
+    await navigateToView(page, 'Journal')
 
-    // The section defaults to COLLAPSED (`readLegacyCollapsedDefault` returns
-    // `true` when no prior preference is stored), so the group content below
-    // is not in the accessibility tree until the header is toggled open.
-    const header = section.getByRole('button').first()
-    await expect(header).toHaveAttribute('aria-expanded', 'false')
-    await header.click()
-    await expect(header).toHaveAttribute('aria-expanded', 'true')
-
-    // Grouped under "Yesterday" (classifyAge in UnfinishedTasks.tsx).
-    const yesterdayGroup = page.getByTestId('unfinished-group-yesterday')
-    await expect(yesterdayGroup).toBeVisible()
-    await expect(yesterdayGroup.getByText('Submit report')).toBeVisible()
+    const panel = page.getByTestId('due-panel')
+    const scheduledEarlier = panel.locator('.scheduled-earlier-section')
+    const overdue = panel.locator('.overdue-section')
+    await expect(scheduledEarlier.getByText('Plan the offsite')).toBeVisible()
+    await expect(scheduledEarlier.getByText('Scheduled earlier')).toBeVisible()
+    await expect(overdue.getByText('Submit report')).toBeVisible()
+    await expect(scheduledEarlier.getByText('Submit report')).toHaveCount(0)
+    await expect(page.getByText('Unfinished tasks')).toHaveCount(0)
   })
 })
 
@@ -117,7 +126,7 @@ test.describe('Unfinished tasks rollover @journal', () => {
 // It also only mounts in WEEKLY mode (WeeklyView.tsx wraps every day's
 // DaySection in one), while the only draggable rows that set the
 // `application/x-block-reschedule` MIME type (BlockListItem.tsx `onDragStart`)
-// live in DuePanel / DonePanel / UnfinishedTasks / AgendaResults — all of
+// live in DuePanel / DonePanel / AgendaResults — all of
 // which are DAILY- or AGENDA-mode-only (DaySection.tsx gates them on
 // `mode === 'daily'`; JournalPage.tsx mounts exactly one mode's view at a
 // time). There is therefore no single screen where a real drag GESTURE could
@@ -174,11 +183,10 @@ test.describe('Reschedule drop zone @journal', () => {
 
     // Resulting-state verification (not just the IPC call): switch to
     // today's daily view and confirm the task actually moved — it drops out
-    // of UnfinishedTasks' "before today" rollover (the only seeded rollover
-    // item, so the whole section unmounts) and shows up in the Due panel as
-    // due today instead.
+    // of Overdue (the only seeded overdue item, so the section unmounts) and
+    // shows up in the Due panel as due today instead.
     await page.getByRole('tab', { name: 'Daily view' }).click()
-    await expect(page.getByTestId('unfinished-tasks')).toHaveCount(0)
+    await expect(page.getByTestId('due-panel').locator('.overdue-section')).toHaveCount(0)
     await expect(page.getByTestId('due-panel').getByText('Submit report')).toBeVisible({
       timeout: 5000,
     })

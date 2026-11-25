@@ -151,19 +151,16 @@ describe('Select', () => {
 
   // -- Coarse pointer media query overrides -----------------------------------
 
-  it('default size includes coarse pointer height override', () => {
-    renderSelect()
-    const trigger = screen.getByRole('combobox')
-    expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(trigger.className).toContain('[@media(pointer:coarse)]:text-base')
-  })
-
-  it('sm size includes coarse pointer height override', () => {
-    renderSelect({ size: 'sm' })
-    const trigger = screen.getByRole('combobox')
-    expect(trigger.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(trigger.className).toContain('[@media(pointer:coarse)]:text-base')
-  })
+  it.each([{}, { size: 'sm' as const }])(
+    'a trigger takes the buttons’ coarse-pointer height and hit area (%o)',
+    (props) => {
+      renderSelect(props)
+      const trigger = screen.getByRole('combobox')
+      expect(trigger.className).toContain('[@media(pointer:coarse)]:h-9')
+      expect(trigger.className).toContain('touch-hit-area')
+      expect(trigger.className).not.toContain('[@media(pointer:coarse)]:h-11')
+    },
+  )
 
   // -- Focus-visible ring classes ---------------------------------------------
 

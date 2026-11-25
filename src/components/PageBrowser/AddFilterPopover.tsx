@@ -382,8 +382,7 @@ export function AddFilterPopover({
         <Button
           ref={triggerRef}
           variant="outline"
-          size="sm"
-          className="h-7 gap-1 text-xs"
+          size="xs"
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-label={t('pageBrowser.filter.addFilter')}
@@ -455,7 +454,6 @@ export function AddFilterPopover({
                       type="button"
                       variant="outline"
                       size="xs"
-                      className="text-xs"
                       onClick={() => emit(bucket.spec)}
                     >
                       {t(`pageBrowser.filter.lastEdited.${bucket.key}`)}
@@ -477,7 +475,6 @@ export function AddFilterPopover({
                       type="button"
                       variant="outline"
                       size="xs"
-                      className="text-xs"
                       onClick={() =>
                         emit({ type: 'Priority', values: [p], is_null: false, exclude: false })
                       }

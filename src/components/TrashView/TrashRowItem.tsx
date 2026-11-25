@@ -193,7 +193,7 @@ export function TrashRowItem({
             <Button
               variant="outline"
               size="sm"
-              className="trash-restore-btn [@media(pointer:coarse)]:h-10"
+              className="trash-restore-btn"
               data-testid="trash-restore-btn"
               onClick={() => onRestore(block)}
               tabIndex={-1}
@@ -214,7 +214,7 @@ export function TrashRowItem({
             <Button
               variant="outline"
               size="sm"
-              className="trash-purge-btn text-destructive hover:text-destructive [@media(pointer:coarse)]:h-10"
+              className="trash-purge-btn text-destructive hover:text-destructive"
               data-testid="trash-purge-btn"
               onClick={() => onRequestPurge(block.id)}
               tabIndex={-1}

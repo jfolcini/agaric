@@ -29,11 +29,16 @@ afterEach(async () => {
 })
 
 describe('GeneralTab', () => {
-  it('renders language, week start, and journal date format, in that order', () => {
+  it('renders language, week start, journal date format and journal template, in that order', () => {
     render(<GeneralTab />)
 
     const ids = screen.getAllByRole('combobox').map((select) => select.id)
-    expect(ids).toEqual(['language-select', 'week-start-select', 'journal-date-format-select'])
+    expect(ids).toEqual([
+      'language-select',
+      'week-start-select',
+      'journal-date-format-select',
+      'journal-template-select',
+    ])
   })
 
   it('has no a11y violations', async () => {

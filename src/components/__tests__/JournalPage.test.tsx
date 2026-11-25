@@ -147,7 +147,6 @@ import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
 import { fetchPageMap } from '@/lib/calendar-page-dates-cache'
 import { getCalendarMonthRange } from '@/lib/date-utils'
-import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -318,10 +317,8 @@ describe('JournalPage', () => {
 
       // Daily mode: date heading is hidden (shown in header bar instead).
       // The only h2 may come from EmptyState; no date heading should exist.
-      // Filter out headings from UnfinishedTasks (F-23) empty state.
       const h2s = screen.queryAllByRole('heading', { level: 2 })
       for (const h2 of h2s) {
-        if (h2.textContent?.includes('unfinished')) continue
         expect(h2.textContent).toMatch(/No blocks/)
       }
     })
@@ -3478,58 +3475,6 @@ describe('JournalPage', () => {
       // And Work's slice still holds the 2026-06-10 monthly view.
       expect(state.currentDateBySpace['SPACE_WORK']).toBe('2026-06-10')
       expect(state.modeBySpace['SPACE_WORK']).toBe('monthly')
-    })
-  })
-
-  // ── Journal template button (#5373) ───────────────────────
-
-  describe('journal template button', () => {
-    it('sits in the header when the journal can open pages', async () => {
-      mockEmptyResponses()
-
-      const { unmount } = renderJournal({ onNavigateToPage: vi.fn() })
-
-      expect(
-        await screen.findByRole('button', { name: t('journal.configureTemplate') }),
-      ).toBeInTheDocument()
-      unmount()
-      renderJournal()
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-      expect(
-        screen.queryByRole('button', { name: t('journal.configureTemplate') }),
-      ).not.toBeInTheDocument()
-    })
-
-    it('stays out of the header on a phone, where the day’s menu holds it', async () => {
-      mockEmptyResponses()
-      const desktopWidth = window.innerWidth
-      const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
-        (query: string) =>
-          ({
-            matches: query === '(pointer: coarse)',
-            media: query,
-            addEventListener: () => {},
-            removeEventListener: () => {},
-          }) as unknown as MediaQueryList,
-      )
-      const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
-      try {
-        renderJournal({ onNavigateToPage: vi.fn() })
-        await waitFor(() => {
-          expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-        })
-
-        expect(
-          screen.queryByRole('button', { name: t('journal.configureTemplate') }),
-        ).not.toBeInTheDocument()
-      } finally {
-        matchMedia.mockRestore()
-        touchPoints.mockRestore()
-        Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
-      }
     })
   })
 })

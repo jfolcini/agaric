@@ -59,7 +59,6 @@ export function LocalGraphControl({
       <Button
         variant={active ? 'secondary' : 'outline'}
         size="xs"
-        className="h-7 gap-1 text-xs"
         onClick={() => onToggle(!active)}
         disabled={!hasSeed}
         aria-pressed={active}
@@ -93,7 +92,6 @@ export function LocalGraphControl({
             <Button
               variant="ghost"
               size="xs"
-              className="h-7 gap-1 text-xs"
               onClick={onReturnToOrigin}
               data-testid="local-graph-back"
             >

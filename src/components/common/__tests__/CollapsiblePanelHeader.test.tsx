@@ -170,8 +170,8 @@ describe('CollapsiblePanelHeader', () => {
   })
 
   // #4713 — `cn()` is last-wins, so a caller override must follow the base or
-  // it is silently dropped. `UnfinishedTasks`' nested group header has passed
-  // `py-1` since it was written and never got it.
+  // it is silently dropped: a nested group header once passed `py-1` and
+  // never got it.
   it('lets a caller override a conflicting base utility', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}} className="py-1 text-xs">

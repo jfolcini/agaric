@@ -6,8 +6,6 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { DaySection } from '@/components/journal/DaySection'
-import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
-import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 
@@ -24,7 +22,6 @@ export function DailyView({
   onAddBlock,
   onPageDeleted,
 }: DailyViewProps): React.ReactElement {
-  const isToday = entry.dateStr === useToday()
   // The day the view mounts with replaces the loading skeleton and paints at
   // once, so boot does not ramp the journal up from transparent (#5440).
   // Every day navigated to after that fades in.
@@ -36,7 +33,6 @@ export function DailyView({
       key={entry.dateStr}
       className={cn('space-y-4', mountDay === null && 'animate-in fade-in-0 duration-normal')}
     >
-      {isToday && <UnfinishedTasks onNavigateToPage={onNavigateToPage} />}
       <DaySection
         entry={entry}
         headingLevel="h2"
