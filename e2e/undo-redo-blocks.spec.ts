@@ -54,7 +54,7 @@ async function openGettingStarted(page: Page): Promise<void> {
   await waitForStableBlockRows(page)
 }
 
-/** Press a page undo or redo chord and wait for its toast: a press while one runs is dropped. */
+/** Press a page undo or redo chord and wait for its toast. */
 async function pageHistory(page: Page, chord: string, toast: string | RegExp): Promise<void> {
   await page.keyboard.press(chord)
   await expect(page.getByLabel('Notifications alt+T').getByText(toast)).toBeVisible()
@@ -188,6 +188,38 @@ test.describe('Block-level undo/redo @editor', () => {
     await reopenPage(page, 'Getting Started')
     await expect(marker).toBeVisible()
     expect(await storedTodo(page, gs3)).toBe('TODO')
+  })
+
+  // #7023: presses that land while the previous undo is in flight run after it, in press order.
+  // Dispatched in one task, as a key repeat lands, so each one finds the one before in flight.
+  test('three Ctrl+Z presses without waiting undo three steps, durably', async ({ page }) => {
+    await openGettingStarted(page)
+    const countBefore = await rows(page).count()
+    const gs3 = SEED_IDS.BLOCK_GS_3
+    await setTodoFromMenu(page, gs3)
+    await outlastUndoGroup()
+    const id = await addTypedBlock(page, 'three steps back')
+
+    await page.evaluate(() => {
+      for (let i = 0; i < 3; i++) {
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'z',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+      }
+    })
+
+    await expect.poll(() => storedTodo(page, gs3)).toBeNull()
+    await expect.poll(() => storedText(page, id)).toBeNull()
+    await reopenPage(page, 'Getting Started')
+    await expect(rows(page)).toHaveCount(countBefore)
+    await expect(row(page, gs3).getByTestId('task-marker')).toHaveCount(0)
+    expect(await storedTodo(page, gs3)).toBeNull()
+    expect(await storedText(page, id)).toBeNull()
   })
 
   // ===========================================================================

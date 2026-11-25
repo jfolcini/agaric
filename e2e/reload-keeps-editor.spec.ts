@@ -421,7 +421,6 @@ test.describe('after an MCP write, Ctrl+Z undoes the agent’s op, then the user
 
     await page.keyboard.press('Control+z')
     await expect.poll(() => storedContent(page, GS1)).toBe(gs1)
-    // A press while an undo is still in flight is dropped; its toast shows once it has settled.
     await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
     await page.keyboard.press('Control+z')
     await expect.poll(() => priorityOf(page, GS2)).toBeNull()

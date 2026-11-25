@@ -272,18 +272,60 @@ function notifySwipeUndoFailed(reason: string | null = null): void {
   notify.error(reason ?? t('undo.undoFailedMessage'))
 }
 
+/**
+ * The entry each page's in-flight `undo()` is reverting. `undo()` removes it
+ * by identity, so `onNewAction` must not coalesce into it: the merged
+ * replacement would keep the already-reversed refs, and every later Ctrl+Z
+ * would fail on them (#2912). The store's queue orders undos against redos,
+ * not against new edits, so an edit can still land mid-flight.
+ */
+const undoInProgressEntry = new Map<string, UndoStackEntry>()
+
 export const useUndoStore = create<UndoStore>((set, get) => {
-  /** Guard: page IDs with undo currently in progress. */
-  const undoInProgress = new Set<string>()
   /**
-   * The entry each page's in-flight `undo()` is reverting. `undo()` removes it
-   * by identity, so `onNewAction` must not coalesce into it: the merged
-   * replacement would keep the already-reversed refs, and every later Ctrl+Z
-   * would fail on them (#2912).
+   * Each page's pending undo and redo presses: `tail` is the last one queued,
+   * `clears` counts the `clearPage` calls since the queue formed. Absent once
+   * the last press settles.
    */
-  const undoInProgressEntry = new Map<string, UndoStackEntry>()
-  /** Guard: page IDs with redo currently in progress. */
-  const redoInProgress = new Set<string>()
+  const historyQueues = new Map<
+    string,
+    { tail: Promise<UndoResult | null> | null; clears: number }
+  >()
+
+  /**
+   * Run a page's undo or redo once the one pressed before it settles (#7023).
+   * - Undo and redo share one queue, in press order: each run reads the stacks
+   *   the previous one left, so N presses take N steps.
+   * - A press still queued when its page is cleared (left) is dropped. The
+   *   cleared page has no stacks, so it would fall to the positional undo at
+   *   depth 0, whose target is the op the previous press may just have
+   *   reverted: a dropped press loses no edit, a run could misapply one.
+   * - A run that finds nothing, or that the backend refuses, settles like any
+   *   other (the runs catch their IPC errors), so the next press runs.
+   */
+  function enqueuePageHistory(
+    pageId: string,
+    run: () => Promise<UndoResult | null>,
+  ): Promise<UndoResult | null> {
+    const queue = historyQueues.get(pageId) ?? { tail: null, clears: 0 }
+    const clearsAtPress = queue.clears
+    const runUnlessLeft = () => {
+      if (queue.clears !== clearsAtPress) {
+        logger.info('UndoStore', 'page left with an undo or redo queued, dropping it', { pageId })
+        return Promise.resolve(null)
+      }
+      return run()
+    }
+    // With nothing in flight, run at once, as `enqueueMove` (`page-blocks.ts`) does.
+    const next = queue.tail ? queue.tail.then(runUnlessLeft, runUnlessLeft) : run()
+    queue.tail = next
+    historyQueues.set(pageId, queue)
+    const forget = () => {
+      if (queue.tail === next) historyQueues.delete(pageId)
+    }
+    void next.then(forget, forget)
+    return next
+  }
 
   /**
    * Redo one op, popping it optimistically. `retained` (ref back on
@@ -524,40 +566,33 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   return {
     pages: new Map(),
 
-    undo: async (pageId: string) => {
-      if (undoInProgress.has(pageId)) {
-        logger.warn('UndoStore', 'undo already in progress, skipping', { pageId })
-        return null
-      }
-      undoInProgress.add(pageId)
-      try {
-        const pageState = getOrCreatePage(get().pages, pageId)
-        const top = pageState.undoStack[0] ?? null
-        const initialDepth = pageState.undoDepth
+    undo: (pageId: string) =>
+      enqueuePageHistory(pageId, async () => {
+        try {
+          const pageState = getOrCreatePage(get().pages, pageId)
+          const top = pageState.undoStack[0] ?? null
+          const initialDepth = pageState.undoDepth
 
-        // Mark the entry so a concurrent `onNewAction` will not coalesce into it.
-        if (top) undoInProgressEntry.set(pageId, top)
+          // Mark the entry so a concurrent `onNewAction` will not coalesce into it.
+          if (top) undoInProgressEntry.set(pageId, top)
 
-        // Ensure the entry exists before the await, so a `clearPage` landing
-        // mid-flight shows as `current` undefined on the success path (#753).
-        set((s) => ({
-          pages: setPageState(s.pages, pageId, (current) => current ?? emptyPageState()),
-        }))
+          // Ensure the entry exists before the await, so a `clearPage` landing
+          // mid-flight shows as `current` undefined on the success path (#753).
+          set((s) => ({
+            pages: setPageState(s.pages, pageId, (current) => current ?? emptyPageState()),
+          }))
 
-        if (top && top.refs !== null && top.refs.length > 0) {
-          return await undoByRefs(pageId, top)
+          if (top && top.refs !== null && top.refs.length > 0) {
+            return await undoByRefs(pageId, top)
+          }
+          return await undoPositional(pageId, top, initialDepth)
+        } finally {
+          undoInProgressEntry.delete(pageId)
         }
-        return await undoPositional(pageId, top, initialDepth)
-      } finally {
-        undoInProgress.delete(pageId)
-        undoInProgressEntry.delete(pageId)
-      }
-    },
+      }),
 
-    redo: async (pageId: string) => {
-      if (redoInProgress.has(pageId)) return null
-      redoInProgress.add(pageId)
-      try {
+    redo: (pageId: string) =>
+      enqueuePageHistory(pageId, async () => {
         const pageState = getOrCreatePage(get().pages, pageId)
         if (pageState.redoStack.length === 0) return null
 
@@ -615,10 +650,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         }
 
         return firstResult
-      } finally {
-        redoInProgress.delete(pageId)
-      }
-    },
+      }),
 
     canRedo: (pageId: string) => {
       const { pages } = get()
@@ -676,6 +708,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     },
 
     clearPage: (pageId: string) => {
+      const queue = historyQueues.get(pageId)
+      if (queue) queue.clears += 1
       set((state) => ({
         pages: setPageState(state.pages, pageId, () => undefined),
       }))
@@ -698,7 +732,12 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   }
 })
 
-/** The page's latest undo entry, compared by identity. */
+/**
+ * The page's latest undo entry, compared by identity; `undefined` while an
+ * undo is reverting it, because that entry is on its way out and a toast's
+ * Undo on it would queue behind that undo and take the step below it.
+ */
 export function latestUndoEntry(pageId: string): UndoStackEntry | undefined {
-  return useUndoStore.getState().pages.get(pageId)?.undoStack[0]
+  const top = useUndoStore.getState().pages.get(pageId)?.undoStack[0]
+  return undoInProgressEntry.get(pageId) === top ? undefined : top
 }
