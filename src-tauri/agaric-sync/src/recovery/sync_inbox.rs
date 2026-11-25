@@ -397,10 +397,9 @@ mod tests {
     /// siblings — a shape production cannot reach: frontier width tracks the
     /// number of concurrent PEERS, not the number of queued messages, and
     /// real inbox leftovers come from one or two peers inside the #535 crash
-    /// window. That artificial shape put `find_common_ancestor` (superlinear
-    /// in frontier width) and the sibling reprojection (#3162) at their worst
-    /// case, so the test's runtime was dominated by its own seeding rather
-    /// than by the walk it asserts (#3161).
+    /// window. That artificial shape put Loro's import and the sibling
+    /// reprojection (#3162) at their worst case, so the test's runtime was
+    /// dominated by its own seeding rather than by the walk it asserts.
     ///
     /// ## Why the chunk-boundary assertion is unweakened
     ///
@@ -553,13 +552,12 @@ mod tests {
     /// transaction then FAILS.
     ///
     /// The author's partial-failure test relies on `import_batch`'s up-front
-    /// `decode_import_blob_meta` pass rejecting the whole batch
-    /// (`loro-internal-1.13.6/src/loro.rs:1409`), so in that test nothing ever
-    /// reaches the engine and the tx never opens. This test drives the other
-    /// half of claim 4: the engine is genuinely AHEAD of SQL (all blobs
-    /// imported) when the Phase-2 tx aborts. #535 requires that ZERO slots be
-    /// cleared — the engine-ahead-of-SQL state with every slot still present is
-    /// exactly what a later boot heals.
+    /// `decode_import_blob_meta` pass rejecting the whole batch, so in that
+    /// test nothing ever reaches the engine and the tx never opens. This test
+    /// drives the other half of claim 4: the engine is genuinely AHEAD of SQL
+    /// (all blobs imported) when the Phase-2 tx aborts. #535 requires that ZERO
+    /// slots be cleared — the engine-ahead-of-SQL state with every slot still
+    /// present is exactly what a later boot heals.
     ///
     /// The abort is injected with a `BEFORE INSERT ON blocks` trigger, which
     /// fails Pass A of the projection *inside* the tx, after the import.
@@ -785,6 +783,56 @@ mod tests {
                 "block {bid} came from a slot that was deleted, so it MUST be projected"
             );
         }
+    }
+
+    /// #535 — the batch failure the test above does not reach: a blob that
+    /// passes `import_batch`'s up-front metadata decode and then fails its own
+    /// import (a wrong checksum). The batch keeps what its other blobs
+    /// imported and returns the error, so the per-slot retry finds their ops
+    /// already in the engine. Their slots may clear only with their blocks
+    /// projected.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_that_fails_after_importing_part_projects_what_it_clears() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let (_parent_id, mut block_ids, mut blobs) = chained_update_blobs(4);
+        let mut poison = blobs.pop().expect("four blobs");
+        // A byte of the header's checksum: the metadata still decodes.
+        poison[18] ^= 0xFF;
+        let poisoned_block = block_ids.pop().expect("four blocks");
+
+        seed_inbox(&pool, space.as_str(), &blobs[0], None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[1], None).await;
+        seed_inbox(&pool, space.as_str(), &poison, None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[2], None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a poison slot must never fail the boot walk");
+        assert_eq!(replayed, 3, "the three healthy slots replay");
+
+        let survivors: Vec<Vec<u8>> = sqlx::query_scalar("SELECT bytes FROM loro_sync_inbox")
+            .fetch_all(&pool)
+            .await
+            .expect("survivors");
+        assert_eq!(survivors, [poison], "only the poison slot is left");
+
+        let projected: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM blocks WHERE id IN (?, ?, ?, ?) ORDER BY id")
+                .bind(&block_ids[0])
+                .bind(&block_ids[1])
+                .bind(&block_ids[2])
+                .bind(&poisoned_block)
+                .fetch_all(&pool)
+                .await
+                .expect("projected blocks");
+        assert_eq!(
+            projected, block_ids,
+            "every cleared slot's block is in SQL, and the poison slot's is not"
+        );
     }
 
     /// #3164 — rows of DIFFERENT spaces in the same chunk are batched

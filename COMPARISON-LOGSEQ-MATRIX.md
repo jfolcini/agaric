@@ -330,7 +330,7 @@ A judgment, not a count: each product is scored 1 to 10 per category on what it 
 | AI / agent access | 2 | 8 | 9 | |
 | Sync / storage | 4 | 5 | 7 | One network, foreground-only on Android |
 | Data integrity | 3 | 4 | 8 | |
-| Performance | 3 | 7 | 7 | Page mode's per-key cost grows with the page; `loro` is held back (#3161) |
+| Performance | 3 | 7 | 7 | Page mode's per-key cost grows with the page |
 | Import / export | 9 | 8 | 8 | No structured export, no Roam import |
 | Mobile | 5 | 4 | 5 | Sideloaded Android, no iOS |
 | Extensibility / ecosystem | 9 | 6 | 3 | A stylesheet, MCP, links and the mirror's files; no plugin API |

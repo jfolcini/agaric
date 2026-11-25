@@ -3212,13 +3212,13 @@ async fn gate_replay_slots(
 /// landed, all N slots survive for a later boot). There is no third outcome.
 ///
 /// The one step batching genuinely widens is the ENGINE import, which is not
-/// transactional: `import_batch` can partially apply and still return `Err`
-/// (`loro-internal-1.13.6/src/loro.rs:1459-1478`). That is handled by ordering
-/// — the import happens before the projection tx opens, so an import error
-/// returns with **zero** slots deleted. The engine being ahead of SQL with the
-/// slots still present is precisely the state #535 was designed for, and the
-/// retry below (and, failing that, the next boot) heals it: re-import is
-/// idempotent and `RecoveryReplay` forces the full-projection fallback.
+/// transactional: `import_batch` can partially apply and still return `Err`.
+/// That is handled by ordering — the import happens before the projection tx
+/// opens, so an import error returns with **zero** slots deleted. The engine
+/// being ahead of SQL with the slots still present is precisely the state #535
+/// was designed for, and the retry below (and, failing that, the next boot)
+/// heals it: re-import is idempotent and `RecoveryReplay` forces the
+/// full-projection fallback.
 ///
 /// ## Poison isolation
 ///

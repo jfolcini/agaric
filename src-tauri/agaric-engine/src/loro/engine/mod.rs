@@ -120,8 +120,9 @@ pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
 /// deterministic `PeerID`, every post-reset op would mint `(peer,
 /// counter)` ids that *collide* with this device's pre-reset ops still
 /// held by peers. The fork is catastrophic in both directions:
-/// outbound, peers silently drop the new ops (their version vector
-/// already covers those ids); inbound, importing the peer's history
+/// outbound, the new ops never reach peers (their version vector
+/// already covers those ids, and a snapshot that carries them is
+/// refused); inbound, importing the peer's history
 /// into the forked doc corrupts loro-internal's causal state (panic in
 /// `loro-internal-1.12.0/src/container/richtext/richtext_state.rs`
 /// `insert_elem_at_entity_index` under debug assertions; silent state
@@ -1129,15 +1130,14 @@ mod tests {
         );
     }
 
-    /// #792 reproduction — the OUTBOUND silent-drop direction of the
-    /// fork, exactly as the issue probed it. This test documents the
-    /// pre-#792 RESET behaviour (fresh engine, SAME deterministic peer
-    /// id): the peer's import returns `Ok` but the post-reset block is
-    /// silently dropped, because the peer's version vector already
-    /// covers the re-minted (peer, counter) ids. The companion test
+    /// #792 reproduction — the OUTBOUND direction of the fork. A pre-#792
+    /// RESET reloaded the engine empty under the SAME deterministic peer id,
+    /// so its first ops reuse `(peer, counter)` ids the peer already holds
+    /// with other content. Loro refuses such a snapshot whole (`UsedOpID`),
+    /// so nothing of the post-reset doc reaches the peer. The companion test
     /// below proves the epoch bump fixes it.
     #[test]
-    fn reset_reusing_same_peer_id_silently_drops_post_reset_ops_at_peer_792() {
+    fn reset_reusing_same_peer_id_cannot_deliver_post_reset_ops_to_peer_792() {
         use super::LoroEngine;
 
         // Device A mints three blocks; peer B imports A's history.
@@ -1161,17 +1161,21 @@ mod tests {
             .apply_create_block("POST-1", "content", "after reset", None, 0)
             .expect("post-1");
 
-        // Outbound: B's import returns Ok…
-        b.import(&a_reset.export_snapshot().expect("snap2"))
-            .expect("import of the forked doc reports Ok — that's the trap");
-        // …but the post-reset block was silently dropped (B's vv already
-        // covers those (peer, counter) ids from the PRE blocks).
+        let refused = b
+            .import(&a_reset.export_snapshot().expect("snap2"))
+            .expect_err("the forked doc reuses op ids B holds with other content");
+        assert!(
+            refused.to_string().contains("has been used"),
+            "loro's UsedOpID, got {refused}"
+        );
         assert!(
             b.read_block("POST-1").expect("read").is_none(),
-            "documents the #792 bug shape: with the peer id reused, the \
-             post-reset block must be silently dropped at the peer — if \
-             this ever starts importing, loro's import semantics changed \
-             and the #792 design needs re-review"
+            "the post-reset block does not reach the peer"
+        );
+        assert_eq!(
+            b.read_block("PRE-1").expect("read").map(|s| s.content),
+            Some("one".to_owned()),
+            "the refused import leaves B as it was"
         );
     }
 
@@ -1431,8 +1435,8 @@ mod tests {
     ///
     /// Nothing in the change tested that directly (only the gate and the
     /// end-to-end replay). If loro emitted one diff per blob, or the re-attach
-    /// diff (`EventTriggerKind::Checkout`, `loro.rs:1470` →
-    /// `_checkout_to_latest_with_guard`) were dropped by the root subscriber,
+    /// diff (`EventTriggerKind::Checkout`, from `BatchImportGuard::finish`)
+    /// were dropped by the root subscriber,
     /// `changed` would come back short or empty — and the batched replay would
     /// delete N slots having projected fewer than N blocks. Assert the batched
     /// delta equals the union the per-blob sequence produces.
@@ -1803,13 +1807,13 @@ mod tests {
     ///
     /// * It reads the blocks BACK rather than trusting `Ok(())`.
     ///   `LoroDoc::import_batch` returns `Ok(ImportStatus { pending: Some(..) })`
-    ///   when changes are still buffered for missing deps
-    ///   (`loro-internal-1.13.6/src/loro.rs:1480-1487`) and the engine wrapper
-    ///   discards that status, so `Ok` alone proves nothing.
+    ///   when changes are still buffered for missing deps and the engine
+    ///   wrapper discards that status, so `Ok` alone proves nothing.
     /// * The reversal genuinely survives into loro. `import_batch` reorders the
     ///   batch by `(mode, descending change_num)` using the STABLE
-    ///   `slice::sort_by` (`loro.rs:1411-1415`); every blob here is `Updates`
-    ///   with one change, so the keys tie and the input order is preserved.
+    ///   `slice::sort_by` (loro-internal's `import_blobs_as_batch`); every blob
+    ///   here is `Updates` with one change, so the keys tie and the input order
+    ///   is preserved.
     #[test]
     fn import_batch_projects_reversed_batch_the_fixpoint_admits_3188() {
         use super::{LoroEngine, ReplayBlobGate};
@@ -2020,11 +2024,11 @@ mod tests {
     /// before the new `start_frontiers` check, and this pins the ordering.
     ///
     /// For an UPDATE blob, loro builds `start_frontiers` from the changes' deps
-    /// that the blob does not itself carry
-    /// (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:456-467`) — genuine
-    /// dependencies, which is what #3189 checks. For a SNAPSHOT blob it means
+    /// that the blob does not itself carry (loro-internal's
+    /// `decode_updates_blob_meta`) — genuine dependencies, which is what
+    /// #3189 checks. For a SNAPSHOT blob it means
     /// something entirely different: loro sets it to the snapshot's
-    /// `shallow_since_frontiers` (`fast_snapshot.rs:404-419`), i.e. the point
+    /// `shallow_since_frontiers` (`decode_snapshot_blob_meta`), i.e. the point
     /// the history was TRUNCATED at — ops the receiver by definition does NOT
     /// hold. Reading that as a dependency would report every shallow snapshot
     /// unreachable and drop its slot, turning #3189 into the data-loss bug it
@@ -2033,7 +2037,7 @@ mod tests {
     ///
     /// (Only `Snapshot`, `ShallowSnapshot` and `Updates` can reach the gate at
     /// all: `decode_import_blob_meta` returns `ImportUnsupportedEncodingMode`
-    /// for the two `Outdated*` modes — `encoding.rs:546-553` — which the gate
+    /// for the two `Outdated*` modes, which the gate
     /// treats as a decode failure and accepts ungated.)
     #[test]
     fn gate_replay_blobs_accepts_shallow_snapshot_despite_start_frontiers_3189() {
@@ -2601,9 +2605,9 @@ mod tests {
     /// on the strength of the accept. Nothing in between checks that the import
     /// actually REACHED the declared frontier — and `LoroDoc::import*` returns
     /// `Ok` when it could not: changes whose dependencies are missing are parked
-    /// in `pending_changes` (`ImportStatus { pending: Some(..) }`,
-    /// `loro-internal-1.13.6/src/loro.rs:1480-1487`) and never enter the op-log,
-    /// so they are never diffed, never projected — and the slot that was their
+    /// in `pending_changes` (`ImportStatus { pending: Some(..) }`) and never
+    /// enter the op-log, so they are never diffed, never projected — and the
+    /// slot that was their
     /// only durable copy would be deleted anyway. That is the #535 invariant
     /// inverted.
     ///
