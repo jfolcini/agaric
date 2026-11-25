@@ -1,4 +1,4 @@
-# Session 4421 — no external version ages silently: Dependabot plus the stale-pins lane
+# Session 4425 — no external version ages silently: Dependabot plus the stale-pins lane
 
 **Ask.** The maintainer's decision: updates that wait only on the 7-day release-age gate land through Dependabot and the weekly `stale-pins` lane, and that pair should be as exhaustive as possible. Inventory every external version source, close Dependabot's gaps, make a bump that fixes a waived advisory mergeable without hand edits, and give every pin an upstream check.
 
