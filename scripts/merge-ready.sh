@@ -209,8 +209,10 @@ else
 fi
 
 # ── the last completed CI run on main ──────────────────────────────
-# One page, newest first: `--paginate` would walk every run the repo has.
-if ! raw=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BASE_REF&event=push&status=completed&per_page=10" 2>/dev/null) \
+# One page, newest first: `--paginate` would walk every run the repo has. A full
+# page, because each push to main cancels the run before it, so a busy day buries
+# the last finished run under more than ten cancelled ones.
+if ! raw=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BASE_REF&event=push&status=completed&per_page=100" 2>/dev/null) \
   || ! run=$(jq -c '[.workflow_runs[]? | select(.status == "completed" and .conclusion != "cancelled")] | first // empty' <<<"$raw" 2>/dev/null); then
   fail "$BASE_REF CI: the completed ci.yml runs could not be read"
 elif [ -z "$run" ]; then

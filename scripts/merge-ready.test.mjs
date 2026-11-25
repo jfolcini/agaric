@@ -27,7 +27,7 @@ const ROUTE = {
   run: `${R}/actions/runs/43713379704`,
   testedBase: `${R}/commits?sha=main&until=2026-11-15T12:20:58Z&per_page=1`,
   mergeBase: `${R}/compare/main...${HEAD}?per_page=1`,
-  ci: `${R}/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10`,
+  ci: `${R}/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=100`,
 }
 
 // A stand-in `gh`: `gh api [--paginate] <path>` prints the recorded response for <path> and exits

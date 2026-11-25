@@ -8,14 +8,16 @@ name: Commit regenerated Gradle verification metadata
 #
 # It is split from the build on purpose: the job that runs the PR's code and
 # its new dependencies never holds a write token, and this one, which does,
-# runs no PR code. It only validates and commits a data file, for branches of
-# this repository (never a fork). A push made with GITHUB_TOKEN starts no CI
-# run, which is the point: the new hashes are trusted on first use, so the
-# PR comment asks a person to review them and then reopen the PR (or push) to
-# run CI against them.
+# never checks the PR branch out: it accepts the artifact only as a well-formed
+# Gradle verification file and commits it through the GitHub API
+# (scripts/commit-via-api.sh, from the default branch), for branches of this
+# repository (never a fork). A commit made with GITHUB_TOKEN starts no CI run,
+# which is the point: the new hashes are trusted on first use, so the PR
+# comment asks a person to
+# review them and then reopen the PR (or push) to run CI against them.
 
 on:
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- runs no PR code: it validates and commits one data file, for same-repo branches only
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- never checks out the PR branch: it commits one validated data file through the API, for same-repo branches only
     workflows: [CI]
     types: [completed]
 
@@ -49,10 +51,10 @@ jobs:
             echo "No gradle-verification-metadata artifact on run $RUN_ID; nothing to commit."
           fi
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the default branch (the script this job runs)
         if: steps.download.outputs.found == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
           persist-credentials: false
 
       - name: Commit it to the PR branch
@@ -64,25 +66,17 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
-            echo "$BRANCH moved past $HEAD_SHA since CI ran; the next CI run regenerates against the new head."
-            exit 0
-          fi
           src="$RUNNER_TEMP/regenerated/verification-metadata.xml"
           dest="src-tauri/gen/android/gradle/verification-metadata.xml"
           # The artifact came from a job that ran PR code: accept it only as a
           # well-formed Gradle verification file.
           python3 -I -c 'import sys, xml.dom.minidom as m; d = m.parse(sys.argv[1]); sys.exit(d.documentElement.tagName != "verification-metadata")' "$src"
-          cp "$src" "$dest"
-          if git diff --quiet -- "$dest"; then
-            echo "The regenerated file matches the committed one; nothing to commit."
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f "$dest"
-          git commit -q -s -m 'build(android): regenerate Gradle dependency verification metadata' -m "From the CI run on $HEAD_SHA, which failed Gradle dependency verification."
-          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out/$(dirname "$dest")"
+          cp "$src" "$out/$dest"
+          message="$(printf '%s\n\n%s' 'build(android): regenerate Gradle dependency verification metadata' "From the CI run on $HEAD_SHA, which failed Gradle dependency verification.")"
+          commit="$(bash scripts/commit-via-api.sh "$BRANCH" "$HEAD_SHA" "$message" "$out" "$dest")"
+          [ -n "$commit" ] || exit 0
           pr="$(gh pr list --repo "$REPO" --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [ -n "$pr" ]; then
             gh pr comment "$pr" --repo "$REPO" --body "CI's Android build failed Gradle dependency verification, so I regenerated \`src-tauri/gen/android/gradle/verification-metadata.xml\` and committed it to this branch. Those hashes are trusted on first use: review the diff (new or changed artifacts should match the dependency bump), then reopen this PR or push to run CI against them."
