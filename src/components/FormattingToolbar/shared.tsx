@@ -52,15 +52,24 @@ export function toolbarShortcut(label: string): { shortcut?: string } {
  * focus and selection through it; right/middle click stay inert.
  *
  * - A mouse acts on `pointerdown`.
- * - A finger acts on its release, unless the press showed the button's name:
+ * - A finger acts on its release, through the click the browser sends after it,
+ *   unless the press showed the button's name:
  *   an `IconButton` held past the long-press delay opens its tooltip, which
  *   Radix marks on the trigger (`data-state="…-open"`), and that release does
  *   nothing, so learning a name never applies it (#6895). A control with no
  *   name to show acts however long the press. A press the browser takes for a
  *   scroll is cancelled and does nothing.
  * - The `click` fallback acts only for keyboard-generated clicks (Enter/Space
- *   dispatch one with `detail === 0`), so a pointer press never double-fires.
+ *   dispatch one with `detail === 0`) and a finger's release, so a pointer press
+ *   never double-fires.
+ *
+ * A finger acts on the release's click rather than the release itself: acting
+ * on the release put the action's result (Block actions' sheet, Delete at its
+ * foot) under the finger before that click landed, which then hit it (#7040).
  */
+/** Buttons a finger has lifted from, waiting for that release's click. */
+const fingerLifted = new WeakSet<HTMLButtonElement>()
+
 export function toolbarPressHandlers(
   action: (button: HTMLButtonElement) => void,
 ): Pick<
@@ -71,15 +80,16 @@ export function toolbarPressHandlers(
     onPointerDown: (e) => {
       if (e.button !== 0) return
       e.preventDefault()
+      fingerLifted.delete(e.currentTarget)
       if (e.pointerType !== 'touch') action(e.currentTarget)
     },
     onPointerUp: (e) => {
       if (e.pointerType !== 'touch') return
       if (e.currentTarget.dataset['state']?.endsWith('open')) return
-      action(e.currentTarget)
+      fingerLifted.add(e.currentTarget)
     },
     onClick: (e) => {
-      if (e.detail === 0) action(e.currentTarget)
+      if (e.detail === 0 || fingerLifted.delete(e.currentTarget)) action(e.currentTarget)
     },
   }
 }

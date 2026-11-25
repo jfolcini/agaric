@@ -1297,10 +1297,6 @@ export const common: Record<string, string> = {
   'searchSheet.escalateCtaTitle': 'Filters & regex',
   'searchSheet.escalateLabel': 'Open full search for filters, regex, and history',
 
-  // Translators: screen-reader label of the grab bar at the top of the phone search sheet.
-  // #899 mobile-search polish batch.
-  // #133 — pull-to-dismiss grab handle.
-
   // Translators: phone search sheet: long-pressing a tab makes it the default. Screen-reader hint,
   // toasts ({{scope}} = "This page" or "All pages"), and the pin icon's screen-reader label.
   // #135 — long-press a scope to pin it as the default; aria hint + toasts.
