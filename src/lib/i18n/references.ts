@@ -194,11 +194,9 @@ export const references: Record<string, string> = {
   'unlinkedRefs.loading': 'Loading\u2026',
   'unlinkedRefs.loadingDots': 'Loading...',
 
-  // Translators: Unlinked references panel errors (toast and inline), with a "Retry" button and its
-  // screen-reader label; linkFailed is a toast after "Link it" fails.
+  // Translators: Unlinked references panel errors: loadFailed is the open panel's inline alert, or a
+  // toast while the panel is collapsed; linkFailed is a toast after "Link it" fails.
   'unlinkedRefs.loadFailed': 'Failed to load unlinked references',
-  // #3738 note 1 — in-panel error affordance. The toast alone left the panel
-  // asserting a carried count over an "empty" body after a failed expand.
   'unlinkedRefs.linkFailed': 'Failed to link reference',
 
   // Translators: Unlinked references panel: empty state; "Untitled" stands in for a page with no

@@ -160,9 +160,9 @@ describe('ViewDispatcher — routing', () => {
     expect(node).toHaveTextContent('page-editor:Hello')
   })
 
-  // #1723: a fresh-space switch can force currentView='page-editor' with a
-  // null activePage (empty tab list). The branch must render an EmptyState
-  // with a CTA, NOT return null (which painted a blank content region).
+  // #1723: currentView='page-editor' with a null activePage (an empty tab
+  // list) must render an EmptyState with a CTA, NOT return null (which
+  // painted a blank content region).
   it('renders an empty state (not null) for page-editor without an active page', () => {
     const { container } = render(
       <ViewDispatcher {...defaultProps({ currentView: 'page-editor', activePage: null })} />,

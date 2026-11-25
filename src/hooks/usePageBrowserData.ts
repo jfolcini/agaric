@@ -53,8 +53,8 @@ import { ValidationCode } from '@/lib/search-query/validation-codes'
  * cursor. The cursor format bumped from v1 → v2 alongside the new sort
  * modes, so a session that started before the new build emitted a stale
  * cursor will round-trip safely on the next page load. If the cursorless
- * retry also fails, the original error propagates and
- * `usePaginatedQuery`'s `onError` toast fires (existing behaviour).
+ * retry also fails, the original error propagates to the query's error
+ * state, which `PageBrowser` paints as its error card.
  */
 async function withCursorRecovery<T>(
   call: (cursor?: string) => Promise<T>,
