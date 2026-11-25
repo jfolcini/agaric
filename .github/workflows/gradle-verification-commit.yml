@@ -13,8 +13,8 @@ name: Commit regenerated Gradle verification metadata
 # (scripts/commit-via-api.sh, from the default branch), for branches of this
 # repository (never a fork). A commit made with GITHUB_TOKEN starts no CI run,
 # which is the point: the new hashes are trusted on first use, so the PR
-# comment asks a person to
-# review them and then reopen the PR (or push) to run CI against them.
+# comment asks a person to review them and then reopen the PR (or push) to
+# run CI against them.
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] -- never checks out the PR branch: it commits one validated data file through the API, for same-repo branches only
