@@ -103,9 +103,6 @@
 //     (`property.selectValue`, PropertyChip.tsx), the slash item
 //     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
 //     location to Office" (`blockTree.setLocationMessage`).
-//   - The SpaceSwitcher (`switchToSpace`, `switcherLabel`): the Radix
-//     `Select` trigger `[aria-label="Switch space"]` (layout/SpaceSwitcher.tsx)
-//     and its `[role="option"]` items, one per space plus "Manage spaces…".
 //   - A page alias in the page header (`aliasBadge`): a `[data-slot="badge"]`
 //     holding the alias (PageAliasSection.tsx).
 // ---------------------------------------------------------------------------
@@ -1136,30 +1133,6 @@ export async function chooseSelectOption(
   await option.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
-const SPACE_SWITCHER = '[aria-label="Switch space"]'
-
-/**
- * The SpaceSwitcher trigger's label, read as DOM text: `getText()` returns ""
- * for it, because Radix's `SelectValue` is a portal target that the selected
- * item's text renders into from a subtree the closed Select keeps hidden.
- */
-export async function switcherLabel(): Promise<string> {
-  const label = await browser.execute(
-    (selector: string) => document.querySelector(selector)?.textContent ?? '',
-    SPACE_SWITCHER,
-  )
-  return label.trim()
-}
-
-/** Make `name` the active space through the SpaceSwitcher, and wait until the trigger shows it. */
-export async function switchToSpace(name: string): Promise<void> {
-  await chooseSelectOption(SPACE_SWITCHER, name)
-  await browser.waitUntil(async () => (await switcherLabel()).includes(name), {
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: `space switcher never showed ${JSON.stringify(name)}`,
-  })
-}
-
 /**
  * Paste a file into the FOCUSED block through the app's own paste handler.
  *
@@ -1888,62 +1861,6 @@ export async function restoreFromTrash(title: string): Promise<void> {
   await restore.waitForClickable({ timeout: ACTION_TIMEOUT })
   await restore.click()
   await row.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
-}
-
-/** Settings › Spaces' panel. */
-export const SPACES_PANEL = '[data-testid="settings-panel-spaces"]'
-
-/** Settings › Spaces, opened from the switcher's Manage spaces item. */
-export async function openSpacesSettings(): Promise<void> {
-  await chooseSelectOption(SPACE_SWITCHER, 'Manage spaces')
-  await $(SPACES_PANEL).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
-
-export interface SpaceRow {
-  name: string
-  deleteDisabled: boolean
-  blockedHint: boolean
-}
-
-/** The Settings › Spaces rows: the name in the rename field, Delete's state, the blocked hint. */
-export function spaceRows(): Promise<SpaceRow[]> {
-  return browser.execute(() =>
-    [...document.querySelectorAll('[data-slot="space-manage-row"]')].map((row) => ({
-      name: row.querySelector<HTMLInputElement>('[aria-label="Rename space"]')?.value ?? '',
-      deleteDisabled:
-        row.querySelector<HTMLButtonElement>('button[aria-label="Delete space"]')?.disabled ?? true,
-      blockedHint: row.querySelector('[data-testid="space-delete-blocked-hint"]') !== null,
-    })),
-  )
-}
-
-/** Wait until the Settings › Spaces rows satisfy `holds`. */
-export async function waitForSpaceRows(holds: (rows: SpaceRow[]) => boolean, what: string) {
-  let seen: SpaceRow[] = []
-  await browser
-    .waitUntil(
-      async () => {
-        seen = await spaceRows()
-        return holds(seen)
-      },
-      { timeout: ACTION_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(`${what}: Settings › Spaces reads ${JSON.stringify(seen)}`)
-    })
-}
-
-/** Create the space `name` from Settings › Spaces, open, and wait for its row. */
-export async function createSpace(name: string): Promise<void> {
-  const create = $(SPACES_PANEL).$('button[aria-label="Create new space"]')
-  await create.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await create.click()
-  await typeInputVerified('[aria-label="New space name"]', name)
-  await browser.keys(['Enter'])
-  await waitForSpaceRows(
-    (rows) => rows.some((row) => row.name === name),
-    `the space ${name} never appeared`,
-  )
 }
 
 /** Open the page kebab's `item`. */

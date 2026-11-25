@@ -1,50 +1,26 @@
 import type { Page } from '@playwright/test'
 
-import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
+import {
+  expect,
+  navigateToView,
+  openSettingsTab,
+  seedSearchBlocks,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * Settings › Tasks & reminders › Deadline warning (#5741): the number of days
  * set there is the window the Due panel's Upcoming section lists on today.
- * The mock answers the panel's `query_by_property` date range, so a window
+ * The backend answers the panel's `query_by_property` date range, so a window
  * that ignores the setting shows here.
  */
 
-// `SEED_IDS.PAGE_PROJECTS` in src/lib/tauri-mock/seed.ts.
-const PAGE_PROJECTS = '00000000000000000000PAGE04'
 // Seeded on Projects relative to today: due tomorrow and in a week.
 const SEED_TOMORROW = 'Ship v2.0 release'
 const SEED_NEXT_WEEK = 'Design new dashboard'
 const IN_TWO_DAYS = 'Task due in two days'
 const IN_FIVE_DAYS = 'Task due in five days'
-
-/** Create a TODO on Projects due `days` after today. */
-async function seedTask(page: Page, content: string, days: number): Promise<void> {
-  await page.evaluate(
-    async ({ text, offset, parentId, spaceId }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      const due = new Date()
-      due.setDate(due.getDate() + offset)
-      const pad = (n: number) => String(n).padStart(2, '0')
-      const date = `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}`
-      const block = (await invoke('create_block', {
-        blockType: 'content',
-        content: text,
-        parentId,
-        index: null,
-        scope: { kind: 'active', space_id: spaceId },
-        blockId: null,
-      })) as { id: string }
-      await invoke('set_todo_state', { blockId: block.id, state: 'TODO' })
-      await invoke('set_due_date', { blockId: block.id, date })
-    },
-    { text: content, offset: days, parentId: PAGE_PROJECTS, spaceId: SEED_IDS.SPACE_PERSONAL },
-  )
-}
 
 async function setDeadlineWarning(page: Page, days: number): Promise<void> {
   await navigateToView(page, 'Settings')
@@ -66,11 +42,11 @@ async function upcomingRows(page: Page) {
 
 test.describe('Settings › Tasks & reminders: deadline warning @settings @journal', () => {
   test.beforeEach(async ({ page }) => {
-    // A Wednesday morning, so no window crosses midnight mid-test.
-    await page.clock.install({ time: new Date('2026-03-11T09:00:00') })
     await waitForBoot(page)
-    await seedTask(page, IN_TWO_DAYS, 2)
-    await seedTask(page, IN_FIVE_DAYS, 5)
+    await seedSearchBlocks(page, [
+      { content: IN_TWO_DAYS, todo: 'TODO', due: 2 },
+      { content: IN_FIVE_DAYS, todo: 'TODO', due: 5 },
+    ])
   })
 
   test('the warning days set the Due panel Upcoming window', async ({ page }) => {
