@@ -24,6 +24,11 @@
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
 //! `wait_pulled` for the app's pull from this vault (`streamed_at`). Both mark
 //! the end of the op phase; attachment bytes travel in the file phase after it.
+//!
+//! The app also asks for a round by itself after each of its own writes, and
+//! this vault pulls back once it has served one (#6551). `hold_sync` keeps this
+//! vault out of every session until `release_sync`, for a write here that must
+//! not have seen the app's.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -53,7 +58,7 @@ use agaric_sync::foreground::LifecycleHooks;
 use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate};
 use agaric_sync::sync_daemon::{SyncDaemon, SyncDaemonContext};
 use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
-use agaric_sync::sync_scheduler::SyncScheduler;
+use agaric_sync::sync_scheduler::{PeerSyncGuard, SyncScheduler};
 
 /// How long a command waits on the app: the lane's `ACTION_TIMEOUT`.
 const WAIT: Duration = Duration::from_secs(60);
@@ -159,6 +164,12 @@ enum Command {
     WaitPulled,
     /// The device ids this vault holds a pairing with.
     ListPeers,
+    /// Refuse the app's sessions and start none until `release_sync`. Answers
+    /// once no session with the app is running. Held, a `sync` or a
+    /// `wait_pulled` only runs out its wait.
+    HoldSync,
+    /// End `hold_sync`.
+    ReleaseSync,
 }
 
 /// Property `key` as `value_type` in space `space_id`, or in the Personal
@@ -213,6 +224,8 @@ enum Reply {
         value_text: Option<String>,
     },
     Pulled,
+    Held,
+    Released,
     Peers {
         peer_ids: Vec<String>,
     },
@@ -282,6 +295,8 @@ struct Peer {
     app: Option<String>,
     /// When this vault last wrote, for `wait_pulled`.
     last_write_ms: i64,
+    /// The daemon's lock for a session with the app, while `hold_sync` holds it.
+    held: Option<PeerSyncGuard>,
 }
 
 impl Peer {
@@ -322,6 +337,7 @@ impl Peer {
             errors,
             app: None,
             last_write_ms: 0,
+            held: None,
         })
     }
 
@@ -374,6 +390,11 @@ impl Peer {
             Command::ReadAttachment { id } => self.read_attachment(id).await,
             Command::WaitPulled => self.wait_pulled().await,
             Command::ListPeers => self.list_peers().await,
+            Command::HoldSync => self.hold_sync().await,
+            Command::ReleaseSync => {
+                self.held = None;
+                Ok(Reply::Released)
+            }
         };
         result.unwrap_or_else(|e| Reply::Error {
             message: e.to_string(),
@@ -726,6 +747,35 @@ impl Peer {
         Ok(Reply::Peers {
             peer_ids: rows.into_iter().map(|row| row.peer_id).collect(),
         })
+    }
+
+    /// Take the lock both of the daemon's roles take for a session with the
+    /// app, as `start_sync_inner`'s probe does: while it is held the app's dial
+    /// is refused as busy, which the app books without a report unless a press
+    /// started it, and this vault's own dial is skipped. A running session
+    /// holds it until it ends.
+    async fn hold_sync(&mut self) -> Result<Reply, AppError> {
+        let app_id = self.paired_app()?;
+        let endpoint_id = peer_refs::get_peer_ref(&self.pools.read, app_id)
+            .await?
+            .and_then(|row| row.endpoint_id)
+            .ok_or_else(|| {
+                AppError::InvalidOperation("this vault's row for the app binds no key yet".into())
+            })?;
+        let lock_key = agaric_sync::sync_daemon::peer_lock_key_from_stored(&endpoint_id)?;
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            if let Some(guard) = self.scheduler.try_lock_peer(&lock_key) {
+                self.held = Some(guard);
+                return Ok(Reply::Held);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(AppError::InvalidOperation(format!(
+                    "waited {WAIT:?} for this vault's session with the app to end"
+                )));
+            }
+            tokio::time::sleep(POLL).await;
+        }
     }
 
     fn paired_app(&self) -> Result<&str, AppError> {

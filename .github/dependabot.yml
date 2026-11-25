@@ -10,7 +10,8 @@ version: 2
 #                        forget", which is almost worse than tag-floating
 #                        because security fixes never reach us).
 #   2. npm            — `package.json` / `package-lock.json` at the repo root.
-#   3. cargo          — `src-tauri/Cargo.toml` / `Cargo.lock` (Tauri workspace).
+#   3. cargo          — `src-tauri/Cargo.toml` / `Cargo.lock` (Tauri workspace)
+#                        and the separate `src-tauri/fuzz` workspace.
 #
 # Cadence: every Monday. A single weekday batch is easier to triage
 # than a trickle across the week, and Monday-AM lines the PRs up before
@@ -45,15 +46,25 @@ version: 2
 # See each group's own comment.
 #
 # Grouping and SECURITY updates — the other default that is easy to miss.
-# A `groups:` entry with no `applies-to` covers `version-updates` ONLY.
-# Every group in this file was in that state until #4351, which means a
-# CVE against a single member of an EXACT-PIN group would arrive as a solo
-# security PR and hit the very install failure the group exists to
-# prevent — on the path that arrives unannounced and under time pressure.
-# Five groups are exact-pin and now carry a `*-security` mirror alongside
-# them: `codeql-action` (github-actions), `stryker`, `tiptap` and `vitest`
-# (npm), and `iroh` (cargo). Each pair MUST be edited together; Dependabot
-# cannot serve both paths from one entry, so the duplication is by design.
+# A `groups:` entry with no `applies-to` covers `version-updates` ONLY, so a
+# CVE against a single member of a coupled stack would arrive as a solo
+# security PR and hit the very install or build failure the group exists to
+# prevent — on the path that arrives unannounced and under time pressure
+# (#4351). Every group that is a coupled stack (AGENTS.md § Coupled
+# Dependency Updates, or members that pin each other) carries a `*-security`
+# mirror: `codeql-action` (github-actions); `tauri-apps`, `react`, `tiptap`,
+# `radix-ui`, `vitest`, `playwright` and `stryker` (npm); `tauri`, `sqlx`,
+# `specta`, `opentelemetry` and `iroh` (cargo). Each pair MUST be edited together;
+# Dependabot cannot serve both paths from one entry. The convenience groups
+# (`lint-and-build`, `i18next`, `tokio`, `tracing`, `rustls`, `serde`,
+# `chrono`) have none: within a major their members install alone.
+#
+# Indirect dependencies. For cargo, `allow: dependency-type: all` makes
+# version updates cover the lockfile's transitive crates too, not only the
+# ones a manifest names; they land in the `minor-and-patch` catch-all. npm
+# supports no `indirect` for version updates (Dependabot's options
+# reference), so a transitive npm package moves when a direct dependency's
+# bump re-resolves it or a security update targets it.
 #
 # `iroh` needed BOTH halves rather than just the mirror: `iroh`,
 # `iroh-base` and `iroh-dns` are pinned at an exact `=` version across
@@ -165,7 +176,23 @@ updates:
       tauri-apps:
         patterns:
           - '@tauri-apps/*'
+      # The Tauri CLI refuses a JS package whose major.minor differs from its
+      # Rust crate's, and the `@tauri-apps/*` packages move as one.
+      tauri-apps-security:
+        applies-to: security-updates
+        patterns:
+          - '@tauri-apps/*'
       react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react'
+          - '@types/react-dom'
+          - '@vitejs/plugin-react'
+          - 'vite-plugin-*'
+      # react-dom throws at startup when its version differs from react's.
+      react-security:
+        applies-to: security-updates
         patterns:
           - 'react'
           - 'react-dom'
@@ -189,6 +216,12 @@ updates:
         patterns:
           - '@tiptap/*'
       radix-ui:
+        patterns:
+          - '@radix-ui/*'
+      # Each `@radix-ui/*` package depends on the shared primitives at an
+      # exact version; a solo bump installs a second copy of them.
+      radix-ui-security:
+        applies-to: security-updates
         patterns:
           - '@radix-ui/*'
       vitest:
@@ -215,6 +248,13 @@ updates:
           - 'happy-dom'
           - 'jsdom'
       playwright:
+        patterns:
+          - '@playwright/*'
+          - 'playwright'
+      # `@playwright/test` and `playwright` each depend on `playwright-core`
+      # at an exact version, and the browser build follows it.
+      playwright-security:
+        applies-to: security-updates
         patterns:
           - '@playwright/*'
           - 'playwright'
@@ -328,8 +368,18 @@ updates:
     labels:
       - dependencies
       - cargo
+    # Direct and transitive crates alike (see the header).
+    allow:
+      - dependency-type: all
     groups:
       tauri:
+        patterns:
+          - 'tauri'
+          - 'tauri-build'
+          - 'tauri-plugin-*'
+          - 'tauri-utils'
+      tauri-security:
+        applies-to: security-updates
         patterns:
           - 'tauri'
           - 'tauri-build'
@@ -346,7 +396,20 @@ updates:
           - 'specta-*'
           - 'tauri-specta'
           - 'tauri-specta-*'
+      specta-security:
+        applies-to: security-updates
+        patterns:
+          - 'specta'
+          - 'specta-*'
+          - 'tauri-specta'
+          - 'tauri-specta-*'
       sqlx:
+        patterns:
+          - 'sqlx'
+          - 'sqlx-*'
+      # The `sqlx-*` crates pin each other at an exact version.
+      sqlx-security:
+        applies-to: security-updates
         patterns:
           - 'sqlx'
           - 'sqlx-*'
@@ -360,6 +423,13 @@ updates:
           - 'loro-*'
       # 0.x minors break and these pin each other: a solo bump cannot compile.
       opentelemetry:
+        patterns:
+          - 'opentelemetry'
+          - 'opentelemetry_*'
+          - 'opentelemetry-*'
+          - 'tracing-opentelemetry'
+      opentelemetry-security:
+        applies-to: security-updates
         patterns:
           - 'opentelemetry'
           - 'opentelemetry_*'
@@ -481,8 +551,9 @@ updates:
   # acceptable trade: libfuzzer-sys majors are coupled to the cargo-fuzz CLI
   # version and need a hand-written migration anyway.
   #
-  # Rejected alternatives: `allow: [dependency-type: indirect]` does NOT help
-  # (rmcp/mdns-sd are parsed as *direct* — they are declared in a manifest
+  # Rejected alternatives for keeping manifest edits out (the `allow: all`
+  # below is for coverage, not that): `allow: [dependency-type: indirect]`
+  # does NOT help (rmcp/mdns-sd are parsed as *direct* — they are declared in a manifest
   # Dependabot fetched); an explicit `allow` name list would have to
   # enumerate every parent-crate dep and silently rot as that list grows.
   - package-ecosystem: cargo
@@ -499,8 +570,16 @@ updates:
     labels:
       - dependencies
       - cargo
+    # Transitive crates too, as for /src-tauri; `lockfile-only` still keeps
+    # every PR to a fuzz/Cargo.lock diff.
+    allow:
+      - dependency-type: all
     groups:
       fuzz:
+        patterns:
+          - '*'
+      fuzz-security:
+        applies-to: security-updates
         patterns:
           - '*'
     # The fuzz workspace has an independent lockfile, so the root cargo

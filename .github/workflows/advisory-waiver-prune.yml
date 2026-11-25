@@ -1,0 +1,112 @@
+name: Prune advisory waivers a Dependabot update left unused
+
+# A Dependabot bump that fixes a waived advisory leaves its waiver matching
+# nothing, and src-tauri/deny.toml (`unused-ignored-advisory = "deny"`) and the
+# .nsprc check in scripts/npm-audit-retry.sh then fail the PR on the waiver
+# alone. When that happens, CI's lint job lists the unused waivers
+# (`prune-advisory-waivers.mjs list`) and uploads them as the
+# `unused-advisory-waivers` artifact; this workflow deletes them on the PR
+# branch, regenerates the files derived from them, and commits.
+#
+# The same split as gradle-verification-commit.yml: the job that ran the PR's
+# code never held a write token, and this one, which does, runs no PR code.
+# The scripts come from the default branch; the PR branch supplies only the two
+# waiver files, and the artifact is accepted only as a list of advisory ids that
+# those files waive. It only ever deletes waivers. A push made with
+# GITHUB_TOKEN starts no CI run, so the PR comment asks a person to reopen the
+# PR (or push) to run CI against the commit.
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- runs no PR code: it deletes listed waivers from two data files, for same-repo Dependabot branches only
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  prune:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      contains(fromJSON('["failure","cancelled"]'), github.event.workflow_run.conclusion) &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read # download the artifact from the CI run
+      contents: write # push the pruned files
+      pull-requests: write # tell the PR
+    steps:
+      - name: Download the unused waivers, if CI listed any
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/unused"
+          if gh run download "$RUN_ID" --repo "$REPO" --name unused-advisory-waivers --dir "$dir" 2>/dev/null \
+            && jq -e '(.cargo + .npm) | length > 0' "$dir/unused-advisory-waivers.json" >/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No unused advisory waivers listed on run $RUN_ID; nothing to prune."
+          fi
+
+      - name: Check out the default branch (the scripts this job runs)
+        if: steps.download.outputs.found == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out the PR branch
+        if: steps.download.outputs.found == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          path: pr
+          persist-credentials: false
+
+      - name: Install Node.js
+        if: steps.download.outputs.found == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: trusted/.nvmrc
+          package-manager-cache: false
+
+      - name: Prune the waivers and commit them to the PR branch
+        if: steps.download.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$(git -C pr rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "$BRANCH moved past $HEAD_SHA since CI ran; the next CI run lists against the new head."
+            exit 0
+          fi
+          # The waiver files go in, the default branch's scripts edit them, and
+          # the waiver files plus the ones derived from them come back out.
+          waivers=(src-tauri/deny.toml .nsprc)
+          files=("${waivers[@]}" src-tauri/.cargo/audit.toml src-tauri/osv-scanner.toml src-tauri/fuzz/osv-scanner.toml osv-scanner.toml)
+          for f in "${waivers[@]}"; do cp "pr/$f" "trusted/$f"; done
+          node trusted/scripts/prune-advisory-waivers.mjs apply "$RUNNER_TEMP/unused/unused-advisory-waivers.json"
+          node trusted/scripts/sync-audit-from-deny.mjs
+          for f in "${files[@]}"; do cp "trusted/$f" "pr/$f"; done
+          cd pr
+          if git diff --quiet -- "${files[@]}"; then
+            echo "Nothing changed; nothing to commit."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${files[@]}"
+          git commit -q -s -m 'chore(deps): drop the advisory waivers this update made unused' -m "Listed by the CI run on $HEAD_SHA, whose advisory check failed on waivers that match nothing."
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          pr="$(gh pr list --repo "$REPO" --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          if [ -n "$pr" ]; then
+            gh pr comment "$pr" --repo "$REPO" --body "This update leaves advisory waivers matching nothing, which fails the advisory check, so I deleted them from \`src-tauri/deny.toml\` / \`.nsprc\` and re-synced the files generated from them. Review the diff (a comment above a deleted waiver may now describe nothing), then reopen this PR or push to run CI against it."
+          fi

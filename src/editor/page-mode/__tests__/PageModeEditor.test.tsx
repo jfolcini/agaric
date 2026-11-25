@@ -3392,7 +3392,8 @@ describe('PageModeEditor attachments (#5743)', () => {
       expect(image('[data-testid="attachment-section"]')).toHaveAttribute('data-alignment', 'right')
     })
 
-    const caption = image('[data-testid="image-caption-input"]')
+    // The redraw remounts the image, whose caption field mounts only once its bytes are read.
+    const caption = await waitFor(() => image('[data-testid="image-caption-input"]'))
     fireEvent.focus(caption)
     fireEvent.change(caption, { target: { value: 'A photo' } })
     await act(async () => {
