@@ -112,6 +112,16 @@ afterEach(() => {
   })
 })
 
+/** Unfold the form, which a query that has run opens folded (#7040). */
+async function unfoldForm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: t('advancedQuery.form.edit') }))
+}
+
+/** The builder's root group, where a condition's chip is (the summary repeats its label). */
+function builder(): ReturnType<typeof within> {
+  return within(screen.getByRole('group', { name: 'Filter' }))
+}
+
 describe('AdvancedQueryView', () => {
   // #2852 — initial load (no prior results to keep on screen) renders a
   // list-shaped LoadingSkeleton mirroring QueryResultList rows, not a bare
@@ -148,7 +158,30 @@ describe('AdvancedQueryView', () => {
     await screen.findByText('No blocks match these filters')
 
     expect(screen.getByText(t('advancedQuery.description'))).toBeInTheDocument()
-    expect(screen.getByText(t('advancedQuery.builder.emptyGroupAnd'))).toBeInTheDocument()
+    expect(builder().getByText(t('advancedQuery.builder.emptyGroupAnd'))).toBeInTheDocument()
+  })
+
+  it('opens a query that has run on its results, the form folded under its summary (#7040)', async () => {
+    const store = useAdvancedQueryStore.getState()
+    store.addLeaf(SPACE_ID, [], { type: 'Tag', tag: seededTagId('project') })
+    store.setSort(SPACE_ID, [{ source: { type: 'Column', name: 'created' }, desc: true }])
+    const user = userEvent.setup()
+    const { container } = render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    const edit = screen.getByRole('button', { name: t('advancedQuery.form.edit') })
+    expect(edit).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('advanced-query-summary')).toHaveTextContent(
+      'tag: project · sorted by Created ↓',
+    )
+    expect(screen.queryByRole('group', { name: 'Filter' })).not.toBeInTheDocument()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    await user.click(edit)
+    expect(edit).toHaveAttribute('aria-expanded', 'true')
+    expect(builder().getByText('tag: project')).toBeInTheDocument()
   })
 
   it('renders matched rows and the total count', async () => {
@@ -266,7 +299,7 @@ describe('AdvancedQueryView', () => {
       })
     })
     // The leaf chip is visible in the builder.
-    expect(screen.getByText('tag: project')).toBeInTheDocument()
+    expect(builder().getByText('tag: project')).toBeInTheDocument()
   })
 
   it('keeps the combinator when the active segment is clicked again', async () => {
@@ -412,7 +445,7 @@ describe('AdvancedQueryView', () => {
     await screen.findByText('No blocks match these filters')
 
     await addTagLeaf(user, 'gone')
-    expect(screen.getByText('tag: gone')).toBeInTheDocument()
+    expect(builder().getByText('tag: gone')).toBeInTheDocument()
 
     // Remove the leaf via its pill remove control.
     await user.click(screen.getByRole('button', { name: 'Remove condition' }))
@@ -805,6 +838,7 @@ describe('AdvancedQueryView', () => {
       serveMockBackend()
       useAdvancedQueryStore.getState().setGroupBy(SEEDED_SPACE, { key: { type: 'State' } })
       render(<AdvancedQueryView />)
+      await unfoldForm(user)
       await user.click(boardSegment())
       await screen.findAllByTestId('query-board-column')
 
@@ -835,6 +869,7 @@ describe('AdvancedQueryView', () => {
       )
       groupBy({ type: 'Property', key: 'stage' })
       render(<AdvancedQueryView />)
+      await unfoldForm(userEvent.setup())
       await waitFor(() => expect(boardSegment()).toBeEnabled())
 
       act(() => groupBy({ type: 'Property', key: 'effort' }))
@@ -851,6 +886,7 @@ describe('AdvancedQueryView', () => {
       )
       groupBy({ type: 'Property', key: 'stage' })
       render(<AdvancedQueryView />)
+      await unfoldForm(userEvent.setup())
 
       await waitFor(() =>
         expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', expect.anything()),
@@ -888,7 +924,7 @@ describe('AdvancedQueryView', () => {
       await user.click(screen.getByText('Roadmap'))
 
       // The chip resolves the stored ULID back to its title.
-      expect(await screen.findByText('links to Roadmap')).toBeInTheDocument()
+      expect(await builder().findByText('links to Roadmap')).toBeInTheDocument()
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenLastCalledWith('run_advanced_query', {
@@ -913,7 +949,7 @@ describe('AdvancedQueryView', () => {
       await user.click(within(await screen.findByRole('dialog')).getByText('Links to'))
       await screen.findByText('Roadmap')
       await user.click(screen.getByText('Roadmap'))
-      expect(await screen.findByText('links to Roadmap')).toBeInTheDocument()
+      expect(await builder().findByText('links to Roadmap')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: 'Remove condition' }))
       await waitFor(() => {
@@ -983,7 +1019,7 @@ describe('AdvancedQueryView', () => {
         })
       })
       // The chip renders the terse placeholder summary.
-      expect(screen.getByText('has parent matching (…)')).toBeInTheDocument()
+      expect(builder().getByText('has parent matching (…)')).toBeInTheDocument()
     })
   })
 })
@@ -1033,6 +1069,22 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
         aggregates: [],
       },
     })
+  })
+
+  it('folds the form under the summary once a saved view loads (#7040)', async () => {
+    render(<AdvancedQueryView />)
+    await saveViewNamed('My saved query')
+    const edit = screen.getByRole('button', { name: t('advancedQuery.form.edit') })
+    expect(edit).toHaveAttribute('aria-expanded', 'true')
+
+    await userEvent.setup().click(
+      await screen.findByRole('button', {
+        name: t('advancedQuery.savedViews.loadTitle', { name: 'My saved query' }),
+      }),
+    )
+    expect(edit).toHaveAttribute('aria-expanded', 'false')
+    // The Load button folded away with the form; focus moves to Edit query.
+    expect(edit).toHaveFocus()
   })
 
   it('refuses a name a page of the space holds, and stamps nothing', async () => {

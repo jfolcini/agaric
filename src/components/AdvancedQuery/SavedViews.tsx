@@ -32,9 +32,11 @@ interface SavedQueryView {
 export interface SavedViewsProps {
   /** Active space key (`__legacy__` when no space): the builder a view loads into. */
   spaceKey: string
+  /** Called once a view has loaded into the builder. */
+  onLoad?: (() => void) | undefined
 }
 
-export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
+export function SavedViews({ spaceKey, onLoad }: SavedViewsProps): React.ReactElement {
   const { t } = useTranslation()
   const loadView = useAdvancedQueryStore((s) => s.loadView)
   const { spaceId, views: all } = useSavedViews()
@@ -51,8 +53,9 @@ export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
 
   const handleLoad = (view: SavedQueryView): void => {
     try {
-      // The builder shows the loaded query; a toast would cover these controls.
+      // The results show the loaded query; a toast would cover them.
       loadView(spaceKey, parseQuerySpec(view.spec))
+      onLoad?.()
     } catch (err) {
       notify.error(err instanceof Error ? err : t('advancedQuery.savedViews.loadError'))
     }

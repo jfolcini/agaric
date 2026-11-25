@@ -76,3 +76,13 @@ export async function finishSyncSession(page: Page): Promise<void> {
   await emitMockEvent(page, 'sync:complete', { type: 'complete', ...counts, changed_blocks: 0 })
   await streamSyncProgress(page, { kind: 'sync', state: 'complete', ...counts })
 }
+
+/**
+ * Unfold the Advanced query form. It starts folded under the query's summary
+ * once a query has run (#7040).
+ */
+export async function openQueryForm(page: Page): Promise<void> {
+  const edit = page.getByRole('button', { name: 'Edit query', exact: true })
+  if ((await edit.getAttribute('aria-expanded')) === 'false') await edit.click()
+  await expect(edit).toHaveAttribute('aria-expanded', 'true')
+}

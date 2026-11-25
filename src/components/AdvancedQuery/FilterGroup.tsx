@@ -20,8 +20,8 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { HasParentMatchingEditor } from '@/components/AdvancedQuery/HasParentMatchingEditor'
+import { builderLeafLabel } from '@/components/AdvancedQuery/query-summary'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
-import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { InfoPopover } from '@/components/ui/info-popover'
@@ -135,26 +135,10 @@ function LeafChip({
   onToggleNegate: (path: BuilderPath) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  // #1478 — the relational `LinksTo` / `LinkedFrom` chips store a ULID; resolve
-  // it to the page title for the chip label (same resolver the grouped-results
-  // headers use, #1447). Non-id facets ignore the resolver.
-  // #3339 — the Tag facet is now an id-emitting picker, so the tag chip carries
-  // a ULID here too and gets the same resolver (3rd arg) the Pages surface
-  // wires up. Unresolvable ids fall back to the raw string rather than the
-  // store's `[[…]]` placeholder, matching `usePageBrowserFilters.tagResolver`.
-  // Selected as a string, so the pill follows a title that changes or arrives
-  // after it mounts.
-  const label = useResolveStore((s) =>
-    pageFilterSummary(
-      node.primitive,
-      t,
-      (id) => {
-        const title = s.resolveTitle(id)
-        return title.startsWith('[[') ? id : title
-      },
-      s.resolveTitle,
-    ),
-  )
+  // #1478 / #3339 — tag and link chips store an id; the label shows the title it
+  // resolves to. Selected as a string, so the pill follows a title that changes
+  // or arrives after it mounts.
+  const label = useResolveStore((s) => builderLeafLabel(node.primitive, t, s.resolveTitle))
   const kind = t('advancedQuery.builder.kindLeaf')
   return (
     <li className="inline-flex items-center gap-1" data-testid="filter-group-leaf">
@@ -179,20 +163,18 @@ function NegateToggle({
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
-    <button
+    // The height of the All / Any segments beside it: 32 px, 36 px on a coarse pointer.
+    <Button
       type="button"
+      variant={negated ? 'destructive' : 'outline'}
+      size="sm"
       aria-pressed={negated}
       aria-label={t('advancedQuery.builder.negate')}
       onClick={onClick}
-      className={cn(
-        'h-7 rounded-md border px-1.5 text-xs [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 font-semibold uppercase leading-none focus-ring-visible',
-        negated
-          ? 'border-destructive bg-destructive text-destructive-foreground'
-          : 'bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-      )}
+      className={cn('px-2 text-xs font-semibold uppercase', !negated && 'text-muted-foreground')}
     >
       {t('advancedQuery.builder.negate')}
-    </button>
+    </Button>
   )
 }
 

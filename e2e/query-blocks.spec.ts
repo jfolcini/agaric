@@ -171,6 +171,12 @@ test.describe('Tag-based query blocks @editor @search', () => {
     await expect(
       queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Weekly standup notes' }),
     ).toBeVisible()
+
+    // Among a page's blocks the rows stay compact: py-1.5 around a text-sm line (#7040).
+    const row = await queryResult
+      .locator('[data-testid="query-result-item"]', { hasText: 'Weekly standup notes' })
+      .boundingBox()
+    expect(row?.height).toBe(32)
   })
 
   test('tag:personal query shows matching blocks', async ({ page }) => {

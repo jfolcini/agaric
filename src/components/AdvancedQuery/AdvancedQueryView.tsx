@@ -21,16 +21,26 @@
  * `handleSaveView`'s dialog saves the serialized spec (`serializeQuerySpec`,
  * `src/stores/advancedQuery.ts`) as a view page of the space
  * (`src/lib/saved-views.ts`, #6544).
+ *
+ * Results first (#7040): above the results sits a one-line summary of the
+ * query (`querySummary`) and an *Edit query* button that folds the builder,
+ * controls and saved views away under it. The form starts open only for an
+ * empty query; loading a saved view folds it.
  */
 
 import type React from 'react'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
 import { boardColumns } from '@/components/AdvancedQuery/board-columns'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
+import {
+  builderLeafLabel,
+  isEmptyQuery,
+  querySummary,
+} from '@/components/AdvancedQuery/query-summary'
 import { QueryBoard } from '@/components/AdvancedQuery/QueryBoard'
 import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
 import { SavedViews } from '@/components/AdvancedQuery/SavedViews'
@@ -40,6 +50,8 @@ import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { listCardVariants } from '@/components/ui/list-item'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
@@ -57,6 +69,7 @@ import {
   serializeQuerySpec,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
+import { useResolveStore } from '@/stores/resolve'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 export interface AdvancedQueryViewProps {
@@ -141,6 +154,16 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     setAggregates(spaceKey, aggregates)
   const handleViewChange = (view: QueryViewMode): void => setView(spaceKey, view)
 
+  // A query that has run opens on its results, its form folded under the summary.
+  const [formOpen, setFormOpen] = useState(() => isEmptyQuery(builder, controls))
+  const formId = useId()
+  const editRef = useRef<HTMLButtonElement>(null)
+  const summary = useResolveStore((s) =>
+    querySummary(builder, controls, t, (primitive) =>
+      builderLeafLabel(primitive, t, s.resolveTitle),
+    ),
+  )
+
   // #1460 saved-views: "Save view" prompts for a name and saves the current
   // spec in this space.
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
@@ -188,58 +211,85 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
       {/* Builder pane — the #1280 D3 recursive nested-boolean tree. It keeps
           the list column's width beside a board. */}
       <div className="advanced-query-builder mx-auto flex w-full max-w-list flex-col gap-3">
-        <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
-        <div className="flex flex-col gap-2">
-          <FilterGroup
-            node={builder}
-            path={[]}
-            depth={0}
-            onAddLeaf={handleAddLeaf}
-            onAddGroup={handleAddGroup}
-            onRemoveNode={handleRemoveNode}
-            onSetGroupOp={handleSetGroupOp}
-            onToggleNegate={handleToggleNegate}
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-sm" data-testid="advanced-query-summary">
+            {summary}
+          </p>
+          <Button
+            ref={editRef}
+            variant="outline"
+            size="sm"
+            aria-expanded={formOpen}
+            aria-controls={formId}
+            onClick={() => setFormOpen((open) => !open)}
+          >
+            <ChevronToggle isExpanded={formOpen} size="md" />
+            {t('advancedQuery.form.edit')}
+          </Button>
+        </div>
+        {/* Hidden, not unmounted: the full-text box commits its term on a
+            debounce that an unmount would cancel. */}
+        <div id={formId} hidden={!formOpen} className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">{t('advancedQuery.description')}</p>
+          <div className="flex flex-col gap-2">
+            <FilterGroup
+              node={builder}
+              path={[]}
+              depth={0}
+              onAddLeaf={handleAddLeaf}
+              onAddGroup={handleAddGroup}
+              onRemoveNode={handleRemoveNode}
+              onSetGroupOp={handleSetGroupOp}
+              onToggleNegate={handleToggleNegate}
+            />
+            {builder.children.length > 0 && (
+              <div>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={handleClearAll}
+                  aria-label={t('advancedQuery.builder.clearAll')}
+                >
+                  {t('advancedQuery.builder.clearAll')}
+                </Button>
+              </div>
+            )}
+          </div>
+          <QueryControlsBar
+            fulltext={controls.fulltext}
+            onFulltextChange={handleFulltextChange}
+            sort={controls.sort}
+            onSortChange={handleSortChange}
+            groupBy={controls.groupBy}
+            onGroupByChange={handleGroupByChange}
+            aggregates={controls.aggregates}
+            onAggregatesChange={handleAggregatesChange}
+            view={board != null ? 'board' : 'list'}
+            onViewChange={handleViewChange}
+            boardAvailable={columns != null}
           />
-          {builder.children.length > 0 && (
+
+          {/* #1460 saved-views: save the current query + browse saved views. */}
+          <div className="advanced-query-saved flex flex-col gap-2">
             <div>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
-                onClick={handleClearAll}
-                aria-label={t('advancedQuery.builder.clearAll')}
+                onClick={() => setSaveDialogOpen(true)}
+                aria-label={t('advancedQuery.savedViews.saveTitle')}
               >
-                {t('advancedQuery.builder.clearAll')}
+                {t('advancedQuery.savedViews.save')}
               </Button>
             </div>
-          )}
-        </div>
-        <QueryControlsBar
-          fulltext={controls.fulltext}
-          onFulltextChange={handleFulltextChange}
-          sort={controls.sort}
-          onSortChange={handleSortChange}
-          groupBy={controls.groupBy}
-          onGroupByChange={handleGroupByChange}
-          aggregates={controls.aggregates}
-          onAggregatesChange={handleAggregatesChange}
-          view={board != null ? 'board' : 'list'}
-          onViewChange={handleViewChange}
-          boardAvailable={columns != null}
-        />
-
-        {/* #1460 saved-views: save the current query + browse saved views. */}
-        <div className="advanced-query-saved flex flex-col gap-2">
-          <div>
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={() => setSaveDialogOpen(true)}
-              aria-label={t('advancedQuery.savedViews.saveTitle')}
-            >
-              {t('advancedQuery.savedViews.save')}
-            </Button>
+            <SavedViews
+              spaceKey={spaceKey}
+              onLoad={() => {
+                setFormOpen(false)
+                // The Load button folds away with the form; keep focus on the page.
+                editRef.current?.focus()
+              }}
+            />
           </div>
-          <SavedViews spaceKey={spaceKey} />
         </div>
 
         <RenameDialog
@@ -351,7 +401,12 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
                   onNavigate={openPage}
                 />
               ) : (
-                <QueryResultList results={results} pageTitles={pageTitles} onNavigate={openPage} />
+                <QueryResultList
+                  results={results}
+                  pageTitles={pageTitles}
+                  onNavigate={openPage}
+                  className={listCardVariants()}
+                />
               )}
 
               <LoadMoreButton

@@ -11,6 +11,7 @@
  */
 import type { Locator, Page } from '@playwright/test'
 
+import { openQueryForm } from './domain'
 import {
   activePopover,
   activeSuggestionList,
@@ -44,10 +45,11 @@ function tagLeaf(page: Page): Locator {
     .getByRole('group', { name: 'tag: work', exact: true })
 }
 
-/** Leave Advanced query for the journal and open it again. */
+/** Leave Advanced query for the journal and open it again, its form unfolded. */
 async function reopenAdvancedQuery(page: Page): Promise<void> {
   await navigateToView(page, 'Journal')
   await navigateToView(page, 'Advanced query')
+  await openQueryForm(page)
 }
 
 /** The tag `work` leaf keeps exactly the three seeded blocks tagged `work`. */
@@ -94,8 +96,11 @@ test('a saved view is listed after leaving, loads, renames, deletes to the Trash
   await savedViews(page)
     .getByRole('button', { name: `Load "${VIEW}"` })
     .click()
-  await expect(tagLeaf(page)).toBeVisible()
+  // Loading folds the form under the query's summary (#7040).
+  await expect(page.getByTestId('advanced-query-summary')).toHaveText('tag: work')
   await expect(resultRows(page)).toHaveText(WORK_ROWS)
+  await openQueryForm(page)
+  await expect(tagLeaf(page)).toBeVisible()
 
   await savedViews(page)
     .getByRole('button', { name: `Rename "${VIEW}"` })
@@ -111,6 +116,7 @@ test('a saved view is listed after leaving, loads, renames, deletes to the Trash
   await expect(savedViews(page).getByText('No saved views yet')).toBeVisible()
   await switchToSpace(page, 'Personal')
   await navigateToView(page, 'Advanced query')
+  await openQueryForm(page)
   await expect(savedViews(page).getByTestId('saved-view-row')).toHaveText([new RegExp(RENAMED)])
 
   await savedViews(page)

@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
 import { QueryResultList } from '@/components/query/QueryResultList'
+import { listCardVariants } from '@/components/ui/list-item'
 import type { BlockRow, GroupSpec, QueryGroup } from '@/lib/bindings'
 import { displayPageTitle } from '@/lib/date-utils'
 
@@ -105,7 +106,12 @@ export function GroupedResults({
               )}
             </header>
             {members.length > 0 && (
-              <QueryResultList results={members} pageTitles={pageTitles} onNavigate={onNavigate} />
+              <QueryResultList
+                results={members}
+                pageTitles={pageTitles}
+                onNavigate={onNavigate}
+                className={listCardVariants()}
+              />
             )}
           </section>
         )
