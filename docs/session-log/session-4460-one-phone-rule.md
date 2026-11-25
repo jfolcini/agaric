@@ -1,4 +1,4 @@
-# Session 4452 — one phone rule: `usePhoneLayout` decides the phone surfaces
+# Session 4460 — one phone rule: `usePhoneLayout` decides the phone surfaces
 
 Part of the #7040 UI review, item M1. The maintainer decided on 2026-11-25 that one hook picks the phone surfaces: a width under 768 px, or touch with a short screen. That is the sidebar's rule, so a phone in landscape gets them too. They also approved naming the hook in `AGENTS.md`.
 
