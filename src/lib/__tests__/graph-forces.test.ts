@@ -56,8 +56,8 @@ describe('applyGraphForces — degree-aware layout (#5432)', () => {
 })
 
 describe('applyGraphForces — the layout takes the canvas shape (#7040)', () => {
-  /** Width over height of the settled layout of six star clusters and some unlinked pages. */
-  function layoutAspect(width: number, height: number): number {
+  /** Width and height of the settled layout of six star clusters and some unlinked pages. */
+  function layoutSpan(width: number, height: number): { x: number; y: number } {
     const nodes: ForceNode[] = []
     const edges: Array<{ source: string; target: string }> = []
     for (let hub = 0; hub < 6; hub++) {
@@ -83,11 +83,21 @@ describe('applyGraphForces — the layout takes the canvas shape (#7040)', () =>
     sim.tick(300)
     const xs = nodes.map((n) => n.x ?? 0)
     const ys = nodes.map((n) => n.y ?? 0)
-    return (Math.max(...xs) - Math.min(...xs)) / (Math.max(...ys) - Math.min(...ys))
+    return { x: Math.max(...xs) - Math.min(...xs), y: Math.max(...ys) - Math.min(...ys) }
+  }
+  const layoutAspect = (width: number, height: number): number => {
+    const span = layoutSpan(width, height)
+    return span.x / span.y
   }
 
   it('lays a tall canvas out taller than wide, and a wide one wider than tall', () => {
     expect(layoutAspect(400, 800)).toBeLessThan(0.8)
     expect(layoutAspect(800, 400)).toBeGreaterThan(1.25)
+  })
+
+  it('keeps the layout on a long thin strip of canvas instead of flinging it away', () => {
+    const span = layoutSpan(3000, 100)
+    expect(span.x).toBeLessThan(1000)
+    expect(span.y).toBeLessThan(1000)
   })
 })

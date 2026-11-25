@@ -8,7 +8,7 @@ Part of the #7040 UI review: the Graph halves of items P9 (phone) and D6 (deskto
 - **The filter bar and the local-graph control are a plain row above the canvas** on every width. They used to be an overlay inside the bordered canvas, covering its top, and the fit ignored them.
 - **Framing:**
   - The fit padding is `min(64, shorter side / 8)`, so a phone keeps more of its canvas and desktop is unchanged.
-  - Gravity is stronger on the canvas's shorter axis, by its aspect ratio squared (d3 `forceX`/`forceY` strengths), so a tall phone canvas gets a tall layout.
+  - Gravity is stronger on the canvas's shorter axis, by its aspect ratio squared (d3 `forceX`/`forceY` strengths), so a tall phone canvas gets a tall layout. The strength is capped at 1, d3's upper bound: uncapped, a long thin canvas (a short desktop window) flung the layout off to infinity.
   - A phone's fitted zoom went from about 0.70 to 1.31, so hub labels now show there; at 0.70 no node reached #5430's 6 px label threshold.
 
 **False premises in the issue**
@@ -23,7 +23,8 @@ Part of the #7040 UI review: the Graph halves of items P9 (phone) and D6 (deskto
   - journal tone in `markNodes`;
   - the phone fit padding;
   - a tall canvas lays out taller than wide;
+  - a long thin canvas keeps its layout in bounds;
   - `theme-contrast`'s new "graph journal node" pair in every theme, with and without more contrast.
-- e2e (`graph-view`): a journal node's fill differs from a page's. On a phone the filter row sits above the canvas, unboxed, and neither it nor the zoom controls intersect the capture button.
+- e2e (`graph-view`): a journal node's fill differs from a page's. On a phone the filter row sits above the canvas, unboxed, and the zoom controls clear the capture button.
 - Each was shown red before the change and by a mutation after it.
 - The graph vitest set passed (24 files), and the graph and phone specs passed as local bridge copies.

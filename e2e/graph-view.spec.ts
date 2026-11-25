@@ -754,15 +754,14 @@ test.describe('Graph view on a phone @graph @mobile', () => {
       await expect(page.getByTestId(testId)).toHaveCSS('border-top-width', '0px')
     }
 
+    // The filters sit above the canvas, so only the zoom cluster could meet the button.
     const button = await box('quick-capture-fab')
-    for (const testId of ['graph-zoom-controls', 'graph-tag-filter']) {
-      const control = await box(testId)
-      const intersects =
-        control.x < button.x + button.width &&
-        button.x < control.x + control.width &&
-        control.y < button.y + button.height &&
-        button.y < control.y + control.height
-      expect(intersects, testId).toBe(false)
-    }
+    const zoom = await box('graph-zoom-controls')
+    const intersects =
+      zoom.x < button.x + button.width &&
+      button.x < zoom.x + zoom.width &&
+      zoom.y < button.y + button.height &&
+      button.y < zoom.y + zoom.height
+    expect(intersects).toBe(false)
   })
 })

@@ -112,12 +112,15 @@ export function nodeRadius(degree: number): number {
  * The x/y pull toward the centre. Along the canvas's shorter side it is
  * stronger by the square of the aspect ratio, so a phone's tall canvas gets a
  * tall layout instead of a round one with empty bands above and below (#7040).
+ * Capped at 1, d3's upper bound: past it each tick overshoots the centre, and
+ * on a long thin canvas the layout is flung off to infinity.
  */
 function gravityForces<N extends ForceNode>({ width, height }: GraphForceDimensions) {
   const aspect = width / height
+  const pull = (stretch: number) => Math.min(GRAVITY_STRENGTH * Math.max(1, stretch) ** 2, 1)
   return {
-    x: forceX<N>(width / 2).strength(GRAVITY_STRENGTH * Math.max(1, 1 / aspect) ** 2),
-    y: forceY<N>(height / 2).strength(GRAVITY_STRENGTH * Math.max(1, aspect) ** 2),
+    x: forceX<N>(width / 2).strength(pull(1 / aspect)),
+    y: forceY<N>(height / 2).strength(pull(aspect)),
   }
 }
 
