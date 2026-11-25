@@ -34,10 +34,10 @@ import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { TruncatedText } from '@/components/ui/truncated-text'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { getPageDisplayName } from '@/lib/page-display'
 import { shouldReduceMotion } from '@/lib/preferences'
 import { useNavigationStore } from '@/stores/navigation'
@@ -62,8 +62,9 @@ export function QuickAccessBar(): React.ReactElement | null {
 
   // The tab bar's own autohide rule (`TabBar`): it shows from the second tab.
   const tabBarShown = useTabsStore((s) => selectTabsForSpace(s, currentSpaceId).length > 1)
+  // A touch phone, portrait or landscape: the phone header has no room for it.
   const isTouch = useIsTouch()
-  const isMobile = useIsMobile()
+  const phoneLayout = usePhoneLayout()
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const isSettings = useNavigationStore((s) => s.currentView === 'settings')
@@ -137,7 +138,7 @@ export function QuickAccessBar(): React.ReactElement | null {
     return () => ro.disconnect()
   }, [])
 
-  if (visible.length === 0 || isSettings || tabBarShown || (isTouch && isMobile)) return null
+  if (visible.length === 0 || isSettings || tabBarShown || (isTouch && phoneLayout)) return null
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- roving-tabindex keyboard navigation: the <nav> intercepts arrow keys delegated up from its focused recent chips to move focus between them. The chips are the interactive controls; the <nav> only routes keys.
