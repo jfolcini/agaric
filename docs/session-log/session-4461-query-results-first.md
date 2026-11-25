@@ -1,4 +1,4 @@
-# Session 4455 — the advanced query opens on its results, with a form that fits a phone
+# Session 4461 — the advanced query opens on its results, with a form that fits a phone
 
 Part of the #7040 UI review: item P8 and the Query half of D6.
 
