@@ -21,11 +21,12 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# sqlx-cli with the same feature set CI uses (sqlx 0.9.x, sqlite + rustls).
+# sqlx-cli at the pins.txt version with the feature set CI uses (sqlite + rustls).
 # Only install when missing — `cargo install` is slow and networked.
 if ! command -v cargo-sqlx >/dev/null 2>&1; then
   echo "→ installing sqlx-cli (sqlite, rustls)…"
-  cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite
+  cargo install --locked sqlx-cli --version "$(bash ../scripts/pins.sh version sqlx-cli)" \
+    --no-default-features --features rustls,sqlite
 fi
 
 # DATABASE_URL is read from src-tauri/.env by sqlx-cli.

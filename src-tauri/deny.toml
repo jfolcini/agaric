@@ -78,7 +78,6 @@ ignore = [
     # use it directly, and specta (exact-pinned rc), rmcp and schemars pull it
     # in too, so moving our own code to jiff would not remove it.
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (no vulnerability); also required by specta, rmcp and schemars, so dropping it is blocked on them even if Agaric's own code moved to jiff" },
-    { id = "RUSTSEC-2026-0459", reason = "Agaric opens only its own notes.db and its own backups, never a database or -wal another party wrote; the fix (libsqlite3-sys 0.39) is outside sqlx 0.9.0's <0.38 range" },
     # Fixed upstream, but the fix is younger than the 7-day release-age gate
     # (.github/dependabot.yml cooldown); take it once it clears.
     { id = "RUSTSEC-2026-0592", reason = "url Url::origin() recursion on nested blob: URLs; neither Agaric, Tauri nor wry calls Url::origin(); the fix, url 2.5.9, clears the 7-day release-age gate on 2026-11-27" },

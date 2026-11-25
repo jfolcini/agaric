@@ -96,7 +96,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # loro's `projection` writer runs `sqlx::query!` macros against the workspace
 # schema (offline-cached in the workspace-root `.sqlx`). Version/features mirror
 # the app crate exactly for cargo feature-unification.
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # loro's `projection` parses RFC-3339 timestamps via `chrono::DateTime`.
 # Version/features mirror the app crate exactly.
 chrono = { version = "0.4.44", features = ["serde"] }

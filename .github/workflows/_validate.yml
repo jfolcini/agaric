@@ -568,6 +568,7 @@ jobs:
           scripts/ci-capacity-report.test.mjs
           scripts/session-log-guards.test.mjs
           scripts/pins.test.mjs
+          scripts/prune-advisory-waivers.test.mjs
           scripts/sbom.test.mjs
           scripts/e2e-related.test.mjs
           scripts/android-launch-smoke.test.mjs
@@ -990,6 +991,23 @@ jobs:
         continue-on-error: true
         working-directory: src-tauri
         run: cargo deny check advisories
+
+      # A Dependabot bump that fixes a waived advisory fails on the waiver it
+      # left unused; advisory-waiver-prune.yml deletes what these list.
+      - name: List the advisory waivers this Dependabot update left unused
+        if: failure() && startsWith(github.head_ref, 'dependabot/')
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: node scripts/prune-advisory-waivers.mjs list "$BRANCH" > unused-advisory-waivers.json
+
+      - name: Upload them for advisory-waiver-prune.yml
+        if: failure() && startsWith(github.head_ref, 'dependabot/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unused-advisory-waivers
+          path: unused-advisory-waivers.json
+          if-no-files-found: ignore
+          retention-days: 3
 
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a

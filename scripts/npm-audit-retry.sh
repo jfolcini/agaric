@@ -7,6 +7,11 @@
 # 3 attempts, 5s then 15s: modest picks around that one data point, not a
 # measured optimum.
 #
+# Each attempt gets its own empty npm cache. npm stores what the registry
+# answered, and the attestations endpoint sends a one-year max-age, so a retry
+# sharing the cache replayed one bad answer (an `OK` body where JSON belongs)
+# on every attempt instead of asking again (#7050, #7054).
+#
 # With no arguments it retries the advisory scan; with arguments it retries
 # that command instead (`npm audit signatures` in _validate.yml, which also
 # fetches from the registry and blocks).
@@ -34,6 +39,8 @@ audit_strict() {
 CMD=("$@")
 if [ "${#CMD[@]}" -eq 0 ]; then CMD=(audit_strict); fi
 TOTAL_ATTEMPTS=$((${#BACKOFF_SECONDS[@]} + 1))
+cache_root=$(mktemp -d)
+trap 'rm -rf "$cache_root"' EXIT
 
 # Fail-closed: the loop exits early only on SUCCESS, so a real advisory fails
 # every attempt and this script exits with its code. That is what makes
@@ -44,7 +51,7 @@ while true; do
   # Not captured: the output streams through, so a failure surfaces npm's own
   # text verbatim.
   rc=0
-  "${CMD[@]}" || rc=$?
+  npm_config_cache="$cache_root/$attempt" "${CMD[@]}" || rc=$?
   if [ "$rc" -eq 0 ]; then exit 0; fi
 
   if [ "$attempt" -ge "$TOTAL_ATTEMPTS" ]; then
