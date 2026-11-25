@@ -36,6 +36,28 @@ import {
 const PERSONAL = SEED_IDS.SPACE_PERSONAL
 const WORK = SEED_IDS.SPACE_WORK
 
+/**
+ * Switch to Work and leave it with no page. Landing on a space's journal creates
+ * today's page (#7040), and a restore into a space holding it would stop to ask
+ * about merging the export's own today page into it.
+ */
+async function switchToEmptyWork(page: Page): Promise<void> {
+  await switchToSpace(page, 'Work')
+  const today = await page.evaluate(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const todayPage = () =>
+    ipc<{ id: string } | null>(page, 'get_journal_page_by_date', {
+      date: today,
+      scope: { kind: 'active', space_id: WORK },
+    })
+  await expect.poll(async () => (await todayPage()) !== null).toBe(true)
+  const created = await todayPage()
+  if (created === null) throw new Error("Work's journal page for today vanished")
+  await ipc(page, 'delete_block', { blockId: created.id })
+}
+
 // A 1x1 transparent PNG.
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -1004,7 +1026,7 @@ test.describe(
       // A partial export's skip ledger, which must not come back as a page.
       files['.agaric/export-report.txt'] = Buffer.from('Agaric export report\n')
 
-      await switchToSpace(page, 'Work')
+      await switchToEmptyWork(page)
       await importFolder(
         page,
         'import-folder-input',
@@ -1070,7 +1092,7 @@ test.describe(
       const files = await exportSpaceZip(page)
       const notes = Object.keys(files).filter((name) => name.endsWith('.md')).length
 
-      await switchToSpace(page, 'Work')
+      await switchToEmptyWork(page)
       await importFolder(
         page,
         'import-folder-input',
