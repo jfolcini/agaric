@@ -39,7 +39,7 @@ base64 = "0.23.0"
 # need the `macros` feature (the DERIVE macros). There are still NO
 # `query!`/`query_as!` macros here: compile-checked queries stay up in the
 # `agaric`/store layer (`verify_active_in_tx`).
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 similar = "3"
 # `tag_norm` (Unicode case-folding) + `text_utils::nfc_normalise` (the shared

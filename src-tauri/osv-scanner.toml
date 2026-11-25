@@ -76,9 +76,6 @@ id = "RUSTSEC-2026-0582"
 id = "RUSTSEC-2026-0543"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0459"
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0592"
 
 [[IgnoredVulns]]
