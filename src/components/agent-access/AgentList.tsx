@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CardTitle } from '@/components/ui/card'
 import { IconButton } from '@/components/ui/icon-button'
 import { type BridgeSource, claudeCodeCommand, claudeDesktopConfig } from '@/lib/agent-config'
 import { unwrap } from '@/lib/app-error'
@@ -111,9 +112,7 @@ export function AgentList({ bridge }: AgentListProps): React.ReactElement {
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-1">
-          <h2 id={headingId} className="text-sm font-medium">
-            {t('agentAccess.agents.title')}
-          </h2>
+          <CardTitle id={headingId}>{t('agentAccess.agents.title')}</CardTitle>
           <p className="text-xs text-muted-foreground">{t('agentAccess.agents.description')}</p>
         </div>
         {agents !== null && agents.length > 0 && addButton}

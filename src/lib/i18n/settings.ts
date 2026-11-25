@@ -470,8 +470,8 @@ export const settings: Record<string, string> = {
   'agentAccess.agents.invalidName':
     'Use a name of up to 128 characters, without control characters',
 
-  // Translators: Group headings in the Settings side rail (and in the phone dropdown), each
-  // above several tabs.
+  // Translators: Group headings in the Settings side rail (and in the phone's list of
+  // sections), each above several tabs.
   // #1108 — grouped tab navigation. Shallow sections lower the altitude of
   // experimental/niche tabs so they no longer sit as flat peers of the core
   // ones (and remove the horizontal-overflow wheel workaround).
@@ -479,6 +479,9 @@ export const settings: Record<string, string> = {
   'settings.groupIntegrations': 'Integrations',
   'settings.groupData': 'Data & sync',
   'settings.groupHelp': 'Help',
+  // Translators: On a phone, the arrow button beside a Settings section's title that returns to
+  // the list of every section. Screen-reader label and tooltip.
+  'settings.backToSections': 'Back to all settings',
 
   // Translators: Settings › General: "Week starts on" dropdown and its two options.
   'settings.weekStartLabel': 'Week starts on',

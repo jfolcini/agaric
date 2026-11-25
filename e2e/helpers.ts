@@ -868,23 +868,28 @@ export async function axeViolations(
 }
 
 /**
- * Open a Settings tab at whatever width the page is: the tab rail from the
- * `sm` breakpoint up, the tab Select below it.
+ * Open a Settings tab on whatever device the page is: a tab of the rail, or on
+ * a phone a row of the section list, going Back to the list from another
+ * section first (#7040).
  */
 export async function openSettingsTab(page: Page, name: string) {
   const tab = page.getByRole('tab', { name, exact: true })
-  const select = page.getByRole('combobox', { name: 'Settings', exact: true })
-  await expect(tab.or(select)).toBeVisible()
+  const sections = page.getByRole('navigation', { name: 'Settings', exact: true })
+  const back = page.getByRole('button', { name: 'Back to all settings', exact: true })
+  const sectionTitle = page
+    .getByTestId('view-header-outlet')
+    .getByRole('heading', { name, level: 2, exact: true })
+  await expect(tab.or(sections).or(back)).toBeVisible()
   if (await tab.isVisible()) {
     await tab.click()
     return
   }
-  await select.click()
-  // The open list scrolls to line the chosen item up with the trigger, and a
-  // tap aimed while it moves can miss under load, leaving the list open on the
-  // old tab. The keyboard needs no aim.
-  await page.getByRole('option', { name, exact: true }).press('Enter')
-  await expect(select).toHaveText(name)
+  if (await back.isVisible()) {
+    if (await sectionTitle.isVisible()) return
+    await back.click()
+  }
+  await sections.getByRole('button', { name, exact: true }).click()
+  await expect(sectionTitle).toBeVisible()
 }
 
 /** Navigate to the page editor for a given page title. */

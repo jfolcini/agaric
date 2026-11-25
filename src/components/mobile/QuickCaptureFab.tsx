@@ -27,6 +27,8 @@
  * included (#6789). That frees it to sit 1rem from the bottom,
  * stacked on the bottom safe-area inset via `var(--safe-area-bottom)` (see
  * `index.css` — every consumer reads the variable, never `env()` directly).
+ * Settings shows none: its rows end in right-aligned switches and selects,
+ * which the button would cover at rest (#7040).
  */
 
 import { PenLine } from 'lucide-react'
@@ -39,6 +41,7 @@ import { Button } from '@/components/ui/button'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { isEditableTarget } from '@/lib/keyboard-config/match'
 import { cn } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation'
 
 /** Scroll travel (px) that counts as a direction, so jitter does not flicker it. */
 const SCROLL_SLOP = 8
@@ -113,10 +116,11 @@ export function QuickCaptureFab({
   const toolbarPinned = usePinnedToolbarShown()
   const scrolledUp = useScrolledUp(shouldShowMobileChrome)
   const typing = useTyping(shouldShowMobileChrome)
+  const onSettings = useNavigationStore((s) => s.currentView === 'settings')
   const shown = scrolledUp && !toolbarPinned && !typing
 
   // Desktop (or tablet-with-keyboard) sessions use the OS chord — no FAB.
-  if (!shouldShowMobileChrome) return null
+  if (!shouldShowMobileChrome || onSettings) return null
 
   return (
     <Button

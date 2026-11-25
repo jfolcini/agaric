@@ -291,6 +291,7 @@ export const settings: Record<string, string> = {
   'settings.groupIntegrations': 'Integrationen',
   'settings.groupData': 'Daten & Synchronisierung',
   'settings.groupHelp': 'Hilfe',
+  'settings.backToSections': 'Zurück zu allen Einstellungen',
   'settings.weekStartLabel': 'Woche beginnt am',
   'settings.weekStartMonday': 'Montag',
   'settings.weekStartSunday': 'Sonntag',

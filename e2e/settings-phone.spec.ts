@@ -1,14 +1,14 @@
 /**
- * E2E — Settings tab navigation and the quick-capture button on a phone (#5344).
+ * E2E — Settings navigation and the quick-capture button on a phone (#5344, #7040).
  *
- * Below `sm` the tab rail stacked ~500px above the panel, so a tab tap changed
- * a panel the user could not see; phones now pick the tab from a Select. The
- * quick-capture button floats over the bottom of the scroll viewport, so the
- * viewport carries enough bottom padding for the last control to clear it,
- * except on Graph, whose canvas fills the viewport.
+ * A phone opens Settings on the list of its sections and drills into one, with
+ * Back to the list in the view header; a section asked for (stored or linked)
+ * opens straight away. The quick-capture button stays off Settings, whose
+ * right-aligned switches it would cover; elsewhere the scroll viewport keeps
+ * bottom padding for it, except on Graph, whose canvas fills the viewport.
  */
 
-import { devices } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 import {
   expect,
@@ -29,79 +29,92 @@ const phone = {
   userAgent: iPhone13.userAgent,
 }
 
-test.describe('Settings on a phone @mobile @settings', () => {
-  test.use({ ...phone, viewport: { width: 390, height: 844 } })
+const sectionList = (page: Page) => page.getByRole('navigation', { name: 'Settings' })
+const backToSections = (page: Page) =>
+  page.getByRole('button', { name: 'Back to all settings', exact: true })
 
-  test('choosing a tab from the Select brings its panel on screen', async ({ page }) => {
+test.describe('Settings on a phone @mobile @settings', () => {
+  test.use({ ...phone, viewport: { width: 412, height: 915 } })
+
+  test('opens on its sections; one drills in, and Back returns to the list', async ({ page }) => {
     await waitForBoot(page)
     await navigateMobile(page, 'Settings')
 
-    await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
-    await page.getByRole('option', { name: 'Sync & devices', exact: true }).click()
+    const list = sectionList(page)
+    await expect(list.getByRole('button', { name: 'General', exact: true })).toBeVisible()
+    await expect(list.getByRole('button', { name: 'Sync & devices', exact: true })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Settings', exact: true })).toHaveCount(0)
+    await expect(page.getByTestId(/^settings-panel-/)).toHaveCount(0)
+
+    await list.getByRole('button', { name: 'Editor', exact: true }).click()
+    await expect(page.getByTestId('settings-panel-editor')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Editor', level: 2 })).toBeVisible()
+    await expect(sectionList(page)).toHaveCount(0)
+    await expect(page.getByRole('combobox', { name: 'Settings', exact: true })).toHaveCount(0)
+
+    await backToSections(page).click()
+    await expect(
+      sectionList(page).getByRole('button', { name: 'Editor', exact: true }),
+    ).toBeVisible()
+    await expect(page.getByTestId('settings-panel-editor')).toHaveCount(0)
+  })
+
+  test('a stored section opens straight away, with Back to the list', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('agaric-settings-active-tab', 'sync'))
+    await waitForBoot(page)
+    await navigateMobile(page, 'Settings')
 
     await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Pair new device' })).toBeInViewport({
       ratio: 1,
     })
+    await backToSections(page).click()
+    await expect(sectionList(page).getByRole('button', { name: 'Sync & devices' })).toBeVisible()
   })
 
-  test('every tab option is a 44px touch target and the list needs no scrolling', async ({
-    page,
-  }) => {
-    // A phone with no hardware keyboard, like an Android WebView: no Keyboard tab (#7040).
+  test('every section row is a 44px touch target', async ({ page }) => {
+    // A phone with no hardware keyboard, like an Android WebView: no Keyboard row (#7040).
     await page.addInitScript(() => {
       Reflect.deleteProperty(Navigator.prototype, 'keyboard')
     })
     await waitForBoot(page)
     await navigateMobile(page, 'Settings')
-    await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
 
-    const options = page.getByRole('option')
-    await expect(options).toHaveCount(11)
-    for (const option of await options.all()) {
-      await expect(option).toBeInViewport({ ratio: 1 })
-      // Polled: the list zooms in from 95%, so an early read is a few px short.
-      await expect
-        .poll(async () => (await option.boundingBox())?.height ?? 0)
-        .toBeGreaterThanOrEqual(44)
+    const rows = sectionList(page).getByRole('button')
+    await expect(rows).toHaveCount(11)
+    for (const row of await rows.all()) {
+      expect((await row.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
     }
   })
-})
 
-// The device's own 390x664 viewport. Keyboard is the longest tab, so its last
-// control is the one that reaches the bottom of the scroll. The button hides on
-// the way down and returns on a scroll up, so the check nudges back up first.
-// The tab shows on a phone once a hardware key is pressed (#7040), as with a
-// Bluetooth keyboard.
-test.describe('Settings on a phone, scrolled to the end @mobile @settings', () => {
-  test.use({ ...phone, viewport: iPhone13.viewport })
-
-  test('the last Keyboard control clears the quick-capture button', async ({ page }) => {
+  test('no Editor control sits under the quick-capture button at rest', async ({ page }) => {
     await waitForBoot(page)
-    await page.keyboard.press('Escape')
+    const fab = page.getByTestId('quick-capture-fab')
+    await expect(fab).toBeVisible()
     await navigateMobile(page, 'Settings')
-    await openSettingsTab(page, 'Keyboard')
-    const resetAll = page
-      .getByTestId('settings-panel-keyboard')
-      .getByRole('button', { name: 'Reset all to defaults', exact: true })
-    await expect(resetAll).toBeVisible()
-    const main = page.locator('#main-content')
-    await main.evaluate((el) => {
-      el.scrollTop = el.scrollHeight
-    })
-    await expect(page.getByTestId('quick-capture-fab')).toBeHidden()
-    await main.evaluate((el) => {
-      el.scrollTop -= 16
-    })
-    await expect(page.getByTestId('quick-capture-fab')).toBeVisible()
+    await openSettingsTab(page, 'Editor')
+    const panel = page.getByTestId('settings-panel-editor')
+    await expect(panel.getByRole('switch').first()).toBeVisible()
 
-    const control = await resetAll.boundingBox()
-    const fab = await page.getByTestId('quick-capture-fab').boundingBox()
-    if (control === null || fab === null) throw new Error('Reset all or the FAB has no box')
-    expect(
-      control.y + control.height,
-      `Reset all ends at ${control.y + control.height}px, the FAB starts at ${fab.y}px`,
-    ).toBeLessThanOrEqual(fab.y)
+    // Every phone height: the button floats over whichever row the screen's foot reaches.
+    for (const height of [664, 700, 740, 780, 820, 844, 880, 915]) {
+      await page.setViewportSize({ width: 412, height })
+      const fabBox = (await fab.isVisible()) ? await fab.boundingBox() : null
+      if (fabBox === null) continue
+      for (const control of await panel.locator('button, [role="switch"], input').all()) {
+        const box = await control.boundingBox()
+        if (box === null) continue
+        const overlaps =
+          box.x < fabBox.x + fabBox.width &&
+          fabBox.x < box.x + box.width &&
+          box.y < fabBox.y + fabBox.height &&
+          fabBox.y < box.y + box.height
+        expect(
+          overlaps,
+          `at ${height}px ${await control.getAttribute('id')} is under the FAB`,
+        ).toBe(false)
+      }
+    }
   })
 })
 
@@ -136,16 +149,16 @@ test.describe('Settings on a touch tablet @mobile @settings', () => {
   })
 })
 
-test('Settings at a desktop width shows the tab rail, not the tab Select @mobile @settings', async ({
+test('Settings at a desktop width shows the tab rail, not the phone section list @mobile @settings', async ({
   page,
 }) => {
   await waitForBoot(page)
   await navigateToView(page, 'Settings')
 
   await expect(page.getByRole('tablist', { name: 'Settings' })).toBeVisible()
-  const select = page.getByRole('combobox', { name: 'Settings', exact: true, includeHidden: true })
-  await expect(select).toHaveCount(1)
-  await expect(select).toBeHidden()
+  await expect(page.getByTestId('settings-panel-general')).toBeVisible()
+  await expect(sectionList(page)).toHaveCount(0)
+  await expect(backToSections(page)).toHaveCount(0)
 })
 
 /**
@@ -168,17 +181,15 @@ test.describe('Keyboard-only UI on a phone with no keyboard (#7040) @mobile @set
     await waitForBoot(page)
   })
 
-  test('Settings offers no Keyboard tab until a hardware key is pressed', async ({ page }) => {
+  test('Settings offers no Keyboard section until a hardware key is pressed', async ({ page }) => {
     await navigateMobile(page, 'Settings')
-    const select = page.getByRole('combobox', { name: 'Settings', exact: true })
-    await select.click()
-    await expect(page.getByRole('option', { name: 'Editor', exact: true })).toBeVisible()
-    await expect(page.getByRole('option', { name: 'Keyboard', exact: true })).toHaveCount(0)
+    const list = sectionList(page)
+    await expect(list.getByRole('button', { name: 'Editor', exact: true })).toBeVisible()
+    await expect(list.getByRole('button', { name: 'Keyboard', exact: true })).toHaveCount(0)
 
-    // A Bluetooth keyboard: its first key (Escape, closing the list) brings the tab back.
+    // A Bluetooth keyboard: its first key brings the section back.
     await page.keyboard.press('Escape')
-    await select.click()
-    await expect(page.getByRole('option', { name: 'Keyboard', exact: true })).toBeVisible()
+    await expect(list.getByRole('button', { name: 'Keyboard', exact: true })).toBeVisible()
   })
 
   test('Search names its filter syntax with no key to press', async ({ page }) => {
