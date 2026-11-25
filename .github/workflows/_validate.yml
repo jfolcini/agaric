@@ -484,7 +484,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding no-commit-to-branch),
-  # npm audit signatures (blocking), cargo audit (blocking — see PEND-41 R5), and the sqlx
+  # npm audit signatures and cargo audit (blocking when a dependency manifest
+  # changes or the run is not a PR — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
   # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
   # zizmor, etc.
@@ -581,6 +582,28 @@ jobs:
           scripts/appimage-xdg-open.test.mjs
           || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
+      - name: Classify dependency changes (advisory gating)
+        # A new upstream advisory (RUSTSEC/GHSA), or a registry answering the
+        # provenance check with garbage, must not red PRs that change no
+        # dependency; those checks stay blocking on a PR that touches one, and
+        # on every non-PR run (push to main, schedule, release). Fail-closed:
+        # a non-PR event or an unresolvable diff counts as "changed".
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=true
+          if [ "$EVENT_NAME" = "pull_request" ] \
+            && files=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA"); then
+            if ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"; then
+              changed=false
+            fi
+          fi
+          echo "Dependency manifests changed: $changed"
+          echo "DEPS_CHANGED=$changed" >> "$GITHUB_ENV"
+
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; fails on a package whose registry signature or
         # Sigstore provenance attestation is invalid. Catches the
@@ -591,7 +614,11 @@ jobs:
         # many transitive deps without provenance do not red the build.
         # Retried like `npm-audit`: it fetches from the registry, and one
         # transient error must not red the required `validate / validate-all`
-        # context.
+        # context. Advisory-only when no dependency manifest changed, as the
+        # advisory scans are: the verdict depends only on the lockfile and the
+        # registry, so on such a PR a failure is the registry's (an `OK` body
+        # where an attestation's JSON belongs, through every retry).
+        continue-on-error: ${{ env.DEPS_CHANGED != 'true' }}
         run: bash scripts/npm-audit-retry.sh npm audit signatures
 
       - name: Prepare externalBin placeholder (FEAT-4f)
@@ -714,27 +741,6 @@ jobs:
             sleep $((attempt * 10))
           done
           exit 1
-
-      - name: Classify dependency changes (advisory gating)
-        # A new upstream advisory (RUSTSEC/GHSA) must not red PRs that change
-        # no dependency; it stays blocking on a PR that touches one, and on
-        # every non-PR run (push to main, schedule, release). Fail-closed:
-        # a non-PR event or an unresolvable diff counts as "changed".
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          changed=true
-          if [ "$EVENT_NAME" = "pull_request" ] \
-            && files=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA"); then
-            if ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"; then
-              changed=false
-            fi
-          fi
-          echo "Dependency manifests changed: $changed"
-          echo "DEPS_CHANGED=$changed" >> "$GITHUB_ENV"
 
       - name: Compute prek SKIP (per changed category)
         # ci/path-conditional-jobs: the per-category list lives in

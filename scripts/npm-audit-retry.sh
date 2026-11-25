@@ -14,7 +14,7 @@
 #
 # With no arguments it retries the advisory scan; with arguments it retries
 # that command instead (`npm audit signatures` in _validate.yml, which also
-# fetches from the registry and blocks).
+# fetches from the registry).
 
 set -euo pipefail
 
