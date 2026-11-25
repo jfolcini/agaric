@@ -1,4 +1,4 @@
-# Session 4402 — the restart and daemon smoke specs take in their neighbours
+# Session 4443 — the restart and daemon smoke specs take in their neighbours
 
 #6926 section C, rows 6 to 9: the real-binary-only specs that restart the app or wait on a daemon fold into four kept smoke specs as `it`s, and the folded files are deleted.
 
@@ -12,3 +12,5 @@
 `conformance-coverage.test.ts`'s waiver for `readmit_quarantined_sync_slot` named the deleted spec; it now names `snapshot-restore.e2e.ts (via seedQuarantinedDelta)`, since the spec reaches the command through the Retry button, not by name.
 
 **Ran:** each of the four with `just e2e-real` under `WDIO_SKIP_TAURI_BUILD=1` (session 4400 says why): all green. `npx vitest run src/lib/tauri-mock/__tests__/conformance-coverage.test.ts`, `npm run typecheck:e2e-tauri`, oxlint over `e2e-tauri/`. `spec-durations.json` gets estimates for the merged specs until CI measures them.
+
+**Resumed 2026-11-25:** rebased from `3f6aad8` onto `main` at `a872546`, after group 2 (#7077). `spec-durations.json` conflicted, because `main` had dropped the S1 sync specs and group 2's MCP specs. Resolved by taking `main`'s copy and applying this group's edits to it: six entries removed, and the estimates for `editor-durability` and `mirror-outbound` raised. Renumbered from 4402, which `main` had passed. No deleted spec is named outside the session logs.
