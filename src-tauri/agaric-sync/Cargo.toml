@@ -79,9 +79,8 @@ n0-error = "1.0"
 n0-future = "0.3"
 
 # Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
-# directly (the wire types + apply path). Pinned exactly to match
-# `agaric-engine`, the workspace's owning entry for this dep (#3120).
-loro = "=1.18.0"
+# directly (the wire types + apply path).
+loro = "1.19.1"
 # `ulid::Ulid` for snapshot / file-transfer temp-name minting + id parsing.
 ulid = "3.0.0"
 # async-fn-in-dyn-trait shim for the `ApplyHost` trait (apply_host.rs).
