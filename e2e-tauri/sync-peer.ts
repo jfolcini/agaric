@@ -160,6 +160,8 @@ type Command =
   | { cmd: 'read_attachment'; id: string }
   | { cmd: 'wait_pulled' }
   | { cmd: 'list_peers' }
+  | { cmd: 'hold_sync' }
+  | { cmd: 'release_sync' }
 
 type Reply =
   | { reply: 'paired'; device_id: string; address: string }
@@ -175,6 +177,8 @@ type Reply =
   | { reply: 'moved' }
   | { reply: 'property'; value_text: string | null }
   | { reply: 'pulled' }
+  | { reply: 'held' }
+  | { reply: 'released' }
   | { reply: 'peers'; peer_ids: string[] }
   | { reply: 'attachments'; attachments: PeerAttachment[] }
   | { reply: 'bytes'; bytes: number[] }
@@ -245,6 +249,18 @@ export interface SyncPeer {
   waitPulled(): Promise<void>
   /** The device ids the peer holds a pairing with. */
   listPeers(): Promise<string[]>
+  /**
+   * Keep the peer out of every session until `releaseSync`; resolves once none
+   * is running. The app asks for a round after each of its own writes
+   * (`notify_local_edit`) and the peer pulls back from it (#6551), so a peer
+   * write that must not have seen an app write goes between the two calls, and
+   * the app's write after this one. Held, the peer refuses the app's dial as
+   * busy, which the app shows only for a pressed sync: press none, and call
+   * neither `sync` nor `waitPulled`, until `releaseSync`.
+   */
+  holdSync(): Promise<void>
+  /** End `holdSync`. */
+  releaseSync(): Promise<void>
   /**
    * Freeze the peer (SIGSTOP): it holds its pairing and its socket but answers
    * nothing, as a device asleep mid-sync does. No request may be sent until `resume`.
@@ -366,6 +382,12 @@ export async function startSyncPeer(): Promise<SyncPeer> {
       await request({ cmd: 'wait_pulled' }, 'pulled')
     },
     listPeers: async () => (await request({ cmd: 'list_peers' }, 'peers')).peer_ids,
+    holdSync: async () => {
+      await request({ cmd: 'hold_sync' }, 'held')
+    },
+    releaseSync: async () => {
+      await request({ cmd: 'release_sync' }, 'released')
+    },
     pause: () => {
       child.kill('SIGSTOP')
     },
