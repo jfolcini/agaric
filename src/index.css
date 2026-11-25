@@ -214,6 +214,9 @@
   --graph-node: oklch(0.6 0.01 70);
   --graph-edge: var(--graph-node);
   --graph-accent: var(--brand);
+  /* Journal pages, a kind of their own (#7040): a hue apart from the accent
+   * red and the focus ring, 3:1 or more on --background; each theme sets it. */
+  --graph-journal: oklch(0.5 0.16 305);
   /* The selected tab's 2 px bar, shared by every tab strip: ink, not the
    * brand red or the focus blue, and 3:1 or more on each theme's --background. */
   --tab-indicator: var(--primary);
@@ -410,6 +413,7 @@
   --input: oklch(0.3 0.007 70);
   /* 7.4:1 on --background. */
   --ring: oklch(0.72 0.13 255);
+  --graph-journal: oklch(0.72 0.12 305);
   /* A mid tone at 0.2 opacity all but vanishes on a dark ground, so edges sit
    * halfway between the node tone and the text. */
   --graph-edge: color-mix(in oklab, var(--graph-node), var(--foreground));
@@ -561,6 +565,7 @@
   --border: oklch(0.9 0.03 85);
   --input: oklch(0.93 0.03 85);
   --ring: oklch(0.61 0.13 235);
+  --graph-journal: oklch(0.56 0.13 279); /* violet */
   /* Solarized blue darkened from 0.61, which was 2.8:1 on the active nav row;
    * 0.56 clears 3:1 on --background, --accent, --sidebar and --sidebar-accent. */
   --icon: oklch(0.56 0.13 235);
@@ -666,6 +671,7 @@
   --border: oklch(0.3 0.04 210);
   --input: oklch(0.3 0.04 210);
   --ring: oklch(0.61 0.13 235);
+  --graph-journal: oklch(0.56 0.13 279); /* violet */
   --icon: oklch(0.61 0.13 235); /* blue */
   --sidebar: oklch(0.2 0.04 210);
   --sidebar-foreground: oklch(0.68 0.01 195);
@@ -779,6 +785,7 @@
   --border: oklch(0.37 0.03 275);
   --input: oklch(0.37 0.03 275);
   --ring: oklch(0.72 0.18 295);
+  --graph-journal: oklch(0.88 0.09 205); /* cyan: purple is the ring */
   --icon: oklch(0.72 0.18 295); /* purple */
   --sidebar: oklch(0.25 0.03 275);
   --sidebar-foreground: oklch(0.96 0.01 90);
@@ -878,6 +885,7 @@
   --border: oklch(0.35 0.02 260);
   --input: oklch(0.35 0.02 260);
   --ring: oklch(0.73 0.13 235);
+  --graph-journal: oklch(0.71 0.15 318); /* purple */
   --icon: oklch(0.73 0.13 235); /* blue */
   --sidebar: oklch(0.25 0.02 260);
   --sidebar-foreground: oklch(0.75 0.02 255);

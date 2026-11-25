@@ -45,8 +45,16 @@ const HIGHLIGHTED_EDGE_OPACITY = '0.8'
 const LABEL_TRUNCATE_LEN = 20
 export const ZOOM_BUTTON_DURATION_MS = 200
 export const ZOOM_FIT_DURATION_MS = 300
-/** Screen pixels kept clear around the graph when it is fitted, and around a node panned into view. */
+/**
+ * Screen pixels kept clear around the graph when it is fitted, and around a
+ * node panned into view: at most an eighth of the canvas's shorter side, so a
+ * phone's narrow canvas does not spend a third of its width on margins (#7040).
+ */
 const FIT_PADDING = 64
+
+function fitPadding(width: number, height: number): number {
+  return Math.min(FIT_PADDING, Math.min(width, height) / 8)
+}
 /** A fitted graph is never zoomed past this, so a handful of nodes is not blown up. */
 const FIT_MAX_SCALE = 2
 export const ZOOM_STEP = 1.3
@@ -175,15 +183,17 @@ function labelText(d: GraphNode, selectedId: string | null): string {
 
 /**
  * The selected node, else the page open in the active tab, takes the one
- * accent; every other node is the neutral tone.
+ * accent; every other node takes its kind's tone, journal pages apart from
+ * the rest (#7040).
  */
 export function markNodes(node: NodeSel, { currentPageId, selectedId }: NodeMarks): void {
   const accented = selectedId ?? currentPageId
   node.attr('aria-current', (d) => (d.id === currentPageId ? 'page' : null))
   node.attr('aria-selected', (d) => String(d.id === selectedId))
-  node
-    .select('circle:nth-child(2)')
-    .attr('fill', (d) => (d.id === accented ? 'var(--graph-accent)' : 'var(--graph-node)'))
+  node.select('circle:nth-child(2)').attr('fill', (d) => {
+    if (d.id === accented) return 'var(--graph-accent)'
+    return d.is_journal ? 'var(--graph-journal)' : 'var(--graph-node)'
+  })
   node.select<SVGTextElement>('text').text((d) => labelText(d, selectedId))
 }
 
@@ -738,7 +748,7 @@ export function createZoomKeyHandler(
 }
 
 /**
- * The zoom that frames every placed node, centred, with `FIT_PADDING` screen
+ * The zoom that frames every placed node, centred, with `fitPadding` screen
  * pixels to spare and the scale capped at `FIT_MAX_SCALE`.
  */
 export function fitTransform(
@@ -758,9 +768,10 @@ export function fitTransform(
     maxY = Math.max(maxY, y)
   }
   if (minX > maxX) return zoomIdentity
+  const padding = fitPadding(width, height)
   const scale = Math.min(
-    (width - 2 * FIT_PADDING) / (maxX - minX),
-    (height - 2 * FIT_PADDING) / (maxY - minY),
+    (width - 2 * padding) / (maxX - minX),
+    (height - 2 * padding) / (maxY - minY),
     FIT_MAX_SCALE,
   )
   return zoomIdentity
@@ -771,7 +782,7 @@ export function fitTransform(
 
 /**
  * The zoom that centres `point` at the current scale, or `null` when the point
- * is already on screen with `FIT_PADDING` pixels to spare.
+ * is already on screen with `fitPadding` pixels to spare.
  */
 export function revealTransform(
   transform: ZoomTransform,
@@ -782,11 +793,12 @@ export function revealTransform(
   const x = point.x ?? 0
   const y = point.y ?? 0
   const [screenX, screenY] = transform.apply([x, y])
+  const padding = fitPadding(width, height)
   const inView =
-    screenX >= FIT_PADDING &&
-    screenX <= width - FIT_PADDING &&
-    screenY >= FIT_PADDING &&
-    screenY <= height - FIT_PADDING
+    screenX >= padding &&
+    screenX <= width - padding &&
+    screenY >= padding &&
+    screenY <= height - padding
   if (inView) return null
   return zoomIdentity
     .translate(width / 2, height / 2)

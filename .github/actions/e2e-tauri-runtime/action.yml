@@ -1,9 +1,9 @@
 name: e2e-tauri runtime packages
 description: >-
   Install what the real-backend specs run (`e2e-tauri-weekly.yml`'s `specs`
-  shards), from a `.deb` cache when one exists. `ci.yml`'s
+  job), from a `.deb` cache when one exists. `ci.yml`'s
   `e2e-tauri-apt-cache` job runs this on every main push so the key stays warm;
-  the shards restore it, and fall back to the mirror on a miss.
+  the specs job restores it, and falls back to the mirror on a miss.
 
 inputs:
   warm-only:

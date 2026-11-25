@@ -157,6 +157,24 @@ describe('fitTransform — fit the graph to the view (#5432)', () => {
     expect(bottom).toBeCloseTo(468)
   })
 
+  it('keeps an eighth of the shorter side clear on a phone-sized canvas, not 64 px (#7040)', () => {
+    const t = fitTransform(
+      [
+        { x: 0, y: 0 },
+        { x: 400, y: 100 },
+      ],
+      380,
+      700,
+    )
+
+    // Width is the tighter side: (380 - 2·47.5) / 400.
+    expect(t.k).toBeCloseTo(0.7125)
+    const [left] = onScreen(t, 0, 0)
+    const [right] = onScreen(t, 400, 100)
+    expect(left).toBeCloseTo(47.5)
+    expect(right).toBeCloseTo(332.5)
+  })
+
   it('caps the scale at 2, so a small graph is not blown up', () => {
     const t = fitTransform(
       [
@@ -245,6 +263,25 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
       ['A', 'var(--graph-accent)', 'page'],
       ['B', 'var(--graph-node)', null],
       ['C', 'var(--graph-node)', null],
+      ['Orphan', 'var(--graph-node)', null],
+    ])
+  })
+
+  it('gives a journal page the journal tone, unless it is the current page (#7040)', () => {
+    const svg = makeSvg()
+    const withJournals = nodes.map((n) =>
+      n.id === 'b' || n.id === 'c' ? { ...n, is_journal: true } : n,
+    )
+    renderGraphElements(svg, withJournals, edges, NO_ACTIONS, {
+      currentPageId: 'c',
+      selectedId: null,
+    })
+
+    expect(paint(svg)).toEqual([
+      ['Hub', 'var(--graph-node)', null],
+      ['A', 'var(--graph-node)', null],
+      ['B', 'var(--graph-journal)', null],
+      ['C', 'var(--graph-accent)', 'page'],
       ['Orphan', 'var(--graph-node)', null],
     ])
   })

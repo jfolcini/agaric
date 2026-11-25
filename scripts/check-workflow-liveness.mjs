@@ -169,7 +169,10 @@ const HOUR_MS = 3600 * 1000
  *     watchdog's own last 15 ticks landed 22:45–02:21. A healthy age is then
  *     at most ~21.4h and one skipped day reads at least ~34.0h, so the same 30h
  *     as `branch-protection-assert` fires on a single skip.
- *   * The weekly lanes (Mon 02:43 / Mon 06:00 / Tue 06:00):
+ *   * `e2e-tauri-weekly` (nightly 02:43 since #6926): with the same lag and
+ *     watchdog ticks, a healthy age is at most ~23.0h and one skipped night
+ *     reads at least ~35.5h, so 30h fires on a single skip.
+ *   * The weekly lanes (Mon 06:00 / Tue 06:00):
  *     healthy age peaks at ~161h on the Sunday tick before the next run, ~167h
  *     with the watchdog's own lag. One skipped week reads ~185h at the Monday
  *     tick and ~209h at the Tuesday one, so 200h trips one day after a missed
@@ -212,9 +215,9 @@ export const WATCHED = Object.freeze([
   }),
   Object.freeze({
     workflow: 'e2e-tauri-weekly.yml',
-    periodHours: 168,
-    maxAgeHours: 200,
-    why: 'weekly Mon 02:43 UTC',
+    periodHours: 24,
+    maxAgeHours: 30,
+    why: 'nightly 02:43 UTC',
   }),
   Object.freeze({
     workflow: 'scheduled-deep-checks.yml',

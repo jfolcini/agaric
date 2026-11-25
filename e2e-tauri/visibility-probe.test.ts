@@ -2,7 +2,7 @@
 // Unit tests for the on-failure visibility diagnostic (#4428, review of #4449).
 //
 // These are VITEST tests, not WDIO specs — `wdio.conf.ts`'s `specs` glob is
-// `./e2e-tauri/**/*.e2e.ts`, so nothing here is ever run by the weekly lane.
+// `./e2e-tauri/**/*.e2e.ts`, so nothing here is ever run by the WDIO lane.
 // They live in `e2e-tauri/` rather than `src/__tests__/` for one reason:
 // `wdio.conf.ts` type-checks only under `tsconfig.wdio.json` (it needs
 // `@wdio/globals/types` for `WebdriverIO.Config` and `browser`), and importing

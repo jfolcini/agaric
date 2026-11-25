@@ -53,7 +53,8 @@ set -euo pipefail
 #                the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`
 #                on the real commands: a Rust change, the Playwright lane run
 #                whole, or a changed spec the list names.
-#   real_backend a path the real-backend lane builds or runs.
+#   real_backend the real-binary smoke lane: a path whose failure only the
+#                binary shows (`real_backend_re`), or the lane's own specs.
 #   real_backend_specs  when non-empty, that lane runs only these changed
 #                `e2e-tauri/*.e2e.ts` specs; empty means every spec.
 # Run it from the repo root with the head checked out: a changed spec that is
@@ -214,14 +215,19 @@ android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-t
 validate_lanes_re='^\.github/(workflows/_validate\.yml$|actions/)'
 validate_lanes_routed_re='^\.github/actions/(playwright-setup|sqlx-offline-check)/'
 
-# The real-backend lane (`e2e-tauri-weekly.yml`): could this path change what
-# that lane BUILDS or RUNS? The Rust app, the frontend bundle the binary serves
-# (`public/` is copied verbatim into `dist/`), the specs and their runner, and
-# the manifests all of that resolves from. Not `e2e/`, the rest of `scripts/`,
-# or `.github/actions/`: each can break the lane, and each is covered by a job
-# that gates the merge (prek's `tsc` in `lint`, the `_validate.yml` jobs that
-# share the composites).
-real_backend_re='^(src/|src-tauri/|e2e-tauri/|public/|wdio\.conf\.ts$|index\.html$|vite\.config\.ts$|tsconfig[^/]*\.json$|package(-lock)?\.json$|\.github/workflows/e2e-tauri-weekly\.yml$)'
+# The real-binary smoke lane (`e2e-tauri-weekly.yml`) runs on a PR only for
+# what the bridge lane cannot show, and nightly and on every tag over the rest
+# (#6926). By class: the capabilities, `tauri.conf.json` and the build script
+# that compiles them in; the Tauri and plugin stack's manifests (a path cannot
+# see which dependency moved); the sync crate and the app's sync glue, with
+# the second device's binary; MCP, in-app and the `agaric-mcp` sidecar; the
+# mirror; boot (`lib.rs`, `app_paths.rs`, recovery, snapshot restore); the
+# main-thread emit, whose deadlock needs the real runtime's webview lock; the
+# maintenance daemon and its notifier; the AppImage launcher env; media
+# capture (the voice recorder with its WebKitGTK Ogg route, and the QR
+# scanner's camera); the lane's runner and this workflow. `e2e-tauri/` is
+# routed by the test-only classes below.
+real_backend_re='^(src-tauri/(capabilities/|tauri\.conf\.json$|build\.rs$|Cargo\.(toml|lock)$|agaric-sync/|src/(lib|main|main_thread|app_paths|sync_host|sync_event_sinks|maintenance|reminders|appimage_integration)\.rs$|src/(mcp|mirror)/|src/bin/agaric-mcp\.rs$|src/db/(recovery|snapshot_restore|daily_snapshot)\.rs$|src/commands/(sync_cmds|mcp|mcp_agents|mirror|recovery|daily_snapshot|notifier)\.rs$|diagnostics/src/bin/e2e_sync_peer\.rs$|scripts/appimage-xdg-open\.sh$)|package(-lock)?\.json$|src/components/attachments/(voice-(recorder|recording|capture-worklet)|ogg-opus)\.ts$|src/components/peers/QrScanner\.tsx$|wdio\.conf\.ts$|\.github/workflows/e2e-tauri-weekly\.yml$)'
 
 # Rust files that compile only into test targets, and the data only those
 # targets read, so they cannot change what `build`, `android-build` or the
@@ -289,7 +295,7 @@ pw_spec_list_max=20
 # rustfmt.toml, .gitattributes, .gitignore, a root Dockerfile / *.sh) is a
 # build/toolchain change no single suite owns, so it pins
 # frontend=backend=rust_tests=ci=true, every frontend lane whole, the
-# real-backend lane whole.
+# smoke lane whole.
 # Recognized-but-unsuited categories (a pure `ci` change like an edit to a
 # workflow other than `_validate.yml`) do NOT trip this: `lint` (incl. zizmor)
 # covers them.

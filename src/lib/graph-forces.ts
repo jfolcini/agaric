@@ -46,7 +46,10 @@ const NODE_RADIUS_MIN = 3
 const NODE_RADIUS_MAX = 12
 const NODE_RADIUS_PER_SQRT_DEGREE = 1.5
 
-/** Strength of the x/y forces pulling nodes toward the centre (`forceX/forceY.strength`). */
+/**
+ * Strength of the x/y forces pulling nodes toward the centre
+ * (`forceX/forceY.strength`) on a square canvas; see `gravityForces`.
+ */
 export const GRAVITY_STRENGTH = 0.05
 
 /**
@@ -106,6 +109,22 @@ export function nodeRadius(degree: number): number {
 }
 
 /**
+ * The x/y pull toward the centre. Along the canvas's shorter side it is
+ * stronger by the square of the aspect ratio, so a phone's tall canvas gets a
+ * tall layout instead of a round one with empty bands above and below (#7040).
+ * Capped at 1, d3's upper bound: past it each tick overshoots the centre, and
+ * on a long thin canvas the layout is flung off to infinity.
+ */
+function gravityForces<N extends ForceNode>({ width, height }: GraphForceDimensions) {
+  const aspect = width / height
+  const pull = (stretch: number) => Math.min(GRAVITY_STRENGTH * Math.max(1, stretch) ** 2, 1)
+  return {
+    x: forceX<N>(width / 2).strength(pull(1 / aspect)),
+    y: forceY<N>(height / 2).strength(pull(aspect)),
+  }
+}
+
+/**
  * Configure the full set of layout forces on `sim` (link, charge, centre,
  * collide, x/y gravity) using the shared tuning constants. Charge and
  * collision read each node's `degree`, so both paths must carry it (#5432).
@@ -119,6 +138,7 @@ export function applyGraphForces<N extends ForceNode, E extends SimulationLinkDa
   options: { edges: E[] } & GraphForceDimensions,
 ): Simulation<N, E> {
   const { edges, width, height } = options
+  const gravity = gravityForces<N>(options)
   return sim
     .force(
       'link',
@@ -137,8 +157,8 @@ export function applyGraphForces<N extends ForceNode, E extends SimulationLinkDa
       'collide',
       forceCollide<N>((d) => nodeRadius(d.degree ?? 0) + COLLIDE_PADDING),
     )
-    .force('x', forceX<N>(width / 2).strength(GRAVITY_STRENGTH))
-    .force('y', forceY<N>(height / 2).strength(GRAVITY_STRENGTH))
+    .force('x', gravity.x)
+    .force('y', gravity.y)
 }
 
 /**
@@ -153,7 +173,8 @@ export function applyResizeForces<N extends ForceNode, E extends SimulationLinkD
   dimensions: GraphForceDimensions,
 ): void {
   const { width, height } = dimensions
+  const gravity = gravityForces<N>(dimensions)
   sim.force('center', forceCenter<N>(width / 2, height / 2))
-  sim.force('x', forceX<N>(width / 2).strength(GRAVITY_STRENGTH))
-  sim.force('y', forceY<N>(height / 2).strength(GRAVITY_STRENGTH))
+  sim.force('x', gravity.x)
+  sim.force('y', gravity.y)
 }
