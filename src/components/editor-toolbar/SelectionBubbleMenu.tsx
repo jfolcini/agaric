@@ -456,7 +456,11 @@ export function SelectionBubbleMenu({
           <Link2 />
         </Button>
       </Tip>
-      <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
+      <Popover
+        open={linkPopoverOpen}
+        onOpenChange={setLinkPopoverOpen}
+        sheetTitle={t('toolbar.link')}
+      >
         <PopoverAnchor virtualRef={virtualAnchorRef} />
         <PopoverContent
           align="start"

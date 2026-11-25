@@ -21,10 +21,10 @@ import { axe } from 'vitest-axe'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 
-const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
 
-vi.mock('@/hooks/useIsTouch', () => ({
-  useIsTouch: mockUseIsTouch,
+vi.mock('@/hooks/usePhoneLayout', () => ({
+  usePhoneLayout: mockUsePhoneLayout,
 }))
 
 vi.mock('lucide-react', () => ({
@@ -59,23 +59,22 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockUseIsTouch.mockReturnValue(false)
+  mockUsePhoneLayout.mockReturnValue(false)
 })
 
 describe('AddPropertyPopover', () => {
-  it('inherits the shared viewport cap in the coarse-pointer sheet', () => {
-    mockUseIsTouch.mockReturnValue(true)
+  it('inherits the shared viewport cap in the phone sheet', () => {
+    mockUsePhoneLayout.mockReturnValue(true)
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByTestId('add-property-sheet')).toHaveClass(
-      'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]',
-    )
-    expect(screen.getByTestId('add-property-sheet')).not.toHaveClass('max-h-[80vh]')
+    const sheet = screen.getByRole('dialog', { name: 'Add property' })
+    expect(sheet).toHaveClass('max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]')
+    expect(sheet).not.toHaveClass('max-h-[80vh]')
   })
 
   // The sheet body must not add its own top margin on top of the header gap.
-  it.each([false, true])('search field sits directly under the header (touch=%s)', (touch) => {
-    mockUseIsTouch.mockReturnValue(touch)
+  it.each([false, true])('search field sits directly under the header (phone=%s)', (phone) => {
+    mockUsePhoneLayout.mockReturnValue(phone)
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
     const search = screen.getByRole('textbox', { name: 'Search definitions' })
@@ -233,9 +232,9 @@ describe('AddPropertyPopover', () => {
   // is held here until the new row's input has the focus, the order a stalled
   // main thread produces by chance.
   it.each([false, true])(
-    'leaves the focus on the input it moved to while the picker closed (touch=%s)',
-    async (touch) => {
-      mockUseIsTouch.mockReturnValue(touch)
+    'leaves the focus on the input it moved to while the picker closed (phone=%s)',
+    async (phone) => {
+      mockUsePhoneLayout.mockReturnValue(phone)
       const user = userEvent.setup()
       render(
         <>

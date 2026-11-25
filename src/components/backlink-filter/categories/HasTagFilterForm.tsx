@@ -84,7 +84,11 @@ export function HasTagFilterForm({ tags, ref }: HasTagFilterFormProps): React.Re
   }
 
   return (
-    <Popover open={tagSearchOpen} onOpenChange={setTagSearchOpen}>
+    <Popover
+      open={tagSearchOpen}
+      onOpenChange={setTagSearchOpen}
+      sheetTitle={t('backlink.selectTag')}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="ghost"

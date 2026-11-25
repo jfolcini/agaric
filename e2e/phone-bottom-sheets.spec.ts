@@ -14,15 +14,19 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
-import { expectToastCloseInside } from './domain'
+import { expectToastCloseInside, runSlashCommand } from './domain'
 import {
   activeMenu,
+  activePopover,
   activeSheet,
   centerOf,
   emitMockEvent,
   expect,
   focusBlock,
+  ipc,
   navigateMobile,
+  openMobileSidebar,
+  openPage,
   openPageMobile,
   test,
   touchLongPress,
@@ -511,5 +515,156 @@ test.describe('A tablet stays a tablet with its keyboard up (#7040) @mobile @pag
     await expect(dialog).toHaveAttribute('data-slot', 'dialog-content')
     await expect(title).toHaveValue('Typed before the keyboard')
     await expect(page.locator('[data-slot="sidebar"]:not([data-mobile])')).toBeInViewport()
+  })
+})
+
+const MEETINGS = '00000000000000000000PAGE05'
+
+/** Open the Pages view on a phone or a desktop. */
+async function openPages(page: Page, phone: boolean): Promise<void> {
+  if (phone) await navigateMobile(page, 'Pages')
+  else await page.getByRole('button', { name: 'Pages', exact: true }).first().click()
+  await expect(page.locator('[data-page-item]').first()).toBeVisible()
+}
+
+/** Meetings with a select property, whose row in its Properties offers Edit options. */
+async function openMeetingsProperties(page: Page, phone: boolean): Promise<void> {
+  await ipc(page, 'set_property', {
+    blockId: MEETINGS,
+    key: 'project',
+    value: { value_text: 'alpha' },
+  })
+  if (phone) await openPageMobile(page, 'Meetings')
+  else await openPage(page, 'Meetings')
+  await page.getByRole('button', { name: /^Properties/ }).click()
+  await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
+}
+
+/** The page ⋮ menu's Add tag, which opens the page's tag picker. */
+async function openTagPicker(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add tag', exact: true }).click()
+}
+
+// One rule, `usePhoneLayout`, makes a popover holding a field, the four
+// dialogs that were still centred, and every menu a bottom sheet on a phone
+// (#7040 M8, M9, S13); a desktop keeps them anchored or centred.
+test.describe('Phone popovers with a field, dialogs and menus are bottom sheets (#7040) @mobile @editor @pages @spaces', () => {
+  test.use({
+    viewport: { width: 412, height: 915 },
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+  })
+
+  test('the page tag picker is a bottom sheet', async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await openTagPicker(page)
+    const sheet = page.getByRole('dialog', { name: 'Add tag' })
+    await expectBottomSheet(page, sheet)
+    await expect(sheet.getByPlaceholder('Search or create tag...')).toBeVisible()
+    // The first Escape closes it, as it closes the desktop popover.
+    await page.keyboard.press('Escape')
+    await expect(sheet).toHaveCount(0)
+  })
+
+  test("a select property's options editor is a bottom sheet", async ({ page }) => {
+    await openMeetingsProperties(page, true)
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Edit options for project' }))
+  })
+
+  test('the Pages ⋮ menu is a bottom-sheet list', async ({ page }) => {
+    await openPages(page, true)
+    await page.getByTestId('page-browser-more').tap()
+    await expectBottomSheet(page, page.getByTestId('saved-views-menu'))
+  })
+
+  test('the Pages filter is a bottom sheet', async ({ page }) => {
+    await openPages(page, true)
+    await page.getByRole('button', { name: 'Add filter', exact: true }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Add filter' }))
+  })
+
+  test("the toolbar's More is a bottom-sheet list", async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await page.getByTestId('formatting-toolbar').getByRole('button', { name: 'More' }).tap()
+    await expectBottomSheet(page, page.getByTestId('toolbar-overflow-menu'))
+  })
+
+  test('the space switcher is a bottom-sheet list', async ({ page }) => {
+    const drawer = await openMobileSidebar(page)
+    await drawer.getByLabel('Switch space', { exact: true }).tap()
+    const sheet = page.getByRole('dialog', { name: 'Switch space' })
+    await expectBottomSheet(page, sheet)
+    // Its rows still act: Manage spaces opens Settings › Spaces.
+    await sheet.getByRole('button', { name: 'Manage spaces…' }).tap()
+    await expect(page.getByRole('tabpanel', { name: 'Spaces' })).toBeVisible()
+  })
+
+  test('the voice note recorder is a bottom sheet', async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await runSlashCommand(page, 'voice', 'VOICE — Record a voice note')
+    await expectBottomSheet(page, page.getByTestId('voice-note-dialog'))
+  })
+})
+
+test.describe('A desktop keeps the anchored popovers, dropdowns and dialogs (#7040) @editor @pages @spaces', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the page tag picker is an anchored popover', async ({ page }) => {
+    await openPage(page, PAGE)
+    await openTagPicker(page)
+    const search = activePopover(page).getByPlaceholder('Search or create tag...')
+    await expect(search).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(search).toHaveCount(0)
+  })
+
+  test("a select property's options editor is an anchored popover", async ({ page }) => {
+    await openMeetingsProperties(page, false)
+    await expect(activePopover(page).getByTestId('options-editor-header-project')).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('saved views and the Pages filter are anchored popovers', async ({ page }) => {
+    await openPages(page, false)
+    await page.getByTestId('saved-views-trigger').click()
+    await expect(page.getByTestId('saved-views-menu')).toHaveAttribute(
+      'data-slot',
+      'popover-content',
+    )
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await expect(activePopover(page).getByRole('button', { name: /^Tag/ }).first()).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('the space switcher is a dropdown', async ({ page }) => {
+    await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('the voice note recorder is a centred dialog', async ({ page }) => {
+    await openPage(page, PAGE)
+    await focusBlock(page)
+    await runSlashCommand(page, 'voice', 'VOICE — Record a voice note')
+    await expect(page.getByTestId('voice-note-dialog')).toHaveAttribute(
+      'data-slot',
+      'dialog-content',
+    )
   })
 })

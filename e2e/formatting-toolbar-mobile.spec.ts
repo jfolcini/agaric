@@ -104,8 +104,9 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     await expect(toolbar).toBeVisible()
 
     // The narrow iPhone width collapses lower-priority buttons into the
-    // `MoreHorizontal` overflow popover.
-    const more = toolbar.getByRole('button', { name: 'More' })
+    // `MoreHorizontal` overflow menu, a bottom sheet whose overlay hides the bar
+    // from the accessibility tree while it is open.
+    const more = toolbar.getByRole('button', { name: 'More', includeHidden: true })
     await expect(more).toBeVisible()
     await expect(more).toHaveAttribute('aria-expanded', 'false')
 

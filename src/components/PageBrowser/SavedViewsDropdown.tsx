@@ -1,7 +1,8 @@
 /**
  * SavedViewsDropdown — list/apply/delete UI for named Pages-view snapshots
  * (#2003 piece 1). Slotted into `PageBrowserHeader`'s search/sort row,
- * next to the sort `Select`; on a phone it is that row's ⋮ menu instead.
+ * next to the sort `Select`; on a phone it is that row's ⋮ menu instead, a
+ * bottom-sheet list (`MenuSheet`) as the page ⋮ is.
  *
  * Pure presentational + its own transient popover/dialog-open state (mirrors
  * `PageHeaderMenu`'s `moveSubmenuOpen` — it's idiomatic in this codebase for
@@ -18,9 +19,12 @@ import { useTranslation } from 'react-i18next'
 import { SaveViewDialog } from '@/components/PageBrowser/SaveViewDialog'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SheetTrigger } from '@/components/ui/sheet'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { SavedPagesView } from '@/lib/saved-pages-views'
 
 export interface SavedViewsDropdownProps {
@@ -55,111 +59,126 @@ export function SavedViewsDropdown({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const phoneLayout = usePhoneLayout()
+
+  const triggerButton = trigger ?? (
+    <Button
+      variant="outline"
+      className="w-auto min-w-[7rem]"
+      aria-label={
+        activeView
+          ? t('pageBrowser.savedViews.triggerActive', { name: activeView.name })
+          : t('pageBrowser.savedViews.trigger')
+      }
+      data-testid="saved-views-trigger"
+    >
+      <Bookmark
+        className="h-4 w-4 text-muted-foreground"
+        fill={activeView ? 'currentColor' : 'none'}
+        aria-hidden="true"
+      />
+      <span className="truncate max-w-[8rem]">
+        {activeView ? activeView.name : t('pageBrowser.savedViews.trigger')}
+      </span>
+    </Button>
+  )
+  const menuLabel = trigger ? t('pageBrowser.moreMenu') : t('pageBrowser.savedViews.trigger')
+  const rows = (
+    <>
+      {trigger != null && (
+        <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+          {t('pageBrowser.savedViews.trigger')}
+        </p>
+      )}
+      {views.length === 0 ? (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
+          {t('pageBrowser.savedViews.empty')}
+        </p>
+      ) : (
+        <ScrollArea className="max-h-64" viewportClassName="[&>div]:!block">
+          <ul className="flex flex-col gap-0.5 list-none m-0 p-0">
+            {views.map((view) => {
+              const isActive = activeView?.id === view.id
+              return (
+                <li key={view.id} className="flex items-center gap-0.5">
+                  <PopoverMenuItem
+                    active={isActive}
+                    aria-current={isActive ? 'true' : undefined}
+                    className="flex items-center gap-2 flex-1 min-w-0"
+                    onClick={() => {
+                      onApply(view)
+                      setOpen(false)
+                    }}
+                    aria-label={t('pageBrowser.savedViews.apply', { name: view.name })}
+                  >
+                    {isActive ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <span className="truncate">{view.name}</span>
+                  </PopoverMenuItem>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={t('pageBrowser.savedViews.delete', { name: view.name })}
+                    onClick={() => onDelete(view)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </li>
+              )
+            })}
+          </ul>
+        </ScrollArea>
+      )}
+      {canSaveCurrentView && (
+        <>
+          <hr className="my-1 h-px bg-border border-none" />
+          <PopoverMenuItem
+            className="flex items-center gap-2"
+            onClick={() => {
+              setOpen(false)
+              setSaveDialogOpen(true)
+            }}
+            data-testid="saved-views-save-current"
+          >
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('pageBrowser.savedViews.saveCurrentView')}
+          </PopoverMenuItem>
+        </>
+      )}
+      {children != null && (
+        <>
+          <hr className="my-1 h-px bg-border border-none" />
+          {children(() => setOpen(false))}
+        </>
+      )}
+    </>
+  )
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          {trigger ?? (
-            <Button
-              variant="outline"
-              className="w-auto min-w-[7rem]"
-              aria-label={
-                activeView
-                  ? t('pageBrowser.savedViews.triggerActive', { name: activeView.name })
-                  : t('pageBrowser.savedViews.trigger')
-              }
-              data-testid="saved-views-trigger"
-            >
-              <Bookmark
-                className="h-4 w-4 text-muted-foreground"
-                fill={activeView ? 'currentColor' : 'none'}
-                aria-hidden="true"
-              />
-              <span className="truncate max-w-[8rem]">
-                {activeView ? activeView.name : t('pageBrowser.savedViews.trigger')}
-              </span>
-            </Button>
-          )}
-        </PopoverTrigger>
-        <MenuPopoverContent
-          align="end"
+      {phoneLayout ? (
+        <MenuSheet
+          open={open}
+          onOpenChange={setOpen}
+          title={menuLabel}
+          trigger={<SheetTrigger asChild>{triggerButton}</SheetTrigger>}
           data-testid="saved-views-menu"
-          aria-label={trigger ? t('pageBrowser.moreMenu') : t('pageBrowser.savedViews.trigger')}
         >
-          {trigger != null && (
-            <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              {t('pageBrowser.savedViews.trigger')}
-            </p>
-          )}
-          {views.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              {t('pageBrowser.savedViews.empty')}
-            </p>
-          ) : (
-            <ScrollArea className="max-h-64" viewportClassName="[&>div]:!block">
-              <ul className="flex flex-col gap-0.5 list-none m-0 p-0">
-                {views.map((view) => {
-                  const isActive = activeView?.id === view.id
-                  return (
-                    <li key={view.id} className="flex items-center gap-0.5">
-                      <PopoverMenuItem
-                        active={isActive}
-                        aria-current={isActive ? 'true' : undefined}
-                        className="flex items-center gap-2 flex-1 min-w-0"
-                        onClick={() => {
-                          onApply(view)
-                          setOpen(false)
-                        }}
-                        aria-label={t('pageBrowser.savedViews.apply', { name: view.name })}
-                      >
-                        {isActive ? (
-                          <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                        ) : (
-                          <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                        )}
-                        <span className="truncate">{view.name}</span>
-                      </PopoverMenuItem>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        aria-label={t('pageBrowser.savedViews.delete', { name: view.name })}
-                        onClick={() => onDelete(view)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </ScrollArea>
-          )}
-          {canSaveCurrentView && (
-            <>
-              <hr className="my-1 h-px bg-border border-none" />
-              <PopoverMenuItem
-                className="flex items-center gap-2"
-                onClick={() => {
-                  setOpen(false)
-                  setSaveDialogOpen(true)
-                }}
-                data-testid="saved-views-save-current"
-              >
-                <Save className="h-3.5 w-3.5" aria-hidden="true" />
-                {t('pageBrowser.savedViews.saveCurrentView')}
-              </PopoverMenuItem>
-            </>
-          )}
-          {children != null && (
-            <>
-              <hr className="my-1 h-px bg-border border-none" />
-              {children(() => setOpen(false))}
-            </>
-          )}
-        </MenuPopoverContent>
-      </Popover>
+          {rows}
+        </MenuSheet>
+      ) : (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
+          <MenuPopoverContent align="end" data-testid="saved-views-menu" aria-label={menuLabel}>
+            {rows}
+          </MenuPopoverContent>
+        </Popover>
+      )}
       <SaveViewDialog
         open={saveDialogOpen}
         onOpenChange={setSaveDialogOpen}

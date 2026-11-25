@@ -206,7 +206,7 @@ function AddFilterPopover({
   }, [dimension, values, onAdd, reset])
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange} sheetTitle={t('agendaFilter.addFilter')}>
       <PopoverTrigger asChild>
         <Button
           ref={triggerRef}
@@ -315,7 +315,7 @@ function EditFilterPopover({
   const [open, setOpen] = useState(false)
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} sheetTitle={dimensionLabel(filter.dimension)}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         <div className="flex flex-col gap-2">
