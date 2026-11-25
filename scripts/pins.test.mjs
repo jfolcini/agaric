@@ -16,6 +16,7 @@ import {
   compareVersions,
   expandUrl,
   filePinVersion,
+  httpClient,
   parsePins,
   staleMarkdown,
   staleRows,
@@ -298,6 +299,34 @@ void describe('staleRows', () => {
       { name: 'rust', pinned: '1.0.0', latest: '1.1.0', upstream: 'rust-stable', status: 'stale' },
     ])
     assert.match(md, /^# rust: edit rust-toolchain\.toml and its lockstep copies to 1\.1\.0$/m)
+  })
+})
+
+void describe('httpClient', () => {
+  void it('sends GITHUB_TOKEN to api.github.com only, not to a url that merely contains it', async () => {
+    const sent = []
+    const { fetch } = globalThis
+    const token = process.env.GITHUB_TOKEN
+    globalThis.fetch = (url, init) => {
+      sent.push([url, init.headers.authorization])
+      return Promise.resolve(new Response('{}'))
+    }
+    process.env.GITHUB_TOKEN = 't0k'
+    try {
+      const http = httpClient()
+      await http.json('https://api.github.com/repos/o/r/releases/latest')
+      await http.json('https://example.com/api.github.com/x')
+      await http.json('https://api.github.com.example.com/x')
+    } finally {
+      globalThis.fetch = fetch
+      if (token === undefined) delete process.env.GITHUB_TOKEN
+      else process.env.GITHUB_TOKEN = token
+    }
+    assert.deepEqual(sent, [
+      ['https://api.github.com/repos/o/r/releases/latest', 'Bearer t0k'],
+      ['https://example.com/api.github.com/x', undefined],
+      ['https://api.github.com.example.com/x', undefined],
+    ])
   })
 })
 

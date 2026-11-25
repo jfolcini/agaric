@@ -323,12 +323,15 @@ export function staleMarkdown(rows) {
 
 // --- CLI --------------------------------------------------------------------
 
-function httpClient() {
+export function httpClient() {
   const headers = { 'user-agent': 'agaric-pins (https://github.com/jfolcini/agaric)' }
   if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
   const get = async (url) => {
     const res = await fetch(url, {
-      headers: url.includes('api.github.com') ? headers : { 'user-agent': headers['user-agent'] },
+      headers:
+        new URL(url).hostname === 'api.github.com'
+          ? headers
+          : { 'user-agent': headers['user-agent'] },
     })
     if (!res.ok) throw new Error(`GET ${url}: ${res.status}`)
     return res
