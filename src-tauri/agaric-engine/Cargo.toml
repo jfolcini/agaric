@@ -29,6 +29,14 @@ publish = false
 # rlib a test binary links is built without this package's dev-dependencies.
 test-util = ["dep:proptest"]
 
+# Cargo-machete allowlist — each entry carries a reachability rationale, per
+# the sibling block in `src-tauri/Cargo.toml`.
+[package.metadata.cargo-machete]
+ignored = [
+    # Declared only to pin it; the reason is on the dependency.
+    "loro-internal",
+]
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
@@ -56,9 +64,12 @@ specta = { version = "=2.0.0-rc.28", features = ["derive", "chrono"] }
 # containers. This is the workspace's owning entry since #3120 (the app crate
 # no longer depends on it); agaric-sync mirrors it. Not part of any coupled
 # dep stack per AGENTS.md §"Coupled Dependency Updates".
-# Pinned exactly, as in `agaric-sync`, so a bump edits both manifests. The
-# lockfile holds `loro-internal` and the rest of the family.
+# Pinned exactly, as in `agaric-sync`, so a bump edits both manifests.
 loro = "=1.18.0"
+# Not used in our source. `loro` requires it by caret, so this pin is what
+# fixes the version of the crate that holds the encoding and the merge; it
+# moves with the `loro` pin.
+loro-internal = "=1.18.0"
 # `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
 # Version/features mirror the app crate exactly.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
