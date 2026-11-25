@@ -722,6 +722,82 @@ describe('useDuePanelData', () => {
     )
   })
 
+  it('leaves out a task due today or in the warning window, which other sections list (#7040)', async () => {
+    localStorage.setItem('agaric:deadlineWarningDays', '7')
+    const dayStr = (offset: number) => {
+      const d = new Date()
+      d.setDate(d.getDate() + offset)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    mockedListUnfinishedTasks.mockResolvedValue({
+      items: [
+        makeBlock({
+          id: 'TODAY',
+          todo_state: 'TODO',
+          scheduled_date: dayStr(-1),
+          due_date: dayStr(0),
+        }),
+        makeBlock({
+          id: 'SOON',
+          todo_state: 'TODO',
+          scheduled_date: dayStr(-1),
+          due_date: dayStr(7),
+        }),
+        makeBlock({
+          id: 'LATER',
+          todo_state: 'TODO',
+          scheduled_date: dayStr(-1),
+          due_date: dayStr(8),
+        }),
+        makeBlock({
+          id: 'UNDATED',
+          todo_state: 'DOING',
+          scheduled_date: dayStr(-2),
+          due_date: null,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['LATER', 'UNDATED'])
+    })
+  })
+
+  it('reads every page of unfinished tasks (#7040)', async () => {
+    const dayStr = (offset: number) => {
+      const d = new Date()
+      d.setDate(d.getDate() + offset)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    const page = (id: string, next: string | null) => ({
+      items: [makeBlock({ id, todo_state: 'TODO', scheduled_date: dayStr(-3), due_date: null })],
+      next_cursor: next,
+      has_more: next != null,
+      total_count: null,
+    })
+    mockedListUnfinishedTasks
+      .mockResolvedValueOnce(page('P1', 'CURSOR2'))
+      .mockResolvedValueOnce(page('P2', null))
+
+    const { result } = renderHook(() => useDuePanelData({ date: dayStr(0), sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.scheduledEarlierBlocks.map((b) => b.id)).toEqual(['P1', 'P2'])
+    })
+    expect(mockedListUnfinishedTasks).toHaveBeenLastCalledWith(
+      dayStr(0),
+      ['TODO', 'DOING'],
+      'CURSOR2',
+      200,
+      expect.anything(),
+    )
+  })
+
   it('fetches no earlier-scheduled tasks for a day other than today', async () => {
     const { result } = renderHook(() => useDuePanelData({ date: '2025-01-15', sourceFilter: null }))
 
