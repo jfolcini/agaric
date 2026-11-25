@@ -1,4 +1,4 @@
-# Session 4444 — the recent-pages strip gives way to tabs and phones; the Pages "+" goes plain beside the capture button
+# Session 4447 — the recent-pages strip gives way to tabs and phones; the Pages "+" goes plain beside the capture button
 
 Part of the #7040 UI review, items S4 and P5, built on the maintainer's 2026-11-25 decisions.
 
