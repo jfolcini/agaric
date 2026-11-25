@@ -26,6 +26,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -234,7 +235,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
 
   return (
     <div className="space-y-2">
-      <h2 className="text-sm font-medium">{t('agentAccess.activityLabel')}</h2>
+      <CardTitle>{t('agentAccess.activityLabel')}</CardTitle>
       {entries.length === 0 ? (
         <EmptyState
           icon={Activity}

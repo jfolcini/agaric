@@ -29,6 +29,7 @@ import {
 // the SAME tokenizer the matcher parses with; the two previously drifted
 // (validator accepted `Ctrl+E`/`Cmd + K` formats the matcher saved dead).
 import { type BindingValidationError, validateBindingInput } from '@/lib/keyboard-config/parse'
+import { cn } from '@/lib/utils'
 
 export function KeyboardTab(): React.ReactElement {
   const { t } = useTranslation()
@@ -144,7 +145,8 @@ export function KeyboardTab(): React.ReactElement {
                 <h2 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h2>
                 {/* The columns sit on one line only when the card has room for
                     them: its width, not the viewport's, since the sidebar and
-                    the Settings rail take most of a tablet's. */}
+                    the Settings rail take most of a tablet's. On one line the
+                    keys take their own width, so the label gets the rest. */}
                 <div className="@container space-y-1">
                   {items.map((shortcut) => {
                     const isEditing = editingId === shortcut.id
@@ -165,7 +167,10 @@ export function KeyboardTab(): React.ReactElement {
                         </div>
 
                         <div
-                          className="min-w-0 flex-1 @lg:w-56 @lg:flex-none"
+                          className={cn(
+                            'min-w-0 flex-1 @lg:flex-none',
+                            isEditing ? '@lg:w-56' : '@lg:w-auto @lg:max-w-56',
+                          )}
                           data-testid="kbd-keys-column"
                         >
                           {isEditing ? (
@@ -255,7 +260,7 @@ export function KeyboardTab(): React.ReactElement {
                             get NO edit affordance; their triggers are hardcoded
                             at the consumption site and a saved override would
                             never be honoured. */}
-                        <div className="flex shrink-0 items-center justify-end gap-1 @lg:w-36">
+                        <div className="flex shrink-0 items-center justify-end gap-1 @lg:min-w-6">
                           {shortcut.isCustom && !isEditing && (
                             <Button
                               variant="ghost"

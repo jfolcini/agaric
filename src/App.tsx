@@ -74,7 +74,7 @@ import { logger } from '@/lib/logger'
 import { openNewPageDialog } from '@/lib/overlay-events'
 import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
-import { useNavigationStore } from '@/stores/navigation'
+import { useNavigationStore, type View } from '@/stores/navigation'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -346,6 +346,15 @@ function headerContentClass(isJournalView: boolean): string {
     'flex min-w-0 flex-1 flex-row items-center gap-2',
     isJournalView ? 'max-sm:gap-1' : 'flex-wrap',
   )
+}
+
+/**
+ * Whether the scroll keeps room at its foot for `QuickCaptureFab`. Settings has
+ * no button, and Graph's canvas fills the viewport and runs under it, its zoom
+ * controls on the far side. Module-level for `App`'s complexity budget.
+ */
+function keepsCaptureRoom(view: View): boolean {
+  return view !== 'graph' && view !== 'settings'
 }
 
 function App() {
@@ -784,12 +793,11 @@ function App() {
               // scroll-into-view stops short of the inset as well.
               // Where `QuickCaptureFab` shows, it floats 1rem up and is 3.5rem
               // tall; 6rem keeps the last control clear of it (the `md:` copy
-              // outranks `md:p-6`). Graph's canvas fills the viewport instead
-              // and runs under the button, its zoom controls on the far side.
+              // outranks `md:p-6`), except where `keepsCaptureRoom` says not.
               viewportClassName={cn(
                 'p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
-                  currentView !== 'graph' &&
+                  keepsCaptureRoom(currentView) &&
                   'pb-[calc(6rem+var(--safe-area-bottom))] md:pb-[calc(6rem+var(--safe-area-bottom))]',
               )}
               data-slot="main-content"

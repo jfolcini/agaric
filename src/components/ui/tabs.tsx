@@ -6,9 +6,9 @@
  *    `text-foreground font-medium` over a 2 px `tab-indicator` bar that covers
  *    the hairline beneath it. The bar is the tab's only border, so its corners
  *    stay square.
- *  - `vertical`: the Settings rail. The selected tab is the neutral
- *    `sidebar-accent` pill of the app sidebar's active item; arrow keys are
- *    Up/Down.
+ *  - `vertical`: the Settings rail. Its states are the app sidebar's: the
+ *    selected tab is the neutral `sidebar-accent` pill in `font-medium`, a
+ *    hovered one half that fill at the regular weight; arrow keys are Up/Down.
  *
  * Radix gives each tablist one tab stop, arrow keys, Home and End; the tab
  * stop is the selected tab. Every switcher here is controlled and mounts only
@@ -44,7 +44,7 @@ const tabsTriggerVariants = cva(
         underline:
           '-mb-px justify-center border-b-2 border-transparent px-1 py-2 hover:text-foreground data-[state=active]:border-tab-indicator data-[state=active]:font-medium data-[state=active]:text-foreground',
         vertical:
-          'w-full justify-start rounded-md px-3 py-1.5 text-left font-medium data-[state=inactive]:hover:bg-muted/50 data-[state=inactive]:hover:text-foreground data-[state=active]:bg-sidebar-accent data-[state=active]:text-sidebar-accent-foreground',
+          'w-full justify-start rounded-md px-3 py-1.5 text-left data-[state=inactive]:hover:bg-sidebar-accent/50 data-[state=inactive]:hover:text-sidebar-accent-foreground data-[state=active]:bg-sidebar-accent data-[state=active]:font-medium data-[state=active]:text-sidebar-accent-foreground',
       },
     },
     defaultVariants: { variant: 'underline' },

@@ -3,7 +3,8 @@
  * navigation. Registered by `useAndroidBackButton` at
  * `BACK_PRIORITY_OVERLAY` / `BACK_PRIORITY_NAVIGATION`; the middle band
  * (`BACK_PRIORITY_ZOOM`) is registered dynamically by `useBlockZoom`
- * while a BlockTree is zoomed.
+ * while a BlockTree is zoomed, and by `SettingsView` while a phone shows
+ * a Settings section.
  */
 
 import { useNavigationStore } from '@/stores/navigation'

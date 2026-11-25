@@ -139,7 +139,7 @@ export function AgentAccessTab(): React.ReactElement {
     <div className="agent-access-tab space-y-6">
       <Card>
         <CardContent className="space-y-6">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t(isMobilePlatform() ? 'agentAccess.descriptionMobile' : 'agentAccess.description')}
           </p>
 

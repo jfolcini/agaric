@@ -18,7 +18,8 @@
  *
  *   1. overlay open → close topmost overlay (`overlayBackHandler`)
  *   2. zoomed BlockTree → zoom out one level (registered by
- *      `useBlockZoom` at `BACK_PRIORITY_ZOOM` while zoomed)
+ *      `useBlockZoom` at `BACK_PRIORITY_ZOOM` while zoomed); a Settings
+ *      section on a phone → the section list (`SettingsView`, same band)
  *   3. in-app history → the header's Back history; with none left (a fresh
  *      launch), page-stack `goBack()` / leave the editor for the view its
  *      stack was opened from / non-root view → journal

@@ -1,18 +1,21 @@
 /**
  * SettingsView -- tabbed settings panel (F-30).
  *
- * The rail is `TAB_GROUPS` (#1108): four labelled groups in a vertical tablist
- * from `sm` up, and a grouped Select on phones (#5344). Each tab's body lives
- * in its own component; this view owns the active tab (`?settings=<id>`, the
- * deep-link handoff slot, localStorage) and the integrity result that Help's
- * Report a bug carries (#5360).
+ * The rail is `TAB_GROUPS` (#1108): four labelled groups in a vertical tablist.
+ * A phone (`usePhoneLayout`) opens on the same groups as a list of sections
+ * instead and drills into one, with Back to the list in the view header (#7040).
+ * Each tab's body lives in its own component; this view owns the active tab
+ * (`?settings=<id>`, the deep-link handoff slot, localStorage) and the integrity
+ * result that Help's Report a bug carries (#5360).
  */
 
+import { ArrowLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
+import { ViewHeader } from '@/components/layout/ViewHeader'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import { QuarantinedSyncCard } from '@/components/peers/QuarantinedSyncCard'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
@@ -27,20 +30,18 @@ import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { SpacesTab } from '@/components/settings/SpacesTab'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { IconButton } from '@/components/ui/icon-button'
+import { ListItem, listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
-import { useReconciliationReport } from '@/hooks/useReconciliationReport'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
+import {
+  type UseReconciliationReportResult,
+  useReconciliationReport,
+} from '@/hooks/useReconciliationReport'
+import { BACK_PRIORITY_ZOOM, registerBackHandler } from '@/lib/back-chain'
 import { dispatchBugReport } from '@/lib/bug-report-events'
-import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -115,18 +116,18 @@ function resolveTab(id: string): SettingsTab | null {
 }
 
 /**
- * Load the active tab. Resolution order:
+ * The tab asked for, or `null`. Resolution order:
  *   1. `?settings=<tab>` query param — enables shareable deep links.
  *   2. localStorage (`agaric-settings-active-tab`) — restores the user's
  *      last-visited tab across navigations within the app.
- *   3. `'general'` fallback.
+ * With neither, the rail opens on General and a phone on its section list.
  *
  * Every layer goes through `resolveTab`, so a removed tab or a hand-crafted
  * URL can't leave the panel in an inconsistent state.
  */
-function readActiveTab(): SettingsTab {
+function readRequestedTab(): SettingsTab | null {
   const fromUrl = getSettingsTabFromUrl([...TAB_IDS, RETIRED_HISTORY_TAB])
-  return resolveTab(fromUrl ?? readPreference(PREFERENCES.settingsActiveTab)) ?? 'general'
+  return resolveTab(fromUrl ?? readPreference(PREFERENCES.settingsActiveTab))
 }
 
 const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
@@ -146,13 +147,47 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
 
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
-  const [chosenTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
+  const [requestedTab] = useState(readRequestedTab)
+  const [chosenTab, setActiveTab] = useState<SettingsTab>(requestedTab ?? 'general')
+  // A phone shows its section list until a section is picked or asked for.
+  const [listOpen, setListOpen] = useState(requestedTab === null)
+  const phoneLayout = usePhoneLayout()
+  const showList = phoneLayout && listOpen
   const keyboardHints = useKeyboardHints()
   const tabGroups = keyboardHints ? TAB_GROUPS : TOUCH_TAB_GROUPS
   const activeTab = !keyboardHints && chosenTab === 'keyboard' ? 'general' : chosenTab
   // Held here, not in the App health tab that runs it, so Help's Report a bug
   // can carry the latest result (#5360).
   const integrity = useReconciliationReport('SettingsView')
+  // Where focus goes once a drill in or out has rendered: the list or the section
+  // that replaced the focused row or Back button is a new subtree.
+  const focusAfterSwitch = useRef<string | null>(null)
+
+  const openSection = (tab: SettingsTab) => {
+    focusAfterSwitch.current = 'settings-section-title'
+    setActiveTab(tab)
+    setListOpen(false)
+  }
+  const openList = () => {
+    focusAfterSwitch.current = `settings-section-${activeTab}`
+    setListOpen(true)
+  }
+
+  useEffect(() => {
+    if (focusAfterSwitch.current === null) return
+    document.getElementById(focusAfterSwitch.current)?.focus()
+    focusAfterSwitch.current = null
+  }, [showList])
+
+  // Android's system back leaves a section for the list before it leaves Settings.
+  useEffect(() => {
+    if (!phoneLayout || listOpen) return
+    return registerBackHandler(() => {
+      focusAfterSwitch.current = `settings-section-${activeTab}`
+      setListOpen(true)
+      return true
+    }, BACK_PRIORITY_ZOOM)
+  }, [phoneLayout, listOpen, activeTab])
 
   // #734 — consume the pending-tab handoff slot. The deep-link router and
   // the welcome modal's actions write it before flipping the view to
@@ -168,6 +203,7 @@ export function SettingsView(): React.ReactElement {
     if (requested !== null) {
       // oxlint-disable-next-line react/set-state-in-effect -- consumes the navigation store's one-shot deep-link handoff slot; the tab is also user-driven, so it cannot be derived from `pendingSettingsTab`; see #4407
       setActiveTab(requested)
+      setListOpen(false)
     }
     // Clear only if the slot still holds the value this effect consumed —
     // passive effects flush asynchronously after commit, so a SECOND deep
@@ -180,17 +216,23 @@ export function SettingsView(): React.ReactElement {
   }, [pendingSettingsTab])
 
   // Persist active tab so navigating away and back restores the user's place
-  // Validation happens on read in `readActiveTab` — stored values
+  // Validation happens on read in `readRequestedTab` — stored values
   // that no longer match a known tab fall back to `'general'`.
   //
   // We also mirror the active tab into the URL query string (`?settings=…`)
   // via `replaceState` so support / users can share deep links to a
   // specific tab. localStorage covers cross-window restoration; the URL
-  // covers per-window deep links.
+  // covers per-window deep links. A phone back on its section list holds no
+  // tab, so it reopens on the list.
   useEffect(() => {
+    if (showList) {
+      removePreference(PREFERENCES.settingsActiveTab)
+      setSettingsTabInUrl(null)
+      return
+    }
     writePreference(PREFERENCES.settingsActiveTab, activeTab)
     setSettingsTabInUrl(activeTab)
-  }, [activeTab])
+  }, [activeTab, showList])
 
   // When SettingsView unmounts (user navigates away from Settings) clear
   // the `?settings=…` query param so the URL no longer claims the user is
@@ -203,44 +245,99 @@ export function SettingsView(): React.ReactElement {
     [],
   )
 
+  const panel = (
+    <SettingsPanel
+      tab={activeTab}
+      integrity={integrity}
+      onReportBugClick={() =>
+        dispatchBugReport({ message: '', integrityReport: integrity.report ?? undefined })
+      }
+    />
+  )
+
+  if (showList) {
+    return (
+      <nav aria-label={t('sidebar.settings')} className="settings-view space-y-4">
+        {tabGroups.map((group) => (
+          <div key={group.id} className={listCardVariants()}>
+            <h2 id={`settings-group-${group.id}`} className={listHeaderVariants()}>
+              {t(group.labelKey)}
+            </h2>
+            <ul
+              aria-labelledby={`settings-group-${group.id}`}
+              className="[&>:last-child]:rounded-b-[inherit]"
+            >
+              {group.tabs.map((tab) => (
+                // The row is one button, so the whole 44 px row takes the tap.
+                <ListItem key={tab} className="p-0">
+                  <button
+                    type="button"
+                    id={`settings-section-${tab}`}
+                    className="flex min-h-11 w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
+                    onClick={() => openSection(tab)}
+                  >
+                    <span className="min-w-0 flex-1">{t(TAB_LABEL_KEYS[tab])}</span>
+                    <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground" />
+                  </button>
+                </ListItem>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    )
+  }
+
+  if (phoneLayout) {
+    return (
+      <div className="settings-view">
+        <ViewHeader>
+          <div className="flex items-center gap-2">
+            <IconButton
+              variant="ghost"
+              size="icon-sm"
+              ariaLabel={t('settings.backToSections')}
+              tooltip={t('settings.backToSections')}
+              onClick={openList}
+            >
+              <ArrowLeft />
+            </IconButton>
+            {/* Takes focus on a drill in, so a screen reader names the section;
+                the Back button would open its tooltip. */}
+            <h2 id="settings-section-title" tabIndex={-1} className="font-medium outline-hidden">
+              {t(TAB_LABEL_KEYS[activeTab])}
+            </h2>
+          </div>
+        </ViewHeader>
+        <section
+          id={`settings-panel-${activeTab}`}
+          aria-labelledby="settings-section-title"
+          data-testid={`settings-panel-${activeTab}`}
+          className="min-w-0"
+        >
+          {panel}
+        </section>
+      </div>
+    )
+  }
+
   return (
-    <div className="settings-view space-y-6">
+    <div className="settings-view">
       {/* #1108 — grouped settings layout. A vertical rail on the left holds
           the tabs bucketed into labeled sections (Workspace / Integrations /
           Data & Sync / Help); the active tab's panel renders to the right. */}
-      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-        {/* Below `sm` the stacked rail is ~500px tall and pushes the panel
-            below the fold, so a tab tap looks like it did nothing. Phones
-            pick the tab from this Select instead; the rail is hidden. */}
-        <Select value={activeTab} onValueChange={(tab) => setActiveTab(tab as SettingsTab)}>
-          <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
-            <SelectValue />
-          </SelectTrigger>
-          {/* Every tab fits on a phone; the shared 24rem cap would hide the last ones. */}
-          <SelectContent className="max-h-(--radix-select-content-available-height)">
-            {tabGroups.map((group) => (
-              <SelectGroup key={group.id}>
-                <SelectLabel className="text-sm font-semibold text-foreground">
-                  {t(group.labelKey)}
-                </SelectLabel>
-                {group.tabs.map((tab) => (
-                  <SelectItem key={tab} value={tab}>
-                    {t(TAB_LABEL_KEYS[tab])}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex items-start gap-6">
         {/* The whole rail is one tablist; each section is a labeled group of
             tabs so screen-reader users hear the grouping without the tabs
             losing their flat `role="tab"` membership. Arrow keys select as
-            they move, as in the app sidebar. */}
+            they move, as in the app sidebar. The rail stays in view while the
+            panel scrolls, where the window is tall enough to hold all of it:
+            a touch rail's 44 px tabs need a taller window. */}
         <Tabs
           variant="vertical"
           value={activeTab}
           onValueChange={(tab) => setActiveTab(tab as SettingsTab)}
-          className="hidden sm:block sm:w-48 sm:shrink-0"
+          className="w-48 shrink-0 [@media(min-height:44rem)_and_(pointer:fine)]:sticky [@media(min-height:48rem)]:sticky top-0"
         >
           <TabsList
             aria-label={t('sidebar.settings')}
@@ -297,58 +394,80 @@ export function SettingsView(): React.ReactElement {
           data-testid={`settings-panel-${activeTab}`}
           className="min-w-0 flex-1 max-w-2xl"
         >
-          {activeTab === 'general' && <GeneralTab />}
-
-          {activeTab === 'appearance' && <AppearanceTab />}
-
-          {activeTab === 'editor' && <EditorTab />}
-
-          {activeTab === 'keyboard' && <KeyboardTab />}
-
-          {activeTab === 'notifications' && <NotificationsTab />}
-
-          {activeTab === 'spaces' && <SpacesTab />}
-
-          {activeTab === 'properties' && (
-            <Card>
-              <CardContent>
-                <PropertyDefinitionsList />
-              </CardContent>
-            </Card>
-          )}
-
-          {activeTab === 'agent' && <AgentAccessTab />}
-
-          {activeTab === 'sync' && (
-            <div className="space-y-6">
-              <QuarantinedSyncCard />
-              <SyncStatusCard />
-              <DeviceManagement />
-            </div>
-          )}
-
-          {activeTab === 'data' && (
-            <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
-              <DataTab />
-            </Suspense>
-          )}
-
-          {activeTab === 'help' && (
-            <HelpTab
-              onReportBugClick={() =>
-                dispatchBugReport({ message: '', integrityReport: integrity.report ?? undefined })
-              }
-            />
-          )}
-
-          {activeTab === 'status' && (
-            <div className="space-y-6">
-              <IntegrityCheckSection {...integrity} />
-              <StatusPanel />
-            </div>
-          )}
+          {panel}
         </div>
       </div>
     </div>
   )
+}
+
+/** The body of one tab, the same in the rail's panel and a phone's section. */
+function SettingsPanel({
+  tab,
+  integrity,
+  onReportBugClick,
+}: {
+  tab: SettingsTab
+  integrity: UseReconciliationReportResult
+  onReportBugClick: () => void
+}): React.ReactElement {
+  switch (tab) {
+    case 'general': {
+      return <GeneralTab />
+    }
+    case 'appearance': {
+      return <AppearanceTab />
+    }
+    case 'editor': {
+      return <EditorTab />
+    }
+    case 'keyboard': {
+      return <KeyboardTab />
+    }
+    case 'notifications': {
+      return <NotificationsTab />
+    }
+    case 'spaces': {
+      return <SpacesTab />
+    }
+    case 'properties': {
+      return (
+        <Card>
+          <CardContent>
+            <PropertyDefinitionsList />
+          </CardContent>
+        </Card>
+      )
+    }
+    case 'agent': {
+      return <AgentAccessTab />
+    }
+    case 'sync': {
+      return (
+        <div className="space-y-6">
+          <QuarantinedSyncCard />
+          <SyncStatusCard />
+          <DeviceManagement />
+        </div>
+      )
+    }
+    case 'data': {
+      return (
+        <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
+          <DataTab />
+        </Suspense>
+      )
+    }
+    case 'help': {
+      return <HelpTab onReportBugClick={onReportBugClick} />
+    }
+    case 'status': {
+      return (
+        <div className="space-y-6">
+          <IntegrityCheckSection {...integrity} />
+          <StatusPanel />
+        </div>
+      )
+    }
+  }
 }

@@ -2,7 +2,7 @@
  * Tests for SettingsView component (F-30).
  *
  * Validates:
- *  - The rail order and grouping (#1108, #5629), and the phone Select
+ *  - The rail order and grouping (#1108, #5629), and the phone's section list (#7040)
  *  - Each tab's panel, including the controls moved between tabs (#5629)
  *  - Theme, font size, animation, week start and journal date format persist
  *  - The active tab: `?settings=`, localStorage, the deep-link handoff slot,
@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +19,8 @@ import { axe } from 'vitest-axe'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { SettingsView } from '@/components/pages/SettingsView'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
+import { runBackChain } from '@/lib/back-chain'
 import type { ReconciliationReport } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -35,6 +37,9 @@ vi.mock('@tauri-apps/plugin-autostart', () => ({
   disable: mockDisable,
   isEnabled: mockIsEnabled,
 }))
+
+// The rail by default; the phone tests turn on the phone layout.
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: vi.fn(() => false) }))
 
 // Mock child components to isolate SettingsView logic
 
@@ -128,6 +133,7 @@ const ALL_THEME_CLASSES = [
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(usePhoneLayout).mockReturnValue(false)
   localStorage.removeItem('theme-preference')
   localStorage.removeItem('agaric-font-size')
   localStorage.removeItem('agaric-motion')
@@ -310,7 +316,6 @@ describe('SettingsView', () => {
     it('is one tab stop, and ArrowDown, End and Home move along the rail', async () => {
       const user = userEvent.setup()
       render(<SettingsView />)
-      screen.getByRole('combobox', { name: t('sidebar.settings') }).focus()
 
       await user.tab()
       const general = screen.getByRole('tab', { name: t('settings.tabGeneral') })
@@ -340,32 +345,94 @@ describe('SettingsView', () => {
     })
   })
 
-  // #5344 — below `sm` the rail is CSS-hidden and this Select picks the tab.
-  // happy-dom applies no Tailwind, so both render here and the Select is
-  // driven directly; the width split itself is pinned by
-  // e2e/settings-phone.spec.ts.
-  describe('phone tab Select (#5344)', () => {
-    it('offers every tab in rail order and switches the panel', async () => {
+  // #7040 — a phone opens on the rail's groups as a list of sections and drills
+  // into one, with Back to the list in the view header.
+  describe('phone section list (#7040)', () => {
+    beforeEach(() => {
+      vi.mocked(usePhoneLayout).mockReturnValue(true)
+    })
+
+    const sections = () => screen.getByRole('navigation', { name: t('sidebar.settings') })
+    const back = () => screen.getByRole('button', { name: t('settings.backToSections') })
+
+    it('opens on every section in rail order, with no rail, Select or panel', async () => {
+      const { container } = render(<SettingsView />)
+
+      expect(
+        within(sections())
+          .getAllByRole('button')
+          .map((row) => row.id),
+      ).toEqual(RAIL_TAB_IDS.map((id) => `settings-section-${id}`))
+      expect(within(sections()).getAllByRole('heading', { level: 2 })).toHaveLength(4)
+      expect(screen.queryByRole('tablist')).toBeNull()
+      expect(screen.queryByTestId(/^settings-panel-/)).toBeNull()
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('a section opens under its title and Back, and Back returns to its row', async () => {
       const user = userEvent.setup()
       const { container } = render(<SettingsView />)
 
-      const select = screen.getByRole('combobox', { name: t('sidebar.settings') })
-      expect(
-        within(select)
-          .getAllByRole('option')
-          .map((option) => option.textContent),
-      ).toEqual(screen.getAllByRole('tab').map((tab) => tab.textContent))
-      expect(select).toHaveValue('general')
+      await user.click(within(sections()).getByRole('button', { name: t('settings.tabStatus') }))
 
-      await user.selectOptions(select, 'status')
-
-      expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-status')
-      expect(screen.getByTestId('status-panel')).toBeInTheDocument()
-      expect(screen.getByRole('tab', { name: t('settings.tabStatus') })).toHaveAttribute(
-        'aria-selected',
-        'true',
+      const title = screen.getByRole('heading', { level: 2, name: t('settings.tabStatus') })
+      expect(title).toHaveFocus()
+      expect(screen.getByRole('region', { name: t('settings.tabStatus') })).toHaveAttribute(
+        'data-testid',
+        'settings-panel-status',
       )
+      expect(screen.getByTestId('status-panel')).toBeInTheDocument()
+      expect(screen.queryByRole('navigation', { name: t('sidebar.settings') })).toBeNull()
+      expect(localStorage.getItem('agaric-settings-active-tab')).toBe('status')
       expect(await axe(container)).toHaveNoViolations()
+
+      await user.click(back())
+
+      expect(screen.queryByTestId('settings-panel-status')).toBeNull()
+      expect(
+        within(sections()).getByRole('button', { name: t('settings.tabStatus') }),
+      ).toHaveFocus()
+      expect(localStorage.getItem('agaric-settings-active-tab')).toBeNull()
+      expect(window.location.search).toBe('')
+    })
+
+    it('a stored section opens straight away, and Back still leads to the list', async () => {
+      const user = userEvent.setup()
+      localStorage.setItem('agaric-settings-active-tab', 'sync')
+      render(<SettingsView />)
+
+      expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
+      await user.click(back())
+      expect(within(sections()).getByRole('button', { name: t('settings.tabSync') })).toBeVisible()
+    })
+
+    it('a deep link opens its section from the list', async () => {
+      render(<SettingsView />)
+      expect(sections()).toBeInTheDocument()
+
+      useNavigationStore.getState().setPendingSettingsTab('data')
+
+      expect(await screen.findByTestId('data-settings-tab')).toBeInTheDocument()
+      expect(back()).toBeInTheDocument()
+    })
+
+    it("Android's back leaves a section for the list, and the list for the app", async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      expect(runBackChain()).toBe(false)
+
+      await user.click(within(sections()).getByRole('button', { name: t('settings.tabEditor') }))
+      expect(screen.getByTestId('settings-panel-editor')).toBeInTheDocument()
+
+      await act(async () => {
+        expect(runBackChain()).toBe(true)
+      })
+      expect(sections()).toBeInTheDocument()
+      expect(screen.queryByTestId('settings-panel-editor')).toBeNull()
+      expect(
+        within(sections()).getByRole('button', { name: t('settings.tabEditor') }),
+      ).toHaveFocus()
+      expect(runBackChain()).toBe(false)
     })
   })
 

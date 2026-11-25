@@ -11,8 +11,10 @@
  *
  *   - `BACK_PRIORITY_OVERLAY` (300) — close the topmost open overlay
  *     (dialog / sheet / popover / menu / picker).
- *   - `BACK_PRIORITY_ZOOM` (200) — zoom out one level in a zoomed
- *     BlockTree (`useBlockZoom` registers this while zoomed).
+ *   - `BACK_PRIORITY_ZOOM` (200) — step out one level inside the view:
+ *     zoom out of a zoomed BlockTree (`useBlockZoom`, while zoomed), or
+ *     leave a Settings section for the section list (`SettingsView`, on a
+ *     phone while a section is open).
  *   - `BACK_PRIORITY_NAVIGATION` (100) — pop the in-app navigation
  *     stack: page-stack `goBack()`, then the view the stack was opened
  *     from, then non-root view → journal.

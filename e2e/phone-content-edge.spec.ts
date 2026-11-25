@@ -185,6 +185,7 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
     page,
   }) => {
     await navigateMobile(page, 'Settings')
+    await openSettingsTab(page, 'General')
     const card = page.locator('[data-slot="card"]')
     await expect(card.first()).toBeVisible()
     await expect.poll(() => textLeft(card.first()), 'General card').toBe(GUTTER)

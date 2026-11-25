@@ -45,13 +45,16 @@ const CardHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) =
 
 CardHeader.displayName = 'CardHeader'
 
-const CardTitle = ({ ref, className, ...props }: React.ComponentProps<'div'>) => (
-  <div
+/** The card's heading: one size for every card, and a heading to screen readers. */
+const CardTitle = ({ ref, className, children, ...props }: React.ComponentProps<'h2'>) => (
+  <h2
     ref={ref}
     data-slot="card-title"
     className={cn('text-base leading-none font-semibold tracking-tight', className)}
     {...props}
-  />
+  >
+    {children}
+  </h2>
 )
 
 CardTitle.displayName = 'CardTitle'
@@ -60,7 +63,8 @@ const CardDescription = ({ ref, className, ...props }: React.ComponentProps<'div
   <div
     ref={ref}
     data-slot="card-description"
-    className={cn('text-sm text-muted-foreground', className)}
+    // The size of a setting row's description (`SettingRow`), so a card's intro reads as one.
+    className={cn('text-xs text-muted-foreground', className)}
     {...props}
   />
 )

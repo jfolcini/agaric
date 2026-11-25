@@ -84,10 +84,11 @@ describe('CardTitle', () => {
     expect(el).toHaveAttribute('data-slot', 'card-title')
   })
 
-  it('forwards ref', () => {
-    const ref = React.createRef<HTMLDivElement>()
+  it('forwards ref to its heading', () => {
+    const ref = React.createRef<HTMLHeadingElement>()
     render(<CardTitle ref={ref}>Title</CardTitle>)
-    expect(ref.current).toBeInstanceOf(HTMLDivElement)
+    expect(ref.current).toBeInstanceOf(HTMLHeadingElement)
+    expect(screen.getByRole('heading', { level: 2, name: 'Title' })).toBe(ref.current)
   })
 
   // #1011: CardTitle codifies the de-facto convention as the primitive
