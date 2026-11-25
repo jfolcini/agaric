@@ -390,6 +390,7 @@ const THEME_PAIRS = [
     bg: 'secondary',
     min: AA_NORMAL,
   },
+  { pair: 'today due chip', fg: 'date-due-foreground', bg: 'date-due', min: AA_NORMAL },
   {
     pair: 'search match',
     fg: 'status-pending-foreground',
@@ -495,7 +496,7 @@ describe('focus ring, chips, hover surfaces and graph nodes clear WCAG in every 
 // (amber), in progress and focus (blue) or the search match (yellow).
 // ─────────────────────────────────────────────────────────────────────────
 
-const PRIORITY_CASES = [false, true].flatMap((highContrast) =>
+const THEME_CASES = [false, true].flatMap((highContrast) =>
   THEMES.map((theme) => ({
     theme,
     highContrast,
@@ -504,7 +505,7 @@ const PRIORITY_CASES = [false, true].flatMap((highContrast) =>
 )
 
 describe('priority is an ink scale apart from every status hue (#7040)', () => {
-  it.each(PRIORITY_CASES)(
+  it.each(THEME_CASES)(
     '$label — P1, P2 and P3 carry no hue and step down from solid',
     ({ theme, highContrast }) => {
       const page = resolveToken(theme, highContrast, 'background')
@@ -566,6 +567,7 @@ const HUE_PAIRS: ReadonlyArray<readonly [HueRole, HueRole]> = [
   ['P1', 'overdue'],
   ['P1', 'destructive'],
   ['P2', 'due today'],
+  ['due today', 'overdue'],
   ['P3', 'DOING / in progress'],
   ['P3', 'focus ring'],
   ['today', 'brand'],
@@ -594,14 +596,6 @@ const ROLE_CASES = [false, true].flatMap((highContrast) =>
   ),
 )
 
-const LIGHTNESS_CASES = [false, true].flatMap((highContrast) =>
-  THEMES.map((theme) => ({
-    theme,
-    highContrast,
-    label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
-  })),
-)
-
 describe('colour roles stay distinguishable in every theme (#7040)', () => {
   it('reads the due-today tokens from dueDateColor', () => {
     expect(DUE_TODAY).toHaveLength(2)
@@ -617,14 +611,11 @@ describe('colour roles stay distinguishable in every theme (#7040)', () => {
     if (huedA && huedB) expect(hueGap(hueA, hueB)).toBeGreaterThanOrEqual(MIN_HUE_GAP)
   })
 
-  it.each(LIGHTNESS_CASES)(
-    '$label — brand vs destructive by lightness',
-    ({ theme, highContrast }) => {
-      const [brand] = resolveToken(theme, highContrast, 'brand')
-      const [destructive] = resolveToken(theme, highContrast, 'destructive')
-      expect(Math.abs(brand - destructive)).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP - 1e-9)
-    },
-  )
+  it.each(THEME_CASES)('$label — brand vs destructive by lightness', ({ theme, highContrast }) => {
+    const [brand] = resolveToken(theme, highContrast, 'brand')
+    const [destructive] = resolveToken(theme, highContrast, 'destructive')
+    expect(Math.abs(brand - destructive)).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP - 1e-9)
+  })
 
   it('Dark — a popover sits above the card it opens over', () => {
     const dark = THEMES[1]

@@ -2321,12 +2321,11 @@ mark[data-highlight-color='purple'] {
    * palette; the StatusBadge / scheduled+repeat indicator chips kept
    * their normal-contrast values. The result was that users in
    * high-contrast mode saw boosted accents but the same washed-out
-   * status / indicator surfaces as everyone else. (Priority needs no
-   * override: its scale is ink, #7040.) Boost chroma and push lightness toward the extremes (darker
-   * fg / lighter bg in light mode, lighter fg / brighter bg in dark
-   * mode) — same `oklch()` recipe as the accent block above, hue
-   * preserved so the semantic mapping (green = done, blue = active,
-   * etc.) is unchanged. */
+   * status / indicator surfaces as everyone else. Boost chroma and
+   * push lightness toward the extremes (darker fg / lighter bg in light
+   * mode, lighter fg / brighter bg in dark mode) — same `oklch()`
+   * recipe as the accent block above, hue preserved so the semantic
+   * mapping (green = done, blue = active, etc.) is unchanged. */
 
   /* Light theme — push backgrounds slightly darker (away from the
    * page bg) and foregrounds toward black for higher legibility. */
@@ -2407,7 +2406,7 @@ mark[data-highlight-color='purple'] {
 
     /* Date source chips. */
     --date-due: oklch(0.92 0.1 75);
-    --date-due-foreground: oklch(0.32 0.22 46);
+    --date-due-foreground: oklch(0.36 0.1 62);
     --date-scheduled: oklch(0.93 0.1 157);
     --date-scheduled-foreground: oklch(0.25 0.18 153);
     --date-property: oklch(0.92 0.1 307);
