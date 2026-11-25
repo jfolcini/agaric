@@ -3,7 +3,7 @@
 // ui-review.mjs — shoot every view and state of the app on a phone and a
 // desktop, light and dark, and report what changed against another ref (#7040).
 //
-//   node scripts/ui-review.mjs                      # shoot this checkout
+//   node scripts/ui-review.mjs                      # shoot this checkout (against the last base)
 //   node scripts/ui-review.mjs --base origin/main   # shoot both, report the change
 //   node scripts/ui-review.mjs --report-only        # rebuild the report from the shots
 //   node scripts/ui-review.mjs --base main -- --grep "phone light"
@@ -349,12 +349,11 @@ async function writeReport(out, hasBase, notes) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2))
   const out = resolve(ROOT, opts.out)
-  const hasBase = opts.base !== null || existsSync(join(out, 'shots', 'before'))
   let status = 0
   if (!opts.reportOnly) {
     mkdirSync(out, { recursive: true })
-    rmSync(join(out, 'shots', 'before'), { recursive: true, force: true })
     if (opts.base !== null) {
+      rmSync(join(out, 'shots', 'before'), { recursive: true, force: true })
       console.log(`ui-review: building ${String(opts.base)}`)
       buildRef(opts.base, join(out, 'build', 'before'))
       await tour(join(out, 'build', 'before'), join(out, 'shots', 'before'), opts.playwright)
@@ -363,11 +362,9 @@ async function main() {
     build(ROOT, join(out, 'build', 'after'))
     status = await tour(join(out, 'build', 'after'), join(out, 'shots', 'after'), opts.playwright)
   }
-  const entries = await writeReport(
-    out,
-    opts.base !== null || (opts.reportOnly && hasBase),
-    readNotes(opts.notes),
-  )
+  // Without `--base`, the base shot last time, if any, stays the comparison.
+  const hasBase = existsSync(join(out, 'shots', 'before'))
+  const entries = await writeReport(out, hasBase, readNotes(opts.notes))
   const count = (s) => entries.filter((e) => e.status === s).length
   console.log(
     `ui-review: ${entries.length} shots — ${count('changed')} changed, ${count('new')} new, ` +
