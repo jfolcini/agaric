@@ -207,7 +207,6 @@ function VoiceNoteRecorder({
       releaseMicrophone(stream)
       return
     }
-    // oxlint-disable-next-line react/purity -- runs from the Record click, never during render
     const startedAt = new Date()
     let session: Session | null = null
     let recorder: VoiceRecorder
