@@ -17,9 +17,10 @@ const SCRIPT_PATH = join(import.meta.dirname, 'npm-audit-retry.sh')
  * instant while still recording the backoff the script asked for.
  *
  * `failuresBeforeSuccess` is how many `npx` invocations exit non-zero before
- * one exits 0; `Infinity` never succeeds.
+ * one exits 0; `Infinity` never succeeds. A successful scan reports the
+ * `unused` waiver IDs in better-npm-audit's `--json` shape.
  */
-function runWrapper(failuresBeforeSuccess, args = []) {
+function runWrapper(failuresBeforeSuccess, args = [], unused = []) {
   const dir = mkdtempSync(join(tmpdir(), 'npm-audit-retry-'))
   try {
     const callLog = join(dir, 'npx-calls')
@@ -41,7 +42,7 @@ function runWrapper(failuresBeforeSuccess, args = []) {
       '  echo "npm error audit endpoint returned an error" >&2',
       '  exit 1',
       'fi',
-      'echo "🤝  All good!"',
+      `echo ${JSON.stringify(JSON.stringify({ passed: true, unusedExceptionIds: unused }))}`,
     ].join('\n')
     stub('npx', counting)
     stub('npm', counting)
@@ -94,4 +95,17 @@ void test('arguments replace the default command', () => {
   assert.equal(run.status, 0)
   assert.equal(run.npxCalls, 2)
   assert.deepEqual(run.calls, ['audit signatures', 'audit signatures'])
+})
+
+// A waiver whose advisory was withdrawn or fixed fails the scan, so it gets deleted.
+void test('a .nsprc waiver npm audit no longer reports fails the scan, naming it', () => {
+  const run = runWrapper(0, [], ['GHSA-aaaa-bbbb-cccc'])
+  assert.notEqual(run.status, 0)
+  assert.match(run.stderr, /\.nsprc waives GHSA-aaaa-bbbb-cccc, which npm audit no longer reports/)
+})
+
+void test('the default scan asks better-npm-audit for its JSON report', () => {
+  const run = runWrapper(0)
+  assert.equal(run.status, 0)
+  assert.deepEqual(run.calls, ['better-npm-audit audit --json'])
 })
