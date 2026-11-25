@@ -63,6 +63,8 @@ describe('PropertyDefinitionSheet', () => {
     expect(
       within(dialog).getByRole('textbox', { name: t('propertiesView.nameLabel') }),
     ).toHaveValue('context')
+    // The sheet takes focus, not its Name: no phone keyboard, no keystroke replacing the name.
+    await waitFor(() => expect(dialog).toHaveFocus())
     expect(saveButton(dialog)).toBeDisabled()
     await user.click(within(dialog).getByRole('button', { name: t('action.cancel') }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

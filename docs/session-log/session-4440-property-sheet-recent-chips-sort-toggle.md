@@ -15,6 +15,7 @@
   - A user property's row is one button: its name stretched over the row, with a chevron at the right; the unfit-values badge sits above it.
   - Tapping it opens a dialog, or a bottom sheet on a phone, holding the Name, the type with *Change type…*, a select's options inline, *Merge into another property…*, *Copy to another space…* and *Delete property*. Name and options save together.
   - A written type change, merge or delete closes the sheet too, back to the list that shows it.
+  - The sheet takes focus when it opens, not its Name: a phone's keyboard would cover it, and a keystroke meant for the options would replace the selected name.
   - `RenamePropertyDefinition` and `EditSelectOptions` are gone. Merge, Change type and Copy take their trigger from the sheet.
   - Every row is one line again, so the use-count wrap from earlier in this round went with the row's buttons.
   - Built-in rows are as they were.
@@ -29,4 +30,5 @@
   - the scheduled-earlier filter, with tasks due today let through, and its paging, with one page read;
   - the row's tap target, with the stretched button removed;
   - the delete confirmation's focus, with the sheet taking focus back to the row;
-  - the sheet closing after a type change, with it left open.
+  - the sheet closing after a type change, with it left open;
+  - the sheet's focus on open, with the Name taking it.

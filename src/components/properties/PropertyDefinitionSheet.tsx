@@ -145,7 +145,8 @@ export function PropertyDefinitionSheet({
   }
 
   const { Root, Content, Header, Title, Description, Footer } = parts
-  const action = 'w-full justify-start'
+  // Text on the content edge, under the field labels; the pressed fill reaches into the gutter.
+  const action = '-mx-4 justify-start'
   const body = (
     <div className="space-y-4 text-sm">
       <div className="space-y-1.5">
@@ -252,6 +253,12 @@ export function PropertyDefinitionSheet({
       </Slot.Root>
       <Root open={open} onOpenChange={setOpen}>
         <Content
+          // Focus the sheet, not its Name: a phone's keyboard would cover the sheet, and a
+          // keystroke meant for the options would replace the selected name.
+          onOpenAutoFocus={(event: Event) => {
+            event.preventDefault()
+            ;(event.currentTarget as HTMLElement | null)?.focus()
+          }}
           onCloseAutoFocus={(event: Event) => {
             // No dialog trigger to return to: the row, while it stands, unless the
             // delete confirmation that opened as this closed has focus.
