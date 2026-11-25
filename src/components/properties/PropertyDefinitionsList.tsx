@@ -361,12 +361,34 @@ export function PropertyDefinitionsList(): React.ReactElement {
                 // its cycle help.
                 const hasOptionsCell =
                   def.value_type === 'select' && (!def.builtin || def.key === 'todo_state')
+                // A user property's actions leave its name's column too narrow on a phone,
+                // so its use count goes to line 2, beside its Edit options.
+                const countOnLine2 = !def.builtin
+                const counts = (
+                  <>
+                    {usage?.has(def.key) && (
+                      <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
+                        {t('propertiesView.usageCount', { count: usage.get(def.key)?.count })}
+                      </Badge>
+                    )}
+                    {spaceId !== null && (
+                      <UnfitPropertyValues
+                        definition={def}
+                        spaceId={spaceId}
+                        counts={usage?.get(def.key) ?? null}
+                        definitions={definitions}
+                        onChanged={reload}
+                      />
+                    )}
+                  </>
+                )
                 return (
-                  // On a phone the options take a second line, flush with the name, while
-                  // Delete or Built-in stays on the name's line; one row when wider (#5925).
-                  // Tab order follows the DOM (name, options, Delete), which is the wide row's
-                  // left-to-right order; on a phone Delete is drawn above the options, so the
-                  // two swap. Matching them would put Delete before the options on desktop.
+                  // On a phone line 2, flush with the name, holds a user property's count and
+                  // the options, while Delete or Built-in stays on the name's line; one row
+                  // when wider (#5925). Tab order follows the DOM (name, options, Delete),
+                  // which is the wide row's left-to-right order; on a phone Delete is drawn
+                  // above the options, so the two swap. Matching them would put Delete before
+                  // the options on desktop.
                   <ListItem
                     key={def.key}
                     className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
@@ -374,37 +396,29 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 [@media(pointer:coarse)]:min-h-11">
                       <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                       <Badge tone="secondary">{valueTypeLabel(def, t)}</Badge>
-                      {usage?.has(def.key) && (
-                        <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
-                          {t('propertiesView.usageCount', { count: usage.get(def.key)?.count })}
-                        </Badge>
-                      )}
-                      {spaceId !== null && (
-                        <UnfitPropertyValues
-                          definition={def}
-                          spaceId={spaceId}
-                          counts={usage?.get(def.key) ?? null}
-                          definitions={definitions}
-                          onChanged={reload}
-                        />
-                      )}
+                      {!countOnLine2 && counts}
                     </div>
-                    {hasOptionsCell && (
-                      <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
-                        {def.key === 'todo_state' && (
-                          <InfoPopover
-                            variant="icon"
-                            data-testid="todo-state-cycle-help"
-                            ariaLabel={t('propertiesView.taskCycleHelpLabel')}
-                            content={t('propertiesView.taskCycleHelpContent')}
-                          />
-                        )}
-                        {!def.builtin && spaceId !== null && (
-                          <EditSelectOptions
-                            definition={def}
-                            spaceId={spaceId}
-                            onChanged={reload}
-                          />
+                    {(countOnLine2 || hasOptionsCell) && (
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-sm:col-span-2 sm:flex-1">
+                        {countOnLine2 && counts}
+                        {hasOptionsCell && (
+                          <div className="flex items-center gap-3 sm:ml-auto">
+                            {def.key === 'todo_state' && (
+                              <InfoPopover
+                                variant="icon"
+                                data-testid="todo-state-cycle-help"
+                                ariaLabel={t('propertiesView.taskCycleHelpLabel')}
+                                content={t('propertiesView.taskCycleHelpContent')}
+                              />
+                            )}
+                            {!def.builtin && spaceId !== null && (
+                              <EditSelectOptions
+                                definition={def}
+                                spaceId={spaceId}
+                                onChanged={reload}
+                              />
+                            )}
+                          </div>
                         )}
                       </div>
                     )}

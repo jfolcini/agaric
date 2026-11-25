@@ -129,7 +129,9 @@ export function FilterSortControls({
       <IconButton
         variant="outline"
         size="icon-xs"
-        className="-ml-px size-7 rounded-l-none text-muted-foreground hover:text-foreground"
+        // As tall as the field picker it is joined to, on a touch screen too; the
+        // rest of its 44 px target is invisible.
+        className="-ml-px size-7 rounded-l-none text-muted-foreground hover:text-foreground [@media(pointer:coarse)]:size-9 touch-hit-area"
         ariaLabel={directionLabel}
         tooltip={directionLabel}
         onClick={() => onSortChange({ ...current, dir: ascending ? 'Desc' : 'Asc' })}

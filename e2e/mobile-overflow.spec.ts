@@ -553,9 +553,10 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
     )
     expect(overflowing).toEqual([])
 
-    // Line 1 is the name with Delete or Built-in at its right end; a user select row's
-    // Edit options, or todo_state's cycle help, start line 2 flush with the name, right
-    // under it. A built-in's options are fixed (#5841), so it offers no Edit options.
+    // Line 1 is the name with Delete or Built-in at its right end. Line 2, flush with the
+    // name and right under it, holds a user property's use count and a user select row's
+    // Edit options side by side, or todo_state's cycle help. A built-in's options are
+    // fixed (#5841), so it offers no Edit options, and its count stays on line 1.
     const misaligned = await rows.evaluateAll((els) =>
       els.flatMap((el) => {
         const key = el.textContent ?? ''
@@ -586,19 +587,32 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
           'button[aria-label="Edit options"], [data-testid="todo-state-cycle-help"]',
         )
         if (isUserSelect && !optionsEl) problems.push(`${key}: a select row without its options`)
-        if (optionsEl) {
+        const isBuiltin = el.querySelector('[data-testid^="builtin-lock-"]') !== null
+        const countEl = el.querySelector('[data-testid^="property-usage-"]')
+        // Line 2's first item, the count or the options, starts under the name.
+        const line2First = isBuiltin ? optionsEl : (countEl ?? optionsEl)
+        if (line2First) {
+          const first = line2First.getBoundingClientRect()
+          if (Math.abs(first.left - name.left) > 1)
+            problems.push(`${key}: line 2 starts at x=${first.left}, name at x=${name.left}`)
+          // Line 2 is its own line box; a 44 px help button can share it.
+          const line2 = (
+            line2First.closest('.max-sm\\:col-span-2') ?? line2First
+          ).getBoundingClientRect()
+          if (Math.abs(line2.top - line1Bottom) > 1)
+            problems.push(`${key}: line 2 top ${line2.top}, line 1 ends at ${line1Bottom}`)
+        }
+        if (!isBuiltin && countEl && optionsEl) {
+          const count = countEl.getBoundingClientRect()
           const options = optionsEl.getBoundingClientRect()
-          if (Math.abs(options.left - name.left) > 1)
-            problems.push(`${key}: options at x=${options.left}, name at x=${name.left}`)
-          // Line 2 is the options' line box; a 44 px help button can share it.
-          const optionsLine = (optionsEl.parentElement ?? optionsEl).getBoundingClientRect()
-          if (Math.abs(optionsLine.top - line1Bottom) > 1)
-            problems.push(`${key}: options top ${optionsLine.top}, line 1 ends at ${line1Bottom}`)
+          const mid = (r: DOMRect) => r.top + r.height / 2
+          if (Math.abs(mid(count) - mid(options)) > 1)
+            problems.push(`${key}: the use count and Edit options are on different lines`)
         }
         const below = [...el.querySelectorAll('*')].some(
           (n) => n.getBoundingClientRect().top >= line1Bottom,
         )
-        if (!optionsEl && below) problems.push(`${key}: a row without options takes two lines`)
+        if (!line2First && below) problems.push(`${key}: a row without a line 2 takes two lines`)
         return problems
       }),
     )

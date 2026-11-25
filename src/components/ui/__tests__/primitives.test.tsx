@@ -598,10 +598,11 @@ describe('RecentPageChip', () => {
     expect(btn.className).toContain('focus-ring-visible')
   })
 
-  it('includes coarse pointer touch-target class', () => {
+  // Measured on a phone in e2e/phone-touch-targets.spec.ts.
+  it('paints a button’s 36 px on touch and keeps a 44 px target', () => {
     render(<RecentPageChip>Touch</RecentPageChip>)
     const btn = screen.getByRole('button', { name: 'Touch' })
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(btn).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
   })
 
   it('merges custom className', () => {

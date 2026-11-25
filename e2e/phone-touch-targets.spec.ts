@@ -109,6 +109,27 @@ test.describe('phone touch targets @mobile', () => {
     )
   })
 
+  test("References' sort toggle is as tall as its field picker", async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, 'Getting Started')
+    const sort = page
+      .getByTestId('linked-references')
+      .getByRole('group', { name: 'Sort references' })
+    const picker = await sort.getByRole('combobox').boundingBox()
+    const toggle = sort.getByTestId('backlink-sort-direction')
+    expect((await toggle.boundingBox())?.height, 'toggle height').toBe(picker?.height)
+    await expect44(toggle, 'sort direction')
+  })
+
+  test("the recent-pages strip's chips are as tall as a button", async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, 'Projects')
+    await openPageMobile(page, 'Getting Started')
+    const chip = page.getByTestId('quick-access-bar').getByRole('button', { name: 'Projects' })
+    expect((await chip.boundingBox())?.height).toBe(36)
+    await expect44(chip, 'recent page chip')
+  })
+
   test("Agenda's status filter chip", async ({ page }) => {
     await waitForBoot(page)
     await page
