@@ -1435,8 +1435,8 @@ mod tests {
     ///
     /// Nothing in the change tested that directly (only the gate and the
     /// end-to-end replay). If loro emitted one diff per blob, or the re-attach
-    /// diff (`EventTriggerKind::Checkout`, from `BatchImportGuard::finish`)
-    /// were dropped by the root subscriber,
+    /// diff (from `BatchImportGuard::finish`) were dropped by the root
+    /// subscriber,
     /// `changed` would come back short or empty — and the batched replay would
     /// delete N slots having projected fewer than N blocks. Assert the batched
     /// delta equals the union the per-blob sequence produces.

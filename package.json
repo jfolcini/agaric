@@ -146,7 +146,7 @@
     "emojibase": "^18.0.0",
     "emojibase-data": "^18.0.0",
     "esbuild": "^0.28.2",
-    "fast-check": "^4.10.2",
+    "fast-check": "^4.10.3",
     "happy-dom": "^21.0.1",
     "jsdom": "^31.0.1",
     "knip": "^6.45.1",
