@@ -392,11 +392,11 @@ describe('BlockInlineControls', () => {
     expect(inlineControls.className).toContain('max-sm:flex-shrink')
   })
 
-  it('task marker uses max-sm: classes instead of [@media(pointer:coarse)]', () => {
+  it('task marker keeps the checkbox’s size, its 44 px target an invisible hit area', () => {
     renderControls(makeProps({ todoState: 'TODO' }))
     const taskMarker = screen.getByTestId('task-marker')
-    expect(taskMarker.className).not.toContain('[@media(pointer:coarse)]')
-    expect(taskMarker.className).toContain('max-sm:')
+    expect(taskMarker).toHaveClass('touch-hit-area')
+    expect(taskMarker).not.toHaveClass('touch-target')
   })
 })
 

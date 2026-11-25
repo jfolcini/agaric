@@ -167,3 +167,21 @@ It judges `position: absolute` children against their CSS containing block, not 
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts
 AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts
 ```
+
+## UI review tour
+
+`e2e/ui-review/` shoots every view, overlay and state on a phone (a Pixel 7 user agent) and a 1440 px desktop, in light and dark, for a person to judge (#7040). It asserts nothing, and neither this suite nor CI runs it: its `*.tour.ts` file and own config match no `testMatch` of theirs.
+
+```sh
+just ui-review                                   # shoot this checkout, against the last base shot
+just ui-review --base origin/main                # shoot that ref too: what changed, side by side
+just ui-review --base origin/main -- --grep "phone light"   # after --: playwright test arguments
+just ui-review --report-only --notes notes.json  # rebuild the report, with a line under each change
+```
+
+`scripts/ui-review.mjs` builds each tree with the mock (`VITE_E2E=1`), the base in a temporary worktree that borrows this checkout's `node_modules`, serves each on a free port and tours both with this checkout's tour, so a screen the base lacks shows as new. `ui-review-out/report/index.html` holds every shot by profile, theme and scene: a changed one shows its before, after and a diff (the share of pixels that moved), and a failed one says why. Under each changed pair is one line: the first `--notes` entry (`{ "<set>/<scene>/<shot>": "<line>" }`, `*` within one segment) that matches it, else where on the screen it changed. A run without `--base` reshoots only this checkout, so a tweak is checked against the base already shot.
+
+- The `editing` scene shoots the editing frame (block mode's editing block, page mode's page, on a page and a journal day): check it after any change to a row's leading controls or its text box.
+- Add a screen with a `shot(name, open)` line in its scene in `ui-review.tour.ts`; `open` puts the app in the state to shoot. A new scene is an entry in `SCENES`, a device or window an entry in `PROFILES`. The data is the mock seed plus `seed.ts`.
+- A shot whose `open` throws leaves `<name>.failed.txt` and goes on, so a selector the app outgrew costs one shot, and the run lists it.
+- The clock is fixed (`NOW`), so one build shoots the same pixels twice; a toast's timing can still differ between runs.

@@ -330,7 +330,7 @@ export function AgendaResults({
         <p className="opacity-90">{t('agenda.loadFailedBody')}</p>
         {onRetry && (
           <Button
-            variant="outline"
+            variant="alert"
             size="sm"
             onClick={onRetry}
             className="mt-3"

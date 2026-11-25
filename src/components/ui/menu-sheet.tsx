@@ -46,7 +46,7 @@ export function MenuSheet({
         side="bottom"
         showCloseButton={false}
         aria-describedby={undefined}
-        className={cn('gap-0 px-2 pt-2 pb-[calc(0.5rem+var(--safe-area-bottom))]', className)}
+        className={cn('gap-0 px-2 pb-[calc(0.5rem+var(--safe-area-bottom))]', className)}
         {...contentProps}
       >
         <SheetTitle className="sr-only">{title}</SheetTitle>

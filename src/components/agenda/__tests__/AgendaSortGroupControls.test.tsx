@@ -170,21 +170,16 @@ describe('AgendaSortGroupControls', () => {
   // -----------------------------------------------------------------------
   // Touch-target sizing
   // -----------------------------------------------------------------------
-  it('group/sort triggers include 44px min-width and min-height on coarse pointer', () => {
+  it('group/sort triggers grow a step on a coarse pointer, with a 44 px hit area', () => {
     renderControls()
 
-    const groupTrigger = screen.getByLabelText(t('agenda.groupBy'))
-    expect(groupTrigger.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
-    expect(groupTrigger.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
-
-    const sortTrigger = screen.getByLabelText(t('agenda.sortBy'))
-    expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
-    expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
+    for (const label of [t('agenda.groupBy'), t('agenda.sortBy')]) {
+      const trigger = screen.getByLabelText(label)
+      expect(trigger).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
+      expect(trigger.className).not.toContain('min-h-[44px]')
+    }
   })
 
-  // When the buttons grow to 44×44 px on touch, scale the label
-  //              from text-xs → text-sm so the text isn't dwarfed inside a
-  //              now-much-larger hit target.
   it('group/sort triggers scale text up on coarse pointer', () => {
     renderControls()
 

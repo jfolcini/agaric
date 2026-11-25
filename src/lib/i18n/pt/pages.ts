@@ -28,6 +28,7 @@ export const pages: Record<string, string> = {
   'journal.configureTemplate': 'Configurar modelo de diário',
   'journal.templatePickerLabel': 'Escolha um modelo de diário',
   'journal.newTemplate': 'Novo modelo de diário',
+  'journal.openTemplate': 'Abrir modelo de diário',
   'journal.templatePageTitle': 'Modelo de diário',
   'journal.prevDay': 'Dia anterior',
   'journal.prevWeek': 'Semana anterior',

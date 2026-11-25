@@ -46,7 +46,7 @@ export function HistoryNavButtons(): React.ReactElement {
         disabled={!canStep(history, -1)}
         onClick={navigateBack}
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft />
       </IconButton>
       <IconButton
         variant="ghost"
@@ -58,7 +58,7 @@ export function HistoryNavButtons(): React.ReactElement {
         disabled={!canStep(history, 1)}
         onClick={navigateForward}
       >
-        <ArrowRight className="h-4 w-4" />
+        <ArrowRight />
       </IconButton>
     </div>
   )

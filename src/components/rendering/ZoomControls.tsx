@@ -52,7 +52,7 @@ export function ZoomControls({
         shortcut={getShortcutKeys('graphZoomIn')}
         data-testid={`${testIdPrefix}-zoom-in`}
       >
-        <Plus className="h-4 w-4" />
+        <Plus />
       </IconButton>
       <IconButton
         variant="outline"
@@ -63,7 +63,7 @@ export function ZoomControls({
         shortcut={getShortcutKeys('graphZoomOut')}
         data-testid={`${testIdPrefix}-zoom-out`}
       >
-        <Minus className="h-4 w-4" />
+        <Minus />
       </IconButton>
       <IconButton
         variant="outline"
@@ -74,7 +74,7 @@ export function ZoomControls({
         shortcut={getShortcutKeys('graphZoomReset')}
         data-testid={`${testIdPrefix}-zoom-reset`}
       >
-        <Maximize2 className="h-4 w-4" />
+        <Maximize2 />
       </IconButton>
       {actualSize && (
         <IconButton
@@ -85,7 +85,7 @@ export function ZoomControls({
           ariaLabel={t('diagramViewer.actualSize')}
           data-testid={`${testIdPrefix}-zoom-actual`}
         >
-          <Scan className="h-4 w-4" />
+          <Scan />
         </IconButton>
       )}
     </div>

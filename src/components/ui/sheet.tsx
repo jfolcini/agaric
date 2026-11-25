@@ -14,15 +14,16 @@ import { cn } from '@/lib/utils'
 // `flex flex-col overflow-hidden` and the padding are baked into the base so
 // consumers can drop a `<SheetBody>` slot and get a properly height-constrained
 // scrollable region without re-stating padding / overflow at every call
-// site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `sm`
+// site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `md`
 // the padding is the app's 16 px phone gutter (`App.tsx`), so a sheet's text
-// starts where the view's does. A consumer overriding it overrides `sm:` too.
+// starts where the view's does; `md` is also where `useIsMobile` stops picking
+// sheets over dialogs. A consumer overriding it overrides `md:` too.
 //
 // A closed sheet takes no taps: until it unmounts it can still sit where it
 // was open (a busy main thread starts its exit late, and it springs back once
 // the exit ends), and a row there took the tap meant for the view below (#6347).
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 sm:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 md:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -59,6 +60,11 @@ const SheetOverlay = ({
 
 SheetOverlay.displayName = 'SheetOverlay'
 
+/**
+ * No grab handle on a bottom sheet: the scrim, Escape, Back and the close
+ * button close it, and a bar that only some gestures used was chrome the
+ * maintainer does not want (#7040).
+ */
 const SheetContent = ({
   ref,
   className,
@@ -87,6 +93,7 @@ const SheetContent = ({
         // App.tsx) rather than slicing through the view title. With the
         // keyboard up both edges move with the layout viewport, which on
         // Android ends at the keyboard's top (`MainActivity.kt`, #6790).
+        // Square: it spans the screen edge to edge (docs/UX.md).
         side === 'bottom' &&
           'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
         className,
@@ -99,7 +106,7 @@ const SheetContent = ({
           data-slot="sheet-close"
           className={cn(
             closeButtonClassName,
-            'top-4 right-4 sm:top-6 sm:right-6 data-[state=open]:bg-secondary',
+            'top-4 right-4 md:top-6 md:right-6 data-[state=open]:bg-secondary',
           )}
         >
           <CloseButtonIcon />
@@ -195,8 +202,8 @@ const SheetBody = ({ ref, className, children, dir, ...props }: SheetBodyProps) 
     // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
-    className={cn('flex-1 min-h-0 -mx-4 sm:-mx-6 -my-1', className)}
-    viewportClassName={cn(DIALOG_BODY_VIEWPORT_CLASS, 'px-4 sm:px-6')}
+    className={cn('flex-1 min-h-0 -mx-4 md:-mx-6 -my-1', className)}
+    viewportClassName={cn(DIALOG_BODY_VIEWPORT_CLASS, 'px-4 md:px-6')}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

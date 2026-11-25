@@ -57,6 +57,8 @@ src-tauri/coverage-summary.json
 # Playwright
 test-results/
 playwright-report/
+# `just ui-review` (scripts/ui-review.mjs): builds, shots and the report.
+ui-review-out/
 blob-report/
 ui-screenshots/
 

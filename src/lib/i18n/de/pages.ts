@@ -28,6 +28,7 @@ export const pages: Record<string, string> = {
   'journal.configureTemplate': 'Journalvorlage konfigurieren',
   'journal.templatePickerLabel': 'Journalvorlage auswählen',
   'journal.newTemplate': 'Neue Journalvorlage',
+  'journal.openTemplate': 'Journalvorlage öffnen',
   'journal.templatePageTitle': 'Journalvorlage',
   'journal.prevDay': 'Vorheriger Tag',
   'journal.prevWeek': 'Vorherige Woche',

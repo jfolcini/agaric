@@ -474,10 +474,9 @@ describe('ConfirmDialog', () => {
       const actionBtn = screen.getByRole('button', { name: /Confirm/ })
       const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
 
-      // Button default size carries `[@media(pointer:coarse)]:h-11` (44 px) —
-      // the class is the contract surfaced to coarse-pointer devices.
-      expect(actionBtn.className).toMatch(/\[@media\(pointer:coarse\)\]:h-11/)
-      expect(cancelBtn.className).toMatch(/\[@media\(pointer:coarse\)\]:h-11/)
+      // A text button's 44 px target is its invisible hit area (`Button` sizes).
+      expect(actionBtn).toHaveClass('touch-hit-area')
+      expect(cancelBtn).toHaveClass('touch-hit-area')
     })
 
     it('has no a11y violations on the mobile path', async () => {

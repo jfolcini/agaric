@@ -483,11 +483,19 @@ function BlockListItemInner({
 
   // Below `sm` the title keeps the first line, after the leading status icon
   // (the row's only `svg` child) or task checkbox, and the chips and source wrap under it: on
-  // one line a 360 px phone squeezed the title to a few characters a line.
+  // one line a 360 px phone squeezed the title to a few characters a line. The leading control
+  // hangs in the row's padding (a negative margin as wide as the control and its gap), so the
+  // title and the chips under it share one left edge beside it.
   const hasLeadingIcon =
     showCompletedIcon === true ||
     Boolean(taskState) ||
     (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
+  const leadHang = !hasLeadingIcon
+    ? undefined
+    : taskState
+      ? // The checkbox's 1.125em box and its p-0.5, then the row's gap-2.
+        'max-sm:pl-[calc(0.75rem+1.875rem)] max-sm:[&>.task-marker]:-ml-[1.875rem] max-sm:[&>.task-marker]:self-start'
+      : 'max-sm:pl-[calc(0.75rem+1.5rem)] max-sm:[&>svg]:-ml-[1.5rem] max-sm:[&>svg]:self-start max-sm:[&>svg]:mt-0.5'
 
   const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
@@ -500,6 +508,7 @@ function BlockListItemInner({
           className:
             'gap-2 cursor-pointer max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first max-sm:[&>.task-marker]:order-first',
         }),
+        leadHang,
         blockId && 'cursor-grab',
         isFocused && 'list-cursor',
         className,
@@ -541,8 +550,7 @@ function BlockListItemInner({
           (e.g. SearchPanel). Agenda shows full content. */}
       <span
         className={cn(
-          'tag-chip-row text-sm min-w-0 flex-1 max-sm:order-first',
-          hasLeadingIcon ? 'max-sm:basis-[calc(100%-2rem)]' : 'max-sm:basis-full',
+          'tag-chip-row text-sm min-w-0 flex-1 max-sm:order-first max-sm:basis-full',
           contentClassName,
         )}
       >

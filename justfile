@@ -96,6 +96,12 @@ test-be-related *ARGS:
 e2e-related *ARGS:
     bash scripts/e2e-related.sh --worktree "$@"
 
+# Shoot every view and state on a phone and a desktop, light and dark, into ui-review-out/report/index.html; `--base origin/main` shoots that ref too and shows what changed (e2e/AGENTS.md § UI review tour).
+[group('test')]
+[positional-arguments]
+ui-review *ARGS: _require-npm
+    node scripts/ui-review.mjs "$@"
+
 # Rust doc-tests, which nextest does not run. Needs the sqlx dev DB, same as `test-be`.
 [group('test')]
 test-doc:

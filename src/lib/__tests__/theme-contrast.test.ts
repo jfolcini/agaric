@@ -85,7 +85,7 @@ const PAIRS: ReadonlyArray<{
   {
     name: 'dark: --primary-foreground on --primary (Button label)',
     fg: [0.2, 0.006, 70],
-    bg: [0.93, 0.005, 70],
+    bg: [0.86, 0.008, 70],
     min: AA_NORMAL,
   },
   {
@@ -235,13 +235,13 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 16.59,
   },
   {
-    // index.css .dark --primary: "Ink inverts … 14.7:1"
-    name: 'dark .dark — --primary-foreground on --primary ≈14.73:1',
+    // index.css .dark --primary: "Ink inverts … 11.8:1"
+    name: 'dark .dark — --primary-foreground on --primary ≈11.82:1',
     selector: '.dark',
     fg: 'primary-foreground',
     bg: 'primary',
     min: AA_NORMAL,
-    documented: 14.73,
+    documented: 11.82,
   },
   {
     // index.css :root --ring: "4.2:1 on --background"
