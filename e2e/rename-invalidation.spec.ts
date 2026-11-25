@@ -241,6 +241,7 @@ test.describe('Rename and create invalidation @pages', () => {
 
     // The holder stays open while the agent renames the page it points at.
     await ipc(page, 'edit_block', { blockId: target, toText: 'Ref renamed' })
+    // The command's own event is a local commit's, which reloads no page store.
     await emitMockEvent(page, 'blocks:changed', {
       changed_page_ids: [target],
       local_ops_appended: true,

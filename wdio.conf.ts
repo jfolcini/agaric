@@ -16,16 +16,13 @@
 // NOT an npm package. On Linux it proxies `WebKitWebDriver` (shipped by the
 // `webkit2gtk-driver` apt package) on an internal port and exposes the
 // WebDriver endpoint WDIO connects to at 127.0.0.1:4444. Both are installed by
-// the weekly workflow (`.github/workflows/e2e-tauri-weekly.yml`); this box
-// cannot run them, so the harness is validated on the first scheduled/dispatch
-// run.
+// the workflow (`.github/workflows/e2e-tauri-weekly.yml`).
 // ---------------------------------------------------------------------------
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
-  globSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -79,7 +76,7 @@ declare global {
   }
 }
 
-// On-failure diagnostics land here; the weekly workflow uploads this directory
+// On-failure diagnostics land here; the workflow uploads this directory
 // as a CI artifact (`if: failure()`) so a red run is diagnosable without a
 // local WebKit driver.
 const ARTIFACTS_DIR = path.resolve(rootDir, 'e2e-tauri', 'artifacts')
@@ -210,7 +207,7 @@ export interface WaitFailure {
  * If a `@wdio/*` bump rewords that template this parser stops matching and the
  * lane degrades to "failure is not an element wait — no visibility probe":
  * safe, silent, and it re-opens the ambiguity #4428 exists to close. A red
- * weekly run whose log says that for an obvious `waitForDisplayed` timeout is
+ * run whose log says that for an obvious `waitForDisplayed` timeout is
  * the symptom; re-read the template at the path above before touching the
  * regex. The selector
  * routinely contains `"` (every `[data-testid="…"]`), so the capture is GREEDY
@@ -826,7 +823,7 @@ const rescuedLogLabels = new Set<string>()
  * bytes of noise, byte-identical across all three failing runs, which is how a
  * step can look like evidence for weeks while collecting none.
  *
- * Copied into `ARTIFACTS_DIR`, which the weekly workflow already uploads.
+ * Copied into `ARTIFACTS_DIR`, which the workflow already uploads.
  * Best-effort: a diagnostics failure must never mask the real test failure.
  *
  * Called from BOTH `afterTest` (per failing test) and `afterSession` (once per
@@ -943,7 +940,7 @@ async function reapSessionApp(): Promise<void> {
 
 // Ensure the driver is reaped even if WDIO tears down abnormally (the docs'
 // `onShutdown` safety net) so a crashed run never leaves an orphan holding the
-// port for the next weekly execution.
+// port for the next run.
 function installShutdownGuard(): void {
   const cleanup = () => {
     try {
@@ -957,53 +954,6 @@ function installShutdownGuard(): void {
     process.on(signal, cleanup)
   }
 }
-
-/**
- * Order `specs` so that wdio's `--shard i/n`, which runs the i-th contiguous
- * slice and sizes the slices by count alone, gives every shard about the same
- * time. Each slice keeps wdio's size; the longest spec goes first, each into
- * the slice with the least time so far. A spec `seconds` does not know counts
- * as the median of those it does.
- */
-export function dealSpecs(
-  specs: readonly string[],
-  total: number,
-  seconds: Readonly<Record<string, number>>,
-): string[] {
-  if (total <= 1) return [...specs]
-  const known = specs.flatMap((spec) => seconds[spec] ?? []).toSorted((a, b) => a - b)
-  const fallback = known[Math.floor(known.length / 2)] ?? 1
-  const cost = (spec: string) => seconds[spec] ?? fallback
-  // ConfigParser.filterSpecsByShard in @wdio/config: round(N / n) per slice,
-  // the rest to the last.
-  const per = Math.max(Math.round(specs.length / total), 1)
-  const slices = Array.from({ length: total }, (_unused, i) => ({
-    size:
-      (i === total - 1 ? specs.length : Math.min((i + 1) * per, specs.length)) -
-      Math.min(i * per, specs.length),
-    specs: [] as string[],
-    time: 0,
-  }))
-  for (const spec of specs.toSorted((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
-    const open = slices.filter((slice) => slice.specs.length < slice.size)
-    const target = open.reduce((least, slice) => (slice.time < least.time ? slice : least))
-    target.specs.push(spec)
-    target.time += cost(spec)
-  }
-  return slices.flatMap((slice) => slice.specs)
-}
-
-// Each spec's mean seconds on CI; `node scripts/e2e-tauri-durations.mjs` rewrites the file.
-const specSeconds = JSON.parse(
-  readFileSync(path.join(rootDir, 'e2e-tauri/spec-durations.json'), 'utf8'),
-) as Record<string, number>
-
-const shardTotal = Number(/--shard[= ]\d+\/(\d+)/.exec(process.argv.join(' '))?.[1] ?? 1)
-const dealtSpecs = dealSpecs(
-  globSync('e2e-tauri/**/*.e2e.ts', { cwd: rootDir }).toSorted(),
-  shardTotal,
-  specSeconds,
-)
 
 // Spec files whose vault `assertVaultReconciled` does not judge, each with its reason.
 const SPECS_THE_ORACLE_SKIPS = new Set([
@@ -1030,14 +980,6 @@ async function assertVaultReconciled(this: Mocha.Context): Promise<void> {
     )
   }
 }
-
-/**
- * Specs whose app starts every background materializer batch a second late
- * (`hold_back_for_e2e`, debug builds): each asserts that a view shows a write
- * without being asked again, which a view that read before the rebuild and
- * never after fails (#6567).
- */
-const SPECS_WITH_A_SLOW_MATERIALIZER = new Set<string>()
 
 /**
  * Specs whose app starts the way an AppImage starts it (#6871): `APPDIR` set,
@@ -1088,7 +1030,7 @@ export const config: WebdriverIO.Config = {
   hostname: '127.0.0.1',
   port: 4444,
 
-  specs: dealtSpecs,
+  specs: ['./e2e-tauri/**/*.e2e.ts'],
   maxInstances: 1,
 
   capabilities: [
@@ -1136,7 +1078,7 @@ export const config: WebdriverIO.Config = {
   // -------------------------------------------------------------------------
   // tauri-driver lifecycle.
   //
-  // The guide builds the app in `onPrepare`; the weekly workflow already builds
+  // The guide builds the app in `onPrepare`; the workflow already builds
   // the binaries in a dedicated job (and sets WDIO_SKIP_TAURI_BUILD=1), so we
   // only build here when that flag is absent. `beforeSession`/`afterSession`
   // spawn and reap `tauri-driver` around each session, as the current docs show.
@@ -1197,9 +1139,6 @@ export const config: WebdriverIO.Config = {
     // leaks a tauri-driver holding port 4444 and a stale vault directory.
     installShutdownGuard()
     const sandboxEnv = createSandboxEnv()
-    if (specs.some((spec) => SPECS_WITH_A_SLOW_MATERIALIZER.has(path.basename(spec)))) {
-      sandboxEnv['AGARIC_E2E_BACKGROUND_DELAY_MS'] = '1000'
-    }
     if (specs.some((spec) => SPECS_IN_AN_APPIMAGE_ENV.has(path.basename(spec)))) {
       stageAppImageEnv(sandboxEnv)
     }
@@ -1301,7 +1240,7 @@ export const config: WebdriverIO.Config = {
   // -------------------------------------------------------------------------
   // On-failure diagnostics (issue #155 harness hardening).
   //
-  // The weekly lane runs once, headless, on CI with no local WebKit driver to
+  // The lane runs headless, on CI with no local WebKit driver to
   // reproduce a failure — so a red run must carry its own evidence. On any
   // failing test this captures: (a) a screenshot, (a2) the VISIBILITY VERDICT
   // for the element the wait was watching — "missing" vs "merely invisible",

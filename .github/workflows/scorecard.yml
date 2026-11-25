@@ -6,7 +6,7 @@ name: OpenSSF Scorecard
 # resource, `.github/AGENTS.md` § Runner slots). The score lags a change by up
 # to a week, and the public badge only ever reflects the tip of main.
 #   * schedule (weekly): Monday 06:00 UTC, clear of `e2e-tauri-weekly.yml`
-#     (Mon 02:43) and `scheduled-deep-checks.yml` (daily 04:17).
+#     (nightly 02:43) and `scheduled-deep-checks.yml` (daily 04:17).
 #   * branch_protection_rule: Scorecard's "Branch-Protection" check requires
 #     the workflow to react to changes in branch protection settings so the
 #     score reflects the current ruleset. It fires only on a ruleset edit.

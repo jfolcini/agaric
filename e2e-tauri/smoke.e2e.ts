@@ -3,9 +3,9 @@
 //
 // Runs against the REAL Agaric binary in a WebKitWebView via tauri-driver, so
 // every step here exercises the genuine Rust backend over real Tauri IPC — NOT
-// the JS mock the Playwright `e2e/` suite uses. It is the canary for the weekly
-// lane: if the app boots, the frontend renders, and a block round-trips through
-// the live backend, the harness itself is healthy.
+// the JS mock the Playwright `e2e/` suite uses. It is the lane's canary: if
+// the app boots, the frontend renders, and a block round-trips through the
+// live backend, the harness itself is healthy.
 //
 // Selectors are deliberately resilient and reuse the app's real testids /
 // accessible names (the same ones the Playwright specs and `e2e/helpers.ts`
