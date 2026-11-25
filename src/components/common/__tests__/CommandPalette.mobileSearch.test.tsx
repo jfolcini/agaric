@@ -4,8 +4,8 @@
  * Covers the feature that lives inside the all-pages palette body:
  *  - #131 recent search terms in the empty state (mobile only).
  *
- * It is gated on `useIsMobile()`; the hook is mocked so each test
- * pins the viewport explicitly.
+ * It is gated on `usePhoneLayout()`; the `useIsMobile` under it is mocked
+ * so each test pins the viewport explicitly.
  */
 
 import { act, render, screen } from '@testing-library/react'

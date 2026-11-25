@@ -25,7 +25,7 @@ import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
 
-// UseDialogOrSheet branches on useIsMobile. Default to the
+// UseDialogOrSheet branches on usePhoneLayout, which reads useIsMobile. Default to the
 // desktop (Dialog) path so the pre-existing test bodies keep their
 // semantics; the dedicated viewport-switch describe at the bottom
 // overrides this.
@@ -987,7 +987,7 @@ describe('BugReportDialog', () => {
 
   // ─── useDialogOrSheet('dialog') viewport switch ─────────────
   //
-  // On phones < 768 px the outer shell renders as a bottom Sheet so the
+  // On a phone the outer shell renders as a bottom Sheet so the
   // footer actions sit within thumb reach. The form body, IPC wiring, and
   // confirm checkbox are identical on both paths — assert the dialog mounts
   // and the form fields are reachable under both viewports.

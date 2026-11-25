@@ -399,6 +399,14 @@ test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @ed
     await expectBottomSheet(page, page.getByRole('menu', { name: 'Page actions' }))
   })
 
+  test('no recent-pages strip under the header', async ({ page }) => {
+    for (const title of [PAGE, 'Quick Notes']) {
+      await openPageMobile(page, title)
+      await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+    }
+    await expect(page.getByTestId('quick-access-bar')).toHaveCount(0)
+  })
+
   test('a view header scrolls with its view, edge to edge', async ({ page }) => {
     await navigateMobile(page, 'Pages')
     const outlet = page.locator('[data-slot="main-content"] [data-testid="view-header-outlet"]')

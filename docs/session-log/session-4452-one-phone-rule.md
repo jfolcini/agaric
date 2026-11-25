@@ -30,7 +30,7 @@ Part of the #7040 UI review, item M1. The maintainer decided on 2026-11-25 that 
 **Tests**
 
 - `usePhoneLayout.test.ts`: a narrow mouse window, portrait and landscape phones, a tablet with the keyboard up, rotation. Each term was shown red by removing it, and by going back to `max-height`.
-- `phone-bottom-sheets` gains a landscape phone at 915×412: the new-page sheet, shortcuts, header, block menu, page ⋮ and toast. It also gains a tablet whose keyboard shrinks the viewport. All were red on unchanged code.
+- `phone-bottom-sheets` gains a landscape phone at 915×412: the new-page sheet, shortcuts, header, block menu, page ⋮, toast and the absent recent-pages strip. It also gains a tablet whose keyboard shrinks the viewport. All were red on unchanged code.
 - Width-only mutations at each site (E1–E22) were red.
 - `mobile-drawer`'s short-screen test now sets `screen` as well as `viewport`.
 - `just check-fe` passed. The phone, mobile, touch, sheet, menu, sidebar and dialog specs passed, and 19 bridge specs passed as local copies.

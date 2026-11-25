@@ -203,8 +203,8 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
   })
 })
 
-// The app keeps the phone gutter, and picks sheets over dialogs, up to 768 px
-// (`useIsMobile`, `p-4 md:p-6`); a sheet's own gutter once widened at 640.
+// Under 768 px the app keeps the phone gutter (`p-4 md:p-6`) and picks sheets
+// over dialogs (`usePhoneLayout`); a sheet's own gutter once widened at 640.
 test.describe('One left edge in a 700 px touch window @mobile @pages', () => {
   test.use({ ...PHONE, viewport: { width: 700, height: 900 } })
 
