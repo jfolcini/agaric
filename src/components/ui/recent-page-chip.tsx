@@ -34,9 +34,10 @@ const chipClass = cn(
   'inline-flex h-7 min-w-0 max-w-[160px] shrink-0 items-center gap-1.5',
   'rounded-md border px-2.5 text-xs',
   'transition-colors',
-  // touch — the buttons' one 36 px height and 14 px label; the rest of the
-  // 44 px target is invisible, inside the strip's vertical padding.
-  '[@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm touch-hit-area',
+  // touch — the buttons' one 36 px height and 14 px label, and room for that
+  // label; the rest of the 44 px target is invisible, inside the strip's
+  // vertical padding.
+  '[@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:max-w-48 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm touch-hit-area',
   // rest state — visible chrome
   'border-border/60 bg-secondary/40 text-muted-foreground',
   // hover — clearer interactive state
