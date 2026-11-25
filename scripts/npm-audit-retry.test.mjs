@@ -25,8 +25,10 @@ function runWrapper(failuresBeforeSuccess, args = [], unused = []) {
   try {
     const callLog = join(dir, 'npx-calls')
     const sleepLog = join(dir, 'sleep-calls')
+    const cacheLog = join(dir, 'cache-dirs')
     writeFileSync(callLog, '')
     writeFileSync(sleepLog, '')
+    writeFileSync(cacheLog, '')
 
     const stub = (name, body) => {
       const path = join(dir, name)
@@ -37,6 +39,9 @@ function runWrapper(failuresBeforeSuccess, args = [], unused = []) {
     // beyond the log the assertions read back.
     const counting = [
       `echo "$@" >> ${JSON.stringify(callLog)}`,
+      // The npm cache each attempt runs with, and whether it already held anything.
+      `echo "$npm_config_cache $(ls -A "$npm_config_cache" 2>/dev/null | wc -l)" >> ${JSON.stringify(cacheLog)}`,
+      'if [ -n "$npm_config_cache" ]; then touch "$npm_config_cache/cached-response"; fi',
       `calls=$(wc -l < ${JSON.stringify(callLog)})`,
       `if [ "$calls" -le ${failuresBeforeSuccess === Infinity ? 999 : failuresBeforeSuccess} ]; then`,
       '  echo "npm error audit endpoint returned an error" >&2',
@@ -59,6 +64,7 @@ function runWrapper(failuresBeforeSuccess, args = [], unused = []) {
       calls: readFileSync(callLog, 'utf8').split('\n').filter(Boolean),
       npxCalls: readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length,
       sleeps: readFileSync(sleepLog, 'utf8').split('\n').filter(Boolean),
+      caches: readFileSync(cacheLog, 'utf8').split('\n').filter(Boolean),
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -73,7 +79,7 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
   assert.equal(run.status, 0)
   assert.equal(run.npxCalls, 2)
   assert.equal(retryLines(run.stderr).length, 1)
-  assert.match(run.stderr, /attempt 1 of 5 failed \(exit 1\); retrying in 5s\./)
+  assert.match(run.stderr, /attempt 1 of 3 failed \(exit 1\); retrying in 5s\./)
   assert.deepEqual(run.sleeps, ['5'])
 })
 
@@ -82,11 +88,22 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
 void test('a failure that never clears fails closed, inside the attempt budget', () => {
   const run = runWrapper(Infinity)
   assert.notEqual(run.status, 0)
-  assert.equal(run.npxCalls, 5)
-  assert.deepEqual(run.sleeps, ['5', '15', '60', '150'])
+  assert.equal(run.npxCalls, 3)
+  assert.deepEqual(run.sleeps, ['5', '15'])
   // The underlying command's own output still reaches the reader.
   assert.match(run.stderr, /npm error audit endpoint returned an error/)
-  assert.match(run.stderr, /attempt 5 of 5 failed \(exit 1\); no attempts left\./)
+  assert.match(run.stderr, /attempt 3 of 3 failed \(exit 1\); no attempts left\./)
+})
+
+// npm caches what the registry answered (the attestations endpoint sends a
+// one-year max-age), so an attempt sharing the last one's cache replays its bad
+// response instead of asking again.
+void test('every attempt runs with its own empty npm cache', () => {
+  const run = runWrapper(Infinity, ['npm', 'audit', 'signatures'])
+  assert.equal(run.caches.length, 3)
+  const dirs = run.caches.map((line) => line.split(' ')[0])
+  assert.equal(new Set(dirs).size, 3)
+  for (const line of run.caches) assert.match(line, /^\/\S+ 0$/)
 })
 
 // `npm audit signatures` is retried through the same wrapper, not through npx.
