@@ -8,9 +8,12 @@ use super::*;
 use loro::Counter;
 
 /// What one captured import yields: the diff the subscription recorded, and the
-/// `(peer, from, to)` spans the payload advanced. Named because the tuple is
-/// past `clippy::type_complexity`'s threshold inline.
-type CapturedImport = (DiffCapture, Vec<(PeerID, Counter, Counter)>);
+/// `(peer, from, to)` spans the payload left pending or the import's error.
+/// Named because the tuple is past `clippy::type_complexity`'s threshold inline.
+type CapturedImport = (
+    DiffCapture,
+    Result<Vec<(PeerID, Counter, Counter)>, AppError>,
+);
 
 /// What [`LoroEngine::import_saved_rows`] found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -373,14 +376,13 @@ impl LoroEngine {
     /// `bytes.len() == 1` early return delegates straight to `import`, so a
     /// one-blob batch is bit-identical to the single path.)
     ///
-    /// ## Error shape callers must handle
+    /// ## A blob that fails
     ///
     /// `import_batch` is NOT atomic: a per-blob failure is *remembered* and
     /// returned after the re-attach, so blobs that decoded fine have already
-    /// landed in the oplog and the state. An `Err`
-    /// here therefore means "an unknown subset was imported" — callers must
-    /// treat it as "project nothing, delete nothing" and retry per blob.
-    /// (Only a failure of the closing re-attach rolls the whole batch back.)
+    /// landed in the oplog and the state. The delta then describes what they
+    /// imported and carries the error in [`ImportDelta::failed`]. (A failure
+    /// of the closing re-attach rolls the whole batch back, and is an `Err`.)
     ///
     /// `import_batch` also SORTS the blobs (by export mode, then descending
     /// change count). That is safe: every blob is
@@ -405,13 +407,17 @@ impl LoroEngine {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
-        let imported = self.import_payload_capturing_diff(payload);
-        if imported.is_err() && self.doc.oplog_frontiers() != before_frontiers {
-            // A failed batch keeps what its other blobs imported, and the
-            // caller's retry reads the tree through the index.
-            self.rebuild_index();
-        }
-        let (cap, pending) = imported?;
+        let (cap, status) = self.import_payload_capturing_diff(payload);
+        let (pending, failed) = match status {
+            Ok(pending) => (pending, None),
+            // A failed import keeps what it did import, a batch what its other
+            // blobs did, and no retry imports that part again: it is resolved
+            // here like any import, purges and kept blocks included.
+            Err(error) if self.doc.oplog_frontiers() != before_frontiers => {
+                (Vec::new(), Some(error))
+            }
+            Err(error) => return Err(error),
+        };
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
@@ -427,6 +433,7 @@ impl LoroEngine {
                 def_keys: Vec::new(),
                 pending,
                 kept: Vec::new(),
+                failed: None,
             });
         }
         let after_import_frontiers = self.doc.oplog_frontiers();
@@ -457,24 +464,14 @@ impl LoroEngine {
                 def_keys: sorted(cap.def_keys),
                 pending,
                 kept: Vec::new(),
+                failed,
             });
         }
 
-        // Structural / fallback path: rebuild the index and compute the purged
-        // delta (#2128: ids live before the import but gone after the rebuild).
-        let before = self.index.clone();
-        self.rebuild_index();
-        // #6561: the kept blocks are moved by ops this import's diff does not
-        // hold, so a rescue takes the brute-force path below, as `migrated` does.
-        let kept = self.keep_unseen_local_blocks(&before)?;
-        if !kept.is_empty() {
-            self.rebuild_index();
-        }
-        let purged: Vec<agaric_core::ulid::BlockId> = before
-            .keys()
-            .filter(|id| !self.index.contains_key(*id))
-            .map(|s| agaric_core::ulid::BlockId::from_trusted(s))
-            .collect();
+        // Structural / fallback path. #6561: the kept blocks are moved by ops
+        // this import's diff does not hold, so a rescue takes the brute-force
+        // path below, as `migrated` does.
+        let (purged, kept) = self.reindex_purged_and_kept()?;
 
         if cap.fallback || migrated || !kept.is_empty() {
             // Brute-force: reproject the whole live tree + globally rebuild the
@@ -491,6 +488,7 @@ impl LoroEngine {
                 def_keys: sorted(cap.def_keys),
                 pending,
                 kept,
+                failed,
             });
         }
 
@@ -507,22 +505,41 @@ impl LoroEngine {
             def_keys: sorted(cap.def_keys),
             pending,
             kept: Vec::new(),
+            failed,
         })
+    }
+
+    /// Rebuilds the index after a structural import. Returns the blocks the
+    /// import purged (#2128: ids live before it and gone after the rebuild) and
+    /// the Trash pages of the local blocks kept from that purge (#6561).
+    fn reindex_purged_and_kept(
+        &mut self,
+    ) -> Result<(Vec<agaric_core::ulid::BlockId>, Vec<super::KeptLocalText>), AppError> {
+        let before = self.index.clone();
+        self.rebuild_index();
+        let kept = self.keep_unseen_local_blocks(&before)?;
+        if !kept.is_empty() {
+            self.rebuild_index();
+        }
+        let purged = before
+            .keys()
+            .filter(|id| !self.index.contains_key(*id))
+            .map(|s| agaric_core::ulid::BlockId::from_trusted(s))
+            .collect();
+        Ok((purged, kept))
     }
 
     /// Imports `payload` and returns the two things the caller needs from it:
     /// the classified diff of the ops it appended, and the changes loro
     /// buffered as `pending` because this payload did not carry their
-    /// dependencies.
+    /// dependencies. A failed import returns its error with the diff of what
+    /// it appended before it failed.
     ///
     /// The subscription is dropped before the capture is taken, so the returned
     /// `DiffCapture` is final: ops appended afterwards (the #400 sibling-order
     /// migration) cannot add to it, which is why that migration has to force the
     /// brute-force fallback itself.
-    fn import_payload_capturing_diff(
-        &mut self,
-        payload: ImportPayload<'_>,
-    ) -> Result<CapturedImport, AppError> {
+    fn import_payload_capturing_diff(&mut self, payload: ImportPayload<'_>) -> CapturedImport {
         // Subscribe to the root so the import's diff is captured. The callback
         // only records owned diff metadata (container ids, paths, tree items);
         // block-id resolution happens after the import, against post-import
@@ -549,8 +566,14 @@ impl LoroEngine {
         // unsubscribe before any local migration ops below.
         self.doc.commit();
         drop(subscription);
-        let status = import_result
-            .map_err(|e| AppError::validation(format!("loro: import_with_changed_blocks: {e}")))?;
+        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
+        let status = match import_result {
+            Ok(status) => status,
+            Err(e) => {
+                let error = AppError::validation(format!("loro: import_with_changed_blocks: {e}"));
+                return (cap, Err(error));
+            }
+        };
         // #3194: loro reports changes it could not apply (missing deps) in
         // `ImportStatus::pending` and returns `Ok` regardless. This wrapper used
         // to discard the status, so a caller could not tell a fully-committed
@@ -574,8 +597,7 @@ impl LoroEngine {
                  NOT projected (#3194)"
             );
         }
-        let cap = std::mem::take(&mut *capture.lock().expect("diff capture mutex poisoned"));
-        Ok((cap, pending))
+        (cap, Ok(pending))
     }
 
     /// Full live-tree enumeration in parent-before-child pre-order, exposed
@@ -954,6 +976,9 @@ pub struct ImportDelta {
     /// #6561: the Trash pages this import created for blocks its purge would
     /// have taken (`keep.rs`). Their blocks are in `changed`, not in `purged`.
     pub kept: Vec<super::KeptLocalText>,
+    /// The import failed after part of it landed, and the rest of the delta
+    /// describes that part. The caller projects it and reports this error.
+    pub failed: Option<AppError>,
 }
 
 /// How the caller must refresh the derived `block_tag_inherited` cache after an
