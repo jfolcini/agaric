@@ -7,6 +7,7 @@ import {
   ipc,
   navigateToView,
   openPage,
+  openPropertySheet,
   openSettingsTab,
   reopenPage,
   seedSearchBlocks,
@@ -35,7 +36,11 @@ async function openProperties(page: Page): Promise<void> {
 /** Open `context`'s type dialog and pick `type`. */
 async function pickContextType(page: Page, type: string) {
   await openProperties(page)
-  await contextRow(page).getByRole('button', { name: 'Change the type of context' }).click()
+  await (
+    await openPropertySheet(page, 'context')
+  )
+    .getByRole('button', { name: 'Change type…' })
+    .click()
   const dialog = activeDialog(page)
   await dialog.getByRole('combobox', { name: 'New type' }).click()
   await page.getByRole('option', { name: type, exact: true }).click()
@@ -146,7 +151,11 @@ test.describe('Change a property type, value by value @settings @editor', () => 
       { content: 'Points plum', parentId: MEETINGS, props: { points: 'plum' } },
     ])
     await openProperties(page)
-    await keyRow(page, 'points').getByRole('button', { name: 'Change the type of points' }).click()
+    await (
+      await openPropertySheet(page, 'points')
+    )
+      .getByRole('button', { name: 'Change type…' })
+      .click()
     const dialog = activeDialog(page)
     await dialog.getByRole('combobox', { name: 'New type' }).click()
     await page.getByRole('option', { name: 'number', exact: true }).click()
@@ -176,8 +185,10 @@ test.describe('Change a property type, value by value @settings @editor', () => 
       { content: 'Authors holder', parentId: MEETINGS, props: { authors: 'Ann, Bob' } },
     ])
     await openProperties(page)
-    await keyRow(page, 'authors')
-      .getByRole('button', { name: 'Change the type of authors' })
+    await (
+      await openPropertySheet(page, 'authors')
+    )
+      .getByRole('button', { name: 'Change type…' })
       .click()
     const dialog = activeDialog(page)
     await dialog.getByRole('checkbox', { name: 'Holds several values' }).click()

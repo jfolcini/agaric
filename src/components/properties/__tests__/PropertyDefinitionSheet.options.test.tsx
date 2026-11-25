@@ -1,7 +1,8 @@
 /**
- * #5841 S4 — Settings › Properties › Edit options, against the mock backend:
- * one row per option, a rename that reaches the blocks' values and that the
- * toast's Undo takes back, the refusals, and Save of an edited list.
+ * #5841 S4 — a select property's options in its Settings › Properties sheet
+ * (#7040), against the mock backend: one row per option, a rename that reaches
+ * the blocks' values and that the toast's Undo takes back, the refusals, and
+ * Save of an edited list.
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
@@ -52,13 +53,12 @@ function row(label: string): HTMLElement {
 
 async function openOptions(label = 'Project'): Promise<HTMLElement> {
   const user = userEvent.setup()
-  await screen.findByText(label)
   await user.click(
-    within(row(label)).getByRole('button', { name: t('propertiesView.editOptionsTooltip') }),
+    await screen.findByRole('button', {
+      name: t('propertiesView.editLabel', { key: label.toLowerCase() }),
+    }),
   )
-  return screen.findByRole('dialog', {
-    name: t('pageProperty.editOptionsLabel', { key: label.toLowerCase() }),
-  })
+  return screen.findByRole('dialog', { name: label })
 }
 
 async function startRename(editor: HTMLElement, option: string): Promise<HTMLElement> {
@@ -89,7 +89,7 @@ function pressToastUndo(message: string): void {
   action?.onClick()
 }
 
-describe('EditSelectOptions', () => {
+describe('PropertyDefinitionSheet options', () => {
   it('shows one row per option', async () => {
     render(<PropertyDefinitionsList />)
     const editor = await openOptions()
@@ -98,9 +98,6 @@ describe('EditSelectOptions', () => {
         within(editor).getByRole('button', { name: t('properties.renameOption', { option }) }),
       ).toBeInTheDocument()
     }
-    expect(within(editor).getByTestId('options-count-badge')).toHaveTextContent(
-      t('properties.optionsCount', { count: 3 }),
-    )
   })
 
   it('renames an option in the definition and in the values blocks hold', async () => {
@@ -238,9 +235,7 @@ describe('EditSelectOptions', () => {
         name: t('properties.renameOption', { option: 'delta' }),
       }),
     ).not.toBeInTheDocument()
-    await user.click(
-      within(editor).getByRole('button', { name: t('pageProperty.saveOptionsButton') }),
-    )
+    await user.click(within(editor).getByRole('button', { name: t('action.save') }))
 
     await waitFor(async () => {
       expect(await storedOptions('project')).toEqual(['beta', 'alpha', 'delta'])
@@ -255,7 +250,7 @@ describe('EditSelectOptions', () => {
     await screen.findByText('Todo State')
     expect(
       within(row('Todo State')).queryByRole('button', {
-        name: t('propertiesView.editOptionsTooltip'),
+        name: t('propertiesView.editLabel', { key: 'todo_state' }),
       }),
     ).not.toBeInTheDocument()
   })

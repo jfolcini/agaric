@@ -9,7 +9,7 @@
  * `useSpaceMove` does for a cross-space move.
  */
 
-import { Merge } from 'lucide-react'
+import { Slot } from 'radix-ui'
 import type React from 'react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,7 +17,6 @@ import { useTranslation } from 'react-i18next'
 import { notifyDefinitionWrite } from '@/components/properties/notify-definition-write'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
-import { IconButton } from '@/components/ui/icon-button'
 import {
   Select,
   SelectContent,
@@ -40,7 +39,8 @@ export interface MergePropertyDefinitionProps {
   definitions: readonly PropertyDefinition[]
   /** Read the list again after a merge or its undo. */
   onChanged: () => void
-  className?: string
+  /** What opens the dialog: Settings' property sheet gives a text button. */
+  trigger: React.ReactElement
 }
 
 export function MergePropertyDefinition({
@@ -48,7 +48,7 @@ export function MergePropertyDefinition({
   spaceId,
   definitions,
   onChanged,
-  className,
+  trigger,
 }: MergePropertyDefinitionProps): React.ReactElement | null {
   const { t } = useTranslation()
   const parts = useDialogOrSheet('dialog')
@@ -171,17 +171,9 @@ export function MergePropertyDefinition({
 
   return (
     <>
-      <IconButton
-        ref={triggerRef}
-        variant="ghost"
-        size="icon-xs"
-        tooltip={t('propertiesView.mergeTooltip')}
-        ariaLabel={t('propertiesView.mergeLabel', { key })}
-        className={className}
-        onClick={() => setOpen(true)}
-      >
-        <Merge />
-      </IconButton>
+      <Slot.Root ref={triggerRef} onClick={() => setOpen(true)}>
+        {trigger}
+      </Slot.Root>
       <Root open={open} onOpenChange={onOpenChange}>
         <Content
           onCloseAutoFocus={(event: Event) => {

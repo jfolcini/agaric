@@ -4,11 +4,10 @@
  * The trailing "edit options" affordance lives in
  * {@link SelectOptionsPopover} so the orchestrator can place it outside
  * the editor slot (the affordance is a sibling of the editor, not a child).
- * Settings' options editor is the same popover behind its own trigger.
+ * Settings' property sheet shows the same list inline ({@link SelectOptionsList}).
  */
 
 import { ArrowDown, ArrowUp, Check, Pencil, Plus, X } from 'lucide-react'
-import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -80,36 +79,22 @@ export function SelectEditor({ state, ariaLabel, unfitValue, onClose }: SelectEd
 export interface SelectOptionsPopoverProps {
   propKey: string
   state: SelectOptionsEditorState
-  /** What opens the editor; the pencil icon button when omitted. */
-  trigger?: React.ReactElement
 }
 
-export function SelectOptionsPopover({ propKey, state, trigger }: SelectOptionsPopoverProps) {
+export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverProps) {
   const { t } = useTranslation()
-  const {
-    open,
-    setOpen,
-    options,
-    newOptionInput,
-    setNewOptionInput,
-    canAddOption,
-    handleOpen,
-    handleAdd,
-    handleSave,
-  } = state
+  const { open, setOpen, options, handleOpen, handleSave } = state
   return (
     <Popover open={open} onOpenChange={(next) => (next ? handleOpen() : setOpen(false))}>
       <PopoverTrigger asChild>
-        {trigger ?? (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="shrink-0 text-muted-foreground"
-            aria-label={t('pageProperty.editOptionsLabel', { key: propKey })}
-          >
-            <Pencil className="h-3 w-3" />
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="shrink-0 text-muted-foreground"
+          aria-label={t('pageProperty.editOptionsLabel', { key: propKey })}
+        >
+          <Pencil className="h-3 w-3" />
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
@@ -126,42 +111,63 @@ export function SelectOptionsPopover({ propKey, state, trigger }: SelectOptionsP
             {t('properties.optionsCount', { count: options.length })}
           </Badge>
         </div>
-        <ScrollArea className="max-h-40">
-          <div className="space-y-1">
-            {options.map((opt, idx) => (
-              <SelectOptionRow key={opt} opt={opt} idx={idx} state={state} />
-            ))}
-          </div>
-        </ScrollArea>
-        <div className="flex gap-1">
-          <Input
-            className="h-7 flex-1 text-xs"
-            placeholder={t('pageProperty.newOptionPlaceholder')}
-            value={newOptionInput}
-            onChange={(e) => setNewOptionInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                handleAdd()
-              }
-            }}
-            aria-label={t('pageProperty.newOptionLabel')}
-          />
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={handleAdd}
-            disabled={!canAddOption}
-            aria-label={t('pageProperty.addOptionLabel')}
-          >
-            <Plus className="h-3 w-3" />
-          </Button>
-        </div>
+        <SelectOptionsList state={state} />
         <Button size="sm" className="w-full" onClick={() => void handleSave()}>
           {t('pageProperty.saveOptionsButton')}
         </Button>
       </PopoverContent>
     </Popover>
+  )
+}
+
+/**
+ * A select's draft options, one row each, and the field that adds one: the
+ * block row's options popover and Settings' property sheet both show it.
+ */
+export function SelectOptionsList({
+  state,
+  className = 'max-h-40',
+}: {
+  state: SelectOptionsEditorState
+  /** The list's scroll box; the popover caps its height. */
+  className?: string
+}) {
+  const { t } = useTranslation()
+  const { options, newOptionInput, setNewOptionInput, canAddOption, handleAdd } = state
+  return (
+    <>
+      <ScrollArea className={className}>
+        <div className="space-y-1">
+          {options.map((opt, idx) => (
+            <SelectOptionRow key={opt} opt={opt} idx={idx} state={state} />
+          ))}
+        </div>
+      </ScrollArea>
+      <div className="flex gap-1">
+        <Input
+          className="h-7 flex-1 text-xs"
+          placeholder={t('pageProperty.newOptionPlaceholder')}
+          value={newOptionInput}
+          onChange={(e) => setNewOptionInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleAdd()
+            }
+          }}
+          aria-label={t('pageProperty.newOptionLabel')}
+        />
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={handleAdd}
+          disabled={!canAddOption}
+          aria-label={t('pageProperty.addOptionLabel')}
+        >
+          <Plus className="h-3 w-3" />
+        </Button>
+      </div>
+    </>
   )
 }
 

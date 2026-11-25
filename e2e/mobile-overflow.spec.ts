@@ -539,7 +539,7 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
     await navigateMobile(page, 'Settings')
     await openSettingsTab(page, 'Properties')
     const rows = page.getByTestId('settings-panel-properties').locator('[data-slot="list-item"]')
-    await expect(rows.getByRole('button', { name: 'Edit options' }).first()).toBeVisible()
+    await expect(rows.getByRole('button', { name: /^Edit property / }).first()).toBeVisible()
     const overflowing = await rows.evaluateAll((els) =>
       els.flatMap((el) => {
         // The row sits inside the card, so content past the row's own edge is
@@ -553,66 +553,57 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
     )
     expect(overflowing).toEqual([])
 
-    // Line 1 is the name with Delete or Built-in at its right end. Line 2, flush with the
-    // name and right under it, holds a user property's use count and a user select row's
-    // Edit options side by side, or todo_state's cycle help. A built-in's options are
-    // fixed (#5841), so it offers no Edit options, and its count stays on line 1.
+    // One line per row: the name, its type and use count, with Built-in or a user property's
+    // chevron at the right end. Only todo_state takes a line 2, flush with the name, for its
+    // cycle help. A user property's row is one button: a tap on its chevron or its count
+    // lands on it (#7040).
     const misaligned = await rows.evaluateAll((els) =>
       els.flatMap((el) => {
         const key = el.textContent ?? ''
-        const nameEl = el.querySelector('span.font-medium')
-        const controlEl = [...el.querySelectorAll('button, [data-slot="badge"]')].find(
-          (n) =>
-            n.getAttribute('aria-label')?.startsWith('Delete property') ||
-            n.textContent === 'Built-in',
-        )
-        if (!nameEl || !controlEl) return [`${key}: no name or Delete/Built-in`]
+        const nameEl = el.querySelector('.font-medium')
+        const controlEl =
+          el.querySelector('[data-testid^="builtin-lock-"]') ??
+          el.querySelector('svg.lucide-chevron-right')
+        if (!nameEl || !controlEl) return [`${key}: no name or Built-in/chevron`]
         const name = nameEl.getBoundingClientRect()
         const control = controlEl.getBoundingClientRect()
         const problems: string[] = []
         if (control.top >= name.bottom || control.bottom <= name.top)
-          problems.push(`${key}: Delete/Built-in is off the name's line`)
+          problems.push(`${key}: Built-in/chevron is off the name's line`)
         const rightmost = Math.max(
           ...[...el.querySelectorAll('*')].map((n) => n.getBoundingClientRect().right),
         )
         if (Math.abs(control.right - rightmost) > 1)
-          problems.push(`${key}: Delete/Built-in ends at ${control.right}, row at ${rightmost}`)
+          problems.push(`${key}: Built-in/chevron ends at ${control.right}, row at ${rightmost}`)
         // Line 1 is the name's line box, which is 44 px tall on touch either way.
         const nameLine = (nameEl.parentElement ?? nameEl).getBoundingClientRect()
         const line1Bottom = Math.max(nameLine.bottom, control.bottom)
-        const isUserSelect =
-          !el.querySelector('[data-testid^="builtin-lock-"]') &&
-          [...el.querySelectorAll('[data-slot="badge"]')].some((b) => b.textContent === 'select')
-        const optionsEl = el.querySelector(
-          'button[aria-label="Edit options"], [data-testid="todo-state-cycle-help"]',
-        )
-        if (isUserSelect && !optionsEl) problems.push(`${key}: a select row without its options`)
-        const isBuiltin = el.querySelector('[data-testid^="builtin-lock-"]') !== null
-        const countEl = el.querySelector('[data-testid^="property-usage-"]')
-        // Line 2's first item, the count or the options, starts under the name.
-        const line2First = isBuiltin ? optionsEl : (countEl ?? optionsEl)
-        if (line2First) {
-          const first = line2First.getBoundingClientRect()
-          if (Math.abs(first.left - name.left) > 1)
-            problems.push(`${key}: line 2 starts at x=${first.left}, name at x=${name.left}`)
-          // Line 2 is its own line box; a 44 px help button can share it.
-          const line2 = (
-            line2First.closest('.max-sm\\:col-span-2') ?? line2First
-          ).getBoundingClientRect()
+        const helpEl = el.querySelector('[data-testid="todo-state-cycle-help"]')
+        if (helpEl) {
+          const help = helpEl.getBoundingClientRect()
+          if (Math.abs(help.left - name.left) > 1)
+            problems.push(`${key}: help at x=${help.left}, name at x=${name.left}`)
+          const line2 = (helpEl.parentElement ?? helpEl).getBoundingClientRect()
           if (Math.abs(line2.top - line1Bottom) > 1)
-            problems.push(`${key}: line 2 top ${line2.top}, line 1 ends at ${line1Bottom}`)
+            problems.push(`${key}: help top ${line2.top}, line 1 ends at ${line1Bottom}`)
+        } else if (
+          [...el.querySelectorAll('*')].some((n) => n.getBoundingClientRect().top >= line1Bottom)
+        ) {
+          problems.push(`${key}: a row without the cycle help takes two lines`)
         }
-        if (!isBuiltin && countEl && optionsEl) {
-          const count = countEl.getBoundingClientRect()
-          const options = optionsEl.getBoundingClientRect()
-          const mid = (r: DOMRect) => r.top + r.height / 2
-          if (Math.abs(mid(count) - mid(options)) > 1)
-            problems.push(`${key}: the use count and Edit options are on different lines`)
+        const rowButton = el.querySelector('button[aria-label^="Edit property "]')
+        if (rowButton) {
+          // A point off the screen hits nothing.
+          el.scrollIntoView({ block: 'center' })
+          const countEl = el.querySelector('[data-testid^="property-usage-"]')
+          for (const target of [controlEl, countEl]) {
+            if (!target) continue
+            const r = target.getBoundingClientRect()
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+            if (!rowButton.contains(hit))
+              problems.push(`${key}: a tap on ${target.tagName} misses the row's button`)
+          }
         }
-        const below = [...el.querySelectorAll('*')].some(
-          (n) => n.getBoundingClientRect().top >= line1Bottom,
-        )
-        if (!line2First && below) problems.push(`${key}: a row without a line 2 takes two lines`)
         return problems
       }),
     )

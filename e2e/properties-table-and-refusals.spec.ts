@@ -11,6 +11,7 @@ import {
   ipc,
   navigateToView,
   openPage,
+  openPropertySheet,
   openSettingsTab,
   reopenPage,
   saveBlock,
@@ -284,13 +285,12 @@ test.describe('Select definition options and in-use delete @editor', () => {
   }
 
   test("edited options are exactly what a block's project chip offers", async ({ page }) => {
-    await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
-    const editor = activePopover(page)
+    const editor = await openPropertySheet(page, 'project')
     await editor.getByRole('button', { name: 'Remove option gamma', exact: true }).click()
     await editor.getByRole('textbox', { name: 'New option value', exact: true }).fill('delta')
     await editor.getByRole('button', { name: 'Add option', exact: true }).click()
-    await editor.getByRole('button', { name: 'Save options', exact: true }).click()
-    await expect(editor).toHaveCount(0)
+    await editor.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(editor).toBeHidden()
     await expect.poll(() => storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'delta'])
 
     await openPage(page, 'Meetings')
@@ -303,8 +303,7 @@ test.describe('Select definition options and in-use delete @editor', () => {
   test('renaming an option renames the values blocks hold, and Undo takes it back', async ({
     page,
   }) => {
-    await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
-    const editor = activePopover(page)
+    const editor = await openPropertySheet(page, 'project')
     await editor.getByRole('button', { name: 'Rename option alpha', exact: true }).click()
     await editor.getByRole('textbox', { name: 'New name for alpha', exact: true }).fill('apollo')
     await editor.getByRole('button', { name: 'Save option name', exact: true }).click()
@@ -331,8 +330,10 @@ test.describe('Select definition options and in-use delete @editor', () => {
   test('deleting a definition a block still uses is refused and the definition stays', async ({
     page,
   }) => {
-    await projectRow(page)
-      .getByRole('button', { name: 'Delete property project', exact: true })
+    await (
+      await openPropertySheet(page, 'project')
+    )
+      .getByRole('button', { name: 'Delete property', exact: true })
       .click()
     const confirm = activeAlertDialog(page)
     await expect(confirm.getByText('Delete this property definition?')).toBeVisible()

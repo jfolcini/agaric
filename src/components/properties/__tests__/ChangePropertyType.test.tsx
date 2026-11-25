@@ -50,18 +50,27 @@ async function setContext(blockId: string, text: string): Promise<void> {
   await dispatch('set_property', { blockId, key: 'context', value: { value_text: text } })
 }
 
-function changeButton(key: string): HTMLElement | null {
-  return screen.queryByRole('button', { name: t('propertiesView.typeChangeLabel', { key }) })
+const TYPE_DIALOG = { name: t('propertiesView.typeChangeTitle', { key: 'context' }) }
+
+/** `key`'s property sheet: the one open, else opened from its row. */
+async function openSheet(key = 'context', title = 'Context'): Promise<HTMLElement> {
+  const open = screen.queryByRole('dialog', { name: title })
+  if (open) return open
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('button', { name: t('propertiesView.editLabel', { key }) }),
+  )
+  return screen.findByRole('dialog', { name: title })
+}
+
+function changeButton(sheet: HTMLElement): HTMLElement | null {
+  return within(sheet).queryByRole('button', { name: t('propertiesView.changeTypeAction') })
 }
 
 /** Open `context`'s type dialog and pick `type`. */
 async function pickType(type: string): Promise<HTMLElement> {
   const user = userEvent.setup()
-  await waitFor(() => {
-    expect(changeButton('context')).toBeInTheDocument()
-  })
-  await user.click(changeButton('context') as HTMLElement)
-  const dialog = await screen.findByRole('dialog')
+  const dialog = await openDialog()
   await user.selectOptions(
     within(dialog).getByRole('combobox', { name: t('propertiesView.typeChangeTypeLabel') }),
     type,
@@ -77,14 +86,11 @@ function counts(dialog: HTMLElement): HTMLElement {
   return within(dialog).getByTestId('property-type-change-counts')
 }
 
-/** `context`'s type dialog, opened. */
+/** `context`'s type dialog, opened from its sheet. */
 async function openDialog(): Promise<HTMLElement> {
   const user = userEvent.setup()
-  await waitFor(() => {
-    expect(changeButton('context')).toBeInTheDocument()
-  })
-  await user.click(changeButton('context') as HTMLElement)
-  return screen.findByRole('dialog')
+  await user.click(changeButton(await openSheet()) as HTMLElement)
+  return screen.findByRole('dialog', TYPE_DIALOG)
 }
 
 function severalBox(dialog: HTMLElement): HTMLElement {
@@ -96,8 +102,10 @@ const unfit = (count: number, type: string) => t('propertiesView.typeChangeUnfit
 
 /** The badge of `context`'s row: its type. */
 function contextType(): string | null | undefined {
-  return screen.getByText('Context').closest('li')?.querySelector('[data-slot="badge"]')
-    ?.textContent
+  return screen
+    .getByRole('button', { name: t('propertiesView.editLabel', { key: 'context' }), hidden: true })
+    .closest('li')
+    ?.querySelector('[data-slot="badge"]')?.textContent
 }
 
 describe('ChangePropertyType', () => {
@@ -108,14 +116,20 @@ describe('ChangePropertyType', () => {
       valueType: 'text',
       options: null,
     })
+    const user = userEvent.setup()
     render(<PropertyDefinitionsList />)
-    await waitFor(() => {
-      expect(changeButton('context')).toBeInTheDocument()
-    })
-    expect(screen.getByText('Template')).toBeInTheDocument()
-    expect(changeButton('template')).not.toBeInTheDocument()
+    const sheet = await openSheet()
+    expect(changeButton(sheet)).toBeInTheDocument()
+    await user.click(within(sheet).getByRole('button', { name: t('action.cancel') }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(changeButton(await openSheet('template', 'Template'))).not.toBeInTheDocument()
     expect(screen.getByTestId('builtin-lock-due_date')).toBeInTheDocument()
-    expect(changeButton('due_date')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', {
+        name: t('propertiesView.editLabel', { key: 'due_date' }),
+        hidden: true,
+      }),
+    ).not.toBeInTheDocument()
   })
 
   // #6758 — a datetime to date keeps its local day; the preview shows the time it drops.
@@ -254,6 +268,7 @@ describe('ChangePropertyType', () => {
     await waitFor(() => {
       expect(contextType()).toBe('number')
     })
+    // The property's sheet closes with the dialog, back to the list that says number.
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(properties.get(MTG_1)?.get('context')).toMatchObject({
       value_text: '@office',
@@ -462,7 +477,7 @@ describe('ChangePropertyType', () => {
       await user.click(severalBox(dialog))
       await user.click(within(dialog).getByRole('button', { name: t('action.cancel') }))
       await waitFor(() => {
-        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(screen.queryByRole('dialog', TYPE_DIALOG)).not.toBeInTheDocument()
       })
       dialog = await openDialog()
       expect(severalBox(dialog)).not.toBeChecked()

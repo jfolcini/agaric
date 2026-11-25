@@ -12,7 +12,7 @@
  * join each list.
  */
 
-import { Shapes } from 'lucide-react'
+import { Slot } from 'radix-ui'
 import type React from 'react'
 import { useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -22,7 +22,6 @@ import { type Preview, type Target, TypeChangeTabs } from '@/components/properti
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogBody } from '@/components/ui/dialog'
-import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -48,7 +47,10 @@ export interface ChangePropertyTypeProps {
   spaceId: string
   /** Read the list again after a change or its undo. */
   onChanged: () => void
-  className?: string
+  /** What opens the dialog: Settings' property sheet gives a text button. */
+  trigger: React.ReactElement
+  /** After a change is written, not after its undo: the property sheet closes with the dialog. */
+  onDone: () => void
 }
 
 /** Where to split or join, or `none` for neither; null until the user picks. */
@@ -100,7 +102,8 @@ export function ChangePropertyType({
   definition,
   spaceId,
   onChanged,
-  className,
+  trigger,
+  onDone,
 }: ChangePropertyTypeProps): React.ReactElement | null {
   const { t } = useTranslation()
   const parts = useDialogOrSheet('dialog')
@@ -199,6 +202,7 @@ export function ChangePropertyType({
         ),
       )
       onOpenChange(false)
+      onDone()
       notifyDefinitionWrite(
         t('propertiesView.typeChanged', {
           key,
@@ -326,21 +330,16 @@ export function ChangePropertyType({
 
   return (
     <>
-      <IconButton
+      <Slot.Root
         ref={triggerRef}
-        variant="ghost"
-        size="icon-xs"
-        tooltip={t('propertiesView.typeChangeTooltip')}
-        ariaLabel={t('propertiesView.typeChangeLabel', { key })}
-        className={className}
         onClick={() => {
           // From the definition as it stands now: a change or its undo may have moved it.
           setDraft(unchanged())
           setOpen(true)
         }}
       >
-        <Shapes />
-      </IconButton>
+        {trigger}
+      </Slot.Root>
       <Root open={open} onOpenChange={onOpenChange}>
         <Content
           onCloseAutoFocus={(event: Event) => {

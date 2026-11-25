@@ -7,6 +7,7 @@ import {
   ipc,
   navigateToView,
   openPage,
+  openPropertySheet,
   openSettingsTab,
   test,
   waitForBoot,
@@ -48,19 +49,12 @@ function panel(page: Page) {
   return page.getByTestId('settings-panel-properties')
 }
 
-function projectRow(page: Page) {
-  return panel(page)
-    .getByRole('listitem')
-    .filter({ has: page.getByText('Project', { exact: true }) })
-}
-
-/** Drop `beta` from `project`'s options through Edit options. */
+/** Drop `beta` from `project`'s options in its property sheet. */
 async function dropBeta(page: Page): Promise<void> {
-  await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
-  const editor = activePopover(page)
+  const editor = await openPropertySheet(page, 'project')
   await editor.getByRole('button', { name: 'Remove option beta', exact: true }).click()
-  await editor.getByRole('button', { name: 'Save options', exact: true }).click()
-  await expect(editor).toHaveCount(0)
+  await editor.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(editor).toBeHidden()
   await expect(panel(page).getByTestId('property-unfit-project')).toHaveText("2 don't fit")
 }
 

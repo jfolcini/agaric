@@ -1,8 +1,9 @@
 /**
- * #5841 S2 — renaming a property key from Settings › Properties, against the
- * mock backend: the list is read again, the blocks' values follow, the toast's
- * Undo puts the key back, the dialog hints at keys that cannot be taken, and
- * a refusal shows the backend's reason.
+ * A user property's sheet in Settings › Properties (#7040), against the mock
+ * backend: its row opens it, and renaming the key there (#5841 S2) reads the
+ * list again, the blocks' values follow, the toast's Undo puts the key back,
+ * the Name field hints at keys that cannot be taken, and a refusal shows the
+ * backend's reason. Its options: PropertyDefinitionSheet.options.test.tsx.
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
@@ -30,26 +31,44 @@ beforeEach(() => {
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
 })
 
+function rowButton(key: string): HTMLElement | null {
+  return screen.queryByRole('button', { name: t('propertiesView.editLabel', { key }) })
+}
+
 async function openRename(key: string): Promise<HTMLElement> {
   const user = userEvent.setup()
   await user.click(
-    await screen.findByRole('button', { name: t('propertiesView.renameLabel', { key }) }),
+    await screen.findByRole('button', { name: t('propertiesView.editLabel', { key }) }),
   )
   return screen.findByRole('dialog')
 }
 
 async function typeKey(dialog: HTMLElement, key: string): Promise<void> {
   const user = userEvent.setup()
-  const input = within(dialog).getByRole('textbox', { name: t('propertiesView.renameInputLabel') })
+  const input = within(dialog).getByRole('textbox', { name: t('propertiesView.nameLabel') })
   await user.clear(input)
   await user.type(input, key)
 }
 
 function saveButton(dialog: HTMLElement): HTMLElement {
-  return within(dialog).getByRole('button', { name: t('rename.save') })
+  return within(dialog).getByRole('button', { name: t('action.save') })
 }
 
-describe('RenamePropertyDefinition', () => {
+describe('PropertyDefinitionSheet', () => {
+  it("opens from the property's row on its name, and closes unchanged with Save off", async () => {
+    const user = userEvent.setup()
+    render(<PropertyDefinitionsList />)
+    const dialog = await openRename('context')
+    expect(within(dialog).getByRole('heading', { name: 'Context' })).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('textbox', { name: t('propertiesView.nameLabel') }),
+    ).toHaveValue('context')
+    expect(saveButton(dialog)).toBeDisabled()
+    await user.click(within(dialog).getByRole('button', { name: t('action.cancel') }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(rowButton('context')).toHaveFocus()
+  })
+
   it("renames the key on the space's definition and on every block holding it", async () => {
     const user = userEvent.setup()
     render(<PropertyDefinitionsList />)
@@ -119,7 +138,9 @@ describe('RenamePropertyDefinition', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("'venue'"))
     })
-    expect(screen.getByText('Context')).toBeInTheDocument()
+    // The sheet stays open for another name.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(spacePropertyDefs(PERSONAL.id).has('context')).toBe(true)
     expect(properties.get(MTG_1)?.get('context')?.['value_text']).toBe('@office')
   })
 
@@ -137,15 +158,14 @@ describe('RenamePropertyDefinition', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(t('propertiesView.renameFailed'))
     })
-    expect(screen.getByText('Context')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(spacePropertyDefs(PERSONAL.id).has('context')).toBe(true)
   })
 
-  it('offers no rename on a built-in definition', async () => {
+  it('offers no sheet on a built-in definition', async () => {
     render(<PropertyDefinitionsList />)
     expect(await screen.findByText('Context')).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: t('propertiesView.renameLabel', { key: 'priority' }) }),
-    ).not.toBeInTheDocument()
+    expect(rowButton('priority')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations with the dialog open', async () => {

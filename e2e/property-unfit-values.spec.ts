@@ -2,9 +2,9 @@ import type { Page } from '@playwright/test'
 
 import {
   activeDialog,
-  activePopover,
   expect,
   navigateToView,
+  openPropertySheet,
   openSettingsTab,
   test,
   waitForBoot,
@@ -34,23 +34,16 @@ function panel(page: Page) {
   return page.getByTestId('settings-panel-properties')
 }
 
-function projectRow(page: Page) {
-  return panel(page)
-    .getByRole('listitem')
-    .filter({ has: page.getByText('Project', { exact: true }) })
-}
-
 function unfitBadge(page: Page) {
   return panel(page).getByTestId('property-unfit-project')
 }
 
-/** Drop `beta` from `project`'s options through Edit options. */
+/** Drop `beta` from `project`'s options in its property sheet. */
 async function dropBeta(page: Page): Promise<void> {
-  await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
-  const editor = activePopover(page)
+  const editor = await openPropertySheet(page, 'project')
   await editor.getByRole('button', { name: 'Remove option beta', exact: true }).click()
-  await editor.getByRole('button', { name: 'Save options', exact: true }).click()
-  await expect(editor).toHaveCount(0)
+  await editor.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(editor).toBeHidden()
   await expect(unfitBadge(page)).toHaveText("1 doesn't fit")
 }
 
@@ -169,9 +162,11 @@ test.describe("Values that don't fit a property @settings", () => {
 
     await comeBack(page)
     await expect(unfitBadge(page)).toHaveCount(0)
-    await projectRow(page).getByRole('button', { name: 'Edit options', exact: true }).click()
     await expect(
-      activePopover(page).getByRole('button', { name: 'Remove option beta', exact: true }),
+      (await openPropertySheet(page, 'project')).getByRole('button', {
+        name: 'Remove option beta',
+        exact: true,
+      }),
     ).toBeVisible()
   })
 })
