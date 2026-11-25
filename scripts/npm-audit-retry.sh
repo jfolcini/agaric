@@ -15,8 +15,24 @@ set -euo pipefail
 
 # One entry per RETRY, so the attempt budget is this many plus the first try.
 BACKOFF_SECONDS=(5 15)
+
+# The advisory scan also fails on a `.nsprc` waiver that matches nothing, so a
+# waiver goes the first run after its advisory is withdrawn or fixed; the
+# nightly deep checks run this on main even when no dependency changed.
+audit_strict() {
+  local report
+  report=$(npx better-npm-audit audit --json) || return
+  node -e '
+    const { unusedExceptionIds } = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+    if (unusedExceptionIds.length > 0) {
+      console.error(`.nsprc waives ${unusedExceptionIds.join(", ")}, which npm audit no longer reports: delete the entry.`)
+      process.exit(1)
+    }
+  ' <<<"$report"
+}
+
 CMD=("$@")
-if [ "${#CMD[@]}" -eq 0 ]; then CMD=(npx better-npm-audit audit); fi
+if [ "${#CMD[@]}" -eq 0 ]; then CMD=(audit_strict); fi
 TOTAL_ATTEMPTS=$((${#BACKOFF_SECONDS[@]} + 1))
 
 # Fail-closed: the loop exits early only on SUCCESS, so a real advisory fails

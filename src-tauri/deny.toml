@@ -1,13 +1,9 @@
 # cargo-deny configuration for Agaric
 # Docs: https://embarkstudios.github.io/cargo-deny/
 
+# No `targets`: the graph is the whole Cargo.lock, the view `cargo audit`, OSV
+# and Scorecard take, so one waiver list fits every scanner.
 [graph]
-targets = [
-    "x86_64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc",
-    "aarch64-apple-darwin",
-    "aarch64-linux-android",
-]
 all-features = false
 no-default-features = false
 
@@ -16,47 +12,20 @@ feature-depth = 1
 
 # ── Advisories (RustSec) ────────────────────────────────────────────────────
 #
-# (issue #145): OSSF Scorecard's `Vulnerabilities` check runs against the
-# full OSV/RustSec set — it scans the entire Cargo.lock target-agnostically, the
-# same view as `cargo audit`. The bulk below are the gtk-rs GTK3 binding crates
-# (RUSTSEC-2024-0411..0420) reaching us transitively via `wry -> tauri` on Linux:
-# wry's only WebView backend on Linux is webkit2gtk (GTK3) and no GTK4 alternative
-# ships yet. These are "no longer maintained" informational notices, not
-# exploitable code paths, and are unfixable for us until upstream wry/tauri
-# migrate off GTK3. Revisit trigger: a Tauri release announces the GTK4 migration
-# complete -> drop the GTK3 entries here + in .cargo/audit.toml + re-run Scorecard.
-#
-# NOTE — TWO SCANNERS, TWO VIEWS. `cargo deny` (this file) prunes the dep graph to
-# the four `[graph].targets` below, so a few of these advisories report
-# `advisory-not-detected` ("no crate matched") here even though they ARE live:
-#   - RUSTSEC-2023-0089 (atomic-polyfill, via loro/heapless/postcard)
-#   - RUSTSEC-2024-0429 (glib 0.18.5 unsound VariantStrIter — function-scoped)
-#   - RUSTSEC-2026-0097 (rand thread_rng unsound — function-scoped)
-# These are still flagged by `cargo audit` / OSV / Scorecard (full-lockfile scan),
-# so the entries MUST stay despite the cosmetic cargo-deny warning. Do NOT delete
-# them on the strength of `advisory-not-detected` alone — confirm with
-# `cargo audit` (target-agnostic) first. `.cargo/audit.toml` and the `osv-scanner.toml`
-# files Scorecard reads are generated from this list (run
-# `node scripts/sync-audit-from-deny.mjs` after any edit here).
+# A waiver that matches nothing fails the check, so it goes the first run after
+# its advisory is withdrawn or its crate is patched or dropped. The nightly deep
+# checks run this on main, so that happens even when no dependency changed.
+# `.cargo/audit.toml` and the `osv-scanner.toml` files are generated from this
+# list: run `node scripts/sync-audit-from-deny.mjs` after editing it. Each
+# reason becomes a release's VEX impact statement (scripts/generate-vex.mjs).
 [advisories]
+unused-ignored-advisory = "deny"
+# Transitive unsound crates too: OSV and Scorecard report them.
+unsound = "all"
 ignore = [
-    # GTK3 bindings — unmaintained, but required by Tauri on Linux (no alternative)
-    { id = "RUSTSEC-2024-0411", reason = "Tauri transitive dep: gtk-rs GTK3 bindings" },
-    { id = "RUSTSEC-2024-0412", reason = "Tauri transitive dep: gdk" },
-    { id = "RUSTSEC-2024-0413", reason = "Tauri transitive dep: atk" },
-    { id = "RUSTSEC-2024-0414", reason = "Tauri transitive dep: gtk" },
-    { id = "RUSTSEC-2024-0415", reason = "Tauri transitive dep: pango" },
-    { id = "RUSTSEC-2024-0416", reason = "Tauri transitive dep: atk-sys" },
-    { id = "RUSTSEC-2024-0417", reason = "Tauri transitive dep: gdk-pixbuf-sys" },
-    { id = "RUSTSEC-2024-0418", reason = "Tauri transitive dep: gdk-sys" },
-    { id = "RUSTSEC-2024-0419", reason = "Tauri transitive dep: gio-sys" },
-    { id = "RUSTSEC-2024-0420", reason = "Tauri transitive dep: gtk-sys" },
-    # Other Tauri transitive unmaintained crates
+    # Tauri transitive unmaintained crates
     { id = "RUSTSEC-2024-0370", reason = "Tauri transitive dep: proc-macro-error" },
-    { id = "RUSTSEC-2025-0057", reason = "Tauri transitive dep: fxhash (via selectors/kuchikiki)" },
-    { id = "RUSTSEC-2025-0075", reason = "Tauri transitive dep: unic-char-range" },
-    { id = "RUSTSEC-2025-0080", reason = "Tauri transitive dep: unic-common" },
-    { id = "RUSTSEC-2025-0081", reason = "Tauri transitive dep: unic-char-property" },
+    { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
     # zbus 5.x folded zvariant, zvariant_derive and zbus_names into itself; the
     # standalone crates are marked unmaintained. zbus 5.14 reaches us through
     # notify-rust, tauri-plugin-opener and tauri-plugin-single-instance, which
@@ -64,6 +33,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "Tauri transitive dep: zvariant (via zbus 5.14; folded into zbus upstream)" },
     { id = "RUSTSEC-2026-0371", reason = "Tauri transitive dep: zbus_names (via zbus 5.14; folded into zbus upstream)" },
     { id = "RUSTSEC-2026-0372", reason = "Tauri transitive dep: zvariant_derive (via zbus 5.14; folded into zbus upstream)" },
+    # glib 0.18 is the GTK3 binding wry uses on Linux; the fix (0.20) needs
+    # Tauri's move off GTK3.
+    { id = "RUSTSEC-2024-0429", reason = "glib 0.18.5 VariantStrIter is unsound; glib 0.18 is the GTK3 binding wry needs on Linux, the fix (0.20) waits on Tauri leaving GTK3, and Agaric never iterates a GVariant string array" },
     # quick-xml <0.41 quadratic duplicate-attribute check (DoS-class, needs
     # attacker-controlled XML). Two remaining lock entries, both transitive
     # pins we cannot bump: quick-xml 0.39 (wayland-scanner ^0.39, its sole
@@ -75,10 +47,6 @@ ignore = [
     # drop until wayland-rs releases against >=0.41. Tracked in #2310.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.39 (wayland-scanner ^0.39 hard cap) and 0.37 (Windows notify); no untrusted-XML runtime exposure; blocked on wayland-rs releasing against >=0.41 (#2310)" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml NsReader sibling advisory, same transitive pins and exposure analysis as RUSTSEC-2026-0194; removal tracked in #2310" },
-    { id = "RUSTSEC-2025-0098", reason = "Tauri transitive dep: unic-ucd-version" },
-    { id = "RUSTSEC-2025-0100", reason = "Tauri transitive dep: unic-ucd-ident" },
-    { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
-    { id = "RUSTSEC-2024-0429", reason = "Tauri GTK3 transitive dep: glib 0.18.5 unsound (sibling of GTK3 binding accept-list above)" },
     # Loro transitive unmaintained crate (atomic-polyfill via heapless → postcard → loro)
     { id = "RUSTSEC-2023-0089", reason = "Loro transitive dep: atomic-polyfill (via heapless → postcard)" },
     # Loro 1.13.6 depends on the archived `im` collection stack. There is no
@@ -94,19 +62,27 @@ ignore = [
     { id = "RUSTSEC-2026-0251", reason = "sized-chunks is unmaintained with no patched release; transitive only through pinned Loro 1.13.6's im stack (#3161)" },
     { id = "RUSTSEC-2023-0126", reason = "im::OrdSet insertion is unsound, but Loro 1.13.6 production code uses im::HashMap and contains no OrdSet use; blocked on upstream replacing im (#3161)" },
     { id = "RUSTSEC-2026-0255", reason = "sized-chunks double-drops when an element Drop panics inside clear/drop_left/drop_right; no patched release, transitive only through pinned Loro 1.13.6's im stack (#3161); shipped builds use the release profile's panic = abort, so that panic ends the process before the second free" },
-    # NOTE: RUSTSEC-2023-0071 (rsa Marvin Attack, via sqlx-mysql) was removed here
-    # In /#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
-    # (absent from Cargo.lock), so the advisory is no longer reachable from any
-    # target and both cargo-deny and cargo-audit confirm it as not-present. If a
-    # future sqlx bump reintroduces `rsa`, re-add it with the SQLite-only rationale.
-    # rand: deprecated `rand::thread_rng` is unsound on freshly-spawned threads.
-    # Transitive via Tauri / Loro stack; Agaric's own code uses `rand::rngs::OsRng`.
-    { id = "RUSTSEC-2026-0097", reason = "Transitive (Tauri/Loro stack); Agaric's own code uses OsRng, the deprecated thread_rng path is not exercised" },
+    # heapless: the fix is 0.9.4 only. 0.7 (postcard, under Loro and
+    # iroh-relay) and 0.8 (loro-delta) have no patched release; 0.9.3
+    # (generic-btree) moves to 0.9.4 once it clears the 7-day release-age gate.
+    { id = "RUSTSEC-2026-0574", reason = "heapless sorted_linked_list::FindMutView::pop use-after-free; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never a SortedLinkedList" },
+    { id = "RUSTSEC-2026-0575", reason = "heapless spsc::Spsc::peek memory ordering; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never an spsc queue" },
+    { id = "RUSTSEC-2026-0576", reason = "heapless IndexMap::truncate; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never an IndexMap" },
+    { id = "RUSTSEC-2026-0577", reason = "heapless double drop when an element Drop panics (Vec IntoIter drop among others); shipped builds use the release profile's panic = abort, so that panic ends the process before the second drop" },
+    { id = "RUSTSEC-2026-0578", reason = "heapless SortedLinkedList::zeroize; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never a SortedLinkedList" },
+    { id = "RUSTSEC-2026-0579", reason = "heapless Deque try_from on a full array (0.9.3 only, generic-btree's copy); Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never a Deque" },
+    { id = "RUSTSEC-2026-0580", reason = "heapless treiber-stack pool race (arc_pool, box_pool, object_pool, pool); Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never a pool" },
+    { id = "RUSTSEC-2026-0581", reason = "heapless Deque::make_contiguous; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never a Deque" },
+    { id = "RUSTSEC-2026-0582", reason = "heapless IndexMap::insert at u16::MAX entries; Agaric reaches heapless only through postcard, loro-delta and generic-btree, whose non-test code uses heapless::Vec alone, never an IndexMap" },
     # chrono: an unmaintained notice, not a vulnerability. Six workspace crates
     # use it directly, and specta (exact-pinned rc), rmcp and schemars pull it
     # in too, so moving our own code to jiff would not remove it.
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (no vulnerability); also required by specta, rmcp and schemars, so dropping it is blocked on them even if Agaric's own code moved to jiff" },
     { id = "RUSTSEC-2026-0459", reason = "Agaric opens only its own notes.db and its own backups, never a database or -wal another party wrote; the fix (libsqlite3-sys 0.39) is outside sqlx 0.9.0's <0.38 range" },
+    # Fixed upstream, but the fix is younger than the 7-day release-age gate
+    # (.github/dependabot.yml cooldown); take it once it clears.
+    { id = "RUSTSEC-2026-0592", reason = "url Url::origin() recursion on nested blob: URLs; neither Agaric, Tauri nor wry calls Url::origin(); the fix, url 2.5.9, clears the 7-day release-age gate on 2026-11-27" },
+    { id = "RUSTSEC-2026-0594", reason = "cookie private-jar nonce reuse after fork [vex:vulnerable_code_not_present]; Tauri builds cookie without its private feature, so the private jar is not compiled in; the fix, cookie 0.18.3, clears the 7-day release-age gate on 2026-11-30" },
 ]
 
 # ── Licenses ────────────────────────────────────────────────────────────────
