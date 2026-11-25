@@ -102,7 +102,7 @@ export function MonthlyDayCell({
           // The whole cell is the tap target, so the marker needs no 44 px size of
           // its own; at 44 px it overflowed a phone-width cell (#5925).
           'inline-flex items-center justify-center text-sm font-medium size-7 rounded-full',
-          isToday && 'bg-brand text-brand-foreground font-bold',
+          isToday && 'bg-foreground text-background font-bold',
         )}
       >
         {dayNumber}

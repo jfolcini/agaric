@@ -26,7 +26,8 @@ const Switch = ({
     <SwitchPrimitive.Thumb
       data-slot="switch-thumb"
       className={cn(
-        'pointer-events-none block size-4 rounded-full bg-background shadow-(--shadow-resting) ring-0 transition-transform',
+        // Light on the off track in dark too, where the page colour read as a hole (#7040).
+        'pointer-events-none block size-4 rounded-full bg-background dark:data-[state=unchecked]:bg-foreground shadow-(--shadow-resting) ring-0 transition-transform',
         'data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5',
         '[@media(pointer:coarse)]:size-6 [@media(pointer:coarse)]:data-[state=checked]:translate-x-5',
       )}

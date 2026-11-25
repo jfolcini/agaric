@@ -42,13 +42,13 @@ interface CyclePriorityButtonProps {
  * priority" state rather than a disabled-looking bare "P".
  */
 function priorityDot(currentPriority: string | null | undefined): React.ReactElement {
-  // The chip fills are soft tints that vanish at dot size; the foregrounds carry the hue.
-  if (currentPriority === '1')
-    return <span className="h-2 w-2 rounded-full bg-priority-urgent-foreground" />
+  // The ink scale at dot size: solid, half, faint (#7040). The P2 and P3 chip fills
+  // are tints that vanish at dot size.
+  if (currentPriority === '1') return <span className="h-2 w-2 rounded-full bg-priority-urgent" />
   if (currentPriority === '2')
-    return <span className="h-2 w-2 rounded-full bg-priority-high-foreground" />
+    return <span className="h-2 w-2 rounded-full bg-priority-urgent/50" />
   if (currentPriority === '3')
-    return <span className="h-2 w-2 rounded-full bg-priority-normal-foreground" />
+    return <span className="h-2 w-2 rounded-full bg-priority-urgent/20" />
   return <span className="h-2 w-2 rounded-full border border-muted-foreground/50" />
 }
 

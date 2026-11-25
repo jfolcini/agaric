@@ -4,6 +4,10 @@
  * primary on the muted surface with muted text; light themes keep the 20%
  * scrim and the half-opacity primary. The pairing dialog's Pair button,
  * disabled until a passphrase is typed, is the sample.
+ *
+ * Floating surfaces in dark (#7040): a Select's list is lighter than the card
+ * it opens over, and a tooltip stays inverted (the text colour as its fill), as
+ * in light. Month draws today in ink, not the brand red the capture button wears.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -113,3 +117,52 @@ test.describe('phone sheet scrim (dark) @mobile @sync', () => {
     )
   })
 })
+
+for (const theme of DARK_THEMES) {
+  test(`a Select lifts off the card and a tooltip stays inverted (${theme}) @settings @spaces`, async ({
+    page,
+  }) => {
+    await page.addInitScript((t) => localStorage.setItem('theme-preference', t), theme)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+
+    // The space switcher is a Select whose trigger carries a tooltip; Escape
+    // returns focus to the trigger, which opens it.
+    const switcher = page.getByRole('combobox', { name: 'Switch space', exact: true })
+    await switcher.click()
+    const list = page.locator('[data-slot="select-content"]').last()
+    await expect(list).toBeVisible()
+    if (theme === 'dark') {
+      expect((await paint(list)).background).not.toBe(await tokenColor(page, '--card'))
+    }
+    await expect(list).toHaveCSS('background-color', await tokenColor(page, '--popover'))
+
+    await page.keyboard.press('Escape')
+    const tooltip = page.locator('[data-slot="tooltip-content"]')
+    await expect(tooltip).toBeVisible()
+    await expect(tooltip).toHaveCSS('background-color', await tokenColor(page, '--foreground'))
+    await expect(tooltip).toHaveCSS('color', await tokenColor(page, '--background'))
+  })
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`Month draws today in ink, not the brand red (${theme}) @journal`, async ({ page }) => {
+    await page.addInitScript((t) => localStorage.setItem('theme-preference', t), theme)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+    await page.getByRole('tab', { name: 'Monthly view' }).click()
+
+    const today = await page.evaluate(() => {
+      const d = new Date()
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    })
+    const numeral = page
+      .getByRole('grid', { name: 'Monthly calendar' })
+      .locator(`[role="gridcell"][data-date="${today}"] > span`)
+      .first()
+    const ink = await tokenColor(page, '--foreground')
+    expect(ink).not.toBe(await tokenColor(page, '--brand'))
+    await expect(numeral).toHaveCSS('background-color', ink)
+    await expect(numeral).toHaveCSS('color', await tokenColor(page, '--background'))
+  })
+}

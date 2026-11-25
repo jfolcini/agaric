@@ -113,6 +113,19 @@ test.describe('page mode document look (#5691) @editor @pages', () => {
     expect(await opacity(task.locator('.due-date-chip'))).toBe('1')
     expect(await opacity(task.locator('[data-testid="priority-badge"]'))).toBe('1')
     expect(await opacity(task.locator('[data-testid="property-chip"]'))).toBe('0')
+    // A P1 keeps its ink fill: its label is the page colour, which axe files as incomplete.
+    const ink = await page.evaluate(() => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--foreground)'
+      document.body.append(probe)
+      const color = getComputedStyle(probe).color
+      probe.remove()
+      return color
+    })
+    await expect(task.locator('[data-testid="priority-badge"] > span')).toHaveCSS(
+      'background-color',
+      ink,
+    )
     // Paragraphs spaced as a document's, list items closer.
     const gap = (id: string | undefined) =>
       page

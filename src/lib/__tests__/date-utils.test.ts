@@ -467,8 +467,8 @@ describe('dueDateColor', () => {
     expect(dueDateColor('2026-04-09')).toBe('bg-alert-error text-alert-error-foreground')
   })
 
-  it('returns status-pending classes for today', () => {
-    expect(dueDateColor('2026-04-10')).toBe('bg-status-pending text-status-pending-foreground')
+  it('returns the due-date amber for today', () => {
+    expect(dueDateColor('2026-04-10')).toBe('bg-date-due text-date-due-foreground')
   })
 
   it('returns neutral classes for the day after today', () => {

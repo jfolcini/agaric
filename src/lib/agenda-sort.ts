@@ -309,8 +309,8 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
  * which also holds a level from before the levels were fixed. Within each
  * group, blocks are sorted by date ASC then state.
  *
- * Index-keyed `INDEX_CLASS` matches the three groups to the destructive /
- * pending / active semantic tokens.
+ * The level headers are ink, as priority is (#7040): a red P1 header read as
+ * the Overdue one.
  */
 export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
   const levels = PRIORITY_LEVELS
@@ -337,19 +337,10 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
     return taskStateRank(a.todo_state) - taskStateRank(b.todo_state)
   }
 
-  const INDEX_CLASS = [
-    'text-destructive',
-    'text-status-pending-foreground',
-    'text-status-active-foreground',
-  ] as const
-
-  const classForLevel = (lv: string): string | undefined => INDEX_CLASS[levels.indexOf(lv)]
-
   const result: AgendaGroup[] = []
   for (const [label, group] of buckets) {
     if (group.length === 0) continue
-    const className =
-      label === NO_PRIORITY ? 'text-muted-foreground' : classForLevel(label.replace(/^P/, ''))
+    const className = label === NO_PRIORITY ? 'text-muted-foreground' : undefined
     result.push({
       label,
       blocks: [...group].toSorted(sortWithin),
