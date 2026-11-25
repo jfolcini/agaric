@@ -885,6 +885,37 @@ export async function openPage(page: Page, title: string) {
 }
 
 /**
+ * Whether a tap 21 px left, right, above and below `el`'s centre reaches it: a
+ * 44 px box less a pixel, which a neighbour's text may overhang. Probed with
+ * `elementFromPoint`, so a 36 px control's invisible hit area (`touch-hit-area`)
+ * counts and a neighbour drawn over the control does not.
+ */
+export async function hits44(el: Locator): Promise<boolean[]> {
+  await el.scrollIntoViewIfNeeded()
+  return el.evaluate((node) => {
+    const r = node.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    const d = 21
+    return [
+      [cx - d, cy],
+      [cx + d, cy],
+      [cx, cy - d],
+      [cx, cy + d],
+    ].map(([x, y]) => node.contains(document.elementFromPoint(x ?? 0, y ?? 0)))
+  })
+}
+
+export async function expect44(el: Locator, name: string): Promise<void> {
+  expect(await hits44(el), `${name}: left, right, top, bottom of a 44 px box`).toEqual([
+    true,
+    true,
+    true,
+    true,
+  ])
+}
+
+/**
  * Navigate to the page editor for a given page title at a MOBILE / coarse-
  * pointer viewport (iPhone-class, ≤ md breakpoint).
  *

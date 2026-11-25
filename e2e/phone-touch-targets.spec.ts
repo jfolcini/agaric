@@ -12,6 +12,8 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
   expect,
+  expect44,
+  hits44,
   ipc,
   navigateToView,
   openMobileSidebar,
@@ -22,35 +24,6 @@ import {
 } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
-
-/**
- * Whether a tap 21 px left, right, above and below the centre reaches `el`:
- * a 44 px box less a pixel, which a neighbour's text may overhang.
- */
-async function hits44(el: Locator): Promise<boolean[]> {
-  await el.scrollIntoViewIfNeeded()
-  return el.evaluate((node) => {
-    const r = node.getBoundingClientRect()
-    const cx = r.left + r.width / 2
-    const cy = r.top + r.height / 2
-    const d = 21
-    return [
-      [cx - d, cy],
-      [cx + d, cy],
-      [cx, cy - d],
-      [cx, cy + d],
-    ].map(([x, y]) => node.contains(document.elementFromPoint(x ?? 0, y ?? 0)))
-  })
-}
-
-async function expect44(el: Locator, name: string): Promise<void> {
-  expect(await hits44(el), `${name}: left, right, top, bottom of a 44 px box`).toEqual([
-    true,
-    true,
-    true,
-    true,
-  ])
-}
 
 async function left(el: Locator): Promise<number> {
   return Math.round((await el.boundingBox())?.x ?? Number.NaN)
