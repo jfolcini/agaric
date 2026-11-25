@@ -54,3 +54,40 @@ describe('applyGraphForces — degree-aware layout (#5432)', () => {
     expect(clearance(hub)).toBe(clearance(orphan))
   })
 })
+
+describe('applyGraphForces — the layout takes the canvas shape (#7040)', () => {
+  /** Width over height of the settled layout of six star clusters and some unlinked pages. */
+  function layoutAspect(width: number, height: number): number {
+    const nodes: ForceNode[] = []
+    const edges: Array<{ source: string; target: string }> = []
+    for (let hub = 0; hub < 6; hub++) {
+      nodes.push({ id: `hub${hub}`, degree: 6 })
+      for (let leaf = 0; leaf < 6; leaf++) {
+        nodes.push({ id: `leaf${hub}.${leaf}`, degree: 1 })
+        edges.push({ source: `hub${hub}`, target: `leaf${hub}.${leaf}` })
+      }
+    }
+    for (let i = 0; i < 10; i++) nodes.push({ id: `loose${i}`, degree: 0 })
+    // d3's phyllotaxis start, centred: the same for every canvas, so only the forces differ.
+    nodes.forEach((n, i) => {
+      const r = 10 * Math.sqrt(0.5 + i)
+      const a = i * Math.PI * (3 - Math.sqrt(5))
+      n.x = width / 2 + r * Math.cos(a)
+      n.y = height / 2 + r * Math.sin(a)
+    })
+    const sim = applyGraphForces(forceSimulation<ForceNode>(nodes).stop(), {
+      edges,
+      width,
+      height,
+    })
+    sim.tick(300)
+    const xs = nodes.map((n) => n.x ?? 0)
+    const ys = nodes.map((n) => n.y ?? 0)
+    return (Math.max(...xs) - Math.min(...xs)) / (Math.max(...ys) - Math.min(...ys))
+  }
+
+  it('lays a tall canvas out taller than wide, and a wide one wider than tall', () => {
+    expect(layoutAspect(400, 800)).toBeLessThan(0.8)
+    expect(layoutAspect(800, 400)).toBeGreaterThan(1.25)
+  })
+})

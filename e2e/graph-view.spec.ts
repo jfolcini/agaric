@@ -1,7 +1,7 @@
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, navigateToView, openPage, test } from './helpers'
+import { expect, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for the GraphView component (F-33).
@@ -481,9 +481,8 @@ test.describe('Graph view @graph', () => {
 
     const svgBox = await svg.boundingBox()
     if (!svgBox) throw new Error('graph svg has no bounding box')
-    // Bottom-left corner: clear of the top filter bar (`absolute top-2
-    // left-2 right-2`), the bottom-right zoom cluster (`absolute bottom-3
-    // right-3`), and — for this small seed graph — the force-simulated
+    // Bottom-left corner: clear of the bottom-right zoom cluster (`absolute
+    // bottom-3 right-3`) and — for this small seed graph — the force-simulated
     // nodes, which settle away from the edges.
     const startX = svgBox.x + 20
     const startY = svgBox.y + svgBox.height - 20
@@ -606,6 +605,25 @@ test.describe('Graph view @graph', () => {
     }
   })
 
+  test('a journal page draws in its own tone, apart from the other pages (#7040)', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Graph')
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
+    await expect(nodeGroups.filter({ hasText: 'Getting Started' })).toHaveCount(1)
+    await page.getByRole('button', { name: 'Remove Exclude journal pages filter' }).click()
+    const journal = page.getByRole('option', { name: localDateStr(new Date()), exact: true })
+    await expect(journal).toHaveCount(1)
+    await expect(journal).not.toHaveAttribute('aria-current', 'page')
+
+    const fill = (name: string) =>
+      page
+        .getByRole('option', { name, exact: true })
+        .locator('circle:not(.hit-area)')
+        .evaluate((dot) => getComputedStyle(dot).fill)
+    expect(await fill(localDateStr(new Date()))).not.toBe(await fill('Getting Started'))
+  })
+
   // ---------------------------------------------------------------------
   // Labels (#5430): one size on screen at every zoom, never overlapping, and
   // the hovered node's neighbourhood always labelled.
@@ -700,5 +718,51 @@ test.describe('Graph view @graph', () => {
 
     await expect(labelOf('North hub')).toBeVisible()
     await expect.poll(hidden).toEqual([])
+  })
+})
+
+// #7040 — on a phone the filters are a plain bar above the canvas, not a box
+// inside it, and the floating capture button covers none of the graph's controls.
+test.describe('Graph view on a phone @graph @mobile', () => {
+  const phone = devices['Pixel 7']
+  test.use({
+    viewport: { width: 412, height: 915 },
+    hasTouch: phone.hasTouch,
+    isMobile: phone.isMobile,
+    userAgent: phone.userAgent,
+  })
+
+  test('the filter bar sits above the canvas, unboxed, and clear of the capture button', async ({
+    page,
+  }) => {
+    test.slow()
+    await waitForBoot(page)
+    await navigateToView(page, 'Graph')
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+    const fab = page.getByTestId('quick-capture-fab')
+    await expect(fab).toBeVisible()
+
+    const box = async (testId: string) => {
+      const b = await page.getByTestId(testId).boundingBox()
+      if (!b) throw new Error(`${testId} has no box`)
+      return b
+    }
+    const canvas = await box('graph-view')
+    const filters = await box('graph-tag-filter')
+    expect(filters.y + filters.height).toBeLessThanOrEqual(canvas.y)
+    for (const testId of ['graph-filter-bar', 'local-graph-control']) {
+      await expect(page.getByTestId(testId)).toHaveCSS('border-top-width', '0px')
+    }
+
+    const button = await box('quick-capture-fab')
+    for (const testId of ['graph-zoom-controls', 'graph-tag-filter']) {
+      const control = await box(testId)
+      const intersects =
+        control.x < button.x + button.width &&
+        button.x < control.x + control.width &&
+        control.y < button.y + button.height &&
+        button.y < control.y + control.height
+      expect(intersects, testId).toBe(false)
+    }
   })
 })
