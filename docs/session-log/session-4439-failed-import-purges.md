@@ -1,6 +1,6 @@
 # Session 4439 — Review notes from #7064 and #7072: a failed import keeps its purges
 
-**Ask.** One follow-up PR for the two Loro upgrade PRs: the data-integrity defect session 4431 left open ("a purge or a kept local block inside such a half-imported batch"), a committed test for a `loro_doc_delta` row loro 1.13.6 wrote, and two review notes.
+**Ask.** One follow-up PR for the two Loro upgrade PRs: the data-integrity defect session 4431 left open ("a purge or a kept local block inside such a half-imported batch"), a committed test for a `loro_doc_delta` row loro 1.13.6 wrote, and a review note.
 
 **The defect.** An import can fail after part of it landed: `import_batch` keeps what its other blobs imported, and a single `import` keeps a valid prefix. `import_payload_with_changed_purged_tagscope` returned the error before it resolved that part, so the purged set and the #6561 rescue were never computed. Boot replay then retried slot by slot, and the purge's re-import was a no-op that resolves nothing: the purged page and its blocks kept their live rows with no tombstone, and a block written here that the purging device never received left the engine instead of going to a Trash page. Shown red first, on the purged rows.
 
@@ -16,10 +16,7 @@
 
 **The 1.13.6 delta row.** The 0.26.0 release vault holds two snapshots and no `loro_doc_delta` row, because the generator exits through a snapshot pass. The new fixture is one row 0.26.0 saves for a write to a new space, written by a throwaway test in a worktree of 7105736 (the last commit on loro 1.13.6); `a_delta_row_written_by_loro_1_13_6_rehydrates` boots from it and reads the blocks back.
 
-**Review notes.**
-
-- The `verify-lockfiles` error text in `_validate.yml` and its copy in `docs/BUILD.md` said loro is pinned exactly in `agaric-engine`. #7072 made it a caret requirement; the sentence is gone from both.
-- #7060's review said "jiff 0.2 costs compile time". It does not: `jiff 0.2.46` is in `Cargo.lock` only as the optional dependency behind `serde_with`'s `jiff_0_2` feature, which nothing enables, and `cargo tree --workspace --target all -i jiff@0.2.46` prints nothing. No code change.
+**Review note.** The `verify-lockfiles` error text in `_validate.yml` and its copy in `docs/BUILD.md` said loro is pinned exactly in `agaric-engine`. #7072 made it a caret requirement; the sentence is gone from both.
 
 **Ran.**
 
