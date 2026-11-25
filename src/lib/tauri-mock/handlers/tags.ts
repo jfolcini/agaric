@@ -95,7 +95,7 @@ function tagCacheRows(): TagCacheRow[] {
  * applies the space scope and `blockType`, then orders `b.id ASC`.
  */
 function evalTagQuery(
-  cmd: 'query_by_tags' | 'query_by_tag_expr',
+  cmd: 'query_by_tags',
   expr: TagExprNode,
   a: Record<string, unknown>,
 ): { items: Record<string, unknown>[]; next_cursor: null; has_more: false; total_count: null } {
@@ -253,10 +253,10 @@ export const tagsHandlers = {
     return count
   },
 
-  // `query_by_tags` is `query_by_tag_expr` with the expression built the way
-  // `query_by_tags_inner` builds it: every tag id a `Tag` leaf, every prefix a
-  // `Prefix` leaf, then `and` → `And`, `not` → `Not(Or(...))`, anything else
-  // → `Or`; no leaves at all short-circuits to an empty page.
+  // `query_by_tags` evaluates the expression `query_by_tags_inner` builds:
+  // every tag id a `Tag` leaf, every prefix a `Prefix` leaf, then `and` →
+  // `And`, `not` → `Not(Or(...))`, anything else → `Or`; no leaves at all
+  // short-circuits to an empty page.
   query_by_tags: (args) => {
     const a = args as Record<string, unknown>
     assertTagFilterWithinCap(a['tagIds'] as string[] | null)
@@ -284,13 +284,6 @@ export const tagsHandlers = {
           ? { type: 'Not', value: { type: 'Or', value: leaves } }
           : { type: 'Or', value: leaves }
     return evalTagQuery('query_by_tags', expr, a)
-  },
-
-  // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
-  query_by_tag_expr: (args) => {
-    const a = args as Record<string, unknown>
-    pageRequestLimit(a['limit'])
-    return evalTagQuery('query_by_tag_expr', a['expr'] as TagExprNode, a)
   },
 
   // `tags_cache` prefix scan over one space's tags: `name LIKE ?1 ESCAPE '\\'
@@ -415,7 +408,6 @@ export const tagsHandlers = {
   | 'remove_tag'
   | 'add_tags_by_ids'
   | 'query_by_tags'
-  | 'query_by_tag_expr'
   | 'list_tags_by_prefix'
   | 'list_all_tags_in_space'
   | 'list_tags_for_block'

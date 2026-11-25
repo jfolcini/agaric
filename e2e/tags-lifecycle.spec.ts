@@ -24,8 +24,6 @@ import {
  *
  *  - #5257: the Tags view stays mounted across a space switch (each space
  *    remembers its view) and must list the space switched back to.
- *  - #5254: renaming or deleting a tag in the list relabels or drops its chip
- *    in the filter panel below.
  *  - #5236: a tag created from the page header is the one a later `#name` in
  *    a block applies, not a second tag of the same name.
  *  - #5244: an applied tag outside the space's 50 oldest still gets its chip.
@@ -57,7 +55,7 @@ async function storedTagId(page: Page): Promise<string | undefined> {
   return content.match(TAG_REF)?.[1]
 }
 
-/** The remove button of the `name` chip (filter panel or page header). */
+/** The remove button of the `name` chip in the page header. */
 function removeChip(page: Page, name: string) {
   return page.getByRole('button', { name: `Remove tag ${name}`, exact: true })
 }
@@ -135,41 +133,6 @@ test.describe('Tags view follows the active space (#5257) @pages @spaces', () =>
       .not.toContain('idea')
     await switchToSpace(page, 'Work')
     await expect(page.getByTestId('tag-item-worktag')).toBeVisible()
-  })
-})
-
-test.describe('Filter panel follows the Tags list (#5254) @pages @spaces', () => {
-  test.beforeEach(async ({ page }) => {
-    await waitForBoot(page)
-    await navigateToView(page, 'Tags')
-    await page.getByLabel('Find a tag').fill('ide')
-    const matching = page.getByRole('grid', { name: 'Matching tags', exact: true })
-    await matching.getByRole('button', { name: 'Add', exact: true }).click()
-    await expect(removeChip(page, 'idea')).toBeVisible()
-  })
-
-  test('renaming a selected tag relabels its chip', async ({ page }) => {
-    const row = tagRow(page, 'idea')
-    await row.hover()
-    await row.getByRole('button', { name: 'Rename tag' }).click()
-    const dialog = activeDialog(page)
-    await dialog.getByLabel('New tag name').fill('concept')
-    await dialog.getByRole('button', { name: 'Save' }).click()
-
-    await expect(page.getByTestId('tag-item-concept')).toBeVisible()
-    await expect(removeChip(page, 'concept')).toBeVisible()
-    await expect(removeChip(page, 'idea')).toHaveCount(0)
-  })
-
-  test('deleting a selected tag drops its chip', async ({ page }) => {
-    const row = tagRow(page, 'idea')
-    await row.hover()
-    await row.getByRole('button', { name: 'Delete tag' }).click()
-    await page.getByRole('button', { name: 'Delete', exact: true }).click()
-
-    await expect(page.getByTestId('tag-item-idea')).toHaveCount(0)
-    await expect(removeChip(page, 'idea')).toHaveCount(0)
-    await expect(page.getByText('Selected:')).toHaveCount(0)
   })
 })
 

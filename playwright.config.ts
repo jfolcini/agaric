@@ -202,7 +202,6 @@ const REAL_BACKEND_SPECS = [
   'tag-suggested-properties.spec.ts',
   'tags-and-links-happy-paths.spec.ts',
   'tags-lifecycle.spec.ts',
-  'tags-query-modes.spec.ts',
   'task-checkbox-rows.spec.ts',
   'task-list-kind.spec.ts',
   'task-repeat-toggle-race.spec.ts',

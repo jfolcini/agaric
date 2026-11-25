@@ -76,9 +76,11 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
   while (start < c && input[start] === '(') start++
   const slice = input.slice(start, c)
 
-  // under:#… completes a tag name exactly as tag:#… does.
-  if (slice.startsWith('under:#')) {
-    return { active: 'tag', query: slice.slice('under:#'.length), anchor: start + 'under:#'.length }
+  // under:#… and not-tag:#… complete a tag name exactly as tag:#… does.
+  for (const prefix of ['under:#', 'not-tag:#']) {
+    if (slice.startsWith(prefix)) {
+      return { active: 'tag', query: slice.slice(prefix.length), anchor: start + prefix.length }
+    }
   }
   // tag:#…
   if (slice.startsWith('tag:#')) {

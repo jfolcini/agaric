@@ -158,14 +158,13 @@ export const pages: Record<string, string> = {
   'pageHeader.removeTag': 'Remove tag {{name}}',
   // #1423 — inherited (derived) tag chips. The screen-reader text marks the
   // chip as derived (styling alone is not color-only); the explanation points
-  // at the one query surface that can match it (#4548).
+  // at the search filter that matches it, `under:` (#4548).
   // Translators: Inherited tag chip (a tag set on a parent block): its screen-reader text, the
   // explanation shown from an (i) button beside it, and that button's screen-reader label.
-  // "Tags view" is the name of the Tags view; 'Include nested blocks' is the label of an option
-  // there, use the same translation.
+  // under:#tag is search syntax: keep it as it is.
   'pageHeader.inheritedTag': 'Inherited tag {{name}}',
   'pageHeader.inheritedTagHint':
-    "Inherited from a parent block. The Tags view matches it only with 'Include nested blocks' turned on.",
+    'Inherited from a parent block. A search matches it only with under:#tag.',
   'pageHeader.inheritedTagInfo': 'About inherited tags',
   // Translators: Tag picker popover: search input placeholder and aria-label, the popover's
   // aria-label, a button that creates a new tag ({{name}} = the typed tag name), and its empty

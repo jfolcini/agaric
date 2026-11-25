@@ -763,10 +763,9 @@ export type Handler = (args: unknown) => unknown
 export { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 
 /**
- * #1472 — the adjacently-tagged `TagExpr` wire shape (`{ type, value }`,
- * matching the Rust `#[serde(tag = "type", content = "value")]` enum and the
- * specta-generated TS union in `bindings.ts`). Declared locally so the mock
- * stays self-contained, mirroring the other `Mock*` row types in this file.
+ * The adjacently-tagged `TagExpr` shape (`{ type, value }`, matching the Rust
+ * `#[serde(tag = "type", content = "value")]` enum) the `query_by_tags` mock
+ * builds and evaluates.
  */
 export type TagExprNode =
   | { type: 'Tag'; value: string }

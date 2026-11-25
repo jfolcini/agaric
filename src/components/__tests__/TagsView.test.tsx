@@ -3,53 +3,29 @@
  * branch of `ViewDispatcher` (#1649).
  *
  * Pins the composition contract: TagsView renders the tag browser
- * (`TagList`) and the tag-filter panel (`TagFilterPanel`), forwards its
- * `onTagClick` prop through to `TagList`, and sources the section divider
- * label from i18n rather than a hardcoded literal.
+ * (`TagList`) and forwards its `onTagClick` prop through to it.
  */
 
 import { render, screen } from '@testing-library/react'
-import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { TagsView } from '@/components/TagsView'
-import { t } from '@/lib/i18n'
 
-// Sub-components are mocked: this test pins composition + wiring, not the
-// internals of TagList / TagFilterPanel (which have their own suites).
-// The mock renders what TagList shows under its list as if the space has a tag;
-// TagList.test.tsx pins that it shows it only then.
+// TagList is mocked: this test pins composition + wiring, not its internals
+// (which have their own suite).
 vi.mock('@/components/TagList', () => ({
-  TagList: ({
-    onTagClick,
-    children,
-  }: {
-    onTagClick: (id: string, name: string) => void
-    children: ReactNode
-  }) => (
-    <>
-      <button type="button" data-testid="tag-list-mock" onClick={() => onTagClick('T1', 'work')}>
-        tag-list
-      </button>
-      {children}
-    </>
+  TagList: ({ onTagClick }: { onTagClick: (id: string, name: string) => void }) => (
+    <button type="button" data-testid="tag-list-mock" onClick={() => onTagClick('T1', 'work')}>
+      tag-list
+    </button>
   ),
-}))
-vi.mock('@/components/filters/TagFilterPanel', () => ({
-  TagFilterPanel: () => <div data-testid="tag-filter-panel-mock">tag-filter</div>,
 }))
 
 describe('TagsView', () => {
-  it('composes TagList and TagFilterPanel', () => {
+  it('renders TagList', () => {
     render(<TagsView onTagClick={vi.fn()} />)
     expect(screen.getByTestId('tag-list-mock')).toBeInTheDocument()
-    expect(screen.getByTestId('tag-filter-panel-mock')).toBeInTheDocument()
-  })
-
-  it('renders the section divider label from i18n', () => {
-    render(<TagsView onTagClick={vi.fn()} />)
-    expect(screen.getByText(t('tagFilter.sectionLabel'))).toBeInTheDocument()
   })
 
   it('forwards onTagClick through to TagList', async () => {

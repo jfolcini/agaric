@@ -562,6 +562,8 @@ export const references: Record<string, string> = {
   'search.help.filter.cell.bareTag': 'Kurzform für tag:#name.',
   'search.help.filter.cell.underTag':
     'Block trägt den Tag oder einen darunter verschachtelten Tag, ob angehängt, inline geschrieben oder von seiner Seite oder einem übergeordneten Block geerbt.',
+  'search.help.filter.cell.notTag':
+    'Block trägt weder den Tag noch einen darunter verschachtelten Tag als angehängten Tag; inline geschriebene und geerbte Tags zählen nicht. Wiederholungen schließen mehr aus.',
   'search.help.filter.cell.path':
     'Seitennamen-Glob (einschließen). Kommagetrennte Werte werden per OR kombiniert.',
   'search.help.filter.cell.notPath': 'Seitennamen-Glob (ausschließen).',

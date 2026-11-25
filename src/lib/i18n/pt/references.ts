@@ -558,6 +558,8 @@ export const references: Record<string, string> = {
   'search.help.filter.cell.bareTag': 'Forma abreviada de tag:#name.',
   'search.help.filter.cell.underTag':
     'O bloco tem a etiqueta, ou uma etiqueta aninhada nela, anexada, escrita no texto ou herdada da página ou de um bloco pai.',
+  'search.help.filter.cell.notTag':
+    'O bloco não tem anexada a etiqueta nem uma etiqueta aninhada nela; etiquetas escritas no texto ou herdadas não contam. Repetir exclui mais.',
   'search.help.filter.cell.path':
     'Inclui páginas cujo nome corresponde ao glob. Valores separados por vírgula são combinados com OR.',
   'search.help.filter.cell.notPath': 'Exclui páginas cujo nome corresponde ao glob.',

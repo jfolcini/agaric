@@ -69,7 +69,7 @@ App
 | **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Sidebar |
 | **Search** | Debounced + cursor-paginated FTS; filter chips for page-path globs, tags and the other filter-DSL tokens. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Sidebar |
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
-| **Tags** | Tag CRUD + colour picker + filtered task panel. | Sidebar, Pages header |
+| **Tags** | Tag CRUD + colour picker. | Sidebar, Pages header |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |
 | **Settings** | Tabbed (incl. a **Spaces** tab, which the SpaceSwitcher's *Manage spaces…* opens, a **Properties** tab for property-definition CRUD, an **App health** tab with the integrity check plus materializer metrics — queue depths, op counts — that poll periodically, and a **Data** tab whose *Open edit history* row opens History); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
 | **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its button's count badge polls periodically. | Pages header |

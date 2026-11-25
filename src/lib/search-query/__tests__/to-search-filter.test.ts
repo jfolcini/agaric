@@ -230,3 +230,16 @@ describe('astToFilterProjection — under: (#5679)', () => {
     expect(p.tagsMatchInlineAndInherited).toBe(true)
   })
 })
+
+describe('astToFilterProjection — not-tag:', () => {
+  it('projects not-tag: names apart from tag: names, deduped and NFC-normalised', () => {
+    const p = project('tag:#work not-tag:#done not-tag:#done not-tag:#café')
+    expect(p.tagNames).toEqual(['work'])
+    expect(p.excludedTagNames).toEqual(['done', 'café'])
+    expect(p.tagsMatchInlineAndInherited).toBe(false)
+  })
+
+  it('projects no exclusion for a query without one', () => {
+    expect(project('tag:#work').excludedTagNames).toEqual([])
+  })
+})

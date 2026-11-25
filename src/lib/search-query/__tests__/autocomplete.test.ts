@@ -32,6 +32,14 @@ describe('detectAutocompleteAnchor', () => {
     })
   })
 
+  it('completes a tag name after not-tag:#', () => {
+    expect(detectAutocompleteAnchor('not-tag:#do', 11)).toEqual({
+      active: 'tag',
+      query: 'do',
+      anchor: 9,
+    })
+  })
+
   it('closes after space following tag', () => {
     expect(detectAutocompleteAnchor('tag:#urgent ', 12)).toBeNull()
   })

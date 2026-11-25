@@ -130,12 +130,12 @@ export function useSearchResults({
   // so the first debounced search can't fire before resolution settles and
   // flash unfiltered results; a settled-but-unresolved name makes
   // `astFilterParams` project the matches-nothing sentinel.
-  const {
-    tagIds,
-    tagAnyOf,
-    pending: tagResolutionPending,
-    byName,
-  } = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
+  const included = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
+  // `not-tag:` names, held the same way: an exclusion fired before its tag
+  // resolves would flash the blocks it drops.
+  const excluded = useTagResolution(debouncedProjection.excludedTagNames, currentSpaceId)
+  const { tagIds, tagAnyOf, byName } = included
+  const tagResolutionPending = included.pending || excluded.pending
 
   // The two search modes are symmetric. In BOTH modes the
   // structural filters are projected and applied as SQL filters server-side;
@@ -144,12 +144,14 @@ export function useSearchResults({
   // #6742 — a query whose `OR` joins filters sends them as one tree instead.
   const filterParams = useMemo(() => {
     const { expr } = debouncedAst
-    if (expr) return treeFilterParams({ ...debouncedAst, expr }, byName)
-    return astFilterParams(debouncedProjection, tagIds, tagAnyOf)
-  }, [debouncedAst, debouncedProjection, tagIds, tagAnyOf, byName])
+    if (expr)
+      return treeFilterParams({ ...debouncedAst, expr }, new Map([...byName, ...excluded.byName]))
+    const excludedTagIds = [...excluded.tagIds, ...excluded.tagAnyOf.flat()]
+    return astFilterParams(debouncedProjection, tagIds, tagAnyOf, excludedTagIds)
+  }, [debouncedAst, debouncedProjection, tagIds, tagAnyOf, byName, excluded])
   // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
   // directly (staged retirement of the generic hook; matching the merged
-  // `DonePanel` / `TagFilterPanel` / `usePageBrowserData` pattern). The query key
+  // `DonePanel` / `usePageBrowserData` pattern). The query key
   // carries every input the old `queryFn` `useCallback` closed over (space / free
   // text / the projected `filterParams` bundle / the three toggles), so a real
   // input change is a fresh query — reproducing the old request-id guard: a late
@@ -279,7 +281,7 @@ export function useSearchResults({
       // until the new fetch resolves (per-key cache writes unchanged, so the
       // stale-guard still holds). The `!queryEnabled` derive below reproduces the
       // old `setItems([])` clear so a retained placeholder can't survive an emptied
-      // query (same guard TagFilterPanel uses).
+      // query.
       placeholderData: keepPreviousData,
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
@@ -293,7 +295,7 @@ export function useSearchResults({
   // Flatten the accumulated pages. The `!queryEnabled` guard reproduces the old
   // explicit `setItems([])` clear: `keepPreviousData` would otherwise retain the
   // last query's pages as a placeholder after the input empties, so derive `[]`
-  // directly when the query is inactive (same guard TagFilterPanel uses).
+  // directly when the query is inactive.
   //
   // Keep the first occurrence of each id: the bm25-rank cursor shifts when the
   // index changes between two fetches, so a later page can repeat a row an

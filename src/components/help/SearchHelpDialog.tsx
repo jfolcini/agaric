@@ -61,6 +61,10 @@ function FilterSyntaxBody() {
             <td>{t('search.help.filter.cell.underTag')}</td>
           </tr>
           <tr>
+            <td className="pr-3">not-tag:#name</td>
+            <td>{t('search.help.filter.cell.notTag')}</td>
+          </tr>
+          <tr>
             <td className="pr-3">path:GLOB</td>
             <td>{t('search.help.filter.cell.path')}</td>
           </tr>

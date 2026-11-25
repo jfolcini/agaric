@@ -405,6 +405,29 @@ describe('compileQueryText: the tokens a query block refused before #6742', () =
     })
   })
 
+  it('not-tag: is the complement of the tag attached, even beside under:', () => {
+    const not = (tag: string): FilterExpr => ({
+      type: 'Not',
+      child: { type: 'Leaf', primitive: { type: 'Tag', tag } },
+    })
+    const result = run('under:#work not-tag:#home')
+    expect(result.filter).toEqual({
+      type: 'And',
+      children: [{ type: 'Leaf', primitive: { type: 'TagUnder', tag: TAG_WORK } }, not(TAG_HOME)],
+    })
+    expect(result.textOnly).toBe(true)
+    expect(compileQueryTextWithTags('not-tag:#nope', tags, today)).toEqual({
+      ok: false,
+      problems: [
+        {
+          token: 'not-tag:#nope',
+          column: 1,
+          message: t('query.text.unknownTag', { name: 'nope' }),
+        },
+      ],
+    })
+  })
+
   it('path: is the patterns search binds; several page names are any of them', () => {
     expect(run('path:Journal').filter).toEqual({ type: 'And', children: [glob('*journal*')] })
     expect(run('path:"Old Notes/*"').filter).toEqual({
@@ -540,6 +563,25 @@ describe('compileQueryText: OR between conditions (#6742)', () => {
     })
     // `under:` and a name standing for its nested tags have no form control.
     expect(result.textOnly).toBe(true)
+  })
+
+  it('compiles a not-tag: in a run as the complement of its tag', () => {
+    expect(run('tag:#work not-tag:#projects OR tag:#home').filter).toEqual({
+      type: 'Or',
+      children: [
+        {
+          type: 'And',
+          children: [
+            leaf({ type: 'Tag', tag: TAG_WORK }),
+            {
+              type: 'Not',
+              child: { type: 'Or', children: [leaf({ type: 'Tag', tag: TAG_NESTED })] },
+            },
+          ],
+        },
+        leaf({ type: 'Tag', tag: TAG_HOME }),
+      ],
+    })
   })
 
   it('keeps free text beside a group as the full-text term', () => {

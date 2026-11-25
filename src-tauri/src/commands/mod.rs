@@ -251,8 +251,8 @@ pub use tags::{
     add_tag, add_tag_inner, add_tags_by_ids, add_tags_by_ids_inner, list_all_tags_in_space,
     list_all_tags_in_space_inner, list_inherited_tags_for_block,
     list_inherited_tags_for_block_inner, list_tags_by_prefix, list_tags_by_prefix_inner,
-    list_tags_for_block, list_tags_for_block_inner, list_tags_inner, query_by_tag_expr,
-    query_by_tag_expr_inner, query_by_tags, query_by_tags_inner, remove_tag, remove_tag_inner,
+    list_tags_for_block, list_tags_for_block_inner, list_tags_inner, query_by_tags,
+    query_by_tags_inner, remove_tag, remove_tag_inner,
 };
 
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)

@@ -8,7 +8,6 @@ import {
   navigateToView,
   openPage,
   saveBlock,
-  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -20,9 +19,8 @@ import {
  *  1. Tags view shows seed tags (work, personal, idea)
  *  2. Tag creation via the TagList inline form
  *  3. Tag deletion with confirmation dialog
- *  4. Tag filter panel: prefix search, add to filter, verify results
- *  5. Tag insertion via @ picker in the block editor
- *  6. A tag colour kept by the tag's synced `color` property (#6544)
+ *  4. Tag insertion via @ picker in the block editor
+ *  5. A tag colour kept by the tag's synced `color` property (#6544)
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`):
  *   Tags: work, personal, idea
@@ -67,29 +65,6 @@ test.describe('Tags view — seed tags @pages', () => {
     // The "New tag name..." input and "Add tag" button should be visible
     await expect(page.getByPlaceholder('New tag name...')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Add tag' })).toBeVisible()
-  })
-})
-
-// A tag filter needs a tag to pick, so a space without tags offers none (#7040).
-test.describe('Tags view — a space with no tags @pages @spaces', () => {
-  test('offers no tag filter until the space has a tag', async ({ page }) => {
-    await waitForBoot(page)
-    await navigateToTags(page)
-    const filterHeading = page.getByRole('heading', { name: 'Find blocks by tag' })
-    await expect(filterHeading).toBeVisible()
-
-    // The seed writes its tags into Personal only.
-    await switchToSpace(page, 'Work')
-    await navigateToTags(page)
-    await expect(
-      page.getByText('No tags yet. Create one above to organize your blocks.'),
-    ).toBeVisible()
-    await expect(filterHeading).toHaveCount(0)
-
-    await page.getByPlaceholder('New tag name...').fill('roadmap')
-    await page.getByRole('button', { name: 'Add tag' }).click()
-    await expect(page.getByTestId('tag-item-roadmap')).toBeVisible()
-    await expect(filterHeading).toBeVisible()
   })
 })
 
@@ -211,68 +186,7 @@ test.describe('Tag deletion @pages', () => {
 })
 
 // ===========================================================================
-// 4. Tag filter panel
-// ===========================================================================
-
-test.describe('Tag filter panel @pages', () => {
-  test.beforeEach(async ({ page }) => {
-    await waitForBoot(page)
-    await navigateToTags(page)
-  })
-
-  test('prefix search finds matching tags', async ({ page }) => {
-    const searchInput = page.getByLabel('Find a tag')
-    await searchInput.fill('wor')
-
-    // Wait for debounce (300ms) + rendering
-    await expect(page.getByText('Matching tags')).toBeVisible()
-
-    // "work" tag should appear in the matching section with an "Add" button
-    const matchingSection = page.locator('section', { hasText: 'Matching tags' })
-    await expect(matchingSection.getByText('work')).toBeVisible()
-    await expect(matchingSection.getByRole('button', { name: 'Add', exact: true })).toBeVisible()
-  })
-
-  test('adding a tag from search shows it as selected', async ({ page }) => {
-    const searchInput = page.getByLabel('Find a tag')
-    await searchInput.fill('per')
-
-    await expect(page.getByText('Matching tags')).toBeVisible()
-
-    // Click "Add" next to "personal"
-    const matchingSection = page.locator('section', { hasText: 'Matching tags' })
-    await matchingSection.getByRole('button', { name: 'Add', exact: true }).click()
-
-    // "personal" should now appear in the "Selected:" area
-    await expect(page.getByText('Selected:')).toBeVisible()
-    await expect(
-      page.locator('.flex-wrap', { hasText: 'Selected:' }).getByText('personal'),
-    ).toBeVisible()
-  })
-
-  test('All/Any mode toggle switches active mode', async ({ page }) => {
-    // By default All is active
-    const andBtn = page.getByRole('radio', { name: 'All', exact: true })
-    const orBtn = page.getByRole('radio', { name: 'Any', exact: true })
-
-    await expect(andBtn).toHaveAttribute('aria-checked', 'true')
-    await expect(orBtn).toHaveAttribute('aria-checked', 'false')
-
-    // Switch to Any
-    await orBtn.click()
-    await expect(orBtn).toHaveAttribute('aria-checked', 'true')
-    await expect(andBtn).toHaveAttribute('aria-checked', 'false')
-  })
-
-  test('feedback message shows when no tags selected', async ({ page }) => {
-    await expect(page.getByTestId('tag-filter-feedback')).toHaveText(
-      'Select tags above to filter blocks',
-    )
-  })
-})
-
-// ===========================================================================
-// 5. Tag insertion via @ picker
+// 4. Tag insertion via @ picker
 // ===========================================================================
 
 test.describe('Tag insertion via @ picker @pages', () => {
@@ -355,7 +269,7 @@ test.describe('Tag insertion via @ picker @pages', () => {
 })
 
 // ===========================================================================
-// 6. @ picker — create new tag & Tab autocomplete
+// 5. @ picker — create new tag & Tab autocomplete
 // ===========================================================================
 
 test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {

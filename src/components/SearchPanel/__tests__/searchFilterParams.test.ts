@@ -26,6 +26,7 @@ function emptyProjection(): AstFilterProjection {
   return {
     tagNames: [],
     tagsMatchInlineAndInherited: false,
+    excludedTagNames: [],
     includePageGlobs: [],
     excludePageGlobs: [],
     stateFilter: [],
@@ -100,6 +101,14 @@ describe('astFilterParams', () => {
     expect(params.tagAnyOf).toEqual([['TAG_WEB', 'TAG_API']])
     expect(astFilterParams(projection, ['TAG_URGENT']).tagIds).toEqual([UNRESOLVED_TAG_SENTINEL])
     expect(astFilterParams(emptyProjection(), []).tagAnyOf).toBeUndefined()
+  })
+
+  it('sends the not-tag: ids, and no sentinel for a not-tag: name no tag holds', () => {
+    const projection = { ...emptyProjection(), excludedTagNames: ['done', 'typo'] }
+    const params = astFilterParams(projection, [], [], ['TAG_DONE'])
+    expect(params.excludedTagIds).toEqual(['TAG_DONE'])
+    expect(params.tagIds).toBeUndefined()
+    expect(astFilterParams(emptyProjection(), []).excludedTagIds).toBeUndefined()
   })
 
   // Issue #717 — a `tag:` filter whose name resolved to no existing tag
@@ -282,6 +291,7 @@ describe('astFilterParams canonical-adapter parity (#1646)', () => {
       projection: {
         tagNames: ['work'],
         tagsMatchInlineAndInherited: false,
+        excludedTagNames: [],
         includePageGlobs: ['Projects/*'],
         excludePageGlobs: ['Archive/*'],
         stateFilter: ['TODO', 'none'],

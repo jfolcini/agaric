@@ -101,11 +101,9 @@ function rowAt(rows: readonly TagRow[], index: number): TagRow {
 interface TagListProps {
   /** Called when a tag name is clicked. */
   onTagClick?: (tagId: string, tagName: string) => void
-  /** Rendered under the list while the space has a tag (the Tags view's tag filter). */
-  children?: React.ReactNode
 }
 
-export function TagList({ onTagClick, children }: TagListProps): React.ReactElement {
+export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const { t } = useTranslation()
   const [tags, setTags] = useState<TagCacheRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -501,8 +499,6 @@ export function TagList({ onTagClick, children }: TagListProps): React.ReactElem
           </ScrollArea>
         )}
       </ListViewState>
-
-      {tags.length > 0 && children}
 
       {/* Rename dialog */}
       <RenameDialog

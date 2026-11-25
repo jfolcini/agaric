@@ -59,6 +59,8 @@ describe('serialize round-trip', () => {
     // #5679 — "Search everything under #tag".
     'under:#idea',
     'under:#"my tag" under:#urgent leftover',
+    'not-tag:#done',
+    'tag:#work not-tag:#"my tag" not-tag:#done leftover',
   ]
 
   it('#3288 — tag: strips one surrounding quote pair, before or after the #', () => {
@@ -68,6 +70,11 @@ describe('serialize round-trip', () => {
       expect(chip?.kind === 'tag' && chip.value).toBe(s.includes('work') ? 'work' : 'my tag')
     }
     expect(tokenSource({ kind: 'tag', value: 'my tag', span: [0, 0] })).toBe('tag:#"my tag"')
+  })
+
+  it('not-tag: serialises with its own prefix, quoting a spaced name', () => {
+    expect(tokenSource({ kind: 'notTag', value: 'my tag', span: [0, 0] })).toBe('not-tag:#"my tag"')
+    expect(serialize(parse('not-tag:done'))).toBe('not-tag:#done')
   })
 
   it('#5679 — under: serialises with its own prefix', () => {
@@ -112,6 +119,7 @@ describe('serialize round-trip', () => {
             'hello world',
             // An under: chip turns every tag: and bare-#tag chip beside it invalid.
             'under:#idea tag:#urgent #followup',
+            'tag:#urgent not-tag:#"my tag" under:#idea',
           ),
           fc.string({ minLength: 0, maxLength: 30 }),
         ),
@@ -129,6 +137,7 @@ describe('serialize round-trip', () => {
       'tag:#a',
       'tag:#"my tag"',
       'under:#b',
+      'not-tag:#c',
       'state:TODO',
       'not-state:DONE',
       'priority:1',

@@ -1,8 +1,8 @@
 /**
  * ResultCard — shared card button for displaying a block result.
  *
- * Used by SearchPanel and TagFilterPanel to render identical result cards
- * with optional spinner, badge, and child content (e.g. breadcrumbs).
+ * Used by SearchPanel to render result cards with optional spinner, badge,
+ * and child content (e.g. breadcrumbs).
  *
  * Inline tokens (#[ULID] tag refs, [[ULID]] block links) are rendered as
  * resolved pills via renderRichContent() + useRichContentCallbacks().

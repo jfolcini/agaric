@@ -567,6 +567,8 @@ export const references: Record<string, string> = {
   'search.help.filter.cell.bareTag': 'Forme abrégée de tag:#name.',
   'search.help.filter.cell.underTag':
     'Le bloc porte l’étiquette, ou une étiquette imbriquée sous celle-ci, qu’elle soit attachée, écrite dans le texte ou héritée de sa page ou d’un bloc parent.',
+  'search.help.filter.cell.notTag':
+    'Le bloc ne porte ni l’étiquette ni une étiquette imbriquée sous celle-ci, attachée\u00A0; les étiquettes écrites dans le texte ou héritées ne comptent pas. Répéter exclut davantage.',
   'search.help.filter.cell.path':
     'Inclusion par glob sur le nom de page. Les valeurs séparées par des virgules se combinent en OR.',
   'search.help.filter.cell.notPath': 'Exclusion par glob sur le nom de page.',

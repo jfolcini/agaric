@@ -1700,7 +1700,7 @@ describe('SearchPanel', () => {
   })
 
   // FE-H-20: SearchPanel must dedupe parentIds before invoking
-  // batchResolve, mirroring the pattern in TagFilterPanel.tsx:137. Without
+  // batchResolve. Without
   // the `[...new Set(...)]` wrap, a results page with N children of the
   // same parent page would resolve the parent N times.
   it('dedupes parent page_ids before calling batchResolve', async () => {

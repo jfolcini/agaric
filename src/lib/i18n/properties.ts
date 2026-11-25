@@ -723,105 +723,6 @@ export const properties: Record<string, string> = {
   'properties.holdsSeveralValues': 'Holds several values',
   'properties.severalValuesType': '{{type}} · several values',
 
-  // Translators: Tags view: short label on the divider between the tag list and the tag filter.
-  'tagFilter.sectionLabel': 'Filter',
-
-  // Translators: Tags view, tag filter panel (find blocks carrying tags): heading, intro, the tag
-  // search box (placeholder + screen-reader label), and the selected-tag pills ({{name}} = tag).
-  'tagFilter.title': 'Find blocks by tag',
-  'tagFilter.description': 'Pick one or more tags to list the blocks that carry them.',
-  'tagFilter.searchPlaceholder': 'Find a tag…',
-  'tagFilter.searchLabel': 'Find a tag',
-  'tagFilter.selectedLabel': 'Selected:',
-  'tagFilter.removeTagLabel': 'Remove tag {{name}}',
-
-  // Translators: Tag filter mode toggle: label "Show blocks with:" then short buttons All (every
-  // selected tag) / Any (at least one), explained in the popover of the ⓘ beside them, whose
-  // screen-reader label is "About tag match modes". The third, None, is further down.
-  'tagFilter.modeLabel': 'Show blocks with:',
-  'tagFilter.andMode': 'All',
-  'tagFilter.andModeTooltip': 'Every selected tag',
-  'tagFilter.orMode': 'Any',
-  'tagFilter.orModeTooltip': 'At least one selected tag',
-  'tagFilter.modeInfoLabel': 'About tag match modes',
-  'tagFilter.selectTagsMessage': 'Select tags above to filter blocks',
-
-  // Translators: Tag filter feedback line: prompt before any tag is chosen, and the match count.
-  'tagFilter.blockMatch_one': '{{count}} block matches',
-  'tagFilter.blockMatch_other': '{{count}} blocks match',
-
-  // Translators: Tag filter: list of tags matching the typed search, each with an "Add" button.
-  'tagFilter.matchingTagsTitle': 'Matching tags',
-  'tagFilter.addButton': 'Add',
-
-  // Translators: Tag filter results: empty text, "Results" heading (the count follows in
-  // parentheses), "(empty)" for a block with no text, loading text and the Load more button.
-  'tagFilter.noMatchesFound': 'No matching blocks found.',
-  'tagFilter.resultsTitle': 'Results',
-  'tagFilter.emptyContent': '(empty)',
-  'tagFilter.loadingMessage': 'Loading...',
-  'tagFilter.loadMoreButton': 'Load more',
-
-  // Translators: Tag filter match count once tags are chosen, as in "3 blocks match 2 tags (All)".
-  // {{count}} = matching blocks; {{tags}} = the tagCount text below ("2 tags"); {{mode}} = the
-  // chosen mode button (All / Any / None).
-  'tagFilter.blockMatchTags_one': '{{count}} block matches {{tags}} ({{mode}})',
-  'tagFilter.blockMatchTags_other': '{{count}} blocks match {{tags}} ({{mode}})',
-  'tagFilter.tagCount_one': '{{count}} tag',
-  'tagFilter.tagCount_other': '{{count}} tags',
-
-  // Translators: Tag filter prefix pills: "Starts with" button adds the typed text as a prefix
-  // (its screen-reader label explains); pills read "{{prefix}}*", where * means "any ending".
-  // #1426 — prefix-search pills
-  'tagFilter.addPrefixButton': 'Starts with',
-  'tagFilter.addPrefixLabel': 'Starts with the typed text: match every tag that begins with it',
-  'tagFilter.prefixesLabel': 'Starts with:',
-  'tagFilter.prefixPillLabel': '{{prefix}}*',
-  'tagFilter.removePrefixLabel': 'Remove prefix {{prefix}}',
-
-  // Translators: Tag filter switch "Include nested blocks", the explanation its ⓘ opens and that
-  // ⓘ's screen-reader label, and the note appended to the match count while it is on.
-  // "inline @ tag chip" = a tag typed in a block's text.
-  // #4548 — the "Include nested blocks" switch. One flag for the whole query (`query_by_tags` /
-  // `query_by_tag_expr` take a single `include_inherited`), default off so an existing query keeps
-  // its result set.
-  'tagFilter.includeInherited': 'Include nested blocks',
-  'tagFilter.includeInheritedTooltip':
-    "Also match blocks nested under a tagged block. A tag on a block applies to every block beneath it, however deep — a tag on a page's first block matches the whole page. Only tags added to a block are inherited; an inline @ tag chip in its text is not.",
-  'tagFilter.includeInheritedInfoLabel': 'About nested blocks',
-  'tagFilter.includingInherited': '(including nested blocks)',
-
-  // Translators: Tag filter toggle button: reads "Advanced" to open the nested AND / OR composer,
-  // "Simple" to go back to the flat filter.
-  // #1426 — nested And/Or/Not composer (#1472 query_by_tag_expr IPC)
-  'tagFilter.composer.show': 'Advanced',
-  'tagFilter.composer.hide': 'Simple',
-
-  // Translators: Tag filter composer (nested groups of tags): screen-reader group names, the
-  // "Combine with" All / Any toggle, the NOT toggle (short, capitals), and short "Tag" / "Group"
-  // add buttons. {{label}} = a tag name or a prefix like "proj*".
-  'tagFilter.composer.rootLabel': 'Tag query group',
-  'tagFilter.composer.groupLabel': 'Nested tag query group',
-  'tagFilter.composer.opLabel': 'Combine with',
-  'tagFilter.composer.opAnd': 'All',
-  'tagFilter.composer.opOr': 'Any',
-  'tagFilter.composer.notLabel': 'NOT',
-  'tagFilter.composer.negateLeaf': 'Negate {{label}} (NOT)',
-  'tagFilter.composer.negateGroup': 'Negate this group (NOT)',
-  'tagFilter.composer.addTag': 'Tag',
-  'tagFilter.composer.addGroup': 'Group',
-  'tagFilter.composer.removeGroup': 'Remove this group',
-  'tagFilter.composer.removeGroupButton': 'Remove group',
-  'tagFilter.composer.removeLeaf': 'Remove {{label}}',
-
-  // Translators: Composer: empty-group hint, prefix chip "{{prefix}}*" (keep the *), the tag search
-  // box (placeholder + screen-reader label), and the option adding the typed text as a prefix.
-  'tagFilter.composer.emptyGroup': 'Add tags, name-prefixes, or a nested group to filter by.',
-  'tagFilter.composer.prefixLeafLabel': '{{prefix}}*',
-  'tagFilter.composer.searchPlaceholder': 'Find a tag…',
-  'tagFilter.composer.searchLabel': 'Search tags to add',
-  'tagFilter.composer.addPrefixOption': 'Add prefix "{{prefix}}*"',
-
   // Translators: Linked references section of a page: filter icon button opening a list of the
   // pages the references come from (search box, empty text, "Clear all" button).
   'sourceFilter.filterLabel': 'Filter by source page',
@@ -836,19 +737,11 @@ export const properties: Record<string, string> = {
   'property.editKeyLabel': 'Edit property {{key}}',
   'property.selectValue': '{{key}}: {{value}}',
 
-  // Translators: Tag filter mode toggle: third button (blocks with none of the tags) and its
-  // explanation in the mode ⓘ popover.
-  'tagFilter.notMode': 'None',
-  'tagFilter.notModeTooltip': 'None of the selected tags',
-
   // Translators: BlockPropertyDrawer: screen-reader announcements after a change.
   'property.saved': 'Property saved',
   'property.deleted': 'Property deleted',
   'property.dateCleared': 'Date cleared',
   'property.dateUpdated': 'Date updated',
-
-  // Translators: Tag filter result card: label before the page link, as in "in: My Page".
-  'tagFilter.inPage': 'in:',
 
   // Translators: Date fields of properties: placeholder listing input examples, and status lines
   // under the field. The date reader understands English only: keep the examples as they are.

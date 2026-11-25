@@ -66,10 +66,6 @@ absorb the backlink-only (`tagPrefix`, `sourcePage`, `contains`) and graph-only
 - `src/components/filters/forms/` (#1647) — `FilterValueSelect` (parametrised
   single-select) + `stateVocabulary.ts`, the *single* canonical task-state value
   set shared by search State and backlink Status.
-- `src/components/filters/TagComposer.tsx` (#1426) — the rich tag-expression
-  builder.
-- Nested **TagExpr** IPC (#1472) — the backend accepts a recursive tag
-  expression; canonical tag predicates are its leaves.
 - The pages popover's `add-filter/{editors,menu,vocab}` modules are the reusable
   categorised-popover building blocks.
 

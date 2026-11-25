@@ -73,6 +73,7 @@ pub fn search_filter(scope: SearchScope) -> SearchFilter {
         last_edited: None,
         tags_match_inline_and_inherited: false,
         tag_any_of: Vec::new(),
+        excluded_tag_ids: Vec::new(),
         filter_expr: None,
     }
 }

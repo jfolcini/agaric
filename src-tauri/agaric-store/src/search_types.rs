@@ -247,6 +247,11 @@ pub struct SearchFilter {
     /// `projects/web`, #6760).
     #[serde(default)]
     pub tag_any_of: Vec<Vec<String>>,
+    /// `not-tag:` — drop a block carrying any of these tags, or a tag nested
+    /// under one, attached: the blocks a [`Self::tag_ids`] entry keeps.
+    /// [`Self::tags_match_inline_and_inherited`] does not widen it.
+    #[serde(default)]
+    pub excluded_tag_ids: Vec<String>,
     /// #6742 — the filters of a search whose `OR` joins filters, as one tree,
     /// AND-ed with the fields above (which the app leaves empty beside it).
     /// Compiled through [`crate::filters::SearchProjection`]; only the leaves

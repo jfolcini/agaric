@@ -131,6 +131,29 @@ describe('classify / parse', () => {
     expect(parse('under:#').filters[0]).toMatchObject({ kind: 'invalid', source: 'under:#' })
   })
 
+  it('parses not-tag:#tag, quoted or bare, and rejects an empty value', () => {
+    expect(parse('not-tag:#done').filters).toEqual([
+      { kind: 'notTag', value: 'done', span: [0, 13] },
+    ])
+    expect(parse('not-tag:#"my tag"').filters[0]).toMatchObject({
+      kind: 'notTag',
+      value: 'my tag',
+    })
+    expect(parse('not-tag:done').filters[0]).toMatchObject({ kind: 'notTag', value: 'done' })
+    expect(parse('not-tag:#').filters[0]).toMatchObject({
+      kind: 'invalid',
+      source: 'not-tag:#',
+      error: 'not-tag: value required',
+    })
+  })
+
+  it('keeps a not-tag: beside an under: valid: an exclusion is never widened', () => {
+    expect(parse('under:#idea not-tag:#done').filters.map((f) => f.kind)).toEqual([
+      'under',
+      'notTag',
+    ])
+  })
+
   it('#5679 — flags a tag: or bare #tag beside an under: as invalid', () => {
     // The backend widens every tag of the query at once, so a tag: chip that
     // stayed valid would silently match inherited tags too.

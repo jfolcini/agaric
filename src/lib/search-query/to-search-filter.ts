@@ -37,6 +37,8 @@ export interface AstFilterProjection {
   tagNames: string[]
   /** An `under:` token is present: every tag name also matches inline and inherited tags. */
   tagsMatchInlineAndInherited: boolean
+  /** `not-tag:` names: a block carrying one of them, or a tag nested under it, is dropped. */
+  excludedTagNames: string[]
   includePageGlobs: string[]
   excludePageGlobs: string[]
   // Metadata filter projection.
@@ -56,6 +58,7 @@ export interface AstFilterProjection {
 export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection {
   const tagNames: string[] = []
   let tagsMatchInlineAndInherited = false
+  const excludedTagNames: string[] = []
   const includePageGlobs: string[] = []
   const excludePageGlobs: string[] = []
   const stateFilter: string[] = []
@@ -80,6 +83,11 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         const tagValue = f.value.normalize('NFC')
         if (!tagNames.includes(tagValue)) tagNames.push(tagValue)
         if (f.kind === 'under') tagsMatchInlineAndInherited = true
+        break
+      }
+      case 'notTag': {
+        const tagValue = f.value.normalize('NFC')
+        if (!excludedTagNames.includes(tagValue)) excludedTagNames.push(tagValue)
         break
       }
       case 'pathInclude': {
@@ -139,6 +147,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
   return {
     tagNames,
     tagsMatchInlineAndInherited,
+    excludedTagNames,
     includePageGlobs,
     excludePageGlobs,
     stateFilter,

@@ -172,10 +172,6 @@ export const MODULES = {
     src: 'src/lib/query-utils.ts',
     tests: ['src/lib/__tests__/query-utils.test.ts'],
   },
-  'tag-expr': {
-    src: 'src/lib/tagExpr.ts',
-    tests: ['src/lib/__tests__/tagExpr.test.ts'],
-  },
   // Importer: parses a foreign vault into blocks. Untrusted input, and the
   // result is written to the user's database. `setup`: restoring a space file
   // is tested through test-setup's `invoke` mock.

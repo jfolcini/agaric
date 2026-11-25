@@ -1,11 +1,16 @@
 /**
  * E2E — search-view filters: the Add filter builder (E2E-3), chip
- * lifecycle (E2E-4), and each structured-DSL token narrowing the rendered
- * results (E2E-6), seeded with blocks the filter must keep and must drop.
+ * lifecycle (E2E-4), each structured-DSL token narrowing the rendered
+ * results (E2E-6), seeded with blocks the filter must keep and must drop,
+ * and tags combined by AND, OR and `not-tag:`.
  */
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
+  expectSearchListed,
+  ipc,
+  navigateToView,
   openSearchView,
   type SearchSeed,
   searchResultIds,
@@ -245,5 +250,77 @@ test.describe('Structured DSL filters narrow the results (E2E-6) @search', () =>
   // Enter picks the first.
   test('prop: with an empty value keeps blocks that have the key', async ({ page }) => {
     await expectFilterKeeps(page, 'prop:mood=', [{ props: { mood: 'calm' } }], [{}])
+  })
+})
+
+// ===========================================================================
+// Tags combined: AND, OR and not-tag:, filter-only
+// ===========================================================================
+
+/** Create a tag in the Personal space; returns its id. */
+async function createTag(page: import('@playwright/test').Page, name: string): Promise<string> {
+  const { id } = await ipc<{ id: string }>(page, 'create_block', {
+    blockType: 'tag',
+    content: name,
+    parentId: null,
+    index: null,
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+    blockId: null,
+  })
+  return id
+}
+
+/**
+ * Blocks tagged `<prefix>a` only, `<prefix>b` only, both, `<prefix>a` and
+ * `<prefix>b/child` (a tag nested under `<prefix>b`), and neither; returns
+ * their ids by those names.
+ */
+async function seedTagCombinations(page: import('@playwright/test').Page, prefix: string) {
+  const a = await createTag(page, `${prefix}a`)
+  const b = await createTag(page, `${prefix}b`)
+  const child = await createTag(page, `${prefix}b/child`)
+  const [aOnly, bOnly, both, aAndChild, neither] = await seedSearchBlocks(page, [
+    { content: `${prefix} a only`, tagIds: [a] },
+    { content: `${prefix} b only`, tagIds: [b] },
+    { content: `${prefix} a and b`, tagIds: [a, b] },
+    { content: `${prefix} a and b child`, tagIds: [a, child] },
+    { content: `${prefix} untagged` },
+  ])
+  return { aOnly, bOnly, both, aAndChild, neither } as Record<string, string>
+}
+
+test.describe('Tags combined in a filter-only search @search', () => {
+  test.beforeEach(async ({ page }) => {
+    await openSearchView(page)
+  })
+
+  // The trailing space puts the caret outside the last tag token, so Enter
+  // runs the search instead of accepting a tag suggestion.
+  test('not-tag: drops the blocks carrying the tag or one nested under it', async ({ page }) => {
+    const ids = await seedTagCombinations(page, 'nt')
+    const query = 'tag:#nta not-tag:#ntb '
+    await expectSearchListed(page, query, [ids['aOnly'] ?? ''])
+
+    await navigateToView(page, 'Journal')
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Search', exact: true })
+      .click()
+    await expectSearchListed(page, query, [ids['aOnly'] ?? ''])
+  })
+
+  test('two tags AND-combine, and OR keeps either', async ({ page }) => {
+    const ids = await seedTagCombinations(page, 'ao')
+    // `tag:#aob` keeps a block carrying `aob/child` too.
+    await expectSearchListed(page, 'tag:#aoa tag:#aob ', [
+      ids['both'] ?? '',
+      ids['aAndChild'] ?? '',
+    ])
+    await expectSearchListed(page, 'tag:#aoa OR tag:#aob ', [
+      ids['aOnly'] ?? '',
+      ids['bOnly'] ?? '',
+      ids['both'] ?? '',
+      ids['aAndChild'] ?? '',
+    ])
   })
 })

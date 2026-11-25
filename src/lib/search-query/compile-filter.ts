@@ -135,9 +135,9 @@ export function conditions(
   return out
 }
 
-/** The condition a `tag:` / `under:` token names, or `null` when no tag holds its name. */
+/** The condition a `tag:` / `under:` / `not-tag:` token names, or `null` when no tag holds its name. */
 export type TagCondition = (
-  token: Extract<FilterToken, { kind: 'tag' | 'under' }>,
+  token: Extract<FilterToken, { kind: 'tag' | 'under' | 'notTag' }>,
 ) => FilterExpr | null
 
 /** One AND run's conditions: its tags, then the rest in the order search adds them. */
@@ -148,8 +148,10 @@ function runConditions(
 ): FilterExpr[] {
   const tags: FilterExpr[] = []
   for (const token of tokens) {
-    if (token.kind !== 'tag' && token.kind !== 'under') continue
-    const condition = tagCondition(token)
+    if (token.kind !== 'tag' && token.kind !== 'under' && token.kind !== 'notTag') continue
+    const found = tagCondition(token)
+    const condition: FilterExpr | null =
+      found && token.kind === 'notTag' ? { type: 'Not', child: found } : found
     if (condition && !tags.some((tag) => canonical(tag) === canonical(condition))) {
       tags.push(condition)
     }

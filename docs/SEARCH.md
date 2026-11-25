@@ -124,6 +124,7 @@ A query block takes the same syntax as its text (`{{query tag:#work state:TODO}}
 | `tag:#name` | Block carries the tag `name`, or a tag nested under it (`name/sub`, `name/sub/deeper`), attached. | Repeats AND-combine. `name` need not be a tag itself when tags are nested under it. There is no spelling for the one tag without its nested tags. |
 | `#name` | Bare alias for `tag:#name`. | Equivalent shape. |
 | `under:#name` | Block carries the tag, or a tag nested under it, attached, written inline as `#name`, or inherited from its page or a parent block. | What a tag's "Search everything under #tag" link opens (#5679). Repeats AND-combine. Cannot sit beside `tag:#` or a bare `#name`: the whole query's tags widen at once, so those chips turn invalid. |
+| `not-tag:#name` | Block carries neither the tag `name` nor a tag nested under it, attached. | The negation of `tag:#name`: the blocks it would keep are dropped. Repeats drop a block carrying any of them. Inline and inherited tags do not count, even beside `under:`. A name that is no tag and has none nested under it drops nothing. |
 | `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. Quote a glob containing spaces: `path:"Meeting Notes/*"` (see *Values with spaces*). |
 | `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. Same quoting rule as `path:`. |
 | `state:VALUE` | Block's `todo_state` is `VALUE`. | Repeats OR-combine (`state IN (…)`). Custom states allowed. `state:none` matches `todo_state IS NULL`. |
@@ -157,7 +158,7 @@ The tokeniser splits the query on whitespace, so a filter value that itself cont
 
 - `prop:KEY="VALUE WITH SPACES"` — e.g. `prop:status="in progress"` (#152).
 - `path:"GLOB WITH SPACES"` / `not-path:"GLOB WITH SPACES"` — e.g. `path:"Meeting Notes/*"` (#718).
-- `tag:#"TAG WITH SPACES"` / `under:#"TAG WITH SPACES"` — a multi-word tag name, one named before new tag names lost whitespace (#3288, #6278).
+- `tag:#"TAG WITH SPACES"` / `under:#"TAG WITH SPACES"` / `not-tag:#"TAG WITH SPACES"` — a multi-word tag name, one named before new tag names lost whitespace (#3288, #6278).
 
 The quotes are syntax, not part of the value: the parser strips one surrounding pair, and the serialiser re-adds quotes whenever the value contains whitespace, is itself `"`-wrapped (so a stripped pair isn't stripped again on the next parse), or holds a `"` that would otherwise stay unclosed — so chips, copy-paste, and the Add filter popover all round-trip exactly. A word whose `"` never closes (`prop:status="in` while you are still typing) is free text, not a chip, until the closing quote arrives: its extent depends on whatever follows it. An unquoted value simply ends at the first space (`path:Meeting Notes/*` is the chip `path:Meeting` plus the free text `Notes/*`).
 
@@ -176,7 +177,7 @@ Filter-prefix autocomplete works in **regex mode** too: the prefixes are real st
 | `state:` / `not-state:` | Static: `TODO`, `DOING`, `DONE`, `CANCELLED`, `none` | Same vocabulary the parser accepts. |
 | `priority:` / `not-priority:` | The priority levels (`PRIORITY_LEVELS` = `1`, `2`, `3`), plus `none` | Same vocabulary the parser accepts. |
 | `due:` / `scheduled:` | Static bucket list: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none` | Bucket keywords only — explicit ISO dates and comparison operators aren't suggested. |
-| `tag:#` / `under:#` / `#` | `listTagsByPrefix` IPC (150 ms debounce) | Returns up to 20 tags matching the typed prefix. |
+| `tag:#` / `under:#` / `not-tag:#` / `#` | `listTagsByPrefix` IPC (150 ms debounce) | Returns up to 20 tags matching the typed prefix. |
 | `prop:` / `not-prop:` (key side) | Shared property-keys cache — `block_properties` `DISTINCT key`s for the current space | Lazily fetched on first `prop:` open per session+space; invalidates on `block:properties-changed`. |
 | `prop:KEY=` (value side) | Not yet suggested — open as a follow-up. | The popover stays closed for `prop:KEY=` until value suggestions land. |
 | `path:` / `not-path:` | Per-space MRU of past path globs (localStorage `agaric:pathHistory:v1:<spaceId>`) | Newest-first, dedup-with-jump-to-top, capped at 30 entries per space. Recorded on submit when the query contains `path:` or `not-path:` tokens. |
@@ -247,6 +248,8 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 |---|---|
 | `TODO path:Journal/2026-* tag:#urgent` | TODO mentions in 2026-Journal pages, tagged urgent. |
 | `tag:#meeting not-path:Archive/**` | Meetings outside the archive subtree. |
+| `tag:#project not-tag:#done` | Project blocks not tagged done. |
+| `tag:#work OR tag:#home` | Blocks tagged either. |
 | `path:{Journal,Notes}/*` | Pages in either `Journal/` or `Notes/`. |
 | `state:TODO priority:1 due:this-week` | High-priority open tasks due this week. |
 | `state:TODO state:DOING due:overdue` | Anything overdue that isn't done. |
