@@ -437,12 +437,16 @@ async function syncIdle(): Promise<boolean> {
   return (await $(SYNC_BUTTON).getAttribute('aria-disabled')) === 'false'
 }
 
-/** Press the sidebar's Sync, which leaves the open view mounted, and wait for the app's pull. */
-async function pullFromPeer(device: SyncPeer): Promise<void> {
+async function waitSyncIdle(): Promise<void> {
   await browser.waitUntil(syncIdle, {
     timeout: ACTION_TIMEOUT,
     timeoutMsg: 'the app never finished the sync it was running',
   })
+}
+
+/** Press the sidebar's Sync, which leaves the open view mounted, and wait for the app's pull. */
+async function pullFromPeer(device: SyncPeer): Promise<void> {
+  await waitSyncIdle()
   await $(SYNC_BUTTON).click()
   await device.waitPulled()
 }
@@ -460,10 +464,7 @@ async function pullPeerWrites<T>(device: SyncPeer, writes: () => Promise<T>): Pr
  * running would be refused as busy and toast its failure, so it ends first.
  */
 async function holdPeer(device: SyncPeer): Promise<void> {
-  await browser.waitUntil(syncIdle, {
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: 'the app never finished the sync it was running',
-  })
+  await waitSyncIdle()
   await device.holdSync()
 }
 
