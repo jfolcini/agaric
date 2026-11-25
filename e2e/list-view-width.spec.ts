@@ -6,7 +6,10 @@
  * the full width.
  *
  * The view's root is the first child of the view wrapper, its header the
- * first child of the header outlet.
+ * first child of the header outlet. On a desktop the header's hairline is the
+ * header's own, so it runs the width of the column the header sits in, not the
+ * window's (S4, #7040); a touch phone's outlet draws its own, edge to edge
+ * (`phone-view-headers.spec.ts`).
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -15,6 +18,7 @@ import {
   expect,
   expectViewLoaded,
   navigateToView,
+  openPage,
   type TopLevelView,
   test,
   waitForBoot,
@@ -37,6 +41,10 @@ function viewRoot(page: Page): Locator {
 
 function viewHeader(page: Page): Locator {
   return page.locator('[data-testid="view-header-outlet"]:visible > *').first()
+}
+
+function headerOutlet(page: Page): Locator {
+  return page.locator('[data-testid="view-header-outlet"]:visible')
 }
 
 /** `box` is at most the list width and has equal room on both sides inside `within`. */
@@ -71,9 +79,20 @@ test.describe('list views at 1440 px @pages @search', () => {
           page.locator('[data-testid="view-header-outlet"]:visible'),
           `${view} header`,
         )
+        await expect(viewHeader(page)).toHaveCSS('border-bottom-width', '1px')
+        await expect(headerOutlet(page)).toHaveCSS('border-bottom-width', '0px')
       }
     })
   }
+
+  test('a page header is capped, centred and ruled at the column @pages', async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await expect(headerOutlet(page).locator('.page-header')).toBeVisible()
+    await expectCappedAndCentred(viewHeader(page), headerOutlet(page), 'page header')
+    await expect(viewHeader(page)).toHaveCSS('border-bottom-width', '1px')
+    await expect(headerOutlet(page)).toHaveCSS('border-bottom-width', '0px')
+  })
 })
 
 test('a list view keeps the full width on a phone @pages @mobile', async ({ page }) => {

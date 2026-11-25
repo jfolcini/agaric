@@ -37,6 +37,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { openNewPageDialog } from '@/lib/overlay-events'
@@ -118,6 +119,8 @@ export function PageBrowserHeader({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
+  // Where the filled capture button shows, it is the one filled create.
+  const captureButtonShown = useShouldShowMobileChrome()
   useRegisterPrimaryFocus(isTouch ? NO_PRIMARY_FOCUS : searchInputRef)
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
@@ -269,6 +272,7 @@ export function PageBrowserHeader({
           </SavedViewsDropdown>
         )}
         <Button
+          variant={captureButtonShown ? 'ghost' : 'default'}
           className={cn('ml-auto', isMobile && 'w-9 px-0 [@media(pointer:coarse)]:w-11')}
           aria-label={t('pageBrowser.newPage')}
           onClick={() => openNewPageDialog()}

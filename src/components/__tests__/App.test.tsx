@@ -2031,9 +2031,9 @@ describe('App', () => {
   })
 
   // Part B (#83 recents-only): the QuickAccessBar mounts between the
-  // hoisted TabBar and the ViewHeaderOutletSlot. It renders whenever the
-  // recents zone is non-empty; with no recents it returns null. Mobile stays
-  // hidden.
+  // hoisted TabBar and the ViewHeaderOutletSlot. It renders while the recents
+  // zone is non-empty and at most one tab is open (the tab bar takes over from
+  // the second), and not on a touch phone; with no recents it returns null.
   describe(' quick-access bar', () => {
     it('mounts between TabBar and ViewHeaderOutletSlot in the shell', async () => {
       // Seed two recent pages and render from a non-editor view so the
@@ -2067,7 +2067,8 @@ describe('App', () => {
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
-    it('mounts after TabBar when both are visible', async () => {
+    // S4 (#7040): the open tabs already list these pages.
+    it('gives way to the TabBar when a second tab is open', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
         selectedBlockId: null,
@@ -2097,22 +2098,12 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
-      const bar = screen.getByTestId('quick-access-bar')
-      const outlet = screen.getByTestId('view-header-outlet')
-
-      // TabBar → QuickAccessBar → ViewHeaderOutletSlot document order.
-      const tablistToBar = tablist.compareDocumentPosition(bar)
-      expect(tablistToBar & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-      const barToOutlet = bar.compareDocumentPosition(outlet)
-      expect(barToOutlet & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(screen.getByRole('tablist', { name: t('tabs.tabList') })).toBeInTheDocument()
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    // #927 f6: the recents strip is the mobile page-switch affordance — TabBar
-    // is desktop-only and there is no bottom-nav, so the bar must render on
-    // mobile (when there are recents) so page-switching isn't gated behind the
-    // sidebar Sheet.
-    it('renders on mobile as the page-switch affordance', async () => {
+    // A narrow mouse window keeps its tab bar and, at one tab, its strip.
+    it('renders in a narrow mouse window', async () => {
       mockedUseIsMobile.mockReturnValue(true)
 
       useRecentPagesStore.setState({
@@ -2129,14 +2120,34 @@ describe('App', () => {
       })
 
       render(<App />)
-      // Boot signal for the MOBILE shell. The old signal here was the
-      // SpaceSwitcher combobox, which lives inside the sidebar — reachable on
-      // mobile only while the persistent icon rail existed. The rail is gone,
-      // and a closed Sheet mounts nothing, so wait on a chrome element that
-      // mobile actually renders: the header hamburger.
+      // The mobile shell's boot signal: the header hamburger (the sidebar's
+      // SpaceSwitcher is not mounted while its Sheet is closed).
       await screen.findByTestId('mobile-sidebar-trigger')
 
       expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
+    })
+
+    it('is gone on a touch phone', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      mockedUseIsTouch.mockReturnValue(true)
+
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: 'A', title: 'Alpha' },
+          { pageId: 'B', title: 'Bravo' },
+        ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: 'A', title: 'Alpha' },
+            { pageId: 'B', title: 'Bravo' },
+          ],
+        },
+      })
+
+      render(<App />)
+      await screen.findByTestId('mobile-sidebar-trigger')
+
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
     // #83 recents-only render gate: with no recents the bar returns null

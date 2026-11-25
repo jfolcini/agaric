@@ -1,6 +1,5 @@
 /**
- * QuickAccessBar — recents strip, rendered on desktop AND mobile
- * (Part B; #83 recents-only; #927 f6 mobile page-switch affordance).
+ * QuickAccessBar — the recents strip (Part B; #83 recents-only).
  *
  * A single `<nav>` holding the MRU **recents scroller**: the existing
  * recents list — `<ScrollArea orientation="horizontal">`, wheel-to-horizontal
@@ -17,11 +16,10 @@
  * Left/Right traverse the recents with wrap; Up/Down are no-ops (horizontal).
  *
  * Render gate:
- *   - Renders on BOTH desktop and mobile. #927 f6: the recents strip is the
- *     mobile page-switch affordance. TabBar is hidden on a touch phone and there is no
- *     bottom-nav, so before this change mobile page-switching was gated behind
- *     the sidebar Sheet. The strip is a horizontal-scroll touch surface, so it
- *     works as-is on coarse pointers; enabling it here is the lower-risk fix.
+ *   - Not on a touch phone, and not while the tab bar is up (more than one
+ *     tab): the chips would repeat the open tabs, and the bars would eat the
+ *     screen (#7040). Recent pages stay in the command palette (and the
+ *     search sheet's all-pages segment on a phone).
  *   - No recents → null (recents-only: the empty path is the real one now that
  *     the always-present destinations zone is gone).
  *   - Settings → null: opening a page from inside Settings is not wanted
@@ -36,6 +34,8 @@ import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { TruncatedText } from '@/components/ui/truncated-text'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { getPageDisplayName } from '@/lib/page-display'
@@ -60,6 +60,11 @@ export function QuickAccessBar(): React.ReactElement | null {
     return active && active.pageStack.length > 0 ? active.pageStack.at(-1)?.pageId : undefined
   })
 
+  // The tab bar's own autohide rule (`TabBar`): it shows from the second tab.
+  const tabBarShown = useTabsStore((s) => selectTabsForSpace(s, currentSpaceId).length > 1)
+  const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
+
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const isSettings = useNavigationStore((s) => s.currentView === 'settings')
   const openInBackgroundTab = useOpenInBackgroundTab()
@@ -67,7 +72,7 @@ export function QuickAccessBar(): React.ReactElement | null {
   const visible = recentPages.filter((p) => p.pageId !== activePageId)
 
   // Roving tabindex over the recents. Hook is called unconditionally (rules of
-  // hooks) before the mobile / empty-state returns below.
+  // hooks) before the hidden / empty-state returns below.
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
     itemCount: visible.length,
     horizontal: true,
@@ -132,10 +137,7 @@ export function QuickAccessBar(): React.ReactElement | null {
     return () => ro.disconnect()
   }, [])
 
-  // #927 f6: renders on mobile too — the recents strip is the mobile
-  // page-switch affordance now that there is no bottom-nav and TabBar is
-  // hidden on a touch phone. Nothing to show with no recents, and none on Settings.
-  if (visible.length === 0 || isSettings) return null
+  if (visible.length === 0 || isSettings || tabBarShown || (isTouch && isMobile)) return null
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- roving-tabindex keyboard navigation: the <nav> intercepts arrow keys delegated up from its focused recent chips to move focus between them. The chips are the interactive controls; the <nav> only routes keys.

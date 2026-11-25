@@ -30,7 +30,7 @@ The Search view replaces across pages: its replace toggle or `Ctrl+H` turns the 
 
 ## Pages
 
-Browse every page in the active space. The first row is search, then sort, saved views and a **New page** button. Search takes focus when you open the view with a mouse or trackpad, never on a touch screen, so a phone's keyboard does not cover the list. While the search text names no page, the results start with a **Create page "…"** row that opens the New page dialog with that title.
+Browse every page in the active space. The first row is search, then sort, saved views and a **New page** button. Under 768 px wide, a phone included, the **New page** button is a ghost icon, so the capture button is the one filled create. Search takes focus when you open the view with a mouse or trackpad, never on a touch screen, so a phone's keyboard does not cover the list. While the search text names no page, the results start with a **Create page "…"** row that opens the New page dialog with that title.
 
 - **Namespace tree**: pages are organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button that creates a child page through the New page dialog.
 - **Sort dropdown**: Alphabetical, Last opened, Created, Last edited, Most linked, Most content. Every sort orders all the pages in the space, not just the loaded ones. Alphabetical ignores accents and case (`Émile` sorts with E); Last edited counts an edit to any block on the page; Last opened is this device's own history, never synced.
@@ -170,4 +170,4 @@ A middle click on anything that opens a page opens it in a **background tab**, a
 
 ## Recent pages strip
 
-Below the TabBar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; Ctrl/Cmd-click or middle-click opens it in a background tab. Settings does not show it.
+Below the top bar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; Ctrl/Cmd-click or middle-click opens it in a background tab. It gives way to the TabBar, which lists the open pages itself: from the second tab on it is gone, and it returns when one tab is left. A touch phone and Settings do not show it; on a phone the search sheet's all-pages list and the command palette offer the same recent pages.

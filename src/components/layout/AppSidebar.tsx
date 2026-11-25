@@ -305,8 +305,8 @@ function AppSidebarInner({
               <SidebarMenu>{SIDEBAR_NAV_ITEMS.flatMap(renderNavItem)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {/* #4713 — the pinned recent pages, as a collapsible section. Below
-              the fixed nav because its length varies with the user's pins. */}
+          {/* #4713 — the bookmarked pages, as a collapsible section. Below
+              the fixed nav because its length varies with the bookmarks. */}
           <BookmarksSection />
         </FeatureErrorBoundary>
       </SidebarContent>

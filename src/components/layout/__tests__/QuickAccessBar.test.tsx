@@ -3,8 +3,8 @@
  *
  * One nav element holding the recents scroller (the former destinations
  * cluster was removed in #83 — it duplicated the left sidebar). Coverage:
- *  - Render gate: desktop AND mobile with recents render; no recents → null
- *    (#927 f6: the recents strip is the mobile page-switch affordance).
+ *  - Render gate: with recents it renders, except on a touch phone and
+ *    while the tab bar is up (more than one tab; S4, #7040); no recents → null.
  *  - Currently-open page excluded from recents; nothing renders on Settings.
  * Recents zone preserves all behaviour.
  *  - Roving tabindex over the recents (wrap, horizontal-only).
@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useTabsStore } from '@/stores/tabs'
@@ -26,7 +27,12 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: vi.fn(() => false),
+}))
+
 const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedUseIsTouch = vi.mocked(useIsTouch)
 
 function seedTab(pageId: string, title: string) {
   useNavigationStore.setState({
@@ -61,6 +67,7 @@ function getRecentsZone(): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseIsMobile.mockReturnValue(false)
+  mockedUseIsTouch.mockReturnValue(false)
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
   clearActiveTab()
   localStorage.clear()
@@ -83,18 +90,48 @@ describe('QuickAccessBar', () => {
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    // #927 f6: the recents strip is the mobile page-switch affordance now that
-    // TabBar is desktop-only and there is no bottom-nav. It must render on
-    // mobile (when there are recents) so page-switching isn't gated behind the
-    // sidebar Sheet.
-    it('renders on mobile when there are recents (page-switch affordance)', () => {
+    // A narrow mouse window keeps its tab bar and its strip; only a touch phone loses both.
+    it('renders in a narrow mouse window when there are recents', () => {
       mockedUseIsMobile.mockReturnValue(true)
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
       render(<QuickAccessBar />)
       const bar = screen.getByTestId('quick-access-bar')
       expect(bar).toBeInTheDocument()
-      // A reachable page-switch control: the recent page chip is a button.
       expect(within(bar).getByRole('button', { name: /Alpha/ })).toBeInTheDocument()
+    })
+
+    it('renders on a touch tablet (touch, not mobile width)', () => {
+      mockedUseIsTouch.mockReturnValue(true)
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      render(<QuickAccessBar />)
+      expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
+    })
+
+    // S4 (#7040): the palette's recents are the way back to a page on a phone.
+    it('returns null on a touch phone even with recents', () => {
+      mockedUseIsTouch.mockReturnValue(true)
+      mockedUseIsMobile.mockReturnValue(true)
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      render(<QuickAccessBar />)
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
+    })
+
+    // The tab bar shows from the second tab (`TabBar`); its tabs repeat the chips.
+    it.each([
+      [1, true],
+      [2, false],
+    ] as const)('with %i tab(s) open, renders the strip: %s', (count, shown) => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      useTabsStore.setState({
+        tabs: Array.from({ length: count }, (_, i) => ({
+          id: String(i),
+          pageStack: [],
+          label: '',
+        })),
+        activeTabIndex: 0,
+      })
+      render(<QuickAccessBar />)
+      expect(screen.queryByTestId('quick-access-bar') !== null).toBe(shown)
     })
 
     it('still returns null on mobile when there are no recents', () => {

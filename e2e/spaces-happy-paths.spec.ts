@@ -43,6 +43,20 @@ const editorTabs = (page: Page) =>
 const recentChips = (page: Page) =>
   page.getByTestId('quick-access-bar').locator('[data-slot="recent-page-chip"]')
 
+/** The palette's recent pages, newest first: the strip is gone while a second tab is open. */
+async function paletteRecents(page: Page): Promise<Locator> {
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(page.getByTestId('command-palette-input')).toBeVisible()
+  return page
+    .getByTestId('palette-recents-group')
+    .locator('[data-testid^="palette-recent-"]:not([data-testid^="palette-recent-bookmark-"])')
+}
+
+async function closePalette(page: Page): Promise<void> {
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('command-palette-input')).toBeHidden()
+}
+
 test('Open on launch keeps the chosen space, and falls back to Last used once a peer deletes it @spaces', async ({
   page,
 }) => {
@@ -101,23 +115,30 @@ test('switching spaces restores each space its own tabs, recent pages and journa
     await openPage(page, title)
     await expect(pageTitle(page)).toHaveText(title)
   }
+  await expect(recentChips(page)).toHaveText(['Quick Notes', 'Getting Started'])
   await page
     .getByTestId('quick-access-bar')
     .getByRole('button', { name: 'Quick Notes', exact: true })
     .click({ modifiers: ['ControlOrMeta'] })
   await expect(editorTabs(page)).toHaveCount(2)
-  await expect(recentChips(page)).toHaveText(['Quick Notes', 'Getting Started'])
+  await expect(page.getByTestId('quick-access-bar')).toHaveCount(0)
 
   await switchToSpace(page, 'Work')
   await expect(dateDisplay(page)).toHaveText(yesterdayText)
   await expect(editorTabs(page)).toHaveCount(0)
-  await expect(recentChips(page)).toHaveCount(0)
+  await expect(await paletteRecents(page)).toHaveCount(0)
+  await closePalette(page)
 
   await switchToSpace(page, 'Personal')
   await expect(editorTabs(page)).toHaveText([/Projects/, /Quick Notes/])
   await expect(editorTabs(page).first()).toHaveAttribute('aria-selected', 'true')
   await expect(pageTitle(page)).toHaveText('Projects')
-  await expect(recentChips(page)).toHaveText(['Quick Notes', 'Getting Started'])
+  await expect(await paletteRecents(page)).toHaveText([
+    /Projects/,
+    /Quick Notes/,
+    /Getting Started/,
+  ])
+  await closePalette(page)
 })
 
 // The journal kept the day page it created in one space and showed it in the
