@@ -53,6 +53,14 @@ describe('useHasHardwareKeyboard', () => {
     expect(result.current).toBe(false)
   })
 
+  it('ignores Enter and Backspace, which soft keyboards send with real codes', () => {
+    const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
+    fireEvent.keyDown(document, { key: 'Enter', keyCode: 13 })
+    fireEvent.keyDown(document, { key: 'Backspace', keyCode: 8 })
+    rerender()
+    expect(result.current).toBe(false)
+  })
+
   it('ignores the soft-keyboard Unidentified sentinel key', () => {
     const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
     fireEvent.keyDown(document, { key: 'Unidentified' })

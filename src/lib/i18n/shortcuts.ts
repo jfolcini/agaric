@@ -54,8 +54,8 @@ export const shortcuts: Record<string, string> = {
   // Translators: Conditions shown after a shortcut: beside the keys in the help sheet, and in
   // parentheses after the action in Settings › Keyboard. They say when the shortcut applies;
   // most are lowercase fragments, so keep the capitalization style of the English.
-  // atStart / atEnd belong to the keys "Arrow Up / Left" and "Arrow Down / Right": each half
-  // says where in the block that arrow works.
+  // atStart / atEnd belong to the keys "Arrow Up / Arrow Left" and "Arrow Down / Arrow Right":
+  // each half says where in the block that arrow works.
   'keyboard.condition.atStart': 'Up on the first line, Left at the start',
   'keyboard.condition.atEnd': 'Down on the last line, Right at the end',
   'keyboard.condition.onEmptyBlock': 'on empty block',

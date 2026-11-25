@@ -51,7 +51,6 @@ src/components/settings/__tests__/BibliographySection.test.tsx
 src/components/settings/__tests__/DebugModeRow.test.tsx
 src/components/settings/__tests__/useImportRunner-merges.test.tsx
 src/components/settings/__tests__/useImportRunner.test.tsx
-src/components/ui/__tests__/kbd.test.tsx
 src/components/ui/__tests__/menu-popover-content.test.tsx
 src/components/ui/__tests__/tooltip-app-provider.test.tsx
 src/components/ui/sidebar/__tests__/use-sidebar-keyboard.test.tsx

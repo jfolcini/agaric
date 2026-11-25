@@ -7,6 +7,7 @@
 
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import { Kbd } from '@/components/ui/kbd'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
@@ -86,5 +87,14 @@ describe('Kbd', () => {
     const kbd = container.querySelector('kbd')
     expect(kbd?.getAttribute('aria-hidden')).toBe('true')
     expect(kbd?.className).toContain('ml-1')
+  })
+
+  it('has no a11y violations, one chord or several', async () => {
+    const { container } = render(
+      <p>
+        <Kbd keys="Ctrl + Shift + Arrow Up" /> <Kbd keys="Ctrl + Y / Ctrl + Shift + Z" size="md" />
+      </p>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

@@ -106,6 +106,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 let touch = false
 vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
 
+import { _resetHardwareKeyboardLatchForTests } from '@/hooks/useHasHardwareKeyboard'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { searchBlocks, searchBlocksPartitioned } from '@/lib/ipc-helpers'
 
@@ -991,6 +992,20 @@ describe('CommandPalette — escalation footer', () => {
     expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('escalate')
     expect(useNavigationStore.getState().currentView).toBe('search')
     expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  // #7040 — a touch tablet (not a phone's sheet) with no hardware keyboard.
+  it('shows no keys on a touch tablet with no hardware keyboard', async () => {
+    touch = true
+    _resetHardwareKeyboardLatchForTests()
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), {
+      target: { value: 'escalate' },
+    })
+    const escalate = await screen.findByTestId('palette-escalation-footer')
+    expect(escalate.querySelector('kbd')).toBeNull()
+    expect(screen.queryByTestId('palette-footer-hint')).not.toBeInTheDocument()
   })
 })
 

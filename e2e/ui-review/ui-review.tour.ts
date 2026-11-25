@@ -538,6 +538,15 @@ for (const profile of Object.keys(PROFILES) as Profile[]) {
       for (const [name, scene] of Object.entries(SCENES)) {
         test(name, async ({ page }) => {
           await page.clock.setFixedTime(NOW)
+          // The emulated phone runs on desktop Chromium, whose Keyboard Map API
+          // reports the host's keyboard; Android's WebView has none, so keyboard
+          // hints stay hidden until the scene's first key press
+          // (`useHasHardwareKeyboard`).
+          if (profile === 'phone') {
+            await page.addInitScript(() => {
+              Reflect.deleteProperty(Navigator.prototype, 'keyboard')
+            })
+          }
           if (!scene.firstRun) {
             await page.addInitScript(() => {
               localStorage.setItem('agaric-onboarding-done', 'true')

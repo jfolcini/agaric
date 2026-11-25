@@ -24,7 +24,7 @@ Part of the #7040 UI review, items S8 and S14. The maintainer decided on 2026-11
 
 **Traps**
 
-- **Emulated phones count as having a keyboard.** `useHasHardwareKeyboard` also turns true when `navigator.keyboard.getLayoutMap()` returns a layout. Playwright's emulated phones run on desktop Chromium, so they do. Android's WebView has no `navigator.keyboard`. Phone specs that check the hidden hints delete `Navigator.prototype.keyboard` first.
+- **Emulated phones count as having a keyboard.** `useHasHardwareKeyboard` also turns true when `navigator.keyboard.getLayoutMap()` returns a layout. Playwright's emulated phones run on desktop Chromium, so they do. Android's WebView has no `navigator.keyboard`. Phone specs that check the hidden hints, and the UI-review tour's phone profile, delete `Navigator.prototype.keyboard` first; the tour's first key press still latches a keyboard.
 - **`shortcutHint(id)` stays a catalog read.** Calling `getShortcutKeys` for display would count as consumption in `keyboard-config-rebindable-drift.test.ts`.
 - **Not done:** the empty-block placeholder's "Shift+Enter for a line break" still shows on touch.
 

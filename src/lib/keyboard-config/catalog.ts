@@ -42,7 +42,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   // KEY_RULES table in `editor/use-block-keyboard.ts`, not the matcher.
   {
     id: 'prevBlock',
-    keys: 'Arrow Up / Left',
+    keys: 'Arrow Up / Arrow Left',
     category: 'keyboard.category.navigation',
     description: 'keyboard.moveToPreviousBlock',
     condition: 'keyboard.condition.atStart',
@@ -50,7 +50,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
   {
     id: 'nextBlock',
-    keys: 'Arrow Down / Right',
+    keys: 'Arrow Down / Arrow Right',
     category: 'keyboard.category.navigation',
     description: 'keyboard.moveToNextBlock',
     condition: 'keyboard.condition.atEnd',

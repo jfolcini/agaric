@@ -266,6 +266,9 @@ describe('KeyboardShortcuts', () => {
     expect(kbdTexts).toContain('Ctrl+Shift+→')
     expect(kbdTexts).toContain('Ctrl+Z')
     expect(kbdTexts).toContain('Enter')
+    // Previous block's second alternative is an arrow too, not the word "Left".
+    expect(kbdTexts).toContain('←')
+    expect(kbdTexts).not.toContain('Left')
   })
 
   it('conditions are rendered as normal text, not inside kbd elements', () => {
