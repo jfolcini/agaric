@@ -100,7 +100,7 @@
 //!
 //! ## Why not `netdev`
 //!
-//! `netdev` 0.45 is already in the tree (via `netwatch` → `iroh`) and exposes
+//! `netdev` is already in the tree (via `netwatch` → `iroh`) and exposes
 //! `get_default_interface()`, so a direct dependency looked free. It is not:
 //!
 //! * On Android its interface enumeration goes through

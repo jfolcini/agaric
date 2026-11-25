@@ -486,7 +486,7 @@ overflow-checks = true
 # answer settled anything:
 #
 #   1. It only looked at FIRST-PARTY code. Dependencies both rely on
-#      unwinding and document what abort does to them. `netdev` 0.45
+#      unwinding and document what abort does to them. `netdev`
 #      (in-tree via `netwatch` -> `iroh`; its `android-extra` feature is
 #      ON by default) calls `panic::catch_unwind(ndk_context::android_context)`
 #      in `src/os/android/api.rs` to probe for a JNI context — a recovery

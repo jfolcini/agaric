@@ -4,8 +4,9 @@
 
 **The bump.** `iroh` and `iroh-dns` at `=1.5.0` in `agaric-sync`, `iroh-base` at `=1.5.0` in `agaric-store`. `iroh-mdns-address-lookup` re-resolves to 0.6.1, the newest release and the one already locked, now built against iroh 1.5.0. No source change.
 
-- iroh 1.5.0 requires `noq`, `noq-proto` and `noq-udp` 1.5.0, `netwatch` and `portmapper` ^0.20.2 and `iroh-relay` ^1.4.2, so those move with it; `netwatch` and `portmapper` 0.20.2 were a few hours short of seven days old and have no older release iroh accepts. They bring `netdev` 0.47.0, `igd-next` 0.18.0, `netlink-proto` 0.13.0 and `simple-dns` 0.13.1.
-- `iroh-relay` 1.5.0 asks for `lru` ^0.19, and cargo picks 0.19.2, two days old. Both lockfiles hold 0.19.0: `lru = "=0.19.0"` in `agaric-sync/Cargo.toml` for the one resolve, then removed, as session 4431 did for the Loro family.
+- iroh 1.5.0 requires `noq`, `noq-proto` and `noq-udp` 1.5.0, `netwatch` and `portmapper` ^0.20.2 and `iroh-relay` ^1.4.2 (resolved to 1.5.0, the same release), so those move with it. All of them are under seven days old, like iroh itself, and none has an older release iroh 1.5.0 accepts. They bring `netdev` 0.47.0, `igd-next` 0.18.0, `netlink-proto` 0.13.0 and `simple-dns` 0.13.1.
+- `iroh-relay` 1.5.0 asks for `lru` ^0.19, and cargo picks 0.19.2, two days old. Both lockfiles hold 0.19.0: `lru = "=0.19.0"` in `agaric-sync/Cargo.toml` for the one resolve, then removed, the way #7064 moved the Loro family.
+- That resolve also moved `data-encoding-macro-internal` from `syn` 1 to `syn` 3 in the root lock, which no iroh manifest asks for; the edge is put back by hand, and `cargo metadata --locked` accepts it.
 
 **Release notes, 1.4.2 and 1.5.0, checked in the crate sources.**
 
@@ -16,9 +17,12 @@
 
 **Not checked.** A 1.4.1 device syncing with a 1.5.0 device over a real link: two iroh versions of one major cannot be linked into one test binary.
 
-**Left alone.** `sync_daemon/tests/endpoint_follows_network.rs` records a by-hand observation "on iroh 1.4.1"; it was not repeated on 1.5.0.
+**Left alone.** `sync_daemon/tests/endpoint_follows_network.rs` records a by-hand observation "on iroh 1.4.1"; it was not repeated on 1.5.0. Two comments named `netdev` 0.45, which left the tree; they name the crate without a version now.
+
+**Not run on.** Windows and macOS. `netdev` goes from 0.45.0 to 0.47.0 on Windows, and `netwatch` 0.20.2 sets `SO_RECV_ANYIF` on Apple UDP sockets.
 
 **Ran.**
 - `cargo nextest run --workspace -E 'package(agaric-sync)'`: 1,071 passed, the `transport::endpoint` guard tests among them.
 - `cargo clippy --workspace --all-targets -- -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, `cargo deny check`, `cargo machete`.
-- The whole-workspace suite and the doc-tests, in the pre-push verify.
+- The whole-workspace suite (8,559 passed) and the doc-tests, in the pre-push verify.
+- Independent review of the commit against the crate sources; its notes are in the diff and above.
