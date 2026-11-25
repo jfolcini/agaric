@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { ResultCard } from '@/components/common/ResultCard'
 import { TagComposer, useTagComposerState } from '@/components/filters/TagComposer'
 import { PageLink } from '@/components/pages/PageLink'
@@ -789,9 +790,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Empty results */}
       {hasQuery && !loading && results.length === 0 && (
-        <div className="tag-filter-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          {t('tagFilter.noMatchesFound')}
-        </div>
+        <EmptyState icon={Search} message={t('tagFilter.noMatchesFound')} headingLevel="p" />
       )}
 
       {/* Results */}

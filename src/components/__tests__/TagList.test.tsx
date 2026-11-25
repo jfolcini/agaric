@@ -791,19 +791,13 @@ describe('TagList', () => {
 
   // UX #8: Error feedback on failed operations
   describe('error feedback', () => {
-    it('shows toast on failed tag load', async () => {
+    it('reports a failed tag load once, in the inline alert and not as a toast', async () => {
       stubInvoke({ list_all_tags_in_space: () => Promise.reject(new Error('Network error')) })
 
       render(<TagList />)
 
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to load tags'),
-          // Effect-driven panel load: dedup by id so rapid mounts /
-          // space switches don't stack identical toasts.
-          expect.objectContaining({ id: 'tags-load-failed' }),
-        )
-      })
+      expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load tags')
+      expect(mockedToastError).not.toHaveBeenCalled()
     })
 
     it('shows toast on failed tag creation', async () => {

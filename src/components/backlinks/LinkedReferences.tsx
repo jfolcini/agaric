@@ -28,7 +28,6 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import type { BacklinkFilter, BacklinkSort, LinkKind } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['list-cursor'] as const
@@ -148,15 +147,6 @@ export function LinkedReferences({
   // Resolve [[ULID]] and #[ULID] tokens in block content
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
     useBacklinkResolution(groups)
-
-  // Error toast parity: the old `fetchGroups` catch surfaced a single deduped
-  // toast on any fetch failure (initial OR load-more). The `{ id }` coalesces
-  // repeats. The observability `logger.error` now lives in the hook's queryFn.
-  useEffect(() => {
-    if (isError) {
-      notify.error(t('references.loadFailed'), { id: 'references-load-failed' })
-    }
-  }, [isError, t])
 
   // Expand-state seeding parity. The old first-page branch REPLACED
   // `groupExpanded` with `page_id => groups.length <= 5 || i < 3` (first 3 groups

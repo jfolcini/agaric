@@ -40,7 +40,12 @@ export function EmptyState({
       className={cn('text-center text-sm text-muted-foreground', compact ? 'p-6' : 'p-8')}
     >
       {Icon && (
-        <div className="mx-auto mb-2 flex size-8 items-center justify-center rounded-full bg-muted [&>svg]:size-4">
+        <div
+          className={cn(
+            'mx-auto mb-3 flex items-center justify-center rounded-full bg-muted',
+            compact ? 'size-10 [&>svg]:size-5' : 'size-12 [&>svg]:size-6',
+          )}
+        >
           <Icon />
         </div>
       )}

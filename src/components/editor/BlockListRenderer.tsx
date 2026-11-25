@@ -13,7 +13,7 @@
 
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { FileText } from 'lucide-react'
+import { FileText, Focus } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -337,6 +337,7 @@ export function BlockListRenderer({
           {visibleItems.length === 0 && !loading ? (
             isZoomed ? (
               <EmptyState
+                icon={Focus}
                 message={t('blockTree.emptyZoom')}
                 description={t('blockTree.emptyZoomHint')}
                 action={
@@ -346,7 +347,7 @@ export function BlockListRenderer({
                 }
               />
             ) : rootParentId && blocks.length === 0 ? (
-              <EmptyState message={t('blockTree.emptyPage')} />
+              <EmptyState icon={FileText} message={t('blockTree.emptyPage')} />
             ) : (
               <EmptyState
                 icon={FileText}

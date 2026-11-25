@@ -225,16 +225,13 @@ describe('ViewDispatcher — routing', () => {
 // #1685 — fresh-space default render path (integration)
 // ---------------------------------------------------------------------------
 //
-// The space-switch subscriber (`navigationSlice` in navigation.ts) forces
-// currentView='page-editor' when a user switches into a brand-new space
-// (one with no recorded per-space view). For a fresh space the tab list is
-// also empty, so App derives activePage=null. Prior coverage asserted only
-// the store-state outcome (getState().currentView === 'page-editor') with no
-// render, leaving the riskiest IA path — a fresh space's first paint —
-// false-green. These tests drive the REAL space-switch subscriber (via
-// useSpaceStore) and the REAL tabs store, then feed the resulting
+// The space-switch subscriber (`navigationSlice` in navigation.ts) opens the
+// journal when a user switches into a brand-new space (one with no recorded
+// per-space view), whose tab list is empty too, so App derives
+// activePage=null (#7040). These tests drive the REAL space-switch subscriber
+// (via useSpaceStore) and the REAL tabs store, then feed the resulting
 // currentView + derived activePage into the dispatcher to assert the content
-// region renders a real view (an EmptyState with a CTA), never null/blank.
+// region renders the journal, not an empty page editor.
 describe('ViewDispatcher — fresh-space default render path (#1685)', () => {
   beforeEach(() => {
     // Start from "no active space" with empty per-space partitions so the
@@ -260,15 +257,15 @@ describe('ViewDispatcher — fresh-space default render path (#1685)', () => {
     })
   })
 
-  // Mirror App.tsx:365 — activePage is the top of the active tab's stack, or
+  // Mirror App.tsx — activePage is the top of the active tab's stack, or
   // null when the stack is empty (the fresh-space case).
   function deriveActivePage() {
     const stack = selectPageStack(useTabsStore.getState())
     return stack.length > 0 ? (stack.at(-1) ?? null) : null
   }
 
-  it('renders a real view (EmptyState + CTA), not a blank region, after switching into a fresh space', () => {
-    // space-1 was used on `search`; space-2 has never been visited.
+  /** space-1 was used on `search`; switch into the never-visited space-2. */
+  function switchIntoFreshSpace() {
     useSpaceStore.setState({
       currentSpaceId: 'space-1',
       availableSpaces: [
@@ -278,65 +275,27 @@ describe('ViewDispatcher — fresh-space default render path (#1685)', () => {
       isReady: true,
     })
     useNavigationStore.getState().setView('search')
-
-    // Switch into the fresh space-2 — drives the real navigation subscriber.
     useSpaceStore.setState({ currentSpaceId: 'space-2' })
+  }
 
-    // The subscriber forced page-editor; the fresh space has no tabs → null.
+  it('renders the journal, not an empty page editor, after switching into a fresh space', () => {
+    switchIntoFreshSpace()
+
+    // The subscriber opened the journal; the fresh space has no tabs → null.
     const currentView = useNavigationStore.getState().currentView
-    expect(currentView).toBe('page-editor')
+    expect(currentView).toBe('journal')
     const activePage = deriveActivePage()
     expect(activePage).toBeNull()
 
-    const { container } = render(<ViewDispatcher {...defaultProps({ currentView, activePage })} />)
+    render(<ViewDispatcher {...defaultProps({ currentView, activePage })} />)
 
-    // The riskiest IA path must paint something real, not an empty region.
-    expect(container).not.toBeEmptyDOMElement()
-    expect(screen.getByText(t('pageEditor.empty.message'))).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: t('pageEditor.empty.goToJournal') }),
-    ).toBeInTheDocument()
-    // The page editor itself must NOT mount without an active page.
+    expect(screen.getByTestId('journal-mock')).toBeInTheDocument()
+    expect(screen.queryByText(t('pageEditor.empty.message'))).not.toBeInTheDocument()
     expect(screen.queryByTestId('page-editor-mock')).not.toBeInTheDocument()
   })
 
-  it('the fresh-space CTA recovers to Journal', async () => {
-    const user = userEvent.setup()
-    useSpaceStore.setState({
-      currentSpaceId: 'space-1',
-      availableSpaces: [
-        { id: 'space-1', name: 'One', accent_color: null },
-        { id: 'space-2', name: 'Two', accent_color: null },
-      ],
-      isReady: true,
-    })
-    useNavigationStore.getState().setView('search')
-    useSpaceStore.setState({ currentSpaceId: 'space-2' })
-
-    render(
-      <ViewDispatcher
-        {...defaultProps({
-          currentView: useNavigationStore.getState().currentView,
-          activePage: deriveActivePage(),
-        })}
-      />,
-    )
-
-    await user.click(screen.getByRole('button', { name: t('pageEditor.empty.goToJournal') }))
-    expect(useNavigationStore.getState().currentView).toBe('journal')
-  })
-
   it('has no a11y violations rendering the fresh-space default', async () => {
-    useSpaceStore.setState({
-      currentSpaceId: 'space-1',
-      availableSpaces: [
-        { id: 'space-1', name: 'One', accent_color: null },
-        { id: 'space-2', name: 'Two', accent_color: null },
-      ],
-      isReady: true,
-    })
-    useNavigationStore.getState().setView('search')
-    useSpaceStore.setState({ currentSpaceId: 'space-2' })
+    switchIntoFreshSpace()
 
     const { container } = render(
       <ViewDispatcher
@@ -346,7 +305,7 @@ describe('ViewDispatcher — fresh-space default render path (#1685)', () => {
         })}
       />,
     )
-    await screen.findByText(t('pageEditor.empty.message'))
+    await screen.findByTestId('journal-mock')
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

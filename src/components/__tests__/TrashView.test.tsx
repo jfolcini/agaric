@@ -660,10 +660,8 @@ describe('TrashView', () => {
       screen.queryByText(/Nothing in trash\. Deleted items will appear here\./),
     ).not.toBeInTheDocument()
 
-    // The toast still fires — the card is an addition, not a replacement.
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load trash')
-    })
+    // The card is the failure's one report: no toast beside it (#7040).
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('retries the failed trash load when Retry is clicked', async () => {

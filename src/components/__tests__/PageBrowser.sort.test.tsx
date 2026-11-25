@@ -5,7 +5,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -216,11 +215,9 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
       await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), 'created')
 
-      await waitFor(() => {
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to load pages'),
-        )
-      })
+      expect(await screen.findByTestId('page-browser-error-state')).toHaveTextContent(
+        'Failed to load pages',
+      )
     })
 
     it('reads a stored retired `default` sort as Created', async () => {

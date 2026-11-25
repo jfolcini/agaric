@@ -419,18 +419,17 @@ describe('PageBrowser', () => {
     })
   })
   describe('error feedback', () => {
-    it('shows toast on failed page load', async () => {
+    it('reports a failed page load once, in the error card and not as a toast', async () => {
       stubInvoke({
         list_pages_with_metadata: () => Promise.reject(new Error('Network error')),
       })
 
       render(<PageBrowser />)
 
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to load pages'),
-        )
-      })
+      expect(await screen.findByTestId('page-browser-error-state')).toHaveTextContent(
+        'Failed to load pages',
+      )
+      expect(mockedToastError).not.toHaveBeenCalled()
     })
 
     it('shows toast on failed page deletion', async () => {

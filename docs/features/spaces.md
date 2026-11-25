@@ -5,7 +5,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 
 ## What you can do
 
-- **Switch space** — pick from the dropdown at the top of the sidebar (the `SpaceSwitcher`).
+- **Switch space** — pick from the dropdown at the top of the sidebar (the `SpaceSwitcher`). A space returns to the view it was last on; one never opened lands on its journal for today.
 - **Switch by index** — `Alt+1` through `Alt+9` (`⌥1`–`⌥9` on macOS) jump to the first nine spaces alphabetically. The shortcut hint appears on each dropdown row where there is a keyboard.
 - **Cycle the active space** — on a collapsed sidebar, click the **SpaceAccentBadge** (the coloured circle replacing the logo) to cycle to the next space.
 - **Manage spaces** — in **Settings › Spaces**, also reached from *Manage spaces…* (last item in the SpaceSwitcher dropdown).

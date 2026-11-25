@@ -26,6 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -125,14 +126,15 @@ export function TemplatesView(): React.ReactElement {
         })),
       )
     } catch (err) {
+      // The list's inline alert is the user's one report (#7040).
       setLoadError(true)
-      reportIpcError('TemplatesView', 'slash.templateLoadFailed', err, t)
+      logger.error('TemplatesView', 'failed to load templates', undefined, err)
     }
     setLoading(false)
-  }, [t, currentSpaceId])
+  }, [currentSpaceId])
 
   useEffect(() => {
-    // `loadTemplates` reports its own failure (reportIpcError); never rejects.
+    // `loadTemplates` reports its own failure inline; never rejects.
     // oxlint-disable-next-line react/set-state-in-effect -- kicks off the template-page + journal-template IPC load; `loadTemplates` sets loading/error state around those awaits, not a render-time derivation; see #4407
     void loadTemplates()
   }, [loadTemplates])

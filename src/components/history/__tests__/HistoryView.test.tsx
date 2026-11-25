@@ -761,6 +761,15 @@ describe('HistoryView', () => {
     expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
   })
 
+  it('reports a failed load once, in its banner and not as a toast', async () => {
+    stubHistory({ list_page_history: () => Promise.reject(new Error('network failure')) })
+
+    render(<HistoryView />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('history.loadFailed'))
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
   it('Ctrl+A selects all reversible items but not non-reversible', async () => {
     const user = userEvent.setup()
     const page = {

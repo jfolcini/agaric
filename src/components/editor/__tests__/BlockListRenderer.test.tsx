@@ -237,9 +237,8 @@ describe('BlockListRenderer', () => {
     )
 
     expect(screen.getByTestId('empty-state-message')).toHaveTextContent(t('blockTree.emptyPage'))
-    // The richer page-root affordances (icon + slash-command hint) are absent
-    // in this branch — only the bare message renders.
-    expect(screen.queryByTestId('empty-state-icon')).not.toBeInTheDocument()
+    // The one empty-state pattern: an icon, but no slash-command hint here (#7040).
+    expect(screen.getByTestId('empty-state-icon')).toBeInTheDocument()
     expect(screen.queryByTestId('empty-state-description')).not.toBeInTheDocument()
   })
 

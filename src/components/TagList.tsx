@@ -157,13 +157,12 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       if (seq !== loadSeqRef.current) return
       logger.error('TagList', 'failed to load tags', undefined, error)
       setLoadError(true)
-      notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
     }
     setLoading(false)
-  }, [currentSpaceId, t])
+  }, [currentSpaceId])
 
   useEffect(() => {
-    // `loadTags` toasts its own failure; never rejects.
+    // `loadTags` shows its own failure inline; never rejects.
     void loadTags()
   }, [loadTags])
 

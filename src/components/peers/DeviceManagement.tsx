@@ -13,7 +13,7 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Globe, RefreshCw, ShieldAlert, X } from 'lucide-react'
+import { Copy, Globe, MonitorSmartphone, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -363,7 +363,12 @@ export function DeviceManagement(): React.ReactElement {
                   skeleton={null}
                   empty={
                     <div data-testid="device-no-peers">
-                      <EmptyState compact headingLevel="p" message={t('device.noPairedDevices')} />
+                      <EmptyState
+                        compact
+                        headingLevel="p"
+                        icon={MonitorSmartphone}
+                        message={t('device.noPairedDevices')}
+                      />
                     </div>
                   }
                 >

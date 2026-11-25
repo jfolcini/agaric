@@ -777,15 +777,15 @@ describe('TemplatesView', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows error toast when loading templates fails', async () => {
-    const mockedToastError = vi.mocked(toast.error)
+  it('reports a failed templates load once, in the inline alert and not as a toast', async () => {
     stubTemplates({ query_by_property: () => Promise.reject(new Error('network')) })
 
     render(<TemplatesView />)
 
-    await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to load templates')
-    })
+    expect(await screen.findByTestId('list-error-state')).toHaveTextContent(
+      'Failed to load templates',
+    )
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
   it('shows error toast when removing template status fails', async () => {

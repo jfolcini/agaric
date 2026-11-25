@@ -2677,6 +2677,36 @@ mark[data-highlight-color='purple'] {
   }
 }
 
+/* A toast's close button is an icon button inside it, last on its row and
+   centred on its text, not a badge on its corner. Sonner injects its sheet at
+   run time, after this one, so these selectors outrank its own (the doubled
+   attribute adds the weight). */
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled='true']
+  [data-close-button][data-close-button] {
+  position: relative;
+  inset: auto;
+  order: 1;
+  transform: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  &:hover {
+    background: color-mix(in oklab, currentColor 12%, transparent);
+  }
+  &:focus-visible {
+    box-shadow: none;
+    outline: 3px solid var(--ring);
+  }
+  & > svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
   @media (pointer: coarse) {
