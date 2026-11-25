@@ -1,4 +1,4 @@
-# Session 4436 — Unfinished tasks into the Due panel, the journal template in Settings, one button height on a phone
+# Session 4437 — Unfinished tasks into the Due panel, the journal template in Settings, one button height on a phone
 
 **Ask.** The maintainer's third pass over the UI review (#7040), after session 4426:
 
