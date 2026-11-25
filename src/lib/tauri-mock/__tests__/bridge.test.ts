@@ -153,6 +153,7 @@ describe('setupBridge', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1))
     expect(handler).toHaveBeenCalledWith({
       event: 'block:properties-changed',
+      id: expect.any(Number),
       payload: { block_id: 'B1', changed_keys: ['todo_state'] },
     })
   })

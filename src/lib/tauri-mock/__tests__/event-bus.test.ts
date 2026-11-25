@@ -49,6 +49,7 @@ describe('mock event bus (#2683)', () => {
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler).toHaveBeenCalledWith({
       event: 'sync:complete',
+      id: expect.any(Number),
       payload: { type: 'complete', ops_received: 3 },
     })
 
@@ -97,6 +98,7 @@ describe('mock event bus (#2683)', () => {
 
     expect(handler).toHaveBeenCalledWith({
       event: 'deep-link',
+      id: expect.any(Number),
       payload: { urls: ['agaric://page/abc123'] },
     })
 
@@ -111,6 +113,7 @@ describe('mock event bus (#2683)', () => {
 
     expect(handler).toHaveBeenCalledWith({
       event: 'block:properties-changed',
+      id: expect.any(Number),
       payload: { block_id: SEED_IDS.BLOCK_GS_1, changed_keys: ['priority'] },
     })
 
@@ -138,6 +141,7 @@ describe('mock event bus (#2683)', () => {
       expect(handler).toHaveBeenCalledTimes(1)
       expect(handler).toHaveBeenCalledWith({
         event: 'blocks:changed',
+        id: expect.any(Number),
         payload: {
           changed_page_ids: [],
           local_ops_appended: true,
