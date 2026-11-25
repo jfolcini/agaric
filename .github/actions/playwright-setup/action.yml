@@ -96,9 +96,30 @@ runs:
         # stalled" (infra) from "apt said no" (a real failure).
         timed_out=0
 
-        # apt's stdout (index fetches, then dpkg's unpack and `Setting up` line
-        # per package) goes here and is printed when an attempt fails, with the
-        # mirror diagnostic `prepare-apt` recorded. apt's stderr always prints.
+        # Twin of `archive_indexed` in `.github/actions/apt-install`: fix both.
+        # Packages that will not resolve while apt holds no release-pocket index
+        # for main or universe mean this runner's sources are broken, not the diff.
+        archive_indexed() {
+          local component files f codename missing=0
+          codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)"
+          echo "apt's Packages indexes for the ${codename} release pocket:"
+          for component in main universe; do
+            # shellcheck disable=SC2016 # $(FILENAME) is apt's field, not the shell's
+            files="$(apt-get indextargets --format '$(FILENAME)' 'Created-By: Packages' \
+                       "Component: ${component}" "Suite: ${codename}")"
+            if [ -n "${files}" ]; then
+              while read -r f; do echo "  ${component}: ${f}"; done <<<"${files}"
+            else
+              echo "  ${component}: none (not in the sources, or not on disk)"
+              missing=1
+            fi
+          done
+          return "${missing}"
+        }
+
+        # install-deps' stdout and stderr (apt's index fetches, `W:` / `E:` lines,
+        # dpkg's unpack and `Setting up` line per package) go here and are printed
+        # when an attempt fails, with the mirror diagnostic `prepare-apt` recorded.
         log="${RUNNER_TEMP}/pw-install-deps.log"
 
         for attempt in 1 2; do
@@ -106,9 +127,9 @@ runs:
           : >"${log}"
           if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ]; then
             # -k: plain `timeout` SIGTERMs and then waits on the child forever.
-            timeout -k 30 "${bound}" npx playwright install-deps chromium >>"${log}" || status=$?
+            timeout -k 30 "${bound}" npx playwright install-deps chromium >>"${log}" 2>&1 || status=$?
           else
-            npx playwright install-deps chromium >>"${log}" || status=$?
+            npx playwright install-deps chromium >>"${log}" 2>&1 || status=$?
           fi
           if [ "${status}" -eq 0 ]; then
             exit 0
@@ -148,6 +169,18 @@ runs:
             echo "### Playwright system deps could not install (infra, not this diff)"
             echo
             echo "\`npx playwright install-deps chromium\` exceeded its \`${bound}s\` bound inside its own \`apt-get update\`, and the unbounded retry then failed with exit \`${status}\`."
+            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 75
+        fi
+
+        if grep -qE 'Unable to locate package|has no installation candidate' "${log}" \
+           && ! archive_indexed; then
+          echo "::error title=apt (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps could not resolve its packages: apt holds no index for the release pocket's main or universe on this runner. Rerun the job."
+          {
+            echo "### Playwright system deps could not install (infra, not this diff)"
+            echo
+            echo "\`npx playwright install-deps chromium\` could not resolve its packages: apt holds no Packages index for the release pocket's main or universe."
             echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           exit 75

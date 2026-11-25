@@ -560,6 +560,7 @@ jobs:
           scripts/file-fuzz-findings.test.mjs
           scripts/npm-audit-retry.test.mjs
           scripts/apt-install-action.test.mjs
+          scripts/playwright-setup-action.test.mjs
           scripts/lib/rust-scan.test.mjs
           scripts/lib/sqlx-query-range.test.mjs
           scripts/check-table-ownership.test.mjs
