@@ -26,6 +26,7 @@ import {
   focusBlock,
   ipc,
   navigateMobile,
+  navigateToView,
   openMobileSidebar,
   openPage,
   openPageMobile,
@@ -548,6 +549,48 @@ async function openTagPicker(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: 'Add tag', exact: true }).click()
 }
 
+/** The Tags view's colour picker for `work`, opened from its row. */
+async function openTagColorPicker(page: Page): Promise<Locator> {
+  await navigateToView(page, 'Tags')
+  const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
+  await row.hover()
+  await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
+  return page.getByRole('dialog', { name: 'Set tag color' })
+}
+
+/** A page `title` holding one JavaScript code block. */
+async function seedCodePage(page: Page, title: string): Promise<void> {
+  const pageId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: title,
+    spaceId: SEED_IDS.SPACE_PERSONAL,
+  })
+  await ipc(page, 'create_block', {
+    blockType: 'content',
+    content: '```javascript\nconst x = 1\n```',
+    parentId: pageId,
+    index: null,
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+  })
+}
+
+/** Open the toolbar's Turn into, inline or under More; on a code block it shows the language filter. */
+async function openTurnInto(page: Page): Promise<void> {
+  const toolbar = page.getByTestId('formatting-toolbar')
+  const inline = toolbar.getByRole('button', { name: 'Turn into', exact: true })
+  if (await inline.isVisible()) {
+    await inline.click()
+    return
+  }
+  await toolbar.getByRole('button', { name: 'More' }).click()
+  await page
+    .getByTestId('toolbar-overflow-menu')
+    .getByRole('button', { name: 'Turn into', exact: true })
+    .click()
+}
+
+const codeFilter = (page: Page) => page.getByRole('textbox', { name: 'Code block language' })
+
 // One rule, `usePhoneLayout`, makes a popover holding a field, the four
 // dialogs that were still centred, and every menu a bottom sheet on a phone
 // (#7040 M8, M9, S13); a desktop keeps them anchored or centred.
@@ -607,7 +650,7 @@ test.describe('Phone popovers with a field, dialogs and menus are bottom sheets 
     await expectBottomSheet(page, sheet)
     // Its rows still act: Manage spaces opens Settings › Spaces.
     await sheet.getByRole('button', { name: 'Manage spaces…' }).tap()
-    await expect(page.getByRole('tabpanel', { name: 'Spaces' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Spaces' })).toBeVisible()
   })
 
   test('the voice note recorder is a bottom sheet', async ({ page }) => {
@@ -650,6 +693,52 @@ test.describe('Phone popovers with a field, dialogs and menus are bottom sheets 
     await expect(sheet).toHaveCount(0)
     await expect(cell).toBeVisible()
     await expect(block.locator('[contenteditable="true"]')).toHaveCount(0)
+  })
+
+  // #7092: anchored, the custom colour ran off the foot of the screen.
+  test('the tag colour picker is a bottom sheet with its hex field on screen', async ({ page }) => {
+    const sheet = await openTagColorPicker(page)
+    await expectBottomSheet(page, sheet)
+    await sheet.getByRole('button', { name: 'Custom color', exact: true }).tap()
+    await expect(sheet.getByRole('textbox', { name: 'Hex color', exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+  })
+
+  // The pick lands on the block being edited, which is still being edited after it.
+  test("Turn into's code language picker is a bottom sheet the editor keeps its block through", async ({
+    page,
+  }) => {
+    await seedCodePage(page, 'Phone code')
+    await openPageMobile(page, 'Phone code')
+    await focusBlock(page)
+    await openTurnInto(page)
+    await expectBottomSheet(page, codeFilter(page))
+    await codeFilter(page).fill('python')
+    await codeFilter(page).press('Enter')
+    await expect(codeFilter(page)).toHaveCount(0)
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(editor).toBeFocused()
+    await expect(editor.locator('pre > code')).toHaveClass('language-python')
+  })
+
+  test("page mode's code language picker is a bottom sheet", async ({ page }) => {
+    await seedCodePage(page, 'Phone page code')
+    await openPageMobile(page, 'Phone page code')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
+    await page.getByRole('menuitem', { name: 'Edit as page', exact: true }).tap()
+    const editor = page.locator('[data-testid="page-mode-editor"]')
+    await editor.locator('pre').tap()
+    const language = page.getByTestId('page-code-bubble').getByRole('button', {
+      name: 'Code block language',
+    })
+    await language.tap()
+    await expectBottomSheet(page, codeFilter(page))
+    await codeFilter(page).fill('python')
+    await codeFilter(page).press('Enter')
+    await expect(codeFilter(page)).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    await expect(language).toHaveText('python')
   })
 })
 
@@ -703,5 +792,24 @@ test.describe('A desktop keeps the anchored popovers, dropdowns and dialogs (#70
       'data-slot',
       'dialog-content',
     )
+  })
+
+  test('the tag colour picker and the code language picker are anchored popovers', async ({
+    page,
+  }) => {
+    await openTagColorPicker(page)
+    await expect(
+      activePopover(page).getByRole('radiogroup', { name: 'Color palette' }),
+    ).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await seedCodePage(page, 'Desktop code')
+    await openPage(page, 'Desktop code')
+    await focusBlock(page)
+    await openTurnInto(page)
+    await expect(
+      activePopover(page).getByRole('textbox', { name: 'Code block language' }),
+    ).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
   })
 })

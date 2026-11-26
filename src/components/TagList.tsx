@@ -421,6 +421,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     <Popover
                       open={colorPickerOpen === tag.tag_id}
                       onOpenChange={(open) => setColorPickerOpen(open ? tag.tag_id : null)}
+                      sheetTitle={t('tagList.colorTagLabel')}
                     >
                       <PopoverTrigger asChild>
                         <Button

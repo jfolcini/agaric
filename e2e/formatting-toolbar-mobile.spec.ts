@@ -18,12 +18,12 @@
  *   4. the pinned toolbar rests on the soft keyboard when the viewport shrinks
  *      for it (keyboard shown) and on the screen's foot when it grows back;
  *   5. a popover opened from that bar with the keyboard up is fully on screen
- *      AND still tall enough to use (#4313).
+ *      AND usable (#4313): on a phone, a bottom sheet resting on the keyboard.
  */
 
 import { devices } from '@playwright/test'
 
-import { expect, focusBlock, test, waitForBoot } from './helpers'
+import { activeSheet, expect, focusBlock, test, waitForBoot } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
 
@@ -164,56 +164,16 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
    * Regression (#4313) — a toolbar popover opened with the IME up must be both
    * fully visible AND usable.
    *
-   * The Turn-into menu anchors to the pinned toolbar, which sits at the top edge
-   * of the keyboard, and its Code-block disclosure expands ~19 more rows in
-   * place. The old cap was `max-h-[calc(100dvh-4rem)]`, and `dvh` does NOT
-   * shrink for the IME on Android (edge-to-edge / targetSdk 36 leaves the LAYOUT
-   * viewport at full height), so the menu was capped against a screen a third of
-   * which was keyboard. Measured on a Pixel 8: it grew past the top of the
-   * screen and its upper third was clipped away, unreachable — scrolling could
-   * not recover those rows because the container itself was off-screen.
+   * Turn into's Code-block disclosure expands the language list in place. Anchored
+   * to the pinned toolbar, which sits at the top edge of the keyboard, the menu
+   * once grew past the top of the screen with its upper third clipped away. On
+   * a phone it is a bottom sheet (#7040): it rests on the keyboard, stays on
+   * screen, and scrolls to its last row. The anchored cap is pinned on desktop
+   * by `toolbar-and-blocks.spec.ts`.
    *
-   * The cap is now `--radix-popover-content-available-height`, which floating-ui
-   * derives from `window.visualViewport` (its default `rootBoundary: 'viewport'`
-   * → `getViewportRect`), i.e. from the band actually on screen; on Android
-   * the keyboard now shrinks that band and the layout viewport alike (#6790).
-   *
-   * Two failure modes, two assertions:
-   *   - too tall  → the popover runs off the top / under the keyboard (the
-   *     original bug); asserted on the rendered box.
-   *   - too short → the keyboard subtracted twice (once by the boundary, once
-   *     as bottom `collisionPadding`) collapses the cap to ~one row, which is
-   *     just as unusable. Hence the MIN_USABLE_POPOVER_HEIGHT floor.
-   *
-   * The second assertion reads the CAP — the resolved
-   * `--radix-popover-content-available-height` — and NOT the rendered box
-   * height. That distinction is load-bearing. `popover.tsx` wraps the cap in
-   * `max(…, 8rem)` to survive a negative available height, and 8rem (128px) is
-   * larger than MIN_USABLE_POPOVER_HEIGHT (120px): replay the double
-   * subtraction and the cap collapses to 56px, the floor lifts the rendered box
-   * back to 128px, and a rendered-height assertion passes on the very bug it
-   * was written for. The custom property is the pre-floor value, so it stays
-   * falsifiable no matter where the floor sits — and it is also the quantity
-   * that actually broke, rather than a downstream consequence of it.
-   *
-   * The keyboard is raised BEFORE the popover opens — that is the real sequence
-   * (the user is typing, the IME is up, then they tap the toolbar) and it makes
-   * the assertion independent of whether anything re-runs the popper on a
-   * viewport resize.
+   * The keyboard is raised BEFORE the menu opens — that is the real sequence
+   * (the user is typing, the IME is up, then they tap the toolbar).
    */
-  // A menu capped to a single row is as broken as one drawn under the keyboard.
-  // Two coarse-pointer rows (44 px each, see TOUCH_FLOOR) plus a little padding
-  // is the smallest thing worth calling a menu. (The addend is deliberately
-  // round: this popover overrides the primitive's `p-4` to `p-1`, so it is a
-  // margin, not a derivation.)
-  // Measured on this viewport: 311 px as it stands; 56 px when the keyboard was
-  // also passed as bottom `collisionPadding` (664 − 300 clipping band, minus
-  // 4 px top and 4 + 300 px bottom padding). The floor sits between the two.
-  // This constant constrains the code; the code's own `max(…, 8rem)` floor is
-  // NOT derived from it (see `popover.tsx`), and the assertion below is taken
-  // on the pre-floor cap precisely so the two cannot collude.
-  const MIN_USABLE_POPOVER_HEIGHT = 2 * TOUCH_FLOOR + 32
-
   test('a toolbar popover opened with the keyboard up is fully visible and usable', async ({
     page,
   }) => {
@@ -226,9 +186,6 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     // does: the viewport shrinks by the keyboard's height.
     const { width, height } = iPhone13.viewport
     await page.setViewportSize({ width, height: height - KEYBOARD })
-
-    // The bar rests on the "keyboard": the popover's anchor is at the very top
-    // edge of it, which is the geometry that produced the bug.
     await expect
       .poll(async () => {
         const b = await toolbar.boundingBox()
@@ -240,42 +197,20 @@ test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
     // Expand the tallest disclosure — the language list is what overflowed.
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
 
-    const popover = page.locator('[data-slot="popover-content"]').first()
-    await expect(popover).toBeVisible()
-
-    // Single DOM pass per attempt, retried until the open animation settles.
+    const sheet = activeSheet(page)
+    await expect(sheet).toBeVisible()
     await expect(async () => {
-      const geometry = await popover.evaluate((el) => {
-        const r = el.getBoundingClientRect()
-        return {
-          top: r.top,
-          bottom: r.bottom,
-          innerHeight: window.innerHeight,
-          // The cap Radix computed, BEFORE `popover.tsx`'s `max(…, 8rem)` floor
-          // is applied to it. Radix's `size()` middleware writes
-          // `--radix-popper-available-height` on the popper wrapper and the
-          // popover layer re-exports it under this name; custom properties
-          // substitute at computed-value time, so this reads back as a resolved
-          // `<n>px`. It is empty until `size()` has run once — hence the retry.
-          availableHeight: getComputedStyle(el)
-            .getPropertyValue('--radix-popover-content-available-height')
-            .trim(),
-        }
+      const r = await sheet.evaluate((el) => {
+        const b = el.getBoundingClientRect()
+        return { top: b.top, bottom: b.bottom, innerHeight: window.innerHeight }
       })
-      // Not clipped off the top of the screen.
-      expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
-      // Not drawn under the keyboard.
-      expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(geometry.innerHeight + SLACK)
-      // The cap resolved at all — an empty value means the popover fell back to
-      // `calc(100dvh-4rem)`, which is not measured against the anchor.
-      expect(geometry.availableHeight, 'available-height var').toMatch(/^-?[\d.]+px$/)
-      // ...and it was not collapsed to an unusable sliver by double-counting the
-      // keyboard. Deliberately NOT `getBoundingClientRect().height`: the 8rem
-      // floor would satisfy that check even at a 56px cap. See the note above.
-      expect(
-        Number.parseFloat(geometry.availableHeight),
-        'popover available height',
-      ).toBeGreaterThanOrEqual(MIN_USABLE_POPOVER_HEIGHT)
+      expect(r.top, 'sheet top').toBeGreaterThanOrEqual(-SLACK)
+      // On the keyboard, not under it.
+      expect(Math.abs(r.bottom - r.innerHeight), 'sheet bottom').toBeLessThanOrEqual(SLACK)
     }).toPass({ timeout: 5000 })
+
+    const lastRow = sheet.getByRole('button', { name: 'Plain text', exact: true })
+    await lastRow.scrollIntoViewIfNeeded()
+    await expect(lastRow).toBeInViewport({ ratio: 1 })
   })
 })

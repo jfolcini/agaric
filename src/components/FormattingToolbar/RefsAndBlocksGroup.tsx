@@ -179,7 +179,8 @@ export function renderTurnIntoButton({
     )
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    // A sheet on a phone: the code language picker in it has a filter field.
+    <Popover open={open} onOpenChange={setOpen} sheetTitle={t('toolbar.turnInto')}>
       <PopoverAnchor asChild>{trigger}</PopoverAnchor>
       <PopoverContent
         align="start"
