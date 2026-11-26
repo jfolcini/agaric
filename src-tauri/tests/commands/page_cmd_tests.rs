@@ -5878,7 +5878,7 @@ async fn copy_tree(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 6] {
     [a, a1, a1x, a2, b, c]
 }
 
-/// #6277 E4 — the page copy, Export as Markdown, pasted into another page is
+/// #6277 E4 — the page copy, Copy as Markdown, pasted into another page is
 /// the page's title as one `# Title` heading, then its blocks: its front
 /// matter reads as no block, where it was two `---` rules and an `aliases:`
 /// paragraph.
