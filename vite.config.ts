@@ -164,7 +164,15 @@ export default defineConfig({
     // applies.
     minify: !process.env['TAURI_DEBUG'] ? 'oxc' : false,
     sourcemap: !!process.env['TAURI_DEBUG'],
+    // `scripts/check-bundle-budget.mjs` is the size check for the chunks on the
+    // startup path. Vite's generic one fires only on mermaid's own lazily loaded
+    // chunk, which loads when a diagram renders.
+    chunkSizeWarningLimit: Number.POSITIVE_INFINITY,
     rolldownOptions: {
+      // The React Compiler runs through babel by design (the `babel` plugin
+      // above), so a note that JS plugins take most of the build restates that
+      // on every build.
+      checks: { bundlerTimings: false },
       output: {
         // Vendor chunking via Rolldown's native `codeSplitting` (see
         // VENDOR_CHUNK_GROUPS). #2939 — this REPLACES the previous Rollup-compat

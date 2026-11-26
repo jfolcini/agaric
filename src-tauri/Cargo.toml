@@ -564,7 +564,9 @@ codegen-units = 16
 # panic while the bench harness always unwinds. Under the inherited abort that
 # is two `agaric_lib` units writing one unhashed rlib (the lib is also a
 # cdylib), and a bench linked against the abort one fails with `expected X,
-# found X`, depending on build order.
+# found X`, depending on build order. Cargo warns that this setting is ignored
+# for the bench profile: it is ignored for the bench targets, which always
+# unwind, but the bins take it, and without it the bench build fails.
 [profile.bench]
 panic = "unwind"
 
