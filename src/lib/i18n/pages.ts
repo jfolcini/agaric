@@ -188,6 +188,17 @@ export const pages: Record<string, string> = {
   'pageHeader.menuAddTag': 'Add tag',
   'pageHeader.menuAddProperty': 'Add property',
 
+  // Translators: PageHeader kebab menu: screen-reader names of its groups of items: adding things
+  // to the page, ways to view it, its template status, and editing it. "Export" is the item that
+  // opens the submenu of ways to copy, save or print the page; "Back" leaves that submenu on a
+  // phone.
+  'pageHeader.sectionAdd': 'Add',
+  'pageHeader.sectionView': 'View',
+  'pageHeader.sectionTemplate': 'Template',
+  'pageHeader.sectionEdit': 'Edit',
+  'pageHeader.exportMenu': 'Export',
+  'pageHeader.exportBack': 'Back',
+
   // Translators: Templates view (opened from the Sidebar): intro text at the top
   // ("/template" is a slash command the user types, keep it as is; "placeholders below" = the list
   // at the bottom), the empty state, the search box (placeholder and aria-label), and the

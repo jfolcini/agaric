@@ -60,7 +60,7 @@ function localDateStr(d: Date): string {
 }
 
 // ===========================================================================
-// Helper: open the kebab menu on the current page and click "Export as Markdown"
+// Helper: open the kebab menu on the current page and click Export → "Export as Markdown"
 // ===========================================================================
 
 async function triggerExport(page: import('@playwright/test').Page) {
@@ -69,7 +69,8 @@ async function triggerExport(page: import('@playwright/test').Page) {
   await expect(kebabButton).toBeVisible()
   await kebabButton.click()
 
-  // Click the "Export as Markdown" option
+  // Open the Export submenu, then click its "Export as Markdown" row
+  await page.getByRole('menuitem', { name: 'Export', exact: true }).click()
   await page.getByText('Export as Markdown').click()
 }
 

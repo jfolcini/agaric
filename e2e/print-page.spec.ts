@@ -162,7 +162,7 @@ test.describe('printing a page @pages @editor', () => {
     await expect(placeholders).not.toHaveCount(0)
   })
 
-  test('the page menu has Print…, which opens the print dialog and closes the menu', async ({
+  test('the page menu’s Export submenu has Print…, which opens the print dialog and closes the menu', async ({
     page,
   }) => {
     await page.evaluate(() => {
@@ -174,6 +174,7 @@ test.describe('printing a page @pages @editor', () => {
     })
     await openSeeded(page, 'Getting Started')
     await page.getByRole('button', { name: 'Page actions' }).click()
+    await activeMenu(page).getByRole('menuitem', { name: 'Export', exact: true }).click()
 
     await activeMenu(page).getByRole('menuitem', { name: 'Print…' }).click()
 

@@ -1,10 +1,12 @@
 import {
   BookTemplate,
+  ChevronLeft,
   Clock,
   Copy,
   Download,
   ExternalLink,
   FileCode,
+  FileOutput,
   FolderOutput,
   LayoutTemplate,
   Link,
@@ -19,7 +21,7 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { shortcutHint } from '@/components/editor/block-context-menu/hints'
@@ -27,6 +29,7 @@ import { EditModeItem } from '@/components/pages/EditModeItem'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { MenuRowChevron, menuRowVariants } from '@/components/ui/menu-row'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { SheetTrigger } from '@/components/ui/sheet'
@@ -36,15 +39,13 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { EditMode } from '@/lib/preferences'
+import { cn } from '@/lib/utils'
 
 /** A space shown in the "Move to space" sub-menu. */
 export interface MoveTargetSpace {
   id: string
   name: string
 }
-
-export const MENU_ITEM_CLASS =
-  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent active:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
 
 const SHORTCUT_HINT_CLASS = 'ml-auto shrink-0'
 
@@ -100,7 +101,7 @@ export interface PageHeaderMenuProps {
   onMoveToSpace?: ((targetSpaceId: string) => void) | undefined
 }
 
-interface TopLevelMenuFlags {
+interface MenuFlags {
   offersNewTab: boolean
   canRedo: boolean
   hasHistory: boolean
@@ -109,35 +110,106 @@ interface TopLevelMenuFlags {
   hasEditMode: boolean
   hasEditSource: boolean
   showMoveEntry: boolean
+  exportOpen: boolean
+  phoneLayout: boolean
 }
 
-/**
- * Ordered top-level menuitem ids — mirrors the conditional render order.
- * A disabled Redo cannot take focus, so it leaves the roving set.
- */
-function topLevelMenuIds(f: TopLevelMenuFlags): string[] {
+function exportMenuIds(f: MenuFlags): string[] {
   return [
-    ...(f.offersNewTab ? ['openInNewTab'] : []),
     'copyAppLink',
-    'undo',
-    ...(f.canRedo ? ['redo'] : []),
-    ...(f.hasHistory ? ['pageHistory'] : []),
-    'openOutline',
-    'showInGraph',
-    'insertEmoji',
-    'addAlias',
-    'addTag',
-    'addProperty',
-    'toggleTemplate',
-    'toggleJournalTemplate',
     'export',
     ...(f.hasSaveMarkdownFile ? ['saveMarkdownFile'] : []),
     ...(f.hasPrint ? ['print'] : []),
+  ]
+}
+
+/**
+ * Ordered menuitem ids — mirrors the conditional render order: the Add, View,
+ * Template and Edit sections, Export and its open rows, Delete. On a phone an
+ * open Export is all the sheet shows. A disabled Redo cannot take focus, so it
+ * leaves the roving set.
+ */
+function menuIds(f: MenuFlags): string[] {
+  if (f.exportOpen && f.phoneLayout) return ['exportBack', ...exportMenuIds(f)]
+  return [
+    'addAlias',
+    'addTag',
+    'addProperty',
+    'insertEmoji',
+    'openOutline',
+    ...(f.hasHistory ? ['pageHistory'] : []),
+    'showInGraph',
+    ...(f.offersNewTab ? ['openInNewTab'] : []),
+    'toggleTemplate',
+    'toggleJournalTemplate',
+    'undo',
+    ...(f.canRedo ? ['redo'] : []),
     ...(f.hasEditMode ? ['editMode'] : []),
     ...(f.hasEditSource ? ['editSource'] : []),
     ...(f.showMoveEntry ? ['moveTo'] : []),
+    'exportMenu',
+    ...(f.exportOpen ? exportMenuIds(f) : []),
     'delete',
   ]
+}
+
+interface ExportRowsProps extends Pick<
+  PageHeaderMenuProps,
+  'onCopyAppLink' | 'onExport' | 'onSaveMarkdownFile' | 'onPrint'
+> {
+  id: string
+  /** Indented under the Export row on a desktop; alone in the sheet on a phone. */
+  indent: 0 | 1
+  keyboardHints: boolean
+  itemProps: (id: string) => React.ComponentProps<'button'>
+}
+
+/** The Export submenu's rows. */
+function ExportRows({
+  id,
+  indent,
+  keyboardHints,
+  itemProps,
+  onCopyAppLink,
+  onExport,
+  onSaveMarkdownFile,
+  onPrint,
+}: ExportRowsProps): React.ReactElement {
+  const { t } = useTranslation()
+  const row = menuRowVariants({ indent })
+  return (
+    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a group of items inside a menu; <fieldset> would bring form semantics into it
+    <div id={id} role="group" aria-label={t('pageHeader.exportMenu')}>
+      <button type="button" className={row} onClick={onCopyAppLink} {...itemProps('copyAppLink')}>
+        <Link />
+        {t('pageHeader.copyAppLink')}
+      </button>
+      <button type="button" className={row} onClick={onExport} {...itemProps('export')}>
+        <Copy />
+        {t('pageHeader.exportMarkdown')}
+        {keyboardHints && (
+          <Kbd keys={shortcutHint('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
+        )}
+      </button>
+      {onSaveMarkdownFile != null && (
+        <button
+          type="button"
+          className={row}
+          onClick={onSaveMarkdownFile}
+          {...itemProps('saveMarkdownFile')}
+        >
+          <Download />
+          {t('pageHeader.saveMarkdownFile')}
+        </button>
+      )}
+      {onPrint != null && (
+        <button type="button" className={row} onClick={onPrint} {...itemProps('print')}>
+          <Printer />
+          {t('pageHeader.print')}
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function PageHeaderMenu({
@@ -168,7 +240,7 @@ export function PageHeaderMenu({
   kebabRef,
   onDeleteRequest,
   onOpenInNewTab,
-  isSpaceBlock = false,
+  isSpaceBlock,
   moveTargets,
   onMoveToSpace,
 }: PageHeaderMenuProps) {
@@ -186,18 +258,29 @@ export function PageHeaderMenu({
   const showMoveEntry =
     !isSpaceBlock && onMoveToSpace != null && moveTargets != null && moveTargets.length > 0
 
-  // CR-A11Y (#151) — roving-tabindex over the TOP-LEVEL menuitems. Items render
-  // conditionally (open-in-new-tab, move-to-space) and are interleaved with
-  // <hr> separators, so we build the ordered id list declaratively below in
-  // render order (which is DOM order) rather than measuring the live DOM. Each
-  // top-level <button> registers its node via `registerItem`, keyed by a stable
-  // id. The nested "move to space" sub-menu has its own role="menu"/
-  // role="menuitem" and is intentionally NOT part of this set, so its targets
-  // are never counted in the top-level roving set.
+  // Export opens in place on a desktop, as the block menu's disclosures do, and
+  // drills in on a phone, where the sheet shows its rows alone. The menu
+  // reopens with it closed.
+  const [exportOpen, setExportOpen] = useState(false)
+  const [wasOpen, setWasOpen] = useState(kebabOpen)
+  if (kebabOpen !== wasOpen) {
+    setWasOpen(kebabOpen)
+    if (kebabOpen) setExportOpen(false)
+  }
+  const exportGroupId = useId()
+
+  // CR-A11Y (#151) — roving-tabindex over the menuitems. Items render
+  // conditionally (open-in-new-tab, move-to-space, the Export rows) and are
+  // interleaved with <hr> separators, so we build the ordered id list
+  // declaratively below in render order (which is DOM order) rather than
+  // measuring the live DOM. Each <button> registers its node via
+  // `registerItem`, keyed by a stable id. The nested "move to space" sub-menu
+  // has its own role="menu"/role="menuitem" and is intentionally NOT part of
+  // this set, so its targets are never counted in the roving set.
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  const orderedIds = topLevelMenuIds({
+  const orderedIds = menuIds({
     offersNewTab,
     canRedo,
     hasHistory: onOpenHistory != null,
@@ -206,6 +289,8 @@ export function PageHeaderMenu({
     hasEditMode: onEditModeChange != null,
     hasEditSource: onEditSource != null,
     showMoveEntry,
+    exportOpen,
+    phoneLayout,
   })
 
   const registerItem = useCallback((id: string, node: HTMLButtonElement | null) => {
@@ -219,28 +304,40 @@ export function PageHeaderMenu({
     itemRefs.current.get(id)?.focus()
   }, [])
 
-  // On open, focus the first menuitem. We wait a frame so conditional items
-  // and the Radix portal content are mounted before we focus.
-  const firstId = orderedIds[0] ?? null
+  // On open, focus the first menuitem, Add alias. We wait a frame so the Radix
+  // portal content is mounted before we focus.
   useEffect(() => {
     if (!kebabOpen) {
       // oxlint-disable-next-line react/set-state-in-effect -- clears the roving focus id on close; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
       setActiveId(null)
       return
     }
-    const raf = requestAnimationFrame(() => focusItem(firstId))
+    const raf = requestAnimationFrame(() => focusItem('addAlias'))
     return () => cancelAnimationFrame(raf)
-  }, [kebabOpen, firstId, focusItem])
+  }, [kebabOpen, focusItem])
+
+  // A phone's drill unmounts the row that had focus, so focus follows the
+  // drill: into the Export rows, or back onto the Export row.
+  const drillFocus = useRef<string | null>(null)
+  useEffect(() => {
+    const id = drillFocus.current
+    drillFocus.current = null
+    focusItem(id)
+  }, [exportOpen, focusItem])
+  const toggleExport = () => {
+    if (phoneLayout) drillFocus.current = exportOpen ? 'exportMenu' : 'copyAppLink'
+    setExportOpen((open) => !open)
+  }
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const ids = orderedIds
     if (ids.length === 0) return
-    // Only the top-level roving set responds to arrow keys. The nested
-    // "move to space" sub-menu uses normal Tab order, so when focus is inside
-    // it (target is not a registered top-level item) we leave the event alone.
+    // Only the roving set responds to arrow keys. The nested "move to space"
+    // sub-menu uses normal Tab order, so when focus is inside it (target is
+    // not a registered item) we leave the event alone.
     const target = event.target as HTMLElement
-    const onTopLevelItem = ids.some((id) => itemRefs.current.get(id) === target)
-    if (!onTopLevelItem) return
+    const onRovingItem = ids.some((id) => itemRefs.current.get(id) === target)
+    if (!onRovingItem) return
     const current = activeId ?? ids[0]
     const idx = current ? ids.indexOf(current) : -1
     switch (event.key) {
@@ -270,7 +367,7 @@ export function PageHeaderMenu({
     }
   }
 
-  /** Shared props for every top-level menuitem button. */
+  /** Shared props for every roving menuitem button. */
   const menuItemProps = (id: string) => ({
     role: 'menuitem' as const,
     tabIndex: activeId === id ? 0 : -1,
@@ -307,245 +404,239 @@ export function PageHeaderMenu({
     if (document.activeElement !== document.body) e.preventDefault()
   }
 
-  const items = (
+  const row = menuRowVariants()
+  const separator = <hr className="my-1 h-px bg-border border-none" />
+
+  const exportRows = (
+    <ExportRows
+      id={exportGroupId}
+      indent={phoneLayout ? 0 : 1}
+      keyboardHints={keyboardHints}
+      itemProps={menuItemProps}
+      onCopyAppLink={onCopyAppLink}
+      onExport={onExport}
+      onSaveMarkdownFile={onSaveMarkdownFile}
+      onPrint={onPrint}
+    />
+  )
+
+  const drilledIntoExport = (
     <>
-      {offersNewTab && (
+      <button type="button" className={row} onClick={toggleExport} {...menuItemProps('exportBack')}>
+        <ChevronLeft />
+        {t('pageHeader.exportBack')}
+      </button>
+      {separator}
+      {exportRows}
+    </>
+  )
+
+  const sections = (
+    <>
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a group of items inside a menu; see exportRows */}
+      <div role="group" aria-label={t('pageHeader.sectionAdd')}>
+        <button type="button" className={row} onClick={onAddAlias} {...menuItemProps('addAlias')}>
+          <Link />
+          {t('pageHeader.menuAddAlias')}
+        </button>
+        <button type="button" className={row} onClick={onAddTag} {...menuItemProps('addTag')}>
+          <Tag />
+          {t('pageHeader.menuAddTag')}
+        </button>
         <button
           type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onOpenInNewTab}
-          {...menuItemProps('openInNewTab')}
+          className={row}
+          onClick={onAddProperty}
+          {...menuItemProps('addProperty')}
         >
-          <ExternalLink className="h-3.5 w-3.5" />
-          {t('tabs.openInNewTab')}
+          <Settings2 />
+          {t('pageHeader.menuAddProperty')}
         </button>
-      )}
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onCopyAppLink}
-        {...menuItemProps('copyAppLink')}
-      >
-        <Link className="h-3.5 w-3.5" />
-        {t('pageHeader.copyAppLink')}
-      </button>
-      <hr className="my-1 h-px bg-border border-none" />
-      <button type="button" className={MENU_ITEM_CLASS} onClick={onUndo} {...menuItemProps('undo')}>
-        <Undo2 className="h-3.5 w-3.5" />
-        {t('pageHeader.undoAction')}
-        {keyboardHints && (
-          <Kbd keys={shortcutHint('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
-        )}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        disabled={!canRedo}
-        onClick={onRedo}
-        {...menuItemProps('redo')}
-      >
-        <Redo2 className="h-3.5 w-3.5" />
-        {t('pageHeader.redoAction')}
-        {keyboardHints && (
-          <Kbd keys={shortcutHint('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
-        )}
-      </button>
-      {onOpenHistory != null && (
         <button
           type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onOpenHistory}
-          {...menuItemProps('pageHistory')}
+          className={row}
+          onClick={onInsertEmoji}
+          {...menuItemProps('insertEmoji')}
         >
-          <Clock className="h-3.5 w-3.5" />
-          {t('pageHeader.pageHistory')}
+          <Smile />
+          {t('pageHeader.insertEmoji')}
         </button>
-      )}
-      <hr className="my-1 h-px bg-border border-none" />
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onOpenOutline}
-        {...menuItemProps('openOutline')}
-      >
-        <List className="h-3.5 w-3.5" />
-        {t('pageHeader.openOutline')}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onShowInGraph}
-        {...menuItemProps('showInGraph')}
-      >
-        <Network className="h-3.5 w-3.5" />
-        {t('pageHeader.showInGraph')}
-        {keyboardHints && (
-          <Kbd keys={shortcutHint('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
-        )}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onInsertEmoji}
-        {...menuItemProps('insertEmoji')}
-      >
-        <Smile className="h-3.5 w-3.5" />
-        {t('pageHeader.insertEmoji')}
-      </button>
-      <hr className="my-1 h-px bg-border border-none" />
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onAddAlias}
-        {...menuItemProps('addAlias')}
-      >
-        <Link className="h-3.5 w-3.5" />
-        {t('pageHeader.menuAddAlias')}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onAddTag}
-        {...menuItemProps('addTag')}
-      >
-        <Tag className="h-3.5 w-3.5" />
-        {t('pageHeader.menuAddTag')}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onAddProperty}
-        {...menuItemProps('addProperty')}
-      >
-        <Settings2 className="h-3.5 w-3.5" />
-        {t('pageHeader.menuAddProperty')}
-      </button>
-      <hr className="my-1 h-px bg-border border-none" />
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onToggleTemplate}
-        {...menuItemProps('toggleTemplate')}
-      >
-        <LayoutTemplate className="h-3.5 w-3.5" />
-        {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
-      </button>
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onToggleJournalTemplate}
-        {...menuItemProps('toggleJournalTemplate')}
-      >
-        <BookTemplate className="h-3.5 w-3.5" />
-        {isJournalTemplate
-          ? t('pageHeader.removeJournalTemplate')
-          : t('pageHeader.setJournalTemplate')}
-      </button>
-      <hr className="my-1 h-px bg-border border-none" />
-      <button
-        type="button"
-        className={MENU_ITEM_CLASS}
-        onClick={onExport}
-        {...menuItemProps('export')}
-      >
-        <Copy className="h-3.5 w-3.5" />
-        {t('pageHeader.exportMarkdown')}
-        {keyboardHints && (
-          <Kbd keys={shortcutHint('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
-        )}
-      </button>
-      {onSaveMarkdownFile != null && (
+      </div>
+      {separator}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a group of items inside a menu; see exportRows */}
+      <div role="group" aria-label={t('pageHeader.sectionView')}>
         <button
           type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onSaveMarkdownFile}
-          {...menuItemProps('saveMarkdownFile')}
+          className={row}
+          onClick={onOpenOutline}
+          {...menuItemProps('openOutline')}
         >
-          <Download className="h-3.5 w-3.5" />
-          {t('pageHeader.saveMarkdownFile')}
+          <List />
+          {t('pageHeader.openOutline')}
         </button>
-      )}
-      {onPrint != null && (
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onPrint}
-          {...menuItemProps('print')}
-        >
-          <Printer className="h-3.5 w-3.5" />
-          {t('pageHeader.print')}
-        </button>
-      )}
-      {onEditModeChange != null && (
-        <EditModeItem
-          className={MENU_ITEM_CLASS}
-          mode={editMode}
-          blocked={editModeBlocked}
-          onModeChange={onEditModeChange}
-          {...menuItemProps('editMode')}
-        />
-      )}
-      {onEditSource != null && (
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onEditSource}
-          {...menuItemProps('editSource')}
-        >
-          <FileCode className="h-3.5 w-3.5" />
-          {t('pageSource.edit')}
-        </button>
-      )}
-      {showMoveEntry && (
-        <>
-          <hr className="my-1 h-px bg-border border-none" />
+        {onOpenHistory != null && (
           <button
             type="button"
-            className={MENU_ITEM_CLASS}
-            aria-haspopup="menu"
-            aria-expanded={moveSubmenuOpen}
-            onClick={() => setMoveSubmenuOpen((open) => !open)}
-            {...menuItemProps('moveTo')}
+            className={row}
+            onClick={onOpenHistory}
+            {...menuItemProps('pageHistory')}
           >
-            <FolderOutput className="h-3.5 w-3.5" />
-            {t('space.moveTo')}
-            <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
-              {moveSubmenuOpen ? '▾' : '▸'}
-            </span>
+            <Clock />
+            {t('pageHeader.pageHistory')}
           </button>
-          {moveSubmenuOpen && (
-            <div
-              role="menu"
-              aria-label={t('space.moveTo')}
-              className="pl-4 mt-0.5 flex flex-col gap-0.5"
-            >
-              {moveTargets.map((target) => (
-                <button
-                  key={target.id}
-                  type="button"
-                  role="menuitem"
-                  className={MENU_ITEM_CLASS}
-                  onClick={() => {
-                    setMoveSubmenuOpen(false)
-                    onMoveToSpace?.(target.id)
-                  }}
-                >
-                  <TruncatedText>{target.name}</TruncatedText>
-                </button>
-              ))}
-            </div>
+        )}
+        <button
+          type="button"
+          className={row}
+          onClick={onShowInGraph}
+          {...menuItemProps('showInGraph')}
+        >
+          <Network />
+          {t('pageHeader.showInGraph')}
+          {keyboardHints && (
+            <Kbd keys={shortcutHint('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
           )}
-        </>
-      )}
-      <hr className="my-1 h-px bg-border border-none" />
+        </button>
+        {offersNewTab && (
+          <button
+            type="button"
+            className={row}
+            onClick={onOpenInNewTab}
+            {...menuItemProps('openInNewTab')}
+          >
+            <ExternalLink />
+            {t('tabs.openInNewTab')}
+          </button>
+        )}
+      </div>
+      {separator}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a group of items inside a menu; see exportRows */}
+      <div role="group" aria-label={t('pageHeader.sectionTemplate')}>
+        <button
+          type="button"
+          className={row}
+          onClick={onToggleTemplate}
+          {...menuItemProps('toggleTemplate')}
+        >
+          <LayoutTemplate />
+          {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
+        </button>
+        <button
+          type="button"
+          className={row}
+          onClick={onToggleJournalTemplate}
+          {...menuItemProps('toggleJournalTemplate')}
+        >
+          <BookTemplate />
+          {isJournalTemplate
+            ? t('pageHeader.removeJournalTemplate')
+            : t('pageHeader.setJournalTemplate')}
+        </button>
+      </div>
+      {separator}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a group of items inside a menu; see exportRows */}
+      <div role="group" aria-label={t('pageHeader.sectionEdit')}>
+        <button type="button" className={row} onClick={onUndo} {...menuItemProps('undo')}>
+          <Undo2 />
+          {t('pageHeader.undoAction')}
+          {keyboardHints && (
+            <Kbd keys={shortcutHint('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
+          )}
+        </button>
+        <button
+          type="button"
+          className={row}
+          disabled={!canRedo}
+          onClick={onRedo}
+          {...menuItemProps('redo')}
+        >
+          <Redo2 />
+          {t('pageHeader.redoAction')}
+          {keyboardHints && (
+            <Kbd keys={shortcutHint('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
+          )}
+        </button>
+        {onEditModeChange != null && (
+          <EditModeItem
+            className={row}
+            mode={editMode}
+            blocked={editModeBlocked}
+            onModeChange={onEditModeChange}
+            {...menuItemProps('editMode')}
+          />
+        )}
+        {onEditSource != null && (
+          <button
+            type="button"
+            className={row}
+            onClick={onEditSource}
+            {...menuItemProps('editSource')}
+          >
+            <FileCode />
+            {t('pageSource.edit')}
+          </button>
+        )}
+        {showMoveEntry && (
+          <>
+            <button
+              type="button"
+              className={row}
+              aria-haspopup="menu"
+              aria-expanded={moveSubmenuOpen}
+              onClick={() => setMoveSubmenuOpen((open) => !open)}
+              {...menuItemProps('moveTo')}
+            >
+              <FolderOutput />
+              {t('space.moveTo')}
+              <MenuRowChevron expanded={moveSubmenuOpen} />
+            </button>
+            {moveSubmenuOpen && (
+              <div role="menu" aria-label={t('space.moveTo')}>
+                {moveTargets.map((target) => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    role="menuitem"
+                    className={menuRowVariants({ indent: 1 })}
+                    onClick={() => {
+                      setMoveSubmenuOpen(false)
+                      onMoveToSpace?.(target.id)
+                    }}
+                  >
+                    <TruncatedText>{target.name}</TruncatedText>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {separator}
+      <button
+        type="button"
+        className={row}
+        aria-expanded={exportOpen}
+        aria-controls={exportOpen ? exportGroupId : undefined}
+        onClick={toggleExport}
+        {...menuItemProps('exportMenu')}
+      >
+        <FileOutput />
+        {t('pageHeader.exportMenu')}
+        <MenuRowChevron expanded={exportOpen} />
+      </button>
+      {exportOpen && exportRows}
+      {separator}
       <div className="rounded-md bg-destructive/5 p-0.5">
         <button
           type="button"
-          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
+          className={cn(
+            row,
+            'text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive focus-visible:ring-destructive/50',
+          )}
           onClick={onDeleteRequest}
           {...menuItemProps('delete')}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 />
           {t('pageHeader.deletePage')}
         </button>
       </div>
@@ -563,7 +654,7 @@ export function PageHeaderMenu({
         trigger={trigger}
         onCloseAutoFocus={onCloseAutoFocus}
       >
-        <div {...menuProps}>{items}</div>
+        <div {...menuProps}>{exportOpen ? drilledIntoExport : sections}</div>
       </MenuSheet>
     )
   }
@@ -577,7 +668,7 @@ export function PageHeaderMenu({
         {...menuProps}
         onCloseAutoFocus={onCloseAutoFocus}
       >
-        {items}
+        {sections}
       </MenuPopoverContent>
     </Popover>
   )

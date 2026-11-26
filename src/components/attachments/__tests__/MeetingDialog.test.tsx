@@ -287,6 +287,11 @@ describe('MeetingDialog', () => {
     })
   })
 
+  it('is a form dialog on a desktop, not an alert', async () => {
+    render(<Harness blockId={SEED_IDS.BLOCK_GS_1} />)
+    expect(await screen.findByTestId('meeting-dialog')).toHaveAttribute('role', 'dialog')
+  })
+
   it('is a bottom sheet on a phone, its fields scrolling above its buttons', async () => {
     mockUsePhoneLayout.mockReturnValue(true)
     render(<Harness blockId={SEED_IDS.BLOCK_GS_1} />)

@@ -28,7 +28,7 @@ export function useReadAloudRow(
   const { t } = useTranslation()
   const supported = useReadAloudSupported()
   const store = useContext(PageBlockContext)
-  // As the menu opens: its rows take focus, which leaves the editor's selection where it is.
+  // As the menu opens: it takes focus, which leaves the editor's selection where it is.
   const selection = useMemo(() => editorSelectionMarkdown(blockId), [blockId])
   if (!supported || store === null) return null
   const read = (): void => {
@@ -45,7 +45,7 @@ export function useReadAloudRow(
           ? 'readAloud.readSelection'
           : 'readAloud.read',
     ),
-    icon: <Volume2 className="h-3.5 w-3.5" />,
+    icon: <Volume2 />,
     action: () => {
       read()
       onClose()
