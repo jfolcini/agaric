@@ -157,7 +157,7 @@ describe('SearchResultBlockRow', () => {
     expect(document.querySelector('mark')).toBeNull()
   })
 
-  // The backend sends no snippet for a short query or a filter-only search.
+  // A filter-only search sends neither a snippet nor match offsets.
   it.each([
     ['**Audit** every *screen*', 'Audit every screen'],
     [

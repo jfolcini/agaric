@@ -21,6 +21,20 @@ import {
   test,
 } from './helpers'
 
+/** Where two buttons' looks differ: border, fill and ink, or `same`. */
+async function cueDiff(
+  a: import('@playwright/test').Locator,
+  b: import('@playwright/test').Locator,
+): Promise<string> {
+  const cue = (btn: import('@playwright/test').Locator) =>
+    btn.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return `${style.borderTopWidth} ${style.borderTopColor} ${style.backgroundColor} ${style.color}`
+    })
+  const [left, right] = [await cue(a), await cue(b)]
+  return left === right ? 'same' : `${left} | ${right}`
+}
+
 interface MockErrorWindow extends Window {
   __injectMockError?: (
     command: string,
@@ -70,6 +84,20 @@ test.describe('Search toggles (E2E-1) @search', () => {
       await expect(btn).toHaveAttribute('aria-pressed', 'false')
       await expect.poll(() => outline(btn)).toBe('1px false')
     }
+  })
+
+  test('Replace takes the mode toggles’ cue: plain while closed, outlined while open', async ({
+    page,
+  }) => {
+    const mode = page.getByTestId('search-toggle-case-sensitive')
+    const replace = page.getByTestId('search-replace-toggle')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
+    await mode.click()
+    await replace.click()
+    await page.mouse.move(0, 0)
+    await expect(mode).toHaveAttribute('aria-pressed', 'true')
+    await expect(replace).toHaveAttribute('aria-expanded', 'true')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
   })
 
   test('default search folds case and matches inside words', async ({ page }) => {

@@ -32,6 +32,13 @@ export interface SearchToggleRowProps {
   size?: IconButtonProps['size']
 }
 
+/**
+ * A toggle's cue, here and on the Replace buttons beside these toggles: plain
+ * while off, outlined once pressed (`aria-pressed`) or open (`aria-expanded`).
+ */
+export const TOGGLE_CUE =
+  'border border-transparent text-muted-foreground aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:text-foreground aria-expanded:border-foreground aria-expanded:bg-secondary aria-expanded:text-foreground'
+
 interface ToggleSpec {
   key: keyof SearchToggleState
   labelKey: string
@@ -89,7 +96,7 @@ export function SearchToggleRow({
             disabled={disabled}
             data-testid={testId}
             onClick={() => onChange({ ...toggles, [key]: !pressed })}
-            className="border border-transparent text-muted-foreground aria-pressed:border-foreground aria-pressed:bg-secondary aria-pressed:text-foreground"
+            className={TOGGLE_CUE}
           >
             <Icon aria-hidden="true" />
           </IconButton>

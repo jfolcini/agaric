@@ -3,7 +3,8 @@
  * Listbox (Phase 1).
  *
  * Renders the matched block's snippet (with `<mark>` highlights via
- * `SnippetHighlight`) or, when the row has no snippet (a short query, a
+ * `SnippetHighlight`); for a short term, which carries match offsets instead,
+ * the block's raw content with those marked; and when the row has neither (a
  * filter-only search), the block's text as a static block shows it, inline:
  * not its Markdown. Each row is the `role="option"`
  * `<li>` itself — the click handler sits on the `<li>` so axe's
@@ -117,11 +118,6 @@ function SearchResultBlockRowImpl({
   const hasOffsets =
     row.match_offsets != null && row.match_offsets.length > 0 && row.content != null
   const hasSnippet = !hasOffsets && row.snippet != null && row.snippet.length > 0
-  // The whole row is the click target, so its chips stay inert.
-  const fallback =
-    row.content && row.content.length > 0
-      ? renderRichContent(row.content, { inline: true, interactive: false, ...richCallbacks })
-      : t('common.empty')
   // Derive the offset-driven React nodes once per row.
   // Inputs change only when the row identity / offsets change.
   const offsetNodes = useMemo(() => {
@@ -163,8 +159,12 @@ function SearchResultBlockRowImpl({
           offsetNodes
         ) : hasSnippet ? (
           <SnippetHighlight snippet={row.snippet} />
+        ) : row.content && row.content.length > 0 ? (
+          // A filter-only search, which sends no snippet and no offsets. The
+          // whole row is the click target, so its chips stay inert.
+          renderRichContent(row.content, { inline: true, interactive: false, ...richCallbacks })
         ) : (
-          fallback
+          t('common.empty')
         )}
       </span>
       {loading && <Spinner className="shrink-0 text-muted-foreground" />}

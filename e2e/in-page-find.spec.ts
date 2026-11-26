@@ -24,7 +24,7 @@ import { SEED_IDS } from '../src/lib/tauri-mock/seed'
  * in GS_3 and "blocks" in GS_4. The "Add block" button below the tree and the
  * "Block refs" toggle in Linked References do not count.
  */
-import { emitMockEvent, expect, ipc, openPage, test, waitForBoot } from './helpers'
+import { emitMockEvent, expect, ipc, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 declare global {
   interface Window {
@@ -47,6 +47,20 @@ function currentMatchText(page: import('@playwright/test').Page): Promise<string
     ).highlights?.get('find-match-current')
     return highlight ? [...highlight].map((range) => range.toString()).join('|') : ''
   })
+}
+
+/** Where two buttons' looks differ: border, fill and ink, or `same`. */
+async function cueDiff(
+  a: import('@playwright/test').Locator,
+  b: import('@playwright/test').Locator,
+): Promise<string> {
+  const cue = (btn: import('@playwright/test').Locator) =>
+    btn.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return `${style.borderTopWidth} ${style.borderTopColor} ${style.backgroundColor} ${style.color}`
+    })
+  const [left, right] = [await cue(a), await cue(b)]
+  return left === right ? 'same' : `${left} | ${right}`
 }
 
 async function openFind(page: import('@playwright/test').Page) {
@@ -200,17 +214,77 @@ test.describe('In-page find (Ctrl+F) @pages @search', () => {
     expect(rule?.height).toBe(16)
   })
 
-  // #7040 O5 — the bar covered the top bar's Today and Search.
-  test('the open bar leaves the top bar’s Today and Search clickable', async ({ page }) => {
-    await openFind(page)
+  test('Replace takes the mode toggles’ cue: plain while closed, outlined while open', async ({
+    page,
+  }) => {
+    const toolbar = await openFind(page)
+    const mode = toolbar.getByTestId('search-toggle-case-sensitive')
+    const replace = toolbar.getByTestId('in-page-find-toggle-replace')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
+    await mode.click()
+    await replace.click()
+    await page.mouse.move(0, 0)
+    await expect(mode).toHaveAttribute('aria-pressed', 'true')
+    await expect(replace).toHaveAttribute('aria-expanded', 'true')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
+  })
+
+  test('the open bar sits in the App header and covers no control', async ({ page }) => {
+    const toolbar = page.getByRole('toolbar', { name: /find/i })
     const topBar = page.locator('[data-slot="sidebar-inset"] > header')
-    for (const control of [
-      topBar.getByRole('button', { name: 'Go to today', exact: true }),
-      topBar.getByTestId('header-search-button'),
-    ]) {
-      // A trial click fails when another element would take the click.
-      await control.click({ trial: true, timeout: 2000 })
+    const modeSwitch = page.getByRole('radiogroup', { name: 'Editing mode' })
+    const button = (name: string) => topBar.getByRole('button', { name, exact: true })
+    const views = [
+      // A page: in the header's row, left of Today and Search.
+      [
+        button('Go to today'),
+        topBar.getByTestId('header-search-button'),
+        page.getByRole('button', { name: 'Bookmark this page', exact: true }),
+        page.getByRole('button', { name: 'Page actions', exact: true }),
+        modeSwitch.getByRole('radio', { name: 'Blocks', exact: true }),
+        modeSwitch.getByRole('radio', { name: 'Page', exact: true }),
+      ],
+      // The journal, whose row is full: a line of its own in the header.
+      [
+        button('Previous day'),
+        topBar.getByTestId('date-display'),
+        button('Next day'),
+        button('Go to today'),
+        topBar.getByTestId('header-search-button'),
+      ],
+    ]
+    for (const [index, controls] of views.entries()) {
+      if (index === 1) await navigateToView(page, 'Journal')
+      await openFind(page)
+      for (const width of [1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        for (const control of controls) {
+          // A trial click fails when another element would take the click.
+          await control.click({ trial: true, timeout: 2000 })
+        }
+        const bar = await toolbar.boundingBox()
+        const header = await topBar.boundingBox()
+        if (bar === null || header === null) throw new Error('the bar or the header has no box')
+        expect(bar.y).toBeGreaterThanOrEqual(header.y)
+        expect(bar.y + bar.height).toBeLessThanOrEqual(header.y + header.height)
+        expect(bar.x).toBeGreaterThanOrEqual(header.x)
+        expect(bar.x + bar.width).toBeLessThanOrEqual(header.x + header.width)
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        )
+        expect(overflow).toBe(0)
+      }
+      await page.keyboard.press('Escape')
     }
+  })
+
+  test('on a phone the open bar floats below the header', async ({ page }) => {
+    await page.setViewportSize({ width: 412, height: 915 })
+    const toolbar = await openFind(page)
+    const header = await page.locator('[data-slot="sidebar-inset"] > header').boundingBox()
+    const bar = await toolbar.boundingBox()
+    if (bar === null || header === null) throw new Error('the bar or the header has no box')
+    expect(bar.y).toBeGreaterThanOrEqual(header.y + header.height)
   })
 })
 

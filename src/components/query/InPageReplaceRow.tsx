@@ -94,7 +94,7 @@ export function InPageReplaceRow({
         placeholder={t('findInPage.replacePlaceholder')}
         aria-label={t('findInPage.replaceInputLabel')}
         data-testid="in-page-replace-input"
-        className={cn('text-sm', embedded ? 'w-full' : 'h-7 w-48 md:w-64')}
+        className={cn('text-sm', embedded ? 'w-full' : 'h-7 w-48')}
       />
       <Tooltip>
         <TooltipTrigger asChild>
