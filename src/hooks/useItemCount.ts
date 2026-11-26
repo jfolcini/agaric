@@ -22,15 +22,18 @@ import { usePollingQuery } from '@/hooks/usePollingQuery'
  *                  page envelope (`{ items: unknown[] }`) or a plain
  *                  `number` (a count-only IPC).
  * @param intervalMs - Polling interval in milliseconds.
+ * @param refetchKey - A new value refetches at once (`usePollingQuery`).
  * @returns The count of items (0 if loading or error).
  */
 export function useItemCount(
   queryFn: () => Promise<{ items: unknown[] } | number>,
   intervalMs: number,
+  refetchKey?: unknown,
 ): number {
   const { data } = usePollingQuery(queryFn, {
     intervalMs,
     refetchOnFocus: true,
+    refetchKey,
   })
   if (data == null) return 0
   return typeof data === 'number' ? data : data.items.length

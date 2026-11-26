@@ -34,8 +34,9 @@ test.describe('Enter and Space press the focused control in the Pages view @page
   test('Enter on a row title opens that page, and on the list the cursor page', async ({
     page,
   }) => {
-    await pageRow(page, 'Quick Notes').getByRole('button', { name: 'Bookmark page' }).focus()
-    await page.keyboard.press('Tab')
+    // The row's checkbox follows its title (#7040 D2).
+    await pageRow(page, 'Quick Notes').getByRole('checkbox').focus()
+    await page.keyboard.press('Shift+Tab')
     const title = pageRow(page, 'Quick Notes').getByRole('button', { name: /^Quick Notes/ })
     await expect(title).toBeFocused()
     await page.keyboard.press('Enter')

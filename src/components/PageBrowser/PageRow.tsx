@@ -1,17 +1,21 @@
 /**
  * `PageRow`.
  *
- * Pages-view leaf row for one page: title + inbound link count (`Link2`) +
- * child-block count (`List`) + relative modified time + the first
- * property-flag badge (if any). The counts' icons are SVG in `currentColor`,
- * not text glyphs a system may draw as colour emoji (#5992).
+ * Pages-view leaf row for one page: the title, with the first property-flag
+ * badge (if any) beside it, then a metadata column — inbound link count
+ * (`Link2`), child-block count (`List`), relative modified time — then the
+ * select, bookmark and delete controls. The title starts at the row's padding
+ * (#7040 D2). Each metadata value keeps a fixed slot, so the column holds still
+ * from row to row, and names itself in a tooltip and to screen readers. The
+ * counts' icons are SVG in `currentColor`, not text glyphs a system may draw as
+ * colour emoji (#5992).
  *
  * Inputs are typed primitive props (no objects with reference identity
  * that change across renders) so `React.memo`'s shallow compare can hit
  * across parent re-renders. Mirrors the pattern in `BlockListItem`.
  */
 
-import { Bookmark, FileText, Link2, List, Trash2 } from 'lucide-react'
+import { Bookmark, Link2, List, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -19,9 +23,11 @@ import { useTranslation } from 'react-i18next'
 import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { listRowVariants } from '@/components/ui/list-item'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -185,18 +191,45 @@ interface PropertyFlagBadgeProps {
 
 function PropertyFlagBadge({ token, label }: PropertyFlagBadgeProps): React.ReactElement {
   return (
-    <span
+    <Badge
+      tone="outline"
+      size="compact"
       data-page-flag={token}
       // #1966 mobile: hide the property-flag badges on narrow rows so the page
       // title (which truncates) keeps usable width instead of collapsing to a
       // few characters. Counts + flags return at `sm`+; the short relative-time
       // stays.
-      className="inline-flex shrink-0 items-center rounded-md border border-border/60 px-1.5 py-0 text-xs font-medium text-muted-foreground max-sm:hidden"
+      className="text-muted-foreground max-sm:hidden"
     >
       #{label}
-    </span>
+    </Badge>
   )
 }
+
+/** One metadata value: shown short, named in full in a tooltip and to screen readers. */
+function MetadataValue({
+  label,
+  children,
+  className,
+  ...props
+}: React.ComponentProps<'span'> & { label: string }): React.ReactElement {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn('inline-flex items-center', className)} {...props}>
+          <span aria-hidden="true" className="inline-flex items-center gap-1">
+            {children}
+          </span>
+          <span className="sr-only">{label}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** A metadata column's fixed width, so a value's absence or length moves no other column. */
+const METADATA_SLOT = 'flex w-12 shrink-0 justify-end'
 
 /** Build the ordered list of flag tokens a page carries; the row renders
  * the first. Pure — exported only so the test file can assert against the
@@ -352,8 +385,77 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
       )}
       style={rowStyle(virtualRowStart)}
     >
-      {/* #81 / batch-selection checkbox: the entry point into selection
-          mode, visible on hover / focus / when checked. On a touch phone it shows
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role, jsx-a11y/control-has-associated-label -- gridcell focus is delegated to the title button, which names the cell (the lint cannot see through `NewTabTarget`); CSS-grid cell would break as a <td> without a <table> */}
+      <div role="gridcell" className="flex flex-1 items-center min-w-0">
+        <NewTabTarget pageId={pageId} title={title}>
+          <button
+            type="button"
+            className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
+            onClick={(e) => {
+              if (touchSelect && selectionActive) onToggleMultiSelect(pageId, e)
+              else onSelect(pageId, title)
+            }}
+            // #2850 — keyboard focus intent (mirrors the row's hover intent
+            // above); this button is the row's actual focusable element.
+            onFocus={() => prefetchIntent.schedule(pageId)}
+            onBlur={prefetchIntent.cancel}
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <TruncatedText
+                text={title}
+                className="page-browser-item-title"
+                data-page-title={title}
+              >
+                <HighlightMatch text={title} filterText={trimmedFilter} />
+                {showAliasBadge && (
+                  <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
+                )}
+                {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
+              </TruncatedText>
+              {firstFlag && (
+                <PropertyFlagBadge token={firstFlag} label={t(FLAG_LABEL_KEY[firstFlag])} />
+              )}
+            </span>
+            <span
+              data-page-metadata
+              className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums"
+            >
+              <span className={cn(METADATA_SLOT, 'max-sm:hidden')}>
+                {inboundLinkCount > 0 && (
+                  <MetadataValue
+                    data-metadata-inbound
+                    label={t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
+                  >
+                    {inboundLinkCount}
+                    <Link2 className="size-3.5" />
+                  </MetadataValue>
+                )}
+              </span>
+              <span className={cn(METADATA_SLOT, 'max-sm:hidden')}>
+                {childBlockCount > 0 && (
+                  <MetadataValue
+                    data-metadata-children
+                    label={t('pageBrowser.metadata.children', { count: childBlockCount })}
+                  >
+                    {childBlockCount}
+                    <List className="size-3.5" />
+                  </MetadataValue>
+                )}
+              </span>
+              <MetadataValue
+                data-metadata-relative
+                className={METADATA_SLOT}
+                label={t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
+              >
+                {relativeLabel}
+              </MetadataValue>
+            </span>
+          </button>
+        </NewTabTarget>
+      </div>
+      {/* #81 / batch-selection checkbox: the entry point into selection mode,
+          visible on hover / focus / when checked. It follows the title, so the
+          title starts at the row's padding (#7040 D2). On a touch phone it shows
           only once something is selected; the long press is the entry there. */}
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table>
@@ -374,16 +476,16 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           )}
         />
       </div>
-      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
+      <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table>
+        role="gridcell"
+        className={cn('flex shrink-0 items-center gap-1', touchSelect && 'hidden')}
+      >
         <Button
           variant="ghost"
           size="icon-xs"
           aria-label={starred ? t('pageBrowser.removeBookmark') : t('pageBrowser.addBookmark')}
-          className={cn(
-            'star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star',
-            touchSelect && 'hidden',
-          )}
+          className="star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
           data-starred={starred}
           onClick={(e) => {
             e.stopPropagation()
@@ -392,74 +494,6 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         >
           <Bookmark fill={starred ? 'currentColor' : 'none'} />
         </Button>
-        <NewTabTarget pageId={pageId} title={title}>
-          <button
-            type="button"
-            className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
-            onClick={(e) => {
-              if (touchSelect && selectionActive) onToggleMultiSelect(pageId, e)
-              else onSelect(pageId, title)
-            }}
-            // #2850 — keyboard focus intent (mirrors the row's hover intent
-            // above); this button is the row's actual focusable element.
-            onFocus={() => prefetchIntent.schedule(pageId)}
-            onBlur={prefetchIntent.cancel}
-          >
-            <span className="flex items-center gap-3 min-w-0">
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <TruncatedText
-                text={title}
-                className="page-browser-item-title"
-                data-page-title={title}
-              >
-                <HighlightMatch text={title} filterText={trimmedFilter} />
-                {showAliasBadge && (
-                  <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
-                )}
-                {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
-              </TruncatedText>
-            </span>
-            <span
-              data-page-metadata
-              className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-xs text-muted-foreground"
-            >
-              {inboundLinkCount > 0 && (
-                <span data-metadata-inbound className="max-sm:hidden">
-                  <span aria-hidden="true" className="inline-flex items-center gap-0.5">
-                    {inboundLinkCount}
-                    <Link2 className="h-3 w-3" />
-                  </span>
-                  <span className="sr-only">
-                    {t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
-                  </span>
-                </span>
-              )}
-              {childBlockCount > 0 && (
-                <span data-metadata-children className="max-sm:hidden">
-                  <span aria-hidden="true" className="inline-flex items-center gap-0.5">
-                    {childBlockCount}
-                    <List className="h-3 w-3" />
-                  </span>
-                  <span className="sr-only">
-                    {t('pageBrowser.metadata.children', { count: childBlockCount })}
-                  </span>
-                </span>
-              )}
-              <span data-metadata-relative>
-                <span aria-hidden="true">{relativeLabel}</span>
-                <span className="sr-only">
-                  {t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
-                </span>
-              </span>
-              {firstFlag && (
-                <PropertyFlagBadge token={firstFlag} label={t(FLAG_LABEL_KEY[firstFlag])} />
-              )}
-            </span>
-          </button>
-        </NewTabTarget>
-      </div>
-      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className={cn('flex shrink-0 items-center', touchSelect && 'hidden')}>
         <Button
           variant="ghost"
           size="icon-xs"

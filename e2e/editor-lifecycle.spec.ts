@@ -238,7 +238,7 @@ test.describe('Editor lifecycle @editor @mobile', () => {
       .click()
     await expect(headerLabel).toHaveText('Tags')
 
-    // Navigate to Trash (Pages header button)
+    // Navigate to Trash (sidebar)
     await navigateToView(page, 'Trash')
     await expect(headerLabel).toHaveText('Trash')
 

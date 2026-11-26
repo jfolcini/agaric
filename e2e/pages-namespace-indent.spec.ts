@@ -6,17 +6,15 @@ import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } fr
  * Geometry guard for the `Pages` list's two row shapes.
  *
  * The list interleaves flat top-level page rows (`PageRow`) with
- * namespace subtrees (`PageTreeItem`). Only the flat row reserves width
- * for a multi-select checkbox and a star toggle, and both keep that
- * width while invisible. A subtree that does not reserve the same run
- * therefore starts LEFT of the flat rows around it, which inverts the
+ * namespace subtrees (`PageTreeItem`). A subtree whose inset differs from
+ * the flat rows' starts left or right of them, which inverts the
  * hierarchy on screen: every flat page listed after a namespace root
  * looks like a child of that root. Reported against 0.10.0 on a vault
  * where a top-level `Nico` page read as `workstations/management/Nico`.
  *
- * `page-tree-gutter` (`src/index.css`) is the fix. These assertions are
- * the pin on both sides of the mirror — they redden if the utility goes
- * away, and equally if `PageRow`'s leading affordances change size.
+ * A flat row's title starts at its padding (#7040 D2), so `TreePageRow`
+ * insets the tree by that padding alone. These assertions are the pin on
+ * both sides — they redden if either side's inset changes alone.
  *
  * jsdom has no layout engine, so this cannot live in a vitest file.
  */
@@ -55,8 +53,7 @@ test.describe('Pages view — namespace indentation @pages', () => {
     await openPagesView(page)
 
     const flatRow = page.locator(`[data-page-item]:has-text("${FLAT_PAGE}")`)
-    // The title button — the first thing after the row's checkbox and
-    // star, i.e. where a flat row's content actually begins.
+    // The title button, where a flat row's content begins.
     const flatContent = flatRow.locator('.page-browser-item')
     const flatTitle = flatRow.locator('.page-browser-item-title')
     const namespaceRoot = page.getByRole('button', { name: 'Toggle work namespace' })
@@ -69,8 +66,8 @@ test.describe('Pages view — namespace indentation @pages', () => {
     await expect(nestedTitle).toBeVisible()
 
     // A namespace root and a flat page are siblings at the top level, so
-    // their content starts at the same x. Both sit at the gutter; the
-    // tolerance is for subpixel layout only.
+    // their content starts at the same x. Both sit at the row's padding;
+    // the tolerance is for subpixel layout only.
     const rootLeft = await leftEdge(namespaceRoot)
     const flatContentLeft = await leftEdge(flatContent)
     expect(Math.abs(rootLeft - flatContentLeft)).toBeLessThanOrEqual(1)
@@ -84,8 +81,11 @@ test.describe('Pages view — namespace indentation @pages', () => {
 
 const iPhone13 = devices['iPhone 13']
 
-/** One namespace level's step in `PageTreeItem` plus the leaf's own inset. */
-const MAX_ONE_LEVEL_INSET_PX = 48
+/**
+ * One namespace level's step in `PageTreeItem` plus the leaf's own inset and
+ * its page icon, which a flat row's title has no counterpart for (#7040 D2).
+ */
+const MAX_ONE_LEVEL_INSET_PX = 56
 
 test.describe('Pages view — namespace indentation on a phone @pages @mobile', () => {
   test.use({
@@ -100,9 +100,8 @@ test.describe('Pages view — namespace indentation on a phone @pages @mobile', 
     await waitForBoot(page)
   })
 
-  // A phone's flat row hides its checkbox and star, so the tree must not
-  // reserve their width either: it once did, and a namespaced page sat a
-  // third of the screen in from the pages around it.
+  // The tree reserves no width for the flat row's controls: it once did, and
+  // a namespaced page sat a third of the screen in from the pages around it.
   test('a namespaced page starts one level in from a top-level page', async ({ page }) => {
     await openPagesView(page)
     await createPageFromPagesView(page, NAMESPACED_PAGE)
@@ -129,8 +128,8 @@ test.describe('Pages view — namespace indentation on a phone @pages @mobile', 
     expect(nestedInset).toBeLessThanOrEqual(MAX_ONE_LEVEL_INSET_PX)
   })
 
-  // In selection mode the phone row shows its checkbox again, so the tree
-  // must step in by that cell too, or a top-level page reads as a child.
+  // In selection mode the phone row shows its checkbox again, after the
+  // title, so the title must not move.
   test('a namespace root stays aligned with top-level pages in selection mode', async ({
     page,
   }) => {

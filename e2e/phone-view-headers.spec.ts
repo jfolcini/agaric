@@ -109,11 +109,13 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
       expect(Math.abs(centre(await rect(control)) - centre(searchBox))).toBeLessThan(2)
     }
 
-    // The ⋮ menu holds saved views and the view shortcuts.
+    // The ⋮ menu holds saved views and the view shortcuts; Graph, Templates
+    // and Trash are in the drawer (#7040 D2).
     await page.getByTestId('page-browser-more').click()
     const menu = page.getByTestId('saved-views-menu')
     await expect(menu.getByTestId('saved-views-save-current')).toBeVisible()
-    await expect(menu.getByRole('button', { name: 'Graph', exact: true })).toBeVisible()
+    await expect(menu.getByRole('button', { name: 'Advanced query', exact: true })).toBeVisible()
+    await expect(menu.getByRole('button', { name: 'Graph', exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape')
     await expect(menu).toBeHidden()
 

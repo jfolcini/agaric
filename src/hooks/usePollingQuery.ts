@@ -23,6 +23,8 @@ export interface UsePollingQueryOptions {
   refetchOnFocus?: boolean
   /** Skip polling when false. Defaults to true. */
   enabled?: boolean
+  /** A new value refetches at once, for a caller that stays mounted while the data changes. */
+  refetchKey?: unknown
 }
 
 interface UsePollingQueryResult<T> {
@@ -45,7 +47,7 @@ export function usePollingQuery<T>(
   queryFn: () => Promise<T>,
   options: UsePollingQueryOptions,
 ): UsePollingQueryResult<T> {
-  const { intervalMs, refetchOnFocus = false, enabled = true } = options
+  const { intervalMs, refetchOnFocus = false, enabled = true, refetchKey } = options
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -132,7 +134,7 @@ export function usePollingQuery<T>(
         document.removeEventListener('visibilitychange', onVisibilityChange)
       }
     }
-  }, [load, intervalMs, refetchOnFocus, enabled])
+  }, [load, intervalMs, refetchOnFocus, enabled, refetchKey])
 
   return { data, loading, error, refetch: load }
 }
