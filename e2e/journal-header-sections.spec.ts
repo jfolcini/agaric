@@ -37,7 +37,7 @@ function countOf(header: Locator): Locator {
   return header.locator('[data-slot="badge"][data-variant="metadata"]')
 }
 
-test.describe('journal on a phone @journal @agenda @mobile', () => {
+test.describe('journal on a phone @journal @mobile', () => {
   test.use(PHONE)
 
   test('the view switch says its mode in a word', async ({ page }) => {
@@ -85,7 +85,7 @@ test.describe('journal on a phone @journal @agenda @mobile', () => {
   })
 })
 
-test.describe('journal on a desktop @journal @agenda', () => {
+test.describe('journal on a desktop @journal', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test('each section header reads its label, then its number in the count tone', async ({
