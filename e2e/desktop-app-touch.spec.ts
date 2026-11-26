@@ -19,7 +19,7 @@ test.describe('the desktop app with a coarse pointer @mobile @pages @editor', ()
     })
   })
 
-  test('lays out for a mouse: row actions hidden at rest, desktop row gap and control lane', async ({
+  test('lays out for a mouse: row actions hidden at rest, desktop indent-guide reach and control lane', async ({
     page,
   }) => {
     await waitForBoot(page)
@@ -37,7 +37,7 @@ test.describe('the desktop app with a coarse pointer @mobile @pages @editor', ()
     await expect(deleteButton).toHaveCSS('min-height', 'auto')
 
     await openPage(page, 'Quick Notes')
-    const rowGap = await page.evaluate(() => {
+    const guideReach = await page.evaluate(() => {
       const probe = document.createElement('div')
       probe.style.height = 'var(--block-row-gap)'
       document.body.append(probe)
@@ -45,7 +45,7 @@ test.describe('the desktop app with a coarse pointer @mobile @pages @editor', ()
       probe.remove()
       return height
     })
-    expect(rowGap).toBe('4px')
+    expect(guideReach).toBe('4px')
     await expect(page.locator('.block-control-lane').first()).toBeAttached()
   })
 })

@@ -379,12 +379,7 @@ export function BlockListRenderer({
                 <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
               )}
               <ul
-                // #992 — vertical rhythm comes from the single-source-of-truth
-                // `--block-row-gap` CSS var (defined in index.css alongside
-                // `--indent-width`): 4px desktop, 6px touch (one scale step up).
-                // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
-                // every BlockTree mount (page + journal day/week/month) shares it.
-                className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
+                className="block-tree relative z-10 list-none m-0 p-0"
                 data-testid="block-tree"
                 aria-label={t('blockTree.treeLabel')}
                 onPointerDown={onContainerPointerDown}

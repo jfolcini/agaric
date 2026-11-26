@@ -63,7 +63,7 @@ Typography:
 Spacing:
 
 - `--indent-width`: the indent per nesting level
-- `--block-row-gap`: the space between blocks
+- `--block-row-gap`: how far an indent guide reaches above its block
 <!-- custom-css-tokens:end -->
 
 Not offered: a file watched on disk, a theme gallery, a font picker, syncing the stylesheet.
