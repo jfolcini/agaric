@@ -60,7 +60,7 @@ import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '
 // background opens into the content. The strip's scroll viewport clips below
 // that line, so the focus ring is drawn inside the tab.
 const tabVariants = cva(
-  'flex items-center gap-1 px-3 py-1 -mb-px border-t-2 text-sm truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none focus-ring-visible focus-visible:ring-inset',
+  'flex items-center gap-1 px-3 py-1 -mb-px border-t-2 text-sm truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none focus-ring-visible focus-visible:-outline-offset-3',
   {
     variants: {
       state: {

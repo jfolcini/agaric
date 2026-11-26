@@ -100,7 +100,7 @@ export function TablePicker({
         the live dimension label below echoes the current selection.
       */}
       <div
-        className="flex flex-col gap-0.5 p-1 focus-outline rounded"
+        className="flex flex-col gap-0.5 p-1 focus-ring-visible rounded"
         tabIndex={0}
         role="grid"
         aria-label={t('toolbar.insertTable')}

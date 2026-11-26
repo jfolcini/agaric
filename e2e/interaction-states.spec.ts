@@ -4,10 +4,11 @@
  * uncut by the box around it, and a selected block row is highlighted as a
  * whole, like the editing box and the cursor ring.
  *
- * The ring is read from the computed `box-shadow`: its `0 0 0 3px` layer, the
- * colour's alpha and the browser's own outline. A control left on the
- * browser's outline draws a thin ring of the engine's choosing, black or white
- * here and another on WebKit; one with a translucent ring all but loses it.
+ * The ring is read from the computed outline: solid, 3 px, opaque, 2 px off
+ * the control (a transparent gap, so an ink ring stays apart from an ink fill)
+ * or 3 px inside it where a scroll container would clip it. A control left on
+ * the browser's own outline draws a thin ring of the engine's choosing; one
+ * with a translucent ring all but loses it.
  *
  * Seed (`src/lib/tauri-mock/seed.ts`): the tags `work` and `personal`, the
  * "Meeting Notes Template" page template, "Getting Started" referenced from
@@ -28,35 +29,25 @@ import {
 
 interface Ring {
   focusVisible: boolean
-  /** The widest `0 0 0 Npx` layer's spread, 0 for none. */
+  style: string
   width: number
-  /** That layer's colour alpha. */
+  offset: number
+  /** The outline colour's alpha. */
   alpha: number
-  /** The browser's own outline, which `focus-ring-visible` hides. */
-  outline: string
 }
 
 async function ringOf(target: Locator): Promise<Ring> {
   return target.evaluate((el) => {
     const style = getComputedStyle(el)
-    const alphaOf = (color: string): number => {
-      const m = /\/\s*([\d.]+)\)$/.exec(color) ?? /rgba\([^)]*,\s*([\d.]+)\)$/.exec(color)
-      return m ? Number(m[1]) : 1
-    }
-    let width = 0
-    let alpha = 0
-    for (const layer of style.boxShadow.split(/,(?![^(]*\))/)) {
-      const m = /^(.*\))\s+0px 0px 0px ([\d.]+)px/.exec(layer.trim())
-      if (m && Number(m[2]) > width) {
-        width = Number(m[2])
-        alpha = alphaOf(m[1] as string)
-      }
-    }
+    const alpha =
+      /\/\s*([\d.]+)\)$/.exec(style.outlineColor) ??
+      /rgba\([^)]*,\s*([\d.]+)\)$/.exec(style.outlineColor)
     return {
       focusVisible: el.matches(':focus-visible'),
-      width,
-      alpha,
-      outline: style.outlineStyle,
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+      offset: Number.parseFloat(style.outlineOffset),
+      alpha: alpha ? Number(alpha[1]) : 1,
     }
   })
 }
@@ -70,15 +61,11 @@ async function tabTo(page: Page, target: Locator): Promise<void> {
   throw new Error('Tab never reached the target')
 }
 
-async function expectTheRing(target: Locator): Promise<void> {
+/** The ring 2 px off the control, or 3 px inside it (`offset: -3`). */
+async function expectTheRing(target: Locator, offset = 2): Promise<void> {
   await expect
     .poll(() => ringOf(target))
-    .toEqual({
-      focusVisible: true,
-      width: 3,
-      alpha: 1,
-      outline: 'none',
-    })
+    .toEqual({ focusVisible: true, style: 'solid', width: 3, offset, alpha: 1 })
 }
 
 test.describe('Interaction states: one keyboard ring, whole-row selection @pages @editor', () => {
@@ -138,7 +125,8 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
     await openPage(page, 'Getting Started')
     const reference = page.locator('.linked-reference-item').first()
     await tabTo(page, reference)
-    await expectTheRing(reference)
+    // A row of a scrolling list: the ring sits inside it.
+    await expectTheRing(reference, -3)
   })
 
   test('the search results take the list cursor, and the list box no outline @search', async ({
@@ -174,10 +162,11 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
       .first()
     await tabTo(page, link)
     await expectTheRing(link)
-    // Every box that clips its content holds the 3 px ring around the link.
+    // Every box that clips its content holds the ring: a 2 px gap and 3 px of outline.
     const cut = await link.evaluate((el) => {
       const r = el.getBoundingClientRect()
-      const ring = { l: r.left - 3, t: r.top - 3, r: r.right + 3, b: r.bottom + 3 }
+      const reach = 5
+      const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach }
       // clientWidth and clientHeight round to whole pixels, so a box whose text
       // ends on a fraction can read up to half a pixel short.
       const rounding = 0.5
@@ -251,7 +240,7 @@ test.describe('Focus rings on a bare phone @mobile @pages', () => {
     const field = page.getByPlaceholder('Search pages...')
     await field.tap()
     await expect(field).toBeFocused()
-    expect(await ringOf(field)).toMatchObject({ focusVisible: true, width: 0, outline: 'none' })
+    expect(await ringOf(field)).toMatchObject({ focusVisible: true, style: 'none' })
     const borderIsRing = () =>
       field.evaluate((el) => {
         const probe = document.createElement('div')

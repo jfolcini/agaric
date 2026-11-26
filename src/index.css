@@ -212,16 +212,15 @@
   --brand-foreground: oklch(0.985 0.004 70);
   --border: oklch(0.91 0.008 70);
   --input: oklch(0.91 0.008 70);
-  /* Blue, not the brand red, so focus and selection never read as an error.
-   * Painted opaque: 4.2:1 on --background. */
-  --ring: oklch(0.58 0.17 255);
-  /* Ink, the parent's own color: red is the capture button and blue is focus
-   * (#5332), so only the alternate themes give icons a palette color. */
+  /* Ink, like every theme's ring: its primary. 16.6:1 on --background. */
+  --ring: var(--primary);
+  /* Ink, the parent's own color: red is the capture button (#5332), so only
+   * the alternate themes give icons a palette color. */
   --icon: currentColor;
   /* Graph view, inherited by every theme (#5428, #5429). Nodes are a mid tone
    * apart from the text, 3.5:1 or more on each theme's --background; edges are
    * that tone drawn at 0.2–0.45 opacity, so they recede; the current page is
-   * red like the capture button, and the focus ring stays blue. */
+   * red like the capture button. */
   --graph-node: oklch(0.6 0.01 70);
   --graph-edge: var(--graph-node);
   --graph-accent: var(--brand);
@@ -229,7 +228,7 @@
    * red and the focus ring, 3:1 or more on --background; each theme sets it. */
   --graph-journal: oklch(0.5 0.16 305);
   /* The selected tab's 2 px bar, shared by every tab strip: ink, not the
-   * brand red or the focus blue, and 3:1 or more on each theme's --background. */
+   * brand red, and 3:1 or more on each theme's --background. */
   --tab-indicator: var(--primary);
   --radius: 0.5rem;
   --sidebar: oklch(0.975 0.005 70);
@@ -251,7 +250,7 @@
   --conflict-move-foreground: oklch(0.35 0.1 310);
   /* Priority is an ink scale (#7040): solid P1, tinted P2, neutral P3, so no
    * level shares a hue with overdue and destructive (red), due today (amber),
-   * in progress and focus (blue). Each theme sets its own P2 tint. */
+   * in progress (blue). Each theme sets its own P2 tint. */
   --priority-urgent: var(--foreground);
   --priority-urgent-foreground: var(--background);
   --priority-high: oklch(0.88 0.01 70);
@@ -424,8 +423,8 @@
    * --input keeps the stronger value so field outlines stay findable. */
   --border: oklch(0.28 0.007 70);
   --input: oklch(0.3 0.007 70);
-  /* 7.4:1 on --background. */
-  --ring: oklch(0.72 0.13 255);
+  /* 11.8:1 on --background. */
+  --ring: var(--primary);
   --graph-journal: oklch(0.72 0.12 305);
   /* A mid tone at 0.2 opacity all but vanishes on a dark ground, so edges sit
    * halfway between the node tone and the text. */
@@ -1255,6 +1254,16 @@
    * focus shows nothing. */
   :focus:not(:focus-visible) {
     outline: none;
+  }
+
+  /* A focusable thing without `focus-ring-visible` still rings when more
+   * contrast is asked for. In this layer, so the utility's ring (and its
+   * inset offset and bare-phone rule) wins where it is set. */
+  @media (prefers-contrast: more) {
+    :focus-visible {
+      outline: 3px solid currentColor;
+      outline-offset: 2px;
+    }
   }
 }
 
@@ -2245,31 +2254,14 @@ mark[data-highlight-color='purple'] {
   overflow: hidden;
 }
 
-/* Shared focus-visible affordance for all chip types */
-.block-link-chip:focus-visible,
-.tag-ref-chip:focus-visible,
-.block-ref-chip:focus-visible {
-  @apply outline-hidden ring-[3px] ring-ring;
-}
-/* #5082 — this selector out-specifies the accessibility block's
-   `:focus-visible` outline, so without re-stating it here a focused chip
-   showed only its ring while an UNFOCUSED `.ref-chip-anchor` beside it wore
-   an opaque 2px outline: focus read weaker than its absence. `outline-solid`
-   readmits that outline as a second cue, because the ring is a box-shadow and
-   `forced-colors` — the same users — drops box-shadows entirely. */
-@media (prefers-contrast: more) {
-  .block-link-chip:focus-visible,
-  .tag-ref-chip:focus-visible,
-  .block-ref-chip:focus-visible {
-    @apply outline-solid;
-    /* The width belongs to this (0,2,0) selector, not to the accessibility
-       block's bare `:focus-visible`: that rule is (0,1,0), exactly tying
-       `.ref-chip-anchor`'s permanent 2px, so a FOCUSED anchor chip outweighed
-       an unfocused one only because it is written later in this file. Focus
-       must outrank `.ref-chip-anchor` on specificity, not on source order —
-       otherwise moving either rule silently re-opens #5076/#5082. */
-    outline-width: 3px;
-  }
+/* The focus ring on every chip type. `.chip:focus-visible` (0,2,0) outranks
+   `.ref-chip-anchor`'s permanent outline (0,1,0) on specificity, not source
+   order, so a focused anchor chip never reads weaker than an unfocused one
+   (#5076, #5082). */
+.block-link-chip,
+.tag-ref-chip,
+.block-ref-chip {
+  @apply focus-ring-visible;
 }
 
 .block-ref-chip,
@@ -2321,12 +2313,9 @@ mark[data-highlight-color='purple'] {
    to depth 0 inside the container (see `selectEmbeddedRows`) — it does not
    continue the host page's indentation. */
 .embed-container {
-  @apply my-1 rounded-e-md;
+  @apply my-1 rounded-e-md focus-ring-visible;
   border-inline-start: 2px solid var(--embed-rail);
   background: var(--embed-surface);
-}
-.embed-container:focus-visible {
-  @apply outline-hidden ring-[3px] ring-ring;
 }
 .embed-header {
   @apply border-b border-border/40;
@@ -2496,11 +2485,6 @@ mark[data-highlight-color='purple'] {
     --input: oklch(0.62 0 0);
   }
 
-  :focus-visible {
-    outline: 3px solid currentColor;
-    outline-offset: 2px;
-  }
-
   /* Icons go back to their parent's ink in every theme: a palette tint is
    * the lower-contrast choice. Later than the theme blocks, so it wins. */
   :root {
@@ -2569,7 +2553,7 @@ mark[data-highlight-color='purple'] {
   }
 
   /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that
-   * `--ring`, `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`,
+   * `--alert-*`, `--op-*`, `--date-*`, `--conflict-*`,
    * `--task-*`, `--block-ref(-foreground)`, `--highlight`, and
    * `--sync-*` were still on their default values inside
    * `prefers-contrast: more`, so a11y users saw the same washed-out
@@ -2581,8 +2565,6 @@ mark[data-highlight-color='purple'] {
 
   /* Light theme — darker, more saturated surfaces; deeper foregrounds. */
   :root {
-    --ring: oklch(0.5 0.2 255);
-
     /* Graph nodes, and the edges drawn from them. */
     --graph-node: oklch(0.4 0.01 70);
 
@@ -2651,8 +2633,6 @@ mark[data-highlight-color='purple'] {
 
   /* Dark theme — brighter, more saturated surfaces; lifted foregrounds. */
   .dark {
-    --ring: oklch(0.8 0.12 255);
-
     /* Graph nodes, and the edges drawn from them. */
     --graph-node: oklch(0.8 0.006 70);
 
@@ -2732,26 +2712,18 @@ mark[data-highlight-color='purple'] {
  * removed — BlockGutterControls was its last consumer and is now migrated to
  * `focus-ring-visible`. */
 
-/* Form-control / interactive-element focus ring. Opaque: at /50 the ring was
- * 2.6:1 against the page, under the 3:1 non-text minimum (#5332). */
+/* The keyboard focus ring. Opaque: at /50 the ring was 2.6:1 against the page,
+ * under the 3:1 non-text minimum (#5332). An outline, so the 2 px gap is
+ * transparent and an ink ring stays apart from an ink fill; a control a
+ * scroll container would clip adds `focus-visible:-outline-offset-3`. */
 @utility focus-ring-visible {
   &:focus-visible {
-    @apply outline-hidden ring-[3px] ring-ring;
+    outline: 3px solid var(--ring);
+    outline-offset: 2px;
   }
   @variant bare-touch {
     &:focus-visible {
-      @apply ring-0;
-    }
-  }
-}
-
-@utility focus-outline {
-  &:focus-visible {
-    @apply outline-2 outline-ring;
-  }
-  @variant bare-touch {
-    &:focus-visible {
-      @apply outline-hidden;
+      outline-style: none;
     }
   }
 }

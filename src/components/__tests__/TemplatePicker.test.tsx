@@ -65,7 +65,7 @@ describe('TemplatePicker', () => {
 
     for (const name of ['Meeting Notes', 'Weekly Review', 'Untitled']) {
       const option = screen.getByText(name).closest('button')
-      expect(option).toHaveClass('focus-ring-visible', '[&:focus-visible]:ring-inset')
+      expect(option).toHaveClass('focus-ring-visible', 'focus-visible:-outline-offset-3')
     }
   })
 
