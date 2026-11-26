@@ -330,10 +330,11 @@ describe('positioning', () => {
     renderer.onExit()
   })
 
-  it('caps the height at 60vh with a 16px edge on coarse pointers', () => {
+  it('caps the height at 60vh with a 16px edge on touch', () => {
     vi.spyOn(window, 'matchMedia').mockImplementation(
       (query: string) => ({ matches: query === '(pointer: coarse)' }) as MediaQueryList,
     )
+    vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
     const renderer = createSuggestionRenderer()
     renderer.onStart(props(editorWith(() => ({ left: 0, top: 80, bottom: 100 }))))
     const popup = popupEl()
@@ -343,7 +344,23 @@ describe('positioning', () => {
     renderer.onExit()
   })
 
-  it('caps the height at the room left below on fine pointers', () => {
+  it('keeps the desktop edge in the desktop app, whose pointer may report coarse (#1236)', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) => ({ matches: query === '(pointer: coarse)' }) as MediaQueryList,
+    )
+    vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+    window.isTauri = true
+    try {
+      const renderer = createSuggestionRenderer()
+      renderer.onStart(props(editorWith(() => ({ left: 0, top: 80, bottom: 100 }))))
+      expect(popupEl().style.left).toBe('8px')
+      renderer.onExit()
+    } finally {
+      delete window.isTauri
+    }
+  })
+
+  it('caps the height at the room left below off touch', () => {
     const renderer = createSuggestionRenderer()
     renderer.onStart(props(editorWith(() => ({ left: 0, top: 80, bottom: 100 }))))
     const popup = popupEl()

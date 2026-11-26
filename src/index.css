@@ -3,6 +3,10 @@
 @import 'highlight.js/styles/github.css';
 
 @custom-variant dark (&:is(.dark *));
+/* Touch layout as the platform decides it (`detectTouch`, `src/lib/touch.ts`,
+ * writes `<html data-touch>`), so CSS and `useIsTouch` agree. Not
+ * `@media (pointer: coarse)`, which WebKitGTK reports for a mouse (#1236). */
+@custom-variant coarse (&:where([data-touch], [data-touch] *));
 
 @theme inline {
   /* A bare `transition-*` runs at the Animations setting's speed (see the token utilities). */
@@ -993,16 +997,14 @@
 /* ── Indent width (responsive) ─────────────────────────────────────── */
 :root {
   --indent-width: 24px;
-  /* #992 — single source of truth for the vertical rhythm between sibling
-   * block rows. Desktop = 4px; touch = desktop + exactly one scale step (6px).
-   * Applied via `.block-tree` so every BlockTree mount (page, journal day /
-   * week / month sections) shares one harmonic pair instead of bare,
-   * divergent Tailwind `space-y-*` literals. */
-  --block-row-gap: 0.25rem; /* 4px */
+  /* How far an indent guide (`.indent-guide`) reaches above its row. Block rows
+   * sit flush; the name stays because the custom CSS token list promises it
+   * (`docs/features/appearance.md`). */
+  --block-row-gap: 0.25rem;
 }
-@media (pointer: coarse) {
-  :root {
-    --block-row-gap: 0.375rem; /* 6px — desktop + one scale step */
+:root {
+  @variant coarse {
+    --block-row-gap: 0.375rem;
   }
 }
 /* A phone's window (`usePhoneLayout`'s width) spares less per level, but still
@@ -1042,35 +1044,42 @@
   );
   --block-tree-task-shift: var(--block-task-shift);
 }
-@media (pointer: coarse) {
-  :root {
+:root {
+  @variant coarse {
     --block-hang: calc(var(--block-gap) + var(--block-inset));
     /* A top-level chevron's 44 px hit area, which ends at its block's first glyph,
      * so a tablet's pane does not clip it against the sidebar. */
     --block-room: calc(var(--block-hang) + 1.75rem);
     --block-controls-lead: var(--block-hang);
     --block-tree-task-shift: 0px;
-  }
-  /* A phone's top-level chevron ends its row instead (`SortableBlock`, `.page-mode-phone`). */
-  @media (width < 48rem) {
-    :root {
+
+    /* A phone's top-level chevron ends its row instead (`SortableBlock`, `.page-mode-phone`). */
+    @media (width < 48rem) {
       --block-room: var(--block-hang);
     }
   }
-  /* Block mode's checkbox sits on the text edge (`BlockInlineControls`); its hit
-   * area ends where the text box starts, so a tap just left of the text edits
-   * the block instead of cycling the task. */
-  .inline-controls > .task-marker::before {
-    left: auto;
-    right: calc(-1 * var(--block-gap));
-    transform: translateY(-50%);
+}
+/* Block mode's checkbox sits on the text edge (`BlockInlineControls`); its hit
+ * area ends where the text box starts, so a tap just left of the text edits
+ * the block instead of cycling the task. */
+.inline-controls > .task-marker {
+  @variant coarse {
+    &::before {
+      left: auto;
+      right: calc(-1 * var(--block-gap));
+      transform: translateY(-50%);
+    }
   }
-  /* The chevron's hit area ends at the block's first glyph, so a tap there edits the
-   * text or cycles the task rather than folding. */
-  .collapse-toggle::before {
-    left: auto;
-    right: 0;
-    transform: translateY(-50%);
+}
+/* The chevron's hit area ends at the block's first glyph, so a tap there edits the
+ * text or cycles the task rather than folding. */
+.collapse-toggle {
+  @variant coarse {
+    &::before {
+      left: auto;
+      right: 0;
+      transform: translateY(-50%);
+    }
   }
 }
 
@@ -1356,8 +1365,8 @@
   overflow-wrap: break-word;
   word-break: break-word;
 }
-@media (pointer: coarse) {
-  .ProseMirror {
+.ProseMirror {
+  @variant coarse {
     min-height: 2.75rem;
   }
 }
@@ -1370,7 +1379,7 @@
 .block-tree :has(+ .block-metadata-row) :is(.block-static, .ProseMirror) {
   padding-bottom: 0;
 
-  @media (pointer: coarse) {
+  @variant coarse {
     min-height: 1.75rem;
   }
 }
@@ -2230,9 +2239,9 @@ mark[data-highlight-color='purple'] {
   }
 }
 
-@media (pointer: coarse) {
-  .block-ref-chip,
-  .tag-ref-chip {
+.block-ref-chip,
+.tag-ref-chip {
+  @variant coarse {
     font-size: 0.9em;
     padding: 0.25em 0.75em;
   }
@@ -2247,13 +2256,13 @@ mark[data-highlight-color='purple'] {
    text and chips (`isolate`, `z-index: -1`): where the text wraps, a tap on
    another line reaches that line, not the chip above or below it. */
 .tag-chip-row {
-  @media (pointer: coarse) {
+  @variant coarse {
     isolation: isolate;
   }
 }
 .tag-chip-row .tag-ref-chip {
   @apply touch-hit-area;
-  @media (pointer: coarse) {
+  @variant coarse {
     &::before {
       left: 0;
       width: 100%;
@@ -2414,15 +2423,14 @@ mark[data-highlight-color='purple'] {
 .react-colorful .react-colorful__hue {
   height: 0.75rem;
   border-radius: var(--radius-md);
+  @variant coarse {
+    height: 1.5rem;
+  }
 }
 
-@media (pointer: coarse) {
-  .react-colorful.react-colorful {
+.react-colorful.react-colorful {
+  @variant coarse {
     gap: 0.75rem;
-  }
-
-  .react-colorful .react-colorful__hue {
-    height: 1.5rem;
   }
 }
 
@@ -2882,12 +2890,12 @@ mark[data-highlight-color='purple'] {
 }
 
 /* A row's secondary control that a mouse finds by hovering the row (`group`).
- * A coarse pointer has no hover, so the control shows at rest there; a fine
- * pointer reveals it on hover, or when the keyboard focuses into the row. A
+ * Touch has no hover, so the control shows at rest there (`coarse`); otherwise
+ * it shows on hover, or when the keyboard focuses into the row. A
  * control that must show regardless (a set bookmark) leaves the utility off. */
 @utility hover-reveal {
   @apply transition-opacity;
-  @media (pointer: fine) {
+  @variant not-coarse {
     opacity: 0;
     :where(.group):hover &,
     :where(.group):has(:focus-visible) & {
@@ -2898,7 +2906,7 @@ mark[data-highlight-color='purple'] {
 
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
-  @media (pointer: coarse) {
+  @variant coarse {
     min-height: 44px;
     min-width: 44px;
   }
@@ -2910,7 +2918,7 @@ mark[data-highlight-color='purple'] {
  * would otherwise take the taps on its overhang. Keep 8 px between neighbours
  * narrower than 44 px, or their hit areas overlap. */
 @utility touch-hit-area {
-  @media (pointer: coarse) {
+  @variant coarse {
     /* At no specificity, so a control that is `absolute` or `fixed` stays so. */
     :where(&) {
       position: relative;
