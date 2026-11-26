@@ -918,6 +918,35 @@ test.describe('metadata badges @pages', () => {
     await expect(row.locator('[data-metadata-relative]')).toBeVisible()
   })
 
+  // #7040 D2 — the metadata is a column that holds still, and the title starts
+  // at the row's content edge.
+  test('a tagged row and an untagged one put their metadata at the same x', async ({ page }) => {
+    await bootPages(page, { facetFixture: true })
+    const tagged = grid(page).locator('[data-page-item]:has-text("Facet Fixture")')
+    const plain = grid(page).locator('[data-page-item]:has-text("Meetings")')
+    await expect(tagged.locator('[data-page-flag="tags"]')).toBeVisible()
+    await expect(plain.locator('[data-page-flag]')).toHaveCount(0)
+    const left = (row: Locator, selector: string) =>
+      row.locator(selector).evaluate((el) => el.getBoundingClientRect().left)
+    for (const selector of ['[data-page-metadata]', '[data-metadata-relative]']) {
+      expect(await left(tagged, selector)).toBe(await left(plain, selector))
+    }
+  })
+
+  test("a row's title starts within its padding", async ({ page }) => {
+    await bootPages(page)
+    const row = grid(page).locator('[data-page-item]:has-text("Meetings")')
+    const { titleLeft, contentLeft } = await row.evaluate((el) => {
+      const title = el.querySelector('.page-browser-item-title') as HTMLElement
+      const box = el.getBoundingClientRect()
+      return {
+        titleLeft: title.getBoundingClientRect().left,
+        contentLeft: box.left + Number.parseFloat(getComputedStyle(el).paddingLeft),
+      }
+    })
+    expect(titleLeft - contentLeft).toBeLessThanOrEqual(1)
+  })
+
   test('zero-inbound pages suppress the inbound badge', async ({ page }) => {
     await bootPages(page)
     // Projects has no inbound links → the inbound badge is omitted, but it

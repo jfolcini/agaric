@@ -60,6 +60,10 @@ export const common: Record<string, string> = {
   'sidebar.search': 'Search',
   'sidebar.tags': 'Tags',
   'sidebar.trash': 'Trash',
+  // Translators: Sidebar: name of the Trash item while its badge shows how many items are in the
+  // Trash. {{count}} = number of items in the Trash.
+  'sidebar.trashWithCount_one': 'Trash, {{count}} item',
+  'sidebar.trashWithCount_other': 'Trash, {{count}} items',
   'sidebar.history': 'History',
   'sidebar.templates': 'Templates',
   'sidebar.graph': 'Graph',

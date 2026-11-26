@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Tasks (the journal's agenda mode), Pages, Search, Tags — with Settings in its footer. A row of named buttons in the Pages header opens Tags, Graph, Advanced Query, Templates and Trash (icons alone when the column is too narrow for the names, in a ⋮ menu on a phone); History opens from the *Open edit history* row in Settings › Data, or for one page from that page's kebab, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Tasks (the journal's agenda mode), Pages, Search, Tags — then a lower group of Graph, Templates and Trash, with Settings in its footer; a phone's drawer shows the same. Named buttons in the Pages header open Tags and Advanced Query (icons alone when the column is too narrow for the names, in a ⋮ menu on a phone); History opens from the *Open edit history* row in Settings › Data, or for one page from that page's kebab, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
@@ -72,7 +72,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 - **Purge** a single item permanently (with confirmation), or batch-purge.
 - **Restore All / Empty Trash** in the header for the nuclear options.
 - Each row names the page the block was deleted from; a page in the Trash too is named and marked *(deleted)*.
-- The Pages header's **Trash** button shows a count badge; large purges may trigger a "non-reversible" warning dialog before confirming.
+- The sidebar's **Trash** item shows a count badge; large purges may trigger a "non-reversible" warning dialog before confirming.
 
 ## History
 

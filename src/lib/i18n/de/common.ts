@@ -28,6 +28,8 @@ export const common: Record<string, string> = {
   'sidebar.search': 'Suche',
   'sidebar.tags': 'Tags',
   'sidebar.trash': 'Papierkorb',
+  'sidebar.trashWithCount_one': 'Papierkorb, {{count}} Element',
+  'sidebar.trashWithCount_other': 'Papierkorb, {{count}} Elemente',
   'sidebar.history': 'Verlauf',
   'sidebar.templates': 'Vorlagen',
   'sidebar.graph': 'Graph',

@@ -1,14 +1,19 @@
+import type { Page } from '@playwright/test'
+
 import {
+  activeAlertDialog,
   deleteBlockViaContextMenu,
   expect,
+  ipc,
   navigateToView,
   openPage,
+  seedSearchBlocks,
   test,
   waitForBoot,
 } from './helpers'
 
 /**
- * The Pages header's Trash button carries a count badge (`useTrashCount` →
+ * The sidebar's Trash item carries a count badge (`useTrashCount` →
  * `count_trash`), and each trash row names the page its block came from
  * (`useTrashBreadcrumbs` → `batch_resolve`). Both are reads the mock answers
  * from its live block map, so a wrong count or a missing breadcrumb shows here.
@@ -32,9 +37,11 @@ test('Trash badge counts deleted blocks, rows name their page, restoring one low
   await expect(page.locator(`[data-block-id="${QN_1}"]`)).toHaveCount(0)
 
   await navigateToView(page, 'Pages')
-  const trashButton = page.locator('.page-browser-header').getByRole('button', { name: /^Trash/ })
+  const sidebar = page.locator('[data-slot="sidebar"]')
+  const trashButton = sidebar.getByRole('button', { name: /^Trash/ })
+  const badge = sidebar.locator('[data-sidebar="menu-badge"]')
   await expect(trashButton).toHaveAccessibleName('Trash, 2 items')
-  await expect(trashButton.locator('[data-slot="badge"]')).toHaveText('2')
+  await expect(badge).toHaveText('2')
 
   await trashButton.click()
   const rows = page.getByTestId('trash-item')
@@ -49,5 +56,41 @@ test('Trash badge counts deleted blocks, rows name their page, restoring one low
 
   await navigateToView(page, 'Pages')
   await expect(trashButton).toHaveAccessibleName('Trash, 1 item')
-  await expect(trashButton.locator('[data-slot="badge"]')).toHaveText('1')
+  await expect(badge).toHaveText('1')
+})
+
+const sidebarTrash = (page: Page) =>
+  page.locator('[data-slot="sidebar"]').getByRole('button', { name: /^Trash/ })
+
+/** Trash two seeded blocks and open Trash, its badge at 2. */
+async function openTrashOfTwo(page: Page) {
+  const ids = await seedSearchBlocks(page, [{ content: 'Trashed one' }, { content: 'Trashed two' }])
+  for (const blockId of ids) await ipc(page, 'delete_block', { blockId })
+  await navigateToView(page, 'Trash')
+  await expect(page.getByTestId('trash-item')).toHaveCount(2)
+  await expect(sidebarTrash(page)).toHaveAccessibleName('Trash, 2 items')
+}
+
+/** The badge sits beside the Trash list, so it empties with the list, not on a later poll. */
+async function expectNoBadge(page: Page) {
+  await expect(sidebarTrash(page)).toHaveAccessibleName('Trash')
+  await expect(page.locator('[data-slot="sidebar"] [data-sidebar="menu-badge"]')).toHaveCount(0)
+}
+
+test('restoring every item in Trash clears the sidebar badge at once @pages', async ({ page }) => {
+  await openTrashOfTwo(page)
+  const rows = page.getByTestId('trash-item')
+  for (const left of [1, 0]) {
+    await rows.first().getByTestId('trash-restore-btn').click()
+    await expect(rows).toHaveCount(left)
+  }
+  await expectNoBadge(page)
+})
+
+test('emptying Trash clears the sidebar badge at once @pages', async ({ page }) => {
+  await openTrashOfTwo(page)
+  await page.getByTestId('trash-empty-trash-btn').click()
+  await activeAlertDialog(page).getByRole('button', { name: 'Yes, delete', exact: true }).click()
+  await expect(page.getByText('Nothing in trash. Deleted items will appear here.')).toBeVisible()
+  await expectNoBadge(page)
 })

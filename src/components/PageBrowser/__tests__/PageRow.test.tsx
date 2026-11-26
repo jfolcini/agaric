@@ -136,6 +136,53 @@ describe('PageRow', () => {
     expect(flags[0]?.getAttribute('data-page-flag')).toBe('todos')
   })
 
+  // #7040 D2 — the title starts at the row's content edge: the checkbox and
+  // the bookmark sit after it, with delete, and no page icon leads it.
+  it('starts the row with the title, its checkbox and bookmark after it', () => {
+    const { container } = render(<PageRow {...baseProps()} />)
+    const cells = container.querySelectorAll('[role="gridcell"]')
+    const title = screen.getByText('Project Alpha')
+    expect(cells[0]).toContainElement(title)
+    expect(cells[0]?.querySelector('svg')).toBe(cells[0]?.querySelector('[data-page-metadata] svg'))
+    for (const control of [
+      screen.getByRole('checkbox'),
+      screen.getByRole('button', { name: /bookmark page/i }),
+    ]) {
+      expect(title.compareDocumentPosition(control)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    }
+  })
+
+  it('puts the flag with the title, out of the metadata column', () => {
+    const { container } = render(<PageRow {...baseProps({ hasTags: true })} />)
+    const flag = container.querySelector('[data-page-flag="tags"]')
+    expect(flag).toHaveTextContent('#tags')
+    expect(container.querySelector('[data-page-metadata]')).not.toContainElement(
+      flag as HTMLElement,
+    )
+  })
+
+  it('keeps a slot for each metadata column, whether or not it has a count', () => {
+    const slots = (props: Partial<RequiredProps>) => {
+      const { container, unmount } = render(<PageRow {...baseProps(props)} />)
+      const count = container.querySelector('[data-page-metadata]')?.children.length
+      unmount()
+      return count
+    }
+    expect(slots({ inboundLinkCount: 0, childBlockCount: 0 })).toBe(3)
+    expect(slots({ inboundLinkCount: 5, childBlockCount: 12 })).toBe(3)
+  })
+
+  it.each([
+    ['[data-metadata-inbound]', '5 inbound links'],
+    ['[data-metadata-children]', '12 child blocks'],
+    ['[data-metadata-relative]', 'Last modified 3d'],
+  ])('names the %s value in a tooltip', async (selector, label) => {
+    const user = userEvent.setup()
+    const { container } = render(<PageRow {...baseProps()} />)
+    await user.hover(container.querySelector(selector) as HTMLElement)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(label)
+  })
+
   it('renders no flag badges when no flags are set', () => {
     const { container } = render(<PageRow {...baseProps()} />)
     expect(container.querySelector('[data-page-flag]')).toBeNull()
@@ -251,7 +298,7 @@ describe('PageRow', () => {
         .getByRole('button', { name: /delete page/i })
         .closest('[role="gridcell"]')
       expect(checkboxCell).toHaveClass('hidden')
-      expect(bookmark).toHaveClass('hidden')
+      expect(bookmark.closest('[role="gridcell"]')).toHaveClass('hidden')
       expect(trashCell).toHaveClass('hidden')
       rerender(<PageRow {...baseProps({ selectionActive: true })} />)
       expect(checkboxCell).not.toHaveClass('hidden')
@@ -261,7 +308,9 @@ describe('PageRow', () => {
       vi.mocked(useIsTouch).mockReturnValue(false)
       render(<PageRow {...baseProps()} />)
       expect(screen.getByRole('checkbox').closest('[role="gridcell"]')).not.toHaveClass('hidden')
-      expect(screen.getByRole('button', { name: /bookmark page/i })).not.toHaveClass('hidden')
+      expect(
+        screen.getByRole('button', { name: /bookmark page/i }).closest('[role="gridcell"]'),
+      ).not.toHaveClass('hidden')
       expect(
         screen.getByRole('button', { name: /delete page/i }).closest('[role="gridcell"]'),
       ).not.toHaveClass('hidden')

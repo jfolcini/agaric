@@ -64,14 +64,13 @@ async function trashUnderLowercaseIds(): Promise<void> {
   }
 }
 
-/** Open Trash from the Pages header and wait until it lists every page in `TITLES`. */
+/**
+ * Open Trash from the sidebar and wait until it lists every page in `TITLES`.
+ * Journal first, so a Trash already open remounts and lists afresh.
+ */
 async function openTrashListingAll(): Promise<void> {
   await navigateTo('Journal')
-  await navigateTo('Pages')
-  // Named "Trash, N items" while the trash holds something.
-  const button = $('//button[@aria-label="Trash" or starts-with(@aria-label, "Trash, ")]')
-  await button.waitForClickable({ timeout: NAV_TIMEOUT })
-  await button.click()
+  await navigateTo('Trash')
   let seen: string[] = []
   await browser
     .waitUntil(

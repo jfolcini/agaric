@@ -20,16 +20,27 @@ test.describe('Smoke tests @boot', () => {
     // (B — `Pages`/`Tags`/`Graph`/`Search` with `aria-label`)
     // don't collide with the sidebar buttons under strict mode.
     const sidebar = page.locator('[data-slot="sidebar"]')
-    const exactNavLabels = ['New page', 'Journal', 'Pages', 'Search', 'Tags', 'Sync', 'Settings']
+    const exactNavLabels = [
+      'New page',
+      'Journal',
+      'Pages',
+      'Search',
+      'Tags',
+      'Graph',
+      'Templates',
+      'Sync',
+      'Settings',
+    ]
     for (const label of exactNavLabels) {
       await expect(sidebar.getByRole('button', { name: label, exact: true })).toBeVisible()
     }
+    // Trash's name gains its item count.
+    await expect(sidebar.getByRole('button', { name: /^Trash/ })).toBeVisible()
     // The rarely-used views open from the Pages header or Settings instead.
-    const movedLabels = ['Graph', 'Templates', 'Advanced query', 'Status', 'History']
+    const movedLabels = ['Advanced query', 'Status', 'History']
     for (const label of movedLabels) {
       await expect(sidebar.getByRole('button', { name: label, exact: true })).toHaveCount(0)
     }
-    await expect(sidebar.getByRole('button', { name: /^Trash/ })).toHaveCount(0)
   })
 
   test('no console errors on load', async ({ page }) => {

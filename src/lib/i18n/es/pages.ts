@@ -320,8 +320,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostLinked': 'Más enlazadas',
   'pageBrowser.sortMostContent': 'Más contenido',
   'pageBrowser.sortPersistedTooltip': 'El orden que elijas se conserva entre sesiones',
-  'pageBrowser.viewButtons.trashWithCount_one': 'Papelera, {{count}} elemento',
-  'pageBrowser.viewButtons.trashWithCount_other': 'Papelera, {{count}} elementos',
   'pageBrowser.savedViews.trigger': 'Vistas guardadas',
   'pageBrowser.moreMenu': 'Más opciones de Páginas',
   'pageBrowser.savedViews.triggerActive': 'Vistas guardadas — {{name}} aplicada',

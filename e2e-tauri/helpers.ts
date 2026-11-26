@@ -135,7 +135,7 @@ export const NAV_TIMEOUT = 60_000
 export const ACTION_TIMEOUT = 60_000
 
 /** Primary nav destinations addressable by their sidebar label. */
-export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Search' | 'Settings'
+export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Search' | 'Settings' | 'Trash'
 
 /**
  * Resolve a primary sidebar nav `<button>` by its exact visible label, using a
@@ -1828,29 +1828,6 @@ export async function defaultSpaceId(client: McpClient): Promise<string> {
 /** The Trash row whose content is the page title `title`. */
 export function trashRow(title: string): string {
   return `//*[@data-testid="trash-item"][.//*[contains(@class, "trash-item-text")][normalize-space(.)="${title}"]]`
-}
-
-/** Open Trash from the Pages header and wait until its list has loaded. */
-export async function openTrash(): Promise<void> {
-  await navigateTo('Pages')
-  // Named "Trash, N items" while the trash holds something.
-  const button = $('//button[@aria-label="Trash" or starts-with(@aria-label, "Trash, ")]')
-  await button.waitForClickable({ timeout: NAV_TIMEOUT })
-  await button.click()
-  await browser.waitUntil(
-    () =>
-      browser.execute(
-        () =>
-          document.querySelector('[data-slot="feature-page-header-title"]')?.textContent ===
-            'Trash' &&
-          document.querySelector('.trash-view-loading') === null &&
-          (document.querySelector('[data-testid="trash-item"]') !== null ||
-            document.querySelector(
-              '[aria-label="Nothing in trash. Deleted items will appear here."]',
-            ) !== null),
-      ),
-    { timeout: NAV_TIMEOUT, timeoutMsg: 'the Trash list never finished loading' },
-  )
 }
 
 /** Click Restore on page `title`'s Trash row and wait for the row to leave. */

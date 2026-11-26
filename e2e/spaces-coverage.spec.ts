@@ -35,7 +35,7 @@ async function openPagesView(page: import('@playwright/test').Page) {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-/** Open the Templates view via the Pages header button. */
+/** Open the Templates view from the sidebar. */
 async function openTemplatesView(page: import('@playwright/test').Page) {
   await navigateToView(page, 'Templates')
 }

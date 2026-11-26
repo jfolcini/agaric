@@ -37,7 +37,7 @@ test('icon buttons across the app render their icons at the asked size @pages @s
   expect(await iconSize(row.getByRole('button', { name: 'Delete page' }))).toBe('16x16')
   // The row's checkbox and icons share one vertical centre.
   const centres = await Promise.all(
-    ['[data-slot="checkbox"]', '.lucide-bookmark', '.lucide-file-text', '.lucide-trash-2'].map(
+    ['[data-slot="checkbox"]', '.lucide-bookmark', '.lucide-list', '.lucide-trash-2'].map(
       (selector) => centreY(row.locator(selector)),
     ),
   )

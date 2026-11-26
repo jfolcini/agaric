@@ -690,20 +690,22 @@ export async function openMobileSidebar(page: Page): Promise<Locator> {
  */
 export async function navigateMobile(page: Page, view: string) {
   const sheet = await openMobileSidebar(page)
-  await sheet.getByRole('button', { name: view, exact: true }).click()
+  await sheet.getByRole('button', { name: sidebarItemName(view), exact: true }).click()
   await expect(sheet).toHaveCount(0)
+}
+
+/** A sidebar item's accessible name: Trash's gains its item count. */
+function sidebarItemName(view: string): string | RegExp {
+  return view === 'Trash' ? /^Trash\b/ : view
 }
 
 /**
  * Views opened from a Pages header button rather than the sidebar (#5269),
- * keyed by label. Trash's name gains its item count. Matched exactly on the
- * desktop buttons and as a substring in the phone ⋮ menu.
+ * keyed by label. Matched exactly on the desktop buttons and as a substring in
+ * the phone ⋮ menu.
  */
 const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
-  Graph: 'Graph',
   'Advanced query': 'Advanced query',
-  Templates: 'Templates',
-  Trash: /^Trash/,
 }
 
 /**
@@ -774,7 +776,7 @@ export async function navigateToView(page: Page, view: string) {
   }
   await page
     .locator('[data-slot="sidebar"]')
-    .getByRole('button', { name: view, exact: true })
+    .getByRole('button', { name: sidebarItemName(view), exact: true })
     .click()
 }
 

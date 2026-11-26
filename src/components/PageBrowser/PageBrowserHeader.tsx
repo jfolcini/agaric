@@ -3,15 +3,14 @@
  *
  * Search first (#5637): the first row is the search input, the sort
  * dropdown, saved views and the New page button that opens the New page
- * dialog; below it, the named buttons that open the page-adjacent views
- * (#5269, #6544).
+ * dialog; below it, the named buttons that open Tags and Advanced query
+ * (#5269, #6544). Graph, Templates and Trash are in the app sidebar (#7040 D2).
  * A phone gets one row (#5927): search, sort as an icon, a ⋮ menu holding
  * saved views and the view buttons, and New page as an icon.
  * The search input is the view's primary focus only with a fine pointer, so
  * entering the view on a phone does not raise the keyboard over the list.
  * The list state lives in the orchestrator (`PageBrowser`) and is passed in
- * as props; the view buttons read the navigation store and the trash count
- * themselves.
+ * as props; the view buttons read the navigation store themselves.
  */
 
 import { ArrowUpDown, MoreVertical, Plus, Search } from 'lucide-react'
@@ -20,7 +19,6 @@ import { type RefObject, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
@@ -38,7 +36,6 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
-import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { openNewPageDialog } from '@/lib/overlay-events'
 import type { SavedPagesView } from '@/lib/saved-pages-views'
@@ -48,7 +45,7 @@ import { useNavigationStore } from '@/stores/navigation'
 /** Registered on touch so the view falls back to its container, not the search input. */
 const NO_PRIMARY_FOCUS: RefObject<HTMLElement | null> = { current: null }
 
-const VIEW_BUTTONS = (['tags', 'graph', 'query', 'templates', 'trash'] as const).flatMap((view) =>
+const VIEW_BUTTONS = (['tags', 'query'] as const).flatMap((view) =>
   NAV_ITEMS.filter((item) => item.id === view),
 )
 
@@ -115,7 +112,6 @@ export function PageBrowserHeader({
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
   const setView = useNavigationStore((s) => s.setView)
-  const trashCount = useTrashCount()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
@@ -155,10 +151,6 @@ export function PageBrowserHeader({
     // (a) Unfiltered → the grand total.
     return t('pageBrowser.countAll', { count: totalCount })
   })()
-  const viewButtonLabel = (view: (typeof VIEW_BUTTONS)[number]['id'], label: string) =>
-    view === 'trash' && trashCount > 0
-      ? t('pageBrowser.viewButtons.trashWithCount', { count: trashCount })
-      : label
   const moreTrigger = (
     <IconButton
       variant="ghost"
@@ -181,7 +173,7 @@ export function PageBrowserHeader({
         }}
       >
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-        {viewButtonLabel(view, t(labelKey))}
+        {t(labelKey)}
       </PopoverMenuItem>
     ))
   const savedViewsProps = {
@@ -282,9 +274,9 @@ export function PageBrowserHeader({
         </Button>
       </div>
 
-      {/* The names show once the row has room for all five (a container
-          query, since the sidebar takes part of a tablet's width); below that
-          the buttons are icons, their names visually hidden and in the tooltip. */}
+      {/* The names show once the row has room for them (a container query,
+          since the sidebar takes part of a tablet's width); below that the
+          buttons are icons, their names visually hidden and in the tooltip. */}
       {!isMobile && (
         <div className="@container">
           <div className="flex items-center gap-1">
@@ -296,22 +288,12 @@ export function PageBrowserHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="relative px-2 @xl:px-3 [@media(pointer:coarse)]:min-w-11"
-                      // The count the badge shows has to be in the name as well.
-                      aria-label={viewButtonLabel(view, label)}
+                      className="px-2 @sm:px-3 [@media(pointer:coarse)]:min-w-11"
+                      aria-label={label}
                       onClick={() => setView(view)}
                     >
                       <Icon aria-hidden="true" />
-                      <span className="sr-only @xl:not-sr-only">{label}</span>
-                      {view === 'trash' && trashCount > 0 && (
-                        <Badge
-                          tone="secondary"
-                          size="xs"
-                          className="absolute -top-1 -right-1 @xl:static"
-                        >
-                          {trashCount}
-                        </Badge>
-                      )}
+                      <span className="sr-only @sm:not-sr-only">{label}</span>
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>{label}</TooltipContent>

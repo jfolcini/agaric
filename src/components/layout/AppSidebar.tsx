@@ -1,10 +1,11 @@
 /**
  * AppSidebar — sidebar shell extracted from App.tsx.
  *
- * #5269 — holds only the daily surfaces: a header (branding + collapse
- * toggle, space switcher, New page), one nav list (`SIDEBAR_NAV_ITEMS`)
- * above Bookmarks, and a footer row with the Sync and Settings icons. The other
- * views open from the Pages header or Settings. `CollapseButton` is a
+ * #5269 — a header (branding + collapse toggle, space switcher, New page),
+ * the daily surfaces (`SIDEBAR_NAV_ITEMS`), a lower group of Graph, Templates
+ * and Trash (`SIDEBAR_LOWER_NAV_ITEMS`, #7040 D2) above Bookmarks, and a footer
+ * row with the Sync and Settings icons. The other views open from the Pages
+ * header or Settings. `CollapseButton` is a
  * sidebar-internal helper and lives alongside the JSX it supports;
  * `syncDotClass` is shared with the phone's drawer button in App.tsx.
  *
@@ -36,14 +37,21 @@ import {
   SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
 import { useMinuteClock } from '@/hooks/useMinuteClock'
+import { useTrashCount } from '@/hooks/useTrashCount'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { type NavItem, SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
+import {
+  type NavItem,
+  SETTINGS_NAV_ITEM,
+  SIDEBAR_LOWER_NAV_ITEMS,
+  SIDEBAR_NAV_ITEMS,
+} from '@/lib/nav-items'
 import { waitingForPeerLabel } from '@/lib/sync-waiting-label'
 import { cn } from '@/lib/utils'
 import { useJournalStore } from '@/stores/journal'
@@ -151,6 +159,7 @@ function AppSidebarInner({
   const setJournalMode = useJournalStore((s) => s.setMode)
   const onTasks = currentView === 'journal' && journalMode === 'agenda'
   const now = useMinuteClock()
+  const trashCount = useTrashCount(currentView)
   const syncUnavailable = syncing || !isOnline
   // Offline wins, then no peers, as they do for the dot; a running sync
   // replaces the old error.
@@ -186,12 +195,15 @@ function AppSidebarInner({
     label: string,
     active: boolean,
     select: () => void,
+    badge?: { count: number; name: string },
   ): ReactElement => (
     <SidebarMenuItem key={key}>
       <SidebarMenuButton
         isActive={active}
         aria-current={active ? 'page' : undefined}
-        tooltip={label}
+        // The badge is outside the button, so its count goes in the name.
+        aria-label={badge?.name}
+        tooltip={badge?.name ?? label}
         onClick={() => {
           select()
           dismissOnMobile()
@@ -200,8 +212,30 @@ function AppSidebarInner({
         <Icon />
         <span>{label}</span>
       </SidebarMenuButton>
+      {badge && (
+        // A coarse pointer's row is taller; the badge stays centred in it.
+        <SidebarMenuBadge className="[@media(pointer:coarse)]:peer-data-[size=default]/menu-button:top-3">
+          {badge.count}
+        </SidebarMenuBadge>
+      )}
     </SidebarMenuItem>
   )
+
+  const renderLowerNavItem = (item: NavItem): ReactElement => {
+    const label = t(item.labelKey)
+    const badge =
+      item.id === 'trash' && trashCount > 0
+        ? { count: trashCount, name: t('sidebar.trashWithCount', { count: trashCount }) }
+        : undefined
+    return renderMenuButton(
+      item.id,
+      item.icon,
+      label,
+      currentView === item.id,
+      () => onSelectView(item.id),
+      badge,
+    )
+  }
 
   const renderNavItem = (item: NavItem): ReactElement[] => {
     if (item.id !== 'journal') {
@@ -303,6 +337,13 @@ function AppSidebarInner({
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>{SIDEBAR_NAV_ITEMS.flatMap(renderNavItem)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          {/* #7040 D2 — the views a day needs less often. Above Bookmarks, so
+              their place does not move with the bookmark count. */}
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>{SIDEBAR_LOWER_NAV_ITEMS.map(renderLowerNavItem)}</SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
           {/* #4713 — the bookmarked pages, as a collapsible section. Below

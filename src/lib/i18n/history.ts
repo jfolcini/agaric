@@ -132,7 +132,7 @@ export const history: Record<string, string> = {
   'history.pageScope': 'Changes to {{title}}',
   'history.showAllPages': 'Show all pages',
 
-  // Translators: Trash view (deleted blocks, opened from the Pages header): its empty state, and
+  // Translators: Trash view (deleted blocks, opened from the Sidebar): its empty state, and
   // the text shown for a deleted block that had no text, also inserted as {{content}} in
   // trash.selectItemLabel.
   'trash.emptyMessage': 'Nothing in trash. Deleted items will appear here.',
