@@ -5,7 +5,8 @@
  * of the space, and the recording's audio, transcript and summary, each
  * optional, the summary written as page content or attached as a file. The
  * page is linked from the block the command ran in, in one transaction, so
- * the success toast's Undo reverts the whole meeting.
+ * the success toast's Undo reverts the whole meeting. On a phone
+ * (`usePhoneLayout`) it is a bottom sheet.
  */
 
 import { format } from 'date-fns'
@@ -14,14 +15,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -31,9 +25,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import type {
   AddMeetingInput,
@@ -87,6 +83,7 @@ export function MeetingDialog({
   onCreated,
 }: MeetingDialogProps): React.ReactElement {
   const { t } = useTranslation()
+  const parts = useDialogOrSheet('dialog')
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const id = useId()
   const [title, setTitle] = useState('')
@@ -166,111 +163,118 @@ export function MeetingDialog({
   }
 
   const field = (name: string) => `${id}-${name}`
+  const { Root, Content, Header, Title, Description, Footer, isMobile } = parts
+  // The fields scroll and the buttons stay: a sheet with the keyboard up is short.
+  const Body = isMobile ? SheetBody : DialogBody
 
   return (
-    <Dialog
+    <Root
       open
       onOpenChange={(open) => {
         if (!open && !saving) onClose()
       }}
     >
-      <DialogContent data-testid="meeting-dialog" className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t('meeting.title')}</DialogTitle>
-          <DialogDescription>{t('meeting.description')}</DialogDescription>
-        </DialogHeader>
+      <Content data-testid="meeting-dialog" className="sm:max-w-md">
+        <Header>
+          <Title>{t('meeting.title')}</Title>
+          <Description>{t('meeting.description')}</Description>
+        </Header>
         <form
-          className="flex flex-col gap-3"
+          className="flex min-h-0 flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault()
             void create()
           }}
         >
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={field('title')}>{t('meeting.titleLabel')}</Label>
-            <Input
-              id={field('title')}
-              value={title}
-              placeholder={t('meeting.defaultTitle')}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={field('date')}>{t('meeting.dateLabel')}</Label>
-            <Input
-              id={field('date')}
-              type="date"
-              required
-              value={date}
-              onChange={(e) => {
-                dateTouched.current = true
-                setDate(e.target.value)
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={field('template')}>{t('meeting.templateLabel')}</Label>
-            <Select value={templateId} onValueChange={setTemplateId}>
-              <SelectTrigger id={field('template')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_TEMPLATE}>{t('meeting.noTemplate')}</SelectItem>
-                {templates.map((page) => (
-                  <SelectItem key={page.id} value={page.id}>
-                    {page.content}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={field('audio')}>{t('meeting.audioLabel')}</Label>
-            <Input
-              id={field('audio')}
-              type="file"
-              accept="audio/*,.opus,.oga,.m4a"
-              onChange={(e) => setAudio(e.target.files?.[0] ?? null)}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={field('transcript')}>{t('meeting.transcriptLabel')}</Label>
-            <Input
-              id={field('transcript')}
-              type="file"
-              accept=".md,.markdown,.txt,text/markdown,text/plain"
-              onChange={(e) => setTranscript(e.target.files?.[0] ?? null)}
-            />
-          </div>
-          <fieldset className="flex flex-col gap-1">
-            <legend className="text-sm font-medium">{t('meeting.summaryLabel')}</legend>
-            <ToggleGroup
-              type="single"
-              aria-label={t('meeting.summaryLabel')}
-              value={summaryMode}
-              onValueChange={(value) => {
-                if (value === 'text' || value === 'file') setSummaryMode(value)
-              }}
-            >
-              <ToggleGroupItem value="text">{t('meeting.summaryAsText')}</ToggleGroupItem>
-              <ToggleGroupItem value="file">{t('meeting.summaryAsFile')}</ToggleGroupItem>
-            </ToggleGroup>
-            {summaryMode === 'text' ? (
-              <Textarea
-                aria-label={t('meeting.summaryTextLabel')}
-                value={summaryText}
-                onChange={(e) => setSummaryText(e.target.value)}
-              />
-            ) : (
-              <Input
-                aria-label={t('meeting.summaryFileLabel')}
-                type="file"
-                accept=".md,.markdown,.txt,text/markdown,text/plain"
-                onChange={(e) => setSummaryFile(e.target.files?.[0] ?? null)}
-              />
-            )}
-          </fieldset>
-          <DialogFooter>
+          <Body>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={field('title')}>{t('meeting.titleLabel')}</Label>
+                <Input
+                  id={field('title')}
+                  value={title}
+                  placeholder={t('meeting.defaultTitle')}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={field('date')}>{t('meeting.dateLabel')}</Label>
+                <Input
+                  id={field('date')}
+                  type="date"
+                  required
+                  value={date}
+                  onChange={(e) => {
+                    dateTouched.current = true
+                    setDate(e.target.value)
+                  }}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={field('template')}>{t('meeting.templateLabel')}</Label>
+                <Select value={templateId} onValueChange={setTemplateId}>
+                  <SelectTrigger id={field('template')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_TEMPLATE}>{t('meeting.noTemplate')}</SelectItem>
+                    {templates.map((page) => (
+                      <SelectItem key={page.id} value={page.id}>
+                        {page.content}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={field('audio')}>{t('meeting.audioLabel')}</Label>
+                <Input
+                  id={field('audio')}
+                  type="file"
+                  accept="audio/*,.opus,.oga,.m4a"
+                  onChange={(e) => setAudio(e.target.files?.[0] ?? null)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={field('transcript')}>{t('meeting.transcriptLabel')}</Label>
+                <Input
+                  id={field('transcript')}
+                  type="file"
+                  accept=".md,.markdown,.txt,text/markdown,text/plain"
+                  onChange={(e) => setTranscript(e.target.files?.[0] ?? null)}
+                />
+              </div>
+              <fieldset className="flex flex-col gap-1">
+                <legend className="text-sm font-medium">{t('meeting.summaryLabel')}</legend>
+                <ToggleGroup
+                  type="single"
+                  aria-label={t('meeting.summaryLabel')}
+                  value={summaryMode}
+                  onValueChange={(value) => {
+                    if (value === 'text' || value === 'file') setSummaryMode(value)
+                  }}
+                >
+                  <ToggleGroupItem value="text">{t('meeting.summaryAsText')}</ToggleGroupItem>
+                  <ToggleGroupItem value="file">{t('meeting.summaryAsFile')}</ToggleGroupItem>
+                </ToggleGroup>
+                {summaryMode === 'text' ? (
+                  <Textarea
+                    aria-label={t('meeting.summaryTextLabel')}
+                    value={summaryText}
+                    onChange={(e) => setSummaryText(e.target.value)}
+                  />
+                ) : (
+                  <Input
+                    aria-label={t('meeting.summaryFileLabel')}
+                    type="file"
+                    accept=".md,.markdown,.txt,text/markdown,text/plain"
+                    onChange={(e) => setSummaryFile(e.target.files?.[0] ?? null)}
+                  />
+                )}
+              </fieldset>
+            </div>
+          </Body>
+          <Footer>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
               {t('action.cancel')}
             </Button>
@@ -278,9 +282,9 @@ export function MeetingDialog({
               {saving && <Spinner />}
               {saving ? t('meeting.creating') : t('meeting.create')}
             </Button>
-          </DialogFooter>
+          </Footer>
         </form>
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Root>
   )
 }

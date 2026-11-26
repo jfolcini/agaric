@@ -138,7 +138,6 @@ export function PageHeader({
   const [tagQuery, setTagQuery] = useState('')
   const [showTagPicker, setShowTagPicker] = useState(false)
   const [forceTagSection, setForceTagSection] = useState(false)
-  const tagPickerForcedRef = useRef(false)
 
   // Two-phase approach: mount tag section first, then open picker on next render
   useEffect(() => {
@@ -148,15 +147,6 @@ export function PageHeader({
       setForceTagSection(false)
     }
   }, [forceTagSection])
-
-  const handleTagPickerChange = useCallback((open: boolean) => {
-    // Suppress the immediate close that Radix triggers on freshly mounted Popovers
-    if (!open && tagPickerForcedRef.current) {
-      tagPickerForcedRef.current = false
-      return
-    }
-    setShowTagPicker(open)
-  }, [])
 
   // --- Kebab + property-expand state ---
   // Delete-dialog state lives in `usePageDeleteAction` (see top of the
@@ -315,7 +305,6 @@ export function PageHeader({
   }, [startEditingAliases])
 
   const handleKebabAddTag = useCallback(() => {
-    tagPickerForcedRef.current = true
     setForceTagSection(true)
     setKebabOpen(false)
   }, [])
@@ -690,7 +679,7 @@ export function PageHeader({
               tagQuery={tagQuery}
               showTagPicker={showTagPicker}
               onTagQueryChange={setTagQuery}
-              onTagPickerChange={handleTagPickerChange}
+              onTagPickerChange={setShowTagPicker}
               onAddTag={(tagId) => void handleTagAdd(tagId)}
               onRemoveTag={(tagId) => void handleRemoveTag(tagId)}
               onCreateTag={() => void handleTagCreate()}

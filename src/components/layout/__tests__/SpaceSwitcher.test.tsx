@@ -13,6 +13,7 @@
  *  - Selecting an option calls `setCurrentSpace` with the right id
  *  - "Manage spaces…" and "Create another space" open Settings › Spaces
  *  - a11y compliance via axe audit
+ *  - on a phone, a bottom-sheet menu with the same rows
  *
  * Radix Select is mocked globally via `src/test-setup.ts` (native
  * `<select>` shim) so `userEvent.selectOptions()` works in jsdom.
@@ -21,8 +22,8 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
 import type { SpaceRow } from '@/lib/bindings'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
@@ -77,6 +78,9 @@ vi.mock('@/components/ui/select', async () => {
   return { ...actual, SelectTrigger }
 })
 
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
+
 const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: null }
 const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: null }
 
@@ -98,6 +102,7 @@ beforeEach(() => {
   useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
   localStorage.clear()
   vi.clearAllMocks()
+  mockUsePhoneLayout.mockReturnValue(false)
 })
 
 describe('SpaceSwitcher', () => {
@@ -441,5 +446,42 @@ describe('SpaceSwitcher', () => {
       },
       { timeout: 3000 },
     )
+  })
+})
+
+describe('SpaceSwitcher on a phone', () => {
+  beforeEach(() => {
+    mockUsePhoneLayout.mockReturnValue(true)
+  })
+
+  it('lists the spaces in a bottom sheet, and a row switches to its space', async () => {
+    const user = userEvent.setup()
+    seedSpaces([PERSONAL, WORK])
+    const { baseElement } = render(<SpaceSwitcher />)
+
+    await user.click(screen.getByRole('button', { name: /Switch space/ }))
+    const sheet = await screen.findByRole('dialog', { name: 'Switch space' })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    expect(screen.getByRole('button', { name: 'Personal' })).toHaveAttribute('aria-current', 'true')
+    expect(await axe(baseElement)).toHaveNoViolations()
+
+    await user.click(screen.getByRole('button', { name: 'Work' }))
+    expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('Manage spaces opens Settings › Spaces without switching', async () => {
+    const user = userEvent.setup()
+    const onNavigate = vi.fn()
+    seedSpaces([PERSONAL, WORK])
+    render(<SpaceSwitcher onNavigate={onNavigate} />)
+
+    await user.click(screen.getByRole('button', { name: /Switch space/ }))
+    await user.click(await screen.findByRole('button', { name: 'Manage spaces…' }))
+
+    expect(useNavigationStore.getState().pendingSettingsTab).toBe('spaces')
+    expect(useNavigationStore.getState().currentView).toBe('settings')
+    expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+    expect(onNavigate).toHaveBeenCalledTimes(1)
   })
 })

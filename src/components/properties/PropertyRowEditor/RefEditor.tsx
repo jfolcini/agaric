@@ -45,7 +45,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
   const refDisplayTitle = useRefTitle(prop.value_ref)
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} sheetTitle={t('block.refPickerLabel')}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"

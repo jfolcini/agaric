@@ -657,7 +657,11 @@ export function GraphFilterBar({
         </Badge>
       )}
 
-      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <Popover
+        open={popoverOpen}
+        onOpenChange={setPopoverOpen}
+        sheetTitle={t('graph.filter.addFilterPopoverLabel')}
+      >
         <PopoverTrigger asChild>
           <Button
             variant="outline"

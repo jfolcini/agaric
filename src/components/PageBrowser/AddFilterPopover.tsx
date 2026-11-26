@@ -377,6 +377,7 @@ export function AddFilterPopover({
         setOpen(next)
         if (!next) reset()
       }}
+      sheetTitle={t('pageBrowser.filter.addFilter')}
     >
       <PopoverTrigger asChild>
         <Button
