@@ -4,6 +4,8 @@
  * label, then its count in the muted count tone.
  * A callout is a tinted card with its style's icon, and a quote keeps its plain
  * left bar.
+ * A table takes the code block's corners, with lighter inner rules than its
+ * frame.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -107,6 +109,18 @@ async function expectTintedCallout(callout: Locator, quote: Locator): Promise<vo
 const staticQuote = (page: Page): Locator =>
   page.locator('.block-static blockquote:not([data-callout-type])')
 
+/** The table's corners are the code block's; its inner rules are lighter than its frame. */
+async function expectTableLikeCode(table: Locator, code: Locator): Promise<void> {
+  const codeRadius = await css(code, 'border-top-left-radius')
+  expect(codeRadius).not.toBe('0px')
+  expect(await css(table, 'border-top-left-radius')).toBe(codeRadius)
+  const cell = table.locator('tr').nth(2).locator('td').first()
+  expect(await css(cell, 'border-top-width'), 'inner rule').toBe('1px')
+  expect(await css(cell, 'border-top-color'), 'inner rule vs frame').not.toBe(
+    await css(table, 'border-top-color'),
+  )
+}
+
 test.describe('the Properties header @pages', () => {
   test.use(DESKTOP)
 
@@ -142,5 +156,20 @@ test.describe('callouts and quotes @editor @pages', () => {
     await page.addInitScript(() => localStorage.setItem('theme-preference', 'dark'))
     await openShowcase(page)
     await expectTintedCallout(page.getByTestId('callout-block'), staticQuote(page))
+  })
+})
+
+test.describe('tables @editor @pages', () => {
+  test.use(DESKTOP)
+
+  test('a table takes the code block’s corners, with lighter inner rules', async ({ page }) => {
+    await openShowcase(page)
+    await expectTableLikeCode(
+      page.getByTestId('rich-table'),
+      page.locator('pre').locator('xpath=ancestor::*[@data-slot="scroll-area"][1]'),
+    )
+    await toPageMode(page)
+    const editor = page.getByTestId('page-mode-editor')
+    await expectTableLikeCode(editor.locator('table'), editor.locator('pre'))
   })
 })

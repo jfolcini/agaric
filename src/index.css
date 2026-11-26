@@ -1839,16 +1839,32 @@
 .ProseMirror .tableWrapper {
   @apply my-1 overflow-x-auto;
 }
+/* The static table's look (`renderTableBlock`): the code block's corners, a
+   frame in the border token and lighter rules between cells (#7040). Cells
+   keep separate borders, as a collapsed table draws no rounded corners. */
 .ProseMirror table {
-  @apply w-auto border-collapse border border-border;
+  @apply w-auto border-separate border-spacing-0 rounded-md border border-border;
 }
 .ProseMirror th,
 .ProseMirror td {
-  @apply border border-border px-3 py-1.5 text-sm align-top;
+  @apply border-0 border-border/60 px-3 py-1.5 text-sm align-top;
   min-width: 5rem;
+}
+.ProseMirror :is(th, td):not(:last-child) {
+  @apply border-r;
+}
+.ProseMirror tr:not(:first-child) > :is(th, td) {
+  @apply border-t;
 }
 .ProseMirror th {
   @apply bg-muted/60 text-left font-medium;
+}
+/* The header's fill stays inside the frame's rounded corners. */
+.ProseMirror tr:first-child > :first-child {
+  border-top-left-radius: calc(var(--radius-md) - 1px);
+}
+.ProseMirror tr:first-child > :last-child {
+  border-top-right-radius: calc(var(--radius-md) - 1px);
 }
 /* Cells hold a single paragraph; drop its default margin so rows stay tight. */
 .ProseMirror th > p,
