@@ -159,6 +159,7 @@ The three-truths boundary is what this ordering encodes: **op log = audit truth 
 
 ## What's intentionally NOT crash-safe
 
+- A commit is not synced to disk when it is made (`synchronous=NORMAL`), so a power cut or an OS crash, though not an app crash, can roll back a device's last commits. Sync makes them durable before it sends them (#6524), so what is lost is only what no paired device had received ([`data-and-events.md` § Database](data-and-events.md#database)).
 - Filesystem-level encryption is the user's responsibility (no SQLCipher; rejected for the overhead and key-management complexity — the SQLite DB lives where the OS encrypts the user's home directory).
 - File attachments stored on disk are recovered via OS file system, not via op log replay. A torn write on a 1 GB video file is the OS's problem.
 - Index drift in `fts_blocks` is reconciled at materializer boot (the FTS index is a cache; if it's stale, a full rebuild fixes it).

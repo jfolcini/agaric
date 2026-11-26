@@ -41,6 +41,32 @@ pub async fn init_pool(
     migrate_at(db_path).await
 }
 
+/// How many durability barriers ([`crate::db::make_commits_durable`]) have
+/// committed on `pool`'s database.
+pub async fn durable_barriers(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, String>("SELECT value FROM app_settings WHERE key = ?")
+        .bind(crate::db::durability::DURABLE_BARRIERS_KEY)
+        .fetch_optional(pool)
+        .await
+        .expect("read the barrier count")
+        .map_or(0, |count| {
+            count.parse().expect("the barrier count is a number")
+        })
+}
+
+/// Make every later durability barrier on `pool`'s database fail, as an I/O
+/// error on its commit would.
+pub async fn break_durability_barrier(pool: &SqlitePool) {
+    sqlx::query(
+        "CREATE TRIGGER break_durability_barrier BEFORE INSERT ON app_settings \
+         WHEN NEW.key = 'sync.durable_barriers' \
+         BEGIN SELECT RAISE(ABORT, 'the durability barrier is broken'); END",
+    )
+    .execute(pool)
+    .await
+    .expect("install the trigger that fails the barrier");
+}
+
 async fn migrate_at(db_path: &std::path::Path) -> Result<SqlitePool, agaric_core::error::AppError> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)

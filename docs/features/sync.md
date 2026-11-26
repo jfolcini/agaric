@@ -77,7 +77,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 
 When the changes one device would send cannot be applied on top of what the other holds, the sync switches to a full snapshot of each space. A fresh device never needs this: its first sync is the ordinary one above. Snapshots stream as raw bytes on the same connection and apply atomically, so a snapshot apply can never half-fail. It is a *merge*, not a wipe: anything you wrote on the catching-up device that the other side had not seen yet survives.
 
-A snapshot cannot heal one case: a device that has lost changes *it made itself* while the other device still holds them. That is what putting an older copy of a device's own database back by hand leads to. Agaric cannot tell the lost changes from whatever that device writes next in their place, so the snapshot is turned away, and every sync from that device fails the same way; it says why and what to do (see [Pitfalls](#pitfalls-to-know)).
+A snapshot cannot heal one case: a device that has lost changes *it made itself* while the other device still holds them. That is what putting an older copy of a device's own database back by hand leads to. Agaric cannot tell the lost changes from whatever that device writes next in their place, so the snapshot is turned away, and every sync from that device fails the same way; it says why and what to do (see [Pitfalls](#pitfalls-to-know)). A power cut or a dead battery does not lead there: a device saves its changes to disk before it sends them, so the most it can lose that way is edits no other device had received (#6524).
 
 ## Per-peer settings
 

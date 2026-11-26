@@ -164,6 +164,9 @@ pub async fn try_offer_loro_snapshot_catchup(
         });
     }
 
+    // #6524: as the session's own stream does, before the first snapshot leaves.
+    agaric_store::db::make_commits_durable(pool).await?;
+
     tracing::info!(
         peer_id = %remote_device_id,
         spaces = messages.len(),
