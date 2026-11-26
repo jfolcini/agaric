@@ -40,7 +40,7 @@ const ROVING_KEYS = new Set([
 const toggleGroupVariants = cva(
   // On a coarse pointer the frame is one button high (`Button`): 32 px
   // items, a 1 px inset and the border make 36 px, at every size.
-  'inline-flex items-center rounded-md border border-input bg-background p-0.5 [@media(pointer:coarse)]:p-px',
+  'inline-flex items-center rounded-md border border-input bg-background p-0.5 coarse:p-px',
   {
     variants: {
       size: {
@@ -108,7 +108,7 @@ function ToggleGroupItem({
         'inline-flex items-center justify-center rounded-sm border border-transparent px-3 py-1 text-xs font-medium',
         // A coarse pointer gets a readable 32 px segment and its 44 px target
         // invisibly (`touch-hit-area`), not a 44 px box around a 12 px label.
-        '[@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm touch-hit-area',
+        'coarse:h-8 coarse:px-3 coarse:text-sm touch-hit-area',
         'text-muted-foreground transition-colors',
         'hover:bg-accent hover:text-accent-foreground',
         'focus-ring-visible',

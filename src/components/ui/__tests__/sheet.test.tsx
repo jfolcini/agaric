@@ -24,7 +24,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 
-const BOTTOM_CAP = 'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]'
+const BOTTOM_CAP = 'max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))]'
 
 // ---------------------------------------------------------------------------
 // displayName

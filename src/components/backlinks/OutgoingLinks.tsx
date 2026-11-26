@@ -149,7 +149,7 @@ export function OutgoingLinks({
                     <li key={link.id}>
                       <button
                         type="button"
-                        className="flex w-full min-w-0 items-center rounded-sm px-2 py-1.5 text-left text-block-sm hover:bg-muted/50 focus-ring-visible [@media(pointer:coarse)]:min-h-11"
+                        className="flex w-full min-w-0 items-center rounded-sm px-2 py-1.5 text-left text-block-sm hover:bg-muted/50 focus-ring-visible coarse:min-h-(--touch-target)"
                         onClick={() => onNavigateToPage?.(pageId, pageTitle, link.source_id)}
                       >
                         <span className="truncate">

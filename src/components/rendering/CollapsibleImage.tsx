@@ -110,7 +110,7 @@ export function CollapsibleImage({
           // Collapsed, the chevron is the only affordance there is, so it stays.
           // Coarse pointers have no hover, so they always get it.
           !collapsed &&
-            'opacity-0 group-hover/image:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100',
+            'opacity-0 group-hover/image:opacity-100 focus-visible:opacity-100 coarse:opacity-100',
         )}
         data-testid="image-collapse-toggle"
         aria-expanded={!collapsed}

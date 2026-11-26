@@ -328,7 +328,7 @@ describe('MonthlyDayCell', () => {
   it('cell meets the 44px coarse-pointer minimum height', () => {
     render(<MonthlyDayCell {...defaultProps} />)
     const cell = screen.getByRole('gridcell')
-    expect(cell.className).toContain('[@media(pointer:coarse)]:min-h-16')
+    expect(cell.className).toContain('coarse:min-h-16')
   })
 
   // #2057: roving tabindex — MonthlyView passes an explicit tabIndex so only

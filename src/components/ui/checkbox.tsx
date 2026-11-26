@@ -10,7 +10,7 @@ const Checkbox = ({
   ...props
 }: React.ComponentProps<typeof CheckboxPrimitive.Root>) => (
   <div
-    className="inline-flex items-center justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+    className="inline-flex items-center justify-center coarse:min-h-(--touch-target) coarse:min-w-(--touch-target)"
     data-slot="checkbox-hitbox"
   >
     <CheckboxPrimitive.Root
@@ -23,7 +23,7 @@ const Checkbox = ({
         'focus-ring-visible',
         'disabled:cursor-not-allowed disabled:opacity-50',
         'data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground',
-        '[@media(pointer:coarse)]:size-5',
+        'coarse:size-5',
         className,
       )}
       {...props}
@@ -32,7 +32,7 @@ const Checkbox = ({
         data-slot="checkbox-indicator"
         className="flex items-center justify-center text-current"
       >
-        <Check className="size-3.5 [@media(pointer:coarse)]:size-4" strokeWidth={3} />
+        <Check className="size-3.5 coarse:size-4" strokeWidth={3} />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   </div>

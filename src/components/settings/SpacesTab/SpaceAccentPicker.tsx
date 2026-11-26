@@ -108,7 +108,7 @@ export function SpaceAccentPicker({
             onClick={() => void handleAccentClick(swatch.token)}
             className={cn(
               'inline-flex items-center justify-center rounded-full ring-offset-background transition-all',
-              'h-5 w-5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+              'h-5 w-5 coarse:h-(--touch-target) coarse:w-(--touch-target)',
               'focus-ring-visible',
               'disabled:opacity-50 disabled:cursor-not-allowed',
               accent === swatch.token && 'ring-2 ring-ring ring-offset-2',

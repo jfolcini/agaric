@@ -1,7 +1,8 @@
 /**
  * Settings › Appearance › Animations times every overlay's entry and every plain transition, not
  * only the token-driven ones: a Select's list, a dialog, a page link's right-click menu and a bare
- * `transition-*` on a button run at half their duration on Fast and at their own on Full.
+ * `transition-*` on a button run at half their duration on Fast and at their own on Full. A duration
+ * class on a container times the container alone, not the transitions inside it.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -32,6 +33,11 @@ test.describe('animation speed reaches every overlay @settings', () => {
       // A button's plain transition, and a Select's list.
       const search = page.getByTestId('header-search-button')
       expect(await durationOf(search, 'transitionDuration')).toBe(s(150))
+      // Inside the sidebar, whose own width transition is `duration-moderate`.
+      const journal = page
+        .locator('[data-slot="sidebar"]')
+        .getByRole('button', { name: 'Journal', exact: true })
+      expect(await durationOf(journal, 'transitionDuration')).toBe(s(150))
       await openAppearance(page)
       await page.getByRole('combobox', { name: 'Theme' }).click()
       expect(await durationOf(page.getByRole('listbox'), 'animationDuration')).toBe(s(150))

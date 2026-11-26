@@ -125,17 +125,17 @@ export function HistoryListView({
         <ScrollArea
           // The touch padding keeps the last row off the bottom corner, so that
           // corner stays round under the cursor. On a touch screen the list is
-          // also shorter by the view's bottom padding (6rem, kept for the
-          // compose button) and the ↑/↓ pill's row under it (4.5rem): the view
+          // also shorter by the view's bottom padding (`--fab-clearance`, kept for
+          // the capture button) and the ↑/↓ pill's row under it (4.5rem): the view
           // then fits without scrolling and the pill, sticky only once the view
           // scrolls, sits under the list instead of over its last row. Never
           // under 12rem: on a landscape phone that sum is the whole screen.
           className={cn(
             listCardVariants(),
-            '[@media(pointer:coarse)]:[&:has(.list-cursor:last-child)]:rounded-es-lg',
+            'coarse:[&:has(.list-cursor:last-child)]:rounded-es-lg',
           )}
           viewportRef={listRef}
-          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)] [@media(pointer:coarse)]:max-h-[max(12rem,calc(100dvh-220px-10.5rem-var(--safe-area-bottom)))] [@media(pointer:coarse)]:pb-16"
+          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)] coarse:max-h-[max(12rem,calc(100dvh-220px-var(--fab-clearance)-4.5rem-var(--safe-area-bottom)))] coarse:pb-16"
           // ARIA grid pattern for history list — no semantic HTML
           // equivalent for a non-tabular interactive grid. Lives on the
           // scroll viewport (the focusable element keyboard nav drives).

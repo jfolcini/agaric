@@ -52,12 +52,12 @@ vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
  * The horizontal-inset utility classes on an element, order-insensitive.
  *
  * The `(^|:)` matches variant-prefixed insets (`sm:px-4`,
- * `[@media(pointer:coarse)]:px-2`) as well as bare ones. An anchored
+ * `coarse:px-2`) as well as bare ones. An anchored
  * `/^(px|pl)-/` would not, and that is not a hypothetical gap: adding a
  * breakpoint inset to `block-static` alone would be invisible to BOTH sides of
  * the comparison below, leaving this test green while the alignment drifts at
  * exactly that breakpoint. `block-static` already carries
- * `[@media(pointer:coarse)]:min-h-[2.75rem]`, so variant classes on it are an
+ * `coarse:min-h-(--touch-target)`, so variant classes on it are an
  * established pattern rather than a shape nobody would reach for.
  *
  * `ps`/`pe` (the logical-property spellings) are in the alternation for the

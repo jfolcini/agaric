@@ -82,10 +82,7 @@ export function EmojiPickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Mouse: just wider than the 8-column grid. Touch keeps the room its
           44px category tabs and skin-tone buttons need. */}
-      <DialogContent
-        className="sm:max-w-sm [@media(pointer:coarse)]:sm:max-w-md"
-        data-editor-portal=""
-      >
+      <DialogContent className="sm:max-w-sm coarse:sm:max-w-md" data-editor-portal="">
         <DialogHeader>
           <DialogTitle>{t('emojiPicker.title')}</DialogTitle>
           <DialogDescription className="sr-only">

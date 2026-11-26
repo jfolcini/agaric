@@ -364,7 +364,7 @@ describe('PageTagSection ', () => {
 
     const removeBtn = screen.getByRole('button', { name: /remove tag urgent/i })
     expect(removeBtn.className).toContain('touch-hit-area')
-    expect(removeBtn.className).not.toContain('[@media(pointer:coarse)]:h-11')
+    expect(removeBtn.className).not.toContain('coarse:h-(--touch-target)')
   })
 
   it('remove-tag button keeps focus-visible ring tokens', () => {

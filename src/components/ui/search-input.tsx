@@ -103,7 +103,7 @@ const SearchInput = ({
         type={props.type ?? 'text'}
         value={value}
         onChange={onChange}
-        className={cn(hasValue && 'pr-10 [@media(pointer:coarse)]:pr-12', className)}
+        className={cn(hasValue && 'pr-10 coarse:pr-12', className)}
         {...props}
       />
       {hasValue && (
@@ -116,7 +116,7 @@ const SearchInput = ({
             'absolute top-1/2 right-1 -translate-y-1/2 inline-flex items-center justify-center rounded-sm text-muted-foreground transition-colors',
             'hover:text-foreground hover:bg-accent/50',
             'focus-ring-visible',
-            'h-7 w-7 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+            'h-7 w-7 coarse:h-(--touch-target) coarse:w-(--touch-target)',
           )}
         >
           <X className="h-4 w-4" aria-hidden="true" />

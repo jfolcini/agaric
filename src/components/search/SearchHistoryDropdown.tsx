@@ -161,7 +161,7 @@ export function SearchHistoryDropdown({
                 }
               }}
               className={cn(
-                'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm [@media(pointer:coarse)]:min-h-11',
+                'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm coarse:min-h-(--touch-target)',
                 'hover:bg-accent hover:text-accent-foreground transition-colors',
                 'truncate',
               )}
@@ -191,7 +191,7 @@ export function SearchHistoryDropdown({
                 className={cn(
                   'inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm p-1',
                   'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+                  'coarse:min-h-(--touch-target) coarse:min-w-(--touch-target)',
                 )}
               >
                 <X className="h-3 w-3" />
@@ -221,7 +221,7 @@ export function SearchHistoryDropdown({
               e.preventDefault()
             }}
             className={cn(
-              'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
+              'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground coarse:min-h-(--touch-target)',
               'hover:bg-accent transition-colors',
               'focus-ring-visible rounded-sm',
             )}
@@ -239,7 +239,7 @@ export function SearchHistoryDropdown({
             e.preventDefault()
           }}
           className={cn(
-            'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
+            'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground coarse:min-h-(--touch-target)',
             'hover:bg-accent transition-colors',
             'focus-ring-visible rounded-sm',
           )}

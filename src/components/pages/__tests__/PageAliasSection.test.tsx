@@ -194,9 +194,9 @@ describe('PageAliasSection touch target on remove button', () => {
     render(<PageAliasSection {...defaultProps} aliases={['alias-a']} editingAliases />)
 
     const btn = screen.getByRole('button', { name: /remove alias alias-a/i })
-    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:w-11')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:p-2')
+    expect(btn.className).toContain('coarse:h-(--touch-target)')
+    expect(btn.className).toContain('coarse:w-(--touch-target)')
+    expect(btn.className).toContain('coarse:p-2')
   })
 
   it('remove-alias button keeps focus-visible ring tokens', () => {

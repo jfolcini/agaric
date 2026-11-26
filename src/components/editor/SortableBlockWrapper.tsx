@@ -228,7 +228,7 @@ function SortableBlockWrapperInner({
         // The min-height is the estimate for a row never measured (#5329): the
         // shortest a `StaticBlock` row can be, in both pointer modes. A cached
         // measurement in `style` overrides it.
-        className="block-placeholder list-none m-0 p-0 min-h-[1.75rem] [@media(pointer:coarse)]:min-h-[2.75rem]"
+        className="block-placeholder list-none m-0 p-0 min-h-[1.75rem] coarse:min-h-(--touch-target)"
         style={{ minHeight: viewport.getHeight(block.id) }}
       />
     )

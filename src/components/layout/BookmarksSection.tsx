@@ -110,7 +110,7 @@ function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkP
         // `SidebarMenuAction` already grows its hit area by
         // `after:-inset-2` (36px) on the mobile breakpoint; -inset-3
         // around the 20px button is the 44px touch target.
-        className="[@media(pointer:coarse)]:after:-inset-3"
+        className="coarse:after:-inset-3"
         onClick={() => onRemove(pageId)}
       >
         <BookmarkX />
@@ -270,7 +270,7 @@ export function BookmarksSection(): ReactElement {
         isCollapsed={collapsed}
         onToggle={() => setCollapsed((prev) => !prev)}
         testId="sidebar-bookmarks-toggle"
-        className="h-8 px-2 py-0 text-xs font-medium group-data-[collapsible=icon]:hidden [@media(pointer:coarse)]:h-11"
+        className="h-8 px-2 py-0 text-xs font-medium group-data-[collapsible=icon]:hidden coarse:h-(--touch-target)"
       >
         {t('bookmarks.title')}
       </CollapsiblePanelHeader>

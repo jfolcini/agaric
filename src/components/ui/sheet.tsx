@@ -89,13 +89,13 @@ const SheetContent = ({
           'inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
         side === 'top' &&
           'inset-x-0 top-0 h-auto max-h-[calc(100dvh-2rem)] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
-        // A tall bottom sheet stops at the phone header's edge (`min-h-14` in
-        // App.tsx) rather than slicing through the view title. With the
+        // A tall bottom sheet stops at the phone header's edge
+        // (`--phone-header-h`) rather than slicing through the view title. With the
         // keyboard up both edges move with the layout viewport, which on
         // Android ends at the keyboard's top (`MainActivity.kt`, #6790).
         // Square: it spans the screen edge to edge (docs/UX.md).
         side === 'bottom' &&
-          'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+          'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
         className,
       )}
       {...props}

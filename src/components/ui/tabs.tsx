@@ -36,7 +36,7 @@ const tabsListVariants = cva('flex', {
 })
 
 const tabsTriggerVariants = cva(
-  'inline-flex items-center gap-1.5 text-sm whitespace-nowrap text-muted-foreground transition-colors focus-ring-visible disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 [@media(pointer:coarse)]:min-h-11',
+  'inline-flex items-center gap-1.5 text-sm whitespace-nowrap text-muted-foreground transition-colors focus-ring-visible disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 coarse:min-h-(--touch-target)',
   {
     variants: {
       variant: {

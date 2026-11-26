@@ -408,7 +408,7 @@ test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @ed
     await expect(page.getByTestId('mobile-sidebar-trigger')).toBeVisible()
     await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeHidden()
     await expect(header.getByTestId('search-sheet-trigger')).toBeVisible()
-    // Room for the 44 px targets (`min-h-14`).
+    // Room for the 44 px targets (`--phone-header-h`).
     expect((await box(header)).height).toBeGreaterThanOrEqual(56)
     await page.getByRole('button', { name: 'Page actions' }).tap()
     await expectBottomSheet(page, page.getByRole('menu', { name: 'Page actions' }))

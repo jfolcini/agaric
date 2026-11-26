@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'highlight.js/styles/github.css';
+/* The docs quote class strings; scanned, they ship as rules nothing uses. */
+@source not '../docs';
 
 @custom-variant dark (&:is(.dark *));
 /* Touch layout as the platform decides it (`detectTouch`, `src/lib/touch.ts`,
@@ -1156,6 +1158,16 @@
     --safe-area-bottom: env(safe-area-inset-bottom);
     --safe-area-left: env(safe-area-inset-left);
     --safe-area-right: env(safe-area-inset-right);
+
+    /* Touch measurements, each named once (#7040 M6). In a class:
+     * `coarse:min-h-(--touch-target)`. */
+    /* The smallest side of a control a finger presses: 44 px. */
+    --touch-target: 2.75rem;
+    /* The phone header's height (`App.tsx`), where a bottom sheet stops. */
+    --phone-header-h: 3.5rem;
+    /* Bottom room a view keeps under the floating capture button
+     * (`QuickCaptureFab`): it floats 1rem up and is 3.5rem tall. */
+    --fab-clearance: 6rem;
   }
 
   body {
@@ -1373,7 +1385,7 @@
 }
 .ProseMirror {
   @variant coarse {
-    min-height: 2.75rem;
+    min-height: var(--touch-target);
   }
 }
 
@@ -1477,13 +1489,13 @@
    (`touch-hit-area`) stays centred on the first line, so the line keeps its
    height. */
 .page-mode-phone [data-page-block][data-depth='0']:has(> .page-block-gutter) {
-  padding-right: 2.75rem;
+  padding-right: var(--touch-target);
 }
 .page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter {
   @apply right-0;
 }
 .page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter > .collapse-toggle {
-  @apply w-11;
+  @apply w-(--touch-target);
 }
 /* And no grip: a tap brought it to the tapped block, a drag handle a phone
    does without; the toolbar's Block actions opens the menu it would (#7040). */
@@ -2925,8 +2937,8 @@ mark[data-highlight-color='purple'] {
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
   @variant coarse {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
   }
 }
 
@@ -2947,8 +2959,8 @@ mark[data-highlight-color='purple'] {
       position: absolute;
       top: 50%;
       left: 50%;
-      width: max(44px, 100%);
-      height: max(44px, 100%);
+      width: max(var(--touch-target), 100%);
+      height: max(var(--touch-target), 100%);
       transform: translate(-50%, -50%);
       z-index: 1;
     }
@@ -3024,6 +3036,13 @@ mark[data-highlight-color='purple'] {
  * Radix overlays' entry and exit). Without a duration class those take `--duration-normal`, and a
  * bare `transition-*` takes it through `--default-transition-duration`: Tailwind's and
  * tw-animate's fixed 150ms would ignore Settings › Appearance › Animations. */
+/* Tailwind registers this only while one of its own `duration-*` classes is in use, and the app
+ * uses none: unregistered, a token utility's duration inherits into every transition inside it
+ * (the sidebar's `duration-moderate` slowed its buttons' hover). */
+@property --tw-duration {
+  syntax: '*';
+  inherits: false;
+}
 @layer base {
   /* The classes come with a variant too (`data-[state=open]:animate-in`). */
   [class*='animate-in'],

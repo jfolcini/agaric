@@ -128,7 +128,7 @@ export function ImageResizeHandle({
       aria-valuemin={MIN_WIDTH}
       aria-valuemax={range.max}
       aria-valuenow={range.width}
-      className="touch-target absolute right-0 bottom-0 flex cursor-nwse-resize touch-none items-end justify-end rounded-sm transition-opacity focus-ring-visible opacity-0 group-hover/image:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100"
+      className="touch-target absolute right-0 bottom-0 flex cursor-nwse-resize touch-none items-end justify-end rounded-sm transition-opacity focus-ring-visible opacity-0 group-hover/image:opacity-100 focus-visible:opacity-100 coarse:opacity-100"
       onPointerDown={(e) => {
         // Cancelling the press suppresses its mousedown, so the editor keeps
         // focus (a blur flushes the block, #1498) and ProseMirror neither

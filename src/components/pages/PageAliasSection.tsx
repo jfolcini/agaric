@@ -51,7 +51,7 @@ export function PageAliasSection({
           {editingAliases && (
             <button
               type="button"
-              className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2"
+              className="ml-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible coarse:h-(--touch-target) coarse:w-(--touch-target) coarse:p-2"
               onClick={() => onRemoveAlias(alias)}
               aria-label={t('pageHeader.removeAlias', { alias })}
             >
@@ -71,7 +71,7 @@ export function PageAliasSection({
           <Input
             ref={inputRef}
             type="text"
-            className="w-24 sm:w-32 [@media(pointer:coarse)]:w-full h-7 text-xs"
+            className="w-24 sm:w-32 coarse:w-full h-7 text-xs"
             placeholder={t('pageHeader.newAliasPlaceholder')}
             value={aliasInput}
             onChange={(e) => onAliasInputChange(e.target.value)}

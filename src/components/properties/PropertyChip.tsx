@@ -70,7 +70,7 @@ export function PropertyChip({
   const groupLabel = unfit ? t('property.unfitChipLabel', { key: displayName, value }) : chipLabel
 
   const icon = Icon && (
-    <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.625)] shrink-0 [@media(pointer:coarse)]:size-[calc(var(--agaric-font-size,1rem)*0.75)]" />
+    <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.625)] shrink-0 coarse:size-[calc(var(--agaric-font-size,1rem)*0.75)]" />
   )
   // The key is set apart from the value by weight: a fade (`opacity-60`) fails AA contrast (#5743).
   const keyLabel = onKeyClick ? (

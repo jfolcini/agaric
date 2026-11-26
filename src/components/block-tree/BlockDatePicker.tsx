@@ -150,7 +150,7 @@ export function BlockDatePicker({
         className={
           parts.isMobile
             ? 'date-picker-popup'
-            : 'date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-xs [@media(pointer:coarse)]:sm:max-w-sm'
+            : 'date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-xs coarse:sm:max-w-sm'
         }
         data-testid="date-picker-popup"
         data-editor-portal=""

@@ -17,13 +17,13 @@ import { useTranslation } from 'react-i18next'
 // pushing the glyph inward. `-m-1` cancels `p-1` (fine); on coarse pointers the
 // 44px min box centres the 20px glyph, so `-m-3` cancels its 12px slack.
 const closeButtonClassName =
-  'absolute top-6 right-6 -m-1 [@media(pointer:coarse)]:-m-3 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-ring-visible disabled:pointer-events-none p-1 [@media(pointer:coarse)]:p-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center'
+  'absolute top-6 right-6 -m-1 coarse:-m-3 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-ring-visible disabled:pointer-events-none p-1 coarse:p-2 coarse:min-h-(--touch-target) coarse:min-w-(--touch-target) coarse:flex coarse:items-center coarse:justify-center'
 
 const CloseButtonIcon = ({ ref, ...props }: React.ComponentProps<'span'>) => {
   const { t } = useTranslation()
   return (
     <span ref={ref} data-slot="close-button-icon" {...props}>
-      <XIcon className="size-4 [@media(pointer:coarse)]:size-5" />
+      <XIcon className="size-4 coarse:size-5" />
       <span className="sr-only">{t('ui.close')}</span>
     </span>
   )

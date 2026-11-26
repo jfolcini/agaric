@@ -240,7 +240,7 @@ export function DonePanel({
     getGroupKey: (g) => g.pageId,
     getGroupItems: (g) => g.items,
     // Header rows ~32px (SectionGroupHeader text + padding); item rows
-    // ~44px (BlockListItem default + touch min-h-11).
+    // ~44px (BlockListItem default + the touch minimum).
     headerHeight: 32,
     itemHeight: 44,
     focusedIndex,
@@ -411,7 +411,7 @@ export function DonePanel({
                             breadcrumbAsLink={false}
                             className="done-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
                             contentClassName="done-panel-item-text"
-                            breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
+                            breadcrumbClassName="done-panel-breadcrumb coarse:text-sm"
                             onClick={rowHandlers.onClick}
                             onKeyDown={rowHandlers.onKeyDown}
                             isFocused={focusedIndex === row.flatItemIndex}

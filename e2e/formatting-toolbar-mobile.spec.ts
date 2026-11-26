@@ -28,7 +28,7 @@ import { activeSheet, expect, focusBlock, test, waitForBoot } from './helpers'
 const iPhone13 = devices['iPhone 13']
 
 // The product enforces a 44 px minimum touch target on coarse pointers
-// (`[@media(pointer:coarse)]:size-11` / `min-h-11` in button.tsx + the toolbar
+// (`coarse:size-(--touch-target)` in button.tsx + the toolbar
 // shared primitives). Allow a 1 px slack for sub-pixel layout rounding.
 const TOUCH_FLOOR = 44
 const SLACK = 1

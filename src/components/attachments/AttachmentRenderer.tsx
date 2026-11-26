@@ -418,7 +418,7 @@ function AttachmentImage({
       {/* FIL-008 (#218 item 6): faint resize-affordance hint. Discoverability
           only — it signals the already-working resize toolbar exists. CSS-only
           so it adds no render churn: hidden at rest, fades in on hover/focus
-          of the group (desktop). On coarse pointers (no hover) it stays faintly
+          of the group (desktop). On touch (no hover) it stays faintly
           visible so touch users get the cue too. Suppressed once the toolbar is
           actually open (`imageHovered`) to avoid two overlapping affordances.
           `pointer-events-none` so it never intercepts the image/lightbox click. */}
@@ -426,7 +426,7 @@ function AttachmentImage({
         <span
           aria-hidden="true"
           data-testid="image-resize-hint"
-          className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-50 group-hover:opacity-50 [@media(hover:none)]:opacity-50"
+          className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-50 group-hover:opacity-50 coarse:opacity-50"
         >
           <MoveHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
@@ -467,7 +467,7 @@ function AttachmentImage({
         <span
           data-testid="image-resize-handle"
           aria-hidden="true"
-          className={`absolute bottom-1 z-[6] h-3.5 w-3.5 touch-none rounded-sm border border-white/70 bg-popover/80 opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-70 group-hover:opacity-70 [@media(hover:none)]:opacity-60 ${
+          className={`absolute bottom-1 z-[6] h-3.5 w-3.5 touch-none rounded-sm border border-white/70 bg-popover/80 opacity-0 shadow-(--shadow-resting) transition-opacity duration-normal group-focus-within:opacity-70 group-hover:opacity-70 coarse:opacity-60 ${
             handleOnLeft ? 'left-1 cursor-nesw-resize' : 'right-1 cursor-nwse-resize'
           }`}
           onPointerDown={handleResizeStart}

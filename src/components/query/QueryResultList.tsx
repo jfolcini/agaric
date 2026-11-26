@@ -48,7 +48,7 @@ function ResultTypeIcon({ block }: { block: BlockRow }): React.ReactElement {
   return (
     <Icon
       // The task checkbox's size, so the text starts at one edge on every row.
-      className="size-[1em] shrink-0 text-muted-foreground [@media(pointer:coarse)]:size-[1.125em]"
+      className="size-[1em] shrink-0 text-muted-foreground coarse:size-[1.125em]"
       aria-hidden="true"
       data-testid="query-result-type"
       data-type={type}

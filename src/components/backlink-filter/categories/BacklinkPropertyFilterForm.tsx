@@ -59,7 +59,7 @@ export function BacklinkPropertyFilterForm({
         </Select>
       ) : (
         <SearchInput
-          className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
+          className="h-7 w-24 text-xs coarse:w-full"
           placeholder={t('backlink.keyPlaceholder')}
           value={propKey}
           onChange={(e) => setPropKey(e.target.value)}
@@ -90,7 +90,7 @@ export function BacklinkPropertyFilterForm({
         </SelectContent>
       </Select>
       <SearchInput
-        className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
+        className="h-7 w-24 text-xs coarse:w-full"
         placeholder={t('backlink.valuePlaceholder')}
         value={propValue}
         onChange={(e) => setPropValue(e.target.value)}

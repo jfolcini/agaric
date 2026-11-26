@@ -21,7 +21,7 @@ export function ContainsFilterForm({ ref }: ContainsFilterFormProps): React.Reac
 
   return (
     <SearchInput
-      className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
+      className="h-7 w-40 text-xs coarse:w-full"
       placeholder={t('backlink.searchTextPlaceholder')}
       value={containsQuery}
       onChange={(e) => setContainsQuery(e.target.value)}

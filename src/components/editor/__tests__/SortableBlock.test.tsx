@@ -4826,9 +4826,9 @@ describe('SortableBlock swipe-to-delete progressive cue', () => {
     )
 
     const hint = screen.getByTestId('swipe-release-hint')
-    // Hidden by default; only revealed under `[@media(pointer:coarse)]`.
+    // Hidden by default; only revealed under `coarse:`.
     expect(hint.className).toContain('hidden')
-    expect(hint.className).toContain('[@media(pointer:coarse)]:inline')
+    expect(hint.className).toContain('coarse:inline')
   })
 
   it('does not render the overlay at all on fine-pointer devices', () => {
@@ -4956,7 +4956,7 @@ describe('SortableBlock swipe-to-delete progressive cue', () => {
 
     const hint = screen.getByTestId('swipe-indent-hint')
     expect(hint.className).toContain('hidden')
-    expect(hint.className).toContain('[@media(pointer:coarse)]:inline')
+    expect(hint.className).toContain('coarse:inline')
   })
 })
 

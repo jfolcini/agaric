@@ -156,9 +156,9 @@ describe('Select', () => {
     (props) => {
       renderSelect(props)
       const trigger = screen.getByRole('combobox')
-      expect(trigger.className).toContain('[@media(pointer:coarse)]:h-9')
+      expect(trigger.className).toContain('coarse:h-9')
       expect(trigger.className).toContain('touch-hit-area')
-      expect(trigger.className).not.toContain('[@media(pointer:coarse)]:h-11')
+      expect(trigger.className).not.toContain('coarse:h-(--touch-target)')
     },
   )
 

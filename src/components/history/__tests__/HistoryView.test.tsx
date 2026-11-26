@@ -1652,7 +1652,7 @@ describe('HistoryView', () => {
   //
   // Vim/arrow keyboard nav has no equivalent on touch devices. The toolbar
   // renders two buttons that drive the same `setFocusedIndex` updater the
-  // keyboard hook would. Visibility is gated by `[@media(pointer:coarse)]`
+  // keyboard hook would. Visibility is gated by `coarse:`
   // — jsdom doesn't evaluate that media query so the element is in the
   // DOM regardless; tests assert behaviour, not visual hiding.
   // ===========================================================================

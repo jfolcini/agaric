@@ -176,7 +176,7 @@ function HistoryListItemInner({
         {/* Restore to here button — only for reversible ops.
              sub-fix 6: tooltips don't fire on touch (no hover), so an
             icon-only affordance is unlabelled there. The trailing span is
-            sr-only on pointer:fine and not-sr-only on pointer:coarse — the
+            hidden, and inline under `coarse:` — the
             text appears beside the icon on touch devices only, preserving
             the compact desktop layout. */}
         {!isNonReversible && (
@@ -193,11 +193,11 @@ function HistoryListItemInner({
                 aria-label={t('history.restoreToHereLabel')}
               >
                 <RotateCcw />
-                {/* Visible only on touch (pointer:coarse) so SRs that
+                {/* Visible only on touch (`coarse:`) so SRs that
                     already read aria-label aren't fed a duplicate. */}
                 <span
                   aria-hidden="true"
-                  className="hidden [@media(pointer:coarse)]:inline ml-1 text-xs"
+                  className="hidden coarse:inline ml-1 text-xs"
                   data-testid="restore-to-here-touch-label"
                 >
                   {t('history.restoreToHereTouchLabel')}

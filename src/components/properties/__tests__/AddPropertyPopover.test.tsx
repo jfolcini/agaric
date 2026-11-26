@@ -68,7 +68,7 @@ describe('AddPropertyPopover', () => {
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
     const sheet = screen.getByRole('dialog', { name: 'Add property' })
-    expect(sheet).toHaveClass('max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]')
+    expect(sheet).toHaveClass('max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))]')
     expect(sheet).not.toHaveClass('max-h-[80vh]')
   })
 

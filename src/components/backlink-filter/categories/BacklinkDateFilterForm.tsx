@@ -28,7 +28,7 @@ export function BacklinkDateFilterForm({ ref }: BacklinkDateFilterFormProps): Re
     <>
       <SearchInput
         type="date"
-        className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
+        className="h-7 w-36 text-xs coarse:w-full"
         value={dateAfter}
         onChange={(e) => setDateAfter(e.target.value)}
         aria-label={t('backlink.dateAfterLabel')}
@@ -36,7 +36,7 @@ export function BacklinkDateFilterForm({ ref }: BacklinkDateFilterFormProps): Re
       <span className="text-xs text-muted-foreground">{t('backlink.dateTo')}</span>
       <SearchInput
         type="date"
-        className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
+        className="h-7 w-36 text-xs coarse:w-full"
         value={dateBefore}
         onChange={(e) => setDateBefore(e.target.value)}
         aria-label={t('backlink.dateBeforeLabel')}

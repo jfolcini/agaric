@@ -35,7 +35,7 @@ const SectionGroupHeader = ({
       ref={ref}
       data-slot="section-group-header"
       className={cn(
-        'px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground [@media(pointer:coarse)]:text-sm',
+        'px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground coarse:text-sm',
         className,
       )}
       {...props}

@@ -18,7 +18,7 @@ const Switch = ({
       // `bg-input` (L 0.93) under a white thumb on a white page read as no
       // control at all; the muted-foreground tint keeps the off track visible.
       'data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/40',
-      '[@media(pointer:coarse)]:h-7 [@media(pointer:coarse)]:w-12',
+      'coarse:h-7 coarse:w-12',
       className,
     )}
     {...props}
@@ -29,7 +29,7 @@ const Switch = ({
         // Light on the off track in dark too, where the page colour read as a hole (#7040).
         'pointer-events-none block size-4 rounded-full bg-background dark:data-[state=unchecked]:bg-foreground shadow-(--shadow-resting) ring-0 transition-transform',
         'data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5',
-        '[@media(pointer:coarse)]:size-6 [@media(pointer:coarse)]:data-[state=checked]:translate-x-5',
+        'coarse:size-6 coarse:data-[state=checked]:translate-x-5',
       )}
     />
   </SwitchPrimitive.Root>

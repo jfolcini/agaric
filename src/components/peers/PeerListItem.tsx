@@ -258,7 +258,7 @@ export function PeerListItem({
           </div>
         </div>
         {/* The address line is a sibling of the name column, not a child of
-            it: its edit pencil inflates to 44×44 under `pointer:coarse`, and
+            it: its edit pencil inflates to 44×44 under `coarse:`, and
             inside the name column that width came straight out of the device
             name. `pl-7` (icon 1rem + gap 0.75rem) keeps it visually aligned
             under the name. */}
@@ -354,7 +354,7 @@ export function PeerListItem({
           NB: no `touch-target` here — its `min-width:44px` would replace the
           flex item's implicit `min-width:auto` and let a button shrink below
           its own `whitespace-nowrap` label. `size="sm"` already supplies the
-          44px height via `[@media(pointer:coarse)]:h-11`. */}
+          44px height via `coarse:h-(--touch-target)`. */}
       <div
         className="device-peer-actions flex w-full flex-col gap-2
           sm:w-auto sm:shrink-0 sm:flex-row sm:items-center"

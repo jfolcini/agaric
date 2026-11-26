@@ -96,7 +96,7 @@ export function DuePanelFilters({
             <ToggleGroupItem
               key={opt.label}
               value={opt.value ?? ALL_SOURCES}
-              className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
+              className="whitespace-nowrap coarse:px-3"
             >
               {opt.label}
               {sourceCounts && count > 0 ? ` (${count})` : ''}
@@ -128,7 +128,7 @@ export function DuePanelFilters({
         <Label
           htmlFor={hideFutureId}
           size="xs"
-          className="font-normal whitespace-nowrap [@media(pointer:coarse)]:text-sm"
+          className="font-normal whitespace-nowrap coarse:text-sm"
         >
           {t('duePanel.hideFutureScheduled')}
         </Label>

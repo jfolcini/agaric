@@ -314,7 +314,7 @@ describe('SourcePageFilter', () => {
     const button = screen.getByLabelText('Filter by source page')
     // 28 px on a fine pointer, 36 px on a coarse one with a 44 px target.
     expect(button.className).toContain('size-7')
-    expect(button.className).toContain('[@media(pointer:coarse)]:size-9')
+    expect(button.className).toContain('coarse:size-9')
     expect(button.className).toContain('touch-hit-area')
   })
 

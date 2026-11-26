@@ -9,7 +9,7 @@
  *  - Controlled value updates via `onChange`
  *  - Uncontrolled value updates via `defaultValue` + native typing
  *  - `aria-invalid` propagates from prop to DOM and styling classes are present
- *  - Coarse-pointer touch-target class (`[@media(pointer:coarse)]:h-11`) is present
+ *  - Coarse-pointer touch-target class (`coarse:h-(--touch-target)`) is present
  *  - Focus-visible ring classes are present
  *  - Forwards `ref` to the underlying `<input>`
  *  - a11y: `axe(container)` clean
@@ -188,11 +188,11 @@ describe('Input', () => {
 
   // -- Touch-friendly sizing (AGENTS.md mandatory) ----------------------------
 
-  it('declares coarse-pointer touch-target class (h-11)', () => {
+  it('declares coarse-pointer touch-target class', () => {
     render(<Input aria-label="Field" />)
 
     const el = screen.getByRole('textbox', { name: 'Field' })
-    expect(el.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(el.className).toContain('coarse:h-(--touch-target)')
   })
 
   // Bumps font-size to `text-base` on coarse pointers so iOS
@@ -202,7 +202,7 @@ describe('Input', () => {
     render(<Input aria-label="Field" />)
 
     const el = screen.getByRole('textbox', { name: 'Field' })
-    expect(el.className).toContain('[@media(pointer:coarse)]:text-base')
+    expect(el.className).toContain('coarse:text-base')
   })
 
   // -- Focus-visible ring -----------------------------------------------------

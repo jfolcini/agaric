@@ -71,7 +71,7 @@ export function FilterPill({
         }}
         aria-label={removeAriaLabel}
       >
-        <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
+        <X className="h-3 w-3 coarse:size-3.5" />
       </button>
     </Badge>
   )

@@ -75,7 +75,7 @@ export function RecentPagesGroup({
                 e.stopPropagation()
               }}
               className={cn(
-                'touch-hit-area rounded p-0.5 text-muted-foreground hover:bg-muted/60 focus-ring-visible [@media(pointer:coarse)]:mr-1.5',
+                'touch-hit-area rounded p-0.5 text-muted-foreground hover:bg-muted/60 focus-ring-visible coarse:mr-1.5',
                 !isBookmarked && 'hover-reveal',
               )}
               aria-label={

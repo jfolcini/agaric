@@ -308,17 +308,17 @@ describe('<EmojiPicker>', () => {
     const tab = within(screen.getByRole('tablist', { name: /emoji categories/i })).getAllByRole(
       'tab',
     )[0]
-    expect(tab?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(tab?.className).toContain('coarse:size-(--touch-target)')
     expect(tab?.className).toContain('touch-target')
 
     const radio = within(screen.getByRole('radiogroup', { name: /skin tone/i })).getAllByRole(
       'radio',
     )[0]
-    expect(radio?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(radio?.className).toContain('coarse:size-(--touch-target)')
     expect(radio?.className).toContain('touch-target')
 
     const cell = within(screen.getByRole('grid', { name: /emoji/i })).getAllByRole('gridcell')[0]
-    expect(cell?.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(cell?.className).toContain('coarse:size-(--touch-target)')
     expect(cell?.className).toContain('touch-target')
   })
 

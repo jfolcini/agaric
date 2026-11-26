@@ -201,7 +201,7 @@ describe('PageHeaderMenu interaction', () => {
     await user.keyboard('{ArrowDown}')
     const item = within(menu).getByRole('menuitem', { name: /^Show in graph/ })
     expect(item).toHaveFocus()
-    expect(item).toHaveClass('[@media(pointer:coarse)]:min-h-11')
+    expect(item).toHaveClass('coarse:min-h-(--touch-target)')
     await user.keyboard('{Enter}')
 
     expect(onShowInGraph).toHaveBeenCalledOnce()
@@ -778,7 +778,7 @@ describe('PageHeaderMenu sections', () => {
     await user.click(screen.getByRole('menuitem', { name: t('pageHeader.exportMenu') }))
     const menu = screen.getByRole('menu', { name: t('pageHeader.pageActions') })
     for (const item of within(menu).getAllByRole('menuitem')) {
-      expect(item).toHaveClass('[:where(&)_svg]:size-4', '[@media(pointer:coarse)]:min-h-11')
+      expect(item).toHaveClass('[:where(&)_svg]:size-4', 'coarse:min-h-(--touch-target)')
       for (const icon of item.querySelectorAll('svg')) {
         expect(icon.getAttribute('class') ?? '').not.toMatch(/\b[hw]-3\.5\b/)
       }

@@ -394,7 +394,7 @@ export function LinkedReferences({
         <div
           // A touch screen spaces the rows a 44 px target apart, so the kind
           // toggle's targets and these do not overlap.
-          className="linked-references-advanced-filters mt-1 px-2 [@media(pointer:coarse)]:mt-2"
+          className="linked-references-advanced-filters mt-1 px-2 coarse:mt-2"
           onFocusCapture={() => setFilterBuilderTouched(true)}
           // Safari does not focus a button on click, so focus alone misses a mouse press.
           onPointerDownCapture={() => setFilterBuilderTouched(true)}

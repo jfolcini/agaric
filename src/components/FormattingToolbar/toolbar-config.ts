@@ -46,7 +46,7 @@ export const bubbleMenuClass =
 
 /** A row in a toolbar popover menu: the app's menu-row recipe on a ghost Button. */
 export const toolbarMenuRowClass =
-  'justify-start rounded-sm px-2 text-sm font-normal w-full active:scale-100 [@media(pointer:coarse)]:min-h-11'
+  'justify-start rounded-sm px-2 text-sm font-normal w-full active:scale-100 coarse:min-h-(--touch-target)'
 
 /** Languages available in the code block language selector popover. */
 export const CODE_LANGUAGES = [

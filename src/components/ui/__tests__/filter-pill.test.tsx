@@ -6,8 +6,8 @@
  *  - Calls `onRemove` when the remove button is clicked
  *  - Keyboard: Delete and Backspace on the remove button trigger `onRemove`
  *  - Remove button has an accessible `aria-label` (icon-only button)
- *  - Touch sizing: `[@media(pointer:coarse)]:min-h-[44px]` and `min-w-[44px]`
- *    on the remove button (44 px coarse-pointer minimum)
+ *  - Touch sizing: the remove button keeps the pill's size, its 44 px target
+ *    an invisible hit area (`touch-hit-area`)
  *  - a11y: `axe(container)` clean
  */
 
@@ -151,7 +151,7 @@ describe('FilterPill', () => {
 
     const removeBtn = screen.getByRole('button', { name: 'Remove filter status = TODO' })
     expect(removeBtn.className).toContain('touch-hit-area')
-    expect(removeBtn.className).not.toContain('[@media(pointer:coarse)]:min-h-[44px]')
+    expect(removeBtn.className).not.toContain('coarse:min-h-(--touch-target)')
   })
 
   it('remove button uses normalized focus-visible ring classes', () => {
@@ -169,7 +169,7 @@ describe('FilterPill', () => {
     const svg = container.querySelector('button svg')
     expect(svg).toBeInTheDocument()
     const cls = svg?.getAttribute('class') ?? ''
-    expect(cls).toContain('[@media(pointer:coarse)]:size-3.5')
+    expect(cls).toContain('coarse:size-3.5')
   })
 
   // -- Prop forwarding (#1091) ------------------------------------------------

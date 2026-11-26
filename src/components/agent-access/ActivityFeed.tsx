@@ -352,7 +352,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                                    * tooltip stay unchanged to avoid
                                    * double-labelling screen readers.
                                    */}
-                                  <span className="hidden [@media(pointer:coarse)]:inline ml-1">
+                                  <span className="hidden coarse:inline ml-1">
                                     {t('agentAccess.undoAgentOp.buttonText')}
                                   </span>
                                 </>

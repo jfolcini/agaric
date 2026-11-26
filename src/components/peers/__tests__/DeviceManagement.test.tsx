@@ -1563,7 +1563,7 @@ describe('DeviceManagement', () => {
     })
   })
 
-  // The pencil inflates to 44×44 under `pointer:coarse`. It must live on the
+  // The pencil inflates to 44×44 under `coarse:`. It must live on the
   // address line, NOT inside the device-name column, or that width comes
   // straight out of the (truncating) device name on a phone.
   it('edit address button sits on the address line, not in the name column', async () => {

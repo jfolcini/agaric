@@ -210,7 +210,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                 <IconButton
                   variant="ghost"
                   size="icon-xs"
-                  className="-ml-1.25 [@media(pointer:coarse)]:-ml-3"
+                  className="-ml-1.25 coarse:-ml-3"
                   onClick={() => onToggleGroup(group.page_id)}
                   aria-expanded={isExpanded}
                   ariaLabel={toggleLabel}

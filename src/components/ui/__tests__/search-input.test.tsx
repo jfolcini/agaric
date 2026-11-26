@@ -131,11 +131,11 @@ describe('SearchInput', () => {
     expect(last).toBe('ab')
   })
 
-  it('clear button respects 44px touch target via pointer:coarse classes', () => {
+  it('clear button respects 44px touch target via coarse: classes', () => {
     render(<SearchInput value="x" onChange={() => {}} placeholder="Search" />)
     const clear = screen.getByTestId('search-input-clear')
-    expect(clear.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(clear.className).toContain('[@media(pointer:coarse)]:w-11')
+    expect(clear.className).toContain('coarse:h-(--touch-target)')
+    expect(clear.className).toContain('coarse:w-(--touch-target)')
   })
 
   it('has no a11y violations when the clear button is visible', async () => {

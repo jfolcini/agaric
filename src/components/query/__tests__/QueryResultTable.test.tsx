@@ -497,7 +497,7 @@ describe('QueryResultTable', () => {
 
   // The content cell must carry the same coarse-pointer padding as
   // the adjacent page cell so the row is consistently 44 px tall on touch.
-  it('content cell has [@media(pointer:coarse)]:py-3 to match the page cell', () => {
+  it('content cell has coarse:py-3 to match the page cell', () => {
     const columns: TableColumn[] = [{ key: 'content', label: 'Content' }]
     const { container } = render(
       <QueryResultTable
@@ -523,7 +523,7 @@ describe('QueryResultTable', () => {
     // Every <td> in the body should have the coarse-pointer padding so the
     // Row sizing is consistent (visual mismatch fix).
     for (const cell of cells) {
-      expect((cell as HTMLElement).className).toContain('[@media(pointer:coarse)]:py-3')
+      expect((cell as HTMLElement).className).toContain('coarse:py-3')
     }
   })
 
@@ -547,9 +547,7 @@ describe('QueryResultTable', () => {
     ]
     for (const btn of sortButtons) {
       const cls = btn.className
-      expect(cls.includes('touch-target') || cls.includes('[@media(pointer:coarse)]:h-11')).toBe(
-        true,
-      )
+      expect(cls.includes('touch-target') || cls.includes('coarse:h-(--touch-target)')).toBe(true)
     }
   })
 

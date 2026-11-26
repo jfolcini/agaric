@@ -776,10 +776,10 @@ describe('HistoryListItem', () => {
     it('renders a touch-only label next to the restore icon', () => {
       renderInListbox(defaultProps())
       const label = screen.getByTestId('restore-to-here-touch-label')
-      // Label is in the DOM but visually hidden on pointer:fine devices.
+      // Label is in the DOM but hidden off touch.
       expect(label).toBeInTheDocument()
       expect(label.className).toContain('hidden')
-      expect(label.className).toContain('[@media(pointer:coarse)]:inline')
+      expect(label.className).toContain('coarse:inline')
       // aria-hidden so SRs read aria-label, not the visible+aria-label duplicate.
       expect(label).toHaveAttribute('aria-hidden', 'true')
     })

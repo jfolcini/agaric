@@ -649,7 +649,7 @@ export function PageHeader({
           {/* Breadcrumb for namespaced page titles. Consumes the
               shared `Breadcrumb` primitive — chevron separators, no
               `touch-target` per-crumb (the primitive handles 44 px hit-area
-              on touch via `[@media(pointer:coarse)]:py-2`). */}
+              on touch via `coarse:py-2`). */}
           {breadcrumbItems.length > 0 && (
             <Breadcrumb
               items={breadcrumbItems}

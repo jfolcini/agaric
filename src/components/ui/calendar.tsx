@@ -32,11 +32,11 @@ export type CalendarProps = DayPickerProps & {
 // module load avoids redundant work on every render of <Calendar>.
 const NAV_BUTTON_CLASS = cn(
   buttonVariants({ variant: 'outline' }),
-  'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 [@media(pointer:coarse)]:size-10',
+  'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 coarse:size-10',
 )
 const DAY_BUTTON_CLASS = cn(
   buttonVariants({ variant: 'ghost' }),
-  'size-8 p-0 font-normal tabular-nums aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
+  'size-8 p-0 font-normal tabular-nums aria-selected:opacity-100 coarse:size-(--touch-target)',
 )
 
 // Hoisted to module scope: the entire `classNames` skeleton is composed of
@@ -55,7 +55,7 @@ const BASE_CLASS_NAMES = {
   month_grid: 'w-full border-collapse space-y-1',
   weekdays: 'flex',
   weekday:
-    'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] [@media(pointer:coarse)]:w-11',
+    'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] coarse:w-(--touch-target)',
   week: 'flex w-full mt-2',
   // In react-day-picker v10 the `Day` component renders the `<td>` cell and
   // sets `aria-selected` on that SAME `<td>` (verified against node_modules:
@@ -67,7 +67,7 @@ const BASE_CLASS_NAMES = {
   // consistent with how #1563 fixed the `today` gate.
   day: cn(
     'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&[aria-selected]]:bg-accent [&[aria-selected].outside]:bg-accent/50 first:[&[aria-selected]]:rounded-l-md last:[&[aria-selected]]:rounded-r-md',
-    'h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+    'h-8 w-8 coarse:h-(--touch-target) coarse:w-(--touch-target)',
   ),
   day_button: DAY_BUTTON_CLASS,
   range_end: 'day-range-end',
@@ -98,7 +98,7 @@ const BASE_CLASS_NAMES = {
   range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
   hidden: 'invisible',
   week_number:
-    'flex h-8 w-8 items-center justify-center text-xs text-muted-foreground [@media(pointer:coarse)]:h-11',
+    'flex h-8 w-8 items-center justify-center text-xs text-muted-foreground coarse:h-(--touch-target)',
   week_number_header: 'text-xs text-muted-foreground w-8',
 } as const
 

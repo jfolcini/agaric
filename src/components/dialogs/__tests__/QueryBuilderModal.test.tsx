@@ -988,7 +988,7 @@ describe('QueryBuilderModal', () => {
       const shell = screen.getByRole('dialog')
       expect(shell).toHaveClass('bottom-0')
       expect(shell).toHaveClass('inset-x-0')
-      expect(shell).toHaveClass('max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]')
+      expect(shell).toHaveClass('max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))]')
       expect(shell).not.toHaveClass('right-0')
     })
   })

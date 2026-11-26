@@ -88,7 +88,7 @@ export function MonthlyDayCell({
       tabIndex={resolvedTabIndex}
       data-date={entry.dateStr}
       className={cn(
-        'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-16 transition-colors focus-ring-visible',
+        'relative bg-background p-1.5 min-h-[80px] coarse:min-h-16 transition-colors focus-ring-visible',
         isCurrentMonth && 'cursor-pointer hover:bg-accent/30 active:bg-accent/50',
         !isCurrentMonth && '[&>*]:opacity-40 pointer-events-none',
       )}
@@ -138,9 +138,7 @@ export function MonthlyDayCell({
             <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" aria-hidden="true" />
           )}
           {/* Total count, right after its dots so it reads as theirs (#7040). */}
-          <span className="ml-0.5 text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
-            {totalCount}
-          </span>
+          <span className="ml-0.5 text-xs coarse:text-sm text-muted-foreground">{totalCount}</span>
         </div>
       )}
     </div>

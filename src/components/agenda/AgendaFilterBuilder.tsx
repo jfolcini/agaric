@@ -404,7 +404,7 @@ export function AgendaFilterBuilder({
 
       {/* On touch a wrapped line sits far enough below the chips that its controls'
           44 px hit areas do not take the chips' lower edge. */}
-      <div className="flex flex-wrap items-center gap-1.5 [@media(pointer:coarse)]:gap-y-4">
+      <div className="flex flex-wrap items-center gap-1.5 coarse:gap-y-4">
         <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 
         {filters.length > 0 && (
@@ -451,7 +451,7 @@ export function AgendaFilterBuilder({
                     >
                       <button
                         type="button"
-                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 [@media(pointer:coarse)]:py-1 hover:bg-accent cursor-pointer focus-ring-visible"
+                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 coarse:py-1 hover:bg-accent cursor-pointer focus-ring-visible"
                         // #1746 — keep the chip clickable/removable, but flag it
                         // as inert to AT, with the reason in its name.
                         aria-disabled={isSubsumed || undefined}
@@ -479,7 +479,7 @@ export function AgendaFilterBuilder({
                         label: isProperty ? pillLabel : dimensionLabel(filter.dimension),
                       })}
                     >
-                      <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
+                      <X className="h-3 w-3 coarse:size-3.5" />
                     </button>
                   </Badge>
                   {isSubsumed && (

@@ -168,7 +168,7 @@ function BoardCard({
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-start gap-x-2 gap-y-1 rounded-lg p-3 text-left text-sm transition-colors hover:bg-muted/40 focus-ring-visible [@media(pointer:coarse)]:[-webkit-touch-callout:none]"
+        className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-start gap-x-2 gap-y-1 rounded-lg p-3 text-left text-sm transition-colors hover:bg-muted/40 focus-ring-visible coarse:[-webkit-touch-callout:none]"
         data-testid="query-board-card"
         data-board-card
         data-block-id={block.id}

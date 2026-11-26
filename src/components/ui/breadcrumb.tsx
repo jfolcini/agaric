@@ -19,7 +19,7 @@
  *   crumbs collapse into a `…` Radix `Popover` (per AGENTS.md — never custom
  *   dropdowns).
  * - 44 px touch hit-area on the toolbar via
- *   `[@media(pointer:coarse)]:min-h-11` + `[@media(pointer:coarse)]:py-2`,
+ *   `coarse:min-h-(--touch-target)` + `coarse:py-2`,
  *   not by stretching every crumb. The desktop `min-h-6` (24 px) on its own
  *   would only reach 40 px under the touch padding (24 + 2×8); bumping
  *   `min-h` to `11` (44 px) on touch-coarse hits the AGENTS.md mandate
@@ -471,7 +471,7 @@ export function Breadcrumb({
         onKeyDown={handleKeyDown}
         className={cn(
           'flex min-h-6 items-center gap-1 px-2 py-1 text-xs text-muted-foreground',
-          '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:py-2',
+          'coarse:min-h-(--touch-target) coarse:py-2',
         )}
       >
         {home ? (

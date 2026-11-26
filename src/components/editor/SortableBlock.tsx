@@ -151,7 +151,7 @@ function SwipeAffordances({
           </button>
           {thresholdCrossed && (
             <span
-              className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+              className="hidden text-sm font-medium coarse:inline"
               data-testid="swipe-release-hint"
             >
               {t('block.swipe.releaseToDelete')}
@@ -176,7 +176,7 @@ function SwipeAffordances({
         >
           <IndentIncrease className="h-5 w-5" />
           <span
-            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            className="hidden text-sm font-medium coarse:inline"
             data-testid="swipe-indent-hint"
           >
             {t('block.swipe.indentHint')}
@@ -199,7 +199,7 @@ function SwipeAffordances({
         >
           <IndentDecrease className="h-5 w-5" />
           <span
-            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            className="hidden text-sm font-medium coarse:inline"
             data-testid="swipe-outdent-hint"
           >
             {t('block.swipe.outdentHint')}
@@ -853,7 +853,7 @@ function SortableBlockInner({
         // magnifier / callout that otherwise competes with the 400ms
         // long-press context menu. Only applied on coarse pointers so
         // desktop text-selection within static blocks still works.
-        '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
+        'coarse:[-webkit-touch-callout:none]',
         // #1232 — keep ONLY the `block-active` class on the row: the
         // `[.block-active_&]` gutter-reveal selector depends on it being an
         // ancestor of the gutter buttons. The visual highlight (warm-grey tint

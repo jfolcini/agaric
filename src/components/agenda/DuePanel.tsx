@@ -242,7 +242,7 @@ export function DuePanel({
     getGroupKey: (g) => g.label,
     getGroupItems: (g) => g.items,
     // Header rows ~32px (SectionGroupHeader text + padding); item rows
-    // ~44px (BlockListItem default + touch min-h-11).
+    // ~44px (BlockListItem default + the touch minimum).
     headerHeight: 32,
     itemHeight: 44,
     focusedIndex,
