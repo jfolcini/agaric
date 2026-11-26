@@ -51,6 +51,9 @@ const MISSING_PACKAGE_ERRORS = ['E: Unable to locate package libdoesnotexist']
  * apt exits when a download or a lookup fails), then succeeds. `cacheHit` is
  * the restore step's output. `indexes` maps a component to the release-pocket
  * Packages index files `apt-get indextargets` lists for it.
+ * @param {{ failures: number, errors: string[], updateStatus?: number, cacheHit?: string,
+ *   installStatus?: number, installOut?: string[], mirrors?: string,
+ *   indexes?: Record<string, string[]> }} opts
  */
 function runAction({
   failures,
@@ -114,7 +117,7 @@ function runAction({
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: `${dir}:${process.env.PATH ?? ''}`,
+        PATH: `${dir}:${process.env['PATH'] ?? ''}`,
         APT_PACKAGES: 'libfoo libbar',
         APT_UPDATE_TIMEOUT: '300',
         APT_INSTALL_TIMEOUT: '300',

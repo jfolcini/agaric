@@ -197,7 +197,8 @@ name = "typescript check (tsc)"
 entry = "npm run typecheck"
 language = "system"
 pass_filenames = false
-types_or = ["ts", "tsx"]
+# javascript: tsconfig.scripts-js.json type-checks scripts/**/*.mjs.
+types_or = ["ts", "tsx", "javascript"]
 stages = ["pre-commit"]
 
 # tsc root-file drop guard (#3912): `tsc -b` (the hook above) silently

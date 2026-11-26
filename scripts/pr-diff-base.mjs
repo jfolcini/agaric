@@ -67,6 +67,8 @@ const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i
  * Throws a descriptive `Error` — never returns an empty/undefined result —
  * when the ref cannot be found, cannot be fetched, or shares no common
  * ancestor with `head`.
+ *
+ * @param {{ baseRef?: string | undefined, cwd?: string, head?: string, env?: NodeJS.ProcessEnv }} [opts]
  */
 export function resolveDiffBase({
   baseRef,
@@ -112,7 +114,7 @@ export function resolveDiffBase({
     } catch (err) {
       throw new Error(
         `resolveDiffBase: '${remoteRef}' is not present locally and ` +
-          `\`git fetch --no-tags origin ${baseRef}\` failed: ${err.message}`,
+          `\`git fetch --no-tags origin ${baseRef}\` failed: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       )
     }
@@ -138,7 +140,7 @@ export function resolveDiffBase({
       // distinguishes them.
       `resolveDiffBase: \`git merge-base ${remoteRef} ${head}\` failed. Either the two ` +
         `share no common ancestor in this checkout (a shallow fetch, or genuinely unrelated ` +
-        `histories), or one of them is not a valid revision here. git said: ${err.message}`,
+        `histories), or one of them is not a valid revision here. git said: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err },
     )
   }
@@ -204,7 +206,7 @@ if (isMainModule) {
     // `%` introduced by the CR/LF escapes below would itself be re-escaped.
     // A git error naming a path containing a literal `%` would otherwise
     // mangle the annotation — the same failure the newline escape prevents.
-    const annotated = String(err.message)
+    const annotated = (err instanceof Error ? err.message : String(err))
       .replace(/%/g, '%25')
       .replace(/\r/g, '%0D')
       .replace(/\n/g, '%0A')

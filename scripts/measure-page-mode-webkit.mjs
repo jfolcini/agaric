@@ -33,17 +33,34 @@ import { loadavg } from 'node:os'
 
 import { remote } from 'webdriverio'
 
-const SIZES = (process.env.SIZES ?? '250,500,1000,2000').split(',').map(Number)
-const REPEATS = Number(process.env.REPEATS ?? 3)
-const CONFIGS = (process.env.CONFIGS ?? 'blocks,blocks-all,page').split(',')
-const PORT = Number(process.env.PORT ?? 5316)
-const WD_PORT = Number(process.env.WD_PORT ?? 4446)
+const SIZES = (process.env['SIZES'] ?? '250,500,1000,2000').split(',').map(Number)
+const REPEATS = Number(process.env['REPEATS'] ?? 3)
+const CONFIGS = (process.env['CONFIGS'] ?? 'blocks,blocks-all,page').split(',')
+const PORT = Number(process.env['PORT'] ?? 5316)
+const WD_PORT = Number(process.env['WD_PORT'] ?? 4446)
 const ORIGIN = `http://localhost:${PORT}`
 const TYPED = ' the quick brown fox jumps over the lazy dog again'
 const PAGE_EDITOR = '[data-testid="page-mode-editor"]'
 const MINIBROWSER = '/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/MiniBrowser'
 
-if (CONFIGS.some((c) => c.endsWith('+css')) && !process.env.CSS) {
+/**
+ * What the probe callbacks read and write on the page's `window`; they run in the webview, so they
+ * cannot share anything with this file but their arguments.
+ *
+ * @typedef {Window & typeof globalThis & {
+ *   __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<unknown> },
+ *   __ready__: number | null,
+ *   __typing__: {
+ *     keys: number[],
+ *     events: number[],
+ *     observer: PerformanceObserver,
+ *     listener: (event: KeyboardEvent) => void,
+ *   },
+ *   __pageModeBlockCap: number,
+ * }} ProbeWindow
+ */
+
+if (CONFIGS.some((c) => c.endsWith('+css')) && !process.env['CSS']) {
   throw new Error('a +css config needs CSS')
 }
 
@@ -60,12 +77,21 @@ process.on('exit', () => {
 })
 // Its own banner, not a fetch: a server already on PORT answers a fetch while `--strictPort`
 // makes this one exit, and the run would measure that server.
-await new Promise((resolve, reject) => {
+/** @type {Promise<void>} */
+const previewReady = new Promise((resolve, reject) => {
   preview.stdout.on('data', (chunk) => {
     if (String(chunk).includes('Local:')) resolve()
   })
   preview.on('exit', (code) => reject(new Error(`vite preview on ${ORIGIN} exited (${code})`)))
 })
+await previewReady
+
+// A variable, not a literal: `webkitgtk:browserOptions` is the WebKitGTK driver's own capability,
+// which wdio's types do not list.
+const capabilities = {
+  'wdio:enforceWebDriverClassic': true,
+  'webkitgtk:browserOptions': { binary: MINIBROWSER, args: ['--automation'] },
+}
 
 const browser = await remote({
   hostname: 'localhost',
@@ -74,19 +100,25 @@ const browser = await remote({
   logLevel: 'error',
   strictSelectors: false,
   connectionRetryTimeout: 600_000,
-  capabilities: {
-    'wdio:enforceWebDriverClassic': true,
-    'webkitgtk:browserOptions': { binary: MINIBROWSER, args: ['--automation'] },
-  },
+  capabilities,
 })
 const $ = (s) => browser.$(s)
 const pause = (ms) => browser.pause(ms)
 const sidebar = (label) => $('[data-slot="sidebar"]').$(`button=${label}`)
 
+/**
+ * @param {number} size
+ * @param {string} title
+ */
 function seed(size, title) {
   return browser.execute(
-    (n, pageTitle) => {
-      const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args)
+    (/** @type {number} */ n, /** @type {string} */ pageTitle) => {
+      /**
+       * @param {string} cmd
+       * @param {object} args
+       */
+      const invoke = (cmd, args) =>
+        /** @type {ProbeWindow} */ (window).__TAURI_INTERNALS__.invoke(cmd, args)
       const words =
         'lorem ipsum dolor sit amet project meeting idea review draft notes plan ship'.split(' ')
       const sentence = (i, len) =>
@@ -106,14 +138,16 @@ function seed(size, title) {
           // `SEED_IDS.SPACE_PERSONAL` (`src/lib/tauri-mock/seed.ts`), which this script cannot import.
           spaceId: '00000000000000000AGAR1CPER',
         })
-        const created = await invoke('create_blocks_batch', {
-          specs: Array.from({ length: n }, (_, i) => ({
-            blockType: 'content',
-            content: content(i),
-            parentId,
-            position: null,
-          })),
-        })
+        const created = /** @type {{ blocks: { id: string }[] }} */ (
+          await invoke('create_blocks_batch', {
+            specs: Array.from({ length: n }, (_, i) => ({
+              blockType: 'content',
+              content: content(i),
+              parentId,
+              position: null,
+            })),
+          })
+        )
         const ids = created.blocks.map((b) => b.id)
         await invoke('set_todo_state_batch', {
           blockIds: ids.filter((_, i) => i % 8 === 3 && i % 16 !== 11),
@@ -131,10 +165,14 @@ function seed(size, title) {
   )
 }
 
-/** Choose the editing mode as the switch does, and add or drop the experiment's stylesheet. */
+/**
+ * Choose the editing mode as the switch does, and add or drop the experiment's stylesheet.
+ *
+ * @param {string} config
+ */
 async function prepare(config) {
   await browser.execute(
-    (mode, css) => {
+    (/** @type {string} */ mode, /** @type {string | undefined} */ css) => {
       const oldValue = localStorage.getItem('agaric-edit-mode')
       localStorage.setItem('agaric-edit-mode', mode)
       dispatchEvent(
@@ -149,20 +187,26 @@ async function prepare(config) {
       }
     },
     config.startsWith('page') ? 'page' : 'blocks',
-    config.endsWith('+css') ? process.env.CSS : '',
+    config.endsWith('+css') ? process.env['CSS'] : '',
   )
 }
 
-/** Open `title` from the palette; resolves with the time from the last click or key to the frame after `ready` appears. */
+/**
+ * Open `title` from the palette; resolves with the time from the last click or key to the frame after `ready` appears.
+ *
+ * @param {string} title
+ * @param {string} ready
+ */
 async function open(title, ready) {
-  await browser.execute((sel) => {
+  await browser.execute((/** @type {string} */ sel) => {
     let t0 = 0
     const mark = () => {
       t0 = performance.now()
     }
     addEventListener('click', mark, true)
     addEventListener('keydown', mark, true)
-    window.__ready__ = null
+    const probeWindow = /** @type {ProbeWindow} */ (window)
+    probeWindow.__ready__ = null
     new MutationObserver((_, observer) => {
       if (t0 === 0 || !document.querySelector(sel)) return
       observer.disconnect()
@@ -170,7 +214,7 @@ async function open(title, ready) {
       removeEventListener('keydown', mark, true)
       requestAnimationFrame(() =>
         setTimeout(() => {
-          window.__ready__ = performance.now() - t0
+          probeWindow.__ready__ = performance.now() - t0
         }),
       )
     }).observe(document, { childList: true, subtree: true })
@@ -183,10 +227,11 @@ async function open(title, ready) {
   await $(`[cmdk-item]*=${title}`).waitForDisplayed({ timeout: 20_000 })
   await pause(300)
   await browser.keys(['Enter'])
+  /** @type {number | null} */
   let ms = null
   await browser.waitUntil(
     async () => {
-      ms = await browser.execute(() => window.__ready__)
+      ms = await browser.execute(() => /** @type {ProbeWindow} */ (window).__ready__)
       return ms !== null
     },
     { timeout: 300_000, interval: 100 },
@@ -194,9 +239,13 @@ async function open(title, ready) {
   return ms
 }
 
-/** Tag the page's scroll container, so the scripts after this find it. */
+/**
+ * Tag the page's scroll container, so the scripts after this find it.
+ *
+ * @param {string} mode
+ */
 function tagScroller(mode) {
-  return browser.execute((m) => {
+  return browser.execute((/** @type {string} */ m) => {
     let el = document.querySelector(
       m === 'page' ? '[data-page-block]' : '[data-testid="block-static"]',
     )
@@ -214,12 +263,14 @@ function scrollThrough() {
   return browser.execute(
     () =>
       new Promise((done) => {
-        const el = document.querySelector('[data-probe-scroller]')
+        // `tagScroller` tagged it before this runs.
+        const el = /** @type {Element} */ (document.querySelector('[data-probe-scroller]'))
         el.scrollTop = 0
+        /** @type {number[]} */
         const deltas = []
         let last = 0
         let stall = 0
-        const step = (now) => {
+        const step = (/** @type {number} */ now) => {
           if (last) deltas.push(now - last)
           last = now
           const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
@@ -242,19 +293,26 @@ function scrollThrough() {
   )
 }
 
-/** Scroll to the middle and tag the text block nearest the viewport's centre. */
+/**
+ * Scroll to the middle and tag the text block nearest the viewport's centre.
+ *
+ * @param {string} mode
+ */
 async function tagMiddleBlock(mode) {
   await browser.execute(() => {
-    const el = document.querySelector('[data-probe-scroller]')
+    const el = /** @type {Element} */ (document.querySelector('[data-probe-scroller]'))
     el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
   })
   await pause(800)
-  return browser.execute((m) => {
-    const box = document.querySelector('[data-probe-scroller]').getBoundingClientRect()
+  return browser.execute((/** @type {string} */ m) => {
+    const box = /** @type {Element} */ (
+      document.querySelector('[data-probe-scroller]')
+    ).getBoundingClientRect()
     const mid = box.top + box.height / 2
     const rows = document.querySelectorAll(
       m === 'page' ? '[data-page-block]:not([data-rendered])' : '[data-testid="block-static"]',
     )
+    /** @type {Element | null} */
     let best = null
     let bestDistance = Infinity
     for (const row of rows) {
@@ -274,26 +332,36 @@ async function tagMiddleBlock(mode) {
 /** Type TYPED a key at a time; each key's latency, and the worst interaction. */
 async function typeMeasured() {
   await browser.execute(() => {
-    const probe = { keys: [], events: [] }
-    window.__typing__ = probe
-    probe.observer = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) if (e.interactionId) probe.events.push(e.duration)
+    /** @type {number[]} */
+    const keys = []
+    /** @type {number[]} */
+    const events = []
+    const observer = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        if (/** @type {PerformanceEventTiming} */ (e).interactionId) events.push(e.duration)
+      }
     })
-    probe.observer.observe({ type: 'event', durationThreshold: 16 })
-    probe.listener = (event) => {
-      requestAnimationFrame(() =>
-        setTimeout(() => probe.keys.push(performance.now() - event.timeStamp)),
-      )
+    // `durationThreshold` is missing from the DOM lib's `PerformanceObserverInit`.
+    observer.observe(
+      /** @type {PerformanceObserverInit & { durationThreshold: number }} */ ({
+        type: 'event',
+        durationThreshold: 16,
+      }),
+    )
+    const listener = (/** @type {KeyboardEvent} */ event) => {
+      requestAnimationFrame(() => setTimeout(() => keys.push(performance.now() - event.timeStamp)))
     }
-    addEventListener('keydown', probe.listener, true)
+    addEventListener('keydown', listener, true)
+    const probeWindow = /** @type {ProbeWindow} */ (window)
+    probeWindow.__typing__ = { keys, events, observer, listener }
   })
   for (const ch of TYPED) {
     await browser.keys([ch])
     await pause(100)
   }
   await pause(1000)
-  return browser.execute((typed) => {
-    const probe = window.__typing__
+  return browser.execute((/** @type {string} */ typed) => {
+    const probe = /** @type {ProbeWindow} */ (window).__typing__
     removeEventListener('keydown', probe.listener, true)
     probe.observer.disconnect()
     const focused = document.activeElement?.closest('[contenteditable="true"]')
@@ -305,11 +373,20 @@ async function typeMeasured() {
   }, TYPED)
 }
 
+/**
+ * @param {number[]} values
+ * @param {number} q
+ */
 function quantile(values, q) {
   const sorted = values.toSorted((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? Number.NaN
 }
 
+/**
+ * @param {string} config
+ * @param {number} size
+ * @param {string} title
+ */
 async function measure(config, size, title) {
   const mode = config.startsWith('page') ? 'page' : 'blocks'
   await sidebar('Tags').click()
@@ -371,7 +448,7 @@ try {
       await sidebar('Journal').click()
       await $('[data-testid="block-static"]').waitForExist({ timeout: 30_000 })
       await browser.execute(() => {
-        window.__pageModeBlockCap = 100_000
+        ;/** @type {ProbeWindow} */ (window).__pageModeBlockCap = 100_000
       })
       const title = `Cap probe ${size} r${repeat}`
       const seeded = await seed(size, title)
@@ -386,7 +463,7 @@ try {
   }
 } finally {
   await browser.deleteSession()
-  if (process.env.OUT) writeFileSync(process.env.OUT, JSON.stringify(samples, null, 2))
+  if (process.env['OUT']) writeFileSync(process.env['OUT'], JSON.stringify(samples, null, 2))
 }
 
 const band = (values) => {

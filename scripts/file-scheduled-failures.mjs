@@ -231,7 +231,10 @@ export function parseNeeds(text) {
   try {
     parsed = JSON.parse(text)
   } catch (err) {
-    throw new Error(`the \`needs\` payload is not valid JSON (${err.message})`, { cause: err })
+    throw new Error(
+      `the \`needs\` payload is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+      { cause: err },
+    )
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('the `needs` payload is not a JSON object keyed by job id')
@@ -601,7 +604,9 @@ export function escalationThreshold(periodHours) {
  */
 export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId }) {
   const streaks = new Map(known)
+  /** @type {string[]} */
   const advanced = []
+  /** @type {string[]} */
   const escalated = []
   for (const job of currentFailing) {
     const lane = laneById.get(job)
@@ -744,6 +749,15 @@ export function rollBackSuppressedEscalations(streaks, known, suppressed) {
  *                and there is nothing open. A weekly job that re-fires on an
  *                unchanged failure must not spam, and two runs that observe
  *                the identical underlying run must not double-count it.
+ *
+ * @param {{
+ *   newOnes: string[],
+ *   resolvedOnes: string[],
+ *   all: string[],
+ *   existingIssue?: { state: string } | null,
+ *   escalatedOnes?: string[],
+ *   advancedOnes?: string[],
+ * }} args
  */
 export function decideAction({
   newOnes,
@@ -1073,6 +1087,13 @@ function buildCommentFor(
  * crossed their threshold, and which crossings were deferred. Kept out of
  * `main()` purely to keep it under the repo's cyclomatic-complexity lint
  * budget.
+ *
+ * @param {{
+ *   escalated: string[],
+ *   deferred?: string[],
+ *   streaks: Map<string, { count: number }>,
+ *   profile: { unit: string },
+ * }} args
  */
 function logEscalated({ escalated, deferred = [], streaks, profile }) {
   if (escalated.length > 0) {
@@ -1164,7 +1185,7 @@ function defaultRunUrl() {
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
   const profile = resolveProfile(args.profile)
-  const repo = args.repo ?? process.env.GITHUB_REPOSITORY
+  const repo = args.repo ?? process.env['GITHUB_REPOSITORY']
   const runUrl = args.runUrl ?? defaultRunUrl()
 
   if (!args.needsJsonFile) throw new Error('--needs-json-file is required')
@@ -1178,6 +1199,7 @@ export function main(argv = process.argv.slice(2)) {
   // --known-body-file is a TEST-ONLY escape hatch substituting for the
   // `gh issue list` lookup, so the diff/decide/render logic can be exercised
   // against sample data without touching real GitHub state.
+  /** @type {{ number: number, state: string, body: string } | null} */
   let existingIssue = null
   if (args.knownBodyFile !== undefined) {
     const body = existsSync(args.knownBodyFile) ? readFileSync(args.knownBodyFile, 'utf8') : ''
@@ -1301,6 +1323,9 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
+  // Every action reaching here is decided against an existing issue ('create' returned above).
+  if (existingIssue === null)
+    throw new Error(`action ${action} requires an existing tracking issue`)
   const number = String(existingIssue.number)
 
   if (action === 'close') {
@@ -1424,7 +1449,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`file-scheduled-failures: ${err.message}`)
+    console.error(`file-scheduled-failures: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(1)
   }
 }

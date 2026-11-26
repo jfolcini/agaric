@@ -171,7 +171,9 @@ function check() {
       repoRoot: ROOT,
     })
   } catch (err) {
-    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    console.error(
+      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
+    )
     return 2
   }
   if (process.argv.includes('--print-source')) {
@@ -182,7 +184,9 @@ function check() {
   try {
     entries = listTrackedEntries(ROOT, { env: GIT_ENV })
   } catch (err) {
-    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    console.error(
+      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
+    )
     return 2
   }
   if (entries === null) {
@@ -200,7 +204,9 @@ function check() {
       env: GIT_ENV,
     })
   } catch (err) {
-    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    console.error(
+      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
+    )
     return 2
   }
 

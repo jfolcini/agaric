@@ -281,7 +281,7 @@ function readBaselineText() {
   try {
     return readFileSync(BASELINE_PATH, 'utf8')
   } catch (error) {
-    if (error.code === 'ENOENT') return null
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null
     throw error
   }
 }
@@ -375,6 +375,7 @@ function main(argv) {
 // --- self-test --------------------------------------------------------------
 
 // [fixture, table, expect a match]
+/** @type {[string, string, boolean][]} */
 const REGEX_CASES = [
   // The real spellings, a multi-line one inside a string included.
   ['sqlx::query!("INSERT OR IGNORE INTO blocks (id) VALUES (?)")', 'blocks', true],
@@ -436,7 +437,7 @@ function runSelfTest() {
   const fail = (line) => failures.push(line)
 
   for (const [fixture, table, expect] of REGEX_CASES) {
-    const got = fixture.search(WRITE_RES.get(table)) !== -1
+    const got = fixture.search(/** @type {RegExp} */ (WRITE_RES.get(table))) !== -1
     if (got !== expect) {
       fail(`regex[${table}] expected match=${expect}, got ${got}: ${JSON.stringify(fixture)}`)
     }

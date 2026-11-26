@@ -424,6 +424,7 @@ const GIT_REDIRECT_VARS = [
  * this existed.
  *
  * `GIT_INDEX_FILE` survives this call untouched — see the list's own note.
+ * @param {NodeJS.ProcessEnv} [env]
  */
 export function scrubGitRedirects(env = process.env) {
   const out = { ...env }
@@ -503,7 +504,7 @@ export function indexBelongsTo(indexFile, repoRoot, env = process.env) {
   const gitDir = normalize(resolvePath(repoRoot, out))
   if (indexPath === gitDir) return true
   if (!indexPath.startsWith(`${gitDir}${sep}`)) return false
-  return !NESTED_GIT_DIRS.has(indexPath.slice(gitDir.length + 1).split(sep)[0])
+  return !NESTED_GIT_DIRS.has(indexPath.slice(gitDir.length + 1).split(sep)[0] ?? '')
 }
 
 /**
@@ -552,12 +553,12 @@ export function indexBelongsTo(indexFile, repoRoot, env = process.env) {
  */
 export function gitEnv(repoRoot, env = process.env) {
   const out = scrubGitRedirects(env)
-  if (out.GIT_INDEX_FILE && !indexBelongsTo(out.GIT_INDEX_FILE, repoRoot, env)) {
+  if (out['GIT_INDEX_FILE'] && !indexBelongsTo(out['GIT_INDEX_FILE'], repoRoot, env)) {
     // The pragma below is check-git-fixture-isolation.mjs's per-statement
     // waiver (#4064), replacing the basename exemption this file used to
     // need. It waives rule 1 for THIS LINE only; rule 2 still judges the
     // file, so a fixture built here would still be reported.
-    delete out.GIT_INDEX_FILE // not-a-fixture-scrub: drops a FOREIGN index (#4017), builds no fixture
+    delete out['GIT_INDEX_FILE'] // not-a-fixture-scrub: drops a FOREIGN index (#4017), builds no fixture
   }
   return out
 }
@@ -568,11 +569,11 @@ export function gitEnv(repoRoot, env = process.env) {
  * @param {string[]} argv         full `process.argv` (the node binary and the
  *   script path are skipped; both guards run with `pass_filenames = false`,
  *   so anything after them is a flag the caller typed).
- * @param {object} env
+ * @param {NodeJS.ProcessEnv} [env]
  * @param {object} [opts]
  * @param {string[]} [opts.extraFlags] flags the CALLING guard understands, on
  *   top of the two source flags this module owns.
- * @param {string} opts.repoRoot  the tree being judged. REQUIRED: AUTO cannot
+ * @param {string} [opts.repoRoot]  the tree being judged. REQUIRED: AUTO cannot
  *   ask whether the exported index is this tree's without it, and defaulting
  *   it would restore the very rule this parameter exists to replace — a
  *   silent one, taken because a call site forgot.
@@ -608,23 +609,24 @@ export function resolveSource(
   const known = new Set(['--cached', '--worktree', ...extraFlags])
   const unknown = argv.slice(2).filter((arg) => !known.has(arg))
   if (unknown.length > 0) {
-    const err = new Error(
-      `unknown option ${unknown.map((a) => `'${a}'`).join(', ')} — known options: ` +
-        `${[...known].join(', ')}`,
+    throw Object.assign(
+      new Error(
+        `unknown option ${unknown.map((a) => `'${a}'`).join(', ')} — known options: ` +
+          `${[...known].join(', ')}`,
+      ),
+      { isUsageError: true },
     )
-    err.isUsageError = true
-    throw err
   }
   const cached = argv.includes('--cached')
   const worktree = argv.includes('--worktree')
   if (cached && worktree) {
-    const err = new Error('--cached and --worktree are mutually exclusive')
-    err.isUsageError = true
-    throw err
+    throw Object.assign(new Error('--cached and --worktree are mutually exclusive'), {
+      isUsageError: true,
+    })
   }
   if (cached) return { source: SOURCE_INDEX, why: 'explicit --cached' }
   if (worktree) return { source: SOURCE_WORKTREE, why: 'explicit --worktree' }
-  const indexFile = env.GIT_INDEX_FILE
+  const indexFile = env['GIT_INDEX_FILE']
   if (!indexFile) {
     return {
       source: SOURCE_WORKTREE,
@@ -634,12 +636,13 @@ export function resolveSource(
   // Only AUTO needs it, and only with a commit in flight — but a call site
   // that forgot it must not be answered with a guess.
   if (!repoRoot) {
-    const err = new Error(
-      'resolveSource: AUTO needs `repoRoot` to decide whether the exported GIT_INDEX_FILE ' +
-        `(${indexFile}) belongs to the tree being judged — pass it, or say --worktree/--cached`,
+    throw Object.assign(
+      new Error(
+        'resolveSource: AUTO needs `repoRoot` to decide whether the exported GIT_INDEX_FILE ' +
+          `(${indexFile}) belongs to the tree being judged — pass it, or say --worktree/--cached`,
+      ),
+      { isUsageError: true },
     )
-    err.isUsageError = true
-    throw err
   }
   // SET is not enough — it has to be OUR index. See the header.
   if (indexBelongsTo(indexFile, repoRoot, env)) {
@@ -648,16 +651,17 @@ export function resolveSource(
       why: `auto: git is running a commit hook, GIT_INDEX_FILE=${indexFile}`,
     }
   }
-  const err = new Error(
-    `a commit is in flight (GIT_INDEX_FILE=${indexFile}) but it belongs to a different ` +
-      `repository than the tree being judged (${repoRoot}).\n` +
-      '  Reading that index would enumerate the committing repository and report the result ' +
-      'as a verdict about this tree.\n' +
-      '  Say which copy you mean: --worktree (judge the files on disk) or --cached (judge the ' +
-      'staged index).',
+  throw Object.assign(
+    new Error(
+      `a commit is in flight (GIT_INDEX_FILE=${indexFile}) but it belongs to a different ` +
+        `repository than the tree being judged (${repoRoot}).\n` +
+        '  Reading that index would enumerate the committing repository and report the result ' +
+        'as a verdict about this tree.\n' +
+        '  Say which copy you mean: --worktree (judge the files on disk) or --cached (judge the ' +
+        'staged index).',
+    ),
+    { isAmbiguousSource: true },
   )
-  err.isAmbiguousSource = true
-  throw err
 }
 
 /**
@@ -670,6 +674,9 @@ export function resolveSource(
  * permission denied, ENOBUFS, ...) is a genuine invocation error and is
  * re-thrown, so a caller can exit 2 with the cause named rather than
  * swallowing it into a silent "clean".
+ *
+ * @param {string} repoRoot
+ * @param {{ env?: NodeJS.ProcessEnv }} [opts]
  *
  * `env` IS NOT OPTIONAL IN PRACTICE, and every guard passes `gitEnv(...)`.
  * `cwd` does NOT determine which repository git reads: an ambient
@@ -694,7 +701,7 @@ export function listTrackedEntries(repoRoot, { env } = {}) {
       maxBuffer: GIT_LS_FILES_MAX_BUFFER,
     })
   } catch (err) {
-    const stderr = String(err?.stderr ?? '')
+    const stderr = String(/** @type {{ stderr?: string }} */ (err)?.stderr ?? '')
     if (/not a git repository/i.test(stderr)) return null
     throw err
   }
@@ -884,15 +891,19 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
  */
 export function parseBatchStream(out, chunk) {
   const bodies = new Map()
-  const desync = (detail, i) => {
-    const err = new Error(
-      `git cat-file --batch desynchronised: ${detail}. ${chunk.length - i} of ${chunk.length} ` +
-        'staged path(s) in this batch would have gone unread, so the scan is abandoned rather ' +
-        'than reported clean (scripts/lib/guard-file-source.mjs).',
+  /**
+   * @param {string} detail
+   * @param {number} i
+   */
+  const desync = (detail, i) =>
+    Object.assign(
+      new Error(
+        `git cat-file --batch desynchronised: ${detail}. ${chunk.length - i} of ${chunk.length} ` +
+          'staged path(s) in this batch would have gone unread, so the scan is abandoned rather ' +
+          'than reported clean (scripts/lib/guard-file-source.mjs).',
+      ),
+      { isBatchDesync: true },
     )
-    err.isBatchDesync = true
-    return err
-  }
   let off = 0
   for (const [i, { path }] of chunk.entries()) {
     const nl = out.indexOf(0x0a, off)
@@ -910,15 +921,16 @@ export function parseBatchStream(out, chunk) {
     // mean "scanned something else" either, which is what the working-tree
     // fallback here amounted to (#4046, and the section above).
     if (parts[1] === 'missing') {
-      const err = new Error(
-        `git cat-file --batch: the index names blob ${chunk[i].sha} for '${path}', but the ` +
-          'object store does not have it. The staged content cannot be read, and the copy on ' +
-          'disk is different content — reporting it under "judged the staged index" would be a ' +
-          'verdict about a file nobody staged, so the scan is abandoned rather than ' +
-          're-aimed (scripts/lib/guard-file-source.mjs).',
+      throw Object.assign(
+        new Error(
+          `git cat-file --batch: the index names blob ${chunk[i]?.sha} for '${path}', but the ` +
+            'object store does not have it. The staged content cannot be read, and the copy on ' +
+            'disk is different content — reporting it under "judged the staged index" would be ' +
+            'a verdict about a file nobody staged, so the scan is abandoned rather than ' +
+            're-aimed (scripts/lib/guard-file-source.mjs).',
+        ),
+        { isMissingObject: true },
       )
-      err.isMissingObject = true
-      throw err
     }
     const size = Number(parts[2])
     if (!Number.isFinite(size)) {

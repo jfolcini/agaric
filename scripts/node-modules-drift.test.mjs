@@ -55,6 +55,10 @@ void test("the root entry's own version is not drift", () => {
 
 // A main checkout and a worktree on disk; `installed` null leaves out the
 // hidden lockfile, and a string is written verbatim.
+/**
+ * @param {{ mainLock?: unknown, installed?: unknown, worktreeLock?: unknown }} fixtures
+ * @param {(r: { code: number | null, err: string, main: string }) => void} fn
+ */
 function withCheckouts({ mainLock = LOCK, installed = INSTALLED, worktreeLock = LOCK }, fn) {
   const root = mkdtempSync(join(tmpdir(), 'node-modules-drift-'))
   try {

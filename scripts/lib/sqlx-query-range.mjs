@@ -31,7 +31,7 @@ const MACRO_RULES_RE = /\bmacro_rules\s*!\s*(\w+)\s*[([{]/g
 function closeOffset(text, open) {
   let depth = 0
   for (let i = open; i < text.length; i++) {
-    const ch = text[i]
+    const ch = text.charAt(i)
     if (ch === '(' || ch === '[' || ch === '{') depth += 1
     else if (ch === ')' || ch === ']' || ch === '}') {
       depth -= 1
@@ -49,7 +49,7 @@ function lineOf(text) {
     let hi = starts.length - 1
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= offset) lo = mid
+      if ((starts[mid] ?? 0) <= offset) lo = mid
       else hi = mid - 1
     }
     return lo + 1
@@ -103,6 +103,7 @@ export function decide({ paths, files, wrapper }) {
   if (trigger !== undefined) return `run: ${trigger} changed`
   if (wrapper) return `run: wrapper macro ${wrapper}`
   for (const file of files) {
+    /** @type {[string | null, string | null, 'newStart' | 'oldStart', 'newCount' | 'oldCount', string][]} */
     const sides = [
       [file.newPath, file.newText, 'newStart', 'newCount', ''],
       [file.oldPath, file.oldText, 'oldStart', 'oldCount', ' before the change'],
@@ -140,9 +141,20 @@ function samePath(header) {
   return path
 }
 
-/** The sections of a `git diff -U0` patch: paths and hunk ranges. */
+/**
+ * @typedef {{ header: string, hunks: { oldStart: number, oldCount: number, newStart: number,
+ *   newCount: number }[], oldPath?: string | null, newPath?: string | null, created?: boolean,
+ *   deleted?: boolean, oldText?: string | null, newText?: string | null }} DiffSection
+ */
+
+/**
+ * The sections of a `git diff -U0` patch: paths and hunk ranges.
+ * @param {string} patch
+ */
 export function parsePatch(patch) {
+  /** @type {DiffSection[]} */
   const sections = []
+  /** @type {DiffSection | null} */
   let current = null
   let inHunks = false
   const finish = () => {
@@ -201,9 +213,10 @@ export function parsePatch(patch) {
 function parseNameStatus(out) {
   const fields = out.split('\0')
   if (fields.at(-1) === '') fields.pop()
+  /** @type {string[]} */
   const paths = []
   for (let i = 0; i < fields.length;) {
-    const status = fields[i]
+    const status = fields[i] ?? ''
     const count = /^[RC]/.test(status) ? 2 : 1
     if (!/^[ACDMRTU]\d*$/.test(status) || i + count >= fields.length) {
       throw new Error(`unparseable name-status entry: ${status}`)
@@ -214,7 +227,10 @@ function parseNameStatus(out) {
   return paths
 }
 
-/** `(args) => stdout` of `git <args>` run in `cwd`; throws on a non-zero exit. */
+/**
+ * `(args) => stdout` of `git <args>` run in `cwd`; throws on a non-zero exit.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [options]
+ */
 export function gitRunner({ cwd, env } = {}) {
   return (args) =>
     execFileSync('git', ['-c', 'core.quotePath=false', ...args], {
@@ -254,7 +270,9 @@ export function rangeVerdict(base, head, git = gitRunner()) {
     section.oldText = show(base, section.oldPath)
     section.newText = show(head, section.newPath)
   }
-  return decide({ paths, files: sections, wrapper: findWrapper(head, git) })
+  // `parsePatch` normalised both paths and the loop above filled both texts.
+  const files = /** @type {Parameters<typeof decide>[0]['files']} */ (sections)
+  return decide({ paths, files, wrapper: findWrapper(head, git) })
 }
 
 function findWrapper(head, git) {
@@ -263,7 +281,8 @@ function findWrapper(head, git) {
     listed = git(['grep', '--no-color', '-lF', 'macro_rules!', head, '--', 'src-tauri/*.rs'])
   } catch (error) {
     // `git grep` exits 1 when nothing matches.
-    if (error.status === 1 && error.stdout === '') return null
+    const failure = /** @type {{ status?: number, stdout?: unknown }} */ (error)
+    if (failure.status === 1 && failure.stdout === '') return null
     throw error
   }
   for (const entry of listed.split('\n').filter(Boolean)) {
@@ -287,7 +306,8 @@ if (isMainModule) {
   try {
     process.stdout.write(`${rangeVerdict(base, head)}\n`)
   } catch (error) {
-    process.stderr.write(`sqlx-query-range: ${error.stderr || error.message}\n`)
+    const failure = /** @type {{ stderr?: string, message?: string }} */ (error)
+    process.stderr.write(`sqlx-query-range: ${failure.stderr || failure.message}\n`)
     process.exit(1)
   }
 }

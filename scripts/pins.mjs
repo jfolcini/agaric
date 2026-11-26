@@ -290,7 +290,7 @@ export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {})
       }
     } catch (e) {
       row.status = 'error'
-      row.note = e.message
+      row.note = e instanceof Error ? e.message : String(e)
     }
   }
   return rows
@@ -325,7 +325,7 @@ export function staleMarkdown(rows) {
 
 export function httpClient() {
   const headers = { 'user-agent': 'agaric-pins (https://github.com/jfolcini/agaric)' }
-  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+  if (process.env['GITHUB_TOKEN']) headers.authorization = `Bearer ${process.env['GITHUB_TOKEN']}`
   const get = async (url) => {
     const res = await fetch(url, {
       headers:
@@ -375,7 +375,7 @@ async function main(argv) {
     const rows = await staleRows(pins, httpClient())
     const md = staleMarkdown(rows)
     process.stdout.write(md)
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, md)
+    if (process.env['GITHUB_STEP_SUMMARY']) appendFileSync(process.env['GITHUB_STEP_SUMMARY'], md)
     return rows.some((r) => r.status === 'stale' || r.status === 'error') ? 1 : 0
   }
   throw new Error('usage: pins.mjs bump <name> <version> | stale')

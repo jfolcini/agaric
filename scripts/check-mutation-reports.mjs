@@ -87,7 +87,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       report = JSON.parse(readFileSync(jsonPath, 'utf8'))
     } catch (err) {
       problems.push(
-        `module \`${mod}\`'s \`${jsonPath}\` is not valid JSON (${err.message}) — a partial/truncated report is a crashed run, not zero survivors (#3330).`,
+        `module \`${mod}\`'s \`${jsonPath}\` is not valid JSON (${err instanceof Error ? err.message : String(err)}) — a partial/truncated report is a crashed run, not zero survivors (#3330).`,
       )
       perModule.push({ module: mod, mutants: 0 })
       continue

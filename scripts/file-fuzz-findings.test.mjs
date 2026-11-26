@@ -79,7 +79,11 @@ void test('every target passing is the only shape that counts as clean', () => {
   assert.equal(allTargetsClean([]), false)
 })
 
-/** Drives `main` in dry-run against a temp result dir, returning its stdout lines. */
+/**
+ * Drives `main` in dry-run against a temp result dir, returning its stdout lines.
+ * @param {{ statuses: Record<string, string>, jobStatus: string, knownIds?: string[],
+ *   knownBody?: string, logs?: Record<string, string> }} input
+ */
 function runMain({ statuses, jobStatus, knownIds = [], knownBody, logs = {} }) {
   const dir = mkdtempSync(join(tmpdir(), 'fuzz-findings-test-'))
   writeFileSync(join(dir, 'targets.txt'), `${Object.keys(statuses).join('\n')}\n`)
@@ -105,6 +109,7 @@ function runMain({ statuses, jobStatus, knownIds = [], knownBody, logs = {} }) {
         ].join('\n')
       : '')
   if (body) writeFileSync(knownFile, body)
+  /** @type {string[]} */
   const lines = []
   const original = console.log
   console.log = (...args) => lines.push(args.join(' '))
@@ -253,7 +258,7 @@ void test('a clean run clears a disproved line from a mixed set, leaving the res
     lost.some((l) => l.startsWith('[dry-run] new findings: 1,')),
     `expected the lost target to be reported as new, got:\n${lost.join('\n')}`,
   )
-  assert.ok(lost[lost.indexOf('[dry-run] --- new-finding comment ---') + 1].includes(LOST_ID))
+  assert.ok(lost[lost.indexOf('[dry-run] --- new-finding comment ---') + 1]?.includes(LOST_ID))
 })
 
 void test('a retained finding keeps its reproduce command across the clear', () => {
@@ -281,6 +286,7 @@ void test('a retained finding keeps its reproduce command across the clear', () 
 
 void test('parseKnownDetails round-trips the details buildIssueBody rendered', () => {
   const angled = '[failed] fts_strip: panicked at <unknown>'
+  /** @type {[string, { id: string, detail: string }][]} */
   const entries = [
     [angled, { id: angled, detail: 'first\nsecond' }],
     [CRASH_ID, { id: CRASH_ID, detail: 'repro line\n\nlog tail' }],
@@ -382,7 +388,7 @@ void test('a build error the next run did not reproduce leaves the block', () =>
     week3.some((l) => l.startsWith('[dry-run] new findings: 1,')),
     `the recurrence must be reported, got:\n${week3.join('\n')}`,
   )
-  assert.ok(week3[week3.indexOf('[dry-run] --- new-finding comment ---') + 1].includes(E0432))
+  assert.ok(week3[week3.indexOf('[dry-run] --- new-finding comment ---') + 1]?.includes(E0432))
 })
 
 void test('a cancelled run clears nothing, because it disproved nothing', () => {

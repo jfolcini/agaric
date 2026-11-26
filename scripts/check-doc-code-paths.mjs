@@ -111,6 +111,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
 import {
   initScratchRepo,
   runSourceScenarios,
@@ -145,6 +146,8 @@ const REPO_ROOT = repoRootFromCwd()
 // readily as `--cached` — while `cwd=REPO_ROOT` made it look otherwise. See
 // `gitEnv`.
 const GIT_ENV = gitEnv(REPO_ROOT, process.env)
+
+/** @typedef {{ name: string, ok: boolean, detail?: string, skipped?: boolean }} ScenarioResult */
 
 // #4482 — the `@/` path-alias map, read from `tsconfig.app.json`'s
 // `compilerOptions.paths` rather than hardcoded. `vite.config.ts` declares
@@ -227,7 +230,7 @@ function loadPathAliasMap(repoRoot) {
   try {
     raw = readFileSync(tsconfigPath, 'utf8')
   } catch (err) {
-    throw new Error(`could not read ${tsconfigPath}: ${err.message}`, { cause: err })
+    throw new Error(`could not read ${tsconfigPath}: ${errorMessage(err)}`, { cause: err })
   }
   let parsed
   try {
@@ -263,7 +266,7 @@ function loadPathAliasMap(repoRoot) {
     try {
       parsed = JSON.parse(stripComments(raw).replace(/,(?=\s*[}\]])/g, ''))
     } catch {
-      throw new Error(`could not parse ${tsconfigPath} as JSON(C): ${err.message}`)
+      throw new Error(`could not parse ${tsconfigPath} as JSON(C): ${errorMessage(err)}`)
     }
   }
   const paths = parsed?.compilerOptions?.paths
@@ -324,6 +327,7 @@ function loadPathAliasMap(repoRoot) {
 //      on this repo's current corpus.
 let ALIAS_PREFIXES = []
 let PATH_ALIAS_MAP
+/** @type {unknown} */
 let PATH_ALIAS_MAP_ERROR = null
 try {
   PATH_ALIAS_MAP = loadPathAliasMap(REPO_ROOT)
@@ -380,7 +384,7 @@ function readBaseline({ lenientOnParseError = false } = {}) {
     parsed = JSON.parse(raw)
   } catch (err) {
     if (lenientOnParseError) return []
-    throw new Error(`${BASELINE_FILE} is not valid JSON: ${err.message}`, { cause: err })
+    throw new Error(`${BASELINE_FILE} is not valid JSON: ${errorMessage(err)}`, { cause: err })
   }
   if (!Array.isArray(parsed)) {
     throw new Error(`${BASELINE_FILE} must contain a JSON array`)
@@ -1096,7 +1100,7 @@ function printSource(chosen) {
   // A caller who wants the loud failure runs the guard without the flag.
   if (PATH_ALIAS_MAP_ERROR) {
     process.stderr.write(
-      `check-doc-code-paths: warning: ${PATH_ALIAS_MAP_ERROR.message} ` +
+      `check-doc-code-paths: warning: ${errorMessage(PATH_ALIAS_MAP_ERROR)} ` +
         `(a real run would exit 2 on this)\n`,
     )
   }
@@ -1138,7 +1142,7 @@ function computeMisses() {
       repoRoot: REPO_ROOT,
     })
   } catch (err) {
-    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-doc-code-paths: invocation error: ${errorMessage(err)}\n`)
     return { exitCode: 2 }
   }
   if (process.argv.includes('--print-source')) {
@@ -1150,7 +1154,7 @@ function computeMisses() {
   // silent fallback to "no alias" — see `loadPathAliasMap`'s header for why.
   if (PATH_ALIAS_MAP_ERROR) {
     process.stderr.write(
-      `check-doc-code-paths: invocation error: ${PATH_ALIAS_MAP_ERROR.message}\n`,
+      `check-doc-code-paths: invocation error: ${errorMessage(PATH_ALIAS_MAP_ERROR)}\n`,
     )
     return { exitCode: 2 }
   }
@@ -1158,7 +1162,7 @@ function computeMisses() {
   try {
     entries = listTrackedEntries(REPO_ROOT, { env: GIT_ENV })
   } catch (err) {
-    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-doc-code-paths: invocation error: ${errorMessage(err)}\n`)
     return { exitCode: 2 }
   }
   if (entries === null) {
@@ -1229,7 +1233,7 @@ function computeMisses() {
       env: GIT_ENV,
     })
   } catch (err) {
-    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-doc-code-paths: invocation error: ${errorMessage(err)}\n`)
     return { exitCode: 2 }
   }
   const misses = []
@@ -1374,7 +1378,7 @@ function computeMisses() {
       targetBodies = new Map()
       process.stderr.write(
         'check-doc-code-paths: WARNING: could not read the targets of line-numbered ' +
-          `citations (${err.message}); line-bound warnings are skipped this run, and ` +
+          `citations (${errorMessage(err)}); line-bound warnings are skipped this run, and ` +
           'KNOWN_INTENTIONAL_WARNINGS is not staleness-checked against an uncomputable ' +
           'warning set.\n',
       )
@@ -1463,7 +1467,7 @@ function check() {
   try {
     baseline = readBaseline()
   } catch (err) {
-    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-doc-code-paths: invocation error: ${errorMessage(err)}\n`)
     return 2
   }
   const baselineSet = new Set(baseline.map((e) => baselineKey(e.file, e.ref)))
@@ -1611,7 +1615,7 @@ function updateBaseline() {
   try {
     existing = readBaseline({ lenientOnParseError: true })
   } catch (err) {
-    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-doc-code-paths: invocation error: ${errorMessage(err)}\n`)
     return 2
   }
   const reasonByKey = new Map(existing.map((e) => [baselineKey(e.file, e.ref), e.reason]))
@@ -3022,6 +3026,7 @@ function lineBoundsWarningScenarios(root) {
  * legible without a second scratch checkout of the whole guard.
  */
 function guardSelfPathDerivationScenarios(root) {
+  /** @type {ScenarioResult[]} */
   const results = []
   const record = (name, ok, detail = '') => results.push({ name, ok, detail })
 
@@ -3060,13 +3065,14 @@ function guardSelfPathDerivationScenarios(root) {
 
   // The consequence: the battery that consumes it must REPORT, not crash.
   let degraded
+  /** @type {string | null} */
   let threw = null
   try {
     degraded = knownIntentionalWarningScenarios(root, null)
   } catch (err) {
     // Recorded as text: a thrown non-`Error` has no `String()` form beyond
     // "[object Object]", which would make every one of them read alike.
-    threw = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err)
+    threw = err instanceof Error ? `${err.name}: ${errorMessage(err)}` : JSON.stringify(err)
   }
   record(
     'a null GUARD_SELF_PATH makes the known-intentional battery report itself skipped instead of throwing TypeError',
@@ -3570,6 +3576,7 @@ function corruptBaselineScenarios(root) {
 function selfTest() {
   const root = mkdtempSync(join(tmpdir(), 'doc-code-paths-selftest-'))
   try {
+    /** @type {ScenarioResult[]} */
     const results = runSourceScenarios({
       scriptPath: import.meta.filename,
       file: 'README.md',

@@ -790,6 +790,7 @@ export function checkFilerPlumbing({ lines, push }) {
  *
  * `overrideArgv` exists only so the self-test can drive the REAL config
  * through a different invocation and prove the failure path fires.
+ * @param {{ root: string, overrideArgv?: string[] }} opts
  */
 export function analyzeMutantsScope({ root, overrideArgv }) {
   const problems = []
@@ -1187,6 +1188,7 @@ function selfTestFilerPlumbing(ok, fail) {
 }
 
 function selfTestTwoPhase(ok, fail) {
+  /** @param {string[][]} invocations @param {Record<string, string>} [filters] */
   const kinds = (invocations, filters = { 'agaric-store': 'test(/op/)' }) => {
     const found = []
     checkTwoPhase({

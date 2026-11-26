@@ -40,6 +40,7 @@ if (!baseline || !(rewind >= 0) || !(rounds > 0) || binArgs.length === 0) {
   console.error('usage: measure-boot.mjs <baseline-dir> <rewind-ops> <rounds> NAME=binary ...')
   process.exit(2)
 }
+const baselineDir = baseline // the usage check above exits when it is missing
 const bins = binArgs.map((a) => a.split('=', 2))
 const device = fs.readFileSync(path.join(baseline, 'device-id'), 'utf8').trim()
 
@@ -130,13 +131,15 @@ async function boot(name, binary, round) {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `measure-boot-${name}-`))
   const vault = path.join(run, 'vault')
   // A baseline that has booted carries its log, whose milestones would be read first.
-  fs.cpSync(baseline, vault, {
+  fs.cpSync(baselineDir, vault, {
     recursive: true,
-    filter: (src) => src !== path.join(baseline, 'logs'),
+    filter: (src) => src !== path.join(baselineDir, 'logs'),
   })
   if (rewind > 0) {
     const db = new DatabaseSync(path.join(vault, 'notes.db'))
-    const { top } = db.prepare('SELECT max(seq) AS top FROM op_log WHERE device_id = ?').get(device)
+    const { top } = /** @type {{top: number}} */ (
+      db.prepare('SELECT max(seq) AS top FROM op_log WHERE device_id = ?').get(device)
+    )
     db.prepare(
       'UPDATE materializer_apply_cursor SET materialized_through_seq = ? WHERE id = 1',
     ).run(top - rewind)
@@ -149,6 +152,7 @@ async function boot(name, binary, round) {
   }
   fs.symlinkSync(vault, path.join(run, 'xdg-data', 'com.agaric.app'))
 
+  /** @type {NodeJS.ProcessEnv} */
   const env = {
     ...process.env,
     AGARIC_DATA_DIR: vault,
@@ -160,8 +164,8 @@ async function boot(name, binary, round) {
     GDK_BACKEND: 'x11',
     XDG_SESSION_TYPE: 'x11',
   }
-  delete env.WAYLAND_DISPLAY
-  delete env.WAYLAND_SOCKET
+  delete env['WAYLAND_DISPLAY']
+  delete env['WAYLAND_SOCKET']
   const execFile = path.join(run, 'exec-ms')
   const busConfig = path.join(run, 'session-bus.conf')
   fs.writeFileSync(busConfig, BUS_CONFIG)
@@ -216,11 +220,13 @@ async function boot(name, binary, round) {
   }
   // Each milestone's step is the time since the milestone logged just before it.
   const ordered = MILESTONES.filter((m) => found[m.key]).toSorted(
-    (a, b) => found[a.key].at - found[b.key].at,
+    (a, b) => (found[a.key]?.at ?? 0) - (found[b.key]?.at ?? 0),
   )
   result.steps = {}
   for (let i = 1; i < ordered.length; i++) {
-    const [prev, cur] = [ordered[i - 1].key, ordered[i].key]
+    // `i` is within `ordered`, so both entries exist.
+    const prev = /** @type {{key: string}} */ (ordered[i - 1]).key
+    const cur = /** @type {{key: string}} */ (ordered[i]).key
     result.steps[`${prev}->${cur}`] = found[cur].at - found[prev].at
   }
   console.log(JSON.stringify(result))

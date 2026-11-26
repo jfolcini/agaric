@@ -136,17 +136,22 @@ export class Unverifiable extends Error {}
  */
 const NDK_HOST_TAGS = ['linux-x86_64', 'darwin-x86_64', 'darwin-arm64']
 
+/**
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {string}
+ */
 export function findReadelf(env = process.env) {
+  const ndkHome = env['NDK_HOME']
   const candidates = [
-    env.READELF,
+    env['READELF'],
     'readelf',
     'llvm-readelf',
-    ...(env.NDK_HOME
+    ...(ndkHome
       ? NDK_HOST_TAGS.map((host) =>
-          join(env.NDK_HOME, `toolchains/llvm/prebuilt/${host}/bin/llvm-readelf`),
+          join(ndkHome, `toolchains/llvm/prebuilt/${host}/bin/llvm-readelf`),
         )
       : []),
-  ].filter(Boolean)
+  ].flatMap((candidate) => (candidate ? [candidate] : []))
   for (const bin of candidates) {
     const probe = spawnSync(bin, ['--version'], { encoding: 'utf8' })
     if (!probe.error && probe.status === 0) return bin
@@ -189,7 +194,7 @@ export function parseLoadAlignments(out, label) {
         `${label}: unrecognised LOAD row shape from readelf, refusing to guess:\n  ${line.trim()}`,
       )
     }
-    aligns.push(Number.parseInt(m.groups.align, 16))
+    aligns.push(Number.parseInt(/** @type {string} */ (m.groups['align']), 16))
   }
   if (aligns.length === 0) {
     throw new Unverifiable(
@@ -213,7 +218,8 @@ export function parseLoadAlignments(out, label) {
  *   Defaults to `false`: a call site that forgets the flag then UNDER-claims
  *   ("we cannot say which build step owns this") rather than misdirecting the
  *   reader to a build script that never linked the library.
- * @returns {{label: string, aligns: number[], bad: {index: number, align: number}[], own: boolean}}
+ * @returns {{label: string, aligns: number[], bad: {index: number, align: number}[], own: boolean,
+ *   zipOffset?: number, zipMisaligned?: boolean}}
  */
 export function checkElfFile(path, label, readelfBin, { own = false } = {}) {
   if (!existsSync(path)) {
@@ -257,7 +263,7 @@ const CRC_TABLE = (() => {
 
 export function crc32(buf) {
   let c = -1
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
+  for (let i = 0; i < buf.length; i++) c = (CRC_TABLE[(c ^ buf[i]) & 0xff] ?? 0) ^ (c >>> 8)
   return (c ^ -1) >>> 0
 }
 
@@ -560,7 +566,7 @@ if (isMainModule) {
     // caller is never told a library is misaligned on the strength of a bug
     // in this file.
     console.error(
-      `check-android-so-alignment: COULD NOT VERIFY — the guard itself failed:\n${err.stack ?? err}`,
+      `check-android-so-alignment: COULD NOT VERIFY — the guard itself failed:\n${(err instanceof Error ? err.stack : undefined) ?? String(err)}`,
     )
     process.exit(EXIT_UNVERIFIED)
   }

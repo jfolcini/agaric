@@ -7,6 +7,7 @@ const NOW = Date.parse('2026-09-11T10:00:00Z')
 
 // `gh run list --json databaseId,status,conclusion,createdAt,url` rows;
 // `orderedRuns` sorts by `createdAt` newest-first regardless of input order.
+/** @param {string | null} [conclusion] */
 function run(databaseId, minutesAgo, status, conclusion = null) {
   return {
     databaseId,

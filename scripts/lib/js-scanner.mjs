@@ -481,6 +481,16 @@ function regexAllowedAfter(prev, src, slashIdx) {
 // ─── the tokenizer ──────────────────────────────────────────────────
 
 /**
+ * A token as `tokenize` below describes it.
+ *
+ * @typedef {{ start: number, end: number, propertyName?: boolean, controlHead?: boolean,
+ *   blockClose?: boolean } & (
+ *   | { kind: 'ws' | 'comment' | 'string' | 'template' | 'regex' | 'number', value?: undefined }
+ *   | { kind: 'ident' | 'punct', value: string }
+ * )} Token
+ */
+
+/**
  * Lex `src[from … to)` into tokens `{ kind, start, end, value? }` where
  * `kind` is one of `ws`, `comment`, `string`, `template`, `regex`,
  * `number`, `ident`, `punct`. `value` carries the text for `ident` and
@@ -495,6 +505,10 @@ function regexAllowedAfter(prev, src, slashIdx) {
  *
  * Throws `ScanError` on undecidable input — see the header's fail-closed
  * policy.
+ *
+ * @param {string} src
+ * @param {{ from?: number, to?: number, initialPrev?: Token | null }} [range]
+ * @returns {Generator<Token, void, undefined>}
  */
 // oxlint-disable-next-line eslint/complexity -- a hand-written lexer; one state machine reads best whole
 export function* tokenize(src, { from = 0, to = src.length, initialPrev = null } = {}) {
@@ -691,6 +705,7 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       value = c
       i += 1
     }
+    /** @type {Token} */
     const tok = { kind: 'punct', value, start, end: i }
 
     // ── TS return-type annotations ────────────────────────────────────
@@ -1056,6 +1071,10 @@ export function findStatementEnd(src, from) {
  */
 // oxlint-disable-next-line eslint/complexity -- one token state machine whose rules share its state
 export function findStatementEndDetailed(src, from) {
+  /**
+   * @param {number | null} end
+   * @param {'unbalanced' | 'ambiguous-angle-line-end' | 'dangling-operator' | null} [reason]
+   */
   const R = (end, reason = null) => ({ end, reason })
   let depth = 0
   // Generic type arguments. Without this, the depth-0 comma branch below
@@ -1067,7 +1086,9 @@ export function findStatementEndDetailed(src, from) {
   // chosen corner.
   let angleDepth = 0
   let suppressedComma = false
+  /** @type {number | null} */
   let lastSignificantEnd = null
+  /** @type {Token | null} */
   let lastSignificantTok = null
   let sawNewlineSinceLastToken = false
 
@@ -1492,7 +1513,7 @@ function runSelfTest() {
     const closes = [...tokenize(src)].filter((t) => t.kind === 'punct' && t.value === '}')
     check(
       'the return-type context does not leak onto the next object literal',
-      closes.length === 2 && closes[0].blockClose === true && closes[1].blockClose === false,
+      closes.length === 2 && closes[0]?.blockClose === true && closes[1]?.blockClose === false,
       JSON.stringify(closes.map((t) => t.blockClose)),
     )
   }
@@ -1595,7 +1616,7 @@ function runSelfTest() {
     const leakedClose = [...tokenize(leaked)].findLast((t) => t.kind === 'punct' && t.value === '}')
     check(
       'a bodiless signature does not leave the return-type context set past its `}`',
-      leakedClose.blockClose === false,
+      leakedClose?.blockClose === false,
       `blockClose=${leakedClose?.blockClose}`,
     )
     // The other arm, and the one the audit found nothing pinning: a bracket
@@ -1618,7 +1639,7 @@ function runSelfTest() {
       const last = [...tokenize(src)].findLast((t) => t.kind === 'punct' && t.value === '}')
       check(
         `a closer ending ${label} does not turn the next \`{\` into a block`,
-        last.blockClose === false,
+        last?.blockClose === false,
         `blockClose=${last?.blockClose}`,
       )
     }
@@ -1647,7 +1668,7 @@ function runSelfTest() {
       const closes = [...tokenize(src)].filter((t) => t.kind === 'punct' && t.value === '}')
       check(
         `the body brace of ${label} consumes the annotation (paren-free body)`,
-        closes[0].blockClose === true && closes.at(-1).blockClose === false,
+        closes[0]?.blockClose === true && closes.at(-1)?.blockClose === false,
         JSON.stringify(closes.map((t) => t.blockClose)),
       )
     }
@@ -1682,21 +1703,21 @@ function runSelfTest() {
       'a `;` ends a bodiless signature, so the next object literal stays one',
       [...tokenize('declare function f(): void;\nexport default { a: 1 }\n')].findLast(
         (t) => t.kind === 'punct' && t.value === '}',
-      ).blockClose === false,
+      )?.blockClose === false,
       'see source',
     )
     check(
       'a `,` ends a member signature, so the next type literal stays one',
       [...tokenize('interface I { a(): void, b: { c: number } }')].find(
         (t) => t.kind === 'punct' && t.value === '}',
-      ).blockClose === false,
+      )?.blockClose === false,
       'see source',
     )
     check(
       'an `=>` ends an arrow return type, so the next object literal stays one',
       [...tokenize('const f = (): number => x + 1\nexport default { a: 1 }\n')].findLast(
         (t) => t.kind === 'punct' && t.value === '}',
-      ).blockClose === false,
+      )?.blockClose === false,
       'see source',
     )
     // `(` and `)` are in that set as a PAIR and cannot be pinned apart: any
@@ -1707,7 +1728,7 @@ function runSelfTest() {
       'a call after a bodiless signature ends the annotation',
       [...tokenize('declare function f(): void\ng(1)\nexport default { a: 1 }\n')].findLast(
         (t) => t.kind === 'punct' && t.value === '}',
-      ).blockClose === false,
+      )?.blockClose === false,
       'see source',
     )
     // `=` is also in that set and has NO falsifying input: reaching it needs
@@ -1746,12 +1767,12 @@ function runSelfTest() {
     kinds('const y = 1.5.toFixed(2)').join(' '),
   )
 
-  for (const [expr, want] of [
+  for (const [expr, want] of /** @type {[string, string][]} */ ([
     ['const z = 1e-3', 'ident:const ident:z punct:= number'],
     ['const w = 0x1F', 'ident:const ident:w punct:= number'],
     ['const v = 1_000n', 'ident:const ident:v punct:= number'],
     ['const u = .5', 'ident:const ident:u punct:= number'],
-  ]) {
+  ])) {
     check(
       `\`${expr.slice(10)}\` still lexes as a single number`,
       kinds(expr).join(' ') === want,
@@ -1828,6 +1849,7 @@ function runSelfTest() {
   // ── fail-closed cases ──────────────────────────────────────────────
 
   {
+    /** @type {unknown} */
     let threw = null
     try {
       drain(tokenize('const x = a++\n/re/.test(s)'))
@@ -1842,6 +1864,7 @@ function runSelfTest() {
   }
 
   {
+    /** @type {unknown} */
     let threw = null
     try {
       drain(tokenize("const s = 'never closed\nconst t = 2"))
@@ -1856,6 +1879,7 @@ function runSelfTest() {
   }
 
   {
+    /** @type {unknown} */
     let threw = null
     try {
       drain(tokenize('const s = `never closed'))
@@ -2231,14 +2255,14 @@ function runSelfTest() {
     // `blankTemplateKeepingInterpolations`) always passes a `to` sitting on a
     // `}`, which completes none of these forms — so this was unreachable via
     // an invariant of the CALLER, with nothing in the tokenizer pinning it.
-    for (const [src, to, label] of [
+    for (const [src, to, label] of /** @type {[string, number, string][]} */ ([
       ['a=>b', 2, 'a two-character punctuator straddling `to`'],
       ['a/*b*/c', 5, 'a block comment whose `*/` straddles `to`'],
       ['a?.b', 2, 'optional chaining straddling `to`'],
       // The `//` line-comment path is deliberately absent: it bounds itself
       // with its own `while (i < to)` loop, so no `to` can make it over-run
       // and an assertion for it could not fail either way.
-    ]) {
+    ])) {
       const ends = [...tokenize(src, { from: 0, to })].map((t) => t.end)
       check(
         `tokenize honours \`to\` for ${label}`,
@@ -2265,10 +2289,10 @@ function runSelfTest() {
   // JSX-valued const into the following statement; treating it as complete
   // truncates `a >\n b`, which is the fail-open this scanner exists to
   // close. Neither guess is defensible, so both refuse.
-  for (const [src, label] of [
+  for (const [src, label] of /** @type {[string, string][]} */ ([
     ['const El = <div>x</div>\nconst next = 1\n', 'a JSX-valued initializer'],
     ['const x = a >\n  b\nconst next = 1\n', 'a dangling relational operator'],
-  ]) {
+  ])) {
     const at = src.indexOf('=') + 1
     check(
       `${label} ending a line in \`>\` is refused (null), not guessed`,
@@ -2368,7 +2392,9 @@ function runSelfTest() {
   {
     // The real-source shape that forced degradation over a throw.
     const src = '<span className="x">path:Journal/*</span>\nconst after = 1\n'
+    /** @type {string | null} */
     let threw = null
+    /** @type {string | null} */
     let stripped = null
     try {
       stripped = stripComments(src)

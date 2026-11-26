@@ -83,7 +83,7 @@ function freePort() {
     const server = createServer()
     server.once('error', fail)
     server.listen(0, () => {
-      const { port } = server.address()
+      const { port } = /** @type {import('node:net').AddressInfo} */ (server.address())
       server.close(() => done(port))
     })
   })
@@ -148,7 +148,7 @@ function stop(child) {
   try {
     process.kill(-child.pid, 'SIGTERM')
   } catch (err) {
-    if (err.code !== 'ESRCH') throw err
+    if (/** @type {NodeJS.ErrnoException} */ (err).code !== 'ESRCH') throw err
   }
 }
 
@@ -178,8 +178,11 @@ function readShots(dir) {
  * Runs in the page: decode the two PNGs, count the pixels that differ by more
  * than anti-aliasing does, and return WebP copies plus a diff (the after shot
  * faded, changed pixels red).
+ *
+ * @param {{ before: string | null, after: string | null }} shots
  */
 async function compareInPage({ before, after }) {
+  /** @param {string | null} b64 */
   const load = async (b64) => {
     if (!b64) return null
     const img = new Image()
@@ -188,13 +191,26 @@ async function compareInPage({ before, after }) {
     const canvas = document.createElement('canvas')
     canvas.width = img.naturalWidth
     canvas.height = img.naturalHeight
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const ctx = /** @type {CanvasRenderingContext2D} */ (
+      canvas.getContext('2d', { willReadFrequently: true })
+    )
     ctx.drawImage(img, 0, 0)
     return { canvas, ctx }
   }
+  /** @param {HTMLCanvasElement} canvas */
   const webp = (canvas) => canvas.toDataURL('image/webp', 0.82).split(',')[1]
   const a = await load(before)
   const b = await load(after)
+  /**
+   * @type {{
+   *   ratio: number | null,
+   *   before: string | null | undefined,
+   *   after: string | null | undefined,
+   *   diff: string | null | undefined,
+   *   box: { top: number, bottom: number, left: number, right: number } | null,
+   *   sizes: number[][] | null,
+   * }}
+   */
   const result = {
     ratio: null,
     before: a && webp(a.canvas),
@@ -216,13 +232,15 @@ async function compareInPage({ before, after }) {
   const pa = a.ctx.getImageData(0, 0, width, height).data
   const pb = b.ctx.getImageData(0, 0, width, height).data
   const out = b.ctx.createImageData(width, height)
+  /** @param {Uint8ClampedArray} data @param {number} i */
+  const at = (data, i) => data[i] ?? 0
   let changed = 0
   const box = { top: height, bottom: 0, left: width, right: 0 }
   for (let i = 0; i < pb.length; i += 4) {
     const delta = Math.max(
-      Math.abs(pa[i] - pb[i]),
-      Math.abs(pa[i + 1] - pb[i + 1]),
-      Math.abs(pa[i + 2] - pb[i + 2]),
+      Math.abs(at(pa, i) - at(pb, i)),
+      Math.abs(at(pa, i + 1) - at(pb, i + 1)),
+      Math.abs(at(pa, i + 2) - at(pb, i + 2)),
     )
     if (delta > 24) {
       changed++
@@ -234,7 +252,7 @@ async function compareInPage({ before, after }) {
       box.right = Math.max(box.right, x + 1)
       out.data.set([230, 30, 40, 255], i)
     } else {
-      const grey = (pb[i] + pb[i + 1] + pb[i + 2]) / 3
+      const grey = (at(pb, i) + at(pb, i + 1) + at(pb, i + 2)) / 3
       const faded = 255 - (255 - grey) * 0.25
       out.data.set([faded, faded, faded, 255], i)
     }
@@ -315,7 +333,7 @@ async function writeReport(out, hasBase, notes) {
     else if (!hasBase) status = 'shot'
     else if (!b?.png) status = 'new'
     else if (!a?.png) status = 'gone'
-    else status = cmp.ratio > 0 ? 'changed' : 'same'
+    else status = (cmp.ratio ?? 0) > 0 ? 'changed' : 'same'
     const stem = `${set}--${scene}--${name}`
     const img = {}
     for (const kind of ['before', 'after', 'diff']) {

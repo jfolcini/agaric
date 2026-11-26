@@ -75,7 +75,7 @@ for (const file of files) {
   // Migration filename convention: NNNN_*.sql
   const match = name.match(/^(\d+)_/)
   if (match) {
-    const n = parseInt(match[1], 10)
+    const n = parseInt(match[1] ?? '', 10)
     if (n < FIRST_STRICT_MIGRATION) continue
   }
 

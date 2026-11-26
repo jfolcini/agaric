@@ -77,8 +77,8 @@ export function justificationOf(reason) {
 
 /** Numeric comparison of dotted versions; prerelease tags are ignored. */
 export function compareVersions(a, b) {
-  const pa = String(a).split(/[-+]/)[0].split('.').map(Number)
-  const pb = String(b).split(/[-+]/)[0].split('.').map(Number)
+  const pa = String(a).split(/[-+]/)[0]?.split('.').map(Number) ?? []
+  const pb = String(b).split(/[-+]/)[0]?.split('.').map(Number) ?? []
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0)
     if (d !== 0) return Math.sign(d)
@@ -173,7 +173,8 @@ export async function osvFetch(id, { fetchImpl = fetch, attempts = 4, delayMs = 
     try {
       res = await fetchImpl(`https://api.osv.dev/v1/vulns/${id}`)
     } catch (e) {
-      if (attempt >= attempts) throw new Error(`OSV ${id}: ${e.message}`, { cause: e })
+      if (attempt >= attempts)
+        throw new Error(`OSV ${id}: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
     }
     if (res?.ok) return res.json()
     if (res && res.status !== 429 && res.status < 500)

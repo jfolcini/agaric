@@ -293,7 +293,7 @@ function restoreProvides(statement, target, scratch, requiredColumns) {
     // unparseable pairing as unproven rather than guessing at it.
     if (bindings.length !== named.length) return false
     return requiredColumns.every((column) =>
-      isValueBearingSource(bindings[named.indexOf(column)].source),
+      isValueBearingSource(bindings[named.indexOf(column)]?.source ?? ''),
     )
   }
   const projection = selectProjection(statement, scratch)
@@ -329,7 +329,7 @@ function findAllMigrationFiles() {
   return readdirSync(MIGRATIONS_DIR)
     .filter((name) => /^\d+_.*\.sql$/.test(name))
     .map((name) => ({ name, number: migrationNumber(name) }))
-    .toSorted((a, b) => a.number - b.number)
+    .toSorted((a, b) => (a.number ?? 0) - (b.number ?? 0))
 }
 
 /** Split `text` on top-level occurrences of `sep`, ignoring ones nested inside parens. */
@@ -557,6 +557,7 @@ function validateFutureSpacesRebuild(statements, dropIndex, renameIndex, schema,
   const registry = findSnapshot(statements, 'spaces', dropIndex, registryColumns)
   // Scan every covering candidate, not just the first: a `SELECT * FROM blocks`
   // bulk copy into the replacement table also "provides" both names (#3438).
+  /** @type {{ table: string, index: number } | null} */
   let members = null
   for (const candidate of snapshotCandidates(statements, 'blocks', dropIndex, [
     'block_id',
@@ -680,7 +681,7 @@ function violationsFor(name, sql) {
 function documentedRecipe() {
   const markdown = readFileSync(MIGRATIONS_AGENTS_MD, 'utf8')
   const blocks = [...markdown.matchAll(/```sql\n([\s\S]*?)```/g)]
-    .map((match) => match[1])
+    .map((match) => /** @type {string} */ (match[1]))
     .filter((block) => /^\s*DROP TABLE blocks;/m.test(block))
   if (blocks.length !== 1) {
     throw new Error(
@@ -689,7 +690,7 @@ function documentedRecipe() {
         `cross-check the documented recipe`,
     )
   }
-  return blocks[0]
+  return /** @type {string} */ (blocks[0])
 }
 
 /** Placeholder for the Rust pin's schema-derived `_new_blocks` DDL. */
@@ -720,13 +721,11 @@ function executableRecipePin() {
         'the guard can no longer cross-check the executable recipe pin against AGENTS.md',
     )
   }
-  return (
-    literal[1]
-      // Rust line continuations: `\n\` + newline + indentation.
-      .replace(/\\n\\\s*/g, '\n')
-      .replaceAll('\\n', '\n')
-      .replace('{create_new_blocks}', NEW_BLOCKS_DDL_STUB)
-  )
+  return /** @type {string} */ (literal[1])
+    // Rust line continuations: `\n\` + newline + indentation.
+    .replace(/\\n\\\s*/g, '\n')
+    .replaceAll('\\n', '\n')
+    .replace('{create_new_blocks}', NEW_BLOCKS_DDL_STUB)
 }
 
 function runSelfTest() {
@@ -788,7 +787,7 @@ function runSelfTest() {
       assertion()
       console.log(`  ✓ ${label}`)
     } catch (error) {
-      console.error(`  ✗ ${label}: ${error.message}`)
+      console.error(`  ✗ ${label}: ${error instanceof Error ? error.message : String(error)}`)
       failed = true
     }
   }

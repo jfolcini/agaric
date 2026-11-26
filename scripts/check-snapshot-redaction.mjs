@@ -174,7 +174,7 @@ function deriveRustSourceRoots() {
   const section = nextSection === null ? rest : rest.slice(0, nextSection.index)
   const members = /\bmembers\s*=\s*\[([^\]]*)\]/.exec(section)
   if (members === null) derivationFailure('no `members` key in [workspace]')
-  const names = [...members[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+  const names = [...(members[1] ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1])
   if (names.length === 0) derivationFailure('the `members` list is empty')
 
   const roots = []
@@ -201,12 +201,14 @@ function deriveRustSourceRoots() {
   return roots
 }
 
+/** @type {string[] | null} */
 let RUST_SOURCE_ROOTS = null
 function getRustSourceRoots() {
   RUST_SOURCE_ROOTS ??= deriveRustSourceRoots()
   return RUST_SOURCE_ROOTS
 }
 
+/** @type {string | null} */
 let RUST_SOURCE_BLOB = null
 function getRustSourceBlob() {
   if (RUST_SOURCE_BLOB !== null) return RUST_SOURCE_BLOB
@@ -285,7 +287,7 @@ for (const snap of snapFiles) {
   const lines = src.split('\n')
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
+    const line = lines[i] ?? ''
 
     // ULID candidates.
     for (const m of line.matchAll(ULID_RE)) {

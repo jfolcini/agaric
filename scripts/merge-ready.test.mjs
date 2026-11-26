@@ -50,7 +50,7 @@ function run(change, args = ['6820']) {
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: `${dir}:${process.env.PATH}`,
+        PATH: `${dir}:${process.env['PATH']}`,
         ROUTES_FILE: join(dir, 'routes.json'),
       },
     })
@@ -390,6 +390,7 @@ void test('main CI: no completed run at all fails', () => {
 })
 
 void test('fail closed: an endpoint that errors fails its check and never reads as nothing wrong', () => {
+  /** @type {[string, string, string][]} */
   const cases = [
     [ROUTE.checks, 'validate / validate-all: check runs', 'could not be read'],
     [ROUTE.reviews, 'review', 'could not be read'],

@@ -88,6 +88,10 @@ import { MODULE_NAMES, MODULES } from '../stryker.modules.mjs'
 // tens of minutes. Raise it only with numbers.
 export const DEFAULT_MAX_MODULES = 4
 
+// Matches the default sort's UTF-16 code-unit order; `localeCompare` would reorder paths.
+/** @param {string} a @param {string} b */
+const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+
 /**
  * Pure selection. `changedFiles` are repo-relative paths exactly as
  * `git diff --name-only` prints them, or `git diff --numstat` triples — the
@@ -109,7 +113,7 @@ export function selectModules({ changedFiles, modules = MODULES, max = DEFAULT_M
   }
 
   // Deterministic within each tier; the tiers themselves carry the priority.
-  const ordered = [...srcHits.toSorted(), ...testHits.toSorted()]
+  const ordered = [...srcHits.toSorted(byCodeUnit), ...testHits.toSorted(byCodeUnit)]
   const selected = ordered.slice(0, max)
   const skipped = ordered.slice(max)
 
@@ -174,7 +178,7 @@ export function parseChangedEntry(raw) {
   // and the surrounding directories are shared. Taking everything after the
   // last ` => ` is right for the first form and drops the shared prefix on the
   // second, which is how a renamed enrolled module would stop being selected.
-  const raw3 = numstat[3].trim()
+  const raw3 = /** @type {string} */ (numstat[3]).trim()
   const BRACED = /\{[^{}]*? => ([^{}]*?)\}/g
   const dest = BRACED.test(raw3)
     ? raw3.replaceAll(BRACED, '$1').replaceAll('//', '/')
@@ -217,9 +221,9 @@ export function diffCoverage({ changedFiles, selected, modules = MODULES }) {
     rows.some((r) => r.lines === null) ? null : rows.reduce((a, r) => a + r.lines, 0)
   const sourceRows = [...mutated, ...unmutated]
   return {
-    mutatedFiles: mutated.map((r) => r.path).toSorted(),
-    unmutatedFiles: unmutated.map((r) => r.path).toSorted(),
-    excludedFiles: excluded.map((r) => r.path).toSorted(),
+    mutatedFiles: mutated.map((r) => r.path).toSorted(byCodeUnit),
+    unmutatedFiles: unmutated.map((r) => r.path).toSorted(byCodeUnit),
+    excludedFiles: excluded.map((r) => r.path).toSorted(byCodeUnit),
     sourceFiles: sourceRows.length,
     mutatedLines: sum(mutated),
     unmutatedLines: sum(unmutated),
@@ -348,7 +352,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`select-mutation-modules: ${err.message}`)
+    console.error(`select-mutation-modules: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
 
@@ -362,7 +366,7 @@ function main(argv) {
   // nothing could ever read, under a step nothing could reference. Harmless in
   // effect, but it makes the output file a misleading record of what the job
   // decided, and the decision belongs to the `select` step alone.
-  const out = args.markdown ? null : process.env.GITHUB_OUTPUT
+  const out = args.markdown ? null : process.env['GITHUB_OUTPUT']
   if (out) {
     // Space-separated so the workflow can pass it straight to
     // `scripts/run-mutation.mjs`, which takes module names as argv.

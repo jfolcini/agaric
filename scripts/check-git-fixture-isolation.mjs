@@ -546,7 +546,9 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`check-git-fixture-isolation: ${err.message}`)
+    console.error(
+      `check-git-fixture-isolation: ${err instanceof Error ? err.message : String(err)}`,
+    )
     process.exit(1)
   }
 }

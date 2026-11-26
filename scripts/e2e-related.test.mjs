@@ -94,7 +94,7 @@ function scanSpecs() {
       const source = readFileSync(join(ROOT, file), 'utf8')
       const { program, errors } = parseSync(file, source, { lang: 'ts' })
       if (errors.length > 0) {
-        problems.push(`${file}: cannot parse: ${errors[0].message}`)
+        problems.push(`${file}: cannot parse: ${errors[0]?.message}`)
         continue
       }
       const titles = topLevelTitles(program, lane.callee)
@@ -119,6 +119,7 @@ function scanSpecs() {
 // The spec files each lane's printed command names; `ALL` for a whole lane.
 const select = (paths) => selectWith(['--stdin'], { input: paths.join('\n') })
 
+/** @param {string[]} args @param {{ input?: string, cwd?: string, env?: NodeJS.ProcessEnv }} [opts] */
 function selectWith(args, { input, cwd = ROOT, env = process.env } = {}) {
   const res = spawnSync('bash', [SCRIPT, ...args], { input, cwd, env, encoding: 'utf8' })
   assert.equal(res.status, 0, res.stderr)
@@ -138,7 +139,7 @@ const tagged = (dir, area) =>
   specs
     .filter((s) => s.file.startsWith(`${dir}/`) && s.areas.has(area))
     .map((s) => s.file)
-    .toSorted()
+    .toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
 void test('every spec in both lanes ends its top-level titles with known @area tags', () => {
   assert.deepEqual(problems, [])
@@ -242,7 +243,7 @@ function runWith(paths, { npxStatus = 0 } = {}) {
     const res = spawnSync('bash', [SCRIPT, '--stdin', '--run'], {
       input: paths.join('\n'),
       cwd: ROOT,
-      env: { ...process.env, PATH: `${root}:${process.env.PATH}`, PW_PORT: '' },
+      env: { ...process.env, PATH: `${root}:${process.env['PATH']}`, PW_PORT: '' },
       encoding: 'utf8',
     })
     let calls = []

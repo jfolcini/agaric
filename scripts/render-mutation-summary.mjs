@@ -55,6 +55,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
 import { frontendKey, parseAcceptedFile } from './lib/mutation-accepted.mjs'
 
 export const DEFAULT_REPORTS_DIR = 'reports/mutation'
@@ -62,8 +63,18 @@ const DEFAULT_TITLE = '## StrykerJS mutation testing (frontend, #886)'
 const DEFAULT_ACCEPTED_PATH = resolve(import.meta.dirname, '..', 'mutation-accepted.tsv')
 
 /**
+ * @typedef {{ file: string, line: number | string, mutator: string }} Survivor
+ * @typedef {{ killed: number, timeout: number, survived: number, noCov: number,
+ *   errors: number, accepted: number }} Counts
+ * @typedef {{ mod: string, state: 'ok', counts: Counts, score: number, survivors: Survivor[] }} OkRow
+ * @typedef {{ mod: string, state: 'no report' | 'unreadable', survivors: Survivor[],
+ *   error?: string, counts?: undefined, score?: undefined }} NoDataRow
+ */
+
+/**
  * Reads one module's `mutation.json` into counts plus a survivor list.
  * Returns a row whose `state` is `'ok'`, `'no report'` or `'unreadable'`.
+ * @returns {OkRow | NoDataRow}
  */
 function readModule(reportsDir, mod, accepted) {
   const jsonPath = join(reportsDir, mod, 'mutation.json')
@@ -73,10 +84,11 @@ function readModule(reportsDir, mod, accepted) {
   try {
     report = JSON.parse(readFileSync(jsonPath, 'utf8'))
   } catch (err) {
-    return { mod, state: 'unreadable', survivors: [], error: err.message }
+    return { mod, state: 'unreadable', survivors: [], error: errorMessage(err) }
   }
 
   const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0, accepted: 0 }
+  /** @type {Survivor[]} */
   const survivors = []
   for (const [file, entry] of Object.entries(report.files ?? {})) {
     const lines = typeof entry?.source === 'string' ? entry.source.split('\n') : []
@@ -170,7 +182,7 @@ export function renderMutationSummary({
     try {
       accepted = parseAcceptedFile(readFileSync(acceptedPath, 'utf8'), acceptedPath)
     } catch (err) {
-      acceptedError = err.message
+      acceptedError = errorMessage(err)
     }
     const rows = analyzeReportTree(reportsDir, accepted)
     if (rows === null) {
@@ -239,7 +251,7 @@ export function renderMutationSummary({
     for (const r of withSurvivors) {
       lines.push(
         '<details>',
-        `<summary><strong>${r.mod}</strong> — ${r.survivors.length} survivor(s), ${r.score.toFixed(1)}% covered score</summary>`,
+        `<summary><strong>${r.mod}</strong> — ${r.survivors.length} survivor(s), ${(r.score ?? 0).toFixed(1)}% covered score</summary>`,
         '',
         '```',
         ...r.survivors.map((s) => `${s.file}:${s.line} [${s.mutator}]`),
@@ -258,7 +270,7 @@ export function renderMutationSummary({
     // leaving the run with no summary at all.
     lines.push(
       '',
-      `_Summary rendering aborted: ${err && err.message}. The lane-liveness guard step is the authoritative signal._`,
+      `_Summary rendering aborted: ${errorMessage(err)}. The lane-liveness guard step is the authoritative signal._`,
     )
   }
 

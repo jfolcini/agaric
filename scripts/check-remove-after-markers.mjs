@@ -262,6 +262,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
 import {
   initScratchRepo,
   scrubbedGitEnv,
@@ -441,18 +442,19 @@ function findMarkers(files, bodies) {
     // blockquote nesting depth — while inside one, so a later fence-shaped
     // line can be judged against what actually opened it rather than
     // toggled unconditionally.
+    /** @type {{ char: string, len: number, quoteDepth: number } | null} */
     let fence = null
     const lines = body.split('\n')
     lines.forEach((line, idx) => {
       if (isMarkdown) {
         const fenceMatch = MD_FENCE_RE.exec(line)
         if (fenceMatch) {
-          const quoteDepth = (fenceMatch[1].match(/>/g) ?? []).length
-          const delim = fenceMatch[2]
+          const quoteDepth = ((fenceMatch[1] ?? '').match(/>/g) ?? []).length
+          const delim = fenceMatch[2] ?? ''
           if (fence === null) {
-            fence = { char: delim[0], len: delim.length, quoteDepth }
+            fence = { char: delim.charAt(0), len: delim.length, quoteDepth }
           } else if (
-            delim[0] === fence.char &&
+            delim.charAt(0) === fence.char &&
             delim.length >= fence.len &&
             quoteDepth === fence.quoteDepth &&
             MD_FENCE_BARE_RE.test(line)
@@ -491,7 +493,7 @@ function check() {
       repoRoot: REPO_ROOT,
     })
   } catch (err) {
-    process.stderr.write(`check-remove-after-markers: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-remove-after-markers: invocation error: ${errorMessage(err)}\n`)
     return 2
   }
   if (process.argv.includes('--print-source')) {
@@ -502,7 +504,7 @@ function check() {
   try {
     entries = listTrackedEntries(REPO_ROOT, { env: GIT_ENV })
   } catch (err) {
-    process.stderr.write(`check-remove-after-markers: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-remove-after-markers: invocation error: ${errorMessage(err)}\n`)
     return 2
   }
   if (entries === null) {
@@ -533,7 +535,7 @@ function check() {
       env: GIT_ENV,
     }).get(VERSION_MANIFEST)
   } catch (err) {
-    process.stderr.write(`check-remove-after-markers: invocation error: ${err.message}\n`)
+    process.stderr.write(`check-remove-after-markers: invocation error: ${errorMessage(err)}\n`)
     return 2
   }
   if (manifestBody === undefined) {
@@ -548,7 +550,7 @@ function check() {
     currentVersionStr = parsed.version
   } catch (err) {
     process.stderr.write(
-      `check-remove-after-markers: invocation error: ${VERSION_MANIFEST} is not valid JSON: ${err.message}\n`,
+      `check-remove-after-markers: invocation error: ${VERSION_MANIFEST} is not valid JSON: ${errorMessage(err)}\n`,
     )
     return 2
   }
@@ -738,6 +740,7 @@ function nearMissFormScenarios(root) {
   return withScrubbedProcessEnv(root, () => {
     const results = []
     const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    /** @type {[string, string][]} */
     const cases = [
       ['pre-release', '// REMOVE AFTER 1.2.3-beta\nexport const x = 1\n'],
       ['fourth component', '// REMOVE AFTER 1.2.3.4\nexport const x = 1\n'],
@@ -1621,7 +1624,7 @@ function docsLintWiringScenario() {
   try {
     text = readFileSync(workflowPath, 'utf8')
   } catch (err) {
-    record('_validate.yml is readable', false, `${workflowPath}: ${err.message}`)
+    record('_validate.yml is readable', false, `${workflowPath}: ${errorMessage(err)}`)
     return results
   }
   const jobBody = extractJobBlock(text, 'docs-lint')

@@ -125,9 +125,16 @@ export function isRatchetFile(path) {
   return RATCHET_PATTERNS.some((re) => re.test(path))
 }
 
-/** The changed paths of one `gh pr list --json files` entry. */
+/** @typedef {{ number?: number | string, title?: string | null, files?: (string | { path?: string } | null)[] }} PrEntry */
+
+/**
+ * The changed paths of one `gh pr list --json files` entry.
+ * @param {PrEntry | null | undefined} pr
+ */
 function pathsOf(pr) {
-  return (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean)
+  return /** @type {string[]} */ (
+    (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean)
+  )
 }
 
 /**
@@ -139,7 +146,7 @@ function pathsOf(pr) {
  * `null` when it could not be computed, which renders as "not computed"
  * rather than as "nothing diverged".
  *
- * @param {{pr: number, prs: object[], divergedPaths?: string[] | null}} opts
+ * @param {{pr: number, prs: PrEntry[], divergedPaths?: string[] | null}} opts
  */
 export function computeOverlap({ pr, prs, divergedPaths = null }) {
   const self = prs.find((p) => Number(p?.number) === Number(pr)) ?? null
@@ -438,13 +445,14 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`pr-file-overlap: ${err.message}`)
+    console.error(`pr-file-overlap: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
 
   // A missing/unreadable divergence list stays `null` — "not computed" — and
   // is NEVER coerced to `[]`, which would render as "nothing diverged" and be
   // the exact conflation this file argues against.
+  /** @type {string[] | null} */
   let divergedPaths = null
   if (args.divergedFrom !== null) {
     try {
@@ -461,7 +469,7 @@ function main(argv) {
   console.log(JSON.stringify(result, null, 2))
   if (args.commentBody) writeFileSync(args.commentBody, `${renderComment(result)}\n`, 'utf8')
 
-  const out = process.env.GITHUB_OUTPUT
+  const out = process.env['GITHUB_OUTPUT']
   if (out) appendFileSync(out, renderGithubOutput(result), 'utf8')
 }
 

@@ -35,10 +35,12 @@ export function unusedFromReports(cargoDenyStderr, npmAuditJson) {
 /** Parse the `list` output, accepting nothing but advisory ids. */
 export function parseUnused(text) {
   const parsed = JSON.parse(text)
-  for (const [key, pattern] of [
+  /** @type {[string, RegExp][]} */
+  const checks = [
     ['cargo', /^RUSTSEC-\d{4}-\d{4}$/],
     ['npm', ID],
-  ]) {
+  ]
+  for (const [key, pattern] of checks) {
     if (!Array.isArray(parsed[key])) throw new Error(`${key} is not a list`)
     for (const id of parsed[key]) {
       if (typeof id !== 'string' || !pattern.test(id))
@@ -76,7 +78,9 @@ function run(cmd, args, cwd) {
   return r
 }
 
-function main([cmd, arg]) {
+/** @param {string[]} argv */
+function main(argv) {
+  const [cmd, arg] = argv
   if (cmd === 'list' && arg) {
     const cargo = arg.startsWith('dependabot/cargo/')
       ? run('cargo', ['deny', '--format', 'json', 'check', 'advisories'], join(ROOT, 'src-tauri'))

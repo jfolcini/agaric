@@ -51,7 +51,7 @@ function main(argv) {
     try {
       names = groupModules(argv[1])
     } catch (err) {
-      console.error(err.message)
+      console.error(err instanceof Error ? err.message : String(err))
       process.exit(2)
     }
   }

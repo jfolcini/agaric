@@ -48,7 +48,7 @@ const SETTLE_MS = 5000
 const KEYCODE_ESCAPE = '111'
 
 function resolveAdb() {
-  const home = process.env.ANDROID_HOME
+  const home = process.env['ANDROID_HOME']
   const sdkAdb = home ? join(home, 'platform-tools', 'adb') : ''
   return sdkAdb && existsSync(sdkAdb) ? sdkAdb : 'adb'
 }
@@ -60,7 +60,8 @@ function adb(args, { allowFail = false } = {}) {
     return execFileSync(ADB, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   } catch (err) {
     if (allowFail) return ''
-    throw new Error(`adb ${args.join(' ')} failed: ${err.stderr || err.message}`, { cause: err })
+    const { stderr, message } = /** @type {Error & { stderr?: string }} */ (err)
+    throw new Error(`adb ${args.join(' ')} failed: ${stderr || message}`, { cause: err })
   }
 }
 
@@ -87,7 +88,9 @@ function dumpNodes() {
   const nodes = []
   for (const [tag] of xml.matchAll(/<node\b[^>]*>/g)) {
     const attr = (name) => tag.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? ''
-    const b = tag.match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/)
+    const b = /** @type {[string, string, string, string, string] | null} */ (
+      tag.match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/)
+    )
     if (attr('package') !== PKG || !b || +b[3] <= +b[1] || +b[4] <= +b[2]) continue
     nodes.push({
       label: (attr('text') || attr('content-desc')).trim(),

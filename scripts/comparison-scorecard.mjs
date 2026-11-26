@@ -17,6 +17,10 @@ const END = '<!-- scorecard:end -->'
 
 // A status is read by its first word; a qualifier after it ("Better vs core",
 // "Done (opt-in)") narrows the claim without moving the row to another bucket.
+/** @typedef {'ahead' | 'level' | 'behind' | 'unranked'} Bucket */
+/** @typedef {{ title: string } & Record<Bucket, number>} Section */
+
+/** @type {Record<string, Bucket>} */
 const BUCKET_OF = {
   better: 'ahead',
   done: 'level',
@@ -26,6 +30,7 @@ const BUCKET_OF = {
   design: 'unranked',
   unverified: 'unranked',
 }
+/** @type {Bucket[]} */
 const BUCKETS = ['ahead', 'level', 'behind', 'unranked']
 
 function cellsOf(line) {
@@ -37,7 +42,9 @@ function cellsOf(line) {
 }
 
 function countSections(text, file) {
+  /** @type {Section[]} */
   const sections = []
+  /** @type {Section | null} */
   let current = null
   for (const line of text.split('\n')) {
     if (line.startsWith('## ')) {

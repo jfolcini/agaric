@@ -54,6 +54,7 @@ const MISSING_PACKAGE_ERRORS = [
  * `errors` to stderr and exits 1 (as apt's `E:` lines reach it, `stdio:
  * inherit`) unless `succeeds`. `indexes` maps a component to the release-pocket
  * Packages index files `apt-get indextargets` lists for it.
+ * @param {{ errors?: string[], succeeds?: boolean, indexes?: Record<string, string[]> }} opts
  */
 function runScript({
   errors = [],
@@ -106,7 +107,7 @@ function runScript({
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: `${dir}:${process.env.PATH ?? ''}`,
+        PATH: `${dir}:${process.env['PATH'] ?? ''}`,
         APT_CACHE_HIT: '',
         RUNNER_TEMP: dir,
         GITHUB_STEP_SUMMARY: join(dir, 'summary'),

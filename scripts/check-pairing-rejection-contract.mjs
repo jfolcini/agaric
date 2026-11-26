@@ -300,7 +300,9 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`check-pairing-rejection-contract: ${err.message}`)
+    console.error(
+      `check-pairing-rejection-contract: ${err instanceof Error ? err.message : String(err)}`,
+    )
     process.exit(1)
   }
 }

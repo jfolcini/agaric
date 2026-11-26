@@ -57,6 +57,7 @@ const PRUNE_DIRS = ['docs/session-log/']
 // repo-relative path -> [extractor, base directory the entries are relative to].
 // `base` is declared, not guessed: one of these is relative to `src-tauri/`,
 // and guessing would make a dangling entry look resolvable.
+/** @type {Record<string, [string, string]>} */
 export const DATA_SOURCES = {
   // JSON array of objects; the `fn` field is `<path>::<symbol>`.
   'scripts/bulk-equivalence-baseline.json': ['json:fn::', '.'],
@@ -92,6 +93,7 @@ export const NO_PATHS = {
 
 // [repo-relative guard file, constant name, base directory]. Each is asserted
 // below to still find its constant and still yield entries.
+/** @type {[string, string, string][]} */
 export const EMBEDDED_SOURCES = [
   // Sanctioned raw-transaction sites. Mixed exact paths and `**` globs.
   ['scripts/check-raw-tx.mjs', 'ALLOWLIST_GLOBS', '.'],
@@ -184,6 +186,11 @@ const KIND_ORDER = ['dangling', 'unknown', 'vanished', 'unread', 'discovery']
 
 const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
+/** @param {unknown} err */
+function errText(err) {
+  return err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+}
+
 /** Strict UTF-8: invalid bytes throw instead of becoming U+FFFD. */
 function readText(path) {
   return UTF8.decode(readFileSync(path))
@@ -220,6 +227,7 @@ function stringsInLiteral(text, name) {
   let started = false
   let quote = ''
   let buf = ''
+  /** @type {string | null} */
   let pending = null
   const pairs = []
   while (i < text.length) {
@@ -300,14 +308,17 @@ function entriesOf(kind, path) {
     .filter((ln) => ln && !ln.startsWith('#'))
   if (kind === 'text:count-path') {
     return lines.flatMap((ln) => {
-      const m = /^\S+\s+(\S[\s\S]*)$/.exec(ln)
-      return m ? [m[1].trim()] : []
+      const entryPath = /^\S+\s+(\S[\s\S]*)$/.exec(ln)?.[1]
+      return entryPath === undefined ? [] : [entryPath.trim()]
     })
   }
   return lines
 }
 
-/** Push a finding per dangling entry. Returns [nDangling, nGlobs]. */
+/**
+ * Push a finding per dangling entry. Returns [nDangling, nGlobs].
+ * @returns {[number, number]}
+ */
 function checkEntries(label, entries, base, findings) {
   const root = base === '.' ? REPO_ROOT : join(REPO_ROOT, base)
   let dangling = 0
@@ -364,8 +375,8 @@ function discover(findings) {
   // Both declaration tables get the existence check: a NO_PATHS entry whose
   // file is gone is a stale path in a hand-maintained set too.
   const declared = [
-    ...Object.keys(DATA_SOURCES).map((rel) => [rel, 'DATA_SOURCES']),
-    ...Object.keys(NO_PATHS).map((rel) => [rel, 'NO_PATHS']),
+    ...Object.keys(DATA_SOURCES).map((rel) => /** @type {const} */ ([rel, 'DATA_SOURCES'])),
+    ...Object.keys(NO_PATHS).map((rel) => /** @type {const} */ ([rel, 'NO_PATHS'])),
   ]
   for (const [rel, table] of declared) {
     if (!isFile(join(REPO_ROOT, rel))) {
@@ -376,17 +387,14 @@ function discover(findings) {
 
 function checkDataSources(findings, perSource) {
   for (const rel of Object.keys(DATA_SOURCES).toSorted()) {
-    const [kind, base] = DATA_SOURCES[rel]
+    const [kind, base] = /** @type {[string, string]} */ (DATA_SOURCES[rel])
     const src = join(REPO_ROOT, rel)
     if (!isFile(src)) continue
     let entries
     try {
       entries = entriesOf(kind, src)
     } catch (err) {
-      findings.push([
-        'unread',
-        `${rel}: could not be read as \`${kind}\` (${err.name}: ${err.message})`,
-      ])
+      findings.push(['unread', `${rel}: could not be read as \`${kind}\` (${errText(err)})`])
       continue
     }
     if (entries.length === 0) {
@@ -415,10 +423,7 @@ function checkEmbeddedSources(findings, perSource) {
       const text = `\n${readText(src)}`.replaceAll(/\r\n?/g, '\n')
       entries = stringsInLiteral(text, name)
     } catch (err) {
-      findings.push([
-        'unread',
-        `${rel}: could not be read for \`${name}\` (${err.name}: ${err.message})`,
-      ])
+      findings.push(['unread', `${rel}: could not be read for \`${name}\` (${errText(err)})`])
       continue
     }
     if (!entries || entries.length === 0) {

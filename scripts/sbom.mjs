@@ -145,6 +145,7 @@ export function augmentSPDX(doc, version, components) {
   const known = new Set(
     (doc.packages ?? []).flatMap((p) => (p.externalRefs ?? []).map((r) => r.referenceLocator)),
   )
+  /** @type {{ name: string, SPDXID: string, versionInfo: string, downloadLocation: string, externalRefs: object[], primaryPackagePurpose?: string, checksums?: object[] }[]} */
   const packages = [
     {
       name: 'agaric',
@@ -164,6 +165,7 @@ export function augmentSPDX(doc, version, components) {
   ]
   for (const c of components) {
     if (known.has(c.purl)) continue
+    /** @type {(typeof packages)[number]} */
     const pkg = {
       name: c.name,
       SPDXID: spdxId(c),
@@ -246,7 +248,7 @@ if (isMainModule) {
   try {
     process.exit(main(process.argv.slice(2)))
   } catch (e) {
-    console.error(`sbom.mjs: ${e.message}`)
+    console.error(`sbom.mjs: ${e instanceof Error ? e.message : String(e)}`)
     process.exit(1)
   }
 }

@@ -312,7 +312,7 @@ async function main() {
     } catch (err) {
       // Logs expire; a job without one contributes no restores, and says so.
       process.stderr.write(
-        `no log for job ${job.id} (${job.name}): ${err.message.split('\n')[0]}\n`,
+        `no log for job ${job.id} (${job.name}): ${(err instanceof Error ? err.message : String(err)).split('\n')[0]}\n`,
       )
       return ''
     }
