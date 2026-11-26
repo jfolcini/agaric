@@ -17,6 +17,7 @@ import {
   focusBlockById,
   ipc,
   seedSearchBlocks,
+  selectEditorRange,
   submitSearch,
   test,
   waitForBoot,
@@ -212,6 +213,352 @@ test.describe('right-to-left text in a block @editor @pages', () => {
     await expectRight(block(ids.list), ARABIC)
     await expectRight(block(ids.table), ARABIC)
   })
+})
+
+const editorRoot = (page: Page) =>
+  page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+const pageBlockContent = (page: Page, id: string) =>
+  page.locator(`[data-testid="page-mode-editor"] [data-page-block-id="${id}"] .page-block-content`)
+
+async function toPageMode(page: Page): Promise<void> {
+  await page
+    .getByRole('radiogroup', { name: 'Editing mode' })
+    .getByRole('radio', { name: 'Page' })
+    .click()
+  await expect(
+    page.locator('[data-testid="page-mode-editor"] [data-page-block]').first(),
+  ).toBeVisible()
+}
+
+/**
+ * Run `check` on each block's content as each mode draws it: the static
+ * render, the block's own editor, and page mode's block.
+ */
+async function inEveryMode(
+  page: Page,
+  ids: string[],
+  check: (content: Locator, where: string, id: string) => Promise<void>,
+): Promise<void> {
+  for (const id of ids) await check(staticBlock(page, id), `static ${id}`, id)
+  for (const id of ids) {
+    await focusBlockById(page, id)
+    await check(editorRoot(page), `editor ${id}`, id)
+    await page.keyboard.press('Escape')
+  }
+  await toPageMode(page)
+  for (const id of ids) await check(pageBlockContent(page, id), `page mode ${id}`, id)
+}
+
+/**
+ * The caret in the focused editor, read once ProseMirror has taken the
+ * browser's selection, a frame after a key: the block it is in and its offset
+ * in its textblock of `size`.
+ */
+function caretAt(page: Page): Promise<{ row: string | null; offset: number; size: number }> {
+  return page.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    interface Resolved {
+      pos: number
+      start: () => number
+      parent: { content: { size: number } }
+    }
+    const root = document.activeElement?.closest('.ProseMirror') as
+      | (Element & {
+          editor: {
+            state: { selection: { from: number; $from: Resolved } }
+            view: { domAtPos: (pos: number) => { node: Node } }
+          }
+        })
+      | null
+    if (!root) return { row: null, offset: -1, size: -1 }
+    const { from, $from } = root.editor.state.selection
+    const dom = root.editor.view.domAtPos(from).node
+    const holder = (
+      dom.nodeType === Node.ELEMENT_NODE ? (dom as Element) : dom.parentElement
+    )?.closest('[data-page-block-id], [data-block-id]')
+    return {
+      row:
+        holder?.getAttribute('data-page-block-id') ?? holder?.getAttribute('data-block-id') ?? null,
+      offset: from - $from.start(),
+      size: $from.parent.content.size,
+    }
+  })
+}
+
+/** Press Home until the caret sits at its line's start: a click's caret can land after the key. */
+async function caretHome(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      await page.keyboard.press('Home')
+      return (await caretAt(page)).offset
+    })
+    .toBe(0)
+}
+
+const direction = (el: Locator) => el.evaluate((node) => getComputedStyle(node).direction)
+
+test.describe('a right-to-left block content follows its direction (#7040) @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the block, a list, a quote, a callout and a table mirror; code stays left to right', async ({
+    page,
+  }) => {
+    const ids = await seedBlocks(page, 'RTL chrome', {
+      chipFirst: `[[${SEED_IDS.PAGE_QUICK_NOTES}]] ${ARABIC}`,
+      list: `1. ${ARABIC}\n2. ${ARABIC}`,
+      quote: `> ${ARABIC}`,
+      callout: `> [!NOTE] عنوان\n> ${ARABIC}`,
+      table: `| عمود | قيمة |\n| --- | --- |\n| واحد | اثنان |`,
+      code: `${ARABIC}\n\n\`\`\`js\nconst x = 1\n\`\`\``,
+      numbered: ARABIC,
+      task: ARABIC,
+    })
+    await ipc(page, 'set_todo_state', { blockId: ids.task, state: 'TODO' })
+    await ipc(page, 'set_priority', { blockId: ids.task, level: '1' })
+    await ipc(page, 'set_property', {
+      blockId: ids.numbered,
+      key: 'listStyle',
+      value: { value_text: 'ordered' },
+    })
+    await open(page, 'RTL chrome')
+    await inEveryMode(page, Object.values(ids), async (content, where, id) => {
+      // An English chip first does not make an Arabic block left to right.
+      expect(await direction(content), where).toBe('rtl')
+      if (id === ids.list) {
+        const li = content.locator('li').first()
+        expect(await direction(li), `${where}: the item, so its marker reads 1. on the right`).toBe(
+          'rtl',
+        )
+        // The marker takes the room right of the text.
+        const room = await content
+          .locator(':is(ol, ul)')
+          .first()
+          .evaluate((list, text) => {
+            const walker = document.createTreeWalker(list, NodeFilter.SHOW_TEXT)
+            let node = walker.nextNode()
+            while (node !== null && !node.textContent?.includes(text)) node = walker.nextNode()
+            if (node === null) throw new Error('no item text')
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            return list.getBoundingClientRect().right - range.getBoundingClientRect().right
+          }, ARABIC)
+        expect(room, `${where}: the marker's room`).toBeGreaterThan(8)
+      }
+      if (id === ids.quote || id === ids.callout) {
+        const bar = await content
+          .locator('blockquote')
+          .first()
+          .evaluate((q) => {
+            const style = getComputedStyle(q)
+            return [style.borderRightWidth, style.borderLeftWidth]
+          })
+        expect(bar, `${where}: the bar on the right`).toEqual(['3px', '0px'])
+      }
+      if (id === ids.callout) {
+        const icon = await content.evaluate((root) => {
+          const static_ = root.querySelector('[data-testid="callout-block"] svg')
+          if (static_ !== null) {
+            const label = static_.nextElementSibling as Element
+            return static_.getBoundingClientRect().left > label.getBoundingClientRect().left
+          }
+          return (
+            getComputedStyle(root.querySelector('blockquote') as Element, '::after').right ===
+            '16px'
+          )
+        })
+        expect(icon, `${where}: the icon right of the label`).toBe(true)
+      }
+      if (id === ids.table) {
+        const [first, second] = await content
+          .locator('th')
+          .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().left))
+        expect(first, `${where}: the first column on the right`).toBeGreaterThan(second as number)
+      }
+      if (id === ids.code)
+        expect(await direction(content.locator('pre').first()), where).toBe('ltr')
+      if (id === ids.task) {
+        // The checkbox and the chips under the text stay left to right, on the left.
+        const block = content
+          .page()
+          .locator(
+            `[data-testid="sortable-block"][data-block-id="${id}"], [data-page-block-id="${id}"]`,
+          )
+        const badge = await block.locator('[data-testid="priority-badge"]').first().boundingBox()
+        if (badge === null) throw new Error(`${where}: no priority badge`)
+        expect(badge.x, `${where}: the priority badge on the left`).toBeLessThan(
+          await xOf(content, ARABIC),
+        )
+      }
+      if (id === ids.numbered) {
+        // A numbered block's marker leads its text from the right; page mode draws it beside the text.
+        const block = content.locator(
+          'xpath=ancestor-or-self::*[@data-block-id or @data-page-block-id][1]',
+        )
+        const marker = await block.locator('.list-marker').first().boundingBox()
+        if (marker === null) throw new Error(`${where}: no marker`)
+        expect(marker.x, `${where}: the marker right of the text`).toBeGreaterThan(
+          await xOf(content, ARABIC),
+        )
+      }
+    })
+  })
+
+  test('an English block keeps every one of them left to right', async ({ page }) => {
+    const ids = await seedBlocks(page, 'LTR chrome', {
+      list: '1. first\n2. second',
+      quote: '> A quoted line',
+      table: '| One | Two |\n| --- | --- |\n| a | b |',
+    })
+    await open(page, 'LTR chrome')
+    await inEveryMode(page, Object.values(ids), async (content, where, id) => {
+      expect(await direction(content), where).toBe('ltr')
+      if (id === ids.list) expect(await direction(content.locator('li').first()), where).toBe('ltr')
+      if (id === ids.quote) {
+        const bar = await content
+          .locator('blockquote')
+          .first()
+          .evaluate((q) => {
+            const style = getComputedStyle(q)
+            return [style.borderLeftWidth, style.borderRightWidth]
+          })
+        expect(bar, where).toEqual(['3px', '0px'])
+      }
+      if (id === ids.table) {
+        const [first, second] = await content
+          .locator('th')
+          .evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().left))
+        expect(first, where).toBeLessThan(second as number)
+      }
+    })
+  })
+
+  test("an Arabic table's handles sit at its start and end, and Alt+Shift+ArrowLeft moves a column left", async ({
+    page,
+  }) => {
+    const ids = await seedBlocks(page, 'RTL table handles', {
+      table: '| عمود | قيمة |\n| --- | --- |\n| واحد | اثنان |',
+    })
+    await open(page, 'RTL table handles')
+    const editor = await focusBlockById(page, ids.table)
+    await editor.locator('td').filter({ hasText: 'واحد' }).click()
+    const table = await editor.locator('table').boundingBox()
+    if (table === null) throw new Error('no table box')
+    const centre = async (testId: string) => {
+      const box = await page.getByTestId(testId).boundingBox()
+      if (box === null) throw new Error(`no ${testId}`)
+      return box.x + box.width / 2
+    }
+    const middle = table.x + table.width / 2
+    expect(
+      await centre('table-row-handle'),
+      'the row handle at the start, on the right',
+    ).toBeGreaterThan(middle)
+    expect(await centre('table-add-column'), 'Add column after the last, on the left').toBeLessThan(
+      middle,
+    )
+    await page.keyboard.press('Alt+Shift+ArrowLeft')
+    await expect(editor.locator('th').first(), 'the column moved left, to the end').toHaveText(
+      'قيمة',
+    )
+    await page.keyboard.press('Alt+Shift+ArrowRight')
+    await expect(editor.locator('th').first(), 'and back right, to the start').toHaveText('عمود')
+
+    // Dragged onto the column after it, it lands past that one: on its left.
+    const handle = await page.getByTestId('table-column-handle').boundingBox()
+    const target = await editor.locator('th').nth(1).boundingBox()
+    if (handle === null || target === null) throw new Error('no layout box')
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 })
+    const line = await page.getByTestId('table-drop-line').boundingBox()
+    if (line === null) throw new Error('no drop line')
+    expect(Math.abs(line.x - target.x), 'the drop line on its left edge').toBeLessThanOrEqual(3)
+    await page.mouse.up()
+    await expect(editor.locator('th').first()).toHaveText('قيمة')
+  })
+
+  test('a click left of a closing marker in Hebrew types outside the bold, on its right half inside', async ({
+    page,
+  }) => {
+    const ids = await seedBlocks(page, 'RTL marker click', { text: 'כתוב **מודגש** סוף' })
+    await open(page, 'RTL marker click')
+    const editor = await focusBlockById(page, ids.text)
+    const closing = page.getByTestId('md-reveal-marker').nth(1)
+    // Past the closing marker is its left side in right-to-left text.
+    await selectEditorRange(page, 7, 7)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+    let box = await closing.boundingBox()
+    if (!box) throw new Error('the closing marker has no layout box')
+    await page.mouse.click(box.x - 1, box.y + box.height / 2)
+    await page.keyboard.type('X')
+    await expect(editor.locator('strong')).toHaveText('מודגש')
+
+    await selectEditorRange(page, 7, 7)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+    box = await closing.boundingBox()
+    if (!box) throw new Error('the closing marker has no layout box')
+    await page.mouse.click(box.x + box.width - 1, box.y + box.height / 2)
+    await page.keyboard.type('Y')
+    await expect(editor.locator('strong')).toHaveText('מודגשY')
+  })
+
+  test('in page mode ArrowRight from a Hebrew block into the bold end of the one above lands outside the bold', async ({
+    page,
+  }) => {
+    const ids = await seedBlocks(page, 'RTL into bold', { above: 'טקסט **מודגש**', below: 'שלום' })
+    await open(page, 'RTL into bold')
+    await toPageMode(page)
+    await pageBlockContent(page, ids.below).locator('p').click()
+    await caretHome(page)
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.type('X')
+    await expect(pageBlockContent(page, ids.above).locator('strong')).toHaveText('מודגש')
+    await expect(pageBlockContent(page, ids.above)).toContainText('X')
+  })
+
+  for (const [what, text, mode] of [
+    ['bold', 'טקסט **מודגש** כאן', 'blocks'],
+    ['a page link', `שלום [[${SEED_IDS.PAGE_QUICK_NOTES}]] עולם`, 'blocks'],
+    ['bold', 'טקסט **מודגש** כאן', 'page'],
+    ['a page link', `שלום [[${SEED_IDS.PAGE_QUICK_NOTES}]] עולם`, 'page'],
+    ['English bold, with ArrowRight', 'text **bold** here', 'blocks'],
+    ['English bold, with ArrowRight', 'text **bold** here', 'page'],
+  ] as const) {
+    test(`the arrows walk through ${what} and out of the block, in ${mode} mode`, async ({
+      page,
+    }) => {
+      const rtl = !what.startsWith('English')
+      const key = rtl ? 'ArrowLeft' : 'ArrowRight'
+      const ids = await seedBlocks(page, `Walk ${what} ${mode}`, { text, after: 'After' })
+      await open(page, `Walk ${what} ${mode}`)
+      const enter = async () => {
+        if (mode === 'blocks') await focusBlockById(page, ids.text)
+        else await pageBlockContent(page, ids.text).locator('p').click()
+      }
+      if (mode === 'page') await toPageMode(page)
+      await enter()
+      const at = () => caretAt(page)
+      await caretHome(page)
+      const seen: number[] = []
+      let last = await at()
+      const { size } = last
+      for (let i = 0; i < 40 && last.row === ids.text; i++) {
+        // Past the end, the next block.
+        await page.keyboard.press(key)
+        const next = await at()
+        if (next.row === ids.text) {
+          // In a one-direction line the way the arrow points is forward in the text.
+          expect(next.offset, `press ${i}`).toBeGreaterThanOrEqual(last.offset)
+          seen.push(next.offset)
+        }
+        last = next
+      }
+      expect(Math.max(...seen), 'the caret reached the end of the text').toBe(size)
+      expect(last.row, 'past the end, the next block').toBe(ids.after)
+    })
+  }
 })
 
 test.describe('right-to-left text: arrows and the Markdown source @editor @pages @markdown', () => {

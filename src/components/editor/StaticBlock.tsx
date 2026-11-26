@@ -179,6 +179,8 @@ function StaticBlockInner({
         )}
         data-testid="block-static"
         data-block-id={blockId}
+        // The content runs and mirrors in the direction of its first strong letter (#7040).
+        dir="auto"
         onMouseDown={onMouseDown}
         onClick={handleOuterClick}
         onDragOver={onDragOver}

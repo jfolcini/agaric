@@ -70,6 +70,7 @@ export function renderTagRef(
         clickable && 'cursor-pointer',
       )}
       data-testid="tag-ref-chip"
+      dir="auto"
       {...deletedProps}
       {...interactiveProps}
     >

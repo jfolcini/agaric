@@ -133,6 +133,8 @@ export const BlockLink = Node.create<BlockLinkOptions>({
     return ({ node, editor, getPos }) => {
       const dom = document.createElement('span')
       dom.setAttribute('contenteditable', 'false')
+      // Its own direction, so its title does not decide the block's (#7040).
+      dom.dir = 'auto'
       let currentId = node.attrs['id'] as string
       const isBroken = (id: string) => options.resolveStatus?.(id) === 'deleted'
       let brokenChip: ReactRenderer<unknown, ComponentProps<typeof BrokenBlockLink>> | null = null

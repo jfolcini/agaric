@@ -303,6 +303,8 @@ class Control<P extends BlockInlineControlsProps | PageBlockMetadataProps | Stat
     this.editor = editor
     this.element.contentEditable = 'false'
     this.element.className = className
+    // Left to right, and its words left out of the block's direction (#7040).
+    this.element.dir = 'ltr'
   }
 
   /** What the empty box says to assistive technology, until the component says it. */
@@ -392,6 +394,9 @@ class PageBlockView implements NodeView {
     for (const [key, value] of Object.entries(attributes)) this.dom.setAttribute(key, String(value))
     // The chevron shows on hovering the block, as block mode's row (`COLLAPSE_TOGGLE_HIDDEN_AT_REST`).
     this.dom.classList.add('group')
+    // The block's text and its list marker run and mirror in the direction of
+    // the text's first strong letter; the controls carry their own (#7040).
+    this.dom.dir = 'auto'
     this.contentDOM.className = 'page-block-content'
     this.dom.append(this.contentDOM)
     this.gutter.show(foldIn(decorations))

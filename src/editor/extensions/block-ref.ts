@@ -103,6 +103,8 @@ export const BlockRef = Node.create<BlockRefOptions>({
       const label = document.createElement('span')
       label.className = 'block-ref-chip-label'
       dom.append(label)
+      // Its own direction, so its text does not decide the block's (#7040).
+      dom.dir = 'auto'
       let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {

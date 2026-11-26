@@ -2,7 +2,6 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import type {
   ParagraphNode,
   TableCellAlign,
@@ -76,9 +75,9 @@ export function renderTableBlock(
               key={cellKey}
               scope="col"
               className={cn(
-                'border-b border-border/60 bg-muted/60 px-3 py-1.5 text-sm font-medium align-top not-last:border-r',
-                'first:rounded-tl-[calc(var(--radius-md)-1px)] last:rounded-tr-[calc(var(--radius-md)-1px)]',
-                ALIGN_CLASS[align ?? 'left'],
+                'border-b border-border/60 bg-muted/60 px-3 py-1.5 text-sm font-medium align-top not-last:border-e',
+                'first:rounded-ss-[calc(var(--radius-md)-1px)] last:rounded-se-[calc(var(--radius-md)-1px)]',
+                align ? ALIGN_CLASS[align] : 'text-start',
               )}
             >
               {children}
@@ -87,7 +86,7 @@ export function renderTableBlock(
             <td
               key={cellKey}
               className={cn(
-                'border-border/60 px-3 py-1.5 text-sm align-top not-last:border-r [tr:not(:first-child)>&]:border-t',
+                'border-border/60 px-3 py-1.5 text-sm align-top not-last:border-e [tr:not(:first-child)>&]:border-t',
                 align && ALIGN_CLASS[align],
               )}
             >
@@ -106,7 +105,10 @@ export function renderTableBlock(
   const bodyRows = hasHeader ? rows.slice(1) : rows
 
   return (
-    <ScrollArea key={key} orientation="horizontal" className="my-1">
+    // Not `ScrollArea`: its root writes `dir="ltr"`, which would keep an Arabic
+    // table's columns left to right and out of the block's direction (#7040).
+    // The editor's own wrapper (`.tableWrapper`) is a plain scroller too.
+    <div key={key} className="my-1 overflow-x-auto">
       <table
         data-testid="rich-table"
         className="w-auto border-separate border-spacing-0 rounded-md border border-border"
@@ -116,6 +118,6 @@ export function renderTableBlock(
         )}
         <tbody>{bodyRows.map((row, r) => renderRow(row, `${key}-r-${r}`))}</tbody>
       </table>
-    </ScrollArea>
+    </div>
   )
 }

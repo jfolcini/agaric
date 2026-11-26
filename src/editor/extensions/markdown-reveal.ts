@@ -71,6 +71,7 @@ import {
   revealedMarkers,
   revealedRunsAt,
 } from '@/editor/revealed-markers'
+import { isRtlAt } from '@/editor/text-direction'
 import { isMarkdownRevealEnabled } from '@/lib/editor-preferences'
 
 const markdownRevealPluginKey = new PluginKey<DecorationSet>('markdownReveal')
@@ -120,6 +121,8 @@ function markerDom(text: string, kind = 'marker'): HTMLElement {
   // In-page find matches what the user reads in the note, not these markers.
   span.setAttribute('data-find-skip', '')
   span.textContent = text
+  // A callout's `[!NOTE]` reads left to right and does not decide the block's direction (#7040).
+  if (kind === 'syntax-marker') span.dir = 'ltr'
   return span
 }
 
@@ -237,12 +240,12 @@ function crossMarkerBeside(view: EditorView, side: 'before' | 'after'): boolean 
 }
 
 /**
- * ArrowLeft onto the edge of a run: land right of the markers there, the side
- * the caret came from. ProseMirror's default lands inside a run's end and
- * outside its start, which skips the marker's near side. ArrowRight needs no
- * help: the default is already the left side.
+ * The arrow back through the text onto the edge of a run: land past the
+ * markers there, on the side the caret came from. ProseMirror's default lands
+ * inside a run's end and outside its start, which skips the marker's near
+ * side. The arrow forward needs no help: the default is already the near side.
  */
-function arriveFromRight(view: EditorView): boolean {
+function arriveFromAfter(view: EditorView): boolean {
   const { state } = view
   const { selection, doc } = state
   if (!selection.empty || !isMarkdownRevealEnabled()) return false
@@ -288,10 +291,14 @@ function endPastClosingMarkers(view: EditorView): boolean {
  * the near side of the markers at the edge it enters, outside the formatting,
  * as a caret that walked there inside one block would be.
  */
-function enterTextblockOutsideMarkers(view: EditorView, dir: 1 | -1): boolean {
+function enterTextblockOutsideMarkers(
+  view: EditorView,
+  dir: 1 | -1,
+  side: 'left' | 'right',
+): boolean {
   const { selection, doc } = view.state
   if (!selection.empty || !isMarkdownRevealEnabled()) return false
-  if (!view.endOfTextblock(dir > 0 ? 'right' : 'left')) return false
+  if (!view.endOfTextblock(side)) return false
   const { $head } = selection
   const into = Selection.findFrom(doc.resolve(dir > 0 ? $head.after() : $head.before()), dir)
   // A rule or a chip on the way is the next place: the editor selects it.
@@ -299,6 +306,25 @@ function enterTextblockOutsideMarkers(view: EditorView, dir: 1 | -1): boolean {
   // The native arrow goes to the next block shown; landing in a hidden one would open it.
   if (isHiddenAt(view.state, into.head)) return false
   return landOutsideRuns(into.$head, dir > 0 ? 'from' : 'to', view)
+}
+
+/**
+ * ProseMirror steps over a chip or past a widget itself, the way it reads from
+ * the editor's root on Chromium. Page mode's root runs left to right, so in an
+ * Arabic or Hebrew block there it would step back, or stay put: step one place
+ * through the text in `dir` here instead, as it would (#7040).
+ */
+function stepInRtlText(view: EditorView, dir: 1 | -1): boolean {
+  const { selection, doc } = view.state
+  if (!selection.empty || getComputedStyle(view.dom).direction === 'rtl') return false
+  const { $head } = selection
+  const node = dir > 0 ? $head.nodeAfter : $head.nodeBefore
+  const widgetHere = markdownRevealPluginKey.getState(view.state)?.find($head.pos, $head.pos)
+  if ((node === null || node.isText) && !widgetHere?.length) return false
+  const target = $head.pos + dir * (node !== null && !node.isText ? node.nodeSize : 1)
+  if (target < $head.start() || target > $head.end()) return false
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, target)).scrollIntoView())
+  return true
 }
 
 /** Where a click at a position with markers puts the caret. */
@@ -327,19 +353,22 @@ function stopForClick(view: EditorView, event: MouseEvent): ClickedStop | null {
   // The drawn markers no longer match the state: a composition froze them, or
   // the editor is not focused and draws none.
   if (drawn.length !== markers.length) return null
-  const leftOfClick = drawn.map((el) => {
+  const rtl = isRtlAt(view, hit.pos)
+  // Before the click in the text: left of it, or right of it in right-to-left text.
+  const beforeClick = drawn.map((el) => {
     const box = el.getBoundingClientRect()
-    return (box.left + box.right) / 2 <= event.clientX
+    const centre = (box.left + box.right) / 2
+    return rtl ? centre >= event.clientX : centre <= event.clientX
   })
   let marks = view.state.doc.resolve(hit.pos).marks()
   let outsideHeading = false
   markers.forEach((m, i) => {
     if (m.kind === 'heading') {
-      outsideHeading = !leftOfClick[i]
+      outsideHeading = !beforeClick[i]
       return
     }
     // Before the caret: an opening marker whose mark typing carries, a closing one whose mark it does not.
-    const carries = m.role === 'open' ? leftOfClick[i] : !leftOfClick[i]
+    const carries = m.role === 'open' ? beforeClick[i] : !beforeClick[i]
     marks = carries ? m.run.mark.addToSet(marks) : m.run.mark.removeFromSet(marks)
   })
   return { pos: hit.pos, marks, outsideHeading }
@@ -459,14 +488,18 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
         if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
         if (event.key === 'Backspace') return deleteMarkerBeside(view, 'before')
         if (event.key === 'Delete') return deleteMarkerBeside(view, 'after')
-        if (event.key === 'ArrowLeft')
-          return (
-            crossMarkerBeside(view, 'before') ||
-            arriveFromRight(view) ||
-            enterTextblockOutsideMarkers(view, -1)
-          )
-        if (event.key === 'ArrowRight')
-          return crossMarkerBeside(view, 'after') || enterTextblockOutsideMarkers(view, 1)
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          const side = event.key === 'ArrowLeft' ? 'left' : 'right'
+          const rtl = isRtlAt(view, view.state.selection.head)
+          // Back through the text: ArrowLeft, or ArrowRight in right-to-left text.
+          const back = (side === 'left') !== rtl
+          const handled = back
+            ? crossMarkerBeside(view, 'before') ||
+              arriveFromAfter(view) ||
+              enterTextblockOutsideMarkers(view, -1, side)
+            : crossMarkerBeside(view, 'after') || enterTextblockOutsideMarkers(view, 1, side)
+          return handled || (rtl && stepInRtlText(view, back ? -1 : 1))
+        }
         if (event.key === 'End') return endPastClosingMarkers(view)
         return false
       },
