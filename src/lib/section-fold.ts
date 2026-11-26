@@ -10,6 +10,7 @@
 /** A page's rows, read by index: block mode's flat tree, page mode's document. */
 export interface Outline {
   readonly length: number
+  id: (index: number) => string
   depth: (index: number) => number
   /** A heading's level (1 to 6); null for any other row. */
   level: (index: number) => number | null
@@ -96,25 +97,34 @@ export function stepOver(
   return { end, to: unit }
 }
 
-/** The rows of `folded` whose folds hold the row at `target`, however far up, outermost first. */
-export function foldsOver(outline: Outline, target: number, folded: Iterable<number>): number[] {
-  const isFolded = new Set(folded)
-  if (isFolded.size === 0) return []
+/**
+ * The ids of `collapsed` whose folds hold the row `targetId`, however far up,
+ * outermost first; none where no row is `targetId`.
+ */
+export function foldsOver(
+  outline: Outline,
+  targetId: string,
+  collapsed: ReadonlySet<string>,
+): string[] {
+  if (collapsed.size === 0) return []
   // The folds open at the row read, innermost last: a fold ends no later than the one holding it.
   const open: number[] = []
-  for (let index = 0; index <= target; index += 1) {
+  for (let index = 0; index < outline.length; index += 1) {
     while (open.length > 0 && ends(outline, open.at(-1) as number, index)) open.pop()
-    if (index < target && isFolded.has(index)) open.push(index)
+    const id = outline.id(index)
+    if (id === targetId) return open.map((fold) => outline.id(fold))
+    if (collapsed.has(id)) open.push(index)
   }
-  return open
+  return []
 }
 
 /** A flat tree's rows as an outline. */
 export function outlineOf(
-  rows: readonly { depth: number; content?: string | null | undefined }[],
+  rows: readonly { id: string; depth: number; content?: string | null | undefined }[],
 ): Outline {
   return {
     length: rows.length,
+    id: (index) => (rows[index] as { id: string }).id,
     depth: (index) => (rows[index] as { depth: number }).depth,
     level: (index) => headingLevel(rows[index]?.content),
   }

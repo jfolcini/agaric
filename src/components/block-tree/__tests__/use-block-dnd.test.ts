@@ -1367,7 +1367,7 @@ describe('useBlockDnD', () => {
       // fires (reorder, not moveToParent).
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputeDropIndex.mockReturnValue(3)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1386,7 +1386,7 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
       })
 
-      expect(params.reorder).toHaveBeenCalledWith('A', 3)
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
       expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
@@ -1399,7 +1399,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputeDropIndex.mockReturnValue(5)
+      mockedComputeDropIndex.mockReturnValue(1)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1419,7 +1419,7 @@ describe('useBlockDnD', () => {
         'A',
       )
       // Same-parent sentinel drop → optimistic reorder by slot (R5 #404).
-      expect(params.reorder).toHaveBeenCalledWith('A', 5)
+      expect(params.reorder).toHaveBeenCalledWith('A', 1)
     })
   })
 
@@ -1888,7 +1888,7 @@ describe('useBlockDnD', () => {
         mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
         const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
         mockedGetProjection.mockReturnValue(projection)
-        mockedComputeDropIndex.mockReturnValue(2)
+        mockedComputeDropIndex.mockReturnValue(1)
         const params = multiDragParams()
         const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1899,7 +1899,7 @@ describe('useBlockDnD', () => {
           result.current.handleDragEnd(makeDragEndEvent('R1', 'X') as never)
         })
 
-        expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 2)
+        expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 1)
         const slotCall = mockedComputeDropIndex.mock.calls.at(-1) as [
           readonly FlatBlock[],
           ...unknown[],

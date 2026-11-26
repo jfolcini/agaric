@@ -4265,6 +4265,38 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
 // handleIndent / handleDedent (Ctrl+Shift+ArrowRight / ArrowLeft in block tree context)
 // =========================================================================
 
+describe('BlockTree moves over a folded heading (#7040)', () => {
+  it('announces a failed move when the batch move past a folded section fails', async () => {
+    const tree = [
+      makeBlock({ id: 'H', content: '## H' }),
+      makeBlock({ id: 'S', content: 'in h' }),
+      makeBlock({ id: 'N', content: '## N' }),
+    ]
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['H']))
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'N' })
+    stubBlockTree({ move_blocks_batch: () => Promise.reject(new Error('move failed')) })
+
+    renderBlockTree({ rootParentId: 'PAGE_1' })
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMoveUp']).toBeDefined()
+    })
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.['onMoveUp'] as () => void)?.()
+    })
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Move failed')
+    })
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('Block moved up')
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'move_blocks_batch',
+      expect.objectContaining({ blockIds: ['N'], newIndex: 0 }),
+    )
+  })
+})
+
 describe('BlockTree handleIndent / handleDedent', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()

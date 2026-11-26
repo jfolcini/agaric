@@ -99,6 +99,7 @@ function headingLevelOf(node: PMNode): number | null {
 function outlineOf(doc: PMNode): Outline {
   return {
     length: doc.childCount,
+    id: (index) => idOf(doc.child(index)),
     depth: (index) => depthOf(doc.child(index)),
     level: (index) => headingLevelOf(doc.child(index)),
   }
@@ -106,11 +107,7 @@ function outlineOf(doc: PMNode): Outline {
 
 /** The blocks of `collapsed` whose folds hold the block at `index`. */
 function collapsedAbove(doc: PMNode, index: number, collapsed: ReadonlySet<string>): Set<string> {
-  const folded: number[] = []
-  doc.forEach((node, _pos, i) => {
-    if (i < index && collapsed.has(idOf(node))) folded.push(i)
-  })
-  return new Set(foldsOver(outlineOf(doc), index, folded).map((i) => idOf(doc.child(i))))
+  return new Set(foldsOver(outlineOf(doc), idOf(doc.child(index)), collapsed))
 }
 
 /** What `collapsed`, less `revealed`, hides of `doc`, and each block's chevron. */

@@ -1075,8 +1075,7 @@ export function BlockTree({
       const move = foldedMove(id, direction)
       if (move === 'stay') return false
       if (move === null) return direction < 0 ? moveUp(id) : moveDown(id)
-      await moveBlocks(move.ids, move.parentId, move.index)
-      return true
+      return moveBlocks(move.ids, move.parentId, move.index)
     },
     [foldedMove, moveUp, moveDown, moveBlocks],
   )

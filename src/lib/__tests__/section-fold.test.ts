@@ -13,7 +13,7 @@ import {
 
 /** An outline from `[depth, content]` pairs. */
 const outline = (rows: [number, string][]) =>
-  outlineOf(rows.map(([depth, content]) => ({ depth, content })))
+  outlineOf(rows.map(([depth, content], i) => ({ id: `r${i}`, depth, content })))
 
 describe('headingLevel', () => {
   it('reads the level of the heading a block opens with', () => {
@@ -153,9 +153,10 @@ describe('foldsOver', () => {
       [0, '# Two'], // 3
       [0, 'b'], // 4
     ])
-    expect(foldsOver(page, 2, [0, 1, 3])).toEqual([0, 1])
-    expect(foldsOver(page, 4, [0, 1, 3])).toEqual([3])
-    expect(foldsOver(page, 3, [0, 1])).toEqual([])
+    expect(foldsOver(page, 'r2', new Set(['r0', 'r1', 'r3']))).toEqual(['r0', 'r1'])
+    expect(foldsOver(page, 'r4', new Set(['r0', 'r1', 'r3']))).toEqual(['r3'])
+    expect(foldsOver(page, 'r3', new Set(['r0', 'r1']))).toEqual([])
+    expect(foldsOver(page, 'gone', new Set(['r0']))).toEqual([])
   })
 })
 

@@ -752,7 +752,7 @@ export function createReducers({
 
     moveBlocks: async (ids: string[], newParentId: string | null, newIndex: number) => {
       const { rootParentId } = get()
-      if (ids.length === 0) return
+      if (ids.length === 0) return false
 
       // Move in document order, so the run keeps its order; drop ids that
       // vanished mid-gesture.
@@ -760,7 +760,7 @@ export function createReducers({
       const ordered = ids
         .filter((id) => order.has(id))
         .toSorted((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
-      if (ordered.length === 0) return
+      if (ordered.length === 0) return false
 
       try {
         // One IPC lands the run at consecutive slots in one transaction (#2274).
@@ -780,11 +780,13 @@ export function createReducers({
         })
         if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId, resp.op_refs)
+        return true
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
         notify.error(i18n.t('error.moveBlockFailed'))
         // No optimistic update and an all-or-nothing batch: nothing to roll
         // back, and restoring a snapshot would clobber concurrent writes.
+        return false
       }
     },
 

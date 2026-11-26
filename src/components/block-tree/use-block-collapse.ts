@@ -329,24 +329,11 @@ export function useBlockCollapse(
   const expandAncestors = useCallback((blockId: string) => {
     setRevealedIds((prev) => {
       const persisted = persistedCollapsedIdsRef.current
-      // Nothing saved as collapsed and nothing revealed — skip the O(n) map
-      // build entirely (this runs on every focus move).
+      // Nothing saved as collapsed and nothing revealed — skip the O(n) walk
+      // entirely (this runs on every focus move).
       if (persisted.size === 0) return prev.size === 0 ? prev : NO_REVEAL
-      const rows = blocksRef.current
-      const indexOf = new Map(rows.map((b, i) => [b.id, i]))
-      const target = indexOf.get(blockId)
-      const next = new Set<string>()
-      if (target !== undefined) {
-        const folded: number[] = []
-        for (const id of persisted) {
-          const index = indexOf.get(id)
-          if (index !== undefined) folded.push(index)
-        }
-        // #7040 — a collapsed heading hides its section too, not only its subtree.
-        for (const index of foldsOver(outlineOf(rows), target, folded)) {
-          next.add((rows[index] as FlatBlock).id)
-        }
-      }
+      // #7040 — a collapsed heading hides its section too, not only its subtree.
+      const next = new Set(foldsOver(outlineOf(blocksRef.current), blockId, persisted))
       if (sameIds(prev, next)) return prev
       return next.size === 0 ? NO_REVEAL : next
     })
