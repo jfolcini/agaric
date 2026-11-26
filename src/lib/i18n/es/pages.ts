@@ -91,6 +91,12 @@ export const pages: Record<string, string> = {
   'pageHeader.menuAddAlias': 'Añadir alias',
   'pageHeader.menuAddTag': 'Añadir etiqueta',
   'pageHeader.menuAddProperty': 'Añadir propiedad',
+  'pageHeader.sectionAdd': 'Añadir',
+  'pageHeader.sectionView': 'Ver',
+  'pageHeader.sectionTemplate': 'Plantilla',
+  'pageHeader.sectionEdit': 'Editar',
+  'pageHeader.exportMenu': 'Exportar',
+  'pageHeader.exportBack': 'Atrás',
   'templates.description':
     'Una plantilla es una página que puedes copiar en cualquier otra con /template. Los marcadores de abajo se rellenan al insertarla.',
   'templates.empty': 'Aún no hay plantillas. Marca una página como plantilla para verla aquí.',

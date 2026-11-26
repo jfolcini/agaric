@@ -19,7 +19,7 @@
  * `<select>` shim) so `userEvent.selectOptions()` works in jsdom.
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -321,15 +321,14 @@ describe('SpaceSwitcher', () => {
     expect(dot.style.backgroundColor).not.toContain('accent-emerald')
   })
 
-  it('falls back to var(--accent-current) when accent_color is null', async () => {
-    // Mirrors the SpaceAccentBadge fallback test — a synced peer with
-    // a null accent_color must still produce a non-blank dot.
+  it('falls back to the default accent when accent_color is null', async () => {
+    // A synced peer with a null accent_color must still produce a non-blank dot.
     seedSpaces([{ ...PERSONAL, accent_color: null }])
 
     render(<SpaceSwitcher />)
 
     const dot = (await screen.findByTestId('space-switcher-accent-dot')) as HTMLElement
-    expect(dot.style.backgroundColor).toContain('var(--accent-current')
+    expect(dot.style.backgroundColor).toContain('var(--accent-blue')
   })
 
   it('does NOT render the legacy "Space:" prefix in the trigger', async () => {
@@ -468,6 +467,19 @@ describe('SpaceSwitcher on a phone', () => {
     await user.click(screen.getByRole('button', { name: 'Work' }))
     expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it("gives each row its space's colour dot, an unset one the default the space takes", async () => {
+    const user = userEvent.setup()
+    seedSpaces([{ ...PERSONAL, accent_color: 'accent-emerald' }, WORK])
+    render(<SpaceSwitcher />)
+
+    await user.click(screen.getByRole('button', { name: /Switch space/ }))
+    const dot = async (name: string) =>
+      within(await screen.findByRole('button', { name })).getByTestId('space-option-dot')
+    expect((await dot('Personal')).style.backgroundColor).toContain('var(--accent-emerald')
+    // Not `--accent-current`: that is the active space's colour, Personal's here.
+    expect((await dot('Work')).style.backgroundColor).toContain('var(--accent-blue')
   })
 
   it('Manage spaces opens Settings › Spaces without switching', async () => {

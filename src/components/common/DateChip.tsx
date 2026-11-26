@@ -30,7 +30,11 @@ interface DateChipProps extends Omit<React.ComponentProps<'button'>, 'type'> {
   kind: DateKind
   /** The day, YYYY-MM-DD: the chip's text, and what colours a due date. */
   date?: string | undefined
-  /** Replaces the date as the chip's text (a count); name it with `aria-label`. */
+  /**
+   * Replaces the date as the chip's text (a count); name the button with
+   * `aria-label`. Without an `onClick` the chip is plain text and drops the
+   * other button props, `aria-label` included.
+   */
   children?: React.ReactNode
 }
 

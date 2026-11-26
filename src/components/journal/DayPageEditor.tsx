@@ -17,8 +17,8 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { EditModeItem } from '@/components/pages/EditModeItem'
 import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
-import { MENU_ITEM_CLASS } from '@/components/pages/PageHeaderMenu'
 import { Button } from '@/components/ui/button'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { MenuSheet } from '@/components/ui/menu-sheet'
 import { SheetTrigger } from '@/components/ui/sheet'
 import { ModeSwap } from '@/editor/page-mode/ModeSwap'
@@ -112,7 +112,7 @@ export function DayPageEditor({
               <div role="menu" aria-label={t('pageHeader.pageActions')}>
                 <EditModeItem
                   role="menuitem"
-                  className={MENU_ITEM_CLASS}
+                  className={menuRowVariants()}
                   mode={pageMode.mode}
                   blocked={pageMode.blocked}
                   onModeChange={(mode) => {
@@ -124,13 +124,16 @@ export function DayPageEditor({
                   <button
                     type="button"
                     role="menuitem"
-                    className={cn(MENU_ITEM_CLASS, 'text-destructive hover:bg-destructive/10')}
+                    className={cn(
+                      menuRowVariants(),
+                      'text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive',
+                    )}
                     onClick={() => {
                       deleteOnMenuClose.current = true
                       setMenuOpen(false)
                     }}
                   >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    <Trash2 aria-hidden="true" />
                     {t('pageHeader.deletePage')}
                   </button>
                 )}

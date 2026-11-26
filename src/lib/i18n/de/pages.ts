@@ -91,6 +91,12 @@ export const pages: Record<string, string> = {
   'pageHeader.menuAddAlias': 'Alias hinzufügen',
   'pageHeader.menuAddTag': 'Tag hinzufügen',
   'pageHeader.menuAddProperty': 'Eigenschaft hinzufügen',
+  'pageHeader.sectionAdd': 'Hinzufügen',
+  'pageHeader.sectionView': 'Ansicht',
+  'pageHeader.sectionTemplate': 'Vorlage',
+  'pageHeader.sectionEdit': 'Bearbeiten',
+  'pageHeader.exportMenu': 'Exportieren',
+  'pageHeader.exportBack': 'Zurück',
   'templates.description':
     'Eine Vorlage ist eine Seite, die du mit /template in jede andere Seite kopieren kannst. Die Platzhalter unten werden beim Einfügen ausgefüllt.',
   'templates.empty':

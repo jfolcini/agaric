@@ -6,12 +6,14 @@
  * presses never double-fire.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type React from 'react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
+import { renderCyclePriority, renderDateMenu } from '@/components/FormattingToolbar/MetadataGroup'
+import { createDateButtons } from '@/components/FormattingToolbar/toolbar-config'
 import { t } from '@/lib/i18n'
 import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
@@ -125,4 +127,75 @@ it('the inline button is an IconButton whose tooltip names it, with no shortcut'
   const tip = screen.getByTestId('tooltip-content')
   expect(tip).toHaveTextContent(t('toolbar.cyclePriority'))
   expect(tip.querySelector('kbd')).toBeNull()
+})
+
+describe('renderDateMenu', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const DATES = ['toolbar.insertDate', 'toolbar.setDueDate', 'toolbar.setScheduledDate']
+
+  function InlineDateMenu() {
+    const [open, setOpen] = useState(false)
+    return (
+      <div role="toolbar" aria-label={t('toolbar.formatting')}>
+        {renderDateMenu({
+          mode: 'inline',
+          t,
+          open,
+          setOpen,
+          dates: createDateButtons(),
+          onOverflowClose: vi.fn(),
+        })}
+      </div>
+    )
+  }
+
+  it('inline, one Date button opens the three dates, each with its name, and a row closes it', async () => {
+    const { container } = render(<InlineDateMenu />)
+    const date = screen.getByRole('button', { name: t('toolbar.date') })
+    expect(date).toHaveAttribute('aria-expanded', 'false')
+    for (const key of DATES) expect(screen.queryByRole('button', { name: t(key) })).toBeNull()
+
+    fireEvent.pointerDown(date, { button: 0 })
+    const menu = await screen.findByTestId('toolbar-date-menu')
+    expect(date).toHaveAttribute('aria-expanded', 'true')
+    for (const key of DATES) {
+      expect(within(menu).getByRole('button', { name: t(key) })).toHaveTextContent(t(key))
+    }
+    await waitFor(async () => expect(await axe(container)).toHaveNoViolations())
+
+    fireEvent.pointerDown(within(menu).getByRole('button', { name: t('toolbar.setDueDate') }), {
+      button: 0,
+    })
+    expect(mockedDispatch).toHaveBeenCalledWith('OPEN_DUE_DATE_PICKER')
+    await waitFor(() => expect(screen.queryByTestId('toolbar-date-menu')).toBeNull())
+    expect(date).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('in More, the dates are its rows, and a row closes More', () => {
+    const onOverflowClose = vi.fn()
+    render(
+      <div>
+        {renderDateMenu({
+          mode: 'overflow',
+          t,
+          open: false,
+          setOpen: vi.fn(),
+          dates: createDateButtons(),
+          onOverflowClose,
+        })}
+      </div>,
+    )
+    expect(screen.queryByRole('button', { name: t('toolbar.date') })).toBeNull()
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(
+      DATES.map((k) => t(k)),
+    )
+    fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.setScheduledDate') }), {
+      button: 0,
+    })
+    expect(mockedDispatch).toHaveBeenCalledWith('OPEN_SCHEDULED_DATE_PICKER')
+    expect(onOverflowClose).toHaveBeenCalledTimes(1)
+  })
 })

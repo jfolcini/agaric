@@ -14,7 +14,7 @@
  */
 
 import { ChevronDown, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { type ComponentProps, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -33,11 +33,12 @@ import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
+import type { SpaceRow } from '@/lib/bindings'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
-import { useSpaceStore } from '@/stores/space'
+import { DEFAULT_ACCENT_TOKEN, useSpaceStore } from '@/stores/space'
 
 /**
  * Sentinel value used by the `t('space.manage')` item so Radix Select
@@ -72,6 +73,20 @@ function spaceHotkey(index: number): string {
   return getShortcutKeys(`switchSpace${index + 1}`)
 }
 
+/** A space's colour, as `SpaceTopStripe` paints it once the space is current. */
+function SpaceDot({ space, ...props }: { space: SpaceRow } & ComponentProps<'span'>) {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-2 w-2 shrink-0 rounded-full"
+      // An unset accent is the default, not `--accent-current`: that is the
+      // active space's colour, wrong on any other space's row.
+      style={{ backgroundColor: accentVar(space.accent_color || DEFAULT_ACCENT_TOKEN) }}
+      {...props}
+    />
+  )
+}
+
 interface SpaceSwitcherProps {
   /** Runs after an item has taken the user to Settings › Spaces. */
   onNavigate?: () => void
@@ -103,12 +118,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   }
 
   const accentDot = activeSpace != null && (
-    <span
-      aria-hidden="true"
-      data-testid="space-switcher-accent-dot"
-      className="h-2 w-2 shrink-0 rounded-full"
-      style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
-    />
+    <SpaceDot space={activeSpace} data-testid="space-switcher-accent-dot" />
   )
 
   if (phoneLayout) {
@@ -141,21 +151,23 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
           {availableSpaces.map((space) => (
             <PopoverMenuItem
               key={space.id}
+              className="flex items-center gap-2"
               active={space.id === currentSpaceId}
               aria-current={space.id === currentSpaceId ? 'true' : undefined}
               onClick={() => pick(space.id)}
             >
+              <SpaceDot space={space} data-testid="space-option-dot" />
               {space.name}
             </PopoverMenuItem>
           ))}
           <hr className="my-1 h-px border-0 bg-border" />
           {availableSpaces.length === 1 && (
             <PopoverMenuItem
-              className="flex items-center gap-2 text-muted-foreground"
+              className="text-muted-foreground"
               data-testid="single-space-create-hint"
               onClick={() => pick(CREATE_SENTINEL)}
             >
-              <Plus className="h-3 w-3" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               {t('spaceSwitcher.createAnotherHint')}
             </PopoverMenuItem>
           )}
@@ -246,6 +258,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
           <SelectItem
             key={space.id}
             value={space.id}
+            startContent={<SpaceDot space={space} data-testid="space-option-dot" />}
             endContent={
               idx < MAX_HOTKEY_SPACES && keyboardHints ? (
                 /*
@@ -287,7 +300,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
             data-testid="single-space-create-hint"
           >
             <span className="flex items-center gap-2">
-              <Plus className="h-3 w-3" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               {t('spaceSwitcher.createAnotherHint')}
             </span>
           </SelectItem>

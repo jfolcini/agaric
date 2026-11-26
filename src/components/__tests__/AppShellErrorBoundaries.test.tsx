@@ -139,6 +139,7 @@ beforeEach(() => {
     list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
     list_unfinished_tasks: () => emptyPage,
     count_backlinks_in_page: () => ({}),
+    count_trash: () => 0,
     load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
     query_by_property: () => emptyPage,
   })

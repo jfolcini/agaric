@@ -34,6 +34,13 @@ vi.mock('@/components/ui/tooltip', () => ({
   ),
 }))
 
+let touch = false
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: () => touch }))
+let hardwareKeyboard = false
+vi.mock('@/hooks/useHasHardwareKeyboard', () => ({
+  useHasHardwareKeyboard: () => hardwareKeyboard,
+}))
+
 const IconStub = (): React.ReactElement => <span data-testid="icon" />
 
 function makeConfig(overrides?: Partial<ToolbarButtonConfig>): ToolbarButtonConfig {
@@ -213,5 +220,47 @@ describe('renderConfigButton inline tooltip', () => {
     const tip = screen.getByTestId('tooltip-content')
     expect(tip).toHaveTextContent(t('toolbar.dividerTip'))
     expect(tip.querySelector('kbd')).toBeNull()
+  })
+})
+
+// A row of More or of the Date menu shows its shortcut as its button's tooltip on the
+// bar did, wherever there is a keyboard to press it on (`useKeyboardHints`).
+describe('renderConfigButton overflow row shortcut', () => {
+  beforeEach(() => {
+    touch = false
+    hardwareKeyboard = false
+  })
+
+  const newLine = () =>
+    renderConfigButton(
+      makeConfig({ label: 'toolbar.newLine', tip: 'toolbar.newLineTip' }),
+      {},
+      'overflow',
+      t,
+    )
+
+  it('shows the name, then the shortcut, and keeps the name as the row’s', () => {
+    render(newLine())
+    const row = screen.getByRole('button', { name: t('toolbar.newLine') })
+    expect(within(row).getByText('Shift+Enter').tagName).toBe('KBD')
+  })
+
+  it('on touch, shows the shortcut only once a keyboard has shown itself', () => {
+    touch = true
+    const { unmount } = render(newLine())
+    expect(
+      screen.getByRole('button', { name: t('toolbar.newLine') }).querySelector('kbd'),
+    ).toBeNull()
+    unmount()
+    hardwareKeyboard = true
+    render(newLine())
+    expect(screen.getByText('Shift+Enter').tagName).toBe('KBD')
+  })
+
+  it('shows no shortcut for a button with none', () => {
+    render(renderConfigButton(makeConfig(), {}, 'overflow', t))
+    expect(
+      screen.getByRole('button', { name: t('toolbar.divider') }).querySelector('kbd'),
+    ).toBeNull()
   })
 })

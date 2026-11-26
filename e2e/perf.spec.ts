@@ -1300,8 +1300,9 @@ const LIST_VIEWS: ListView[] = [
   {
     name: 'Tags',
     rows: '[data-testid^="tag-item-"]',
-    // set_title, list_all_tags_in_space
-    ipcOnOpen: 2,
+    // set_title, count_trash (the sidebar's Trash badge recounts on a view
+    // change), list_all_tags_in_space
+    ipcOnOpen: 3,
     seed: (page) =>
       invokeEach(
         page,
@@ -1320,8 +1321,8 @@ const LIST_VIEWS: ListView[] = [
   {
     name: 'Search',
     rows: '[data-testid^="search-result-row-"]',
-    // set_title, search_blocks, resolve_page_by_alias, batch_resolve
-    ipcOnOpen: 4,
+    // set_title, count_trash, search_blocks, resolve_page_by_alias, batch_resolve
+    ipcOnOpen: 5,
     // Every block of the big page holds `**bold**`.
     seed: (page) => seedBigPage(page, []),
     open: async (page) => {
@@ -1402,6 +1403,7 @@ for (const view of LIST_VIEWS) {
 const PAGE_OPEN_IPC = [
   'batch_resolve',
   'count_backlinks_in_page',
+  'count_trash',
   'count_unlinked_references',
   'get_batch_properties',
   'get_block',
@@ -1419,9 +1421,10 @@ const PAGE_OPEN_IPC = [
   'record_page_open',
 ]
 /**
- * The open set plus the chip's target lookup, minus the tag list and the
- * property definitions: the header stays mounted and loads the tags once per
- * space, and the definitions are the space's shared query, already cached.
+ * The open set plus the chip's target lookup, minus the tag list, the property
+ * definitions and the trash count: the header stays mounted and loads the tags
+ * once per space, the definitions are the space's shared query, already cached,
+ * and the sidebar recounts the trash only when the view changes.
  */
 const LINK_CLICK_IPC = [
   'batch_resolve',

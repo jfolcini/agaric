@@ -73,10 +73,14 @@ export const SOURCE_TOOLBAR_ACTIONS: Readonly<Record<string, SourceToolbarAction
   'toolbar.redo': ({ editor }) => editor.chain().focus().redo().run(),
 }
 
-/** The toolbar's popovers the buffer shows, with its own content: Format's marks, Turn into's block types. */
+/**
+ * The toolbar's popovers the buffer shows: Format's marks and Turn into's block
+ * types with its own content, and the Date menu with its rows' actions above.
+ */
 export const SOURCE_TOOLBAR_MENUS: ReadonlySet<string> = new Set([
   'toolbar.format',
   'toolbar.turnInto',
+  'toolbar.date',
 ])
 
 /** Each of Format's marks as the markdown that wraps the selection. */

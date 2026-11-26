@@ -1841,12 +1841,15 @@ export async function restoreFromTrash(title: string): Promise<void> {
 }
 
 /** Open the page kebab's `item`. */
-export async function pageAction(item: string): Promise<void> {
+export async function pageAction(item: string, submenu?: string): Promise<void> {
   const kebab = $('button[aria-label="Page actions"]')
   await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
   await kebab.click()
   // The menu's last rows reach the toast corner of the lane's window, where a
   // toast from the step before takes a plain click.
+  if (submenu !== undefined) {
+    await clickUncovered($('[role="menu"]').$(`[role="menuitem"]=${submenu}`), submenu)
+  }
   await clickUncovered($('[role="menu"]').$(`[role="menuitem"]*=${item}`), item)
 }
 
@@ -1858,7 +1861,7 @@ export async function pageAction(item: string): Promise<void> {
 export async function exportOpenPage(): Promise<string> {
   const sentinel = runScopedMarker('wdio-rt-sentinel')
   await invoke('plugin:clipboard-manager|write_text', { text: sentinel })
-  await pageAction('Export as Markdown')
+  await pageAction('Export as Markdown', 'Export')
   let text = sentinel
   await browser
     .waitUntil(

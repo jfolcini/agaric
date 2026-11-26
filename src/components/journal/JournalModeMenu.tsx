@@ -61,7 +61,7 @@ export function JournalModeMenu<M extends string>({
           {modes.map((m) => (
             <li key={m}>
               <PopoverMenuItem
-                className="flex items-center justify-between"
+                className="justify-between"
                 active={m === mode}
                 aria-current={m === mode ? 'true' : undefined}
                 onClick={() => {
@@ -70,7 +70,7 @@ export function JournalModeMenu<M extends string>({
                 }}
               >
                 {labels[m]}
-                {m === mode && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                {m === mode && <Check aria-hidden="true" />}
               </PopoverMenuItem>
             </li>
           ))}
