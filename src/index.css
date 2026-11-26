@@ -1097,6 +1097,13 @@
   }
 }
 
+/* Settings' panel takes the reading column on the journal's axis, and its tab
+ * rail (`w-48` and the `gap-6` after it, `SettingsView`) hangs in the room the
+ * centring leaves; a pane too narrow for that pushes the column right. */
+@utility settings-column {
+  padding-left: max(0px, calc((100% - var(--container-reading)) / 2 - 13.5rem));
+}
+
 /* ── Responsive typography scale ───────────────────────────── */
 /* Under 768 px, where `usePhoneLayout` lays the app out as a phone. */
 @media (width < 48rem) {

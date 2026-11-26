@@ -70,7 +70,7 @@ async function openSyncSettings(page: import('@playwright/test').Page) {
 /** Settings › Sync & Devices, without the reload `waitForBoot` does (which re-seeds the mock). */
 async function showSyncPanel(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.locator('header').getByText('Settings')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
   await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
   await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
 }
@@ -259,7 +259,7 @@ test.describe('Sync pairing flows @sync', () => {
     // not a local countdown, and is not covered here.
     await waitForBoot(page)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await expect(page.locator('header').getByText('Settings')).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
     await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
     await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
 

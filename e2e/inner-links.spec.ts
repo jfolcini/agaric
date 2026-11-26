@@ -454,7 +454,7 @@ test.describe('Inner links — link persistence @editor @pages', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Tags', exact: true })
       .click()
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Tags' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Tags' })).toBeVisible()
 
     // Navigate back to Getting Started
     await openPage(page, 'Getting Started')

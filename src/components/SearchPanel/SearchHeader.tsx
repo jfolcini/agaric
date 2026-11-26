@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
@@ -76,7 +77,8 @@ export function SearchHeader({
   const keyboardHints = useKeyboardHints()
   return (
     <ViewHeader>
-      <div className="mx-auto max-w-list">
+      <div className="mx-auto max-w-list space-y-2">
+        <FeaturePageHeader title={t('sidebar.search')} className="md:mt-3" />
         <form
           onSubmit={onSubmit}
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a <search> wrapper is a landmark only from WebKit 17 (Safari 17, WebKitGTK 2.42); older macOS and Linux webviews would drop it
