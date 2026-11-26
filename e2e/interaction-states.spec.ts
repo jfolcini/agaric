@@ -159,6 +159,9 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
     const cut = await link.evaluate((el) => {
       const r = el.getBoundingClientRect()
       const ring = { l: r.left - 3, t: r.top - 3, r: r.right + 3, b: r.bottom + 3 }
+      // clientWidth and clientHeight round to whole pixels, so a box whose text
+      // ends on a fraction can read up to half a pixel short.
+      const rounding = 0.5
       const clippers: string[] = []
       for (let box = el.parentElement; box; box = box.parentElement) {
         const s = getComputedStyle(box)
@@ -169,8 +172,8 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
         if (
           ring.l < l ||
           ring.t < t ||
-          ring.r > l + box.clientWidth ||
-          ring.b > t + box.clientHeight
+          ring.r > l + box.clientWidth + rounding ||
+          ring.b > t + box.clientHeight + rounding
         )
           clippers.push(box.className.toString().slice(0, 60))
       }
