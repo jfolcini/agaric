@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canFold,
   carriedEnd,
+  foldedSiblingsAt,
   foldEnd,
   foldsOver,
   headingLevel,
@@ -10,6 +11,7 @@ import {
   outlineOf,
   stepOver,
   unfoldedBy,
+  withFoldedSections,
 } from '@/lib/section-fold'
 
 /** An outline from `[depth, content]` pairs. */
@@ -237,5 +239,29 @@ describe('unfoldedBy', () => {
     ])
     expect(unfoldedBy(before, after, new Set(['P', 'H']))).toEqual([])
     expect(unfoldedBy(before, before, new Set(['H']))).toEqual([])
+  })
+})
+
+describe('foldedSiblingsAt and withFoldedSections', () => {
+  const page = outline([
+    [0, 'a'], // r0
+    [0, '## Two'], // r1
+    [0, 'b'], // r2
+    [1, 'b1'], // r3
+    [0, 'c'], // r4
+    [0, '## Three'], // r5
+    [0, 'd'], // r6
+  ])
+
+  it('names the siblings a heading folds, not the rows under them', () => {
+    expect(foldedSiblingsAt(page, 1)).toEqual(['r2', 'r4'])
+    expect(foldedSiblingsAt(page, 0)).toEqual([])
+  })
+
+  it('takes a collapsed heading’s section with it, in document order, once', () => {
+    const collapsed = new Set(['r1'])
+    expect(withFoldedSections(page, ['r5', 'r1'], collapsed)).toEqual(['r1', 'r2', 'r4', 'r5'])
+    expect(withFoldedSections(page, ['r1', 'r2'], collapsed)).toEqual(['r1', 'r2', 'r4'])
+    expect(withFoldedSections(page, ['r1'], new Set())).toEqual(['r1'])
   })
 })

@@ -32,7 +32,7 @@ import { hasPreference, PREFERENCES, readPreference, writePreference } from '@/l
 import {
   canFold,
   carriedEnd,
-  foldEnd,
+  foldedSiblingsAt,
   foldsOver,
   hiddenRows,
   outlineOf,
@@ -146,13 +146,29 @@ export interface UseBlockCollapseReturn {
    */
   foldedSiblings: (blockId: string) => string[]
   /**
-   * Ctrl+Shift+↑/↓ on `blockId` where a fold is in play, as a drop one shown row
-   * away makes it (#7040): it and the siblings it hides go past the shown
-   * sibling next to it and the siblings that one hides (`stepOver`). Null where
-   * no fold is in play and the store's one-block move does the same; 'stay'
-   * where it has nowhere to go.
+   * Ctrl+Shift+↑/↓ on `blockId` over `rows` (the store's, read at the key) where
+   * a fold is in play, as a drop one shown row away makes it (#7040): it and the
+   * siblings it hides go past the shown sibling next to it and the siblings that
+   * one hides (`stepOver`). Null where no fold is in play and the store's
+   * one-block move does the same; 'stay' where it has nowhere to go or a fold
+   * hides it.
    */
-  foldedMove: (blockId: string, direction: -1 | 1) => FoldedMove | 'stay' | null
+  foldedMove: (
+    rows: readonly FlatBlock[],
+    blockId: string,
+    direction: -1 | 1,
+  ) => FoldedMove | 'stay' | null
+  /**
+   * Indent or outdent of a collapsed heading over `rows`: it and the siblings it
+   * hides go together, in one batch (#7040 decision 30). Null where the block
+   * hides no sibling and the store's one-block move does the same; 'stay' where
+   * it has nowhere to go or a fold hides it.
+   */
+  foldedIndent: (
+    rows: readonly FlatBlock[],
+    blockId: string,
+    direction: 'in' | 'out',
+  ) => FoldedMove | 'stay' | null
   /**
    * #7040 decision 30 — after a move from `before` to `after`, unfold each
    * collapsed heading it landed a shown block in, as Enter does; saved like a
@@ -380,30 +396,30 @@ export function useBlockCollapse(
     (blockId: string): string[] => {
       if (!collapsedIds.has(blockId)) return []
       const index = blocks.findIndex((b) => b.id === blockId)
-      if (index === -1) return []
-      const depth = (blocks[index] as FlatBlock).depth
-      const siblings: string[] = []
-      const end = foldEnd(outline, index)
-      for (let i = index + 1; i < end; i++) {
-        const block = blocks[i] as FlatBlock
-        if (block.depth === depth) siblings.push(block.id)
-      }
-      return siblings
+      return index === -1 ? [] : foldedSiblingsAt(outline, index)
     },
     [blocks, outline, collapsedIds],
   )
 
   const foldedMove = useCallback(
-    (blockId: string, direction: -1 | 1): FoldedMove | 'stay' | null => {
-      const index = blocks.findIndex((b) => b.id === blockId)
+    (
+      rows: readonly FlatBlock[],
+      blockId: string,
+      direction: -1 | 1,
+    ): FoldedMove | 'stay' | null => {
+      const collapsed = collapsedIdsRef.current
+      const rowsOutline = outlineOf(rows)
+      // A block a fold hides moves with what carries it, never on its own.
+      if (foldsOver(rowsOutline, blockId, collapsed).length > 0) return 'stay'
+      const index = rows.findIndex((b) => b.id === blockId)
       if (index === -1) return null
-      const block = blocks[index] as FlatBlock
+      const block = rows[index] as FlatBlock
       const parentId = block.parent_id ?? null
       const carry = (i: number) =>
-        carriedEnd(outline, i, collapsedIds.has((blocks[i] as FlatBlock).id))
-      const { end, to } = stepOver(outline, carry, index, direction)
+        carriedEnd(rowsOutline, i, collapsed.has((rows[i] as FlatBlock).id))
+      const { end, to } = stepOver(rowsOutline, carry, index, direction)
       const roots = (from: number, until: number) =>
-        blocks
+        rows
           .slice(from, until)
           .filter((b) => b.depth === block.depth)
           .map((b) => b.id)
@@ -411,9 +427,9 @@ export function useBlockCollapse(
       if (to === null) {
         // A first or last child leaves its parent (#922), with the siblings it hides.
         if (ids.length === 1) return null
-        const parent = blocks.find((b) => b.id === parentId)
+        const parent = rows.find((b) => b.id === parentId)
         if (parent === undefined) return 'stay'
-        const outer = blocks.filter(
+        const outer = rows.filter(
           (b) => b.parent_id === parent.parent_id && b.depth === parent.depth,
         )
         const slot = outer.indexOf(parent) + (direction > 0 ? 1 : 0)
@@ -422,14 +438,47 @@ export function useBlockCollapse(
       const neighbour = direction < 0 ? roots(to, index) : roots(end, to)
       if (ids.length === 1 && neighbour.length === 1) return null
       const moving = new Set(ids)
-      const slot = blocks
+      const slot = rows
         .slice(0, to)
         .filter(
           (b) => (b.parent_id ?? null) === parentId && b.depth === block.depth && !moving.has(b.id),
         ).length
       return { ids, parentId, index: slot }
     },
-    [blocks, outline, collapsedIds],
+    [],
+  )
+
+  const foldedIndent = useCallback(
+    (
+      rows: readonly FlatBlock[],
+      blockId: string,
+      direction: 'in' | 'out',
+    ): FoldedMove | 'stay' | null => {
+      const collapsed = collapsedIdsRef.current
+      const rowsOutline = outlineOf(rows)
+      if (foldsOver(rowsOutline, blockId, collapsed).length > 0) return 'stay'
+      const index = rows.findIndex((b) => b.id === blockId)
+      if (index === -1 || !collapsed.has(blockId)) return null
+      const siblings = foldedSiblingsAt(rowsOutline, index)
+      if (siblings.length === 0) return null
+      const block = rows[index] as FlatBlock
+      const ids = [blockId, ...siblings]
+      if (direction === 'in') {
+        // Under the sibling before it, after its children, as the store's indent goes.
+        let before = index - 1
+        while (before >= 0 && (rows[before] as FlatBlock).depth > block.depth) before -= 1
+        const parent = rows[before]
+        if (parent === undefined || parent.depth !== block.depth) return 'stay'
+        const slot = rows.filter((b) => b.parent_id === parent.id).length
+        return { ids, parentId: parent.id, index: slot }
+      }
+      // Out to just after its parent, as the store's dedent goes.
+      const parent = rows.find((b) => b.id === block.parent_id)
+      if (parent === undefined) return 'stay'
+      const outer = rows.filter((b) => b.parent_id === parent.parent_id && b.depth === parent.depth)
+      return { ids, parentId: parent.parent_id ?? null, index: outer.indexOf(parent) + 1 }
+    },
+    [],
   )
 
   const unfoldLanded = useCallback(
@@ -457,6 +506,7 @@ export function useBlockCollapse(
     foldableSet,
     foldedSiblings,
     foldedMove,
+    foldedIndent,
     unfoldLanded,
   }
 }

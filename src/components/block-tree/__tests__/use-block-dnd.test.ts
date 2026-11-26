@@ -1966,6 +1966,21 @@ describe('folded heading sections (#7040)', () => {
     })
   })
 
+  it("a selection's drag takes a folded heading's hidden siblings with it", () => {
+    mockedComputeSelectionRoots.mockReturnValue(['H', 'X'])
+    const params = makeDefaultParams({
+      blocks: [H, S1, S2, X, Y],
+      collapsedVisible: [H, X, Y],
+      selectedBlockIds: ['H', 'X'],
+      foldedSiblings: folded,
+    })
+    const { result } = renderHook(() => useBlockDnD(params))
+    act(() => {
+      result.current.handleDragStart(makeDragStartEvent('X') as never)
+    })
+    expect(result.current.dragRoots).toEqual(['H', 'S1', 'S2', 'X'])
+  })
+
   it("a folded heading's drag moves it with its hidden siblings in one batch", () => {
     const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
     mockedGetProjection.mockReturnValue(projection)

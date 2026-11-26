@@ -11,7 +11,7 @@ import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
-import { carriedEnd, moveStep, unfoldLanded } from '@/editor/page-mode/page-collapse'
+import { carriedEnd, moveStep, unfoldLanded, withSections } from '@/editor/page-mode/page-collapse'
 import {
   blockIndex,
   firstTokenPos,
@@ -196,7 +196,7 @@ export const deleteBlocks =
   (state, dispatch) => {
     const tr = state.tr
     let deleted = false
-    for (const id of ids) {
+    for (const id of withSections(state, ids)) {
       const range = subtreeRange(tr.doc, id)
       if (range === null) continue
       tr.delete(range.start, range.end)

@@ -16,6 +16,7 @@ import type { RefObject } from 'react'
 import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { loadCollapsedIds } from '@/components/block-tree/use-block-collapse'
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -29,6 +30,7 @@ import {
 } from '@/lib/last-interacted-tree'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { outlineOf, withFoldedSections } from '@/lib/section-fold'
 import { computeSelectionRoots } from '@/lib/tree-utils'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
@@ -147,7 +149,12 @@ function selectionByPage(
     const state = store.getState()
     const owned = selected.filter((id) => state.blocksById.has(id))
     if (owned.length === 0) continue
-    const roots = computeSelectionRoots(state.blocks, owned)
+    // #7040 decision 30 — a folded heading takes the section its fold hides.
+    const roots = withFoldedSections(
+      outlineOf(state.blocks),
+      computeSelectionRoots(state.blocks, owned),
+      loadCollapsedIds(state.rootParentId),
+    )
     const row = roots
       .map((id) => document.querySelector(`[data-block-id="${id}"]`))
       .find((el) => el != null)

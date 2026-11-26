@@ -25,7 +25,13 @@ import {
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { canMerge, dropBlock, mergeBlock, moveBlocks } from '@/editor/page-mode/page-block-actions'
+import {
+  canMerge,
+  deleteBlocks,
+  dropBlock,
+  mergeBlock,
+  moveBlocks,
+} from '@/editor/page-mode/page-block-actions'
 import {
   foldIn,
   foldOf,
@@ -34,7 +40,7 @@ import {
   toggleFold,
 } from '@/editor/page-mode/page-collapse'
 import { PAGE_BLOCK, startOf } from '@/editor/page-mode/page-document'
-import { indentBlocks, indentIds } from '@/editor/page-mode/page-keys'
+import { indentBlocks, indentIds, outdentIds } from '@/editor/page-mode/page-keys'
 import { createSaveState, savePage } from '@/editor/page-mode/page-save'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -577,6 +583,49 @@ describe('a block landing in a collapsed section (#7040 decision 30)', () => {
     expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, D, B, C])
     expect(saved(ed).has(B)).toBe(true)
     expect(hidden(ed)).toEqual([C])
+  })
+})
+
+describe('a selection with a collapsed heading (#7040 decision 30)', () => {
+  const ROWS: Row[] = [
+    [A, 0, 'a'],
+    [B, 0, '## Two'],
+    [C, 0, 'c'],
+    [D, 1, 'd'],
+    [E, 0, '## Three'],
+  ]
+
+  it('deletes the section the heading hides with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, B)
+
+    expect(deleteBlocks([B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, E])
+  })
+
+  it('indents and outdents the section the heading hides with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, B)
+
+    expect(indentIds(() => [B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 1],
+      [C, 1],
+      [D, 2],
+      [E, 0],
+    ])
+    expect(outdentIds(() => [B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 0],
+      [C, 0],
+      [D, 1],
+      [E, 0],
+    ])
+    expect(hidden(ed)).toEqual([C, D])
   })
 })
 

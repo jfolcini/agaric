@@ -55,6 +55,7 @@ import {
   type Outline,
   stepOver,
   unfoldedBy,
+  withFoldedSections,
 } from '@/lib/section-fold'
 
 /** A block with blocks under it: collapsed, or not. */
@@ -192,6 +193,16 @@ export function moveStep(
 export function unfoldLanded(state: EditorState, tr: Transaction): Transaction {
   const ids = unfoldedBy(outlineOf(state.doc), outlineOf(tr.doc), stateOf(state).collapsed)
   return ids.length === 0 ? tr : tr.setMeta(EXPAND, ids)
+}
+
+/**
+ * `ids` in document order, each collapsed heading followed by the siblings its
+ * fold hides: a selection takes a folded section with it (#7040 decision 30).
+ */
+export function withSections(state: EditorState, ids: readonly string[]): string[] {
+  const { collapsed, revealed } = stateOf(state)
+  const folded = new Set([...collapsed].filter((id) => !revealed.has(id)))
+  return withFoldedSections(outlineOf(state.doc), ids, folded)
 }
 
 /** The fold of block `id`, for its block menu. */

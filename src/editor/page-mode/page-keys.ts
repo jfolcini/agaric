@@ -37,7 +37,12 @@ import { emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
 import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
 import { openSlashPicker, slashCommandPluginKey } from '@/editor/extensions/slash-command'
-import { hiddenBlocks, isCollapsed, unfoldLanded } from '@/editor/page-mode/page-collapse'
+import {
+  hiddenBlocks,
+  isCollapsed,
+  unfoldLanded,
+  withSections,
+} from '@/editor/page-mode/page-collapse'
 import {
   depthOf,
   firstTokenPos,
@@ -158,7 +163,8 @@ export function applyRows(tr: Transaction, rows: readonly TreeItem[]): void {
 /**
  * Each of the blocks `pick` names, with the blocks under it, moves in under the
  * sibling before it, as block mode's `indent` does: nothing past the backend's
- * deepest level, and a block with no sibling before it stays.
+ * deepest level, and a block with no sibling before it stays. A collapsed
+ * heading takes the siblings it hides along (`withSections`).
  */
 export const indentIds =
   (pick: (state: EditorState) => string[]): Command =>
@@ -166,7 +172,7 @@ export const indentIds =
     const tr = state.tr
     const ends = selectionEnds(state.doc, state.selection)
     let moved = false
-    for (const id of pick(state)) {
+    for (const id of withSections(state, pick(state))) {
       const rows = treeRows(tr.doc)
       const prevSibling = findPrevSiblingAt(
         rows,
@@ -193,7 +199,8 @@ export const indentBlocks = indentIds((state) => selectedRoots(state, treeRows(s
 /**
  * Each of the blocks `pick` names, with the blocks under it, moves out to just
  * after its parent's blocks, as block mode's `dedent` does (#400): the blocks
- * that followed it under the parent stay there. Last first, so a run of
+ * that followed it under the parent stay there, but for the siblings a
+ * collapsed heading hides, which go with it (`withSections`). Last first, so a run of
  * siblings keeps its order.
  */
 export const outdentIds =
@@ -202,7 +209,7 @@ export const outdentIds =
     const tr = state.tr
     const ends = selectionEnds(state.doc, state.selection)
     let moved = false
-    for (const id of pick(state).toReversed()) {
+    for (const id of withSections(state, pick(state)).toReversed()) {
       const rows = treeRows(tr.doc)
       const parentId = rows.find((row) => row.id === id)?.parent_id ?? null
       if (parentId === null) continue

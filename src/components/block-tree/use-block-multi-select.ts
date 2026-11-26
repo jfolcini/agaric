@@ -46,6 +46,11 @@ export interface UseBlockMultiSelectParams {
    * (optimistic update, undo bookkeeping).
    */
   handleTogglePriority: (blockId: string) => void | Promise<void>
+  /**
+   * #7040 decision 30 — the siblings a collapsed heading hides
+   * (`useBlockCollapse`): the batch delete takes them with it.
+   */
+  foldedSiblings?: ((blockId: string) => string[]) | undefined
 }
 
 export interface UseBlockMultiSelectReturn {
@@ -123,6 +128,7 @@ export function useBlockMultiSelect({
   currentSpaceId,
   t,
   handleTogglePriority,
+  foldedSiblings,
 }: UseBlockMultiSelectParams): UseBlockMultiSelectReturn {
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
   // `batchInProgress` (state) is surfaced to the UI (disables buttons in
@@ -175,7 +181,10 @@ export function useBlockMultiSelect({
     batchInProgressRef.current = true
     setBatchInProgress(true)
     try {
-      const ids = selectedBlockIds
+      // #7040 decision 30 — a folded heading takes the siblings its fold hides.
+      const ids = [
+        ...new Set(selectedBlockIds.flatMap((id) => [id, ...(foldedSiblings?.(id) ?? [])])),
+      ]
       // #4524 review note 2 — captured HERE, alongside `ids` and before the
       // `deleteBlocksByIds` await below, not read fresh off the store after
       // it. Same value-at-the-moment-the-user-acted discipline the
@@ -344,7 +353,7 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore, currentSpaceId])
+  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore, currentSpaceId, foldedSiblings])
 
   return {
     batchDeleteConfirm,

@@ -59,6 +59,39 @@ export function hiddenRows(outline: Outline, folded: (index: number) => boolean)
   return hidden
 }
 
+/** The rows at its depth the fold of the row at `index` hides: the siblings its drag carries. */
+export function foldedSiblingsAt(outline: Outline, index: number): string[] {
+  const depth = outline.depth(index)
+  const end = foldEnd(outline, index)
+  const siblings: string[] = []
+  for (let row = index + 1; row < end; row += 1) {
+    if (outline.depth(row) === depth) siblings.push(outline.id(row))
+  }
+  return siblings
+}
+
+/**
+ * `roots` in document order, each of `collapsed` followed by the siblings its
+ * fold hides: a selection takes a folded heading's section with it, as its
+ * drag does (#7040 decision 30).
+ */
+export function withFoldedSections(
+  outline: Outline,
+  roots: readonly string[],
+  collapsed: ReadonlySet<string>,
+): string[] {
+  const picked = new Set(roots)
+  const result = new Set<string>()
+  for (let index = 0; index < outline.length; index += 1) {
+    const id = outline.id(index)
+    if (!picked.has(id) || result.has(id)) continue
+    result.add(id)
+    if (collapsed.has(id))
+      for (const sibling of foldedSiblingsAt(outline, index)) result.add(sibling)
+  }
+  return [...result]
+}
+
 /**
  * The index just past what a move of the row at `index` takes: its fold if
  * `folded`, else the rows under it.

@@ -333,6 +333,7 @@ export function BlockTree({
     foldableSet,
     foldedSiblings,
     foldedMove,
+    foldedIndent,
     unfoldLanded,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
@@ -804,6 +805,7 @@ export function BlockTree({
     currentSpaceId,
     t,
     handleTogglePriority,
+    foldedSiblings,
   })
 
   // Reload + reset zoom when the page changes (parentId). `load` and
@@ -1086,12 +1088,23 @@ export function BlockTree({
   // heading's move carries its section, as their drags do (`foldedMove`).
   const moveOver = useCallback(
     async (id: string, direction: -1 | 1): Promise<boolean> => {
-      const move = foldedMove(id, direction)
+      const move = foldedMove(pageStore.getState().blocks, id, direction)
       if (move === 'stay') return false
       if (move === null) return direction < 0 ? moveUp(id) : moveDown(id)
       return moveBlocks(move.ids, move.parentId, move.index)
     },
-    [foldedMove, moveUp, moveDown, moveBlocks],
+    [foldedMove, moveUp, moveDown, moveBlocks, pageStore],
+  )
+
+  // #7040 decision 30 — a folded heading's indent and outdent take its section.
+  const indentOver = useCallback(
+    async (id: string, direction: 'in' | 'out'): Promise<boolean> => {
+      const move = foldedIndent(pageStore.getState().blocks, id, direction)
+      if (move === 'stay') return false
+      if (move === null) return direction === 'in' ? indent(id) : dedent(id)
+      return moveBlocks(move.ids, move.parentId, move.index)
+    },
+    [foldedIndent, indent, dedent, moveBlocks, pageStore],
   )
 
   // ── Keyboard handlers hook ─────────────────────────────────────────
@@ -1181,8 +1194,8 @@ export function BlockTree({
     ),
     splitOff,
     mergeInto,
-    indent: useMemo(() => landing(indent), [landing, indent]),
-    dedent: useMemo(() => landing(dedent), [landing, dedent]),
+    indent: useMemo(() => landing((id: string) => indentOver(id, 'in')), [landing, indentOver]),
+    dedent: useMemo(() => landing((id: string) => indentOver(id, 'out')), [landing, indentOver]),
     moveUp: useMemo(() => landing((id: string) => moveOver(id, -1)), [landing, moveOver]),
     moveDown: useMemo(() => landing((id: string) => moveOver(id, 1)), [landing, moveOver]),
     createBelow,

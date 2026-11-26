@@ -616,18 +616,18 @@ describe('useBlockCollapse — heading sections (#7040)', () => {
   it('moves a collapsed heading with its section over a collapsed neighbour, as one batch', () => {
     const { result } = renderHook(() => useBlockCollapse(page))
     act(() => result.current.toggleCollapse('H2'))
-    expect(result.current.foldedMove('NEXT', -1)).toEqual({
+    expect(result.current.foldedMove(page, 'NEXT', -1)).toEqual({
       ids: ['NEXT'],
       parentId: null,
       index: 0,
     })
     act(() => result.current.toggleCollapse('NEXT'))
-    expect(result.current.foldedMove('NEXT', -1)).toEqual({
+    expect(result.current.foldedMove(page, 'NEXT', -1)).toEqual({
       ids: ['NEXT', 'LAST'],
       parentId: null,
       index: 0,
     })
-    expect(result.current.foldedMove('H2', 1)).toEqual({
+    expect(result.current.foldedMove(page, 'H2', 1)).toEqual({
       ids: ['H2', 'S1', 'S2'],
       parentId: null,
       index: 2,
@@ -636,10 +636,11 @@ describe('useBlockCollapse — heading sections (#7040)', () => {
 
   it('leaves a move with no fold in play to the store, and a root section with nowhere to go', () => {
     const { result } = renderHook(() => useBlockCollapse(page))
-    expect(result.current.foldedMove('S2', -1)).toBeNull()
-    expect(result.current.foldedMove('GONE', 1)).toBeNull()
+    expect(result.current.foldedMove(page, 'S2', -1)).toBeNull()
+    expect(result.current.foldedMove(page, 'GONE', 1)).toBeNull()
     act(() => result.current.toggleCollapse('NEXT'))
-    expect(result.current.foldedMove('NEXT', 1)).toBe('stay')
+    expect(result.current.foldedMove(page, 'NEXT', 1)).toBe('stay')
+    expect(result.current.foldedMove(page, 'LAST', -1)).toBe('stay')
   })
 
   it("takes a collapsed last child's section out of its parent with it", () => {
@@ -651,15 +652,46 @@ describe('useBlockCollapse — heading sections (#7040)', () => {
     ]
     const { result } = renderHook(() => useBlockCollapse(nested))
     act(() => result.current.toggleCollapse('H'))
-    expect(result.current.foldedMove('H', 1)).toEqual({
+    expect(result.current.foldedMove(nested, 'H', 1)).toEqual({
       ids: ['H', 'IN'],
       parentId: null,
       index: 1,
     })
-    expect(result.current.foldedMove('H', -1)).toEqual({
+    expect(result.current.foldedMove(nested, 'H', -1)).toEqual({
       ids: ['H', 'IN'],
       parentId: null,
       index: 0,
+    })
+  })
+
+  it('indents and outdents a collapsed heading with the siblings its fold hides (decision 30)', () => {
+    const nested: FlatBlock[] = [
+      makeBlock({ id: 'P', depth: 0, content: 'parent' }),
+      makeBlock({ id: 'K', depth: 1, parent_id: 'P', content: 'kid' }),
+      makeBlock({ id: 'H', depth: 0, content: '## H' }),
+      makeBlock({ id: 'IN', depth: 0, content: 'in h' }),
+    ]
+    const { result } = renderHook(() => useBlockCollapse(nested))
+    expect(result.current.foldedIndent(nested, 'H', 'in')).toBeNull()
+    act(() => result.current.toggleCollapse('H'))
+    expect(result.current.foldedIndent(nested, 'H', 'in')).toEqual({
+      ids: ['H', 'IN'],
+      parentId: 'P',
+      index: 1,
+    })
+    expect(result.current.foldedIndent(nested, 'H', 'out')).toBe('stay')
+    expect(result.current.foldedIndent(nested, 'IN', 'in')).toBe('stay')
+
+    const under: FlatBlock[] = [
+      nested[0] as FlatBlock,
+      nested[1] as FlatBlock,
+      makeBlock({ id: 'H', depth: 1, parent_id: 'P', content: '## H' }),
+      makeBlock({ id: 'IN', depth: 1, parent_id: 'P', content: 'in h' }),
+    ]
+    expect(result.current.foldedIndent(under, 'H', 'out')).toEqual({
+      ids: ['H', 'IN'],
+      parentId: null,
+      index: 1,
     })
   })
 
