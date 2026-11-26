@@ -631,7 +631,7 @@ export function PageHeaderMenu({
           type="button"
           className={cn(
             row,
-            'text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive focus-visible:ring-destructive/50',
+            'text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive',
           )}
           onClick={onDeleteRequest}
           {...menuItemProps('delete')}
