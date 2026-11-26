@@ -1,4 +1,4 @@
-# Session 4501 — type-check scripts/**/*.mjs
+# Session 4503 — type-check scripts/**/*.mjs
 
 **Ask.** Fix every finding of the TypeScript review, the small ones included. The largest: the repo's guards and tooling, `scripts/**/*.mjs`, are plain JS that no project type-checked.
 
