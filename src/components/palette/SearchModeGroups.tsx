@@ -80,9 +80,9 @@ export function SearchModeGroups({
                     listbox options would violate ARIA. SnippetHighlight
                     is the pure renderer extracted in . */}
                 {block.snippet != null && block.snippet.length > 0 ? (
-                  <SnippetHighlight snippet={block.snippet} className="truncate" />
+                  <SnippetHighlight snippet={block.snippet} className="truncate bidi-plaintext" />
                 ) : (
-                  <span className="truncate">
+                  <span className="truncate bidi-plaintext">
                     {renderRichContent(block.content ?? '', {
                       inline: true,
                       interactive: false,

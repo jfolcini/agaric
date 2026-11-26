@@ -144,10 +144,7 @@ function EmbeddedRowList({
   const { handleToggleTodo } = useBlockProperties()
 
   return (
-    <ul
-      className="embed-tree list-none m-0 p-0 space-y-[var(--block-row-gap)]"
-      data-testid="embed-tree"
-    >
+    <ul className="embed-tree list-none m-0 p-0" data-testid="embed-tree">
       {rows.map((row) => {
         const aria = siblingAria.get(row.id)
         return (

@@ -71,7 +71,7 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 | Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
 | Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←`; on touch, the toolbar's *Indent* and *Outdent* buttons (a phone's keyboard has no Tab), in blocks and in page mode |
 | Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
-| Go to the block above / below | `↑` on a block's first visual line, `↓` on its last, one press a block, the caret keeping its horizontal position on the neighbour's last / first line; `←` at a block's start / `→` at its end |
+| Go to the block above / below | `↑` on a block's first visual line, `↓` on its last, one press a block, the caret keeping its horizontal position on the neighbour's last / first line; `←` at a block's start / `→` at its end, and in a right-to-left paragraph `→` at its start (on the right) / `←` at its end |
 | Select blocks from the text | `Shift+↑` / `Shift+↓` once the text selection reaches the block's start / end: the block and the one above / below are selected, and further presses select blocks |
 | Collapse / expand children, or a heading's section | `Ctrl+.` (or click the chevron) |
 | Open Property Drawer | `Ctrl+Shift+P` |

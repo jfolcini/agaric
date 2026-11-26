@@ -263,7 +263,9 @@ function BacklinkRowInner({
           {block.block_type}
         </Badge>
       )}
-      <span className="linked-reference-item-text text-sm flex-1 truncate">{richContent}</span>
+      <span className="linked-reference-item-text text-sm flex-1 truncate bidi-plaintext">
+        {richContent}
+      </span>
       {childrenExpanded && renderChildren && (
         <div ref={childrenRef} className="linked-reference-item-children basis-full">
           {renderChildren(block)}

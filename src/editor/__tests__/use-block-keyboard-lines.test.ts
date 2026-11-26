@@ -147,3 +147,39 @@ describe('Shift+Arrow at the block edge (#6537)', () => {
     expect(cb.onFocusNext).not.toHaveBeenCalled()
   })
 })
+
+describe('ArrowLeft / ArrowRight in a right-to-left paragraph (#7040)', () => {
+  const ARABIC = 'مرحبا بالعالم'
+  const END = 1 + ARABIC.length
+
+  /** One Arabic paragraph, the caret at `pos`, and a view where only an arrow toward `edge` leaves it. */
+  function arabic(pos: number, edge: 'left' | 'right'): EditorLike {
+    editor = new Editor({ extensions: [Document, Paragraph, Text], content: `<p>${ARABIC}</p>` })
+    const { state } = editor
+    return {
+      state: state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos))),
+      isEmpty: false,
+      view: { endOfTextblock: (dir) => dir === edge, coordsAtPos: () => ({ left: 42 }) },
+    }
+  }
+
+  it('at the start, on the right, ArrowRight leaves to the previous block and ArrowLeft stays', () => {
+    const cb = callbacks()
+    const left = press('ArrowLeft')
+    handleBlockKeyDown(left, arabic(1, 'right'), cb)
+    expect(left.preventDefault).not.toHaveBeenCalled()
+    handleBlockKeyDown(press('ArrowRight'), arabic(1, 'right'), cb)
+    expect(cb.onFocusPrev).toHaveBeenCalledOnce()
+    expect(cb.onFocusNext).not.toHaveBeenCalled()
+  })
+
+  it('at the end, on the left, ArrowLeft leaves to the next block and ArrowRight stays', () => {
+    const cb = callbacks()
+    const right = press('ArrowRight')
+    handleBlockKeyDown(right, arabic(END, 'left'), cb)
+    expect(right.preventDefault).not.toHaveBeenCalled()
+    handleBlockKeyDown(press('ArrowLeft'), arabic(END, 'left'), cb)
+    expect(cb.onFocusNext).toHaveBeenCalledOnce()
+    expect(cb.onFocusPrev).not.toHaveBeenCalled()
+  })
+})

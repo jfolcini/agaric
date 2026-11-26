@@ -4,13 +4,23 @@
  * paragraph sits against the right edge of its box while an English block, the
  * app chrome and every gutter control keep their place. Block mode's static
  * render and editor and page mode alike, in a plain block, a mixed one, a list
- * item and a table cell.
+ * item and a table cell. The arrows walk an Arabic block in the direction they
+ * point, and block text shown elsewhere (search, the palette, the references,
+ * the agenda, *Edit as Markdown*) runs in its own direction too (#7040).
  */
 
 import type { Locator, Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, focusBlockById, ipc, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  ipc,
+  seedSearchBlocks,
+  submitSearch,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 const ARABIC = 'مرحبا بالعالم، هذه فقرة.'
@@ -21,19 +31,22 @@ const CONTENT = {
   list: `- ${ARABIC}`,
   table: `| A column heading wider than its cells | Another heading wider than its cells |\n| --- | --- |\n| ${ARABIC} | Plain text |`,
 } as const
-type Key = keyof typeof CONTENT
 
-async function seed(page: Page, title: string): Promise<Record<Key, string>> {
+async function seedBlocks<K extends string>(
+  page: Page,
+  title: string,
+  content: Record<K, string>,
+): Promise<Record<K, string>> {
   const pageId = await ipc<string>(page, 'create_page_in_space', {
     parentId: null,
     content: title,
     spaceId: SCOPE.space_id,
   })
-  const ids = {} as Record<Key, string>
-  for (const key of Object.keys(CONTENT) as Key[]) {
+  const ids = {} as Record<K, string>
+  for (const key of Object.keys(content) as K[]) {
     const { id } = await ipc<{ id: string }>(page, 'create_block', {
       blockType: 'content',
-      content: CONTENT[key],
+      content: content[key],
       parentId: pageId,
       index: null,
       scope: SCOPE,
@@ -42,6 +55,8 @@ async function seed(page: Page, title: string): Promise<Record<Key, string>> {
   }
   return ids
 }
+
+const seed = (page: Page, title: string) => seedBlocks(page, title, CONTENT)
 
 async function open(page: Page, title: string): Promise<void> {
   await page.keyboard.press('Control+k')
@@ -88,6 +103,27 @@ async function expectLeft(scope: Locator, text: string): Promise<void> {
   const { left, right } = await gaps(scope, text)
   expect(Math.abs(left), `${text}: left gap`).toBeLessThanOrEqual(1)
   expect(right, `${text}: right gap`).toBeGreaterThan(10)
+}
+
+/** The viewport x of the left edge of `needle`, a run inside one text node under `scope`. */
+function xOf(scope: Locator, needle: string): Promise<number> {
+  return scope.evaluate((root, text) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node !== null && !node.textContent?.includes(text)) node = walker.nextNode()
+    if (node === null) throw new Error(`no text node with ${text}`)
+    const start = (node.textContent as string).indexOf(text)
+    const range = document.createRange()
+    range.setStart(node, start)
+    range.setEnd(node, start + text.length)
+    return range.getBoundingClientRect().left
+  }, needle)
+}
+
+/** `مرحبا Agaric عالم` reads right to left: its first word is right of the English one. */
+async function expectReadsRightToLeft(scope: Locator, what: string): Promise<void> {
+  await expect(scope).toContainText('Agaric')
+  expect(await xOf(scope, 'مرحبا'), what).toBeGreaterThan(await xOf(scope, 'Agaric'))
 }
 
 const staticBlock = (page: Page, id: string) =>
@@ -175,5 +211,125 @@ test.describe('right-to-left text in a block @editor @pages', () => {
     await expectLeft(block(ids.english), CONTENT.english)
     await expectRight(block(ids.list), ARABIC)
     await expectRight(block(ids.table), ARABIC)
+  })
+})
+
+test.describe('right-to-left text: arrows and the Markdown source @editor @pages @markdown', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the arrows walk an Arabic block the way they point and leave it at that edge', async ({
+    page,
+  }) => {
+    const ids = await seedBlocks(page, 'RTL arrows', {
+      before: 'Before',
+      arabic: ARABIC,
+      after: 'After',
+    })
+    await open(page, 'RTL arrows')
+    const editing = () =>
+      page
+        .locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+        .getAttribute('data-block-id')
+    const caret = () =>
+      page
+        .locator('[data-testid="block-editor"] [contenteditable="true"]')
+        .evaluate(
+          (el) =>
+            (el as HTMLElement & { editor: { state: { selection: { from: number } } } }).editor
+              .state.selection.from,
+        )
+
+    // A block the arrow lands in focuses a frame later and ProseMirror puts its selection back
+    // 20 ms after that, undoing keys sent meanwhile (`editBlock` in helpers.ts).
+    const settle = () =>
+      page
+        .locator('[data-testid="block-editor"] [contenteditable="true"]')
+        .evaluate(
+          () =>
+            new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20))),
+        )
+
+    await focusBlockById(page, ids.arabic)
+    // Home is the line's start, its right end: ArrowLeft goes into the text.
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(editing).toBe(ids.arabic)
+    await expect.poll(caret).toBe(2)
+    // Past the left end, the end of the text, is the next block.
+    await page.keyboard.press('End')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(editing).toBe(ids.after)
+    await settle()
+    // ArrowLeft from the English start comes back to the Arabic block, and
+    // ArrowRight past the Arabic start goes on to the block before.
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(editing).toBe(ids.arabic)
+    await settle()
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(editing).toBe(ids.before)
+  })
+
+  test('a callout keeps its Arabic title on the right while its marker shows', async ({ page }) => {
+    const ids = await seedBlocks(page, 'RTL callout', { callout: `> [!NOTE] عنوان\n> ${ARABIC}` })
+    await open(page, 'RTL callout')
+    const editor = await focusBlockById(page, ids.callout)
+    await page.keyboard.press('Control+Home')
+    await expect(editor.getByTestId('md-reveal-syntax-marker')).toBeVisible()
+    // The marker sits between the title and the right edge.
+    await expectRight(editor, 'عنوان', 120)
+  })
+
+  test('Edit as Markdown runs each line in its own direction', async ({ page }) => {
+    await seed(page, 'RTL source')
+    await open(page, 'RTL source')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
+    const source = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+    const line = (text: string) => source.locator('[data-source-line]').filter({ hasText: text })
+    await expectRight(line(ARABIC).first(), ARABIC)
+    await expectLeft(line(CONTENT.english), CONTENT.english)
+    await expectReadsRightToLeft(line(CONTENT.mixed), 'the mixed line')
+  })
+})
+
+test.describe('right-to-left block text in lists of blocks @search @journal @pages', () => {
+  test('search, the palette, the references and the agenda read it right to left', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const [id] = await seedSearchBlocks(page, [
+      { content: `${CONTENT.mixed} [[${SEED_IDS.PAGE_QUICK_NOTES}]]`, todo: 'TODO', due: 0 },
+    ])
+
+    await open(page, 'Quick Notes')
+    await expectReadsRightToLeft(
+      page.locator(`[data-backlink-item="${id}"] .linked-reference-item-text`),
+      'references',
+    )
+
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Search', exact: true })
+      .click()
+    await submitSearch(page, 'Agaric')
+    await expectReadsRightToLeft(page.getByTestId(`search-result-row-${id}`), 'search')
+
+    await page.keyboard.press('Control+k')
+    await page.getByTestId('command-palette-input').fill('Agaric')
+    await expectReadsRightToLeft(page.getByTestId(`palette-block-${id}`), 'palette')
+    await page.keyboard.press('Escape')
+
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Agenda', exact: true })
+      .click()
+    await expectReadsRightToLeft(
+      page.getByTestId('agenda-results-item').filter({ hasText: 'Agaric' }),
+      'agenda',
+    )
   })
 })
