@@ -269,7 +269,10 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await page.getByRole('button', { name: 'Page actions' }).tap()
     const pageMenu = page.getByRole('menu', { name: 'Page actions' })
     await expectPressedFill(page, pageMenu.getByRole('menuitem', { name: 'Open outline' }), accent)
-    await expect(page.getByRole('dialog', { name: 'Outline' })).toBeVisible()
+    const outline = page.getByRole('dialog', { name: 'Outline' })
+    await expect(outline).toBeVisible()
+    // Escape reaches the sheet once it holds the focus, which the closing menu hands over later.
+    await expect(outline.locator(':focus')).toHaveCount(1)
     await page.keyboard.press('Escape')
     await expect(activeSheet(page)).toHaveCount(0)
     // A Pages row (`ListItem`), not the one the list cursor rests on.
