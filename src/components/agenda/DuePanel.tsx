@@ -365,7 +365,9 @@ export function DuePanel({
                 {virtualRows.length > 0 && (
                   <ScrollArea
                     viewportRef={scrollParentRef}
-                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)]"
+                    // The padding keeps the last row's chips their whole hit
+                    // area, which reaches below the row: the viewport clips there.
+                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pb-2"
                   >
                     <ul
                       className="due-panel-blocks relative m-0 p-0 list-none"
@@ -374,12 +376,15 @@ export function DuePanel({
                       {virtualizer.getVirtualItems().map((virtualRow) => {
                         const row = virtualRows[virtualRow.index]
                         if (!row) return null
+                        // Placed by `top`, not a transform: a transformed row is a
+                        // stacking context, and the row after it would cover the
+                        // 44 px hit area a chip on this row's last line reaches
+                        // below it with (`touch-hit-area`).
                         const rowStyle: React.CSSProperties = {
                           position: 'absolute',
-                          top: 0,
+                          top: virtualRow.start,
                           left: 0,
                           width: '100%',
-                          transform: `translateY(${virtualRow.start}px)`,
                         }
                         if (row.kind === 'group-header') {
                           return (
@@ -410,13 +415,15 @@ export function DuePanel({
                             contentMaxLength={120}
                             emptyContentFallback={t('duePanel.emptyContent')}
                             // Typed metadata primitives — `BlockListItem`
-                            // renders the priority badge internally so the
-                            // memo shallow-compare hits cleanly across
-                            // parent re-renders (perf-review Tier 1.4
-                            // metadata half, 2026-05-14).
+                            // renders the chips internally so the memo
+                            // shallow-compare hits cleanly across parent
+                            // re-renders (perf-review Tier 1.4 metadata
+                            // half, 2026-05-14).
                             taskState={block.todo_state}
                             priority={block.priority}
-                            priorityBadgeClassName="due-panel-priority [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+                            priorityBadgeClassName="due-panel-priority"
+                            dueDate={block.due_date}
+                            scheduledDate={block.scheduled_date}
                             pageId={block.page_id}
                             pageTitle={
                               block.page_id

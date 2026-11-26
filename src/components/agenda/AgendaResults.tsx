@@ -2,8 +2,9 @@
  * AgendaResults -- flat results list for the agenda view (#606).
  *
  * Replaces the 3 hardcoded TaskSection panels (TODO/DOING/DONE) with a single
- * flat list of blocks. Each item shows: status icon, priority badge, due date
- * chip, content text, and a source page breadcrumb.
+ * flat list of blocks. Each item is the one task row (`BlockListItem`): task
+ * checkbox, content text, then the priority badge, the due and scheduled date
+ * chips, and a source page breadcrumb.
  *
  * This is a pure presentation component — the parent is responsible for
  * fetching, filtering, and passing down blocks.
@@ -402,21 +403,24 @@ export function AgendaResults({
         key={virtualRow.key}
         liRef={virtualizer.measureElement}
         dataIndex={virtualRow.index}
+        // Placed by `top`, not a transform: a transformed row is a stacking
+        // context, and the row after it would cover the 44 px hit area a chip
+        // on this row's last line reaches below it with (`touch-hit-area`).
         style={{
           position: 'absolute',
-          top: 0,
+          top: virtualRow.start - scrollMargin,
           left: 0,
           width: '100%',
-          transform: `translateY(${virtualRow.start - scrollMargin}px)`,
         }}
         content={block.content}
         // Metadata primitives — rendered by `BlockListItem`'s internal
-        // `BlockMetadataRow` sub-component (memoed) so a parent re-render
+        // `RowMetadata` sub-component (memoed) so a parent re-render
         // without prop changes does NOT allocate fresh React elements per row.
         taskState={block.todo_state}
         priority={block.priority}
-        priorityVariant="agenda"
+        priorityBadgeClassName="agenda-results-priority"
         dueDate={block.due_date}
+        scheduledDate={block.scheduled_date}
         dueDateBlockId={block.id}
         {...(onDateChanged !== undefined && { onDateChanged })}
         dependencyBlockId={block.id}
@@ -461,10 +465,9 @@ export function AgendaResults({
         if (!row) return null
         const rowStyle: React.CSSProperties = {
           position: 'absolute',
-          top: 0,
+          top: virtualRow.start - scrollMargin,
           left: 0,
           width: '100%',
-          transform: `translateY(${virtualRow.start - scrollMargin}px)`,
         }
         if (row.kind === 'group-header') {
           const i18nKey = groupI18nKey(row.group, GROUP_I18N)
@@ -613,7 +616,6 @@ export function AgendaResults({
           firstFlatIndex={flatItems.length - projectedEntries.length}
           focusedIndex={focusedIndex}
           onNavigateToPage={onNavigateToPage}
-          showDate
         />
         {projected && (
           <LoadMoreButton

@@ -89,7 +89,7 @@ vi.mock('lucide-react', () => ({
   AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
   BookTemplate: () => <svg data-testid="book-template-icon" />,
-  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  Flag: () => <svg data-testid="flag-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
@@ -1300,7 +1300,9 @@ describe('PageHeader alias display', () => {
     expect(editButton.querySelector('[data-testid="plus-icon"]')).toBeNull()
   })
 
-  it('alias badges use the same styling pattern as tag badges', async () => {
+  // #7040 — a chip says what it is by its shape: a tag is tinted, an alias,
+  // a value of the page, is outlined as a property is.
+  it('an alias badge and a tag badge are different chips', async () => {
     setupTagMock(['TAG_1'], ['alias-1'])
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
@@ -1311,17 +1313,10 @@ describe('PageHeader alias display', () => {
       expect(screen.getByText('urgent')).toBeInTheDocument()
     })
 
-    // Alias badges should use Badge component (has data-slot="badge")
     const aliasBadge = screen.getByText('alias-1').closest('[data-slot="badge"]')
-    expect(aliasBadge).toBeInTheDocument()
-
-    // Tag badges should also use Badge component
     const tagBadge = screen.getByText('urgent').closest('[data-slot="badge"]')
-    expect(tagBadge).toBeInTheDocument()
-
-    // Both should have the same variant
-    expect(aliasBadge).toHaveAttribute('data-variant', 'secondary')
-    expect(tagBadge).toHaveAttribute('data-variant', 'secondary')
+    expect(aliasBadge).toHaveAttribute('data-variant', 'property')
+    expect(tagBadge).toHaveAttribute('data-variant', 'tag')
   })
 })
 

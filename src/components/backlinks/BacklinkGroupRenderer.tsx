@@ -259,7 +259,7 @@ function BacklinkRowInner({
         </IconButton>
       )}
       {block.block_type !== 'content' && (
-        <Badge tone="secondary" className="linked-reference-item-type shrink-0">
+        <Badge tone="metadata" className="linked-reference-item-type">
           {block.block_type}
         </Badge>
       )}

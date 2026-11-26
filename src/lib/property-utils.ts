@@ -1,15 +1,8 @@
 import type { TFunction } from 'i18next'
 import type { LucideIcon } from 'lucide-react'
-import {
-  CalendarCheck2,
-  CalendarClock,
-  CalendarPlus,
-  CheckCircle2,
-  Clock,
-  MapPin,
-  Repeat,
-  User,
-} from 'lucide-react'
+import { CalendarPlus, CheckCircle2, Clock, MapPin, Repeat, User } from 'lucide-react'
+
+import { DATE_ICONS } from '@/lib/date-icons'
 
 /**
  * Human-friendly display name for a property key.
@@ -59,8 +52,8 @@ export function selectOptionsJson(list: string): string | null {
 
 /** Icon lookup for built-in property keys. Returns `undefined` for custom keys. */
 export const BUILTIN_PROPERTY_ICONS: Record<string, LucideIcon> = {
-  due_date: CalendarCheck2,
-  scheduled_date: CalendarClock,
+  due_date: DATE_ICONS.due,
+  scheduled_date: DATE_ICONS.scheduled,
   created_at: CalendarPlus,
   completed_at: CheckCircle2,
   effort: Clock,

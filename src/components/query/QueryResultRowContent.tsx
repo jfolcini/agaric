@@ -5,18 +5,17 @@
  * `QueryResultTable` (the content cell), which render the same block content
  * in the same two conditions — inside a clamping inline wrapper, and inside
  * an element that is ITSELF the click target. Written once because the two
- * are the third and fourth copy of this row body in the codebase
- * (`AlertSection`'s `AlertRowContent` and `DuePanel`'s
- * `ProjectedEntryContent` are the first two), and because a query row is
+ * are two more copies of a row body the codebase already has (`DuePanel`'s
+ * `ProjectedEntryContent`), and because a query row is
  * exactly the surface where the two components must not drift: they render
  * the same `resolveBlockDisplay` output and are already kept in step by it.
  *
- * The two agenda copies are deliberately NOT folded in here. `DuePanel`'s
+ * The agenda copy is deliberately NOT folded in here. `DuePanel`'s
  * passes `interactive: true` plus an `onTagClick`, and memoizes through refs
  * keyed on the resolve-store version rather than on the callbacks — a
  * different contract, not a duplicate of this one.
  *
- * Memoized on the content string, following `AlertRowContent` (#4705): both
+ * Memoized on the content string (#4705): both
  * callers re-render on state that is not the row's content (roving
  * `focusedIndex` in the list, a header click re-sorting the table), and
  * `renderRichContent`'s element tree — unlike its `parse` — is not cached.

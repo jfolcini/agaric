@@ -200,7 +200,9 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
     <div
       role="grid"
       aria-label={t('journal.monthlyCalendarLabel')}
-      className="rounded-lg overflow-hidden bg-border"
+      // The 1px gaps between rows and between cells let `bg-border` show
+      // through as the gridlines.
+      className="flex flex-col gap-px rounded-lg overflow-hidden border border-border bg-border"
       // Programmatically focusable (not a tab stop) so the grid can host the
       // arrow-key handler; the roving cell keeps the single tabindex 0.
       tabIndex={-1}
@@ -208,7 +210,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
     >
       {/* Day-of-week headers */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid built on CSS grid divs; a real <tr> requires <table>/<tbody> ancestry that would break the grid-cols-7 layout */}
-      <div role="row" className="grid grid-cols-7 gap-0.5">
+      <div role="row" className="grid grid-cols-7 gap-px">
         {dayHeaders.map((header) => (
           <div
             key={header}
@@ -226,7 +228,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
         const weekKey = week[0]?.dateStr ?? ''
         return (
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid row on a CSS-grid div; a real <tr> requires <table>/<tbody> ancestry that would break the grid-cols-7 layout
-          <div key={weekKey} role="row" className="grid grid-cols-7 gap-0.5">
+          <div key={weekKey} role="row" className="grid grid-cols-7 gap-px">
             {week.map((entry) => {
               const isToday = entry.dateStr === todayStr
               const isCurrentMonth = isSameMonth(entry.date, currentDate)

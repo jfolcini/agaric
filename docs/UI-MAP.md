@@ -135,7 +135,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 | **TrashPurgeDialog** + batch variants     | Trash view actions                                                     |
 | **LinkEditPopover**                       | FormattingToolbar External Link / SelectionBubbleMenu Link             |
 | **AddPropertyPopover**                    | "+ Add" inside property surfaces                                       |
-| **DateChipEditor**                        | Agenda date chips                                                      |
+| **DateChipEditor**                        | A task row's date chips (Agenda, Due panel)                            |
 | **PageHeaderMenu**                        | Kebab in PageHeader                                                    |
 | **FormattingToolbar overflow**            | `MoreHorizontal` when toolbar narrows                                  |
 | **TagValuePicker** / **InlinePicker**     | Tag- and value-picker popovers inside filter and property surfaces     |
