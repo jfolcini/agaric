@@ -1367,7 +1367,7 @@ describe('useBlockDnD', () => {
       // fires (reorder, not moveToParent).
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputeDropIndex.mockReturnValue(3)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1386,7 +1386,7 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
       })
 
-      expect(params.reorder).toHaveBeenCalledWith('A', 3)
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
       expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
@@ -1399,7 +1399,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputeDropIndex.mockReturnValue(5)
+      mockedComputeDropIndex.mockReturnValue(1)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1419,7 +1419,7 @@ describe('useBlockDnD', () => {
         'A',
       )
       // Same-parent sentinel drop → optimistic reorder by slot (R5 #404).
-      expect(params.reorder).toHaveBeenCalledWith('A', 5)
+      expect(params.reorder).toHaveBeenCalledWith('A', 1)
     })
   })
 
@@ -1888,7 +1888,7 @@ describe('useBlockDnD', () => {
         mockedComputeSelectionRoots.mockReturnValue(['R1', 'R2'])
         const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
         mockedGetProjection.mockReturnValue(projection)
-        mockedComputeDropIndex.mockReturnValue(2)
+        mockedComputeDropIndex.mockReturnValue(1)
         const params = multiDragParams()
         const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1899,7 +1899,7 @@ describe('useBlockDnD', () => {
           result.current.handleDragEnd(makeDragEndEvent('R1', 'X') as never)
         })
 
-        expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 2)
+        expect(params.moveBlocks).toHaveBeenCalledWith(['R1', 'R2'], null, 1)
         const slotCall = mockedComputeDropIndex.mock.calls.at(-1) as [
           readonly FlatBlock[],
           ...unknown[],
@@ -1964,6 +1964,21 @@ describe('folded heading sections (#7040)', () => {
       expect(slotAmongAll(all, all, null, 2, new Set(['X']), () => [])).toBe(2)
       expect(slotAmongAll(all, all, null, 3, new Set(['X']), () => [])).toBe(3)
     })
+  })
+
+  it("a selection's drag takes a folded heading's hidden siblings with it", () => {
+    mockedComputeSelectionRoots.mockReturnValue(['H', 'X'])
+    const params = makeDefaultParams({
+      blocks: [H, S1, S2, X, Y],
+      collapsedVisible: [H, X, Y],
+      selectedBlockIds: ['H', 'X'],
+      foldedSiblings: folded,
+    })
+    const { result } = renderHook(() => useBlockDnD(params))
+    act(() => {
+      result.current.handleDragStart(makeDragStartEvent('X') as never)
+    })
+    expect(result.current.dragRoots).toEqual(['H', 'S1', 'S2', 'X'])
   })
 
   it("a folded heading's drag moves it with its hidden siblings in one batch", () => {

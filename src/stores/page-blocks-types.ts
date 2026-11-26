@@ -158,9 +158,10 @@ export interface PageBlockState {
    * Move the selection roots `ids` under `newParentId`, landing contiguously
    * from slot `newIndex` in their document order, in one `move_blocks_batch`
    * transaction (#914, #2274). A block nested in another moved block must not
-   * be listed (`computeSelectionRoots`); it travels with its ancestor.
+   * be listed (`computeSelectionRoots`); it travels with its ancestor. `false`
+   * when the batch failed (toasted, nothing moved).
    */
-  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
+  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<boolean>
 
   /**
    * Make a block the last child of its previous sibling. `true` when the move

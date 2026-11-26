@@ -78,6 +78,7 @@ const REAL_BACKEND_SPECS = [
   'hash-tag-typing.spec.ts',
   'header-search-button.spec.ts',
   'heading-folds-drag.spec.ts',
+  'heading-folds-selection.spec.ts',
   'history-advanced.spec.ts',
   'history-keyboard-controls.spec.ts',
   'history-keyboard.spec.ts',

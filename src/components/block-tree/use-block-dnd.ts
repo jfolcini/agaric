@@ -77,7 +77,7 @@ interface UseBlockDnDParams {
    * a 0-based sibling slot. Required for multi-select drag; optional so call
    * sites that never multi-select can omit it.
    */
-  moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
+  moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<unknown>
   /**
    * #7040 — the siblings a collapsed heading hides (`useBlockCollapse`): its
    * drag carries them, through `moveBlocks`, so one undo puts them back.
@@ -133,10 +133,10 @@ export function slotAmongAll(
     const at = all.indexOf(before.id)
     return at === -1 ? slot : at
   }
-  // After the last shown sibling: past the siblings hidden before it and in its fold.
+  // After the last shown sibling: past it and the siblings its fold hides.
   const hidden = (foldedSiblings?.(last.id) ?? []).filter((id) => !moving.has(id))
   const at = all.indexOf(last.id)
-  return at === -1 ? slot : slot + at - (visible.length - 1) + hidden.length
+  return at === -1 ? slot : at + 1 + hidden.length
 }
 
 export interface UseBlockDnDReturn {

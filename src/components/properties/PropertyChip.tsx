@@ -69,6 +69,9 @@ export function PropertyChip({
   const chipLabel = t('property.selectValue', { key: displayName, value })
   const groupLabel = unfit ? t('property.unfitChipLabel', { key: displayName, value }) : chipLabel
 
+  const icon = Icon && (
+    <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.625)] shrink-0 [@media(pointer:coarse)]:size-[calc(var(--agaric-font-size,1rem)*0.75)]" />
+  )
   // The key is set apart from the value by weight: a fade (`opacity-60`) fails AA contrast (#5743).
   const keyLabel = onKeyClick ? (
     <button
@@ -86,14 +89,14 @@ export function PropertyChip({
       onClick={onKeyClick}
       aria-label={t('property.editKeyLabel', { key: displayName })}
     >
-      {Icon && <Icon className="h-2.5 w-2.5 shrink-0 [@media(pointer:coarse)]:size-3" />}
+      {icon}
       {displayName}:
     </button>
   ) : (
     <span
       className={cn('property-key-label font-normal', Icon && 'inline-flex items-center gap-0.5')}
     >
-      {Icon && <Icon className="h-2.5 w-2.5 shrink-0 [@media(pointer:coarse)]:size-3" />}
+      {icon}
       {displayName}:
     </span>
   )
@@ -146,7 +149,7 @@ export function PropertyChip({
       aria-label={groupLabel}
       className={cn(
         badgeVariants({ tone: 'property' }),
-        'property-chip gap-0.5 leading-none select-none',
+        'property-chip gap-0.5 text-block-chip leading-none select-none',
         unfit && 'border-alert-warning-border bg-alert-warning text-alert-warning-foreground',
         'focus-within:ring-[3px] focus-within:ring-ring',
         onClick &&

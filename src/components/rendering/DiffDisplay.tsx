@@ -172,7 +172,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   return (
     <div className="diff-display-wrapper">
       <section aria-label={t('diff.regionLabel')}>
-        <p className="diff-display text-sm leading-relaxed whitespace-pre-wrap break-words m-0">
+        <p className="diff-display text-block-sm leading-relaxed whitespace-pre-wrap break-words m-0">
           {visibleSpans.map((span, i) => {
             const key = `${i}-${span.tag}`
             // #1623 — reuse the memoized parse so the active-hunk ring update

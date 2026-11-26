@@ -25,7 +25,13 @@ import {
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { canMerge, dropBlock, mergeBlock, moveBlocks } from '@/editor/page-mode/page-block-actions'
+import {
+  canMerge,
+  deleteBlocks,
+  dropBlock,
+  mergeBlock,
+  moveBlocks,
+} from '@/editor/page-mode/page-block-actions'
 import {
   foldIn,
   foldOf,
@@ -34,7 +40,7 @@ import {
   toggleFold,
 } from '@/editor/page-mode/page-collapse'
 import { PAGE_BLOCK, startOf } from '@/editor/page-mode/page-document'
-import { indentIds } from '@/editor/page-mode/page-keys'
+import { indentBlocks, indentIds, outdentIds } from '@/editor/page-mode/page-keys'
 import { createSaveState, savePage } from '@/editor/page-mode/page-save'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -516,6 +522,110 @@ describe('heading sections (#7040)', () => {
     toggle(folded, A)
     expect(dropBlock(A, 5, 0)(folded.state, folded.view.dispatch)).toBe(true)
     expect(rowsOf(folded.state.doc).map(([id]) => id)).toEqual([D, E, A, B, C])
+  })
+})
+
+describe('a block landing in a collapsed section (#7040 decision 30)', () => {
+  const ROWS: Row[] = [
+    [A, 0, 'a'],
+    [B, 0, '## Two'],
+    [C, 0, 'c'],
+    [D, 0, '## Three'],
+  ]
+  const saved = (ed: Editor): ReadonlySet<string> =>
+    pageCollapseKey.getState(ed.state)?.collapsed ?? new Set()
+
+  it('unfolds the heading a move takes a block into', () => {
+    const ed = build(ROWS)
+    caret(ed, 3, 0)
+    toggle(ed, B)
+
+    expect(moveBlocks([A], 1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([B, C, A, D])
+    expect(saved(ed).has(B)).toBe(false)
+    expect(hidden(ed)).toEqual([])
+  })
+
+  it('unfolds the heading a drop lands a block in', () => {
+    const ed = build(ROWS)
+    caret(ed, 3, 0)
+    toggle(ed, B)
+
+    expect(dropBlock(A, 3, 0)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([B, C, A, D])
+    expect(saved(ed).has(B)).toBe(false)
+  })
+
+  it('unfolds the heading an indent takes a block into', () => {
+    const ed = build([
+      [A, 0, '## One'],
+      [B, 0, 'b'],
+      [C, 0, '## Two'],
+    ])
+    caret(ed, 2, 0)
+    toggle(ed, A)
+
+    expect(indentBlocks(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, '## One'],
+      [B, 0, 'b'],
+      [C, 1, '## Two'],
+    ])
+    expect(saved(ed).has(A)).toBe(false)
+  })
+
+  it('leaves a section folded when what moves stays out of it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, B)
+
+    expect(moveBlocks([D], -1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, D, B, C])
+    expect(saved(ed).has(B)).toBe(true)
+    expect(hidden(ed)).toEqual([C])
+  })
+})
+
+describe('a selection with a collapsed heading (#7040 decision 30)', () => {
+  const ROWS: Row[] = [
+    [A, 0, 'a'],
+    [B, 0, '## Two'],
+    [C, 0, 'c'],
+    [D, 1, 'd'],
+    [E, 0, '## Three'],
+  ]
+
+  it('deletes the section the heading hides with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, B)
+
+    expect(deleteBlocks([B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, E])
+  })
+
+  it('indents and outdents the section the heading hides with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, B)
+
+    expect(indentIds(() => [B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 1],
+      [C, 1],
+      [D, 2],
+      [E, 0],
+    ])
+    expect(outdentIds(() => [B])(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 0],
+      [C, 0],
+      [D, 1],
+      [E, 0],
+    ])
+    expect(hidden(ed)).toEqual([C, D])
   })
 })
 
