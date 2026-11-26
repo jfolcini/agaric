@@ -24,6 +24,9 @@ test.describe('Escape keeps the text (#5160 D17) @editor', () => {
     const row = page.locator(
       `[data-testid="sortable-block"][data-block-id="${blockId}"] [data-testid="block-static"]`,
     )
+    const frame = page.locator(
+      `[data-testid="sortable-block"][data-block-id="${blockId}"] [data-testid="block-frame"]`,
+    )
 
     const editor = await focusBlock(page, 0)
     await editor.press('Control+a')
@@ -31,13 +34,13 @@ test.describe('Escape keeps the text (#5160 D17) @editor', () => {
     await page.keyboard.press('Escape')
 
     await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
-    await expect(row).toHaveClass(/block-selected/)
+    await expect(frame).toHaveClass(/block-selected/)
     // One selected block brings no batch bar (#6547).
     await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
     await expect(row).toHaveText(EDITED)
 
     await page.keyboard.press('Escape')
-    await expect(row).not.toHaveClass(/block-selected/)
+    await expect(frame).not.toHaveClass(/block-selected/)
 
     await reopenPage(page, PAGE)
     await expect(row).toHaveText(EDITED)

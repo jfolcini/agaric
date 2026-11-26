@@ -149,7 +149,7 @@ function SearchResultBlockRowImpl({
           className: 'list-none gap-2 text-sm cursor-pointer',
         }),
         'active:bg-accent/70',
-        isFocused && 'bg-accent',
+        isFocused && 'list-cursor',
         loading && 'opacity-60 cursor-progress',
       )}
       data-testid={`search-result-row-${row.id}`}

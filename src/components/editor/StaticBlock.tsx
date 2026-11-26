@@ -28,7 +28,6 @@ import { useRichContent } from '@/components/editor/useRichContent'
 import { type TextPoint, textPointAtClick } from '@/editor/click-caret'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { parseEmbedToken } from '@/lib/embed-token'
-import { cn } from '@/lib/utils'
 
 export interface StaticBlockProps {
   blockId: string
@@ -45,8 +44,6 @@ export interface StaticBlockProps {
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  /** Whether this block is part of a multi-selection. */
-  isSelected?: boolean | undefined
   /** Ctrl+Click / Shift+Click selection callback. */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onMouseDown?: React.MouseEventHandler<HTMLDivElement> | undefined
@@ -67,7 +64,6 @@ function StaticBlockInner({
   resolveTagName,
   resolveBlockStatus,
   resolveTagStatus,
-  isSelected,
   onSelect,
   onMouseDown,
   onDragOver,
@@ -173,10 +169,7 @@ function StaticBlockInner({
           buttons retain their own role/tabIndex/keyboard handling. */}
       {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface whose click mounts the editor; keyboard users reach the same content through the inner chips and buttons */}
       <div
-        className={cn(
-          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 leading-normal transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',
-          isSelected && 'block-selected',
-        )}
+        className="block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 leading-normal transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]"
         data-testid="block-static"
         data-block-id={blockId}
         onMouseDown={onMouseDown}

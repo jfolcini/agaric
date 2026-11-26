@@ -1935,18 +1935,18 @@ describe('SearchPanel', () => {
 
       const options = screen.getAllByRole('option')
 
-      // Initial state: focusedIndex=0, first item has bg-accent
-      expect(options[0]).toHaveClass('bg-accent')
-      expect(options[1]).not.toHaveClass('bg-accent')
+      // Initial state: focusedIndex=0, the first item carries the list cursor
+      expect(options[0]).toHaveClass('list-cursor')
+      expect(options[1]).not.toHaveClass('list-cursor')
 
       const listbox = screen.getByRole('listbox')
       listbox.focus()
 
-      // Press ArrowDown — second item should get bg-accent (0→1)
+      // Press ArrowDown — the cursor moves to the second item (0→1)
       await user.keyboard('{ArrowDown}')
 
-      expect(options[0]).not.toHaveClass('bg-accent')
-      expect(options[1]).toHaveClass('bg-accent')
+      expect(options[0]).not.toHaveClass('list-cursor')
+      expect(options[1]).toHaveClass('list-cursor')
     })
   })
 

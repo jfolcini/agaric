@@ -18,7 +18,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *
  * Selection mechanics:
  *   - Ctrl+Click on a static block toggles it in/out of selection
- *   - Selected blocks get the `block-selected` utility on [data-testid="block-static"]
+ *   - Selected blocks get the `block-selected` utility on their row's [data-testid="block-frame"]
  *   - Batch toolbar (`.batch-toolbar`) appears from two selected blocks (#6547)
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */
@@ -40,11 +40,13 @@ test.describe('Batch block operations @editor', () => {
   }) => {
     const blocks = page.locator('[data-testid="sortable-block"]')
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
+    const firstFrame = blocks.nth(0).getByTestId('block-frame')
     const secondStatic = blocks.nth(1).locator('[data-testid="block-static"]')
+    const secondFrame = blocks.nth(1).getByTestId('block-frame')
 
     // Initially, blocks should NOT have the selection highlight
-    await expect(firstStatic).not.toHaveClass(/block-selected/)
-    await expect(secondStatic).not.toHaveClass(/block-selected/)
+    await expect(firstFrame).not.toHaveClass(/block-selected/)
+    await expect(secondFrame).not.toHaveClass(/block-selected/)
 
     // Ctrl+Click first block to toggle it into selection. Click a stable
     // non-interactive corner (the block's padding) rather than the element
@@ -52,12 +54,12 @@ test.describe('Batch block operations @editor', () => {
     // position shifts with font metrics, so a center click can land on an
     // inner `<a>`/chip (which swallows the selection toggle) on some platforms.
     await firstStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-    await expect(firstStatic).toHaveClass(/block-selected/)
+    await expect(firstFrame).toHaveClass(/block-selected/)
 
     // Ctrl+Click second block to add it to selection
     await secondStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-    await expect(firstStatic).toHaveClass(/block-selected/)
-    await expect(secondStatic).toHaveClass(/block-selected/)
+    await expect(firstFrame).toHaveClass(/block-selected/)
+    await expect(secondFrame).toHaveClass(/block-selected/)
   })
 
   // =========================================================================
@@ -80,9 +82,7 @@ test.describe('Batch block operations @editor', () => {
       .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 
     // One selected block brings no toolbar (#6547)
-    await expect(blocks.nth(0).locator('[data-testid="block-static"]')).toHaveClass(
-      /block-selected/,
-    )
+    await expect(blocks.nth(0).getByTestId('block-frame')).toHaveClass(/block-selected/)
     await expect(batchToolbar).toHaveCount(0)
 
     // Ctrl+Click second block — the toolbar appears with count 2
@@ -148,9 +148,7 @@ test.describe('Batch block operations @editor', () => {
 
     // All static blocks should have the selection highlight indicator
     for (let i = 0; i < blockCount; i++) {
-      await expect(blocks.nth(i).locator('[data-testid="block-static"]')).toHaveClass(
-        /block-selected/,
-      )
+      await expect(blocks.nth(i).getByTestId('block-frame')).toHaveClass(/block-selected/)
     }
   })
 

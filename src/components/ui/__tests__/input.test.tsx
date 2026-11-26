@@ -182,7 +182,8 @@ describe('Input', () => {
 
     const el = screen.getByRole('textbox', { name: 'Field' })
     expect(el.className).toContain('aria-invalid:border-destructive')
-    expect(el.className).toContain('aria-invalid:ring-destructive/20')
+    // The border says invalid; the focus ring stays the opaque `--ring` (#7040).
+    expect(el.className).not.toMatch(/ring-destructive/)
   })
 
   // -- Touch-friendly sizing (AGENTS.md mandatory) ----------------------------
