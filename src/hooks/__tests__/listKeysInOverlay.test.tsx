@@ -67,13 +67,13 @@ function Overlays() {
         <button type="button">No</button>
       </div>
       <div data-radix-popper-content-wrapper="">
-        {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- mirrors the markup Radix Select renders */}
+        {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- mirrors the markup Radix Select renders */}
         <div role="listbox" aria-label="Operation type">
+          {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- mirrors the markup Radix Select renders */}
           <div role="option" aria-selected={false} tabIndex={-1}>
             All types
           </div>
         </div>
-        {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
       </div>
     </>
   )

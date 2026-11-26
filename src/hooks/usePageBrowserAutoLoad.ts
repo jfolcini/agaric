@@ -23,7 +23,7 @@
  * effects, same deps, same timing.
  */
 
-import { type RefObject, useEffect, useRef } from 'react'
+import { type RefObject, useEffect, useEffectEvent } from 'react'
 
 /// Bottom-of-list proximity in CSS pixels at which the auto-load
 /// pixel-trigger fires. Picked to give ~5-7 rows of headroom at the
@@ -63,28 +63,20 @@ export function usePageBrowserAutoLoad({
   // trigger above for tree view (one expanded tree-page row may
   // exceed the viewport vertically; the index-based check never
   // advances past that row even as the user scrolls inside it).
-  const hasMoreRef = useRef(hasMore)
-  const loadingRef = useRef(loading)
-  const loadMoreRef = useRef(loadMore)
-  hasMoreRef.current = hasMore
-  loadingRef.current = loading
-  loadMoreRef.current = loadMore
+  // The listener attaches once per mount (`listRef` is stable) and reads the
+  // latest hasMore/loading/loadMore through the effect event.
+  const onScroll = useEffectEvent((el: HTMLDivElement) => {
+    if (!hasMore || loading) return
+    const remaining = el.scrollHeight - (el.scrollTop + el.clientHeight)
+    if (remaining <= INFINITE_SCROLL_BOTTOM_THRESHOLD_PX) {
+      loadMore()
+    }
+  })
   useEffect(() => {
     const el = listRef.current
     if (el == null) return
-    function handleScroll() {
-      if (!hasMoreRef.current || loadingRef.current) return
-      if (el == null) return
-      const remaining = el.scrollHeight - (el.scrollTop + el.clientHeight)
-      if (remaining <= INFINITE_SCROLL_BOTTOM_THRESHOLD_PX) {
-        loadMoreRef.current()
-      }
-    }
+    const handleScroll = () => onScroll(el)
     el.addEventListener('scroll', handleScroll, { passive: true })
     return () => el.removeEventListener('scroll', handleScroll)
-    // Empty deps + refs above: listener attaches once per mount, and
-    // the refs always carry the latest hasMore/loading/loadMore.
-    // `listRef` is a stable ref, so it does not belong in the dep array.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- attach once per mount; latest values read via refs
-  }, [])
+  }, [listRef])
 }

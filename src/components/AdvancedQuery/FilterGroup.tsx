@@ -193,15 +193,14 @@ export function FilterGroup({
   const kind = t('advancedQuery.builder.kindGroup')
 
   return (
-    <div
+    <fieldset
       className={cn(
-        'filter-group flex flex-col gap-2 rounded-md border p-2',
+        // `min-w-0` resets the fieldset's UA `min-inline-size: min-content`.
+        'filter-group flex min-w-0 flex-col gap-2 rounded-md border p-2',
         depth > 0 && 'ml-3 bg-muted/30',
       )}
       data-testid="filter-group"
       data-depth={depth}
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a <fieldset>/<details> would impose form/disclosure semantics and break the inline builder layout; role=group is the correct grouping primitive for this composite control
-      role="group"
       aria-label={
         isRoot ? t('advancedQuery.builder.rootLabel') : t('advancedQuery.builder.groupLabel')
       }
@@ -300,6 +299,6 @@ export function FilterGroup({
           {t('advancedQuery.builder.addGroup')}
         </Button>
       </div>
-    </div>
+    </fieldset>
   )
 }

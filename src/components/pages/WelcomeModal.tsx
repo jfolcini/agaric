@@ -252,7 +252,7 @@ export function WelcomeModal() {
     /*
       oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit role="list" is
       required because Safari + VoiceOver strip the implicit list role
-      from a <ul> with `list-style: none` (Tailwind `list-none`). .
+      from a <ul> with `list-style: none` (Tailwind `list-none`).
     */
     <ul role="list" className="grid list-none gap-4 py-2 pl-0">
       {FEATURES.map((feature) => (

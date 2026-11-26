@@ -104,7 +104,7 @@ export function useBlockNavigation({
           onClick: () => handleBlockClick(block),
           onKeyDown: (e: React.KeyboardEvent) => handleBlockKeyDown(e, block),
         }
-        // oxlint-disable-next-line react/immutability -- `cache` is a Map allocated once (per handleBlockClick/handleBlockKeyDown identity) and only ever grown with entries that are a pure, deterministic function of the key (block.id, block.page_id) plus the two captured callbacks; a discarded/duplicate render (StrictMode double-invoke, an interrupted concurrent render) only recomputes a behaviourally identical entry for the same key, so this mutation is idempotent and produces no observable difference (#4409)
+        // oxlint-disable-next-line react/immutability -- the cache only grows, with entries that are a pure function of the key and this memo's deps, so a discarded render's write is idempotent (#4409)
         cache.set(key, entry)
       }
       return entry

@@ -62,9 +62,9 @@ vi.mock('@/components/journal/MonthlyDayCell', () => ({
     const isCurrentMonth = !!props['isCurrentMonth']
     const tabIndex = props['tabIndex'] as number | undefined
     return (
-      /* oxlint-disable jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell */
       <div
         ref={props['ref'] as React.Ref<HTMLDivElement> | undefined}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}
         data-date={entry.dateStr}
