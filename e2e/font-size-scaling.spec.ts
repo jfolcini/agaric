@@ -109,7 +109,20 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
         small,
       )
       await focusBlockById(page, code)
-      expect(await fontSize(editor.locator('pre')), 'edited code block').toBe(small)
+      const pre = editor.locator('pre')
+      expect(await fontSize(pre), 'edited code block').toBe(small)
+      // Its revealed fences, on lines of their own in the room its margins leave.
+      await expect(pre).toHaveClass(/md-reveal-block-syntax/)
+      const fence = await pre.evaluate((el) => {
+        const style = getComputedStyle(el, '::before')
+        return {
+          size: style.fontSize,
+          line: style.lineHeight,
+          margin: getComputedStyle(el).marginTop,
+        }
+      })
+      expect(fence.size, 'code fence').toBe(small)
+      expect(fence.margin, "the fence's room").toBe(fence.line)
     })
   })
 }
