@@ -1047,7 +1047,7 @@
     --block-controls-lead: var(--block-hang);
     --block-tree-task-shift: 0px;
   }
-  /* A phone's ends its row instead (`SortableBlock`, `.page-mode-phone`). */
+  /* A phone's top-level chevron ends its row instead (`SortableBlock`, `.page-mode-phone`). */
   @media (width < 48rem) {
     :root {
       --block-room: var(--block-hang);
