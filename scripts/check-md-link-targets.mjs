@@ -61,6 +61,7 @@
 
 import path from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
 import {
   describeSource,
   gitEnv,
@@ -171,9 +172,7 @@ function check() {
       repoRoot: ROOT,
     })
   } catch (err) {
-    console.error(
-      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`check-md-link-targets: invocation error: ${errorMessage(err)}`)
     return 2
   }
   if (process.argv.includes('--print-source')) {
@@ -184,9 +183,7 @@ function check() {
   try {
     entries = listTrackedEntries(ROOT, { env: GIT_ENV })
   } catch (err) {
-    console.error(
-      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`check-md-link-targets: invocation error: ${errorMessage(err)}`)
     return 2
   }
   if (entries === null) {
@@ -204,9 +201,7 @@ function check() {
       env: GIT_ENV,
     })
   } catch (err) {
-    console.error(
-      `check-md-link-targets: invocation error: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`check-md-link-targets: invocation error: ${errorMessage(err)}`)
     return 2
   }
 

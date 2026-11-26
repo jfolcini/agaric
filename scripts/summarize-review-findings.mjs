@@ -73,6 +73,8 @@
 import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 export const CHECK_NAME = 'claude-review findings'
 
 // Cardinals the reviewer actually writes. Digits are handled separately.
@@ -649,7 +651,7 @@ function readList(file) {
  * @param {unknown} err
  */
 export function failureResult(headSha, err) {
-  const message = err instanceof Error ? err.message : String(err)
+  const message = errorMessage(err)
   return {
     conclusion: 'neutral',
     findings: 0,
@@ -678,7 +680,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`summarize-review-findings: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`summarize-review-findings: ${errorMessage(err)}`)
     process.exit(2)
   }
 
