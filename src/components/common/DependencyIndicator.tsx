@@ -1,6 +1,8 @@
 /**
- * DependencyIndicator — shows a subtle Link2 icon with tooltip when a block
- * has a `blocked_by` property (value_ref type). Used in AgendaResults metadata.
+ * DependencyIndicator — a subtle Link2 button when a block has a `blocked_by`
+ * property (value_ref type), named "Blocked by …" and opening that text on a
+ * click, tap or Enter (`InfoPopover`): a tooltip never opened on touch. Used in
+ * AgendaResults metadata.
  *
  * Props:
  *   blockId — the block whose properties to check
@@ -22,14 +24,13 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { InfoPopover } from '@/components/ui/info-popover'
 import { useBatchPropertyRows, useBatchPropertyRowsLoading } from '@/hooks/useBatchPropertyRows'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { requireActiveScope } from '@/lib/space-scope'
-import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
 export interface DependencyIndicatorProps {
@@ -41,14 +42,11 @@ export interface DependencyIndicatorProps {
    * unused — properties come from the provider directly.
    */
   propertiesCache?: React.RefObject<Map<string, PropertyRow[]>> | undefined
-  /** Additional CSS classes */
-  className?: string | undefined
 }
 
 export function DependencyIndicator({
   blockId,
   propertiesCache,
-  className,
 }: DependencyIndicatorProps): React.ReactElement | null {
   const { t } = useTranslation()
   const [blockedByTitle, setBlockedByTitle] = useState<string | null>(null)
@@ -110,8 +108,8 @@ export function DependencyIndicator({
 
         // Try to resolve the title of the blocking task. Scoped to the active
         // space (#5415): a blocker left in another space by "Move to space"
-        // keeps the generic tooltip, as a cross-space link renders broken.
-        // With no space known the tooltip stays generic too.
+        // keeps the generic text, as a cross-space link renders broken.
+        // With no space known the text stays generic too.
         if (currentSpaceId == null) return
         try {
           const resolved = unwrap(
@@ -124,7 +122,7 @@ export function DependencyIndicator({
             setBlockedByTitle(resolved[0].title)
           }
         } catch (err) {
-          // Best-effort title resolution — fall back to the generic tooltip text.
+          // Best-effort title resolution — fall back to the generic text.
           logger.warn(
             'DependencyIndicator',
             'Failed to resolve blocking task',
@@ -158,26 +156,17 @@ export function DependencyIndicator({
 
   if (!hasBlockedBy) return null
 
-  const tooltipText = blockedByTitle
+  const blockedBy = blockedByTitle
     ? t('dependency.blockedBy', { title: blockedByTitle })
     : t('dependency.blockedByUnresolved')
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn('inline-flex items-center text-muted-foreground', className)}
-          data-testid="dependency-indicator"
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- labelled wrapper around an inline SVG icon and the Tooltip's asChild trigger ref; <img> is a void element that can't contain the SVG child
-          role="img"
-          aria-label={tooltipText}
-        >
-          <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>{tooltipText}</p>
-      </TooltipContent>
-    </Tooltip>
+    <InfoPopover
+      variant="icon"
+      icon={Link2}
+      ariaLabel={blockedBy}
+      content={blockedBy}
+      data-testid="dependency-indicator"
+    />
   )
 }

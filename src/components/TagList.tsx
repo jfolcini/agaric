@@ -428,7 +428,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                           variant="ghost"
                           size="icon-xs"
                           aria-label={t('tagList.colorTagLabel')}
-                          className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                          className="shrink-0 hover-reveal touch-target text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
                         >
                           {color ? (
                             <span
@@ -475,7 +475,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t('tagList.renameTagLabel')}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
+                      className="shrink-0 hover-reveal touch-target text-muted-foreground hover:text-foreground active:text-foreground active:scale-95"
                       onClick={() =>
                         setRenameTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })
                       }
@@ -486,7 +486,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t('tagList.deleteTagLabel')}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                      className="shrink-0 hover-reveal touch-target text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
                       onClick={() =>
                         setDeleteTarget({ id: tag.tag_id, name: tag.name || 'Unnamed' })
                       }

@@ -1,8 +1,8 @@
 /**
  * Footnotes `[^label]` in the static view (#6033): references numbered by the
  * order their labels first appear on the page, read once per page from the
- * page store; a definition block's marker; an undefined reference muted with a
- * tooltip; a click that focuses the definition.
+ * page store; a definition block's marker; an undefined reference muted, with
+ * an explanation a click or tap opens; a click that focuses the definition.
  */
 
 import { act, render, screen, waitFor, within } from '@testing-library/react'
@@ -57,11 +57,11 @@ function row(id: string): HTMLElement {
   return screen.getByTestId(`row-${id}`)
 }
 
-/** The numbers a row's references show, in order. */
+/** The numbers a row's references show, in order; a missing one's sits in its explanation's trigger. */
 function refNumbers(id: string): string[] {
   return within(row(id))
     .queryAllByTestId('footnote-ref')
-    .map((el) => el.firstChild?.textContent ?? '')
+    .map((el) => (el.querySelector('button') ?? el).firstChild?.textContent ?? '')
 }
 
 describe('footnotes in the static view (#6033)', () => {
@@ -114,16 +114,17 @@ describe('footnotes in the static view (#6033)', () => {
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith('DB')
   })
 
-  it('mutes a reference whose label nothing defines, with a tooltip', async () => {
+  it('mutes a reference whose label nothing defines, and a click explains it', async () => {
     const user = userEvent.setup()
     const { onNavigate } = renderPage()
     const missing = within(row('B2')).getAllByTestId('footnote-ref')[1] as HTMLElement
     expect(missing).toHaveClass('footnote-ref-missing')
-    expect(missing).not.toHaveAttribute('role')
-    await user.hover(missing)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(t('editor.footnoteMissing'))
-    await user.click(missing)
+    const name = `3 ${t('editor.footnoteMissing')}`
+    await user.click(within(missing).getByRole('button', { name }))
+    const explanation = await screen.findByRole('dialog', { name })
+    expect(explanation).toHaveTextContent(t('editor.footnoteMissing'))
     expect(onNavigate).not.toHaveBeenCalled()
+    expect(await axe(explanation)).toHaveNoViolations()
   })
 
   it('shows the label as written where no page numbers it', () => {
@@ -139,8 +140,7 @@ describe('footnotes in the static view (#6033)', () => {
     })
     expect(link).toHaveClass('focus-ring-visible', 'touch-hit-area')
     const missing = within(row('B2')).getAllByTestId('footnote-ref')[1] as HTMLElement
-    expect(missing).toHaveAttribute('tabindex', '0')
-    expect(missing).toHaveClass('focus-ring-visible')
+    expect(within(missing).getByRole('button')).toHaveClass('focus-ring-visible', 'touch-hit-area')
   })
 
   it('re-renders only the blocks that can hold a footnote when the page’s blocks change', () => {

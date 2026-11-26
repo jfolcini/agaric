@@ -1050,7 +1050,8 @@
 }
 
 /* ── Responsive typography scale ───────────────────────────── */
-@media (max-width: 640px) {
+/* Under 768 px, where `usePhoneLayout` lays the app out as a phone. */
+@media (width < 48rem) {
   :root {
     --text-2xl: 1.25rem; /* 20px on mobile (down from 24px) */
     --text-3xl: 1.5rem; /* 24px on mobile (down from 30px) */
@@ -2761,6 +2762,21 @@ mark[data-highlight-color='purple'] {
   & > svg {
     width: 1rem;
     height: 1rem;
+  }
+}
+
+/* A row's secondary control that a mouse finds by hovering the row (`group`).
+ * A coarse pointer has no hover, so the control shows at rest there; a fine
+ * pointer reveals it on hover, or when the keyboard focuses into the row. A
+ * control that must show regardless (a set bookmark) leaves the utility off. */
+@utility hover-reveal {
+  @apply transition-opacity;
+  @media (pointer: fine) {
+    opacity: 0;
+    :where(.group):hover &,
+    :where(.group):has(:focus-visible) & {
+      opacity: 1;
+    }
   }
 }
 

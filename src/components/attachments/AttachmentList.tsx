@@ -167,7 +167,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                   <button
                     type="button"
                     aria-label={t('attachments.rename', { name: attachment.filename })}
-                    className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground transition-opacity opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring-visible active:scale-95 [@media(pointer:coarse)]:opacity-100"
+                    className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground hover-reveal focus-ring-visible active:scale-95"
                     onClick={() => {
                       setEditingId(attachment.id)
                       setEditValue(attachment.filename)
@@ -187,10 +187,10 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                     }
                     aria-pressed={pendingDeleteId === attachment.id}
                     className={cn(
-                      'shrink-0 rounded-sm p-1 transition-opacity focus-visible:opacity-100 focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
+                      'shrink-0 rounded-sm p-1 transition-opacity focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
                       pendingDeleteId === attachment.id
-                        ? 'text-destructive opacity-100 bg-destructive/10'
-                        : 'text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100',
+                        ? 'text-destructive bg-destructive/10'
+                        : 'text-muted-foreground hover:text-destructive hover-reveal',
                     )}
                     onClick={() => onDelete(attachment)}
                   >

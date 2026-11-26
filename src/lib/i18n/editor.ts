@@ -383,7 +383,7 @@ export const editor: Record<string, string> = {
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
 
   // Translators: footnote numbers in a block's text. footnoteLink = aria-label of the number,
-  // {{number}} = 1, 2, 3…; footnoteMissing = tooltip on a number whose text no block gives.
+  // {{number}} = 1, 2, 3…; footnoteMissing = what a tap on a number whose text no block gives shows.
   // #6033 — a footnote reference `[^label]`, shown as its number on the page.
   'editor.footnoteLink': 'Footnote {{number}}',
   'editor.footnoteMissing': 'No block on this page defines this footnote',

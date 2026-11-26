@@ -158,7 +158,7 @@ test.describe('Delete attachment @attachments', () => {
     const list = page.getByRole('list', { name: 'Attachments' })
     await expect(list.getByText('report.pdf')).toBeVisible()
 
-    // Hover the list item to reveal the delete button (opacity-0 → group-hover:opacity-100)
+    // Hover the list item to reveal the delete button (`hover-reveal`)
     const listItem = list.getByRole('listitem').filter({ hasText: 'report.pdf' })
     await listItem.hover()
 
