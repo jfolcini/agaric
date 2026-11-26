@@ -11,9 +11,11 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   expect,
   expectViewLoaded,
+  ipc,
   navigateToView,
   openPage,
   type TopLevelView,
@@ -139,12 +141,13 @@ test.describe('the view shell at 1440 px @pages @journal @settings @graph @searc
 
   test("a view's actions sit on its title row", async ({ page }) => {
     await waitForBoot(page)
-    await openView(page, 'Pages')
+    await ipc(page, 'delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    await openView(page, 'Trash')
     const row = viewTitle(page)
     const h1 = await box(row.getByRole('heading', { level: 1 }), 'title')
-    const action = row.getByRole('button', { name: 'New page', exact: true })
+    const action = row.getByTestId('trash-restore-all-btn')
     await expect(action).toBeVisible()
-    const button = await box(action, 'New page')
+    const button = await box(action, 'Restore all')
     expect(Math.abs(h1.y + h1.height / 2 - (button.y + button.height / 2))).toBeLessThanOrEqual(1)
   })
 })
