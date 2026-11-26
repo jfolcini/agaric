@@ -37,7 +37,7 @@ async function upcomingRows(page: Page) {
     .locator('#journal-due-panel')
     .getByRole('heading', { name: /^Upcoming/ })
     .locator('xpath=..')
-  return section.locator('[data-slot="alert-list-row"]')
+  return section.getByTestId('due-panel-alert-item')
 }
 
 test.describe('Settings › Tasks & reminders: deadline warning @settings @journal', () => {

@@ -12,8 +12,6 @@ import type { LucideIcon } from 'lucide-react'
 import {
   AtSign,
   Bold,
-  CalendarCheck2,
-  CalendarClock,
   CalendarDays,
   CheckSquare,
   Code,
@@ -33,6 +31,7 @@ import {
   Undo2,
 } from 'lucide-react'
 
+import { DATE_ICONS } from '@/lib/date-icons'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
@@ -341,14 +340,14 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
       action: () => dispatchBlockCommand('OPEN_DATE_PICKER'),
     },
     {
-      icon: CalendarClock,
+      icon: DATE_ICONS.due,
       label: 'toolbar.setDueDate',
       tip: 'toolbar.dueDateTip',
       priority: 40,
       action: () => dispatchBlockCommand('OPEN_DUE_DATE_PICKER'),
     },
     {
-      icon: CalendarCheck2,
+      icon: DATE_ICONS.scheduled,
       label: 'toolbar.setScheduledDate',
       tip: 'toolbar.scheduledDateTip',
       priority: 40,

@@ -290,7 +290,6 @@ function syncStateLine(
  * and because App sits at its cyclomatic-complexity ceiling.
  */
 function SearchOverlays(): ReactElement {
-  const findOpen = useInPageFindStore((s) => s.open)
   const paletteOpen = useCommandPaletteStore((s) => s.open)
   const sheetSegment = useSearchSheetStore((s) => (s.open ? s.mode : null))
   useEffect(() => {
@@ -299,13 +298,7 @@ function SearchOverlays(): ReactElement {
   }, [])
   return (
     <>
-      {findOpen && sheetSegment !== 'in-page' && (
-        <FeatureErrorBoundary name="Find in page" nameKey="errorBoundary.section.findInPage">
-          <Suspense fallback={null}>
-            <InPageFind />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )}
+      <FindBar variant="overlay" />
       {paletteOpen && sheetSegment !== 'all-pages' && (
         <FeatureErrorBoundary name="Command palette" nameKey="errorBoundary.section.commandPalette">
           <Suspense fallback={null}>
@@ -325,16 +318,37 @@ function SearchOverlays(): ReactElement {
 }
 
 /**
+ * Find in page, while its store is open. On desktop it sits in the App header,
+ * so it covers nothing; a phone's header has no room for it, so there it floats
+ * below. Each placement mounts its own, and neither while the search sheet
+ * shows its own find.
+ */
+function FindBar({ variant }: { variant: 'header' | 'overlay' }): ReactElement | null {
+  const findOpen = useInPageFindStore((s) => s.open)
+  const sheetShowsFind = useSearchSheetStore((s) => s.open && s.mode === 'in-page')
+  const phoneLayout = usePhoneLayout()
+  if (!findOpen || sheetShowsFind || phoneLayout !== (variant === 'overlay')) return null
+  return (
+    <FeatureErrorBoundary name="Find in page" nameKey="errorBoundary.section.findInPage">
+      <Suspense fallback={null}>
+        <InPageFind variant={variant} />
+      </Suspense>
+    </FeatureErrorBoundary>
+  )
+}
+
+/**
  * Layout classes for the header's content wrapper (everything right of the
  * hamburger).
  *
- * The journal branch never stacks: its controls (mode tabs, date stepper,
+ * The journal's controls never stack: they (mode tabs, date stepper,
  * calendar) plus the search trigger are all "always on", and they belong on
  * ONE line on a phone rather than the three rows the stack produced. The
  * fitting is done inside `JournalControls` (a mode menu + a truncating date
- * chip); this wrapper just has to stop wrapping.
+ * chip), which grows from no width, so it never pushes the search trigger
+ * onto a line of its own. The one line the journal wraps onto is find's.
  *
- * Every other view WRAPS below sm instead, so a title too long for the row
+ * Every other view's items wrap freely, so a title too long for the row
  * pushes the controls onto a second row rather than overflowing the screen.
  *
  * Module-level rather than an inline ternary in `App`: that function sits at
@@ -343,8 +357,8 @@ function SearchOverlays(): ReactElement {
  */
 function headerContentClass(isJournalView: boolean): string {
   return cn(
-    'flex min-w-0 flex-1 flex-row items-center gap-2',
-    isJournalView ? 'max-sm:gap-1' : 'flex-wrap',
+    'flex min-w-0 flex-1 flex-row flex-wrap items-center gap-2',
+    isJournalView && 'max-sm:gap-1',
   )
 }
 
@@ -714,7 +728,14 @@ function App() {
                   See `headerContentClass` for why journal is the exception. */}
               <div className={headerContentClass(currentView === 'journal')}>
                 {currentView === 'journal' ? (
-                  <JournalControls />
+                  <>
+                    <JournalControls />
+                    {/* The journal's row has no room left, so find takes a
+                        line of its own under it. */}
+                    <div className="order-last flex basis-full justify-end empty:hidden">
+                      <FindBar variant="header" />
+                    </div>
+                  </>
                 ) : (
                   <>
                     {/* #3308 — the shell label is the `<h1>` for every view that
@@ -736,7 +757,9 @@ function App() {
                     >
                       {headerLabel}
                     </HeaderLabelTag>
-                    <div className="flex-1" />
+                    <div className="flex flex-1 justify-end">
+                      <FindBar variant="header" />
+                    </div>
                     <GlobalDateControls />
                   </>
                 )}

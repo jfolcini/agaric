@@ -1990,10 +1990,11 @@ mark[data-highlight-color='purple'] {
   text-decoration: line-through;
 }
 
-/* Tag reference chips — #[ULID] rendered as tag name pills. Muted metadata,
-   not a strong fill, so a tagged line still reads as prose (#5332). */
+/* Tag reference chips — #[ULID] rendered as the tag's name. The tag chip of
+   `Badge`'s `tag` tone, sized to the text around it (#7040): a muted tint, not
+   a strong fill, so a tagged line still reads as prose (#5332). */
 .tag-ref-chip {
-  @apply inline-flex items-center rounded-md bg-muted font-medium text-muted-foreground;
+  @apply inline-flex items-center rounded-sm bg-muted font-medium text-muted-foreground;
   font-size: 0.85em;
   padding: 0.15em 0.5em;
 }

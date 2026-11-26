@@ -101,10 +101,12 @@ export function SearchHeader({
             aria-describedby={
               regexMode ? 'search-filter-hint search-regex-hint' : 'search-filter-hint'
             }
-            className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
+            className={regexMode ? 'font-mono' : undefined}
             // On a phone the input takes the first row and the toggles,
-            // submit and help share the second, instead of a row each.
-            wrapperClassName="max-sm:w-full"
+            // submit and help share the second, instead of a row each. A set
+            // width elsewhere: sized by its text, the field grew once the
+            // clear button padded it, and pushed the controls beside it.
+            wrapperClassName="max-sm:w-full sm:w-72"
             {...comboboxAttrs}
           />
           {regexMode ? (

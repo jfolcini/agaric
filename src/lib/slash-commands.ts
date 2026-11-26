@@ -15,8 +15,6 @@ import {
   Blocks,
   Bold,
   Calendar,
-  CalendarClock,
-  CalendarDays,
   CalendarX,
   CheckCheck,
   CheckCircle2,
@@ -62,6 +60,7 @@ import {
 import { matchSorter } from 'match-sorter'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { DATE_ICONS } from '@/lib/date-icons'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import type { RecentCommand } from '@/lib/preferences'
 import { getPropertyKeys } from '@/lib/property-keys-cache'
@@ -146,13 +145,13 @@ export const SLASH_COMMANDS: PickerItem[] = [
     id: 'due',
     label: 'DUE — Set due date on block',
     category: 'slashCommand.categories.dates',
-    icon: CalendarClock,
+    icon: DATE_ICONS.due,
   },
   {
     id: 'schedule',
     label: 'SCHEDULED — Set scheduled date on block',
     category: 'slashCommand.categories.dates',
-    icon: CalendarDays,
+    icon: DATE_ICONS.scheduled,
   },
   {
     id: 'link',
