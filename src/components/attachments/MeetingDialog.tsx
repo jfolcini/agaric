@@ -83,7 +83,7 @@ export function MeetingDialog({
   onCreated,
 }: MeetingDialogProps): React.ReactElement {
   const { t } = useTranslation()
-  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer, isMobile } = useDialogOrSheet('dialog')
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
   const id = useId()
   const [title, setTitle] = useState('')
@@ -163,7 +163,6 @@ export function MeetingDialog({
   }
 
   const field = (name: string) => `${id}-${name}`
-  const { Root, Content, Header, Title, Description, Footer, isMobile } = parts
   // The fields scroll and the buttons stay: a sheet with the keyboard up is short.
   const Body = isMobile ? SheetBody : DialogBody
 

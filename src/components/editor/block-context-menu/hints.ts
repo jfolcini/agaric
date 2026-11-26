@@ -62,6 +62,10 @@ export function getPriorityLabel(
 /**
  * #1728 — a menu row's shortcut, read live from the catalog by id so a rebind
  * shows, in the catalog's `Ctrl + K` format that `Kbd` draws.
+ *
+ * Not inlined: `keyboard-config-rebindable-drift.test.ts` counts a literal
+ * `getShortcutKeys('id')` as the binding being consumed, and a hint only shows
+ * it (`deleteBlock`'s is not rebindable).
  */
 export function shortcutHint(id: string): string {
   return getShortcutKeys(id)
