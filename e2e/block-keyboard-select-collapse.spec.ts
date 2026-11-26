@@ -45,7 +45,7 @@ test.describe('Keyboard range selection across an ancestor collapse (#922) @edit
     )
     const gs2 = ids[1] as string
     const childById = page.locator(
-      `[data-testid="sortable-block"][data-block-id="${gs2}"] [data-testid="block-static"]`,
+      `[data-testid="sortable-block"][data-block-id="${gs2}"] [data-testid="block-frame"]`,
     )
 
     // 1. Indent GS_2 (index 1) under GS_1 (index 0) so GS_1 becomes a parent

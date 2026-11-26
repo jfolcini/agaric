@@ -410,8 +410,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       )}
 
       {/* The row's frame: the checkbox, the text and the chips under it. It
-            draws the editing box while the block is edited, and the cursor
-            row's ring, on `:focus` rather than `:focus-visible`: Chromium does
+            draws the editing box while the block is edited, the multi-select
+            highlight, and the cursor row's ring, on `:focus` rather than `:focus-visible`: Chromium does
             not count a Ctrl chord as keyboard use, so after a click into a
             block, Ctrl+Space and Ctrl+Arrow would move an unmarked cursor.
             Both inset: on a phone the frame starts at the column's edge, which
@@ -420,6 +420,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         className={cn(
           'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
           isFocused && 'block-editing',
+          isSelected && 'block-selected',
         )}
         data-testid="block-frame"
       >
@@ -472,7 +473,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
               resolveTagName={resolveTagName}
               resolveBlockStatus={resolveBlockStatus}
               resolveTagStatus={resolveTagStatus}
-              isSelected={isSelected}
               onSelect={onSelect}
             />
           </div>
