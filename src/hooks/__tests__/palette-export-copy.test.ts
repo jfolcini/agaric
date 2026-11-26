@@ -1,5 +1,5 @@
 /**
- * #6277 A4 — the palette's "Export page as Markdown" puts on the clipboard what
+ * #6277 A4 — the palette's "Copy page as Markdown" puts on the clipboard what
  * the page header's copy does: attachment refs resolved to filenames, never a
  * raw `attachment:<id>` link that opens nothing outside Agaric.
  */

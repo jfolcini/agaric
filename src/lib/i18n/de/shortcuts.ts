@@ -126,7 +126,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.toggleSidebar': 'Seitenleiste ein-/ausblenden',
   'keyboard.createNewPage': 'Neue Seite erstellen',
   'keyboard.showKeyboardShortcuts': 'Tastenkürzel anzeigen',
-  'keyboard.exportPageMarkdown': 'Seite als Markdown exportieren',
+  'keyboard.exportPageMarkdown': 'Seite als Markdown kopieren',
   'keyboard.showPageInGraph': 'Diese Seite im Graph anzeigen',
   'keyboard.togglePageMode': 'Diese Seite als Blöcke oder als eine Seite bearbeiten',
   'keyboard.closeOverlays': 'Overlays schließen, Bearbeitung abbrechen, Auswahl aufheben',
