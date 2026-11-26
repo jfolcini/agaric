@@ -65,7 +65,7 @@ Unzip Notion's *Markdown & CSV* export and pick the folder. A folder whose `.md`
 
 ### Per-page export
 
-In the **PageHeaderMenu** kebab → *Export as Markdown* (or `Ctrl+Shift+E`) copies it to the clipboard. *Save as Markdown file*, beside it, saves the same text as `<title>.md` to Downloads, each character a file name cannot hold (`/` included) made `_` and a long title cut short.
+In the **PageHeaderMenu** kebab → *Export* → *Export as Markdown* (or `Ctrl+Shift+E`) copies it to the clipboard. *Save as Markdown file*, beside it, saves the same text as `<title>.md` to Downloads, each character a file name cannot hold (`/` included) made `_` and a long title cut short.
 
 Every file save in the app (this one, the exports below, the bug-report ZIP, a diagram's SVG, an attachment) goes through `saveBlob` (`src/lib/attachment-utils.ts`). On Linux and Windows the webview downloads the file. On macOS, where WKWebView cancels a download the app registers no handler for, and on Android, whose WebView handles no `blob:` download, the `save_to_downloads` command writes it into Downloads, numbering a taken name (`notes (1).md`) rather than overwriting: on macOS straight to the folder, on Android through `MediaStore.Downloads` (#6546), where the Files app shows it. Android has no download UI of its own, so there the save toasts the name the file was saved under, and the caller adds no success toast of its own. The success toast follows the save. Not yet run on a Mac: the check is on #6514 (#6652).
 

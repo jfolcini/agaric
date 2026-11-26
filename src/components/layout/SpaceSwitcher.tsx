@@ -151,11 +151,11 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
           <hr className="my-1 h-px border-0 bg-border" />
           {availableSpaces.length === 1 && (
             <PopoverMenuItem
-              className="flex items-center gap-2 text-muted-foreground"
+              className="text-muted-foreground"
               data-testid="single-space-create-hint"
               onClick={() => pick(CREATE_SENTINEL)}
             >
-              <Plus className="h-3 w-3" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               {t('spaceSwitcher.createAnotherHint')}
             </PopoverMenuItem>
           )}
@@ -287,7 +287,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
             data-testid="single-space-create-hint"
           >
             <span className="flex items-center gap-2">
-              <Plus className="h-3 w-3" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               {t('spaceSwitcher.createAnotherHint')}
             </span>
           </SelectItem>

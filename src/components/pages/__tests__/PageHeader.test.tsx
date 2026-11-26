@@ -94,6 +94,7 @@ vi.mock('lucide-react', () => ({
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
+  ChevronLeft: () => <svg data-testid="chevron-left" />,
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   Clock: () => <svg data-testid="clock-icon" />,
   Copy: () => <svg data-testid="copy-icon" />,
@@ -101,6 +102,7 @@ vi.mock('lucide-react', () => ({
   Printer: () => <svg data-testid="printer-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
   FileCode: () => <svg data-testid="file-code-icon" />,
+  FileOutput: () => <svg data-testid="file-output-icon" />,
   FileText: () => <svg data-testid="file-text-icon" />,
   FolderOutput: () => <svg data-testid="folder-output-icon" />,
   Info: () => <svg data-testid="info-icon" />,
@@ -1625,6 +1627,7 @@ describe('PageHeader kebab menu (#639)', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
 
     expect(await screen.findByText(/Export as Markdown/i)).toBeInTheDocument()
   })
@@ -1911,6 +1914,7 @@ describe('PageHeader error paths', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
     await user.click(await screen.findByText(/Export as Markdown/i))
 
     await waitFor(() => {
@@ -1935,6 +1939,7 @@ describe('PageHeader error paths', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
     await user.click(await screen.findByText(/Export as Markdown/i))
 
     await waitFor(() => {
@@ -2177,6 +2182,7 @@ describe('PageHeader export rewrites attachment refs before copying', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
     await user.click(await screen.findByText(/Export as Markdown/i))
 
     await waitFor(() => {
@@ -2242,6 +2248,7 @@ describe('PageHeader export flushes the active draft first (#2969)', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
     await user.click(await screen.findByText(/Export as Markdown/i))
 
     await waitFor(() => {
@@ -2562,7 +2569,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     // The Export entry is always shown so waiting for it proves the menu
     // rendered to completion before asserting on absence.
-    await screen.findByText(/Export as Markdown/i)
+    await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') })
 
     expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
   })
@@ -2593,7 +2600,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await screen.findByText(/Export as Markdown/i)
+    await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') })
 
     expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
   })

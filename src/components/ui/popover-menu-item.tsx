@@ -1,39 +1,20 @@
-import { cva, type VariantProps } from 'class-variance-authority'
+import type { VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 import type * as React from 'react'
 
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { cn } from '@/lib/utils'
-
-const popoverMenuItemVariants = cva(
-  'w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent active:bg-accent cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
-  {
-    variants: {
-      active: {
-        true: 'bg-accent font-medium',
-        false: '',
-      },
-      disabled: {
-        true: 'opacity-50 cursor-not-allowed',
-        false: '',
-      },
-    },
-    defaultVariants: {
-      active: false,
-      disabled: false,
-    },
-  },
-)
 
 // Base prop surface, sans `disabled` (its meaning depends on `asChild`).
 interface PopoverMenuItemBaseProps
   extends
     Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
-    Omit<VariantProps<typeof popoverMenuItemVariants>, 'disabled'> {
+    Omit<VariantProps<typeof menuRowVariants>, 'disabled' | 'indent'> {
   ref?: React.Ref<HTMLButtonElement>
-  active?: VariantProps<typeof popoverMenuItemVariants>['active']
+  active?: VariantProps<typeof menuRowVariants>['active']
 }
 
-type DisabledVariant = VariantProps<typeof popoverMenuItemVariants>['disabled']
+type DisabledVariant = VariantProps<typeof menuRowVariants>['disabled']
 
 /**
  * `disabled` is only honoured on the native `<button>`. When `asChild` is
@@ -77,7 +58,7 @@ const PopoverMenuItem = ({
     <Comp
       ref={ref}
       data-slot="popover-menu-item"
-      className={cn(popoverMenuItemVariants({ active, disabled }), className)}
+      className={cn(menuRowVariants({ active, disabled }), className)}
       {...buttonOnlyProps}
       {...props}
     >
@@ -87,4 +68,4 @@ const PopoverMenuItem = ({
 }
 PopoverMenuItem.displayName = 'PopoverMenuItem'
 
-export { PopoverMenuItem, popoverMenuItemVariants }
+export { PopoverMenuItem }

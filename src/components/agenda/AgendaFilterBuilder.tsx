@@ -248,6 +248,7 @@ function AddFilterPopover({
                     return (
                       <li key={dim}>
                         <PopoverMenuItem
+                          className="flex-col items-start gap-0"
                           disabled={alreadyUsed}
                           aria-label={dimensionLabel(dim)}
                           aria-describedby={`${descIdBase}-${dim}`}
