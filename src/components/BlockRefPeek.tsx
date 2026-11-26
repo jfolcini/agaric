@@ -317,7 +317,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
               {t(data.hasMore ? 'refPeek.pageNoPreview' : 'refPeek.pageEmpty')}
             </p>
           ) : (
-            <div className="ref-peek-content flex flex-col gap-1 text-sm">
+            <div className="ref-peek-content flex flex-col gap-1 text-block-sm">
               {data.blocks.map((block) => (
                 <div key={block.id}>
                   {renderRichContent(block.content, { interactive: false, ...callbacks })}
@@ -342,7 +342,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
           {data.content.trim().length === 0 ? (
             <p className="text-xs text-muted-foreground">{t('refPeek.empty')}</p>
           ) : (
-            <div className="ref-peek-content text-sm">
+            <div className="ref-peek-content text-block-sm">
               {renderRichContent(data.content, { interactive: false, ...callbacks })}
             </div>
           )}

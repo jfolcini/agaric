@@ -263,7 +263,7 @@ function EmbeddedRow({
     // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface while unlocked, as `StaticBlock`'s row is: the click mounts the editor, and keyboard users reach the content through the inner chips
     <div
       className={cn(
-        'embed-row flex w-full min-h-[1.5rem] items-start rounded-md text-left text-sm',
+        'embed-row flex w-full min-h-[1.5rem] items-start rounded-md text-left text-block-sm',
         editable && 'cursor-text hover:bg-accent/50',
       )}
       data-embed-editable={editable ? 'true' : undefined}

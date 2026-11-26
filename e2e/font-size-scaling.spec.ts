@@ -5,7 +5,8 @@
  * A table's cells, a code block, a callout's label and a block's chips are
  * note text too, a step or two smaller, and grow with it (#7040), and so does
  * a block's text in a list (the due panel, search, references, history, trash,
- * query results) while the list's own words stay fixed.
+ * query results), an embed and a reference peek, while the list's own words
+ * stay fixed.
  * This is geometry, which happy-dom cannot measure.
  */
 
@@ -251,7 +252,7 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
       )
     })
 
-    test.describe('block text in a list keeps its ratio to the block text', () => {
+    test.describe('block text wherever it shows keeps its ratio to the block text', () => {
       const scale = textPx / MEDIUM.text
       const listText = `${MEDIUM_LIST_TEXT.size * scale}px / ${MEDIUM_LIST_TEXT.line * scale}px`
 
@@ -318,6 +319,17 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
         const expanded = sheet.getByTestId('block-history-preview-0')
         await expect(expanded).toBeVisible()
         expect(await textBox(expanded), 'history preview').toBe(listText)
+        await sheet.getByTestId('block-history-diff-mode-just-0').click()
+        const diff = sheet.locator('.diff-display')
+        await expect(diff).toBeVisible()
+        expect(await fontSize(diff), 'history diff').toBe(`${MEDIUM_LIST_TEXT.size * scale}px`)
+        expect(
+          await diff.evaluate((el) => {
+            const style = getComputedStyle(el)
+            return Number.parseFloat(style.lineHeight) / Number.parseFloat(style.fontSize)
+          }),
+          "the diff's own leading-relaxed",
+        ).toBeCloseTo(1.625, 2)
         await page.keyboard.press('Escape')
 
         const [gone = ''] = await seedPage(page, `Trashed ${size}`, ['Thrown away'])
@@ -335,6 +347,21 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
         const item = page.getByTestId('query-result-item').filter({ hasText: TASK })
         await expect(item).toBeVisible()
         expect(await textBox(item.locator('span.truncate').first()), 'query result').toBe(listText)
+      })
+
+      test('an embedded block and a reference peek', async ({ page }) => {
+        const title = `Embeds ${size}`
+        const [target = ''] = await seedPage(page, `${title} source`, ['Embedded words'])
+        await seedPage(page, title, [`{{embed ((${target}))}}`, `See ((${target}))`])
+        await openPage(page, title)
+        const embed = page.locator('.embed-row').filter({ hasText: 'Embedded words' })
+        await expect(embed).toBeVisible()
+        expect(await textBox(embed), 'embedded block').toBe(listText)
+
+        await page.locator('[data-testid="block-static"] [data-testid="block-ref-chip"]').hover()
+        const peek = page.getByTestId('ref-peek').locator('.ref-peek-content')
+        await expect(peek).toContainText('Embedded words')
+        expect(await textBox(peek), 'reference peek').toBe(listText)
       })
     })
   })
