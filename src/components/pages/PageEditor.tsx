@@ -397,7 +397,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
     <div
       ref={pageRef}
       // `w-full`: the auto margins turn off the flex stretch, so a short page would shrink.
-      className="page-editor flex flex-col gap-3 min-w-0 w-full max-w-reading mx-auto"
+      className="page-editor outline-column flex flex-col gap-3 min-w-0 w-full max-w-reading mx-auto"
       onPointerDown={handleBackgroundMouseDown}
     >
       {/* Header: back button + editable title + tag badges */}

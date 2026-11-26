@@ -27,7 +27,6 @@ import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 import { Button } from '@/components/ui/button'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { useListStyles } from '@/hooks/useListStyles'
 import { delegatedLinkClickProps } from '@/hooks/useOpenInBackgroundTab'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
@@ -135,7 +134,6 @@ export function BlockListRenderer({
   onExpandMount,
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
-  const isTouch = useIsTouch()
   const { onOpenLinkInNewTab } = useBlockActions()
   const linkClick = useMemo(
     () => (onOpenLinkInNewTab ? delegatedLinkClickProps(onOpenLinkInNewTab) : {}),
@@ -247,6 +245,17 @@ export function BlockListRenderer({
   const tasksUnder = (parentId: string | null): number =>
     parentId === null ? 0 : (tasksAtOrAbove.get(parentId) ?? 0)
 
+  // Each row's indent guides: its ancestors' tasks above, outermost first (`SortableBlock`).
+  const guides = useMemo(() => {
+    const out = new Map<string, string>()
+    const above: number[] = []
+    for (const block of visibleItems) {
+      above[block.depth] = block.parent_id === null ? 0 : (tasksAtOrAbove.get(block.parent_id) ?? 0)
+      out.set(block.id, above.slice(0, block.depth).join(' '))
+    }
+    return out
+  }, [visibleItems, tasksAtOrAbove])
+
   // Apply the new drag state DURING render so rows rendering in this same pass
   // (newly mounted, or any already re-rendering) read the fresh snapshot, then
   // notify the changed-but-memoized rows in a layout effect. Splitting it this
@@ -357,11 +366,10 @@ export function BlockListRenderer({
             )
           ) : (
             <div
-              // The desktop control lane stays inside the page column, as page
-              // mode's gutter stays inside its frame. Touch rows have no lane:
-              // the row's gap-1 + the block's px-3 hang in the pane's margin,
-              // so block text lines up with the heading on the view's gutter.
-              className={cn('relative', isTouch && '-ml-4')}
+              // A row's lane, gap and text box inset hang left of the column
+              // (`--block-hang`), so a block's first glyph starts the edge the
+              // title and the headings start (#7040).
+              className="relative -ml-(--block-hang)"
             >
               {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
@@ -400,6 +408,7 @@ export function BlockListRenderer({
                       siblingPosinset={aria?.posinset}
                       properties={blockProperties[block.id]}
                       tasksAbove={tasksUnder(block.parent_id)}
+                      guides={guides.get(block.id)}
                     />
                   )
                 })}

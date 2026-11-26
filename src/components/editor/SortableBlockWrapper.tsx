@@ -95,6 +95,8 @@ export interface SortableBlockWrapperProps {
   properties: InlineProperty[] | undefined
   /** How many of the block's ancestors are tasks (`countTasksAtOrAbove`). */
   tasksAbove?: number | undefined
+  /** Its ancestors' `tasksAbove`, outermost first: where its indent guides fall (`SortableBlock`). */
+  guides?: string | undefined
 }
 
 function SortableBlockWrapperInner({
@@ -116,6 +118,7 @@ function SortableBlockWrapperInner({
   siblingPosinset,
   properties,
   tasksAbove = 0,
+  guides,
 }: SortableBlockWrapperProps): React.ReactElement {
   // #1267 — read ONLY this row's drag-derived state via a per-id external-store
   // subscription (the `DragStateStore` published by BlockListRenderer). A bare
@@ -276,6 +279,7 @@ function SortableBlockWrapperInner({
           isFocused={isFocused}
           depth={projectedDepth}
           tasksAbove={projectedTasks}
+          guides={guides}
           rovingEditor={rovingEditor}
           hasChildren={hasChildren}
           isCollapsed={isCollapsed}

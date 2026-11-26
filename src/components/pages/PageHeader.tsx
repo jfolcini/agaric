@@ -581,7 +581,7 @@ export function PageHeader({
       <ViewHeader>
         {/* Capped and centred like `.page-editor`, so the title and its
             actions line up with the column below the outlet. */}
-        <div className="page-header space-y-2 max-w-reading mx-auto">
+        <div className="page-header outline-column space-y-2 max-w-reading mx-auto">
           {/* Title row: the title, the Blocks | Page switch, the star and
               the page-actions kebab, which holds every other page action
               (on a phone the switch too, so the row fits one line). If the

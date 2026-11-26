@@ -1119,8 +1119,8 @@ describe('useBlockDnD', () => {
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
 
-      // Coarse/narrow viewport recipe sets --indent-width to 12px.
-      document.documentElement.style.setProperty('--indent-width', '12px')
+      // A phone's window sets --indent-width to 20px.
+      document.documentElement.style.setProperty('--indent-width', '20px')
       try {
         const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1130,7 +1130,7 @@ describe('useBlockDnD', () => {
 
         const calls = mockedGetProjection.mock.calls
         const lastCall = calls.at(-1)
-        expect(lastCall?.[4]).toBe(12)
+        expect(lastCall?.[4]).toBe(20)
       } finally {
         document.documentElement.style.removeProperty('--indent-width')
       }

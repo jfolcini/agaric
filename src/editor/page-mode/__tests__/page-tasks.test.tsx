@@ -827,7 +827,7 @@ describe('the indent past the tasks above', () => {
     expect(drawn()).toEqual(['0', '0', '0'])
     // The margin counts it, as block mode's row does.
     expect(blockEl(container, C).style.marginLeft).toBe(
-      'calc(var(--indent-width) * 1 + var(--block-task-shift) * var(--tasks-above, 0))',
+      'calc(var(--indent-width) * 1 + var(--block-tree-task-shift) * var(--tasks-above, 0))',
     )
 
     act(() => caret(editor, 1, 0))

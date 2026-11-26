@@ -88,7 +88,7 @@ Settings › Editor › *Show Markdown syntax around the cursor* (on by default,
 
 ## Drag and drop
 
-Drag-handle on the left gutter. On touch there is no handle: hold anywhere on a block for 400 ms (it lifts), then drag it; let go without moving and its menu opens instead. A parent's collapse chevron sits at the right end of its row there. The drop indicator shows the projected nesting depth — horizontal offset during drag determines whether you're moving the block as a sibling, a child, or to an outer level. Offscreen blocks become zero-height placeholders to preserve scroll position. Auto-scroll engages when dragging near the top or bottom of the viewport.
+A block's text, or a task's checkbox, starts the left edge the page title does; the drag handle and a parent's collapse chevron hang in the gutter left of it, the chevron just before the text, and a faint guide runs down each nesting level beneath it. On touch there is no handle: hold anywhere on a block for 400 ms (it lifts), then drag it; let go without moving and its menu opens instead. On a phone a top-level parent's chevron sits at the right end of its row, in blocks and in page mode, as the margin left of the text is too narrow for a 44 px target. A phone indents each level a little less than a desktop. The drop indicator shows the projected nesting depth — horizontal offset during drag determines whether you're moving the block as a sibling, a child, or to an outer level. Offscreen blocks become zero-height placeholders to preserve scroll position. Auto-scroll engages when dragging near the top or bottom of the viewport.
 
 You cannot drop a block into its own subtree.
 

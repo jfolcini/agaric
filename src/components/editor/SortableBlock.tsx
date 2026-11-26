@@ -1,22 +1,28 @@
 /**
  * SortableBlock — drag-and-drop wrapper for blocks using @dnd-kit (p2-t9).
  *
- * Wraps EditableBlock with sortable behavior. Layout:
+ * Wraps EditableBlock with sortable behavior. A row's first glyph, its task
+ * checkbox or its text, starts the column's edge, and what leads it hangs left
+ * of that edge (`--block-hang`, `index.css`, #7040). Layout:
  * - Desktop: a narrow control lane (grip handle, hover-gated; the multi-select
- *   checkbox while a selection is active; the collapse chevron), then the task
- *   checkbox, then the text.
- * - Touch: no lane. The task checkbox, then the text; a parent's collapse
- *   chevron sits at the right end of the row on the first text line. The row
- *   itself takes the one touch gesture: hold, then drag to move or release to
- *   open the menu (#5332 item 10).
+ *   checkbox while a selection is active), then a parent's collapse chevron,
+ *   just left of the edge, then the task checkbox, then the text.
+ * - Touch: no lane. The chevron, the task checkbox, then the text; on a phone a
+ *   top-level parent's chevron ends the row instead, as the margin left of its
+ *   text cannot hold a 44 px target. The row itself takes the one touch
+ *   gesture: hold, then drag to move or release to open the menu (#5332 item 10).
  * - Below-block metadata row: priority badge, due / scheduled chips, repeat
  *   indicator, property chips and the attachment badge, left-aligned under the
  *   text and always visible.
+ * - A faint indent guide per nesting level, under the chevron of the block it
+ *   hangs from.
  *
  *   Desktop: [grip] [chevron?] | [checkbox] [content]
  *                                           [metadata row]
- *   Touch:   [checkbox] [content] [chevron?]
- *                       [metadata row]
+ *   Touch:          [chevron?] | [checkbox] [content]
+ *                                           [metadata row]
+ *   Phone, top level:          | [checkbox] [content] [chevron?]
+ *                                           [metadata row]
  *
  * History, Delete, Zoom and the indent/dedent + move ops live in the
  * right-click / long-press context menu (touch-friendly), not the gutter.
@@ -227,11 +233,40 @@ type PropertyEditorProps = Pick<
   | 'valueType'
 >
 
+/**
+ * One faint line per ancestor (`guides`), each under that ancestor's chevron:
+ * the chevron's centre, half its width left of the ancestor's first glyph,
+ * which starts past the ancestor's hang, depth and the tasks above it. A
+ * phone's top-level parent keeps its guide there, its chevron ending its row.
+ */
+function IndentGuides({ guides }: { guides: string }): React.ReactElement | null {
+  if (guides === '') return null
+  return (
+    <>
+      {guides.split(' ').map((tasks, level) => (
+        <span
+          // oxlint-disable-next-line react/no-array-index-key -- a level is its position; the list only grows or shrinks at its end
+          key={level}
+          aria-hidden="true"
+          data-testid="indent-guide"
+          className="indent-guide"
+          style={{
+            left: `calc(var(--block-hang) + var(--indent-width) * ${level} + var(--block-tree-task-shift) * ${tasks} - 0.5rem - 0.5px)`,
+          }}
+        />
+      ))}
+    </>
+  )
+}
+
 interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   blockId: string
   content: string
   isFocused: boolean
   isTouchDevice: boolean
+  /** Touch in a phone's layout: a top-level row's chevron ends the row (`BlockCollapseControl`'s `atRowEnd`). */
+  isPhone: boolean
+  depth: number
   swipeTranslateX: number
   hasChildren: boolean
   isCollapsed: boolean
@@ -278,6 +313,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     content,
     isFocused,
     isTouchDevice,
+    isPhone,
+    depth,
     swipeTranslateX,
     hasChildren,
     isCollapsed,
@@ -323,6 +360,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   } = props
 
   const isSliding = isTouchDevice && swipeTranslateX !== 0
+  const chevronAtRowEnd = isPhone && depth === 0
   const isClosedTask = todoState === 'DONE' || todoState === 'CANCELLED'
 
   return (
@@ -330,7 +368,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       className={cn(
         // `items-start` + the controls' `min-h-block-line` (the first text
         // line box) keep the leading controls on the FIRST text line (#5332).
-        'flex items-start gap-(--block-gap) w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+        'relative flex items-start gap-(--block-gap) w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
         // #1347: token-driven transition (respects prefers-reduced-motion).
         isSliding && 'swipe-content-sliding',
       )}
@@ -339,18 +377,15 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         transform: isSliding ? `translateX(${swipeTranslateX}px)` : undefined,
       }}
     >
-      {/* ── Leading control lane (desktop) — drag handle + collapse chevron ── */}
-      {/* #1968: one tight, right-aligned lane reserving two control slots
-            (drag handle + chevron). `justify-end` keeps the glyphs hugging the
-            text: on a childless block the hover-revealed drag handle fills the
-            text-adjacent slot, so sibling text stays aligned with no gap.
-            Touch reserves nothing: the row is the drag activator and the
-            chevron sits after the text, so only the multi-select checkbox
-            renders here, and only while a selection is active. */}
+      {/* ── Leading control lane (desktop) — drag handle ── */}
+      {/* `justify-end` keeps the grip hugging the chevron's slot. Touch
+            reserves nothing: the row is the drag activator, so only the
+            multi-select checkbox renders here, and only while a selection is
+            active. */}
       {isTouchDevice ? (
         <BlockGutterControls blockId={blockId} isSelected={isSelected} onSelect={onSelect} />
       ) : (
-        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-block-line min-w-(--block-lane)">
+        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end min-h-block-line min-w-(--block-lane)">
           <BlockGutterControls
             blockId={blockId}
             dragAttributes={attributes}
@@ -358,11 +393,18 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             isSelected={isSelected}
             onSelect={onSelect}
           />
+        </div>
+      )}
+
+      {/* ── Collapse chevron — out of flow, in the text box's inset just left
+            of the first glyph (`--block-hang`), on the first line ── */}
+      {hasChildren && !chevronAtRowEnd && (
+        <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] flex min-h-block-line items-center">
           <BlockCollapseControl
             blockId={blockId}
-            hasChildren={hasChildren}
+            hasChildren
             isCollapsed={isCollapsed}
-            isTouch={false}
+            isTouch={isTouchDevice}
             onToggleCollapse={onToggleCollapse}
           />
         </div>
@@ -458,13 +500,15 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         />
       </div>
 
-      {/* ── Collapse chevron (touch) — right end of the row, first text line ── */}
-      {isTouchDevice && (
+      {/* ── Collapse chevron (a phone's top-level row) — the row's right end,
+            first text line, after the text in the tab order as on screen ── */}
+      {hasChildren && chevronAtRowEnd && (
         <BlockCollapseControl
           blockId={blockId}
-          hasChildren={hasChildren}
+          hasChildren
           isCollapsed={isCollapsed}
           isTouch
+          atRowEnd
           onToggleCollapse={onToggleCollapse}
         />
       )}
@@ -487,6 +531,11 @@ interface SortableBlockProps {
   depth?: number | undefined
   /** How many of its ancestors are tasks: its text starts past that many checkboxes. */
   tasksAbove?: number | undefined
+  /**
+   * Its ancestors' `tasksAbove`, outermost first, space-separated: one indent
+   * guide each, under that ancestor's chevron. Empty at the root.
+   */
+  guides?: string | undefined
   rovingEditor: RovingEditorHandle
   /** Whether this block has children in the tree. */
   hasChildren?: boolean | undefined
@@ -512,6 +561,7 @@ function SortableBlockInner({
   isFocused,
   depth = 0,
   tasksAbove,
+  guides = '',
   rovingEditor,
   hasChildren = false,
   isCollapsed = false,
@@ -865,6 +915,8 @@ function SortableBlockInner({
         />
       )}
 
+      <IndentGuides guides={guides} />
+
       {/* Sliding content wrapper (gutter + inline controls + editor body +
           attachment list). Extracted to a pure subcomponent so its branchy
           presentational logic doesn't inflate `SortableBlockInner`. */}
@@ -873,6 +925,8 @@ function SortableBlockInner({
         content={content}
         isFocused={isFocused}
         isTouchDevice={isTouchDevice}
+        isPhone={isPhone}
+        depth={depth}
         swipeTranslateX={swipeTranslateX}
         hasChildren={hasChildren}
         isCollapsed={isCollapsed}
