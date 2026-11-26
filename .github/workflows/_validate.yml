@@ -590,21 +590,43 @@ jobs:
         # dependency; those checks stay blocking on a PR that touches one, and
         # on every non-PR run (push to main, schedule, release). Fail-closed:
         # a non-PR event or an unresolvable diff counts as "changed".
+        #
+        # PROVENANCE_DEPS_CHANGED, read only by the provenance step, also
+        # judges a branch push by its own range: one registry edge answers that
+        # check with garbage for a whole job, so it reddened `main` on pushes
+        # that changed no dependency. A tag push, a new branch (all-zero
+        # `before`), a force-push (`before` not an ancestor or not fetched) and
+        # every other event still count as "changed".
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Fails (and so counts as "changed") unless the diff resolves and
+          # touches no dependency manifest.
+          no_manifest_in() {
+            local files
+            files=$(git diff --name-only "$1") || return 1
+            ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"
+          }
           changed=true
-          if [ "$EVENT_NAME" = "pull_request" ] \
-            && files=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA"); then
-            if ! grep -qE '(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|deny\.toml|audit\.toml|\.nsprc)$' <<<"$files"; then
-              changed=false
-            fi
+          if [ "$EVENT_NAME" = "pull_request" ] && no_manifest_in "$PR_BASE_SHA...$PR_HEAD_SHA"; then
+            changed=false
           fi
-          echo "Dependency manifests changed: $changed"
+          provenance_changed=$changed
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/heads/* ]] \
+            && [[ ! "$PUSH_BEFORE" =~ ^0*$ ]] \
+            && git merge-base --is-ancestor "$PUSH_BEFORE" "$PUSH_SHA" 2>/dev/null \
+            && no_manifest_in "$PUSH_BEFORE..$PUSH_SHA"; then
+            provenance_changed=false
+          fi
+          echo "Dependency manifests changed: $changed (provenance check: $provenance_changed)"
           echo "DEPS_CHANGED=$changed" >> "$GITHUB_ENV"
+          echo "PROVENANCE_DEPS_CHANGED=$provenance_changed" >> "$GITHUB_ENV"
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; fails on a package whose registry signature or
@@ -616,11 +638,12 @@ jobs:
         # many transitive deps without provenance do not red the build.
         # Retried like `npm-audit`: it fetches from the registry, and one
         # transient error must not red the required `validate / validate-all`
-        # context. Advisory-only when no dependency manifest changed, as the
-        # advisory scans are: the verdict depends only on the lockfile and the
-        # registry, so on such a PR a failure is the registry's (an `OK` body
-        # where an attestation's JSON belongs, through every retry).
-        continue-on-error: ${{ env.DEPS_CHANGED != 'true' }}
+        # context. Advisory-only when the PR, or the branch push, changed no
+        # dependency manifest: the verdict depends only on the lockfile and the
+        # registry, so there a failure is the registry's (an `OK` body where an
+        # attestation's JSON belongs, which sticks to the job and so to every
+        # retry in it).
+        continue-on-error: ${{ env.PROVENANCE_DEPS_CHANGED != 'true' }}
         run: bash scripts/npm-audit-retry.sh npm audit signatures
 
       - name: Prepare externalBin placeholder (FEAT-4f)
