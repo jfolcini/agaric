@@ -83,6 +83,14 @@ describe('InfoPopover', () => {
     await screen.findByRole('dialog', { name: 'Ops processed' })
     await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
     expect(screen.queryByRole('dialog', { name: 'Missed writes' })).not.toBeInTheDocument()
+
+    // Reopened, the one closed by another returns focus to its trigger again.
+    const first = screen.getByRole('button', { name: 'Missed writes' })
+    await user.click(first)
+    await screen.findByRole('dialog', { name: 'Missed writes' })
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(first).toHaveFocus()
   })
 
   it('keeps presses on the trigger and inside the popover out of a clickable row', async () => {
