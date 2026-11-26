@@ -96,13 +96,17 @@ export function stepOver(
   return { end, to: unit }
 }
 
-/** The rows of `folded` whose folds hold the row at `target`, however far up. */
+/** The rows of `folded` whose folds hold the row at `target`, however far up, outermost first. */
 export function foldsOver(outline: Outline, target: number, folded: Iterable<number>): number[] {
-  const over: number[] = []
-  for (const index of folded) {
-    if (index < target && foldEnd(outline, index) > target) over.push(index)
+  const isFolded = new Set(folded)
+  if (isFolded.size === 0) return []
+  // The folds open at the row read, innermost last: a fold ends no later than the one holding it.
+  const open: number[] = []
+  for (let index = 0; index <= target; index += 1) {
+    while (open.length > 0 && ends(outline, open.at(-1) as number, index)) open.pop()
+    if (index < target && isFolded.has(index)) open.push(index)
   }
-  return over
+  return open
 }
 
 /** A flat tree's rows as an outline. */
