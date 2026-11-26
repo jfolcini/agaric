@@ -37,6 +37,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **Animation.** `var(--duration-fast | --duration-normal | --duration-moderate)` for durations; `var(--ease-out | --ease-in-out)` for easings. Reduced-motion overrides apply globally. The `duration-*` classes also time an overlay's `animate-in` / `animate-out`, and a bare `transition-*` or `animate-in` without one takes `--duration-normal`, so the Animations setting reaches all of them.
 - **Indent width.** `var(--indent-width)` — narrower in a phone's window (under `md`, the phone rule's width). JS DnD calculations multiply by this CSS variable, not a literal.
 - **One left edge.** A page's title, its blocks' first glyph (text or a task's checkbox), Add block and its section headings start one x. What leads a block (the grip, the chevron) hangs left of that edge (`--block-hang`), except a top-level parent's chevron on a phone, which ends its row: the margin there is too narrow for a 44 px target. A column that holds an outline takes `outline-column` so the pane keeps room for it.
+- **Block text keeps its own direction; the chrome stays left to right.** Each paragraph of block text runs and aligns in the direction of its first strong letter (`unicode-bidi: plaintext`, `index.css`). A row that shows block text (search, the palette, the references, the agenda) puts `bidi-plaintext` on the box that holds and truncates it, so Arabic or Hebrew mixed with English reads in order and a truncated line keeps its start.
 
 ## Touch & responsive
 

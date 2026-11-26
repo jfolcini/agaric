@@ -8,7 +8,7 @@ How notes look: the text size, right-to-left text, printing, and your own styles
 
 ## Right-to-left text
 
-Each paragraph of block text runs in the direction of its first strong letter (`unicode-bidi: plaintext` on block text and on its paragraphs, list items, headings and table cells), so an Arabic, Hebrew or Persian paragraph sits on the right of its box with its punctuation in place, while English blocks, the gutter controls and the rest of the app stay left to right. A block-mode list item's bullet moves to the right with its text; page mode's list markers stay on the left. `e2e/rtl-text.spec.ts`.
+Each paragraph of block text runs in the direction of its first strong letter (`unicode-bidi: plaintext` on block text and on its paragraphs, list items, headings and table cells), so an Arabic, Hebrew or Persian paragraph sits on the right of its box with its punctuation in place, while English blocks, the gutter controls and the rest of the app stay left to right. A block-mode list item's bullet moves to the right with its text; page mode's list markers stay on the left. The arrows move the way they point: in an Arabic block `←` walks towards its end and past it into the next block, and `→` past its start goes to the block before. A callout's `> [!NOTE]`, shown while the cursor is on its first line, does not turn an Arabic title left to right. Block text shown elsewhere runs in its own direction too: a row in search, the palette, the references and the agenda (`bidi-plaintext`), so Arabic mixed with an English word or a link reads in order and a truncated line keeps its start, and each line of *Edit as Markdown*. `e2e/rtl-text.spec.ts`.
 
 ## Printing
 
