@@ -943,6 +943,32 @@ describe('DuePanel', () => {
     })
   })
 
+  // A chosen segment fetched its own source's rows alone, so the header names
+  // that segment even for a row the date heuristic would call Due.
+  it('under Scheduled, a row both due and scheduled today counts as Scheduled', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({
+          id: 'B1',
+          content: 'both dates',
+          due_date: '2025-06-15',
+          scheduled_date: '2025-06-15',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    render(<DuePanel date="2025-06-15" />)
+    await screen.findByText('both dates')
+
+    await user.click(screen.getByRole('radio', { name: /^Scheduled/ }))
+
+    expect(await screen.findByRole('button', { name: 'Scheduled 1' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Scheduled (1)' })).toBeInTheDocument()
+  })
+
   // 18. Header shows per-source breakdown when multiple sources exist
   it('header shows per-source breakdown when multiple sources exist', async () => {
     mockedListBlocks.mockResolvedValue({
