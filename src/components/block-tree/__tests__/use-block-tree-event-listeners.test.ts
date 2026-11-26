@@ -11,9 +11,9 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { renderHook } from '@testing-library/react'
+import { render, renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { createElement } from 'react'
+import { createElement, Fragment, useEffect } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -27,7 +27,11 @@ import type { PasteInput, PropertyRow } from '@/lib/bindings'
 import { listStyleFromRows, setListStyle } from '@/lib/list-style'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
-import { __resetBlockCommandBus, dispatchBlockCommand } from '@/stores/block-command-bus'
+import {
+  __resetBlockCommandBus,
+  dispatchBlockCommand,
+  mountedTreeStores,
+} from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 
@@ -302,6 +306,30 @@ describe('useBlockTreeEventListeners', () => {
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
       expect(opts.handleShowProperties).not.toHaveBeenCalled()
+    })
+
+    it('is registered for a passive effect earlier in the tree, at mount and across a re-render', () => {
+      const pageStore = makePageStore([{ id: 'BLOCK_1' }])
+      const seen: boolean[] = []
+      // Ahead of the tree, as the App header's find bar is.
+      function Reader({ tick }: { tick: number }) {
+        useEffect(() => {
+          seen.push(mountedTreeStores().includes(pageStore))
+        }, [tick])
+        return null
+      }
+      // Fresh handlers each render re-run the registration, as BlockTree's renders do.
+      function Tree() {
+        useBlockTreeEventListeners(makeOptions({ pageStore }))
+        return null
+      }
+      const view = (tick: number) =>
+        createElement(Fragment, null, createElement(Reader, { tick }), createElement(Tree))
+
+      const { rerender } = render(view(0))
+      rerender(view(1))
+
+      expect(seen).toEqual([true, true])
     })
   })
 
