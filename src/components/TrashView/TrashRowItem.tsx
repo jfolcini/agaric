@@ -165,7 +165,7 @@ export function TrashRowItem({
           </Badge>
         )}
         <div className="flex flex-col min-w-0">
-          <span className="trash-item-text text-sm truncate">{renderedContent}</span>
+          <span className="trash-item-text text-block-sm truncate">{renderedContent}</span>
           <span className="trash-item-date text-xs text-muted-foreground">
             {t('trash.deletedPrefix')}{' '}
             {block.deleted_at ? formatRelativeTime(block.deleted_at, t) : ''}

@@ -3,14 +3,28 @@
  * with its row controls (the task checkbox, the due-date chip's icon), keeps
  * Medium at today's pixels, and leaves the app chrome (a sidebar icon) fixed.
  * A table's cells, a code block, a callout's label and a block's chips are
- * note text too, a step or two smaller, and grow with it (#7040).
+ * note text too, a step or two smaller, and grow with it (#7040), and so does
+ * a block's text in a list (the due panel, search, references, history, trash,
+ * query results) while the list's own words stay fixed.
  * This is geometry, which happy-dom cannot measure.
  */
 
 import type { Locator, Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, focusBlockById, ipc, openPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  ipc,
+  navigateToView,
+  openPage,
+  openSearchView,
+  replaceEditorText,
+  saveBlock,
+  settleBackend,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const PAGE = 'Projects'
 const TASK = 'Fix login bug'
@@ -24,6 +38,17 @@ const MEDIUM_SMALL_TEXT = 14
 const MEDIUM_CHIP = { text: 12, chrome: 6, propertyIcon: 10, pageText: 11 } as const
 /** The sidebar nav icon: the nav row's `size-4`, chrome, the same at every setting. */
 const SIDEBAR_ICON_PX = 16
+
+/** A list row's block text at Medium: `text-sm`, 14 px on a 20 px line. */
+const MEDIUM_LIST_TEXT = { size: 14, line: 20 } as const
+
+/** Its font size and line height, which sets a text row's height. */
+function textBox(locator: Locator): Promise<string> {
+  return locator.evaluate((el) => {
+    const style = getComputedStyle(el)
+    return `${style.fontSize} / ${style.lineHeight}`
+  })
+}
 
 function fontSize(locator: Locator): Promise<string> {
   return locator.evaluate((el) => getComputedStyle(el).fontSize)
@@ -224,6 +249,93 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
       expect(await fontSize(pagePriority), 'page-mode priority').toBe(
         `${MEDIUM_CHIP.pageText * scale}px`,
       )
+    })
+
+    test.describe('block text in a list keeps its ratio to the block text', () => {
+      const scale = textPx / MEDIUM.text
+      const listText = `${MEDIUM_LIST_TEXT.size * scale}px / ${MEDIUM_LIST_TEXT.line * scale}px`
+
+      test('the due panel, search results and the alias card', async ({ page }) => {
+        await navigateToView(page, 'Journal')
+        const due = page.locator('.due-panel-item-text').first()
+        await expect(due).toBeVisible()
+        expect(await textBox(due), 'due panel row').toBe(listText)
+
+        await openSearchView(page)
+        const input = page.getByPlaceholder('Search blocks...')
+        await input.fill('Review')
+        await input.press('Enter')
+        const result = page.locator('[data-testid^="search-result-row-"] > span').first()
+        await expect(result).toBeVisible()
+        expect(await textBox(result), 'search result').toBe(listText)
+
+        await input.fill('gs')
+        await input.press('Enter')
+        const alias = page.getByTestId('alias-match').locator('.line-clamp-2')
+        await expect(alias).toContainText('Getting Started')
+        expect(await textBox(alias), 'alias card').toBe(listText)
+      })
+
+      test('linked, unlinked and outgoing references', async ({ page }) => {
+        await seedPage(page, `Mentions ${size}`, ['About Quick Notes'])
+        await settleBackend(page)
+        await openPage(page, 'Quick Notes')
+        const linked = page.locator('.linked-reference-item-text').first()
+        await expect(linked).toBeVisible()
+        expect(await textBox(linked), 'linked reference').toBe(listText)
+
+        const unlinked = page.getByTestId('unlinked-references')
+        await unlinked.locator('.unlinked-references-header').click()
+        const mentionRow = unlinked
+          .locator('.unlinked-reference-item-text')
+          .filter({ hasText: 'About Quick Notes' })
+        await expect(mentionRow).toBeVisible()
+        expect(await textBox(mentionRow), 'unlinked reference').toBe(listText)
+
+        await openPage(page, 'Getting Started')
+        const outgoing = page.locator('[data-testid="outgoing-links"]')
+        await outgoing.getByRole('button', { name: /Outgoing links/ }).click()
+        const link = outgoing
+          .getByRole('list', { name: 'Links to Quick Notes' })
+          .getByRole('button')
+        await expect(link).toHaveCount(1)
+        expect(await textBox(link), 'outgoing link').toBe(listText)
+      })
+
+      test('block history and the trash', async ({ page }) => {
+        await openPage(page, 'Getting Started')
+        await focusBlockById(page, SEED_IDS.BLOCK_GS_1)
+        await replaceEditorText(page, 'An edit to keep')
+        await saveBlock(page, 'Escape')
+        await focusBlockById(page, SEED_IDS.BLOCK_GS_1)
+        await page.keyboard.press('Control+Shift+Y')
+        const sheet = page.getByRole('dialog', { name: 'Block history' })
+        const row = sheet.locator('[data-testid^="block-history-item-"]').first()
+        const preview = row.locator('.history-item-preview')
+        await expect(preview).toContainText('An edit to keep')
+        expect(await textBox(preview), 'history row').toBe(listText)
+        await row.click()
+        const expanded = sheet.getByTestId('block-history-preview-0')
+        await expect(expanded).toBeVisible()
+        expect(await textBox(expanded), 'history preview').toBe(listText)
+        await page.keyboard.press('Escape')
+
+        const [gone = ''] = await seedPage(page, `Trashed ${size}`, ['Thrown away'])
+        await ipc(page, 'delete_block', { blockId: gone })
+        await navigateToView(page, 'Trash')
+        const trashed = page.locator('.trash-item-text').filter({ hasText: 'Thrown away' })
+        await expect(trashed).toBeVisible()
+        expect(await textBox(trashed), 'trash row').toBe(listText)
+      })
+
+      test('query results', async ({ page }) => {
+        const title = `Query ${size}`
+        await seedPage(page, title, ['{{query state:DOING}}'])
+        await openPage(page, title)
+        const item = page.getByTestId('query-result-item').filter({ hasText: TASK })
+        await expect(item).toBeVisible()
+        expect(await textBox(item.locator('span.truncate').first()), 'query result').toBe(listText)
+      })
     })
   })
 }

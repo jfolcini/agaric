@@ -47,6 +47,9 @@ import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 
+/** The content preview: what the block held, sized as block text in a list. */
+const PREVIEW_CLASS = 'history-item-preview text-block-sm line-clamp-2'
+
 // ---------------------------------------------------------------------------
 // Plain-text ops
 // ---------------------------------------------------------------------------
@@ -316,7 +319,7 @@ export function HistoryItemCore({
         </span>
         {/* Content preview */}
         {propPayload && (
-          <span className="history-item-preview text-sm line-clamp-2">
+          <span className={PREVIEW_CLASS}>
             {formatPropertyName(propPayload.key)}
             {propValue != null && ` → ${propValue}`}
           </span>
@@ -327,10 +330,10 @@ export function HistoryItemCore({
             property-payload branch above, so a filename like `#budget.png`
             renders as literal text instead of a clickable tag chip. */}
         {!propPayload && isPlainTextOp && rawContent && (
-          <span className="history-item-preview text-sm line-clamp-2">{rawContent}</span>
+          <span className={PREVIEW_CLASS}>{rawContent}</span>
         )}
         {!propPayload && !isPlainTextOp && rawContent && (
-          <span className="history-item-preview text-sm line-clamp-2">{previewContent}</span>
+          <span className={PREVIEW_CLASS}>{previewContent}</span>
         )}
       </div>
       {/* Diff toggle — only when the parent supplies an `onToggleDiff`

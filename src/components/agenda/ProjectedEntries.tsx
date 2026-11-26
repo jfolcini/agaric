@@ -146,7 +146,7 @@ function ProjectedEntryRowInner({
       className={cn(
         // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
         // with the muted dashed-border "projected" shape via tailwind-merge.
-        'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
+        'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-block-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
         isFocused && 'list-cursor',
       )}
       onClick={navigate}

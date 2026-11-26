@@ -500,7 +500,9 @@ function BlockListItemInner({
       {/* Block content — full content by default; callers opt into line-clamp
           via contentClassName="line-clamp-2" when a truncated preview is needed
           (e.g. SearchPanel). Agenda shows full content. */}
-      <span className={cn('tag-chip-row text-sm min-w-0 max-sm:basis-full', contentClassName)}>
+      <span
+        className={cn('tag-chip-row text-block-sm min-w-0 max-sm:basis-full', contentClassName)}
+      >
         {richContent ?? emptyContentFallback ?? t('common.empty')}
       </span>
 
