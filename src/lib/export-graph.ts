@@ -649,7 +649,7 @@ async function rewriteAttachmentRefs(
 
 /**
  * Rewrite every `attachment:<id>` ref in `md` to a portable form for a BARE
- * single-page copy (#2967) — the "Export as Markdown" clipboard action,
+ * single-page copy (#2967) — the "Copy as Markdown" clipboard action,
  * which (unlike `exportGraphAsZip`) has no accompanying `assets/` folder to
  * write attachment bytes into. There is nowhere to put a link that still
  * resolves once the markdown is pasted elsewhere, so the best available

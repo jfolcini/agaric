@@ -43,17 +43,17 @@ test.describe('Page ⋮ menu sections on a desktop @pages @markdown', () => {
     await page.getByRole('button', { name: 'Page actions', exact: true }).click()
     await expectSectionsAndDeleteLast(page)
     const menu = pageMenu(page)
-    await expect(menu.getByRole('menuitem', { name: /^Export as Markdown/ })).toHaveCount(0)
+    await expect(menu.getByRole('menuitem', { name: /^Copy as Markdown/ })).toHaveCount(0)
 
     await menu.getByRole('menuitem', { name: 'Export', exact: true }).click()
     const submenu = menu.getByRole('group', { name: 'Export', exact: true })
     await expect(submenu.getByRole('menuitem')).toHaveText([
       'Copy app link',
-      /^Export as Markdown/,
+      /^Copy as Markdown/,
       'Save as Markdown file',
       'Print…',
     ])
-    await submenu.getByRole('menuitem', { name: /^Export as Markdown/ }).click()
+    await submenu.getByRole('menuitem', { name: /^Copy as Markdown/ }).click()
     await expect(page.getByText('Markdown copied to clipboard', { exact: true })).toBeVisible()
     expect(await readClipboard(page)).toContain(`# ${PAGE}`)
   })

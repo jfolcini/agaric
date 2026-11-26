@@ -274,7 +274,7 @@ describe('PageHeaderMenu interaction', () => {
     renderMenu({ kebabOpen: true, onExport })
 
     await user.click(screen.getByRole('menuitem', { name: t('pageHeader.exportMenu') }))
-    await user.click(screen.getByText(/Export as Markdown/i))
+    await user.click(screen.getByText(/Copy as Markdown/i))
     expect(onExport).toHaveBeenCalledOnce()
   })
 
@@ -357,12 +357,12 @@ describe('PageHeaderMenu accessibility', () => {
 describe('PageHeaderMenu export shortcut hint', () => {
   afterEach(() => resetAllShortcuts())
 
-  it('shows Export as Markdown with keyboard shortcut hint', async () => {
+  it('shows Copy as Markdown with keyboard shortcut hint', async () => {
     const user = userEvent.setup()
     renderMenu({ kebabOpen: true })
     await user.click(screen.getByRole('menuitem', { name: t('pageHeader.exportMenu') }))
 
-    expect(screen.getByText(/Export as Markdown/i)).toBeInTheDocument()
+    expect(screen.getByText(/Copy as Markdown/i)).toBeInTheDocument()
     // Compact form (no spaces around `+`) that must not wrap.
     expect(screen.getByText('Ctrl+Shift+E')).toHaveClass('whitespace-nowrap')
   })
@@ -735,7 +735,7 @@ describe('PageHeaderMenu sections', () => {
     ]) {
       expect(screen.queryByRole('menuitem', { name })).toBeNull()
     }
-    expect(screen.queryByText(/Export as Markdown/)).toBeNull()
+    expect(screen.queryByText(/Copy as Markdown/)).toBeNull()
   })
 
   it('opens the Export submenu in place, and its rows run their actions', async () => {
