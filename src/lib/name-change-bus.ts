@@ -124,9 +124,11 @@
  * This module does NOT touch the resolve store: `@/stores/resolve` is the
  * source of truth for chip titles and each mutating surface already writes it
  * (see `@/stores/page-rename` for the rename fan-out). This bus is only about
- * the two picker list caches.
+ * the two picker list caches, plus the graph-structure bump on
+ * {@link notifyPagesRemoved}, the point every page removal converges on.
  */
 
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 
 /** The entities whose display names the pickers cache. */
@@ -416,6 +418,10 @@ export function notifyPagesRemoved(
   spaceId: string | null,
   everywhereIds: readonly string[] | ReadonlySet<string> = [],
 ): void {
+  // Now, not at the change feed, which lands only after the cache rebuild:
+  // expires subtrees prefetched before the removal, or following a recents
+  // entry opens the trashed or moved page from its old snapshot (#5243).
+  recordGraphStructureChange()
   const scoped: ReadonlySet<string> = pageIds instanceof Set ? pageIds : new Set(pageIds)
   // The two cohorts are disjoint by construction: an id the caller can scope
   // wins, so a delete cascade that echoes the roots back inside its reported
