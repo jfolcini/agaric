@@ -14,6 +14,7 @@ import {
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
 import { useAgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
@@ -232,45 +233,46 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   }, [])
 
   return (
-    <div className="agenda-view space-y-4" data-testid="agenda-view">
-      <ViewHeader>
-        {/* Capped and centred like the journal column below the outlet. */}
-        <div className="max-w-reading mx-auto space-y-2">
-          {/* In agenda mode JournalPage renders no heading of its own: the title
+    // One boundary for the filter bar's chunk and the rows: the bar wraps to a
+    // second row on a phone, and rows painted before it would jump under a tap.
+    <Suspense fallback={<LoadingSkeleton count={3} height="h-10" />}>
+      <div className="agenda-view space-y-4" data-testid="agenda-view">
+        <ViewHeader>
+          {/* Capped and centred like the journal column below the outlet. */}
+          <div className="max-w-reading mx-auto space-y-2">
+            {/* In agenda mode JournalPage renders no heading of its own: the title
               lives here so it sits above the filter/sort bar in the outlet. */}
-          <FeaturePageHeader title={t('journal.agendaTab')} />
-          <div className="agenda-view-header flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              {/* Holds the bar's row height (its trigger: h-7, 44 px on touch) while the chunk loads. */}
-              <Suspense fallback={<div className="h-7 coarse:h-(--touch-target)" />}>
+            <FeaturePageHeader title={t('journal.agendaTab')} />
+            <div className="agenda-view-header flex items-start gap-2">
+              <div className="min-w-0 flex-1">
                 <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-              </Suspense>
+              </div>
+              <AgendaSortGroupControls
+                groupBy={agendaGroupBy}
+                onGroupByChange={setAgendaGroupBy}
+                sortBy={agendaSortBy}
+                onSortByChange={setAgendaSortBy}
+              />
             </div>
-            <AgendaSortGroupControls
-              groupBy={agendaGroupBy}
-              onGroupByChange={setAgendaGroupBy}
-              sortBy={agendaSortBy}
-              onSortByChange={setAgendaSortBy}
-            />
           </div>
-        </div>
-      </ViewHeader>
-      <AgendaResults
-        blocks={filteredBlocks}
-        loading={agendaLoading}
-        error={agendaError}
-        onRetry={retryFilters}
-        hasMore={agendaHasMore}
-        onLoadMore={() => void loadMoreAgenda()}
-        onNavigateToPage={onNavigateToPage}
-        hasActiveFilters={isNonDefaultAgendaFilters(agendaFilters)}
-        onClearFilters={() => setAgendaFilters(makeDefaultAgendaFilters())}
-        pageTitles={agendaPageTitles}
-        groupBy={agendaGroupBy}
-        sortBy={agendaSortBy}
-        onDateChanged={() => setRefreshKey((k) => k + 1)}
-        projected={projected}
-      />
-    </div>
+        </ViewHeader>
+        <AgendaResults
+          blocks={filteredBlocks}
+          loading={agendaLoading}
+          error={agendaError}
+          onRetry={retryFilters}
+          hasMore={agendaHasMore}
+          onLoadMore={() => void loadMoreAgenda()}
+          onNavigateToPage={onNavigateToPage}
+          hasActiveFilters={isNonDefaultAgendaFilters(agendaFilters)}
+          onClearFilters={() => setAgendaFilters(makeDefaultAgendaFilters())}
+          pageTitles={agendaPageTitles}
+          groupBy={agendaGroupBy}
+          sortBy={agendaSortBy}
+          onDateChanged={() => setRefreshKey((k) => k + 1)}
+          projected={projected}
+        />
+      </div>
+    </Suspense>
   )
 }

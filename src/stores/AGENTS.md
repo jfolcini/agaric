@@ -11,6 +11,8 @@ Check every new or changed writer against all five; tests rarely catch these rac
 3. **Rollback is reference-guarded.** On failure, restore only if live state still equals what this call wrote; otherwise `load()`. `edit` and `rollbackProvisionalMove` (`page-blocks-move.ts`) are the reference.
 4. **Never coalesce into an undo entry whose undo is in flight** (`undoInProgressEntry` in `undo.ts`); it jams Ctrl+Z.
 5. **An undo entry carries the op refs of every write it covers**, clears included (the command returns `WithOps` through `capture_op_refs`): one ref-less write drops the entry to positional undo, which can take back an unrelated edit in the same window.
+6. **A load must not revert a write in flight.** An optimistic writer calls `holdLoads()` from its store write until its command answers: the load generation orders loads only against each other, so a reload whose snapshot predates the write puts the old state back.
+7. **A write sent on leaving a page registers with `trackPageFlush(pageId, outcome)`** (`unmount-flush.ts`): the reopened page is a fresh store whose load can read before that write commits, and only a tracked flush makes it read again.
 
 A callee that catches and logs its own error defeats the caller's abort or rollback: let it throw, or return a result the caller checks.
 

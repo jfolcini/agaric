@@ -3311,6 +3311,10 @@ mark[data-highlight-color='purple'] {
     content: ' (' attr(data-href) ')';
     overflow-wrap: anywhere;
   }
+  /* The address replaces the icon, and the end padding the icon sits in. */
+  .external-link {
+    padding-inline-end: 0;
+  }
   .external-link > svg {
     display: none;
   }

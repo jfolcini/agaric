@@ -156,6 +156,12 @@ test.describe('printing a page @pages @editor', () => {
         .locator('[data-testid="external-link"]')
         .evaluate((el) => getComputedStyle(el, '::after').content),
     ).toContain(LINK_URL)
+    // No blank room after the address, where the hidden icon sat.
+    expect(
+      await page
+        .locator('[data-testid="external-link"]')
+        .evaluate((el) => getComputedStyle(el).paddingInlineEnd),
+    ).toBe('0px')
 
     await page.evaluate(() => window.dispatchEvent(new Event('afterprint')))
     await page.emulateMedia({ media: 'screen' })

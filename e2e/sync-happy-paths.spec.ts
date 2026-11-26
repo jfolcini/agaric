@@ -128,7 +128,7 @@ test('the sidebar Sync row shows no devices paired, idle, syncing, failed and of
   ])
 
   await page.context().setOffline(true)
-  await expect(button).toHaveAccessibleName('Offline')
+  await expect(button).toHaveAccessibleName('Sync Offline')
   await expect(await syncTooltipLines(page)).toHaveText(['Offline', 'Last synced just now'])
   await expect(state).toHaveText('Offline')
   // The next scheduled run finds no network and puts the store in step.

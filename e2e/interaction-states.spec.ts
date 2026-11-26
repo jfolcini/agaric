@@ -103,6 +103,17 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
     await expectTheRing(input)
   })
 
+  test('the skip link and the page title draw the ring', async ({ page }) => {
+    const skip = page.getByRole('link', { name: 'Skip to main content' })
+    await tabTo(page, skip)
+    await expectTheRing(skip)
+
+    await openPage(page, 'Getting Started')
+    const title = page.getByRole('textbox', { name: 'Page title' })
+    await tabTo(page, title)
+    await expectTheRing(title)
+  })
+
   test('the Tags list, the Templates list and the references rows draw the ring', async ({
     page,
   }) => {

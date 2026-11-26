@@ -77,7 +77,7 @@ interface UseBlockDnDParams {
    * a 0-based sibling slot. Required for multi-select drag; optional so call
    * sites that never multi-select can omit it.
    */
-  moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<unknown>
+  moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<boolean>
   /**
    * #7040 — the siblings a collapsed heading hides (`useBlockCollapse`): its
    * drag carries them, through `moveBlocks`, so one undo puts them back.

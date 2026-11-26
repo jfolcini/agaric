@@ -43,21 +43,28 @@ function linkProps(
 
 function renderExternalLink(
   label: React.ReactNode,
+  name: string,
   href: string,
   ctx: RenderContext,
   key: string,
 ): React.ReactElement {
+  // Nothing follows the label in the flow, or the line could break there: the icon sits in
+  // the end padding, which stays on the label's last line, and the "opens in new tab" hint
+  // is in the name rather than a hidden span.
   return (
     <span
       key={key}
-      className="external-link cursor-pointer"
+      className="external-link relative cursor-pointer pe-[calc(0.8em+0.125rem)]"
       data-testid="external-link"
       data-href={href}
+      aria-label={`${name} ${i18n.t('link.opensInNewTab')}`}
       {...linkProps(() => openUrl(href), ctx.interactive)}
     >
+      <ArrowUpRight
+        className="absolute end-0 bottom-[0.125em] size-[0.8em] opacity-60"
+        aria-hidden="true"
+      />
       {label}
-      <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
-      <ArrowUpRight className="inline-block ms-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
     </span>
   )
 }
@@ -136,9 +143,9 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   }
   // Text marks (code/strike/highlight/italic/bold/underline) wrap the
   // visible label only. The external-link element is applied LAST, around
-  // the already-marked label, so its trailing arrow icon and sr-only
-  // "opens in new tab" affordance stay outside the marks (a struck-through
-  // or `code`-styled link must not cross/monospace the icon). See #1737.
+  // the already-marked label, so its arrow icon stays outside the marks (a
+  // struck-through or `code`-styled link must not cross/monospace the icon).
+  // See #1737.
   let content: React.ReactNode = node.text
 
   if (hasCode) {
@@ -180,12 +187,13 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     content = <u>{content}</u>
   }
 
-  return linkMark ? applyLinkMark(content, linkMark, ctx, key) : content
+  return linkMark ? applyLinkMark(content, node.text, linkMark, ctx, key) : content
 }
 
-/** Wrap `content`, a marked text run or an image (#6342), in the link `mark` opens. */
+/** Wrap `content`, a marked text run or an image (#6342) named `name`, in the link `mark` opens. */
 export function applyLinkMark(
   content: React.ReactNode,
+  name: string,
   mark: LinkMark,
   ctx: RenderContext,
   key: string,
@@ -199,7 +207,7 @@ export function applyLinkMark(
   const attachmentId = parseAttachmentRef(href)
   if (attachmentId !== null) return renderAttachmentLink(content, attachmentId, ctx, `${key}-link`)
   if (!href.startsWith(ATTACHMENT_REF_SCHEME) && isAllowedUrl(href)) {
-    return renderExternalLink(content, href, ctx, `${key}-link`)
+    return renderExternalLink(content, name, href, ctx, `${key}-link`)
   }
   return content
 }

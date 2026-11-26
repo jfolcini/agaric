@@ -96,8 +96,8 @@ function lastSyncedLine(
 }
 
 /**
- * The Sync row's state in words (#7040 P11), in the dot's order: offline, then a running
- * sync, then no peers, then a failure; otherwise when it last synced, or whom it waits for.
+ * The Sync row's state in words (#7040 P11): offline, then a running sync, then no peers,
+ * then a failure; otherwise when it last synced, or whom it waits for.
  */
 function syncStateWords(
   t: TFunction,
@@ -175,8 +175,7 @@ function AppSidebarInner({
   const now = useMinuteClock()
   const trashCount = useTrashCount(currentView)
   const syncUnavailable = syncing || !isOnline
-  // Offline wins, then no peers, as they do for the dot; a running sync
-  // replaces the old error.
+  // Offline wins, then no peers; a running sync replaces the old error.
   const hasPeers = syncPeers.length > 0
   const syncSettled = isOnline && !syncing
   const syncFailed = syncSettled && hasPeers && syncState === 'error'
@@ -382,7 +381,10 @@ function AppSidebarInner({
               // `aria-disabled`, not `disabled`, and still hoverable: a disabled button takes
               // no hover or focus, so the offline / syncing tooltip could never show.
               className="aria-disabled:pointer-events-auto aria-disabled:cursor-default"
-              aria-label={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
+              // Offline, the name is the row's words: it holds what it shows (WCAG 2.5.3).
+              aria-label={
+                isOnline ? t('sidebar.sync') : `${t('sidebar.sync')} ${t('sidebar.offline')}`
+              }
               aria-describedby={
                 syncStatusLabel === null ? LAST_SYNCED_ID : `${SYNC_STATUS_ID} ${LAST_SYNCED_ID}`
               }
