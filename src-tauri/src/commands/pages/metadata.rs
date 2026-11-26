@@ -840,7 +840,7 @@ pub fn compose_list_pages_with_metadata_sql(
 /// transaction; a page whose row is missing (between a reset wiping the
 /// cache and its rebuild) is absent until `RebuildPagesCache` lands, and the
 /// reconciliation oracle reports it (`pages_cache.row`).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
     mut filter: ListPagesWithMetadataFilter,

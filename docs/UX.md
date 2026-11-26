@@ -38,6 +38,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **Indent width.** `var(--indent-width)` — narrower in a phone's window (under `md`, the phone rule's width). JS DnD calculations multiply by this CSS variable, not a literal.
 - **One left edge.** A page's title, its blocks' first glyph (text or a task's checkbox), Add block and its section headings start one x. What leads a block (the grip, the chevron) hangs left of that edge (`--block-hang`), except a top-level parent's chevron on a phone, which ends its row: the margin there is too narrow for a 44 px target. A column that holds an outline takes `outline-column` so the pane keeps room for it.
 - **Block text keeps its own direction; the chrome stays left to right.** Each paragraph of block text runs and aligns in the direction of its first strong letter (`unicode-bidi: plaintext`, `index.css`). A row that shows block text (search, the palette, the references, the agenda) puts `bidi-plaintext` on the box that holds and truncates it, so Arabic or Hebrew mixed with English reads in order and a truncated line keeps its start.
+- **Headings fold their sections.** A heading with something to fold carries a parent's chevron, in the same place. Its fold hides its children, then the blocks after it at its depth up to the next heading of the same or a higher level, never past its parent's end (`src/lib/section-fold.ts`). It is a block fold like any other, per page and device, so the folds inside a folded section come back as they were.
 
 ## Touch & responsive
 

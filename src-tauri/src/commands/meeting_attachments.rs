@@ -327,7 +327,10 @@ async fn cleanup_written(written: &[Written]) {
 ///   template page of the space or cannot be copied, the summary text holds no
 ///   block, or `space_id` is not a live space
 /// - [`AppError::NotFound`] — the target or link block is missing or deleted
-#[instrument(skip(pool, device_id, materializer, app_data_dir, req), err)]
+#[instrument(
+    skip(pool, device_id, materializer, app_data_dir, req),
+    err(level = "info")
+)]
 pub async fn add_meeting_inner(
     pool: &SqlitePool,
     device_id: &str,

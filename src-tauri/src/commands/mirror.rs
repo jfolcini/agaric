@@ -436,7 +436,7 @@ pub async fn get_mirror_status_inner(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn pick_mirror_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<String>, AppError> {
@@ -447,7 +447,7 @@ pub async fn pick_mirror_folder<R: tauri::Runtime>(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn set_mirror_folder(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -462,7 +462,7 @@ pub async fn set_mirror_folder(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn set_mirror_read_back(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -477,7 +477,7 @@ pub async fn set_mirror_read_back(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn set_mirror_copy_files(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -491,7 +491,7 @@ pub async fn set_mirror_copy_files(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn set_mirror_ask_mass_change(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -505,7 +505,7 @@ pub async fn set_mirror_ask_mass_change(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn set_mirror_space(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -520,7 +520,7 @@ pub async fn set_mirror_space(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn get_mirror_status(
     pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
@@ -533,7 +533,7 @@ pub async fn get_mirror_status(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn preview_mirror_adoption(
     pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
@@ -556,7 +556,7 @@ pub async fn preview_mirror_adoption(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn adopt_mirror_folder(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -581,14 +581,14 @@ pub async fn adopt_mirror_folder(
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn list_adoption_folder(folder: String) -> Result<Vec<FolderFile>, AppError> {
     list_adoption_folder_inner(&folder).map_err(sanitize_internal_error)
 }
 
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn read_adoption_file(folder: String, path: String) -> Result<String, AppError> {
     read_adoption_file_inner(&folder, &path).map_err(sanitize_internal_error)
 }

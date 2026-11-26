@@ -1,6 +1,6 @@
 /**
- * useFindReveal (#6557): the tree owning find's current match expands its
- * collapsed ancestors and raises the mount cap to its row.
+ * useFindReveal (#6557): the tree owning find's current match expands the
+ * collapsed blocks whose folds hold it and raises the mount cap to its row.
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -14,12 +14,16 @@ import { useInPageFindStore } from '@/stores/useInPageFindStore'
 const parent = makeBlock({ id: 'PARENT', parent_id: null, depth: 0 })
 const child = makeBlock({ id: 'CHILD', parent_id: 'PARENT', depth: 1 })
 const other = makeBlock({ id: 'OTHER', parent_id: null, depth: 0 })
-const blocksById = new Map<string, FlatBlock>([parent, child, other].map((b) => [b.id, b]))
+const tree = [parent, child, other]
 
-function setup(collapsedIds: ReadonlySet<string>, visible: readonly FlatBlock[]) {
+function setup(
+  collapsedIds: ReadonlySet<string>,
+  visible: readonly FlatBlock[],
+  blocks: readonly FlatBlock[] = tree,
+) {
   const expandBlock = vi.fn()
   const revealIndex = vi.fn()
-  renderHook(() => useFindReveal({ blocksById, collapsedIds, visible, expandBlock, revealIndex }))
+  renderHook(() => useFindReveal({ blocks, collapsedIds, visible, expandBlock, revealIndex }))
   return { expandBlock, revealIndex }
 }
 
@@ -33,6 +37,14 @@ describe('useFindReveal', () => {
     const { expandBlock, revealIndex } = setup(new Set(['PARENT']), [parent, other])
     expect(expandBlock).toHaveBeenCalledExactlyOnceWith('PARENT')
     expect(revealIndex).not.toHaveBeenCalled()
+  })
+
+  it('expands a collapsed heading whose section holds the target (#7040)', () => {
+    const heading = makeBlock({ id: 'HEADING', parent_id: null, depth: 0, content: '## H' })
+    const sibling = makeBlock({ id: 'SIBLING', parent_id: null, depth: 0, content: 'in it' })
+    act(() => useInPageFindStore.getState().setRevealBlockId('SIBLING'))
+    const { expandBlock } = setup(new Set(['HEADING']), [heading], [heading, sibling])
+    expect(expandBlock).toHaveBeenCalledExactlyOnceWith('HEADING')
   })
 
   it('raises the mount cap to the target row', () => {

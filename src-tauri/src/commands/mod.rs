@@ -892,7 +892,7 @@ struct ResolvedBlockRow {
 /// other `BlockId`-typed sibling command. A lowercase id from a caller used
 /// to miss the (uppercase) `op_log.block_id` rows and return an empty
 /// history silently.
-#[tracing::instrument(skip_all, fields(block_id = block_id.as_str(), limit), err)]
+#[tracing::instrument(skip_all, fields(block_id = block_id.as_str(), limit), err(level = "info"))]
 pub async fn get_block_history_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -1151,6 +1151,11 @@ fn new_error_id() -> String {
 /// pass-through list: both are call-site-recoverable signals (unique
 /// violation, writer busy) that the frontend can surface as targeted
 /// toasts rather than the generic "an internal error occurred" string.
+///
+/// This is where a command's internal failure is logged at ERROR, so the
+/// commands' `*_inner` spans log their error at info
+/// (`#[instrument(err(level = "info"))]`): a `NotFound` or `Validation` is
+/// the caller's answer, and at ERROR it filled bug reports' recent errors.
 ///
 /// Agaric's threat model is benign (single-user, local-first, no remote
 /// peers), so this sanitization exists purely for UX consistency and to

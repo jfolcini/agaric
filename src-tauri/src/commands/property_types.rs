@@ -289,7 +289,7 @@ fn counts_of(conversions: &[Conversion]) -> PropertyTypeChangeCounts {
 /// What changing `space_id`'s property to `target`'s type would convert and
 /// leave unfit (#5841), which [`change_property_type_inner`] takes as its
 /// acknowledgement. Refused as the change is.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn preview_property_type_change_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -357,7 +357,7 @@ async fn with_holders(
 ///   a malformed cursor, or a change refused as [`change_property_type_inner`]
 ///   refuses it.
 /// - [`AppError::NotFound`] — the space does not declare the key.
-#[instrument(skip(pool, cursor), err)]
+#[instrument(skip(pool, cursor), err(level = "info"))]
 pub async fn list_property_type_change_values_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -429,7 +429,7 @@ fn type_change_writes(key: &str, conversions: Vec<Conversion>) -> Vec<PropertyVa
 /// - [`AppError::NotFound`] when the space does not declare the key.
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when the counts differ from `acknowledged`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn change_property_type_inner(
     pool: &SqlitePool,
     device_id: &str,

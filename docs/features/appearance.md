@@ -4,7 +4,7 @@ How notes look: the text size, right-to-left text, printing, and your own styles
 
 ## Note text size and headings
 
-*Note text size* (Small, Medium, Large: 14, 16, 18 px) sets `--agaric-font-size` on `<html>` (`src/hooks/useFontSize.ts`). Headings are multiples of it, so h1 to h3 keep their rank over body text at every size: from the `sm` breakpoint up h1 1.5×, h2 1.25×, h3 1.125×, h4 1×, h5 0.875×, h6 0.75×, which at Medium is 24 / 20 / 18 / 16 / 14 / 12 px; below it, on a phone, they step down to 1.25×, 1.125×, 1.0625×, 0.875×, 0.875×, 0.75×. The editor, the static render and page mode read the same `--heading-N-size` tokens in `src/index.css`, as do the first-line boxes the gutter controls centre on. `e2e/heading-font-size.spec.ts`.
+*Note text size* (Small, Medium, Large: 14, 16, 18 px) sets `--agaric-font-size` on `<html>` (`src/hooks/useFontSize.ts`). Headings are multiples of it, so h1 to h3 keep their rank over body text at every size: from the `sm` breakpoint up h1 1.5×, h2 1.25×, h3 1.125×, h4 1×, h5 0.875×, h6 0.75×, which at Medium is 24 / 20 / 18 / 16 / 14 / 12 px; below it, on a phone, they step down to 1.25×, 1.125×, 1.0625×, 0.875×, 0.875×, 0.75×. The editor, the static render and page mode read the same `--heading-N-size` tokens in `src/index.css`, as do the first-line boxes the gutter controls centre on. `e2e/heading-font-size.spec.ts`. A table's cells and a code block sit a step under body text at 0.875× (`text-block-sm`), 14 px at Medium, read or edited. `e2e/font-size-scaling.spec.ts`.
 
 ## Right-to-left text
 

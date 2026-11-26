@@ -103,7 +103,7 @@ fn validate_list_blocks_filters(
         has_parent = parent_id.is_some(),
         has_tag_filter = tag_id.is_some(),
     ),
-    err
+    err(level = "info")
 )]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
@@ -254,7 +254,7 @@ async fn count_blocks_by_type(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — no block with the given ID exists
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_block_inner(pool: &SqlitePool, block_id: BlockId) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
@@ -285,7 +285,7 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: BlockId) -> Result<Blo
 ///
 /// - [`AppError::NotFound`] — no active block with the given ID exists
 ///   (either the row does not exist at all, or it is soft-deleted)
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_active_block_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -328,7 +328,7 @@ pub async fn get_active_block_inner(
 ///
 /// `scope` restricts the result set to the named space (the broken-chip
 /// rendering for foreign-space `[[ULID]]` targets).
-#[instrument(skip(pool, ids), err)]
+#[instrument(skip(pool, ids), err(level = "info"))]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
     ids: Vec<BlockId>,
@@ -455,7 +455,7 @@ pub async fn list_blocks(
 ///
 /// - [`AppError::Validation`] — invalid `limit` (must be in `[1, 100]`)
 /// - [`AppError::Database`] — propagated from sqlx
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_trash_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
@@ -536,7 +536,7 @@ pub async fn batch_resolve(
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
-#[instrument(skip(pool, root_ids), err)]
+#[instrument(skip(pool, root_ids), err(level = "info"))]
 pub async fn trash_descendant_counts_inner(
     pool: &SqlitePool,
     root_ids: Vec<String>,
@@ -588,7 +588,7 @@ pub async fn trash_descendant_counts(
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `block_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
-#[instrument(skip(pool, block_ids), err)]
+#[instrument(skip(pool, block_ids), err(level = "info"))]
 pub async fn first_child_for_blocks_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,
@@ -671,7 +671,7 @@ pub async fn first_child_for_blocks(
 /// # Errors
 ///
 /// - [`AppError::Database`] — propagated from sqlx.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64, AppError> {
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
@@ -850,5 +850,55 @@ mod tests {
             count_b, 3,
             "SPACE_B trash count must exclude SPACE_A blocks; got {count_b}"
         );
+    }
+
+    /// A lookup that finds nothing is the caller's answer, not an incident: the
+    /// command span logs the `NotFound` at info, and nothing reaches ERROR, the
+    /// level a bug report's recent errors read.
+    #[tokio::test]
+    async fn not_found_logs_at_info_not_error() {
+        use tracing_subscriber::layer::SubscriberExt;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let (pool, _dir) = test_pool().await;
+        let buf = Buf::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("info"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        let guard = tracing::subscriber::set_default(subscriber);
+        let err =
+            get_active_block_inner(&pool, BlockId::from_trusted("01HZZZZZZZZZZZZZZZZZZMISSNG"))
+                .await
+                .unwrap_err();
+        drop(guard);
+
+        assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+        let logged = String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned();
+        let lines: Vec<&str> = logged
+            .lines()
+            .filter(|l| l.contains("Not found: block"))
+            .collect();
+        assert_eq!(lines.len(), 1, "{logged}");
+        assert!(lines[0].contains(" INFO "), "{logged}");
     }
 }

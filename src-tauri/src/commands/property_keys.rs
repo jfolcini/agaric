@@ -108,7 +108,7 @@ pub(crate) async fn declared_def(
 /// - [`AppError::Validation`] when the keys are equal, either is the app's
 ///   own, `new_key` is malformed, or the space declares or uses `new_key`.
 /// - [`AppError::NotFound`] when the space does not declare `old_key`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn rename_property_key_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -224,7 +224,7 @@ pub(super) async fn visible_holders(
 /// What merging `from_key` into `into_key` would move and drop in `space_id`
 /// (#5841), which [`merge_property_key_inner`] takes as its acknowledgement.
 /// Refused as the merge is.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn preview_property_merge_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -383,7 +383,7 @@ fn merge_def_writes(
 /// - [`AppError::Validation`] when the keys are equal, either is the app's own
 ///   or their types differ.
 /// - [`AppError::NotFound`] when the space does not declare either key.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn merge_property_key_inner(
     pool: &SqlitePool,
     device_id: &str,
