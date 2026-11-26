@@ -806,8 +806,15 @@ impl Peer {
         }
     }
 
-    fn close(self) {
+    /// Waits for the daemon, which closes its endpoint as it stops: `main`
+    /// returning drops the runtime, and a daemon task dropped with it leaves
+    /// the endpoint unclosed.
+    async fn close(mut self) {
         self.daemon.shutdown();
+        if let Some(daemon) = self.daemon.handle.take() {
+            // A panic in the daemon has already been reported by the panic hook.
+            let _ = daemon.await;
+        }
         self.materializer.shutdown();
     }
 }
@@ -825,7 +832,7 @@ async fn serve(mut peer: Peer) -> std::io::Result<()> {
         stdout.write_all(json.as_bytes()).await?;
         stdout.flush().await?;
     }
-    peer.close();
+    peer.close().await;
     Ok(())
 }
 
@@ -1143,6 +1150,73 @@ mod tests {
             synced,
             serde_json::json!({ "reply": "synced" }),
             "a reply without fields is its kind alone"
+        );
+    }
+
+    /// In-process log capture (the helper in `commands/blocks/crud.rs`'s tests;
+    /// test-helper duplication is intentional).
+    #[derive(Clone, Default)]
+    struct LogBuf(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// `main` returning drops the runtime, and with it whatever the daemon task
+    /// still holds. A plain `#[test]` that owns a current-thread runtime, so
+    /// that drop runs here, on the thread whose subscriber captures.
+    #[test]
+    fn closing_the_peer_closes_its_endpoint_before_the_runtime_drops() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let logs = LogBuf::default();
+        let _capturing = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("iroh=error"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(logs.clone())
+                    .with_ansi(false),
+            )
+            .set_default();
+        let vault = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        runtime.block_on(async {
+            let mut peer = Peer::open(vault.path()).await.expect("the vault opens");
+            // Hosting a pairing is what wakes the dormant daemon to bind.
+            let reply = peer.run(Command::HostPairing).await;
+            assert!(
+                matches!(reply, Reply::Hosting { .. }),
+                "the peer hosts a pairing, got: {}",
+                serde_json::to_string(&reply).unwrap()
+            );
+            assert!(
+                peer.scheduler.local_endpoint().is_some(),
+                "the daemon bound an endpoint, so there is one to close"
+            );
+            peer.close().await;
+        });
+        drop(runtime);
+
+        let logged = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+        assert!(
+            !logged.contains("Endpoint dropped without calling"),
+            "the peer must close its endpoint before it exits, logged: {logged}"
         );
     }
 }
