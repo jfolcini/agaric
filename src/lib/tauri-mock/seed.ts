@@ -336,6 +336,9 @@ export function offsetIso(days: number): string {
 /** Deterministic IDs for seed data so tests and components can reference them.
  *  Must be valid 26-char Crockford base32 ULIDs so [[id]] and #[id] tokens
  *  parse correctly through the markdown serializer. */
+/** What `getVersion()` answers in the browser: the real app reads its build's version. */
+export const MOCK_APP_VERSION = '0.0.0-mock'
+
 export const SEED_IDS = {
   // Spelled as the backend's first boot makes them (`agaric-engine/src/spaces.rs`),
   // so a spec that names a space runs unchanged on the real backend (#6529).
