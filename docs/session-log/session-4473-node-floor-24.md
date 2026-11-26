@@ -9,6 +9,7 @@ The nightly deep checks printed eight `npm warn deprecated` lines in every job. 
 - The nightly floor lane (`full-suite-frontend`) installs 24.22.1.
 - The four `--no-warnings` flags in `verify-ci-equivalent.sh` and `devdb-migration-gap.mjs` existed for Node 22's `node:sqlite` warning, which Node 24 does not print. They are removed, along with the pitfall that said to run guards on Node 22.
 - The range's copies in `.npmrc`, `CONTRIBUTING.md`, `docs/BUILD.md`, `prek.toml`, `setup.sh` and `check-main-module-detection.mjs` now give the new range. `.npmrc` had named jsdom as the binding constraint; it is `@wdio`.
+- The cloud SessionStart hook no longer runs on `compact` or `clear` (`.claude/settings.json` matches `startup,resume,fork`). It ran setup.sh on every compaction, and that script's `npm ci` deleted and reinstalled the main checkout's node_modules, the directory worktrees link to, while agents tested in them. The hooks reference lists five sources; which one a reclaimed cloud container fires on reopen is not documented, so only the two that keep the container are dropped.
 - `.nsprc`'s minimatch waiver names the new 10.x consumers. The fork pins `@npmcli/arborist` 9.6.0, whose `@npmcli/map-workspaces`, `ignore-walk` and `@tufjs/models` chains declare `^10`. `npm audit` reports no advisory beyond that waiver.
 
 **Ran, on Node 24.22.3 unless stated.**
