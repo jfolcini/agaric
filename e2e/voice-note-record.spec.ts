@@ -21,10 +21,21 @@ import {
  * The vitest DOM has no audio stack, so this is the lane where a real encoder
  * and a real `<audio>` read the file.
  */
+// Merged into the config's launch options, which carry a cloud session's Chromium path.
 test.use({
-  launchOptions: {
-    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
-  },
+  launchOptions: [
+    async ({ launchOptions }, use) => {
+      await use({
+        ...launchOptions,
+        args: [
+          ...(launchOptions.args ?? []),
+          '--use-fake-device-for-media-stream',
+          '--use-fake-ui-for-media-stream',
+        ],
+      })
+    },
+    { scope: 'worker' },
+  ],
   permissions: ['microphone'],
 })
 

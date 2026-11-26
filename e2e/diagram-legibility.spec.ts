@@ -156,7 +156,8 @@ for (const width of ['phone', 'desktop'] as const) {
     await expect(page.locator('[data-testid="mermaid-diagram"] svg')).toBeVisible()
 
     const m = await measureLegibility(page)
-    expect(m.smallestLabelPx).toBeGreaterThanOrEqual(11)
+    // The floor's min-width lands on a 1/64 px layout unit, so it can read a hair under 11.
+    expect(m.smallestLabelPx).toBeGreaterThanOrEqual(11 - 0.01)
     // Too wide for the column at a legible size, so it scrolls on its own.
     expect(m.fitsColumn).toBe(false)
     expect(m.overflows && m.scrollable).toBe(true)
