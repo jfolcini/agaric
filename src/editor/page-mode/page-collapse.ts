@@ -192,7 +192,7 @@ export function moveStep(
  */
 export function unfoldLanded(state: EditorState, tr: Transaction): Transaction {
   const ids = unfoldedBy(outlineOf(state.doc), outlineOf(tr.doc), stateOf(state).collapsed)
-  return ids.length === 0 ? tr : tr.setMeta(EXPAND, ids)
+  return tr.setMeta(EXPAND, ids)
 }
 
 /**

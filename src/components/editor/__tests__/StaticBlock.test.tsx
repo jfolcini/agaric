@@ -1631,7 +1631,7 @@ describe('StaticBlock', () => {
       } as ReturnType<typeof parse>)
     }
 
-    it('renders blockquote with left border and muted text', () => {
+    it('renders blockquote with a start-side border and muted text', () => {
       mockBlockquoteDoc([
         {
           type: 'paragraph',
@@ -1645,9 +1645,9 @@ describe('StaticBlock', () => {
 
       const bq = container.querySelector('blockquote') as HTMLElement
       expect(bq).not.toBeNull()
-      expect(bq.classList.contains('border-l-[3px]')).toBe(true)
+      expect(bq.classList.contains('border-s-[3px]')).toBe(true)
       expect(bq.classList.contains('border-border')).toBe(true)
-      expect(bq.classList.contains('pl-4')).toBe(true)
+      expect(bq.classList.contains('ps-4')).toBe(true)
       expect(bq.classList.contains('text-muted-foreground')).toBe(true)
       expect(bq.textContent).toContain('Quoted text')
     })

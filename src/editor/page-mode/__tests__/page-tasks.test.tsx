@@ -240,6 +240,19 @@ describe('the checkbox', () => {
   })
 })
 
+describe('direction (#7040)', () => {
+  it('runs a block in its own text’s direction, and its controls left to right', async () => {
+    const tasks = new FakeTasks()
+    tasks.setBlock(A, { todo_state: 'TODO' })
+    const { container } = mount([[A, 0, 'שלום']], tasks)
+
+    const block = blockEl(container, A)
+    await findIn(block, MARKER)
+    expect(block).toHaveAttribute('dir', 'auto')
+    expect(block.querySelector('.page-block-controls')).toHaveAttribute('dir', 'ltr')
+  })
+})
+
 describe('the metadata row', () => {
   function metadataTasks(): FakeTasks {
     const tasks = new FakeTasks()

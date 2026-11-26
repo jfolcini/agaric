@@ -70,6 +70,7 @@ export function BrokenBlockLink({
             anchored && 'ref-chip-anchor',
           )}
           data-testid="block-link-chip"
+          dir="auto"
           // The press must not put the block into edit mode.
           onClick={(e) => e.stopPropagation()}
         >
@@ -154,6 +155,8 @@ export function renderBlockLink(
         linkId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-link-chip"
+      // Its own direction, so its title does not decide the block's (#7040).
+      dir="auto"
       // The editor's NodeView carries the same pair; `pageLinkIdAt` finds either.
       {...(clickable ? { 'data-type': 'block-link', 'data-id': linkId } : {})}
       // oxlint-disable-next-line react/forbid-dom-props -- the rule's second sanctioned case: a chip showing a leaf or a label is shortened text, so its full target stays on hover; one showing its full title carries none (#6895)

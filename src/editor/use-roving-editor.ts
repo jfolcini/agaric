@@ -162,6 +162,8 @@ const EDITOR_PROPS = {
     role: 'textbox',
     'aria-multiline': 'true',
     'aria-label': t('editor.blockEditorLabel'),
+    // The block's content runs and mirrors in the direction of its first strong letter (#7040).
+    dir: 'auto',
     // #925 — deliberate soft-keyboard configuration for the prose-first
     // block editor (previously unset, so mobile keyboards guessed). Enter
     // creates a new block, so hint the keyboard's action key as "enter";
@@ -681,7 +683,8 @@ export function contentExtensions(o: ContentExtensionOptions) {
     ParagraphTableHeader,
     ParagraphTableCell,
     TableMoveKeys,
-    CodeBlockWithShortcut.configure({ lowlight }),
+    // Code reads left to right in a right-to-left block too (#7040).
+    CodeBlockWithShortcut.configure({ lowlight, HTMLAttributes: { dir: 'ltr' } }),
     HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
     HardBreak,
     History,

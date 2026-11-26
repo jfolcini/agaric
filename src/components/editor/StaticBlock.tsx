@@ -172,6 +172,8 @@ function StaticBlockInner({
         className="block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 leading-normal transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]"
         data-testid="block-static"
         data-block-id={blockId}
+        // The content runs and mirrors in the direction of its first strong letter (#7040).
+        dir="auto"
         onMouseDown={onMouseDown}
         onClick={handleOuterClick}
         onDragOver={onDragOver}

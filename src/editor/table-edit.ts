@@ -17,6 +17,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { addColumn, addRow, cellAround, TableMap } from '@tiptap/pm/tables'
 
+import { isRtlAt } from '@/editor/text-direction'
 import { findTextPieces, type MarkdownNode } from '@/lib/in-page-find/block-text'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isMac } from '@/lib/platform'
@@ -173,6 +174,7 @@ export const TableMoveKeys = Extension.create({
           handleKeyDown: (view, event) => {
             const at = tableCaret(view.state)
             if (at === null) return false
+            const rtl = () => isRtlAt(view, view.state.selection.from)
             // macOS extends the selection by word and paragraph with Option+Shift+arrows.
             if (isMac() && event.altKey && event.shiftKey && !event.metaKey && !event.ctrlKey) {
               return false
@@ -181,9 +183,10 @@ export const TableMoveKeys = Extension.create({
             else if (matchesShortcutBinding(event, 'moveTableRowDown')) {
               moveTableRowTo(editor, at.row + 1)
             } else if (matchesShortcutBinding(event, 'moveTableColumnLeft')) {
-              moveTableColumnTo(editor, at.col - 1)
+              // Left is towards the end in a right-to-left table (#7040).
+              moveTableColumnTo(editor, at.col + (rtl() ? 1 : -1))
             } else if (matchesShortcutBinding(event, 'moveTableColumnRight')) {
-              moveTableColumnTo(editor, at.col + 1)
+              moveTableColumnTo(editor, at.col + (rtl() ? -1 : 1))
             } else return false
             return true
           },
