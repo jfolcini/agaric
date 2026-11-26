@@ -46,7 +46,7 @@ export function renderImage(node: ImageNode, key: string, ctx: RenderContext): R
           src={node.attrs.src}
           alt={text}
           width={width}
-          link={(content) => applyLinkMark(content, link, ctx, key)}
+          link={(content) => applyLinkMark(content, text, link, ctx, key)}
         />
       </span>
     )
