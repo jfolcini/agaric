@@ -271,6 +271,8 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const ROOT = path.resolve(import.meta.dirname, '..')
 
 const RULES = Object.freeze([
@@ -1967,9 +1969,7 @@ function runGuard(root) {
   try {
     baseline = readBaseline(root)
   } catch (err) {
-    console.error(
-      `ERROR: could not read ${BASELINE_REL}: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`ERROR: could not read ${BASELINE_REL}: ${errorMessage(err)}`)
     process.exit(2)
   }
   const problems = validateBaseline(baseline)

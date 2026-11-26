@@ -17,10 +17,10 @@ import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 export interface ToolbarItemGroups {
   refsAndBlocks: ToolbarButtonConfig[]
   structureButtons: ToolbarButtonConfig[]
+  /** The state toggle first: the priority cycle and the Date menu follow it. */
   taskButtons: ToolbarButtonConfig[]
   /** The Date menu's rows: they are one button on the bar (`renderDateMenu`). */
   dateButtons: ToolbarButtonConfig[]
-  metadataButtons: ToolbarButtonConfig[]
   historyButtons: ToolbarButtonConfig[]
 }
 
@@ -52,14 +52,7 @@ export function buildToolbarItems(
   groups: ToolbarItemGroups,
   options: BuildToolbarItemsOptions = {},
 ): ToolbarItem[] {
-  const {
-    refsAndBlocks,
-    structureButtons,
-    taskButtons,
-    dateButtons,
-    metadataButtons,
-    historyButtons,
-  } = groups
+  const { refsAndBlocks, structureButtons, taskButtons, dateButtons, historyButtons } = groups
   const { includeTableOps = false, touch = false } = options
   const out: ToolbarItem[] = []
   const pushButton = (key: string, group: number, priority: number, isPopoverTrigger?: boolean) => {
@@ -102,11 +95,12 @@ export function buildToolbarItems(
   out.push({ kind: 'separator', key: 'sep-1', group: 1, priority: 0 })
 
   // Group 2 — the Task group: state, priority, the Date menu, then the block's properties.
-  for (const c of taskButtons) pushButton(c.label, 2, c.priority ?? 0)
+  const [stateToggle, ...restOfTask] = taskButtons
+  if (stateToggle !== undefined) pushButton(stateToggle.label, 2, stateToggle.priority ?? 0)
   // Below the TODO toggle (80).
   pushButton('toolbar.cyclePriority', 2, 75)
   pushButton('toolbar.date', 2, Math.max(0, ...dateButtons.map((c) => c.priority ?? 0)))
-  for (const c of metadataButtons) pushButton(c.label, 2, c.priority ?? 0)
+  for (const c of restOfTask) pushButton(c.label, 2, c.priority ?? 0)
   out.push({ kind: 'separator', key: 'sep-2', group: 2, priority: 0 })
 
   // Group 3 — history
@@ -117,15 +111,9 @@ export function buildToolbarItems(
 
 /** Build a `label -> config` lookup for `renderConfigButton`. */
 export function buildConfigByKey(groups: ToolbarItemGroups): Map<string, ToolbarButtonConfig> {
-  const { refsAndBlocks, structureButtons, taskButtons, metadataButtons, historyButtons } = groups
+  const { refsAndBlocks, structureButtons, taskButtons, historyButtons } = groups
   const map = new Map<string, ToolbarButtonConfig>()
-  for (const c of [
-    ...refsAndBlocks,
-    ...structureButtons,
-    ...taskButtons,
-    ...metadataButtons,
-    ...historyButtons,
-  ]) {
+  for (const c of [...refsAndBlocks, ...structureButtons, ...taskButtons, ...historyButtons]) {
     map.set(c.label, c)
   }
   return map

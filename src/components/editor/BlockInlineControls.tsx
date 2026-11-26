@@ -116,7 +116,6 @@ export const COLLAPSE_TOGGLE_HIDDEN_AT_REST =
 
 export interface BlockCollapseControlProps {
   blockId: string
-  hasChildren: boolean
   isCollapsed: boolean
   /** Coarse pointer: the chevron is always visible. */
   isTouch: boolean
@@ -126,8 +125,8 @@ export interface BlockCollapseControlProps {
 }
 
 /**
- * The collapse chevron of a block WITH children; a leaf renders nothing. It
- * sits just left of the block's first glyph, in the text box's inset, centred on
+ * The collapse chevron of a block with children (the caller renders none for
+ * a leaf). It sits just left of the block's first glyph, in the text box's inset, centred on
  * the first text line, where the block's indent guides hang from (#7040).
  * Desktop: hover-revealed while expanded. Touch: always visible; the row itself
  * is the touch drag activator, so the chevron only toggles. On a phone a
@@ -136,15 +135,12 @@ export interface BlockCollapseControlProps {
  */
 export function BlockCollapseControl({
   blockId,
-  hasChildren,
   isCollapsed,
   isTouch,
   atRowEnd = false,
   onToggleCollapse,
-}: BlockCollapseControlProps): React.ReactElement | null {
+}: BlockCollapseControlProps): React.ReactElement {
   const { t } = useTranslation()
-
-  if (!hasChildren) return null
 
   return (
     <Tooltip>

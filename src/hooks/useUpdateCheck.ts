@@ -50,7 +50,7 @@
 import { relaunch } from '@tauri-apps/plugin-process'
 import { useEffect, useSyncExternalStore } from 'react'
 
-import { unwrap } from '@/lib/app-error'
+import { isPluginUnavailable, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { RELEASES_URL } from '@/lib/config'
 import { i18n } from '@/lib/i18n'
@@ -325,7 +325,9 @@ async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
       lastCheckedAt: new Date().toISOString(),
     })
     if (silentOnNoUpdate) {
-      logger.warn('updater', 'Update check failed (silent boot path)', undefined, err)
+      // Desktop builds always register the updater; only the browser has none.
+      if (isPluginUnavailable(err)) logger.debug('updater', 'no updater plugin; boot check skipped')
+      else logger.warn('updater', 'Update check failed (silent boot path)', undefined, err)
     } else {
       logger.error('updater', 'Update check failed (manual path)', undefined, err)
       notify.error(message)

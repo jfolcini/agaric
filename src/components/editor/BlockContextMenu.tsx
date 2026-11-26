@@ -1092,6 +1092,14 @@ export function BlockContextMenu({
     }
   }
 
+  // The cursor follows focus, so a key after a click on a row moves on from that row.
+  const handleFocus = (e: React.FocusEvent) => {
+    const row = itemRefs.current.indexOf(e.target as HTMLButtonElement)
+    if (row === -1) return
+    rowsEntered.current = true
+    setFocusedIndex(row)
+  }
+
   // #999/#1003/#1109 — the per-render roving-focus counter; the extracted
   // `renderMenuItem` advances it for each interactive (actionable) row, exactly
   // as the inline render loop did. Reset before each render pass.
@@ -1128,6 +1136,7 @@ export function BlockContextMenu({
       )}
       style={phoneLayout ? undefined : { left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
+      onFocus={handleFocus}
       data-editor-portal=""
     >
       {/* oxlint-disable-next-line react/refs -- `itemRefs` is handed down and turned into a ref CALLBACK that only writes `.current` when React attaches the node, never during render — see the note above and #4406 */}

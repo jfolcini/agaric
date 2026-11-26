@@ -101,6 +101,8 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 // Stable title: the ONLY thing the find-or-file logic matches on. Never
 // rename an existing issue with this title — the script would stop finding
 // it and file a duplicate.
@@ -1000,7 +1002,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`file-fuzz-findings: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`file-fuzz-findings: ${errorMessage(err)}`)
     process.exit(1)
   }
 }

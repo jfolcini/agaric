@@ -329,6 +329,9 @@ export function offsetIso(days: number): string {
   return d.toISOString()
 }
 
+/** What `getVersion()` answers in the browser: the real app reads its build's version. */
+export const MOCK_APP_VERSION = '0.0.0-mock'
+
 // ---------------------------------------------------------------------------
 // Seed data IDs — exported for tests and external reference
 // ---------------------------------------------------------------------------

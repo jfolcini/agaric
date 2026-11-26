@@ -31,7 +31,10 @@ describe('check-migrations-strict.mjs', () => {
     PRIMARY KEY (id)
 );\n`,
     )
-    expect(() => execFileSync('node', [SCRIPT, file])).toThrow(/must use STRICT mode/)
+    // Piped, so the guard's report is in the error message rather than on the run's stderr.
+    expect(() => execFileSync('node', [SCRIPT, file], { stdio: 'pipe' })).toThrow(
+      /must use STRICT mode/,
+    )
   })
 
   it('does not false-positive on semicolon inside a line comment', () => {

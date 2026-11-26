@@ -186,7 +186,6 @@ function makeCollapseProps(
 ): BlockCollapseControlProps {
   return {
     blockId: 'BLOCK_1',
-    hasChildren: false,
     isCollapsed: false,
     isTouch: false,
     ...overrides,
@@ -364,37 +363,30 @@ describe('BlockCollapseControl (#1968)', () => {
     vi.clearAllMocks()
   })
 
-  it('renders the chevron when hasChildren is true (desktop)', () => {
-    renderCollapse(makeCollapseProps({ hasChildren: true }))
+  it('renders the chevron (desktop)', () => {
+    renderCollapse(makeCollapseProps())
     expect(screen.getByTestId('chevron-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
-  })
-
-  it('renders nothing for a desktop leaf (no placeholder)', () => {
-    const { container } = renderCollapse(makeCollapseProps({ hasChildren: false, isTouch: false }))
-    expect(screen.queryByTestId('chevron-toggle')).not.toBeInTheDocument()
-    expect(container.querySelector('span.w-5.h-5')).not.toBeInTheDocument()
-    expect(container).toBeEmptyDOMElement()
   })
 
   it('calls onToggleCollapse with blockId on chevron click', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
-    renderCollapse(makeCollapseProps({ hasChildren: true, onToggleCollapse: onToggle }))
+    renderCollapse(makeCollapseProps({ onToggleCollapse: onToggle }))
     await user.click(screen.getByTestId('collapse-toggle'))
     expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
   })
 
   it('shows expand label when collapsed and collapse label when expanded', () => {
-    const { unmount } = renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))
+    const { unmount } = renderCollapse(makeCollapseProps({ isCollapsed: true }))
     expect(screen.getByRole('button', { name: t('block.expandChildren') })).toBeInTheDocument()
     unmount()
-    renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: false }))
+    renderCollapse(makeCollapseProps({ isCollapsed: false }))
     expect(screen.getByRole('button', { name: t('block.collapseChildren') })).toBeInTheDocument()
   })
 
   it('exposes the Ctrl+. collapse shortcut via aria-keyshortcuts (desktop)', () => {
-    renderCollapse(makeCollapseProps({ hasChildren: true }))
+    renderCollapse(makeCollapseProps())
     expect(screen.getByTestId('collapse-toggle')).toHaveAttribute(
       'aria-keyshortcuts',
       t('block.collapseKeyshortcuts'),
@@ -405,7 +397,7 @@ describe('BlockCollapseControl (#1968)', () => {
   // must opt the shared ChevronToggle into that swap. The real glyph swap is
   // asserted in mobile-a11y-216.test.tsx, which renders the unmocked icon.
   it('opts the chevron into the solid-when-collapsed glyph swap', () => {
-    renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))
+    renderCollapse(makeCollapseProps({ isCollapsed: true }))
     expect(screen.getByTestId('chevron-toggle')).toHaveAttribute(
       'data-solid-when-collapsed',
       'true',
@@ -413,16 +405,16 @@ describe('BlockCollapseControl (#1968)', () => {
   })
 
   it('passes the collapsed state through to the chevron icon', () => {
-    const { unmount } = renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: false }))
+    const { unmount } = renderCollapse(makeCollapseProps({ isCollapsed: false }))
     expect(screen.getByTestId('chevron-toggle').getAttribute('data-expanded')).toBe('true')
     unmount()
-    renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))
+    renderCollapse(makeCollapseProps({ isCollapsed: true }))
     expect(screen.getByTestId('chevron-toggle').getAttribute('data-expanded')).toBe('false')
   })
 
   it('chevron prevents default on mousedown and still fires onClick (focus retention)', async () => {
     const onToggleCollapse = vi.fn()
-    renderCollapse(makeCollapseProps({ hasChildren: true, onToggleCollapse }))
+    renderCollapse(makeCollapseProps({ onToggleCollapse }))
     const btn = screen.getByTestId('collapse-toggle')
     // fireEvent returns false when a handler called preventDefault.
     const notPrevented = fireEvent.mouseDown(btn)
@@ -433,7 +425,7 @@ describe('BlockCollapseControl (#1968)', () => {
 
   // ── Touch: a plain collapse toggle (#5332 item 10) ──
   it('on touch, the chevron is a plain, always-visible collapse toggle with a 44px hit area', () => {
-    renderCollapse(makeCollapseProps({ hasChildren: true, isTouch: true }))
+    renderCollapse(makeCollapseProps({ isTouch: true }))
     const chevron = screen.getByTestId('collapse-toggle')
     expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
     expect(chevron.className).toContain('touch-hit-area')
@@ -443,12 +435,6 @@ describe('BlockCollapseControl (#1968)', () => {
     expect(chevron).toHaveAttribute('data-context-trigger', 'true')
     expect(chevron).toHaveAttribute('aria-keyshortcuts', t('block.collapseKeyshortcuts'))
     expect(chevron).toHaveAttribute('aria-expanded', 'true')
-  })
-
-  it('on touch, a leaf renders nothing (no drag bullet)', () => {
-    const { container } = renderCollapse(makeCollapseProps({ hasChildren: false, isTouch: true }))
-    expect(container).toBeEmptyDOMElement()
-    expect(screen.queryByTestId('grip-vertical-icon')).not.toBeInTheDocument()
   })
 })
 
@@ -1189,7 +1175,7 @@ describe('BlockInlineControls in selection mode', () => {
   // aria-label while a selection is active.
   it('keeps the collapse chevron (with its per-block aria-label) during selection mode', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
-    renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))
+    renderCollapse(makeCollapseProps({ isCollapsed: true }))
 
     const chevron = screen.getByTestId('collapse-toggle')
     expect(chevron).toBeInTheDocument()

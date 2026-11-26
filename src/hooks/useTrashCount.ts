@@ -15,7 +15,7 @@ const subscribeToQueries = (onChange: () => void) => queryClient.getQueryCache()
  * updates, which each restore and purge does once it lands: a badge that stays
  * mounted recounts on navigation and beside the Trash list.
  */
-export function useTrashCount(recountKey?: string): number {
+export function useTrashCount(recountKey: string): number {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const trashListUpdatedAt = useSyncExternalStore(
     subscribeToQueries,

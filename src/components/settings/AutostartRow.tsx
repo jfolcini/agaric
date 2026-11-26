@@ -20,6 +20,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ToggleRow } from '@/components/ui/toggle-row'
+import { isPluginUnavailable } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/platform/autostart'
@@ -44,17 +45,20 @@ export function AutostartRow(): React.ReactElement | null {
       })
       .catch((err) => {
         if (cancelled) return
-        // Not an error from the user's perspective — this is the
-        // mobile / browser-dev path where the plugin is unregistered
-        // and `isEnabled()` rejects. Log at warn level (with cause)
-        // so a real desktop IPC failure still lands in the daily log,
-        // and hide the row either way.
-        logger.warn(
-          'SettingsView',
-          'autostart plugin unavailable; hiding launch-on-login row',
-          undefined,
-          err,
-        )
+        // The plugin is registered on desktop only, so its absence (mobile,
+        // the browser) is the expected path; any other rejection is a real
+        // desktop IPC failure, which belongs in the daily log. The row hides
+        // either way.
+        if (isPluginUnavailable(err)) {
+          logger.debug('SettingsView', 'no autostart plugin; hiding launch-on-login row')
+        } else {
+          logger.warn(
+            'SettingsView',
+            'autostart unavailable; hiding launch-on-login row',
+            undefined,
+            err,
+          )
+        }
         setEnabled(null)
       })
     return () => {

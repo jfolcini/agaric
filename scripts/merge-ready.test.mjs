@@ -27,7 +27,7 @@ const ROUTE = {
   run: `${R}/actions/runs/43713379704`,
   testedBase: `${R}/commits?sha=main&until=2026-11-15T12:20:58Z&per_page=1`,
   mergeBase: `${R}/compare/main...${HEAD}?per_page=1`,
-  ci: `${R}/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=100`,
+  ci: `${R}/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100`,
 }
 
 // A stand-in `gh`: `gh api [--paginate] <path>` prints the recorded response for <path> and exits
@@ -380,6 +380,17 @@ void test('main CI: an in-progress or cancelled run is skipped, the one before i
     ]
   })
   assertFailsOnly(red, 'main CI', 'run 3')
+})
+
+void test('main CI: the newest finished run decides even when the status-filtered listing lags', () => {
+  const [newest, ...older] = GREEN[ROUTE.ci].workflow_runs
+  const r = run((routes) => {
+    routes[ROUTE.ci.replace('&per_page', '&status=completed&per_page')] = {
+      workflow_runs: [{ ...newest, id: 4, conclusion: 'failure' }, ...older],
+    }
+  })
+  assert.equal(r.status, 0, r.out)
+  assert.ok(line(r.out, 'main CI').includes(`run ${newest.id}`), r.out)
 })
 
 void test('main CI: no completed run at all fails', () => {

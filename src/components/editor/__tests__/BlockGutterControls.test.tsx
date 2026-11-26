@@ -372,13 +372,10 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     resetMaxTouchPoints()
   })
 
-  // #1968: the touch drag activator moved OUT of the gutter onto the leading
-  // collapse chevron (or, on leaves, a small bullet) — see
-  // `BlockCollapseControl`. On touch the gutter therefore renders NO drag grip;
-  // it only ever shows the selection checkbox, and only while a selection is
-  // active. (The grip's touch-target / touch-action / long-press-hint behavior
-  // is now covered by the BlockCollapseControl tests.)
-  it('renders no drag grip on touch (activator moved to the chevron/bullet)', () => {
+  // On touch the row itself is the drag activator (see `SortableBlock`), so the
+  // gutter renders NO drag grip; it only shows the selection checkbox, and only
+  // while a selection is active.
+  it('renders no drag grip on touch (the row is the activator)', () => {
     renderWithTooltip(
       <BlockGutterControls
         blockId="B1"

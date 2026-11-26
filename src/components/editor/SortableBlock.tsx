@@ -402,7 +402,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] flex min-h-block-line items-center">
           <BlockCollapseControl
             blockId={blockId}
-            hasChildren
             isCollapsed={isCollapsed}
             isTouch={isTouchDevice}
             onToggleCollapse={onToggleCollapse}
@@ -506,7 +505,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       {hasChildren && chevronAtRowEnd && (
         <BlockCollapseControl
           blockId={blockId}
-          hasChildren
           isCollapsed={isCollapsed}
           isTouch
           atRowEnd
