@@ -105,12 +105,12 @@ test.describe('Page actions menu @pages', () => {
     expect(await readClipboard(page)).toBe(`agaric://page/${QUICK_NOTES}`)
   })
 
-  test('Save as Markdown file downloads what Export as Markdown copies, named after the page', async ({
+  test('Save as Markdown file downloads what Copy as Markdown copies, named after the page', async ({
     page,
   }) => {
     await waitForBoot(page)
     await openPage(page, 'Quick Notes')
-    await pageAction(page, /^Export as Markdown/, 'Export')
+    await pageAction(page, /^Copy as Markdown/, 'Export')
     await expect(page.getByText('Markdown copied to clipboard', { exact: true })).toBeVisible()
     const copied = await readClipboard(page)
 

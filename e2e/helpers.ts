@@ -1138,8 +1138,7 @@ export interface SearchSeed {
 
 /**
  * Create each block through the mock IPC; returns their ids in order. Then settles the
- * backend, so the real one has indexed them before a search: resubmitting an unchanged query
- * does not re-run it.
+ * backend, so the real one has indexed them before the first search.
  */
 export async function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<string[]> {
   const created = await page.evaluate(
@@ -1204,9 +1203,10 @@ export async function searchResultIds(page: Page): Promise<string[]> {
 }
 
 /**
- * Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. A
- * resubmit of an unchanged query does not re-run the search, so this cannot wait out the backend's
- * FTS write: seed through a helper that settles the backend first, as `seedSearchBlocks` does.
+ * Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. Each
+ * try submits again, which re-runs the search, so the retry waits out the backend's FTS write;
+ * seeding through a helper that settles the backend first, as `seedSearchBlocks` does, makes the
+ * first try the one that lands.
  */
 export async function expectSearchListed(
   page: Page,

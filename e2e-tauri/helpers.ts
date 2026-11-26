@@ -1854,14 +1854,14 @@ export async function pageAction(item: string, submenu?: string): Promise<void> 
 }
 
 /**
- * The open page's Export as Markdown, read off the clipboard. A sentinel goes
+ * The open page's Copy as Markdown, read off the clipboard. A sentinel goes
  * on the clipboard first, so an earlier export's toast and text are not taken
  * for this one's.
  */
 export async function exportOpenPage(): Promise<string> {
   const sentinel = runScopedMarker('wdio-rt-sentinel')
   await invoke('plugin:clipboard-manager|write_text', { text: sentinel })
-  await pageAction('Export as Markdown', 'Export')
+  await pageAction('Copy as Markdown', 'Export')
   let text = sentinel
   await browser
     .waitUntil(
@@ -1872,7 +1872,7 @@ export async function exportOpenPage(): Promise<string> {
       { timeout: ACTION_TIMEOUT },
     )
     .catch(() => {
-      throw new Error('Export as Markdown never put the page on the clipboard')
+      throw new Error('Copy as Markdown never put the page on the clipboard')
     })
   return text
 }

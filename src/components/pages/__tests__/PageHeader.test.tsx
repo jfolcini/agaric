@@ -1617,14 +1617,14 @@ describe('PageHeader kebab menu (#639)', () => {
     })
   })
 
-  it('shows Export as Markdown option', async () => {
+  it('shows Copy as Markdown option', async () => {
     const user = userEvent.setup()
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
 
-    expect(await screen.findByText(/Export as Markdown/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Copy as Markdown/i)).toBeInTheDocument()
   })
 
   it('shows Delete page option', async () => {
@@ -1893,7 +1893,7 @@ describe('PageHeader error paths', () => {
     })
   })
 
-  it('Export as Markdown shows the copied toast', async () => {
+  it('Copy as Markdown shows the copied toast', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -1910,7 +1910,7 @@ describe('PageHeader error paths', () => {
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
+    await user.click(await screen.findByText(/Copy as Markdown/i))
 
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith('Markdown copied to clipboard')
@@ -1935,7 +1935,7 @@ describe('PageHeader error paths', () => {
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
+    await user.click(await screen.findByText(/Copy as Markdown/i))
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith('Export failed')
@@ -2170,7 +2170,7 @@ describe('PageHeader export rewrites attachment refs before copying', () => {
     })
   }
 
-  it('kebab menu "Export as Markdown" copies markdown with no dead attachment: refs', async () => {
+  it('kebab menu "Copy as Markdown" copies markdown with no dead attachment: refs', async () => {
     const user = userEvent.setup()
     mockInvokeWithAttachment()
 
@@ -2178,7 +2178,7 @@ describe('PageHeader export rewrites attachment refs before copying', () => {
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
+    await user.click(await screen.findByText(/Copy as Markdown/i))
 
     await waitFor(() => {
       expect(mockedWriteText).toHaveBeenCalledWith('![shot](shot.png)')
@@ -2244,7 +2244,7 @@ describe('PageHeader export flushes the active draft first (#2969)', () => {
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
-    await user.click(await screen.findByText(/Export as Markdown/i))
+    await user.click(await screen.findByText(/Copy as Markdown/i))
 
     await waitFor(() => {
       expect(mockedWriteText).toHaveBeenCalledWith('# fresh content')

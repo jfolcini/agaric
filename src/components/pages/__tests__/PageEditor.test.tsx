@@ -551,6 +551,47 @@ describe('PageEditor', () => {
     expect(stored.map((b) => b.id)).toEqual(['B1'])
   })
 
+  // A load that read the page before the create answered must not drop the new block.
+  it('Add block on a page still loading keeps its block when the older snapshot lands', async () => {
+    const user = userEvent.setup()
+    const page = (blocks: ReturnType<typeof makeBlock>[]) => ({
+      blocks,
+      truncated: false,
+      total: blocks.length,
+    })
+    const created = { id: 'B1', content: '', parent_id: 'PAGE_1', position: 0 }
+    let answerFirstLoad: (answer: ReturnType<typeof page>) => void = () => undefined
+    let loads = 0
+    stubInvoke({
+      create_block: () => withOps(makeBlockRow(created)),
+      load_page_subtree: () => {
+        loads++
+        if (loads > 1) return page([makeBlock(created)])
+        return new Promise((resolve) => {
+          answerFirstLoad = resolve
+        })
+      },
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const store = getPageStore('PAGE_1')
+    if (!store) throw new Error('page store not registered')
+    let loaded: Promise<void> = Promise.resolve()
+    act(() => {
+      loaded = store.getState().load()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add block/i }))
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    })
+    await act(async () => {
+      answerFirstLoad(page([]))
+      await loaded
+    })
+
+    expect(store.getState().blocks.map((b) => b.id)).toEqual(['B1'])
+  })
+
   it('Add block button creates top-level block when page has nested blocks', async () => {
     const user = userEvent.setup()
 
@@ -668,6 +709,53 @@ describe('PageEditor', () => {
       ?.getState()
       .blocks.find((b) => b.id !== 'BLANK')?.id
     expect(useBlockStore.getState().focusedBlockId).toBe(newId)
+  })
+
+  it('Add block focuses the new block before the create answers', async () => {
+    const user = userEvent.setup()
+    // Never answers: keys typed meanwhile go to the focused block.
+    stubInvoke({ create_block: () => new Promise(() => undefined) })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [makeBlock({ id: 'B1', content: 'First block', parent_id: 'PAGE_1', position: 0 })],
+      })
+      useBlockStore.getState().setFocused('B1')
+    })
+
+    await user.click(screen.getByRole('button', { name: /add block/i }))
+
+    const newId = getPageStore('PAGE_1')
+      ?.getState()
+      .blocks.find((b) => b.id !== 'B1')?.id
+    expect(newId).toBeDefined()
+    expect(useBlockStore.getState().focusedBlockId).toBe(newId)
+  })
+
+  it('Add block returns focus to the block being edited when the create fails', async () => {
+    const user = userEvent.setup()
+    stubInvoke({ create_block: () => Promise.reject(new Error('backend error')) })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [makeBlock({ id: 'B1', content: 'First block', parent_id: 'PAGE_1', position: 0 })],
+      })
+      useBlockStore.getState().setFocused('B1')
+    })
+
+    await user.click(screen.getByRole('button', { name: /add block/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to create block')
+    })
+    expect(
+      getPageStore('PAGE_1')
+        ?.getState()
+        .blocks.map((b) => b.id),
+    ).toEqual(['B1'])
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    })
   })
 
   it('Add block button shows toast on failure when no blocks exist', async () => {

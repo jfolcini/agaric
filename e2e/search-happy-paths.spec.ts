@@ -1,9 +1,9 @@
 /**
  * E2E — search happy paths (#5738): Enter commits a search without waiting
- * for the debounce, a result click opens its page with the block scrolled
- * into view and focused, and the palette's Toggle sidebar and Keyboard
- * shortcuts entries. Each step is one mock IPC or none, so the mock lane shows
- * every failure.
+ * for the debounce, and searches again on an unchanged query; a result click
+ * opens its page with the block scrolled into view and focused; and the
+ * palette's Toggle sidebar and Keyboard shortcuts entries. Each step is one
+ * mock IPC or none, so the mock lane shows every failure.
  */
 
 import type { Page } from '@playwright/test'
@@ -22,6 +22,27 @@ import {
 } from './helpers'
 
 const MARK = 'quokka'
+
+/**
+ * The real backend indexes a block in the background, so a search waits until
+ * the index holds it; the mock indexes at once.
+ */
+async function waitIndexed(page: Page, id: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const found = await ipc<{ items: Array<{ id: string }> }>(page, 'search_blocks', {
+          query: MARK,
+          cursor: null,
+          limit: 10,
+          filter: { scope: { kind: 'spaces', space_ids: [SEED_IDS.SPACE_PERSONAL] } },
+        })
+        return found.items.map((item) => item.id)
+      },
+      { timeout: 15_000 },
+    )
+    .toContain(id)
+}
 
 test('Enter runs the search without waiting for the debounce @search', async ({ page }) => {
   await page.clock.install()
@@ -42,6 +63,23 @@ test('Enter runs the search without waiting for the debounce @search', async ({ 
     .toEqual([id])
 })
 
+// A block written just before a search can miss the index; Enter again retries.
+test('Enter on an unchanged query searches again and lists a block indexed since @search', async ({
+  page,
+}) => {
+  await openSearchView(page)
+  const [before = ''] = await seedSearchBlocks(page, [{ content: `${MARK} before` }])
+  await waitIndexed(page, before)
+  await submitSearch(page, MARK)
+  await expect.poll(() => searchResultIds(page)).toEqual([before])
+
+  const [after = ''] = await seedSearchBlocks(page, [{ content: `${MARK} after` }])
+  await waitIndexed(page, after)
+  await page.getByRole('combobox', { name: 'Search blocks' }).press('Enter')
+
+  await expect.poll(() => searchResultIds(page)).toEqual([before, after].toSorted())
+})
+
 test('clicking a result opens its page with the block in view and focused @search', async ({
   page,
 }) => {
@@ -53,22 +91,7 @@ test('clicking a result opens its page with the block in view and focused @searc
     ...Array.from({ length: 20 }, (_, i) => ({ content: `tail row ${i}` })),
   ])
   const target = ids[60] as string
-  // The real backend indexes the blocks in the background, so wait until the
-  // index holds the row before searching; the mock indexes at once.
-  await expect
-    .poll(
-      async () => {
-        const found = await ipc<{ items: Array<{ id: string }> }>(page, 'search_blocks', {
-          query: MARK,
-          cursor: null,
-          limit: 10,
-          filter: { scope: { kind: 'spaces', space_ids: [SEED_IDS.SPACE_PERSONAL] } },
-        })
-        return found.items.map((item) => item.id)
-      },
-      { timeout: 15_000 },
-    )
-    .toContain(target)
+  await waitIndexed(page, target)
   await submitSearch(page, MARK)
   await page.getByRole('option', { name: `${MARK} far down` }).click()
 

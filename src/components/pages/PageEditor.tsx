@@ -39,7 +39,7 @@ import { tagOfPageTitle } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { useBlockStore } from '@/stores/blocks'
-import { unfocusedBlankTail } from '@/stores/empty-block-cleanup'
+import { addBlockAtEnd } from '@/stores/empty-block-cleanup'
 import { useNavigationStore } from '@/stores/navigation'
 import {
   PageBlockStoreProvider,
@@ -72,7 +72,6 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
   const { t } = useTranslation()
   const blocks = usePageBlockStore((s) => s.blocks)
   const blocksById = usePageBlockStore((s) => s.blocksById)
-  const createBelow = usePageBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
   const pageStore = usePageBlockStoreApi()
   // #5691 — page mode: the page as one document in place of the block tree.
@@ -315,45 +314,34 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
   )
 
   const handleAddBlock = useCallback(async () => {
-    // Find the last top-level block (direct child of this page) rather than
-    // the last entry in the flat tree, which could be a deeply nested child.
-    // Using the flat-tree tail would create the new block under the wrong
-    // parent (the nested block's parent instead of the page).
-    const topLevel = blocks.filter((b) => b.parent_id === pageId)
-    const lastBlock = topLevel.at(-1)
-    const blankTail = unfocusedBlankTail(blocks, pageId)
-    if (blankTail !== null) {
-      setFocused(blankTail)
-    } else if (lastBlock) {
-      const newId = await createBelow(lastBlock.id, '')
-      if (newId) {
-        setFocused(newId)
-      }
-    } else {
-      // No blocks yet — create a first block under this page.
-      // createBelow needs an afterBlockId, so for the empty case we call
-      // createBlock from the Tauri API directly.
-      try {
-        const spaceId = useSpaceStore.getState().currentSpaceId
-        if (spaceId == null) throw new Error('No active space; cannot create block')
-        const { createBlock } = await import('@/lib/ipc-helpers')
-        const result = await createBlock({
-          blockType: 'content',
-          content: '',
-          parentId: pageId,
-          spaceId,
-        })
-        // Splice the returned row into the local store
-        // instead of re-fetching the full page. The backend response
-        // already carries the canonical BlockRow, so the second
-        // `list_blocks` IPC was pure waste.
-        pageStore.getState().appendBlock(result)
-        setFocused(result.id)
-      } catch {
-        notify.error(t('error.createBlockFailed'))
-      }
+    if (await addBlockAtEnd(pageStore.getState(), pageId)) return
+    // No blocks yet — create a first block under this page.
+    // createBelow needs an afterBlockId, so for the empty case we call
+    // createBlock from the Tauri API directly. A load in flight, which can
+    // predate the create, reads again once it has answered.
+    const release = pageStore.getState().holdLoads()
+    try {
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) throw new Error('No active space; cannot create block')
+      const { createBlock } = await import('@/lib/ipc-helpers')
+      const result = await createBlock({
+        blockType: 'content',
+        content: '',
+        parentId: pageId,
+        spaceId,
+      })
+      // Splice the returned row into the local store
+      // instead of re-fetching the full page. The backend response
+      // already carries the canonical BlockRow, so the second
+      // `list_blocks` IPC was pure waste.
+      pageStore.getState().appendBlock(result)
+      setFocused(result.id)
+    } catch {
+      notify.error(t('error.createBlockFailed'))
+    } finally {
+      release()
     }
-  }, [blocks, createBelow, setFocused, pageId, t, pageStore])
+  }, [setFocused, pageId, t, pageStore])
 
   // ── Click on page background whitespace closes active editor ──
   const handleBackgroundMouseDown = useCallback((e: React.PointerEvent) => {

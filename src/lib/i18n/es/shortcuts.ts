@@ -126,7 +126,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.toggleSidebar': 'Mostrar u ocultar la barra lateral',
   'keyboard.createNewPage': 'Crear una página nueva',
   'keyboard.showKeyboardShortcuts': 'Mostrar los atajos de teclado',
-  'keyboard.exportPageMarkdown': 'Exportar la página como Markdown',
+  'keyboard.exportPageMarkdown': 'Copiar la página como Markdown',
   'keyboard.showPageInGraph': 'Mostrar esta página en el grafo',
   'keyboard.togglePageMode': 'Editar esta página como bloques o como una sola página',
   'keyboard.closeOverlays': 'Cerrar superposiciones, cancelar la edición, quitar la selección',

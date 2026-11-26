@@ -193,7 +193,7 @@ export const shortcuts: Record<string, string> = {
   // Translators: Page editor section, while a page is open: save it as a Markdown file, show it
   // in the Graph view (map of linked pages), and switch its edit mode: "as blocks" (one block
   // at a time) or "as one page" (the whole page as a single document).
-  'keyboard.exportPageMarkdown': 'Export page as Markdown',
+  'keyboard.exportPageMarkdown': 'Copy page as Markdown',
   'keyboard.showPageInGraph': 'Show this page in graph',
   'keyboard.togglePageMode': 'Edit this page as blocks or as one page',
 

@@ -130,7 +130,7 @@ export const pages: Record<string, string> = {
   'templates.variableIsoweek': 'Número da semana ISO',
   'templates.variableRecording':
     'Em um bloco próprio, onde uma nova reunião coloca sua gravação; outras inserções o omitem',
-  'pageHeader.exportMarkdown': 'Exportar como Markdown',
+  'pageHeader.exportMarkdown': 'Copiar como Markdown',
   'pageHeader.deletePage': 'Excluir página',
   'pageHeader.deletePageTitle': 'Excluir página',
   'pageHeader.deletePageDescription':

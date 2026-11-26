@@ -256,11 +256,11 @@ export const pages: Record<string, string> = {
   // beside them lists. {{n}} = that count, always several.
   'templates.variablesMore': '+{{n}} more',
 
-  // Translators: PageHeader kebab menu: "Export as Markdown" copies the page as Markdown text to
+  // Translators: PageHeader kebab menu: "Copy as Markdown" copies the page as Markdown text to
   // the clipboard; "Delete page" is a menu item, the delete dialog's confirm button and the tooltip
   // of the trash button next to the page title or on a journal day. The title and Cancel belong to
   // that confirmation dialog.
-  'pageHeader.exportMarkdown': 'Export as Markdown',
+  'pageHeader.exportMarkdown': 'Copy as Markdown',
   'pageHeader.deletePage': 'Delete page',
   'pageHeader.deletePageTitle': 'Delete page',
   'pageHeader.deletePageDescription':
@@ -268,7 +268,7 @@ export const pages: Record<string, string> = {
   'pageHeader.cancel': 'Cancel',
 
   // Translators: Toasts after the template menu items of the PageHeader kebab menu, and after
-  // "Export as Markdown". "template status" = being marked as a template.
+  // "Copy as Markdown". "template status" = being marked as a template.
   'pageHeader.templateSaved': 'Saved as template',
   'pageHeader.templateRemoved': 'Template status removed',
   'pageHeader.templateFailed': 'Failed to update template status',

@@ -7,7 +7,15 @@ import type { Locator, Page } from '@playwright/test'
 
 import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
-test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } })
+// Merged into the config's launch options, which carry a cloud session's Chromium path.
+test.use({
+  launchOptions: [
+    async ({ launchOptions }, use) => {
+      await use({ ...launchOptions, ignoreDefaultArgs: ['--hide-scrollbars'] })
+    },
+    { scope: 'worker' },
+  ],
+})
 
 const SMALL_FLOW = '```mermaid\ngraph TD\n  A[Capture idea] --> B{Worth doing?}\n```'
 const WIDE_FLOW =

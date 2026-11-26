@@ -11,8 +11,8 @@ import {
 } from './helpers'
 
 /**
- * Keys typed while Enter or a Backspace merge is saving land where they would
- * with an instant backend (#6559). The mock answers every command 50 ms late
+ * Keys typed while Enter, a Backspace merge or Add block is saving land where
+ * they would with an instant backend (#6559). The mock answers every command 50 ms late
  * here (`__setMockLatency`); with no delay these keys never raced the saves.
  * Each test types with no pause, then reads the rows, and again after leaving
  * the surface and coming back. The journal day and the page editor each mount
@@ -107,6 +107,17 @@ async function typeAcrossMerge(page: Page, surface: Surface): Promise<void> {
   await expectRows(page, surface, ['onexyztwo'])
 }
 
+/** Add block while a block is edited: what is typed next goes to the new block. */
+async function typeAcrossAddBlock(page: Page, surface: Surface): Promise<void> {
+  await surface.open(page)
+  await page.keyboard.type('one')
+  await expect(editor(page)).toHaveText('one')
+  await setMockLatency(page, 50)
+  await page.getByRole('button', { name: 'Add block', exact: true }).click()
+  await page.keyboard.type('two')
+  await expectRows(page, surface, ['one', 'two'])
+}
+
 /**
  * Press `key` in the block editor from inside the page and report whether the
  * editor still has the focus once the handler returns. A key the user types
@@ -134,7 +145,7 @@ async function focusKeptAcrossEnterAndMerge(page: Page, surface: Surface): Promi
   await expectRows(page, surface, ['onetwo'])
 }
 
-test.describe('keys typed while a journal day saves Enter or a merge @editor @journal', () => {
+test.describe('keys typed while a journal day saves Enter, a merge or Add block @editor @journal', () => {
   test('a second Enter is kept and the keys around both land in their blocks', ({ page }) =>
     typeAcrossEnters(page, journalDay))
   test('keys typed after Enter mid-line go to the split-off block', ({ page }) =>
@@ -143,13 +154,17 @@ test.describe('keys typed while a journal day saves Enter or a merge @editor @jo
     typeAcrossMerge(page, journalDay))
   test('the editor keeps the focus straight through Enter and a merge', ({ page }) =>
     focusKeptAcrossEnterAndMerge(page, journalDay))
+  test('keys typed after Add block go to the new block', ({ page }) =>
+    typeAcrossAddBlock(page, journalDay))
 })
 
-test.describe('keys typed while a page saves Enter or a merge @editor @pages', () => {
+test.describe('keys typed while a page saves Enter, a merge or Add block @editor @pages', () => {
   test('a second Enter is kept and the keys around both land in their blocks', ({ page }) =>
     typeAcrossEnters(page, newPage))
   test('keys typed after Enter mid-line go to the split-off block', ({ page }) =>
     typeAcrossSplit(page, newPage))
   test('keys typed after a Backspace merge go to the join', ({ page }) =>
     typeAcrossMerge(page, newPage))
+  test('keys typed after Add block go to the new block', ({ page }) =>
+    typeAcrossAddBlock(page, newPage))
 })

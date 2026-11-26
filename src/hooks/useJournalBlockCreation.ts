@@ -36,7 +36,7 @@ import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { parkEmptyPageSubtree } from '@/lib/prefetch-page-subtree'
 import { useBlockStore } from '@/stores/blocks'
-import { unfocusedBlankTail } from '@/stores/empty-block-cleanup'
+import { addBlockAtEnd } from '@/stores/empty-block-cleanup'
 import { getPageStore } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -186,14 +186,8 @@ export function useJournalBlockCreation({
             useBlockStore.getState().setFocused(seeded)
             return
           }
-          const blankTail = unfocusedBlankTail(
-            getPageStore(pageId)?.getState().blocks ?? [],
-            pageId,
-          )
-          if (blankTail !== null) {
-            useBlockStore.getState().setFocused(blankTail)
-            return
-          }
+          const store = getPageStore(pageId)?.getState()
+          if (store && (await addBlockAtEnd(store, pageId))) return
           const spaceId = useSpaceStore.getState().currentSpaceId
           if (spaceId == null) throw new Error('No active space; cannot create block')
           const block = await createBlock({

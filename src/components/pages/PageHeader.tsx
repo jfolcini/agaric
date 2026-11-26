@@ -215,7 +215,7 @@ export function PageHeader({
     handleRemoveAlias,
   } = usePageAliases(pageId, t)
 
-  // --- Export as Markdown (copies to clipboard) ---
+  // --- Copy as Markdown (copies to clipboard) ---
   // Shared by the kebab menu item and the Ctrl+Shift+E shortcut below; the
   // palette's command copies through the same `pageMarkdownForCopy`.
   const copyPageMarkdownToClipboard = useCallback(async (): Promise<void> => {
