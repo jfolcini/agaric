@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SearchInput } from '@/components/ui/search-input'
@@ -182,10 +183,28 @@ export function PageBrowserHeader({
     onDelete: onDeleteSavedView,
     onSaveCurrentView,
   }
+  const newPageButton = (
+    <Button
+      variant={captureButtonShown ? 'ghost' : 'default'}
+      className={cn(isMobile && 'ml-auto w-9 px-0 [@media(pointer:coarse)]:w-11')}
+      aria-label={t('pageBrowser.newPage')}
+      onClick={() => openNewPageDialog()}
+    >
+      <Plus />
+      <span className={cn(isMobile && 'sr-only')}>{t('pageBrowser.newPage')}</span>
+    </Button>
+  )
   return (
     // On a phone the header is one row, and it stays pinned while the list
     // scrolls under it (`data-sticky-search`, read by the outlet in App.tsx).
     <div className="page-browser-header space-y-2" data-sticky-search="">
+      {/* The title row holds New page; a phone's bar names the view, so its
+          New page stays on the search row. */}
+      <FeaturePageHeader
+        title={t('sidebar.pages')}
+        className="md:mt-3"
+        {...(!isMobile && { actions: newPageButton })}
+      />
       {/* On desktop `flex-wrap` lets the controls stack onto a second line
           instead of overflowing, and the search field keeps a width it can be
           typed in. A phone keeps one row: the search field shrinks, and the
@@ -262,15 +281,7 @@ export function PageBrowserHeader({
             {viewMenuItems}
           </SavedViewsDropdown>
         )}
-        <Button
-          variant={captureButtonShown ? 'ghost' : 'default'}
-          className={cn('ml-auto', isMobile && 'w-9 px-0 [@media(pointer:coarse)]:w-11')}
-          aria-label={t('pageBrowser.newPage')}
-          onClick={() => openNewPageDialog()}
-        >
-          <Plus />
-          <span className={cn(isMobile && 'sr-only')}>{t('pageBrowser.newPage')}</span>
-        </Button>
+        {isMobile && newPageButton}
       </div>
 
       {/* The names show once the row has room for them (a container query,

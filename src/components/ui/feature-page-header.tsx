@@ -2,14 +2,15 @@
  * FeaturePageHeader — shared title/breadcrumb/actions chrome for top-level
  * views (PEND / design-system-ux-review-2026-05-09.md Tier 1 item 5).
  *
- * Standardises the "feature page" landmark: every top-level view now
- * carries a real `<header>` + `<h1>` so screen readers can land on the
- * view title via heading navigation and assistive-tech users get a
- * consistent visual anchor across Journal and Trash. Settings, Graph and
- * Templates, which have no actions, let the shell label be their h1 instead
- * (`VIEW_HEADING_OWNER`). `ViewHeader`-portaled views
- * (PageBrowser, HistoryView, SearchPanel, PageHeader) use the portal; agenda
- * mode renders this header inside its `ViewHeader`.
+ * Standardises the "feature page" landmark: every top-level view carries a
+ * real `<header>` + `<h1>` in its content, with its actions on the title row,
+ * so the title sits in the same place on every view and screen readers land
+ * on it via heading navigation (S3, #7040). The desktop top bar shows no
+ * label; the page editor's title is its own (`PageTitleEditor`).
+ * `ViewHeader`-portaled views (PageBrowser, HistoryView, SearchPanel) render
+ * it inside the portal with `md:mt-3`, which tops the outlet's padding up to
+ * the scroller's so their title sits where an in-content one does; agenda mode
+ * renders it inside its `ViewHeader`.
  *
  * Layout:
  *   ┌─────────────────────────────────────────────────────────────┐
@@ -87,9 +88,9 @@ const FeaturePageHeader = ({
     data-slot="feature-page-header"
     className={cn(
       'feature-page-header flex flex-col gap-2',
-      // A title-only header has nothing left to show on a phone, so it gives
-      // back the gap its parent's `space-y-*` would put under it.
-      breadcrumb == null && actions == null && kebab == null && 'max-md:m-0',
+      // A title-only header has nothing left to show on a phone, so it leaves
+      // the flow and its parent's `space-y-*` or `gap-*` puts no gap under it.
+      breadcrumb == null && actions == null && kebab == null && 'max-md:absolute',
       className,
     )}
   >

@@ -27,6 +27,7 @@ import {
 import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import {
@@ -181,6 +182,17 @@ function withShortcut(label: string, shortcutId: string): string {
 // `tagFilterIds` dependency doesn't change identity on every unrelated
 // (client-side) filter toggle and re-fire the graph fetch.
 const EMPTY_TAG_IDS: string[] = []
+
+/** The view's column: its title, then the canvas filling the full width. */
+function GraphShell({ children }: { children: React.ReactNode }): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+      <FeaturePageHeader title={t('sidebar.graph')} />
+      {children}
+    </div>
+  )
+}
 
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
@@ -497,16 +509,16 @@ export function GraphView(): React.ReactElement {
 
   if (loading)
     return (
-      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      <GraphShell>
         <LoadingSkeleton count={3} height="h-16" />
-      </div>
+      </GraphShell>
     )
   // Render `error` via the shared EmptyState primitive instead
   // of an ad-hoc `role="alert"` card so the failure mode reuses the same
   // visual language as the empty / no-data path.
   if (error)
     return (
-      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      <GraphShell>
         {/* #3315 item 4 — use EmptyState's existing `action` slot so the
             failure is recoverable in place, mirroring SearchPanel's
             `search-error-retry`. */}
@@ -526,17 +538,17 @@ export function GraphView(): React.ReactElement {
             </Button>
           }
         />
-      </div>
+      </GraphShell>
     )
   if (nodes.length === 0)
     return (
-      <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      <GraphShell>
         <EmptyState icon={Network} message={t('graph.noPages')} />
-      </div>
+      </GraphShell>
     )
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+    <GraphShell>
       {/* A plain bar above the canvas, so it covers none of the graph (#7040).
           Wrapped in FeatureErrorBoundary so a crash in the filter bar doesn't
           blank the entire GraphView (UX Tier 3). */}
@@ -677,6 +689,6 @@ export function GraphView(): React.ReactElement {
           </IconButton>
         </div>
       </div>
-    </div>
+    </GraphShell>
   )
 }

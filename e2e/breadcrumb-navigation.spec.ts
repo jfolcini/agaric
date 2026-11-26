@@ -198,7 +198,7 @@ test.describe('Breadcrumb navigation — PageHeader namespace path @pages', () =
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Pages', exact: true })
       .click()
-    await expect(page.locator('header').getByText('Pages')).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Pages' })).toBeVisible()
 
     // Creating the page opens it.
     await createPageFromPagesView(page, 'Work/Project/Page A')
@@ -222,6 +222,6 @@ test.describe('Breadcrumb navigation — PageHeader namespace path @pages', () =
     // calls `useNavigationStore.setView('pages')`, which switches the app
     // view back to the Pages list — assert that the Pages header is back.
     await breadcrumbNav.getByRole('button', { name: 'Work' }).click()
-    await expect(page.locator('header').getByText('Pages')).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Pages' })).toBeVisible()
   })
 })
