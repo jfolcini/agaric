@@ -189,7 +189,9 @@ describe('renderDateMenu', () => {
       </div>,
     )
     expect(screen.queryByRole('button', { name: t('toolbar.date') })).toBeNull()
-    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(DATES.map((k) => t(k)))
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(
+      DATES.map((k) => t(k)),
+    )
     fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.setScheduledDate') }), {
       button: 0,
     })

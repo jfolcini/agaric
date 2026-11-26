@@ -281,12 +281,35 @@ test.describe('the rarer inserts @editor', () => {
         .getByRole('button')
         .evaluateAll((rows) => rows.map((row) => row.getAttribute('aria-label'))),
     ).toEqual(['Block reference', 'Insert query', 'Emoji', 'New line', 'Insert table'])
+    // Each row shows its shortcut, as its button's tooltip on the bar did.
+    await expect(
+      menu.getByRole('button', { name: 'New line', exact: true }).locator('kbd'),
+    ).toHaveText('Shift+Enter')
 
     await menu.getByRole('button', { name: 'Insert table', exact: true }).click()
     await page.getByTestId('table-picker').getByTestId('table-cell-2-2').click()
     const table = page.locator('[data-testid="block-editor"] table')
     await expect(table.locator('tr')).toHaveCount(2)
     await expect(table.locator('tr').first().locator('th, td')).toHaveCount(2)
+  })
+
+  test('the Date menu’s rows show their shortcuts', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    await page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'Date', exact: true })
+      .click()
+    const menu = page.getByTestId('toolbar-date-menu')
+    await expect(
+      menu.getByRole('button', { name: 'Insert date', exact: true }).locator('kbd'),
+    ).toHaveText('Ctrl+Shift+D')
+    // Due and scheduled have no shortcut of their own.
+    for (const name of ['Set due date', 'Set scheduled date']) {
+      await expect(menu.getByRole('button', { name, exact: true }).locator('kbd')).toHaveCount(0)
+    }
   })
 })
 
