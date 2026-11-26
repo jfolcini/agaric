@@ -27,7 +27,7 @@ function hasInlineTokens(text: string): boolean {
 // sits on the column edge with the tags and the block checkboxes below.
 const TITLE_CLASS = cn(
   'flex-1 min-w-48 -ml-1 text-3xl font-semibold leading-tight tracking-tight outline-hidden rounded-md px-1 cursor-text',
-  'focus:ring-2 focus:ring-ring',
+  'focus-ring-visible',
   'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
 )
 

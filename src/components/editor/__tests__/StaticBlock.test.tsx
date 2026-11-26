@@ -646,17 +646,14 @@ describe('StaticBlock', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('external link renders new-tab indicator and sr-only text', () => {
+  it('external link renders new-tab indicator and says so in its name', () => {
     const content = '[click here](https://example.com)'
     const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
 
     const link = container.querySelector('span.external-link')
     expect(link).not.toBeNull()
 
-    // sr-only text for screen readers
-    const srOnly = link?.querySelector('.sr-only')
-    expect(srOnly).not.toBeNull()
-    expect(srOnly?.textContent).toBe(' (opens in new tab)')
+    expect(link).toHaveAccessibleName('click here (opens in new tab)')
 
     // Visual arrow indicator
     const arrow = link?.querySelector('[aria-hidden="true"]')
