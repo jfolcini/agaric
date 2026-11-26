@@ -1211,7 +1211,6 @@ export const common: Record<string, string> = {
 
   // Translators: in-page find toolbar (Ctrl+F, searches the open page only): screen-reader name of
   // the toolbar, placeholder and screen-reader label of its search field.
-  // \u2014 in-page find toolbar.
   'findInPage.toolbarLabel': 'Find in page',
   'findInPage.inputPlaceholder': 'Find in page\u2026',
   'findInPage.inputLabel': 'Find in page',
