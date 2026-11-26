@@ -47,11 +47,11 @@ Where the view shows block trees, find searches the blocks' text in the page sto
 
 ### Toggles
 
-The toolbar exposes the same toggle row as the across-pages search view so the two surfaces feel coherent:
+The toolbar shows the across-pages search view's own toggle row, so the two surfaces work alike:
 
-- **`Aa` — Match case.** Disabled by default. ASCII letters fold via `String.prototype.toLocaleLowerCase` (Unicode-safe in modern engines).
+- **`Aa` — Case-sensitive.** Disabled by default. ASCII letters fold via `String.prototype.toLocaleLowerCase` (Unicode-safe in modern engines).
 - **`Ab|` — Whole word.** Restricts matches whose boundary letters are word chars (`[A-Za-z0-9_]`). Wraps around literal queries and post-filters regex matches.
-- **`.*` — Regular expression.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
+- **`.*` — Regex.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
 
 Matches do NOT span block boundaries — each block is searched on its own, so a query will not match from the end of one block into the next. Within a block, a match may cross formatting (`**bold**tail` matches `boldtail`). On the DOM path each text node is searched independently.
 

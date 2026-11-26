@@ -3,8 +3,9 @@
  * Listbox (Phase 1).
  *
  * Renders the matched block's snippet (with `<mark>` highlights via
- * `SnippetHighlight`) or, when the row has no content snippet (page-name-
- * only hit), the block content verbatim. Each row is the `role="option"`
+ * `SnippetHighlight`) or, when the row has no snippet (a short query, a
+ * filter-only search), the block's text as a static block shows it, inline:
+ * not its Markdown. Each row is the `role="option"`
  * `<li>` itself — the click handler sits on the `<li>` so axe's
  * "nested-interactive" rule stays satisfied (an `<option>` cannot wrap
  * a focusable `<button>`). Keyboard activation flows through the
@@ -21,10 +22,12 @@ import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { NewTabTarget } from '@/components/common/NewTabTarget'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { Badge } from '@/components/ui/badge'
 import { listRowVariants } from '@/components/ui/list-item'
 import { Spinner } from '@/components/ui/spinner'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { MatchOffset, SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 
@@ -110,10 +113,15 @@ function SearchResultBlockRowImpl({
   dataIndex,
 }: SearchResultBlockRowProps): React.ReactElement {
   const { t } = useTranslation()
+  const richCallbacks = useRichContentCallbacks()
   const hasOffsets =
     row.match_offsets != null && row.match_offsets.length > 0 && row.content != null
   const hasSnippet = !hasOffsets && row.snippet != null && row.snippet.length > 0
-  const fallback = row.content && row.content.length > 0 ? row.content : t('common.empty')
+  // The whole row is the click target, so its chips stay inert.
+  const fallback =
+    row.content && row.content.length > 0
+      ? renderRichContent(row.content, { inline: true, interactive: false, ...richCallbacks })
+      : t('common.empty')
   // Derive the offset-driven React nodes once per row.
   // Inputs change only when the row identity / offsets change.
   const offsetNodes = useMemo(() => {

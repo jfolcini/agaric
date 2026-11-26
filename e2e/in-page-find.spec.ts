@@ -193,6 +193,25 @@ test.describe('In-page find (Ctrl+F) @pages @search', () => {
     await expect(page.getByRole('toolbar', { name: /find/i })).toBeHidden()
     await expect.poll(() => highlightSize(page, 'find-match')).toBe(0)
   })
+
+  test('a drawn rule sets the match modes apart from Replace', async ({ page }) => {
+    const toolbar = await openFind(page)
+    const rule = await toolbar.locator('[data-slot="separator"]').boundingBox()
+    expect(rule?.height).toBe(16)
+  })
+
+  // #7040 O5 — the bar covered the top bar's Today and Search.
+  test('the open bar leaves the top bar’s Today and Search clickable', async ({ page }) => {
+    await openFind(page)
+    const topBar = page.locator('[data-slot="sidebar-inset"] > header')
+    for (const control of [
+      topBar.getByRole('button', { name: 'Go to today', exact: true }),
+      topBar.getByTestId('header-search-button'),
+    ]) {
+      // A trial click fails when another element would take the click.
+      await control.click({ trial: true, timeout: 2000 })
+    }
+  })
 })
 
 /**
