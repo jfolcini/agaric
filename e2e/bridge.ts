@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { SEED_IDS } from '@/lib/tauri-mock/seed'
+import { SEED_IDS, todayDate } from '@/lib/tauri-mock/seed'
 import { seedCommands } from '@/lib/tauri-mock/seed-commands'
 
 /** The `bridge` binary to run the specs against; unset means the mock. */
@@ -28,8 +28,12 @@ export interface Bridge {
   readonly url: string
   /** One request; resolves with the reply's `ok`, rejects with its `err`. */
   request(op: string, fields?: Record<string, unknown>): Promise<unknown>
+  /** Give the next test a fresh copy of the template vault. */
+  reset(): Promise<void>
   stop(): Promise<void>
 }
+
+type SeededBridge = Omit<Bridge, 'reset'> & { readonly seededOn: string }
 
 /** The port the bridge prints as its first line, once it is listening. */
 function listeningPort(child: ChildProcess): Promise<number> {
@@ -76,6 +80,27 @@ async function seedVault(request: Bridge['request']): Promise<void> {
  * whose view must not re-read before a cache rebuild has run.
  */
 export async function startBridge(binary: string, backgroundDelayMs = 0): Promise<Bridge> {
+  let current = await startSeededBridge(binary, backgroundDelayMs)
+  return {
+    get url() {
+      return current.url
+    },
+    request: (op, fields) => current.request(op, fields),
+    async reset() {
+      // The seed writes today's journal page and dates counted from today, while the
+      // app and the specs read the day they run: a template seeded before midnight is
+      // a day behind every test after it.
+      if (current.seededOn !== todayDate()) {
+        await current.stop()
+        current = await startSeededBridge(binary, backgroundDelayMs)
+      }
+      await current.request('reset')
+    },
+    stop: () => current.stop(),
+  }
+}
+
+async function startSeededBridge(binary: string, backgroundDelayMs: number): Promise<SeededBridge> {
   const root = await mkdtemp(path.join(tmpdir(), 'agaric-bridge-'))
   // Its stdin stays open for as long as this worker lives: the bridge exits
   // when it closes.
@@ -112,11 +137,13 @@ export async function startBridge(binary: string, backgroundDelayMs = 0): Promis
       socket.send(JSON.stringify({ id, op, ...fields }))
     })
 
+  const seededOn = todayDate()
   await seedVault(request)
 
   return {
     url,
     request,
+    seededOn,
     async stop() {
       socket.close()
       child.kill()
