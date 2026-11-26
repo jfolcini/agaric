@@ -29,20 +29,20 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 - **No iOS build**, and none is planned for now.
 - **No plugins or scripting.** What you can change is the keyboard shortcuts, the theme, a custom stylesheet, and what an agent does through MCP.
 - **No collaboration, sharing or publishing.** One user, their devices.
-- **Your notes are not Markdown files.** They are rows in a SQLite database. A Markdown export, an import and an optional desktop mirror folder are the routes to and from files.
+- **Your notes are not Markdown files.** They are rows in a SQLite database. A Markdown export, an import and an optional desktop mirror folder are the routes to and from files; the mirror can keep an existing Obsidian vault in place, but the database stays the source of truth.
 - **No encryption at rest.** The database is a plain file; use your operating system's disk encryption (LUKS, FileVault, BitLocker).
 - **No built-in AI.** An agent connects from outside, through MCP, if you turn that on.
 - **Five interface languages, and no right-to-left interface.** English, German, Spanish, French and Portuguese (Brazilian). Adding a language is a folder of translations: [docs/TRANSLATING.md](docs/TRANSLATING.md).
 
 ## What you can do
 
-**Outline.** Every paragraph, heading, task or code snippet is a block with its own id. Blocks nest (to `MAX_BLOCK_DEPTH`), fold, drag, zoom and multi-select. A page is a block that holds blocks; page titles can be namespaced (`work/meetings/standup`).
+**Outline.** Every paragraph, heading, task or code snippet is a block with its own id. Blocks nest (to `MAX_BLOCK_DEPTH`), fold, drag, zoom and multi-select, and a heading folds the section under it. A page is a block that holds blocks; page titles can be namespaced (`work/meetings/standup`).
 
 **Write.** *Block mode* edits one block at a time, with the Markdown syntax shown around the cursor. *Page mode* (off by default; `Ctrl+E`, or Settings › Editor) edits the whole page as one document while each block keeps its id. *Edit as Markdown* opens the page as plain Markdown text, with a preview and a diff before you save. All three write the same blocks.
 
 **Format.** Bold, italic, strikethrough, highlight, underline, inline code, headings, bulleted, numbered and task lists, quotes and callouts, tables, footnotes, code blocks with highlighting, math (KaTeX) and Mermaid diagrams. Pasted Markdown or HTML becomes blocks.
 
-**Link.** `[[page]]` links and `#tags` are stored by id, so a rename breaks nothing. `((block))` references show as a chip with a peek; `/embed` shows a block or a page live inside another page. Each page lists what links to it, and what mentions it without linking. A graph shows pages and their links.
+**Link.** `[[page]]` links and `#tags` are stored by id, so a rename breaks nothing. Tags nest by name (`#work/meetings`), and a tag's page holds your notes on it and the properties its blocks should have. `((block))` references show as a chip with a peek; `/embed` shows a block or a page live inside another page. Each page lists what links to it, and what mentions it without linking. A graph shows pages and their links.
 
 **Journal.** One page per day, made from your journal template, shown as a day, a week, a month, a continuous stream, or an agenda of tasks.
 
@@ -70,7 +70,7 @@ Someone who thinks in outlines, keeps a daily journal, tracks tasks beside their
 
 - **Import** Markdown files and folders, an Obsidian vault, a Logseq graph, Org files, a Notion export, Evernote (`.enex`), Joplin (`.jex`) and BibTeX / CSL-JSON bibliographies. Importing a file again updates its page in place.
 - **Export** one page as Markdown, or a space or every space as a ZIP of Markdown files with their attachments. A folder import of that ZIP, unzipped, restores the spaces. It does not restore history or the Trash.
-- **Markdown mirror** (desktop, off by default): keeps every page as a `.md` file in a folder you choose, and reads edits made there back into the page. The database stays the source of truth.
+- **Markdown mirror** (desktop, off by default): keeps every page as a `.md` file in a folder you choose, and reads edits made there back into the page. *Open a folder of notes…* does the same for an Obsidian vault or a folder of Markdown files where it already is: its notes become a new space, and a file is rewritten only where its page changes. The database stays the source of truth.
 
 Details and limits: [docs/features/import-export.md](docs/features/import-export.md).
 
