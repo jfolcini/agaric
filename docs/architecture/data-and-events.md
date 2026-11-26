@@ -80,6 +80,8 @@ Both apply paths funnel through **one collapsed entry point**, `apply_op_project
 
 SQLite, WAL mode, FK on, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autocheckpoint=5000` pages, `journal_size_limit=52428800` (50 MB WAL cap), `cache_size=-65536` (64 MB), `mmap_size=268435456` (256 MB), `temp_store=MEMORY`. Set per-connection on both pools in `src-tauri/src/db/pool.rs`.
 
+**Durability.** Under `synchronous=NORMAL` a commit is written to the WAL and not synced, so an app crash loses nothing, and a power cut or an OS crash can roll back the commits made since the last checkpoint. A commit a paired device has received is the one that may not be lost that way: the device would come back behind its own history and reuse those Loro counters and op-log seqs. So before sync sends this device's ops it calls `db::make_commits_durable` (`src-tauri/agaric-store/src/db/durability.rs`, #6524), which commits one small write on a connection of its own under `synchronous=FULL`. That commit syncs the WAL file, which holds every commit the database file does not. The pools stay on `NORMAL`. Where the barrier sits: [`sync-and-network.md` § Durable before send](sync-and-network.md#durable-before-send).
+
 **Pool architecture:** type-safe `WritePool` (2 connections) + `ReadPool` (4 connections). The newtypes prevent accidentally reading through the write pool or vice versa. Cache rebuilds use the read pool until the final DELETE+INSERT batch, which acquires a write connection.
 
 **Migrations:** `src-tauri/migrations/*.sql`, versioned SQL, auto-run on boot. `sqlx::query!` / `query_as!` macros validate every query at compile time; the offline cache is `.sqlx/` (committed; CI fails on stale via `sqlx-prepare-check`).

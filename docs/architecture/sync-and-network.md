@@ -101,6 +101,15 @@ Nothing in this document should be read as saying the QUIC port *by itself* make
 5. **`is_last: true`** transitions both sides to `SyncComplete`.
 6. **File-transfer phase** streams attachment blobs on the same QUIC stream after op convergence, copied through one 5 MB buffer (`BULK_COPY_BYTES`).
 
+### Durable before send
+
+The database commits under `synchronous=NORMAL`, so a power cut can roll back a device's last commits ([`data-and-events.md` § Database](data-and-events.md#database)). If a peer already held the ops of those commits, the device would write its next ops under Loro counters and op-log seqs the peer holds for other content: the two could not merge, or would merge with the peer's copy overwritten and no error. So the two places that send this device's ops call `db::make_commits_durable` first (#6524), once per stream, after everything the stream carries has been read and before its first frame:
+
+- `SyncOrchestrator::head_exchange_outgoing_loro`, the responder's stream of `LoroSync` updates or snapshots and `OpLogBatch` records;
+- `snapshot_transfer::try_offer_loro_snapshot_catchup`, the responder's snapshots of the catch-up below.
+
+A barrier that fails fails the dispatch or the offer with its error: nothing is queued or sent, and the dialling device retries. The dialling device sends no ops of its own, only its frontiers (`HeadExchange`) and `SyncComplete`, so the round a local edit asks for needs no barrier; the attachment phase sends file bytes, not ops. A power cut can still lose edits no peer has received. A database put back by hand from an older copy remains the one way into the fork ([`features/sync.md` § Pitfalls](../features/sync.md#pitfalls-to-know)).
+
 ## Snapshot catch-up
 
 When the responder cannot satisfy the initiator's advertised version vectors by delta replay, the session exits the delta loop into `ResetRequired` and hands off to `sync_daemon/snapshot_transfer.rs`.
