@@ -118,7 +118,7 @@ describe('MarkdownReveal in page mode', () => {
     expect(markers(ed)).toEqual(['**', '**'])
   })
 
-  it('reveals nothing for a selection across blocks, Ctrl+A included, and again once it is one block’s', () => {
+  it('reveals nothing for a selection, across blocks, Ctrl+A or inside one block, and again for a caret', () => {
     const ed = page([[A, 0, '## **one** two'], BOLD, [C, 0, '**three**']])
     caret(ed, 1, 8)
     expect(markers(ed)).toEqual(['**', '**'])
@@ -135,12 +135,8 @@ describe('MarkdownReveal in page mode', () => {
         TextSelection.create(ed.state.doc, posIn(ed, 1, 7), posIn(ed, 1, 9)),
       ),
     )
-    expect(markers(ed)).toEqual(['**', '**'])
-  })
-
-  it('Ctrl+A on a page of one block reveals that block’s markers', () => {
-    const ed = page([BOLD])
-    ed.view.dispatch(ed.state.tr.setSelection(new AllSelection(ed.state.doc)))
+    expect(markers(ed)).toEqual([])
+    caret(ed, 1, 8)
     expect(markers(ed)).toEqual(['**', '**'])
   })
 

@@ -197,9 +197,9 @@ describe('MarkdownReveal with the preference on', () => {
 
   it('leaves Delete over a selection to the editor, even from a marked run', () => {
     const ed = createEditor(BOLD)
-    // `plain **bold[** e]nd`: the selection starts at the bold end, where a marker is drawn.
+    // `plain **bold[** e]nd`: the selection starts at the bold end, and a range draws no marker.
     ed.commands.setTextSelection({ from: 11, to: 13 })
-    expect(markers(ed)).toEqual(['**', '**'])
+    expect(markers(ed)).toEqual([])
     pressKey(ed, 'Delete')
     expect(markdown(ed)).toBe('plain **bold**nd')
   })
@@ -422,18 +422,32 @@ describe('MarkdownReveal with the preference on', () => {
     expect(markers(ed)).toEqual([])
   })
 
-  it('draws nothing new while the mouse button is down, and the selection’s markers once it is released', () => {
+  it('draws nothing new while the mouse button is down, and the caret’s markers once it is released', () => {
     vi.useFakeTimers()
     const ed = createEditor(BOLD)
     ed.view.posAtCoords = () => null
     ed.commands.setTextSelection(14)
     ed.view.dom.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))
-    // A drag from `en|d` back into the bold: nothing is drawn under the pointer.
-    ed.commands.setTextSelection({ from: 14, to: 9 })
+    // The press puts the caret in the bold: nothing is drawn under the pointer.
+    ed.commands.setTextSelection(9)
     expect(markers(ed)).toEqual([])
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     vi.runAllTimers()
     expect(markers(ed)).toEqual(['**', '**'])
+  })
+
+  it('draws no markers for the range a drag selects, during the press or after it (#7040)', () => {
+    vi.useFakeTimers()
+    const ed = createEditor(BOLD)
+    ed.view.posAtCoords = () => null
+    ed.commands.setTextSelection(2)
+    ed.view.dom.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))
+    // A drag from `p|lain` into the bold.
+    ed.commands.setTextSelection({ from: 2, to: 9 })
+    expect(markers(ed)).toEqual([])
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    vi.runAllTimers()
+    expect(markers(ed)).toEqual([])
   })
 
   it('a press whose release never comes ends when focus leaves for another window', () => {
@@ -507,12 +521,15 @@ describe('MarkdownReveal with the preference on', () => {
     const source = 'a **bold** _it_ `code` ~~gone~~ z'
     const ed = createEditor(source)
     const before = markdown(ed)
-    // A selection across every mark reveals all of them.
-    ed.commands.setTextSelection({ from: 3, to: ed.state.doc.content.size - 2 })
-    expect(markers(ed)).toEqual(['**', '**', '*', '*', '`', '`', '~~', '~~'])
-
-    expect(markdown(ed)).toBe(before)
-    expect(ed.state.doc.textContent).toBe('a bold it code gone z')
+    // A caret in each mark in turn reveals its markers.
+    const revealed: string[] = []
+    for (const word of ['bold', 'it', 'code', 'gone']) {
+      ed.commands.setTextSelection(ed.state.doc.textContent.indexOf(word) + 2)
+      revealed.push(...markers(ed))
+      expect(markdown(ed)).toBe(before)
+      expect(ed.state.doc.textContent).toBe('a bold it code gone z')
+    }
+    expect(revealed).toEqual(['**', '**', '*', '*', '`', '`', '~~', '~~'])
   })
 
   it('draws the markers from the first state, before any edit', () => {
@@ -745,10 +762,12 @@ describe('MarkdownReveal for headings', () => {
     expect(markers(ed)).toEqual([])
   })
 
-  it('reveals the # run of every heading a selection crosses', () => {
+  it('reveals the # run of the caret’s heading, and none for a selection across headings (#7040)', () => {
     const ed = createEditor(`${HEADING}\n\n# Mid\n\n### End`)
     ed.commands.setTextSelection({ from: 3, to: ed.state.doc.content.size - 1 })
-    expect(markers(ed)).toEqual(['## ', '# ', '### '])
+    expect(markers(ed)).toEqual([])
+    ed.commands.setTextSelection(ed.state.doc.content.size - 1)
+    expect(markers(ed)).toEqual(['### '])
   })
 
   it('Backspace after the # run lowers the heading one level, in one undo step', () => {
@@ -1552,12 +1571,16 @@ describe('MarkdownReveal for quotes, callouts, code blocks and math (#5691)', ()
     expect(markdown(ed)).toBe(stored)
   })
 
-  it('shows the syntax of every line a range selects, as it does every heading’s # run', () => {
+  it('shows the syntax of the caret’s line, and none for a range across lines (#7040)', () => {
     const ed = createEditor(`${QUOTES}\n\n${CODE}`, constructs)
     ed.commands.setTextSelection({ from: at(ed, 'first') + 1, to: at(ed, 'deep') + 1 })
-    expect(syntax(ed)).toEqual(['> [!NOTE] ', '> ', '> > '])
+    expect(syntax(ed)).toEqual([])
     ed.commands.setTextSelection({ from: at(ed, 'Title') + 1, to: at(ed, 'a = 1') })
-    expect(syntax(ed)).toEqual(['> ', '```ts', '```'])
+    expect(syntax(ed)).toEqual([])
+    ed.commands.setTextSelection(at(ed, 'deep') + 1)
+    expect(syntax(ed)).toEqual(['> > '])
+    ed.commands.setTextSelection(at(ed, 'a = 1'))
+    expect(syntax(ed)).toEqual(['```ts', '```'])
   })
 
   it('draws a quote’s `>` run before the # run of the heading inside it', () => {

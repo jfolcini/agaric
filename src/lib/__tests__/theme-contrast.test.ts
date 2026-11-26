@@ -440,6 +440,17 @@ const THEME_PAIRS = [
   { pair: 'muted text on secondary', fg: 'muted-foreground', bg: 'secondary', min: AA_NORMAL },
   // `Badge`'s `metadata` tone: a type label or a count in a list's card (#7040).
   { pair: 'type label on a list card', fg: 'muted-foreground', bg: 'card', min: AA_NORMAL },
+  // A callout's label and icon on its tinted fill (#7040).
+  { pair: 'callout info label', fg: 'alert-info-foreground', bg: 'alert-info', min: AA_NORMAL },
+  {
+    pair: 'callout warning label',
+    fg: 'alert-warning-foreground',
+    bg: 'alert-warning',
+    min: AA_NORMAL,
+  },
+  { pair: 'callout tip label', fg: 'alert-tip-foreground', bg: 'alert-tip', min: AA_NORMAL },
+  { pair: 'callout error label', fg: 'alert-error-foreground', bg: 'alert-error', min: AA_NORMAL },
+  { pair: 'callout note label', fg: 'alert-note-foreground', bg: 'alert-note', min: AA_NORMAL },
   { pair: 'code keyword', fg: 'alert-error-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },

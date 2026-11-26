@@ -1,7 +1,7 @@
 /**
  * E2E for edit-mode table styling. Guards that the `.ProseMirror table`
- * rules added to index.css actually apply (collapsed, bordered cells)
- * rather than falling back to raw browser defaults.
+ * rules added to index.css actually apply (a rounded frame, no cell spacing,
+ * ruled cells) rather than falling back to raw browser defaults.
  */
 import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
@@ -10,7 +10,7 @@ test.describe('Editor table styling @editor', () => {
     await waitForBoot(page)
   })
 
-  test('an inserted table has collapsed, bordered cells', async ({ page }) => {
+  test('an inserted table has a rounded frame and ruled cells', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
@@ -23,12 +23,16 @@ test.describe('Editor table styling @editor', () => {
     const table = page.locator('[data-testid="block-editor"] table').first()
     await expect(table).toBeVisible()
 
-    const borderCollapse = await table.evaluate((el) => getComputedStyle(el).borderCollapse)
-    expect(borderCollapse).toBe('collapse')
+    // A browser's table spaces its cells 2 px apart and has square corners.
+    const frame = await table.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return [style.borderSpacing, style.borderTopLeftRadius !== '0px']
+    })
+    expect(frame).toEqual(['0px', true])
 
-    // Header cell carries a visible (non-zero, non-transparent) border.
+    // Header cell carries a visible rule between it and the next column.
     const th = page.locator('[data-testid="block-editor"] table th').first()
-    const borderWidth = await th.evaluate((el) => getComputedStyle(el).borderTopWidth)
+    const borderWidth = await th.evaluate((el) => getComputedStyle(el).borderRightWidth)
     expect(Number.parseFloat(borderWidth)).toBeGreaterThan(0)
   })
 })

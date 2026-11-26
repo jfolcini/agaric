@@ -312,11 +312,10 @@ describe('SourcePageFilter', () => {
     )
 
     const button = screen.getByLabelText('Filter by source page')
-    // Desktop (28px) + coarse pointer (44px), no fixed-height conflict from size="sm".
-    expect(button.className).toContain('h-7')
-    expect(button.className).toContain('w-7')
-    expect(button.className).toContain('[@media(pointer:coarse)]:h-11')
-    expect(button.className).toContain('[@media(pointer:coarse)]:w-11')
+    // 28 px on a fine pointer, 36 px on a coarse one with a 44 px target.
+    expect(button.className).toContain('size-7')
+    expect(button.className).toContain('[@media(pointer:coarse)]:size-9')
+    expect(button.className).toContain('touch-hit-area')
   })
 
   // 13. a11y audit

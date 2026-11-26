@@ -16,6 +16,7 @@ import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { SuggestedPropertyRows } from '@/components/properties/SuggestedPropertyRows'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { SectionCount } from '@/components/ui/section-count'
 import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { useSpacePropertyDefList } from '@/hooks/useSpacePropertyDefs'
@@ -346,8 +347,13 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         onToggle={() => setExpanded((prev) => !prev)}
         className="page-property-table-header"
       >
-        {t('pageProperty.propertiesButton')}
-        {propertyCount > 0 ? ` (${propertyCount})` : ''}
+        <span>
+          {propertyCount > 0 ? (
+            <SectionCount label={t('pageProperty.propertiesButton')} count={propertyCount} />
+          ) : (
+            t('pageProperty.propertiesButton')
+          )}
+        </span>
       </CollapsiblePanelHeader>
 
       {expanded && (

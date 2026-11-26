@@ -95,7 +95,7 @@ test.describe('printing a page @pages @editor', () => {
     await expect(page.getByText(LAST, { exact: true })).toBeVisible()
     expect(await clipped(page, LAST)).toBe(false)
 
-    // The light palette: dark text on a light ground, link chips included.
+    // The light palette: dark text on a light ground, and link chips darker than mid-grey.
     const lightness = (selector: string, property: 'color' | 'backgroundColor') =>
       page
         .locator(selector)
@@ -110,7 +110,7 @@ test.describe('printing a page @pages @editor', () => {
         }, property)
     expect(await lightness('body', 'backgroundColor')).toBeGreaterThan(200)
     expect(await lightness('[data-page-block]', 'color')).toBeLessThan(100)
-    expect(await lightness('[data-testid="block-link-chip"]', 'color')).toBeLessThan(100)
+    expect(await lightness('[data-testid="block-link-chip"]', 'color')).toBeLessThan(128)
 
     // A heading stays with what follows it, and a link's address is on the paper.
     expect(

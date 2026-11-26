@@ -12,7 +12,7 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -257,8 +257,8 @@ describe('PagePropertyTable rendering', () => {
     render(<PagePropertyTable pageId="PAGE_1" />)
 
     await waitFor(() => {
-      const toggle = screen.getByRole('button', { name: /Properties/ })
-      expect(toggle).toHaveTextContent(`${t('pageProperty.propertiesButton')} (2)`)
+      const toggle = screen.getByRole('button', { name: `${t('pageProperty.propertiesButton')} 2` })
+      expect(within(toggle).getByText('2')).toHaveAttribute('data-variant', 'metadata')
     })
   })
 })
