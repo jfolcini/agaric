@@ -317,7 +317,9 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
     if (await addBlockAtEnd(pageStore.getState(), pageId)) return
     // No blocks yet — create a first block under this page.
     // createBelow needs an afterBlockId, so for the empty case we call
-    // createBlock from the Tauri API directly.
+    // createBlock from the Tauri API directly. A load in flight, which can
+    // predate the create, reads again once it has answered.
+    const release = pageStore.getState().holdLoads()
     try {
       const spaceId = useSpaceStore.getState().currentSpaceId
       if (spaceId == null) throw new Error('No active space; cannot create block')
@@ -336,6 +338,8 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
       setFocused(result.id)
     } catch {
       notify.error(t('error.createBlockFailed'))
+    } finally {
+      release()
     }
   }, [setFocused, pageId, t, pageStore])
 
