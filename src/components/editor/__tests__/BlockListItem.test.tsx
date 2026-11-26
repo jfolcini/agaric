@@ -320,7 +320,7 @@ describe('BlockListItem', () => {
     expect(contentSpan.className).toContain('my-content-class')
     // Base classes still present (line-clamp-2 is NOT a base class — callers
     // Opt in via contentClassName;).
-    expect(contentSpan.className).toContain('text-sm')
+    expect(contentSpan.className).toContain('text-block-sm')
     expect(contentSpan.className).not.toContain('line-clamp-2')
 
     const breadcrumbSpan = screen.getByText(/Page/).closest('span')

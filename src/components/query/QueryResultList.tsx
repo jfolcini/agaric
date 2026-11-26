@@ -150,7 +150,7 @@ export function QueryResultList({
             ) : (
               <ResultTypeIcon block={block} />
             )}
-            <span className="min-w-0 flex-1 truncate">
+            <span className="min-w-0 flex-1 truncate text-block-sm">
               {displayMarkdown !== null ? (
                 <QueryResultRowContent content={displayMarkdown} />
               ) : (

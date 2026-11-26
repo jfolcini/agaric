@@ -80,7 +80,7 @@ export function ResultCard({
   return (
     <CardButton onClick={onClick} disabled={disabled}>
       <div className="flex items-center gap-2">
-        <span className={cn('flex-1 text-sm line-clamp-2', contentClassName)}>
+        <span className={cn('flex-1 text-block-sm line-clamp-2', contentClassName)}>
           {richContent ?? t('common.empty')}
         </span>
         {showSpinner && <Spinner className="shrink-0 text-muted-foreground" />}

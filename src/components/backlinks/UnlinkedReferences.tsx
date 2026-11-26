@@ -609,7 +609,7 @@ export function UnlinkedReferences({
                       >
                         <button
                           type="button"
-                          className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left bidi-plaintext"
+                          className="unlinked-reference-item-text text-block-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left bidi-plaintext"
                           onClick={() => handleBlockClick(block)}
                         >
                           {/* `inline` because the button is one truncating
