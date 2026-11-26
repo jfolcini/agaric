@@ -13,6 +13,8 @@
 
 **Fixed here.**
 - **#7101:** MeetingDialog destructures `useDialogOrSheet('dialog')` directly, as PageSourceConflictDialog does.
+  - The diff-scoped mutation lane then found a survivor on that line: `'dialog'` → `''` makes the desktop form an `AlertDialog`, and no test told the two apart. That gap was already on `main`.
+  - "is a form dialog on a desktop, not an alert" now pins `role="dialog"`. With the call back on the default `alert` kind, it fails on `role="alertdialog"`.
 - **#7103:** DateChip's `children` doc now says the text form, with no `onClick`, drops the other props, `aria-label` included. Spreading them onto the span would not help: ARIA does not name a plain span by its `aria-label`. Every caller that passes `children` also passes `onClick`.
 
 **Checked and left.**
@@ -32,6 +34,6 @@
   - Left as it is: the same wait is what clears the registry's bad answer, on a laptop as in CI, and only that kind of push pays it.
 
 **Ran.**
-- `npx vitest run` over the drift test and the tests of the changed and restored components: 263 passed.
+- `npx vitest run` over the drift test and the tests of the changed and restored components: 264 passed.
 - `npm run typecheck`, and oxlint and oxfmt on the changed files.
-- There is no new test, because nothing changes behaviour.
+- Besides the MeetingDialog test above, there is no new test, because nothing changes behaviour.
