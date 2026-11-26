@@ -54,6 +54,7 @@ import {
   hiddenRows,
   type Outline,
   stepOver,
+  unfoldedBy,
 } from '@/lib/section-fold'
 
 /** A block with blocks under it: collapsed, or not. */
@@ -76,7 +77,7 @@ interface CollapseState {
 
 export const pageCollapseKey = new PluginKey<CollapseState>('pageCollapse')
 
-/** The meta that expands the block it names, whether it is revealed for the caret or not. */
+/** The meta that expands the blocks it names, whether revealed for the caret or not. */
 const EXPAND = 'pageCollapseExpand'
 
 // A block's id is null only inside the transaction that made the block, until
@@ -184,6 +185,15 @@ export function moveStep(
   return stepOver(outlineOf(doc), (i) => carriedEnd(state, i, doc), index, direction)
 }
 
+/**
+ * `tr`, a move of `state`'s blocks, unfolding each collapsed heading it lands a
+ * shown block in (#7040 decision 30), as Enter does.
+ */
+export function unfoldLanded(state: EditorState, tr: Transaction): Transaction {
+  const ids = unfoldedBy(outlineOf(state.doc), outlineOf(tr.doc), stateOf(state).collapsed)
+  return ids.length === 0 ? tr : tr.setMeta(EXPAND, ids)
+}
+
 /** The fold of block `id`, for its block menu. */
 export function foldOf(state: EditorState, id: string): Fold | null {
   const index = blockIndex(state.doc, id)
@@ -251,7 +261,7 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   while (made < first && depthOf(doc.child(made)) > depth) made += 1
   if (made === first) return null
   if (headingLevelOf(before.doc.child(index)) !== null) {
-    const tr = after.tr.setMeta(EXPAND, id)
+    const tr = after.tr.setMeta(EXPAND, [id])
     // Under a heading with blocks under it the new blocks go first among them,
     // taking none of them as theirs.
     if (depthOf(doc.child(first)) > depth) {
@@ -301,7 +311,7 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
           },
           apply: (tr, value, _old, state) => {
             const toggled = tr.getMeta(pageCollapseKey) as string | undefined
-            const expanded = tr.getMeta(EXPAND) as string | undefined
+            const expanded = tr.getMeta(EXPAND) as readonly string[] | undefined
             let { collapsed } = value
             if (toggled !== undefined) {
               collapsed =
@@ -309,7 +319,7 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
                   ? withoutId(collapsed, toggled)
                   : withId(collapsed, toggled)
             }
-            if (expanded !== undefined) collapsed = withoutId(collapsed, expanded)
+            for (const id of expanded ?? []) collapsed = withoutId(collapsed, id)
             const reshaped =
               toggled !== undefined ||
               expanded !== undefined ||

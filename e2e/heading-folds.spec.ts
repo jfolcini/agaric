@@ -2,6 +2,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  dragBlock,
   expect,
   expect44,
   focusBlockById,
@@ -350,6 +351,87 @@ test.describe('Heading folds @editor', () => {
 
     await page.keyboard.press('Control+Shift+ArrowDown')
     await expect.poll(() => stored(page, ids.pageId)).toEqual(order)
+  })
+
+  test('a block moved into a folded section unfolds it, for good', async ({ page }) => {
+    await toggle(page, ids.beta)
+    await focusBlockById(page, ids.intro)
+    await page.keyboard.press('Control+Shift+ArrowDown')
+    await expect
+      .poll(() => stored(page, ids.pageId))
+      .toEqual([
+        ids.alpha,
+        ids.beta,
+        ids.betaOne,
+        ids.intro,
+        ids.gamma,
+        ids.gammaOne,
+        ids.lone,
+        ids.delta,
+        ids.outer,
+        ids.tail,
+      ])
+
+    await focusBlockById(page, ids.tail)
+    await expect(row(page, ids.intro)).toBeVisible()
+    await expect(row(page, ids.betaOne)).toBeVisible()
+    await reopenPage(page, PAGE)
+    await expect(row(page, ids.tail)).toBeVisible()
+    await expect(row(page, ids.intro)).toBeVisible()
+    await expect(row(page, ids.beta).getByTestId('collapse-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+  })
+
+  test('a block dropped into a folded section unfolds it', async ({ page }) => {
+    await toggle(page, ids.beta)
+    const source = page.locator(`[data-testid="sortable-block"][data-block-id="${ids.intro}"]`)
+    await source.hover()
+    await dragBlock(
+      page,
+      source.locator('[data-testid="drag-handle"]'),
+      page.locator(`[data-testid="sortable-block"][data-block-id="${ids.beta}"]`),
+    )
+    await expect.poll(async () => (await stored(page, ids.pageId)).indexOf(ids.intro)).toBe(3)
+
+    await focusBlockById(page, ids.tail)
+    await expect(row(page, ids.intro)).toBeVisible()
+    await expect(row(page, ids.beta).getByTestId('collapse-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+  })
+
+  test('a heading moved above a folded one unfolds it as its own section joins it', async ({
+    page,
+  }) => {
+    await toggle(page, ids.beta)
+    await focusBlockById(page, ids.gamma)
+    await page.keyboard.press('Control+Shift+ArrowUp')
+    await expect.poll(async () => (await stored(page, ids.pageId)).indexOf(ids.gamma)).toBe(2)
+
+    await focusBlockById(page, ids.tail)
+    await expect(row(page, ids.gammaOne)).toBeVisible()
+    await expect(row(page, ids.beta).getByTestId('collapse-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+  })
+
+  test('a block indented into a folded section unfolds it', async ({ page }) => {
+    await toggle(page, ids.gamma)
+    await focusBlockById(page, ids.delta)
+    await page.keyboard.press('Tab')
+    await expect.poll(() => stored(page, ids.lone)).toEqual([ids.delta])
+
+    // Above the section: a block focused in it would show it either way.
+    await focusBlockById(page, ids.alpha)
+    await expect(row(page, ids.delta)).toBeVisible()
+    await expect(row(page, ids.gamma).getByTestId('collapse-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
   })
 
   test('find reveals a match inside a folded section', async ({ page }) => {

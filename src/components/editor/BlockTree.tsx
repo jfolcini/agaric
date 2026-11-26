@@ -333,6 +333,7 @@ export function BlockTree({
     foldableSet,
     foldedSiblings,
     foldedMove,
+    unfoldLanded,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
@@ -951,6 +952,19 @@ export function BlockTree({
   // the zoomed block — passing the page `rootParentId` here made every
   // in-place reorder look like a reparent and ejected the block out of the
   // zoomed subtree.
+  // #7040 decision 30 — a move or a drop that lands shown blocks in a folded
+  // section unfolds it, as Enter does.
+  const landing = useCallback(
+    <A extends unknown[], R>(move: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        const before = pageStore.getState().blocks
+        const result = await move(...args)
+        unfoldLanded(before, pageStore.getState().blocks)
+        return result
+      },
+    [pageStore, unfoldLanded],
+  )
+
   const dnd = useBlockDnD({
     blocks,
     collapsedVisible: zoomedVisible,
@@ -961,9 +975,9 @@ export function BlockTree({
     selectedBlockIds,
     handleFlush,
     setFocused,
-    reorder,
-    moveToParent,
-    moveBlocks,
+    reorder: useMemo(() => landing(reorder), [landing, reorder]),
+    moveToParent: useMemo(() => landing(moveToParent), [landing, moveToParent]),
+    moveBlocks: useMemo(() => landing(moveBlocks), [landing, moveBlocks]),
     foldedSiblings,
     scrollContainerRef,
   })
@@ -1167,10 +1181,10 @@ export function BlockTree({
     ),
     splitOff,
     mergeInto,
-    indent,
-    dedent,
-    moveUp: useCallback((id: string) => moveOver(id, -1), [moveOver]),
-    moveDown: useCallback((id: string) => moveOver(id, 1), [moveOver]),
+    indent: useMemo(() => landing(indent), [landing, indent]),
+    dedent: useMemo(() => landing(dedent), [landing, dedent]),
+    moveUp: useMemo(() => landing((id: string) => moveOver(id, -1)), [landing, moveOver]),
+    moveDown: useMemo(() => landing((id: string) => moveOver(id, 1)), [landing, moveOver]),
     createBelow,
     // #7040 — Enter at a folded heading's end opens its section: under one with
     // children the new block is the first of them, so none of them moves under it.

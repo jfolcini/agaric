@@ -37,6 +37,7 @@ import {
   hiddenRows,
   outlineOf,
   stepOver,
+  unfoldedBy,
 } from '@/lib/section-fold'
 import type { FlatBlock } from '@/lib/tree-utils'
 
@@ -152,6 +153,12 @@ export interface UseBlockCollapseReturn {
    * where it has nowhere to go.
    */
   foldedMove: (blockId: string, direction: -1 | 1) => FoldedMove | 'stay' | null
+  /**
+   * #7040 decision 30 — after a move from `before` to `after`, unfold each
+   * collapsed heading it landed a shown block in, as Enter does; saved like a
+   * chevron click.
+   */
+  unfoldLanded: (before: readonly FlatBlock[], after: readonly FlatBlock[]) => void
 }
 
 /** A move of the roots `ids` under `parentId`, from sibling slot `index`, in one batch. */
@@ -425,6 +432,21 @@ export function useBlockCollapse(
     [blocks, outline, collapsedIds],
   )
 
+  const unfoldLanded = useCallback(
+    (before: readonly FlatBlock[], after: readonly FlatBlock[]) => {
+      const persisted = persistedCollapsedIdsRef.current
+      const ids = unfoldedBy(outlineOf(before), outlineOf(after), persisted)
+      if (ids.length === 0) return
+      for (const id of ids) releaseReveal(id)
+      setCollapsedIds((prev) => {
+        const next = new Set(prev)
+        for (const id of ids) next.delete(id)
+        return next
+      })
+    },
+    [releaseReveal, setCollapsedIds],
+  )
+
   return {
     collapsedIds,
     toggleCollapse,
@@ -435,5 +457,6 @@ export function useBlockCollapse(
     foldableSet,
     foldedSiblings,
     foldedMove,
+    unfoldLanded,
   }
 }

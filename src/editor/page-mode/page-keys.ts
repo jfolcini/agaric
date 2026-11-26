@@ -37,7 +37,7 @@ import { emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
 import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
 import { openSlashPicker, slashCommandPluginKey } from '@/editor/extensions/slash-command'
-import { hiddenBlocks, isCollapsed } from '@/editor/page-mode/page-collapse'
+import { hiddenBlocks, isCollapsed, unfoldLanded } from '@/editor/page-mode/page-collapse'
 import {
   depthOf,
   firstTokenPos,
@@ -182,7 +182,7 @@ export const indentIds =
     }
     if (dispatch) {
       announce(t(moved ? 'announce.blockIndented' : 'announce.moveFailed'))
-      if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+      if (moved) dispatch(unfoldLanded(state, restoreSelection(tr, ends).scrollIntoView()))
     }
     return true
   }
@@ -212,7 +212,7 @@ export const outdentIds =
     }
     if (dispatch) {
       announce(t(moved ? 'announce.blockDedented' : 'announce.moveFailed'))
-      if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+      if (moved) dispatch(unfoldLanded(state, restoreSelection(tr, ends).scrollIntoView()))
     }
     return true
   }

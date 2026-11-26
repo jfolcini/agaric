@@ -663,6 +663,28 @@ describe('useBlockCollapse — heading sections (#7040)', () => {
     })
   })
 
+  it('unfolds, and saves, a collapsed heading a move lands a shown block in (decision 30)', () => {
+    const x = makeBlock({ id: 'X', depth: 0, content: 'x' })
+    const before = [x, ...page]
+    const { result } = renderHook(() => useBlockCollapse(before, { pageKey: 'PAGE' }))
+    act(() => result.current.toggleCollapse('H2'))
+    act(() => result.current.toggleCollapse('NEXT'))
+    const after = [...page.slice(0, 4), x, ...page.slice(4)]
+
+    act(() => result.current.unfoldLanded(before, after))
+
+    expect(result.current.collapsedIds.has('H2')).toBe(false)
+    expect(result.current.collapsedIds.has('NEXT')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('collapsed_ids:PAGE') ?? '[]')).toEqual(['NEXT'])
+  })
+
+  it('unfolds nothing where a move lands no shown block in a fold', () => {
+    const { result } = renderHook(() => useBlockCollapse(page, { pageKey: 'PAGE' }))
+    act(() => result.current.toggleCollapse('H2'))
+    act(() => result.current.unfoldLanded(page, page))
+    expect(result.current.collapsedIds.has('H2')).toBe(true)
+  })
+
   it('reveals a target in a collapsed heading section without saving it', () => {
     const { result } = renderHook(() => useBlockCollapse(page, { pageKey: 'PAGE' }))
     act(() => result.current.toggleCollapse('H2'))

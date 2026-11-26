@@ -118,6 +118,35 @@ export function foldsOver(
   return []
 }
 
+/**
+ * The collapsed headings to unfold after a move from `before` to `after`: each
+ * whose fold holds a row `before` showed (#7040 decision 30, a block moved or
+ * dropped into a folded section unfolds it). A block fold does not unfold.
+ */
+export function unfoldedBy(
+  before: Outline,
+  after: Outline,
+  collapsed: ReadonlySet<string>,
+): string[] {
+  if (collapsed.size === 0) return []
+  const hidden = hiddenRows(before, (index) => collapsed.has(before.id(index)))
+  const shown = new Set<string>()
+  for (let index = 0; index < before.length; index += 1) {
+    if (!hidden[index]) shown.add(before.id(index))
+  }
+  const unfold = new Set<string>()
+  const open: number[] = []
+  for (let index = 0; index < after.length; index += 1) {
+    while (open.length > 0 && ends(after, open.at(-1) as number, index)) open.pop()
+    const id = after.id(index)
+    if (shown.has(id)) {
+      for (const fold of open) if (after.level(fold) !== null) unfold.add(after.id(fold))
+    }
+    if (collapsed.has(id)) open.push(index)
+  }
+  return [...unfold]
+}
+
 /** A flat tree's rows as an outline. */
 export function outlineOf(
   rows: readonly { id: string; depth: number; content?: string | null | undefined }[],

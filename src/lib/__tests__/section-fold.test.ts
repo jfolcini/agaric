@@ -9,6 +9,7 @@ import {
   hiddenRows,
   outlineOf,
   stepOver,
+  unfoldedBy,
 } from '@/lib/section-fold'
 
 /** An outline from `[depth, content]` pairs. */
@@ -195,5 +196,46 @@ describe('carriedEnd and stepOver', () => {
     expect(stepOver(page, carry, 2, -1)).toEqual({ end: 3, to: null })
     expect(stepOver(page, carry, 4, 1)).toEqual({ end: 6, to: null })
     expect(stepOver(page, carry, 0, -1)).toEqual({ end: 1, to: null })
+  })
+})
+
+describe('unfoldedBy', () => {
+  /** An outline of `[id, depth, content]` rows. */
+  const rows = (list: [string, number, string][]) =>
+    outlineOf(list.map(([id, depth, content]) => ({ id, depth, content })))
+
+  it('names a collapsed heading a move lands a shown row in, and every folded heading over it', () => {
+    const before = rows([
+      ['X', 0, 'x'],
+      ['H1', 0, '# One'],
+      ['H2', 0, '## Two'],
+      ['S', 0, 's'],
+    ])
+    const after = rows([
+      ['H1', 0, '# One'],
+      ['H2', 0, '## Two'],
+      ['S', 0, 's'],
+      ['X', 0, 'x'],
+    ])
+    expect(unfoldedBy(before, after, new Set(['H1', 'H2']))).toEqual(['H1', 'H2'])
+  })
+
+  it('leaves a block fold, and a section whose rows were hidden before', () => {
+    const before = rows([
+      ['P', 0, 'p'],
+      ['C', 1, 'c'],
+      ['X', 0, 'x'],
+      ['H', 0, '## H'],
+      ['S', 0, 's'],
+    ])
+    const after = rows([
+      ['P', 0, 'p'],
+      ['C', 1, 'c'],
+      ['X', 1, 'x'],
+      ['H', 0, '## H'],
+      ['S', 0, 's'],
+    ])
+    expect(unfoldedBy(before, after, new Set(['P', 'H']))).toEqual([])
+    expect(unfoldedBy(before, before, new Set(['H']))).toEqual([])
   })
 })
