@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 export const SHARED_INPUT_CLASSES = [
   'focus-visible:border-ring focus-ring-visible',
-  'aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40',
+  'aria-invalid:border-destructive',
 ] as const
 
 const Input = ({ ref, className, type, ...props }: React.ComponentProps<'input'>) => (

@@ -226,7 +226,7 @@ function BacklinkRowInner({
       // (pointing at this row's `id`) plus aria-current here. #2263.
       aria-current={isFocused ? true : undefined}
       className={cn(
-        'linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 cursor-pointer hover:bg-muted/50',
+        'linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 cursor-pointer hover:bg-muted/50 focus-ring-visible focus-visible:ring-inset',
         isLast === undefined ? 'last:border-b-0' : isLast && 'border-b-0',
       )}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation

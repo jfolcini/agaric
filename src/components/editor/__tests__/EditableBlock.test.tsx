@@ -327,23 +327,6 @@ describe('EditableBlock', () => {
       expect(wrapper).not.toBeNull()
       expect(wrapper?.classList.contains('block-editor')).toBe(true)
     })
-
-    it('applies the block-selected recipe when isSelected (recipe unified)', () => {
-      render(
-        <EditableBlock
-          blockId="B1"
-          content="Hello"
-          isFocused
-          isSelected
-          rovingEditor={makeRovingEditor() as never}
-        />,
-      )
-
-      // Selection now uses the single `block-selected` @utility
-      // (src/index.css) instead of the inlined ring-primary/bg-primary cluster.
-      const wrapper = screen.getByTestId('block-editor')
-      expect(wrapper.className).toContain('block-selected')
-    })
   })
 
   // ── Focus (click → mount) ────────────────────────────────────────────

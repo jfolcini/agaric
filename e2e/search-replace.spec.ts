@@ -193,4 +193,27 @@ test.describe('Replace across pages from Search @search @pages @editor', () => {
     await expect(page.getByRole('combobox', { name: 'Search blocks' })).toBeFocused()
     expect(await stored(page, alpha)).toEqual(['first needle', 'second needle'])
   })
+
+  // One list, one cursor: the Search results' list cursor (#7040).
+  test('the cursor on a preview row is the list cursor, bar and ring', async ({ page }) => {
+    await openSearchView(page)
+    const alpha = await seedPage(page, 'Replace Cursor', ['first needle', 'second needle'])
+    await previewReplace(page, 'needle', 'zorbex')
+    const listbox = page.getByTestId(`search-result-group-${alpha}`)
+    await expect(listbox.getByRole('option')).toHaveCount(2)
+    await listbox.focus()
+    await page.keyboard.press('ArrowDown')
+    // `aria-selected` is a row's tick here; the cursor is the active descendant.
+    const cursorId = await listbox.getAttribute('aria-activedescendant')
+    const cursor = listbox.locator(`[id="${cursorId}"]`)
+    await expect(cursor).toContainText('second')
+    await expect
+      .poll(() =>
+        cursor.evaluate((el) => ({
+          bar: getComputedStyle(el, '::before').width,
+          ring: /0px 0px 0px 2px inset/.test(getComputedStyle(el).boxShadow),
+        })),
+      )
+      .toEqual({ bar: '2px', ring: true })
+  })
 })

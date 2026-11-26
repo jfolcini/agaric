@@ -279,8 +279,6 @@ interface EditableBlockProps {
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  /** Whether this block is part of a multi-selection. */
-  isSelected?: boolean | undefined
   /** Ctrl+Click / Shift+Click selection callback. */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
@@ -295,7 +293,6 @@ function EditableBlockInner({
   resolveTagName,
   resolveBlockStatus,
   resolveTagStatus,
-  isSelected,
   onSelect,
 }: EditableBlockProps): React.ReactElement {
   const setFocused = useBlockStore((s) => s.setFocused)
@@ -603,7 +600,6 @@ function EditableBlockInner({
         resolveTagName={resolveTagName}
         resolveBlockStatus={resolveBlockStatus}
         resolveTagStatus={resolveTagStatus}
-        isSelected={isSelected}
         onSelect={onSelect}
         onMouseDown={keepEditorUntilClick}
         onDragOver={acceptPageDrag}
@@ -617,11 +613,7 @@ function EditableBlockInner({
     <section
       ref={wrapperRef}
       id={`editor-${blockId}`}
-      className={cn(
-        'block-editor rounded-md',
-        isSelected && 'block-selected',
-        isDragOver && 'ring-2 ring-ring bg-ring/5',
-      )}
+      className={cn('block-editor rounded-md', isDragOver && 'ring-2 ring-ring bg-ring/5')}
       data-testid="block-editor"
       data-block-id={blockId}
       onBlur={handleBlur}

@@ -285,7 +285,7 @@ export function TemplatesView(): React.ReactElement {
                       <TooltipTrigger asChild>
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 flex-col text-left"
+                          className="flex min-w-0 flex-1 flex-col rounded-sm text-left focus-ring-visible"
                           aria-label={t('templates.navigateLabel', { name: tpl.content })}
                           onClick={() => handleNavigate(tpl.id, tpl.content)}
                         >

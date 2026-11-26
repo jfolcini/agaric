@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 // Icon sizes sit at zero specificity, so a `size-*`, `h-*` or `w-*` on the icon wins.
 const buttonVariants = cva(
-  'inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,opacity,transform,scale] active:scale-[0.97] focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4',
+  'inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,opacity,transform,scale] active:scale-[0.97] focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4',
   {
     variants: {
       variant: {
@@ -15,7 +15,7 @@ const buttonVariants = cva(
         default:
           'bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80 dark:disabled:bg-muted dark:disabled:text-muted-foreground dark:disabled:opacity-100',
         destructive:
-          'bg-destructive text-destructive-foreground hover:bg-destructive/90 active:bg-destructive/80 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40',
+          'bg-destructive text-destructive-foreground hover:bg-destructive/90 active:bg-destructive/80',
         outline:
           'border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground active:bg-accent/80 dark:border-input dark:bg-input/30 dark:hover:bg-input/50 dark:active:bg-input/70',
         secondary:

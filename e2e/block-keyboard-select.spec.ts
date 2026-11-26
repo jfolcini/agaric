@@ -16,8 +16,8 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *   PAGE_GETTING_STARTED ("Getting Started") -- 5 child blocks GS_1..GS_5.
  *
  * Selection mechanics (mirrors batch-operations.spec.ts):
- *   - Selected blocks get the `block-selected` utility on
- *     [data-testid="block-static"].
+ *   - Selected blocks get the `block-selected` utility on their row's
+ *     [data-testid="block-frame"].
  *   - Batch toolbar (`.batch-toolbar`, testid `batch-toolbar`) shows from two
  *     selected blocks (#6547), with the count.
  *   - Entry into block-select mode: Ctrl+Click a static block selects it
@@ -40,8 +40,9 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     // Enter block-select mode: Ctrl+Click the first block to select it WITHOUT
     // opening its editor. This is the anchor for keyboard range extension.
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
+    const firstFrame = blocks.nth(0).getByTestId('block-frame')
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(firstStatic).toHaveClass(/block-selected/)
+    await expect(firstFrame).toHaveClass(/block-selected/)
     await expect(batchToolbar).toHaveCount(0)
 
     // Press Shift+ArrowDown twice — extend the selection down by two blocks.
@@ -50,14 +51,10 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
 
     // The first three blocks now carry the selection highlight.
     for (let i = 0; i < 3; i++) {
-      await expect(blocks.nth(i).locator('[data-testid="block-static"]')).toHaveClass(
-        /block-selected/,
-      )
+      await expect(blocks.nth(i).getByTestId('block-frame')).toHaveClass(/block-selected/)
     }
     // Block 4 stays unselected (the range stopped at 3).
-    await expect(blocks.nth(3).locator('[data-testid="block-static"]')).not.toHaveClass(
-      /block-selected/,
-    )
+    await expect(blocks.nth(3).getByTestId('block-frame')).not.toHaveClass(/block-selected/)
 
     // The batch toolbar reflects the keyboard-built selection count.
     await expect(batchToolbar).toBeVisible()
@@ -70,8 +67,9 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     const batchToolbar = page.getByTestId('batch-toolbar')
 
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
+    const firstFrame = blocks.nth(0).getByTestId('block-frame')
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(firstStatic).toHaveClass(/block-selected/)
+    await expect(firstFrame).toHaveClass(/block-selected/)
 
     // Grow down to three blocks…
     await page.keyboard.press('Shift+ArrowDown')
@@ -81,14 +79,8 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     // …then Shift+ArrowUp shrinks back toward the anchor (block 1).
     await page.keyboard.press('Shift+ArrowUp')
     await expect(batchToolbar).toContainText('2')
-    await expect(blocks.nth(0).locator('[data-testid="block-static"]')).toHaveClass(
-      /block-selected/,
-    )
-    await expect(blocks.nth(1).locator('[data-testid="block-static"]')).toHaveClass(
-      /block-selected/,
-    )
-    await expect(blocks.nth(2).locator('[data-testid="block-static"]')).not.toHaveClass(
-      /block-selected/,
-    )
+    await expect(blocks.nth(0).getByTestId('block-frame')).toHaveClass(/block-selected/)
+    await expect(blocks.nth(1).getByTestId('block-frame')).toHaveClass(/block-selected/)
+    await expect(blocks.nth(2).getByTestId('block-frame')).not.toHaveClass(/block-selected/)
   })
 })

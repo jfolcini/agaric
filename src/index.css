@@ -2748,7 +2748,7 @@ mark[data-highlight-color='purple'] {
   @apply rounded-md ring-1 ring-inset ring-border bg-accent/[0.06] shadow-(--shadow-resting);
 }
 
-/* Explicit block selection (StaticBlock / EditableBlock multi-select). */
+/* Explicit block selection (multi-select), on the row's frame (`SortableBlock`). */
 @utility block-selected {
   @apply ring-2 ring-inset ring-ring bg-ring/15;
 }

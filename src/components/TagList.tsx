@@ -399,7 +399,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                     <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <button
                       type="button"
-                      className="touch-hit-area cursor-pointer border-none bg-transparent p-0"
+                      className="touch-hit-area cursor-pointer rounded-sm border-none bg-transparent p-0 focus-ring-visible"
                       onClick={() => onTagClick?.(tag.tag_id, tag.name || 'Unnamed')}
                       data-testid={`tag-item-${tag.name || 'Unnamed'}`}
                       // The name sits inside the badge's TruncatedText, past what the lint can see.
