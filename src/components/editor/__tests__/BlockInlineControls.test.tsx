@@ -449,11 +449,11 @@ describe('BlockMetadataRow', () => {
     expect(screen.getByText('P1')).toBeInTheDocument()
   })
 
-  // Date chips are 18px (14px icon + py-0.5); leading-none (12px) + py-0.75 (3px x 2) = 18px.
+  // At Medium, date chips are 18px (14px icon + py-0.5); leading-none (12px) + py-0.75 (3px x 2) = 18px.
   it('priority chip is sized to the same 18px as the date chips beside it', () => {
     renderMetadata(makeMetaProps({ priority: '1' }))
     const chip = screen.getByText('P1')
-    expect(chip).toHaveClass('leading-none', 'py-0.75', 'text-xs')
+    expect(chip).toHaveClass('leading-none', 'py-0.75', 'text-block-chip')
   })
 
   // A block-level button seats the chip on the 24px line-height strut, 2px below the

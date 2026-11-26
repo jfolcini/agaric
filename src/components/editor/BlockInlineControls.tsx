@@ -233,7 +233,7 @@ function PriorityBadge({
   const badge = (
     <span
       className={cn(
-        'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5',
+        'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-block-chip font-bold leading-none max-sm:px-2.5',
         priorityColor(priority),
       )}
     >
@@ -283,7 +283,7 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
   const label = formatRepeatLabel(repeatValue, t)
   return (
     <output
-      className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground"
+      className="repeat-indicator flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-block-chip font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground"
       aria-label={t('block.repeats', { value: label })}
     >
       <Repeat className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
@@ -298,11 +298,11 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
  * follows the font-size setting, #5369).
  */
 const OVERFLOW_CHIP =
-  'inline-flex items-center flex-shrink-0 rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium leading-none text-muted-foreground select-none'
+  'inline-flex items-center flex-shrink-0 rounded-sm border border-border px-1.5 py-0.5 text-block-chip font-medium leading-none text-muted-foreground select-none'
 
 /** A count (attachments, references): plain muted text, as `Badge`'s `metadata` tone is. */
 const COUNT_CHIP =
-  'flex items-center gap-0.5 rounded-sm text-xs leading-none tabular-nums text-muted-foreground select-none cursor-pointer hover:text-foreground focus-ring-visible touch-hit-area'
+  'flex items-center gap-0.5 rounded-sm text-block-chip leading-none tabular-nums text-muted-foreground select-none cursor-pointer hover:text-foreground focus-ring-visible touch-hit-area'
 
 /** The inline property chips, each marked if it doesn't fit its key, + `+N` overflow pill. */
 function InlineProperties({

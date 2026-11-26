@@ -56,14 +56,12 @@ export function DateChip({
   const color = kind === 'scheduled' ? NEUTRAL : date === undefined ? DUE_COLOR : dueDateColor(date)
   const classes = cn(
     chipClass,
-    'inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none',
+    'inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-block-chip font-medium leading-none tabular-nums select-none',
     color,
     className,
   )
   const icon = (
     <Icon
-      // The chip pins text-xs, where 1em stays 12px at every font size, so its
-      // icon sizes from the setting itself (#5369).
       className="size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0"
       fill={overdue ? 'currentColor' : 'none'}
       aria-hidden="true"

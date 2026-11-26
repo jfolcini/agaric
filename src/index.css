@@ -1295,11 +1295,17 @@
   font-size: var(--heading-6-size);
   line-height: var(--heading-6-leading);
 }
-/* A table's cells and a code block: note text a step under the body, so they
-   follow the font-size setting like it; `text-sm` at Medium. */
+/* A table's cells, a code block and a callout's label: note text a step under
+   the body, so they follow the font-size setting like it; `text-sm` at Medium. */
 @utility text-block-sm {
   font-size: calc(var(--agaric-font-size, 1rem) * 0.875);
   line-height: var(--text-sm--line-height);
+}
+/* A block's chips (priority, dates, repeat, properties, counts), whose text
+   grows with their icons; `text-xs` at Medium. `cn` knows both as font sizes. */
+@utility text-block-chip {
+  font-size: calc(var(--agaric-font-size, 1rem) * 0.75);
+  line-height: var(--tw-leading, var(--text-xs--line-height));
 }
 
 /* The first line box of a block's text, on which its grip, chevron and
@@ -1511,8 +1517,8 @@
   .page-block-metadata
   :is(.due-date-chip, .scheduled-chip, .repeat-indicator, .priority-badge > span) {
   @apply bg-transparent px-0 font-normal;
-  font-size: 0.6875rem;
-  line-height: 0.75rem;
+  font-size: calc(var(--agaric-font-size, 1rem) * 0.6875);
+  line-height: calc(var(--agaric-font-size, 1rem) * 0.75);
 }
 .page-mode-editor
   .page-block-metadata
@@ -1539,15 +1545,19 @@
 }
 /* Until the row mounts (`page-tasks.ts`), its empty box keeps its height, so
    nothing moves as it mounts: the row's top margin, and a date chip's height
-   (its icon and padding), or the badge's (its text and two paddings). */
+   (its icon and padding), or the badge's (its text and two paddings), whichever
+   is taller. */
 .page-mode-editor .page-block-metadata:empty {
   margin-top: 0.125rem;
   min-height: calc(var(--agaric-font-size, 1rem) * 0.875 + 0.25rem);
 }
-/* A property chip's and the priority badge's text and padding do not scale
-   with the font. */
+/* A property chip's and the priority badge's text scales with the font, its
+   padding and border do not. */
 .page-mode-editor .page-block-metadata:empty:is([data-properties], [data-priority]) {
-  min-height: max(1.125rem, calc(var(--agaric-font-size, 1rem) * 0.875 + 0.25rem));
+  min-height: max(
+    calc(var(--agaric-font-size, 1rem) * 0.75 + 0.375rem),
+    calc(var(--agaric-font-size, 1rem) * 0.875 + 0.25rem)
+  );
 }
 /* A closed task reads as block mode's, struck and muted, but not while edited;
    muted by the token rather than by opacity, which leaves it 3.4:1. */
