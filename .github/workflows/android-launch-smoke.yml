@@ -52,17 +52,16 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force >/dev/null || true
 
-      - name: Install Rust toolchain
-        uses: ./.github/actions/rust-toolchain
-        with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.100.0
-          targets: x86_64-linux-android
-
       - name: Read pins.txt
         id: pins
         run: bash scripts/pins.sh github-output
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/rust-toolchain
+        with:
+          # #640: rust-toolchain.toml's exact channel.
+          toolchain: ${{ steps.pins.outputs.rust }}
+          targets: x86_64-linux-android
 
       - name: Set up JDK 17
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0

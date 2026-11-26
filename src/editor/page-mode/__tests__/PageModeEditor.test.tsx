@@ -438,7 +438,11 @@ describe('PageModeEditor', () => {
     const { pageId, ids } = seedPage(['first'])
     const { container } = renderPageMode(pageId)
     const editor = await editorIn(container)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true })
     typeAt(editor, 0, 5, 'a')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
     await waitFor(() => {
       expect(backendText(ids[0] as string)).toBe('firsta')
     })
@@ -1859,6 +1863,7 @@ describe('PageModeEditor tasks (#5743)', () => {
     const { pageId, ids } = seedPage(['a', '[ ] b', 'c'])
     const { container } = renderPageMode(pageId)
     const editor = await editorIn(container)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true })
 
     act(() => {
       editor.commands.setTextSelection({ from: at(editor, 0, 0), to: at(editor, 1, 0) })
@@ -1867,6 +1872,7 @@ describe('PageModeEditor tasks (#5743)', () => {
     caretTo(editor, 1)
     await act(async () => {
       await flushActiveDraft()
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
     await waitFor(() => {
       expect(backendPage(pageId).map(([id]) => id)).toEqual([ids[1], ids[2]])
@@ -4552,8 +4558,12 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
     act(() => {
       editor.commands.setTextSelection(at(editor, 1, 2))
     })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true })
     expect(press(editor, 'L', chord)).toBe(true)
     await pick(/TURN INTO Heading 1/)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
     await waitFor(() => {
       expect(backendText(ids[1] as string)).toBe('# second')
     })
@@ -4869,10 +4879,14 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
       expect(callsTo('list_attachments_batch')).toBe(1)
     })
     const reads = callsTo('load_page_subtree')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], shouldAdvanceTime: true })
 
     typeIn(editor, 1, 6, ' /h2')
     await pick(/Heading 2/)
     expect(docTexts(editor)).toEqual(['first', '## second '])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
     await waitFor(() => {
       expect(backendText(ids[1] as string)).toBe('## second ')
     })
@@ -4884,6 +4898,9 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
       typeText(editor, 'loud')
     })
     expect(docTexts(editor)).toEqual(['first **loud**', '## second '])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
     await waitFor(() => {
       expect(backendText(ids[0] as string)).toBe('first **loud**')
     })

@@ -1,7 +1,7 @@
 import { devices, type Page } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
-import { expect, navigateToView, openPage, test, waitForBoot } from './helpers'
+import { expect, navigateToView, openPage, settleBackend, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for the GraphView component (F-33).
@@ -345,6 +345,9 @@ test.describe('Graph view @graph', () => {
       for (const i of range(10)) previous = [await createPage(`Chain ${i}`, previous)]
       await Promise.all(range(15).map((i) => createPage(`Loose ${i}`, [])))
     }, SEED_IDS.SPACE_PERSONAL)
+    // The seed's late `blocks:changed` refetches the graph, which lays its nodes out again
+    // after the first settle's fit; under reduced motion nothing fits them again.
+    await settleBackend(page)
   }
 
   for (const reducedMotion of ['no-preference', 'reduce'] as const) {

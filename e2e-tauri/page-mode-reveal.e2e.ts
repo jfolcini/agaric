@@ -163,27 +163,6 @@ async function caretInto(text: string, offset: number): Promise<void> {
   )
 }
 
-/** Put the caret inside the bold word, through the editor's own API. */
-async function caretIntoBold(): Promise<void> {
-  await browser.execute((sel: string) => {
-    interface TextNode {
-      isText: boolean
-      text?: string
-    }
-    const el = document.querySelector(sel) as HTMLElement & {
-      editor: {
-        state: { doc: { descendants: (f: (node: TextNode, pos: number) => void) => void } }
-        commands: { setTextSelection: (pos: number) => boolean }
-      }
-    }
-    let inside = -1
-    el.editor.state.doc.descendants((node, pos) => {
-      if (inside < 0 && node.isText && node.text === 'bold') inside = pos + 2
-    })
-    el.editor.commands.setTextSelection(inside)
-  }, EDITOR)
-}
-
 async function pageTitle(): Promise<string> {
   return $('[aria-label="Page title"]').getText()
 }
@@ -348,7 +327,7 @@ describe('Markdown syntax revealed around the cursor in page mode on the real ba
     await expect(editor.$('em')).toHaveText('it')
 
     // The preference is live in this WebView: the caret in the bold word draws its markers.
-    await caretIntoBold()
+    await caretInto('bold', 2)
     await browser.waitUntil(
       async () => (await $$('[data-testid="md-reveal-marker"]').getElements()).length === 2,
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the caret in bold text drew no Markdown markers' },

@@ -309,9 +309,9 @@ export function QueryResult({
     return () => {
       cancelled = true
     }
-    // Keyed on every fetch, not on the result ids: a property change leaves the
-    // ids alone (#5298). `results` moves with it; tableMode gates the fetch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // The `eslint-` spelling is load-bearing: the React Compiler skips a component only for
+    // that spelling, so `oxlint-` here would switch the Compiler on for QueryResult (#4469).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on every fetch, not on `results`: a property-only change leaves the ids, and so `results`, alone (#5298)
   }, [tableMode, resultsUpdatedAt, t, blockId])
 
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({

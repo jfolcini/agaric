@@ -763,9 +763,8 @@ export type Handler = (args: unknown) => unknown
 export { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 
 /**
- * The adjacently-tagged `TagExpr` shape (`{ type, value }`, matching the Rust
- * `#[serde(tag = "type", content = "value")]` enum) the `query_by_tags` mock
- * builds and evaluates.
+ * The tag expression tree the `query_by_tags` mock builds and evaluates. It
+ * never crosses IPC, so its shape is the mock's own.
  */
 export type TagExprNode =
   | { type: 'Tag'; value: string }

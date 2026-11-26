@@ -170,8 +170,6 @@ export function CommandPalette(): React.ReactElement | null {
           if (actionMenuOpenRef.current) e.preventDefault()
         }}
         data-testid="command-palette"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="dialog" is on Radix's <Content> primitive (a custom component, not a raw element); the native <dialog> tag would bypass Radix's focus-trap/portal/escape handling
-        role="dialog"
         aria-label={t('palette.dialogLabel')}
       >
         <Title className="sr-only">{t('palette.dialogTitle')}</Title>
@@ -194,7 +192,7 @@ export function CommandPalette(): React.ReactElement | null {
  * onClose → setView('search')` flow disposes the sheet cleanly
  * before the find-in-files view appears).
  */
-// oxlint-disable-next-line eslint/complexity -- complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
+// oxlint-disable-next-line eslint/complexity -- the orchestrator of the row types, the debounced IPC pipeline and the action-menu state, which share one set of closures; its pure helpers are already extracted
 export function PaletteBody({
   onClose,
   actionMenuOpenRef,

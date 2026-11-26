@@ -15,7 +15,7 @@
     "tailwindcss",
     "markdownlint-cli2",
     "better-npm-audit",
-    "license-checker",
+    "license-checker-rseidelsohn",
     "tw-animate-css",
     "@wdio/local-runner"
   ],

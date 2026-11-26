@@ -158,10 +158,10 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot @
     //    exists, so the page's file can only come from the pass an edit asks for.
     const set = await invoke<MirrorStatus>('set_mirror_folder', { path: folder, readBack: true })
     expect(set.folder).toBe(folder)
-    await browser.waitUntil(
-      async () => (await invoke<MirrorStatus>('get_mirror_status')).last_pass_ms !== null,
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never finished a pass in the new folder' },
-    )
+    await browser.waitUntil(async () => (await status()).last_pass_ms !== null, {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the mirror never finished a pass in the new folder',
+    })
     expect(existsSync(path.join(folder, '.agaric-mirror'))).toBe(true)
 
     await openNewPage(TITLE)
@@ -180,17 +180,17 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot @
     const marker = path.join(folder, '.agaric-mirror')
     const device = readFileSync(marker, 'utf8')
     unlinkSync(marker)
-    await browser.waitUntil(
-      async () => (await invoke<MirrorStatus>('get_mirror_status')).paused !== null,
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the mirror never paused without its marker' },
-    )
+    await browser.waitUntil(async () => (await status()).paused !== null, {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the mirror never paused without its marker',
+    })
     await invoke('edit_block', { blockId, toText: RESTARTED })
     await restartApp('kill', () => {
       writeFileSync(marker, device)
     })
     await waitForFileHolding(relative, RESTARTED, 'after the restart')
 
-    const settled = await invoke<MirrorStatus>('get_mirror_status')
+    const settled = await status()
     expect(settled.folder).toBe(folder)
     expect(settled.diverged).toEqual([])
     expect(settled.failed).toEqual([])
@@ -213,7 +213,7 @@ describe('Agaric real-backend outbound Markdown mirror (#5363) @markdown @boot @
 
     await reopenPageHolding(TITLE, EXTERNAL)
 
-    const final = await invoke<MirrorStatus>('get_mirror_status')
+    const final = await status()
     expect(final.diverged).toEqual([])
     expect(final.failed).toEqual([])
   })
