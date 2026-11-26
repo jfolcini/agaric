@@ -185,6 +185,18 @@ test.describe('callouts and quotes @editor @pages', () => {
     )
   })
 
+  test('a callout’s icon is painted in the label’s colour under forced colours', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' })
+    await openShowcase(page)
+    await toPageMode(page)
+    const callout = page.getByTestId('page-mode-editor').locator('blockquote[data-callout-type]')
+    expect(await css(callout, 'background-color', '::after'), 'icon').toBe(
+      await css(callout, 'color', '::before'),
+    )
+  })
+
   test('a callout stays tinted in the dark theme', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('theme-preference', 'dark'))
     await openShowcase(page)

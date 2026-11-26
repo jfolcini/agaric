@@ -1645,9 +1645,9 @@
   user-select: none;
 }
 
-/* The style's icon, the view mode's lucide glyph as a mask painted in the
- * label's colour, centred on the label's line. Pseudo-elements never enter
- * the ProseMirror document. */
+/* The style's icon, the view mode's lucide glyph (`CALLOUT_CONFIG`) as an SVG
+ * mask painted in the label's colour, centred on the label's line.
+ * Pseudo-elements never enter the ProseMirror document. */
 .ProseMirror blockquote[data-callout-type]::after {
   content: '';
   position: absolute;
@@ -1704,6 +1704,12 @@
 }
 .ProseMirror blockquote[data-callout-style='note']::before {
   color: var(--alert-note-foreground);
+}
+/* Forced colours paint every background Canvas, which would blank the icon. */
+@media (forced-colors: active) {
+  .ProseMirror blockquote[data-callout-type]::after {
+    background-color: CanvasText;
+  }
 }
 
 /* Heading styles inside the editor: the same classes as the static render's
