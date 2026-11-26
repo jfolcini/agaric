@@ -1,53 +1,32 @@
-import { cva, type VariantProps } from 'class-variance-authority'
+import type { VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 import type * as React from 'react'
 
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { cn } from '@/lib/utils'
-
-const popoverMenuItemVariants = cva(
-  'w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent active:bg-accent cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
-  {
-    variants: {
-      active: {
-        true: 'bg-accent font-medium',
-        false: '',
-      },
-      disabled: {
-        true: 'opacity-50 cursor-not-allowed',
-        false: '',
-      },
-    },
-    defaultVariants: {
-      active: false,
-      disabled: false,
-    },
-  },
-)
 
 // Base prop surface, sans `disabled` (its meaning depends on `asChild`).
 interface PopoverMenuItemBaseProps
   extends
     Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
-    Omit<VariantProps<typeof popoverMenuItemVariants>, 'disabled'> {
+    Omit<VariantProps<typeof menuRowVariants>, 'indent'> {
   ref?: React.Ref<HTMLButtonElement>
-  active?: VariantProps<typeof popoverMenuItemVariants>['active']
+  active?: VariantProps<typeof menuRowVariants>['active']
 }
-
-type DisabledVariant = VariantProps<typeof popoverMenuItemVariants>['disabled']
 
 /**
  * `disabled` is only honoured on the native `<button>`. When `asChild` is
  * true the rendered element is the caller's child (e.g. an `<a>`), which the
- * native `disabled` attribute and the visual-only CVA styling cannot make
- * non-interactive — the link stays focusable/clickable. So the prop type is a
- * discriminated union: in the `asChild` branch `disabled` is `never`, making
- * `<PopoverMenuItem asChild disabled>` a compile error. A dev-only runtime
- * warning (below) backstops `any`/spread call sites that erase the static check.
+ * native `disabled` attribute cannot make non-interactive — the link stays
+ * focusable/clickable. So the prop type is a discriminated union: in the
+ * `asChild` branch `disabled` is `never`, making `<PopoverMenuItem asChild
+ * disabled>` a compile error. A dev-only runtime warning (below) backstops
+ * `any`/spread call sites that erase the static check.
  */
 type PopoverMenuItemProps = PopoverMenuItemBaseProps &
   (
     | { asChild: true; disabled?: never }
-    | { asChild?: false | undefined; disabled?: DisabledVariant }
+    | { asChild?: false | undefined; disabled?: boolean | undefined }
   )
 
 const PopoverMenuItem = ({
@@ -69,15 +48,14 @@ const PopoverMenuItem = ({
   }
   // `type="button"` and the native `disabled` attribute are only valid on
   // the native button; when rendering via Slot the caller's element
-  // (e.g. `<a>`) owns its own semantics. Keep the visual `disabled`
-  // styling via the CVA variant either way.
+  // (e.g. `<a>`) owns its own semantics. The row dims through `:disabled`.
   const buttonOnlyProps = asChild ? {} : { type: 'button' as const, disabled: disabled === true }
 
   return (
     <Comp
       ref={ref}
       data-slot="popover-menu-item"
-      className={cn(popoverMenuItemVariants({ active, disabled }), className)}
+      className={cn(menuRowVariants({ active }), className)}
       {...buttonOnlyProps}
       {...props}
     >
@@ -87,4 +65,4 @@ const PopoverMenuItem = ({
 }
 PopoverMenuItem.displayName = 'PopoverMenuItem'
 
-export { PopoverMenuItem, popoverMenuItemVariants }
+export { PopoverMenuItem }

@@ -465,6 +465,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
     await ipc(page, 'set_page_aliases', { pageId: PAGE_ID, aliases: ['GS alias'] })
     await openPage(page, PAGE)
     await page.getByRole('button', { name: 'Page actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export', exact: true }).click()
     await page.getByText('Export as Markdown').click()
     await expect
       .poll(() => readClipboard(page))

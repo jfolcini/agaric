@@ -34,8 +34,8 @@ describe('PopoverMenuItem', () => {
     render(<PopoverMenuItem disabled>Disabled item</PopoverMenuItem>)
     const btn = screen.getByRole('button', { name: 'Disabled item' })
     expect(btn).toBeDisabled()
-    expect(btn.className).toContain('opacity-50')
-    expect(btn.className).toContain('cursor-not-allowed')
+    // The row dims through `:disabled`, so the native attribute drives it.
+    expect(btn).toHaveClass('disabled:opacity-50')
   })
 
   it('calls onClick handler', async () => {

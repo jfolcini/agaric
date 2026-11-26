@@ -279,35 +279,35 @@ export function FilterHelperPopover({
                 promises arrow-key navigation (same model as AddFilterPopover). */}
             <PopoverMenuItem onClick={openTagMode}>
               <span className="font-medium">{t('search.filterCategory.tag')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">tag:#name</span>
+              <span className="text-xs text-muted-foreground">tag:#name</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('pathInclude')}>
               <span className="font-medium">{t('search.filterCategory.pathInclude')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">path:Journal/*</span>
+              <span className="text-xs text-muted-foreground">path:Journal/*</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('pathExclude')}>
               <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
+              <span className="text-xs text-muted-foreground">not-path:Archive/**</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('state')}>
               <span className="font-medium">{t('search.filterCategory.state')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">state:TODO</span>
+              <span className="text-xs text-muted-foreground">state:TODO</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('priority')}>
               <span className="font-medium">{t('search.filterCategory.priority')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">priority:1</span>
+              <span className="text-xs text-muted-foreground">priority:1</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('due')}>
               <span className="font-medium">{t('search.filterCategory.due')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">due:today</span>
+              <span className="text-xs text-muted-foreground">due:today</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('scheduled')}>
               <span className="font-medium">{t('search.filterCategory.scheduled')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">scheduled:next-week</span>
+              <span className="text-xs text-muted-foreground">scheduled:next-week</span>
             </PopoverMenuItem>
             <PopoverMenuItem onClick={() => setMode('prop')}>
               <span className="font-medium">{t('search.filterCategory.prop')}</span>
-              <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
+              <span className="text-xs text-muted-foreground">prop:key=value</span>
             </PopoverMenuItem>
             <p className="mt-2 px-2 text-xs text-muted-foreground">
               {t('search.filterCategoryTip')}

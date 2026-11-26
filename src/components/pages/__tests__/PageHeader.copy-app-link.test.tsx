@@ -82,9 +82,14 @@ function renderHeader() {
   )
 }
 
-async function copyAppLink(user: ReturnType<typeof userEvent.setup>) {
+async function openExport(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
-  await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.copyAppLink') }))
+  await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.exportMenu') }))
+}
+
+async function copyAppLink(user: ReturnType<typeof userEvent.setup>) {
+  await openExport(user)
+  await user.click(screen.getByRole('menuitem', { name: t('pageHeader.copyAppLink') }))
 }
 
 describe('PageHeader Copy app link', () => {
@@ -105,13 +110,11 @@ describe('PageHeader Copy app link', () => {
     })
   })
 
-  it('is reached by ArrowDown from Open in new tab and runs on Enter', async () => {
+  it('is reached by ArrowDown from the opened Export row and runs on Enter', async () => {
     const user = userEvent.setup()
     renderHeader()
-    await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
-    await waitFor(() => {
-      expect(screen.getByRole('menuitem', { name: t('tabs.openInNewTab') })).toHaveFocus()
-    })
+    await openExport(user)
+    expect(screen.getByRole('menuitem', { name: t('pageHeader.exportMenu') })).toHaveFocus()
 
     await user.keyboard('{ArrowDown}')
     expect(screen.getByRole('menuitem', { name: t('pageHeader.copyAppLink') })).toHaveFocus()
@@ -154,7 +157,7 @@ describe('PageHeader Copy app link', () => {
   it('has no a11y violations with the menu open', async () => {
     const user = userEvent.setup()
     renderHeader()
-    await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
+    await openExport(user)
     await screen.findByRole('menuitem', { name: t('pageHeader.copyAppLink') })
 
     // The menu is portalled out of the render container, so audit it directly.

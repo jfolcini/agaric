@@ -45,7 +45,7 @@ export function EditModeItem({
       }}
       {...props}
     >
-      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <Icon />
       <span className="flex flex-col">
         <span id={labelId}>
           {t(to === 'page' ? 'pageMode.editAsPage' : 'pageMode.editAsBlocks')}
