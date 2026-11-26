@@ -697,9 +697,9 @@ describe('BlockTree picker wiring', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', expect.anything())
     expect(results).toEqual([
-      expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
       expect.objectContaining({ id: 'TAG_01', label: 'important' }),
       expect.objectContaining({ id: 'TAG_02', label: 'improvement' }),
+      expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
     ])
   })
 
@@ -2345,10 +2345,10 @@ describe('BlockTree priority slash commands', () => {
 
     const results = await capturedSearchSlashCommands?.('priority')
 
-    const labels = results?.map((r) => r.label) ?? []
-    expect(labels).toContain('PRIORITY 1 — Set high priority')
-    expect(labels).toContain('PRIORITY 2 — Set medium priority')
-    expect(labels).toContain('PRIORITY 3 — Set low priority')
+    const rows = results?.map((r) => [r.label, r.description]) ?? []
+    expect(rows).toContainEqual(['PRIORITY 1', 'Set high priority'])
+    expect(rows).toContainEqual(['PRIORITY 2', 'Set medium priority'])
+    expect(rows).toContainEqual(['PRIORITY 3', 'Set low priority'])
   })
 
   it('priority commands are not shown for empty query', async () => {
@@ -2545,11 +2545,11 @@ describe('BlockTree repeat slash commands', () => {
 
     const results = await capturedSearchSlashCommands?.('repeat')
 
-    const labels = results?.map((r) => r.label) ?? []
-    expect(labels).toContain('REPEAT DAILY — Every day')
-    expect(labels).toContain('REPEAT WEEKLY — Every week')
-    expect(labels).toContain('REPEAT MONTHLY — Every month')
-    expect(labels).toContain('REPEAT YEARLY — Every year')
+    const rows = results?.map((r) => [r.label, r.description]) ?? []
+    expect(rows).toContainEqual(['REPEAT DAILY', 'Every day'])
+    expect(rows).toContainEqual(['REPEAT WEEKLY', 'Every week'])
+    expect(rows).toContainEqual(['REPEAT MONTHLY', 'Every month'])
+    expect(rows).toContainEqual(['REPEAT YEARLY', 'Every year'])
   })
 
   it('repeat preset commands are not shown for empty query', async () => {

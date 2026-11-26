@@ -17,7 +17,8 @@ import { jaroWinkler } from '@/lib/jaro-winkler'
  *
  * - Each `pages` row seeds a group (page-name match band).
  * - Each `blocks` row appends to the existing group keyed by `page_id`,
- *   or seeds a content-only group when no page row exists for it.
+ *   or seeds a content-only group when no page row exists for it, titled from
+ *   `pageTitles` (a block row carries only its page's id).
  * Groups are ordered by **4-band rule** (grouping"):
  *   exact title → prefix title → contains-in-title → content-only,
  *   tiebroken by the FTS-band + fuzzy blend score.
@@ -32,6 +33,7 @@ export function mergeAndRankGroups(
   pages: ReadonlyArray<SearchBlockRow>,
   blocks: ReadonlyArray<SearchBlockRow>,
   query: string,
+  pageTitles: Readonly<Record<string, string>> = {},
 ): PaletteGroup[] {
   const groups = new Map<string, PaletteGroup>()
   const order: string[] = []
@@ -69,7 +71,7 @@ export function mergeAndRankGroups(
     }
     const pageId = row.page_id
     if (pageId == null) continue
-    const group = ensureGroup(pageId, t('common.untitled'), false)
+    const group = ensureGroup(pageId, pageTitles[pageId] ?? t('common.untitled'), false)
     if (group.matches.length < MAX_MATCHES_PER_GROUP) {
       group.matches.push(row)
     } else {

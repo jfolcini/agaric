@@ -10,6 +10,7 @@ import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   mergeSlashHandlerTables,
+  searchSlashMenu,
   useBlockSlashCommands,
 } from '@/components/block-tree/use-block-slash-commands'
 import { useSlashCommandDate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandDate'
@@ -280,6 +281,20 @@ describe('searchSlashCommands', () => {
     // "prihi" should fuzzy match "PRIORITY 1 — Set high priority"
     const results = searchSlashCommands('pri', [])
     expect(results.some((r) => r.id === 'priority-high')).toBe(true)
+  })
+})
+
+// #7040 — the menu shows a command's name, and what it does apart from it.
+describe('searchSlashMenu', () => {
+  it('splits a command into its name and its description', () => {
+    const todo = searchSlashMenu('todo').find((r) => r.id === 'todo')
+    expect(todo).toMatchObject({ label: 'TODO', description: 'Mark as to-do' })
+  })
+
+  it('leaves a command with no description as it is', () => {
+    const h4 = searchSlashMenu('heading 4').find((r) => r.id === 'h4')
+    expect(h4?.label).toBe('Heading 4')
+    expect(h4).not.toHaveProperty('description')
   })
 })
 

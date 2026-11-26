@@ -240,7 +240,7 @@ export function WelcomeModal() {
   }, [handleCreateSamplePages])
 
   const parts = useDialogOrSheet('dialog')
-  const { Root, Content, Header, Title, Description, Footer } = parts
+  const { Root, Content, Header, Title, Description } = parts
 
   if (bootState !== 'ready') return null
 
@@ -275,19 +275,34 @@ export function WelcomeModal() {
   )
 
   const importButton = (
-    <Button key="import" variant="outline" size="sm" onClick={() => openSettingsTab('data')}>
+    <Button key="import" variant="ghost" size="sm" onClick={() => openSettingsTab('data')}>
       {t('welcome.importNotes')}
     </Button>
   )
   const pairButton = (
-    <Button key="pair" variant="outline" size="sm" onClick={() => openSettingsTab('sync')}>
+    <Button key="pair" variant="ghost" size="sm" onClick={() => openSettingsTab('sync')}>
       {t(touch ? 'welcome.pairComputer' : 'welcome.pairDevice')}
     </Button>
   )
-  // On a phone, pairing with the computer the notes already live on comes first.
+  // The primaries, then the secondary actions, then the tips (#7040). On a phone, pairing with the
+  // computer the notes already live on comes before import. The ghost buttons' labels line up with
+  // the column's edge.
   const body = (
     <>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button ref={getStartedRef} onClick={handleDismiss}>
+          {t('welcome.getStarted')}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => void handleCreateSamplePages()}
+          disabled={creating}
+        >
+          {creating && <Spinner />}
+          {t('welcome.createSamplePages')}
+        </Button>
+      </div>
+      <div className="-ml-3 flex flex-wrap gap-2">
         {touch ? [pairButton, importButton] : [importButton, pairButton]}
       </div>
       {featureList}
@@ -303,8 +318,7 @@ export function WelcomeModal() {
     >
       <Content
         data-testid="welcome-modal"
-        // Get started takes focus, not Radix's first tabbable (the secondary
-        // "Create sample pages"), so Enter on open dismisses. No ring: it opens
+        // Get started takes focus, so Enter on open dismisses. No ring: it opens
         // before the user has done anything.
         onOpenAutoFocus={(e) => {
           e.preventDefault()
@@ -312,23 +326,12 @@ export function WelcomeModal() {
         }}
       >
         <Header>
+          {/* The brand, which the title names. */}
+          <img src="/agaric.svg" alt="" className="size-10" />
           <Title>{t('welcome.title')}</Title>
           <Description>{t('welcome.description')}</Description>
         </Header>
         {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
-        <Footer>
-          <Button
-            variant="outline"
-            onClick={() => void handleCreateSamplePages()}
-            disabled={creating}
-          >
-            {creating && <Spinner />}
-            {t('welcome.createSamplePages')}
-          </Button>
-          <Button ref={getStartedRef} onClick={handleDismiss}>
-            {t('welcome.getStarted')}
-          </Button>
-        </Footer>
       </Content>
     </Root>
   )

@@ -13,6 +13,7 @@
  * do not duplicate it here.
  */
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expect, openPage, test, waitForBoot } from './helpers'
 
 test.describe('desktop palette (Phase 5.T2) @search', () => {
@@ -60,6 +61,37 @@ test.describe('desktop palette (Phase 5.T2) @search', () => {
     // The exact landing depends on the fixture but the palette MUST be
     // gone — that's the contract.
     await expect(paletteInput).not.toBeVisible({ timeout: 5000 })
+  })
+
+  // #7040 — a block row names only its page; the palette titled such a group "Untitled" and
+  // showed a snippet-less row's Markdown (the mock returns no snippets).
+  test('a block hit names its page and reads as text, not Markdown', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    await page.keyboard.press('Control+k')
+    const input = page.getByTestId('command-palette-input')
+    await expect(input).toBeFocused()
+
+    await input.fill('search panel')
+    await expect(
+      page.getByTestId(`palette-page-header-${SEED_IDS.PAGE_GETTING_STARTED}`),
+    ).toHaveText('Getting Started')
+    await expect(page.getByTestId(`palette-block-${SEED_IDS.BLOCK_GS_5}`)).toHaveText(
+      'Use the search panel to find anything across all your pages.',
+    )
+
+    // A journal day's blocks, under the day's title in the journal format.
+    const today = await page.evaluate(() => {
+      localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+      const d = new Date()
+      const two = (n: number) => String(n).padStart(2, '0')
+      return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()}`
+    })
+    await input.fill('groceries')
+    await expect(page.getByTestId(`palette-page-header-${SEED_IDS.PAGE_DAILY}`)).toHaveText(today)
   })
 
   test('Escape closes the palette without navigating', async ({ page }) => {

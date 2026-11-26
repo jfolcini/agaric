@@ -486,8 +486,6 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Ocorrências em {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} a mais nesta página',
   'palette.moreInThisPage_other': '+{{count}} a mais nesta página',
-  'palette.welcomeEmpty':
-    'Digite para pesquisar páginas e blocos, ou [[ para vincular. Pressione > para comandos.',
   'palette.noResults': 'Nenhum resultado para “{{query}}”. Tente a pesquisa completa abaixo.',
   'palette.footerHintOpen': 'abrir',
   'palette.footerHintNewTab': 'nova aba',
@@ -529,7 +527,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Recentes',
   'palette.modeTags': 'Etiquetas',
   'palette.modeHelp': 'Ajuda',
-  'palette.modeHint': '> comandos · # etiquetas · ? ajuda',
+  'palette.modeHint': '> comandos · # etiquetas · ? ajuda · [[ vínculo',
   'palette.modeBackHint': 'Clique no chip para voltar à pesquisa',
   'palette.tagsTitle': 'Etiquetas',
   'palette.tagsWelcomeEmpty': 'Digite para filtrar etiquetas. Enter abre a etiqueta na pesquisa.',

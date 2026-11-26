@@ -105,6 +105,8 @@ export const settings: Record<string, string> = {
   'settings.quickCapture.saveFailed':
     'Das Tastenkürzel konnte nicht registriert werden. Es kollidiert möglicherweise mit einer anderen App.',
   'quickCapture.dialogTitle': 'Schnellerfassung',
+  'quickCapture.descriptionShortcut':
+    'Drücke <keys/> von überall, um eine Zeile im heutigen Journal festzuhalten.',
   'quickCapture.descriptionTouch': 'Notiere eine Zeile; sie landet im heutigen Journal.',
   'quickCapture.captureInputLabel': 'Inhalt der Schnellerfassung',
   'quickCapture.placeholder': 'Was geht dir durch den Kopf?',

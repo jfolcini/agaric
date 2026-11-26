@@ -493,8 +493,6 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Correspondances dans {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} autre dans cette page',
   'palette.moreInThisPage_other': '+{{count}} autres dans cette page',
-  'palette.welcomeEmpty':
-    'Tapez pour rechercher des pages, des blocs, ou [[ pour créer un lien. Appuyez sur > pour les commandes.',
   'palette.noResults':
     'Aucune correspondance pour “{{query}}”. Essayez la recherche étendue ci-dessous.',
   'palette.footerHintOpen': 'ouvrir',
@@ -537,7 +535,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Récentes',
   'palette.modeTags': 'Étiquettes',
   'palette.modeHelp': 'Aide',
-  'palette.modeHint': '> commandes · # étiquettes · ? aide',
+  'palette.modeHint': '> commandes · # étiquettes · ? aide · [[ lien',
   'palette.modeBackHint': 'Cliquez sur la puce pour revenir à la recherche',
   'palette.tagsTitle': 'Étiquettes',
   'palette.tagsWelcomeEmpty':
