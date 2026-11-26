@@ -3219,9 +3219,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # Typecheck + vitest on the Node 22 floor only: the PR gate's `vitest` job
-    # already runs the suite on Node 24. No Rust: vitest runs against the
-    # tauri mock. One suite run plus setup, with headroom for suite growth.
+    # Typecheck + vitest on the `engines.node` floor only: the PR gate's
+    # `vitest` job already runs the suite on `.nvmrc`'s Node. No Rust: vitest
+    # runs against the tauri mock. One suite run plus setup, with headroom for
+    # suite growth.
     timeout-minutes: 30
     permissions:
       contents: read
@@ -3230,22 +3231,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Node 22 (the `engines.node` floor)
+      - name: Install Node 24.22.1 (the `engines.node` floor)
         # The Node floor is checked nightly here, not per PR. Pinned to the
-        # exact floor of `engines.node` (^22.23.4), not a floating 22, so the
+        # exact floor of `engines.node` (^24.22.1), not a floating 24, so the
         # lane tests the lowest version we claim to support — keep in lockstep
         # with package.json.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 22.23.4
+          node-version: 24.22.1
           cache: npm
 
-      - name: Install npm dependencies (Node 22)
+      - name: Install npm dependencies (Node 24.22.1)
         # `.npmrc` sets engine-strict=true, so this step is itself part of the
-        # test: npm refuses to install if `engines.node` excludes 22.23.4.
+        # test: npm refuses to install if `engines.node` excludes 24.22.1.
         run: npm ci
 
-      - name: Typecheck + vitest on Node 22 (no coverage)
+      - name: Typecheck + vitest on Node 24.22.1 (no coverage)
         run: |
           npm run typecheck
           npx vitest run

@@ -396,11 +396,8 @@ devdb_migration_gap() {
   # stderr folded into the capture: a missing node (exit 127) or a
   # failure that never reaches the .mjs's own catch would otherwise
   # print to the terminal while $out stays empty — a hard block with a
-  # headline and a blank body. `--no-warnings` keeps a warning out of
-  # that fold: Node 22 prints an ExperimentalWarning on stderr every time
-  # `node:sqlite` loads, which would otherwise read as part of the
-  # diagnosis.
-  out="$(node --no-warnings "$DEVDB_GAP_MJS" "$src_tauri" "$migrations_dir" 2>&1)"
+  # headline and a blank body.
+  out="$(node "$DEVDB_GAP_MJS" "$src_tauri" "$migrations_dir" 2>&1)"
   rc=$?
   if [ "$rc" -eq 127 ]; then
     # `node` itself is missing — bash's own "command not found" is
@@ -1399,7 +1396,7 @@ typos")"
     case "$applied" in
       NODB) ;;
       NOTABLE)
-        node --no-warnings -e '
+        node -e '
 const { DatabaseSync } = require("node:sqlite")
 const db = new DatabaseSync(process.argv[1])
 db.exec("CREATE TABLE not_a_migrations_table (id INTEGER)")
@@ -1407,7 +1404,7 @@ db.close()
 ' "$dir/$dbname"
         ;;
       *)
-        node --no-warnings -e '
+        node -e '
 const { createHash } = require("node:crypto")
 const { readdirSync, readFileSync } = require("node:fs")
 const { join } = require("node:path")

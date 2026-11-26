@@ -68,11 +68,11 @@ retry() {
 # The "is the active node good enough?" test reads `engines.node` from
 # package.json rather than comparing majors against .nvmrc. A major-only test
 # is wrong in BOTH directions now that the range is derived from the dependency
-# tree (`^22.23.4 || ^24.22.1 || >=26.12.1`, @wdio being the binding
-# constraint): it would skip provisioning on 24.0–24.22.0 — same major as .nvmrc,
-# but rejected by engine-strict, so `npm ci` fails immediately after the script
-# says the node is fine — and it would provision needlessly over a perfectly
-# supported 22.23.4+. Reading the range keeps this in lockstep with
+# tree (`^24.22.1 || >=26.12.1`, @wdio setting each line's floor): it would
+# skip provisioning on 24.0–24.22.0 — same major as .nvmrc, but rejected by
+# engine-strict, so `npm ci` fails immediately after the script says the node
+# is fine — and it would provision needlessly over a perfectly supported
+# 26.12.1+. Reading the range keeps this in lockstep with
 # package.json automatically when the range is next re-derived.
 #
 # This deliberately uses nvm over plain HTTPS — Node from nodejs.org, and (only
