@@ -160,7 +160,7 @@ function makeDefaultParams(
     setFocused: vi.fn(),
     reorder: vi.fn(async () => {}),
     moveToParent: vi.fn(async () => {}),
-    moveBlocks: vi.fn(async () => {}),
+    moveBlocks: vi.fn(async () => true),
     ...rest,
   }
 }
