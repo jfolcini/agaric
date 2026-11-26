@@ -120,7 +120,7 @@ Where the installer takes no hash, `pins.txt` pins the exact version, never a ra
 
 Dependabot cannot see these pins. `just pin-bump <name> <version>` moves one and recomputes its sha256s from the new downloads (review that diff: the hashes are trusted on first use), and the weekly `stale-pins` lane of `scheduled-deep-checks.yml` (`just pins-stale`) goes red when one falls behind its upstream past the 7-day cooldown.
 
-Each release artifact ships SBOMs and an OpenVEX document generated together (`.github/actions/syft-sbom`; SECURITY.md § Mitigations). A waiver added to `deny.toml` or `.nsprc` becomes a VEX statement with its `reason` as the impact statement, so write the reason for a reader outside the repo.
+Each release artifact ships SBOMs and an OpenVEX document generated together (`.github/actions/syft-sbom`; SECURITY.md § Mitigations). A waiver added to `deny.toml` or `.nsprc` becomes a VEX statement with its `reason` as the impact statement, so write the reason for a reader outside the repo. A waiver that matches no advisory fails `cargo deny` (`unused-ignored-advisory = "deny"`): a bump that clears an advisory deletes its waiver and reruns `node scripts/sync-audit-from-deny.mjs` in the same commit.
 
 ## Database
 
@@ -134,6 +134,7 @@ Each release artifact ships SBOMs and an OpenVEX document generated together (`.
 - **State:** Zustand stores in `src/stores/`. `usePageBlockStore` is a per-page factory (`createPageBlockStore(pageId)` + `PageBlockContext`); `useBlockStore` holds focus and selection only.
 - **Editor:** one roving TipTap instance per mounted `BlockTree` (invariant 4) with the extensions in `src/editor/extensions/`. Serializer: `src/editor/markdown-serializer.ts`, no external deps.
 - **Logging:** `src/lib/logger.ts` writes to the console and, at `warn` and `error` only, to the Rust log; production drops `debug` and `info`, so a milestone that must reach the log calls `logFrontend` (`@/lib/ipc-helpers`). Never swallow errors silently; `.catch(() => {})` is banned, use `logger.warn` / `logger.error`.
+- **Errors shown to the user** go through `formatErrorForDisplay` (`src/lib/error-display.ts`), never the raw `message`: a coded validation error is translated by its code, and an uncoded one carries a `Validation error: ` prefix the mock leaves out, so only the bridge shows the difference.
 - **Style:** 2-space indent, single quotes, no semicolons, 100 columns (oxfmt).
 
 ## Frontend Development Guidelines
@@ -153,7 +154,7 @@ Before writing frontend code, check those four places for an existing primitive,
 **Mandatory patterns**
 
 - CVA variants + `cn()` (`src/lib/utils.ts`) for every component with variants; `Badge` is the reference.
-- Radix for every overlay (Select, Dialog, Popover, Tooltip, AlertDialog). Never hand-roll a dropdown or modal.
+- Radix for every overlay (Select, Dialog, Popover, Tooltip, AlertDialog). Never hand-roll a dropdown or modal. A control under `TooltipTrigger asChild` keys its look on its ARIA state (`aria-checked`, `aria-pressed`), never `data-state`, which the trigger overwrites.
 - Semantic color tokens, never raw Tailwind colors where a token exists. `ScrollArea` for scrollable containers, never bare `overflow-auto`.
 - 44 px touch targets via `[@media(pointer:coarse)]` (`touch-hit-area` for a chip that must keep its row height), and phone surfaces (sheet or dialog, menu sheet, drawer) keyed on `usePhoneLayout()`, touch-only layout on `useIsTouch() && usePhoneLayout()`, never width alone; a popover holding a field (`Popover`'s `sheetTitle`) and the phone header follow the same rule, listed in full in [docs/UX.md § Touch & responsive](docs/UX.md#touch--responsive); focus rings via `focus-ring-visible` (opaque 3 px; a half-alpha `ring-ring/50` fails 3:1); `aria-label` on every icon-only button, through `t()` i18n keys.
 - `EmptyState` for empty lists, `LoadingSkeleton` for initial loads, `Spinner` for action feedback.
@@ -234,7 +235,7 @@ Maintainer only, through `scripts/release.sh <version>`; the tag push publishes.
 
 ### Acceptance is falsification
 
-A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify in one shell command that backs up (`cp /abs/f /tmp/f.bak`), restores on exit (`trap 'cp /tmp/f.bak /abs/f' EXIT`; a relative path misses after a `cd`), mutates once (a second mutation in the same command backs up the first's mutated file), confirms the mutation applied (`! cmp -s`), and runs: a mutation left between tool calls by an interrupted run has shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
+A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify in one shell command that backs up under a name of its own (`b=$(mktemp); cp /abs/f "$b"`: `/tmp` and the scratchpad are shared by every agent in the session), restores on exit (`trap 'cp "$b" /abs/f' EXIT`; a relative path misses after a `cd`), mutates once (a second mutation in the same command backs up the first's mutated file), confirms the mutation applied (`! cmp -s`), and runs: a mutation left between tool calls by an interrupted run has shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
 
 ```bash
 node scripts/run-mutation.mjs <module>       # frontend

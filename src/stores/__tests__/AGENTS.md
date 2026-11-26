@@ -50,7 +50,7 @@ Prefer the global `invoke` mock, which catches every call. `vi.mock('@/lib/ipc-h
 Per-page state is a `Map<string, PageUndoState>` (`undoDepth`, `redoStack`, `redoGroupSizes`); reset with `useUndoStore.setState({ pages: new Map() })`.
 
 - **Two revert paths.** Entries with op refs from `onNewAction` revert by ref (`undoOp`, or one atomic `undoOps` per group); ref-less and pre-tracking entries fall back to the positional `undoPageGroup` anchored on `undoDepth`. Test both.
-- **Batch grouping.** Same-device ops within `UNDO_GROUP_WINDOW_MS` (import from `src/stores/undo.ts`) form one undo unit. Use `makeHistoryEntry()` with explicit timestamps; assert inside window → grouped, past it → separate, device change → separate.
+- **Batch grouping.** Same-device ops within `UNDO_GROUP_WINDOW_MS` (import from `src/lib/constants.ts`) form one undo unit. Use `makeHistoryEntry()` with explicit timestamps; assert inside window → grouped, past it → separate, device change → separate.
 - **Optimistic update + rollback.** `undo()` bumps `undoDepth` immediately; on a rejected `undoPageGroup` assert it rolled back.
 - **Page-blocks integration.** Every mutation (`createBelow`, `edit`, `remove`) calls `onNewAction(pageId, opRefs?)` on success (clearing the redo stack), never on backend error.
 

@@ -16,7 +16,7 @@ To share SQL between `query!` sites, keep each macro's literal and add a test as
 
 ## specta bindings
 
-`just gen-bindings` (when, in `AGENTS.md` § TypeScript Bindings) exceeds the 10-minute foreground limit: run it as a background task.
+`just gen-bindings` (when, in `AGENTS.md` § TypeScript Bindings) exceeds the 10-minute foreground limit: run it as a background task. When it changes code your branch did not touch, two PRs crossed on `main` and `ts_bindings_up_to_date` is red there: land the regeneration once, in its own PR, not on every branch.
 
 ## Migrations
 
