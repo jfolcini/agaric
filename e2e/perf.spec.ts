@@ -1005,7 +1005,14 @@ interface TraceEvent {
 }
 
 /** Median and range over the boots, one row per metric seen in any boot. */
-function summarize(boots: Array<Map<string, number>>): Array<Record<string, string | number>> {
+interface MetricSummary {
+  metric: string
+  median: number
+  min: number
+  max: number
+}
+
+function summarize(boots: Array<Map<string, number>>): MetricSummary[] {
   const keys = [...new Set(boots.flatMap((b) => [...b.keys()]))]
   return keys.map((metric) => {
     const values = boots.map((b) => b.get(metric) ?? 0).toSorted((a, b) => a - b)
@@ -1162,10 +1169,10 @@ test('perf: boot main-thread profile (#5440) @editor @pages @journal @search', a
   }
 
   const rows = summarize(boots)
-  const fixed = rows.filter((r) => !String(r.metric).startsWith('self '))
+  const fixed = rows.filter((r) => !r.metric.startsWith('self '))
   const selfRows = rows
-    .filter((r) => String(r.metric).startsWith('self '))
-    .toSorted((a, b) => Number(b.median) - Number(a.median))
+    .filter((r) => r.metric.startsWith('self '))
+    .toSorted((a, b) => b.median - a.median)
     .slice(0, 15)
   await saveOutput('boot-profile.json', JSON.stringify({ cpuThrottle: CPU, rows }, null, 2))
   console.log(`\nboot profile (CPU ×${CPU}, ${boots.length} boots, ms: median [min, max])`)
