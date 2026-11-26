@@ -44,6 +44,7 @@ export const common: Record<string, string> = {
   'sidebar.offline': 'Offline',
   'sidebar.syncTooltip': 'Alle Geräte synchronisieren',
   'sidebar.syncing': 'Wird synchronisiert...',
+  'sidebar.syncStateFailed': 'Fehlgeschlagen',
   'bookmarks.title': 'Lesezeichen',
   'bookmarks.emptyHint': 'Setze ein Lesezeichen auf eine Seite, um sie hier zu behalten.',
   'bookmarks.remove': '{{title}} aus den Lesezeichen entfernen',

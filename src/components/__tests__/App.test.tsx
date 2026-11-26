@@ -1105,44 +1105,35 @@ describe('App', () => {
     // Sub-fix 1: the sidebar-footer Sync button surfaces a
     // glanceable colored dot so the user has a sync signal regardless
     // of whether the StatusPanel view is open.
-    describe('sidebar Sync button status dot', () => {
-      it('renders the dot with the pending color when online but there are no peers', async () => {
-        // Online + no peers is a pairing-state problem (waiting for action),
-        // Distinct from offline (network problem). split these two
-        // states off from the shared muted gray to make the difference
-        // glanceable.
+    // #7040 P11 — the sidebar's Sync row names its state in words.
+    describe('sidebar Sync row state', () => {
+      it('names a pairing problem when online but there are no peers', async () => {
         useSyncStore.setState({ state: 'idle', peers: [] })
         render(<App />)
-        const dot = await screen.findByTestId('sync-button-status-dot')
-        expect(dot).toBeInTheDocument()
-        // Whole-token match: a `className` substring check would also pass on
-        // `bg-status-pending-foo`, and `bg-destructive` below is a prefix of
-        // every `bg-destructive/NN` opacity variant.
-        expect(dot).toHaveClass('bg-status-pending-foreground')
-        // Decorative — text label carries semantics.
-        expect(dot).toHaveAttribute('aria-hidden', 'true')
+        expect(await screen.findByTestId('sync-state')).toHaveTextContent(t('sync.noPeersTitle'))
       })
 
-      it('renders the dot with the active color while syncing with peers', async () => {
+      it('says it is syncing while syncing with peers', async () => {
         useSyncStore.setState({
           state: 'syncing',
           peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0, name: null }],
         })
         render(<App />)
-        const dot = await screen.findByTestId('sync-button-status-dot')
-        expect(dot).toHaveClass('bg-sync-active')
-        expect(dot).toHaveAttribute('data-sync-state', 'syncing')
+        const state = await screen.findByTestId('sync-state')
+        expect(state).toHaveTextContent(t('sidebar.syncing'))
+        expect(state).toHaveAttribute('data-sync-state', 'syncing')
       })
 
-      it('renders the dot with the destructive color on sync error', async () => {
+      it('says the sync failed, in the destructive tone, on sync error', async () => {
         useSyncStore.setState({
           state: 'error',
           error: 'connection lost',
           peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0, name: null }],
         })
         render(<App />)
-        const dot = await screen.findByTestId('sync-button-status-dot')
-        expect(dot).toHaveClass('bg-destructive')
+        const state = await screen.findByTestId('sync-state')
+        expect(state).toHaveTextContent(t('sidebar.syncStateFailed'))
+        expect(state).toHaveClass('text-destructive')
       })
     })
 

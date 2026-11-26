@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -218,16 +219,16 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByText('Block properties')).not.toBeInTheDocument()
   })
 
-  // The SheetContent takes the default sheet width (75% of a phone, capped at
-  // `sm:max-w-sm` on desktop) instead of a narrower per-drawer override.
-  it('SheetContent uses the default sheet width, not a drawer-specific override', () => {
+  // The SheetContent is as wide as Block history's (#7040 O7): 75% of the window, capped at
+  // `sm:max-w-lg` on desktop, never a narrower per-drawer override.
+  it("SheetContent shares Block history's width", () => {
     setupMock()
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const sheetContent = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
     expect(sheetContent).not.toBeNull()
     expect(sheetContent.className).toContain('w-3/4')
-    expect(sheetContent.className).toContain('sm:max-w-sm')
+    expect(sheetContent.className).toContain('sm:max-w-lg')
     expect(sheetContent.className).not.toContain('sm:w-80')
   })
 
@@ -318,7 +319,7 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.getByText('Due')).toBeInTheDocument()
     })
-    const dateInput = screen.getByDisplayValue('2026-06-15')
+    const dateInput = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     expect(dateInput).toBeInTheDocument()
   })
 
@@ -348,7 +349,7 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.getByText('Scheduled')).toBeInTheDocument()
     })
-    const dateInput = screen.getByDisplayValue('2026-07-01')
+    const dateInput = screen.getByDisplayValue(formatCompactDate('2026-07-01'))
     expect(dateInput).toBeInTheDocument()
   })
 
@@ -455,7 +456,7 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(screen.getByText('Due')).toBeInTheDocument()
     })
-    expect(screen.getByDisplayValue('2026-08-20')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(formatCompactDate('2026-08-20'))).toBeInTheDocument()
   })
 
   it('property value inputs have accessible labels', async () => {
@@ -598,11 +599,13 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
     })
 
-    // Badge shows the formatted name
-    const badge = screen.getByText('Created At').closest('[data-slot="badge"]') as HTMLElement
+    // The label shows the formatted name
+    const badge = screen
+      .getByText('Created At')
+      .closest('[data-slot="property-label"]') as HTMLElement
     expect(badge).toBeInTheDocument()
 
-    // Badge should have icon styling (flex items-center gap-1) and NOT font-mono
+    // The label has icon styling (flex items-center gap-1) and NOT font-mono
     expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
     expect(badge).not.toHaveClass('font-mono')
 
@@ -621,7 +624,7 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Effort')).toBeInTheDocument()
     })
 
-    const badge = screen.getByText('Effort').closest('[data-slot="badge"]') as HTMLElement
+    const badge = screen.getByText('Effort').closest('[data-slot="property-label"]') as HTMLElement
     expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
     expect(badge).not.toHaveClass('font-mono')
 
@@ -640,7 +643,9 @@ describe('BlockPropertyDrawer', () => {
     })
 
     // Custom properties keep font-mono and raw key as title
-    const badge = screen.getByText('my_custom').closest('[data-slot="badge"]') as HTMLElement
+    const badge = screen
+      .getByText('my_custom')
+      .closest('[data-slot="property-label"]') as HTMLElement
     expect(badge).toHaveClass('font-mono')
 
     // No icon for custom properties
@@ -932,7 +937,7 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Due')).toBeInTheDocument()
     })
 
-    const dateInput = screen.getByDisplayValue('2026-06-15')
+    const dateInput = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(dateInput)
     await user.type(dateInput, '2026-12-25')
     await user.tab() // triggers onBlur → handleSaveBuiltinDate
@@ -1608,6 +1613,9 @@ describe('PropertyField', () => {
 
     const input = screen.getByLabelText('Due value')
     expect(input).toHaveAttribute('type', 'text')
+    // At rest the date reads as the chips do; focus shows the ISO date to edit.
+    expect(input).toHaveValue(formatCompactDate('2026-06-15'))
+    fireEvent.focus(input)
     expect(input).toHaveValue('2026-06-15')
   })
 
@@ -1669,7 +1677,9 @@ describe('PropertyField', () => {
       />,
     )
 
-    const badge = screen.getByText('Due Date').closest('[data-slot="badge"]') as HTMLElement
+    const badge = screen
+      .getByText('Due Date')
+      .closest('[data-slot="property-label"]') as HTMLElement
     expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
     expect(badge).not.toHaveClass('font-mono')
     expect(badge.querySelector('svg')).toBeInTheDocument()
@@ -1685,7 +1695,9 @@ describe('PropertyField', () => {
       />,
     )
 
-    const badge = screen.getByText('custom_key').closest('[data-slot="badge"]') as HTMLElement
+    const badge = screen
+      .getByText('custom_key')
+      .closest('[data-slot="property-label"]') as HTMLElement
     expect(badge).toHaveClass('font-mono')
     expect(badge.querySelector('svg')).not.toBeInTheDocument()
   })

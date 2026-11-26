@@ -446,15 +446,9 @@ const THEME_PAIRS = [
   { pair: 'code section', fg: 'alert-info-foreground', bg: 'muted', min: AA_NORMAL },
   // The check glyph on a completed task's filled box (#6528).
   { pair: 'DONE check mark', fg: 'task-done-foreground', bg: 'task-done', min: NON_TEXT },
-  // The sidebar Sync button's status dot (#6528).
-  { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'sidebar', min: NON_TEXT },
-  { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'sidebar', min: NON_TEXT },
-  {
-    pair: 'sync dot, no devices paired',
-    fg: 'status-pending-foreground',
-    bg: 'sidebar',
-    min: NON_TEXT,
-  },
+  // The sync dot on the phone header's drawer button (#6528, #6870).
+  { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'background', min: NON_TEXT },
+  { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'background', min: NON_TEXT },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>

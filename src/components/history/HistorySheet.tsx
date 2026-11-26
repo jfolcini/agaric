@@ -34,13 +34,10 @@ export function HistorySheet({
   const phoneLayout = usePhoneLayout()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      {/* A phone gets a bottom sheet (#5931). `sm:max-w-lg` (≈512 px) overrides the Sheet primitive's default
-          `sm:max-w-sm` (≈384 px) — history rows are dense (timestamp +
-          op-icon + author + multi-line preview + diff toggle + restore
-          button) and 384 px guarantees aggressive single-word wrapping in
-          the diff content. 512 px keeps the filter bar on one row and the
-          diff hunks readable. Per-call override; other Sheet consumers
-          keep the default width. */}
+      {/* A phone gets a bottom sheet (#5931). `sm:max-w-lg` (≈512 px) overrides the Sheet
+          primitive's default `sm:max-w-sm` (≈384 px): history rows are dense, and 512 px keeps
+          the filter bar on one row and the diff hunks readable. Block properties shares the
+          width (#7040 O7). */}
       <SheetContent
         side={phoneLayout ? 'bottom' : 'right'}
         className={phoneLayout ? undefined : 'sm:max-w-lg'}
