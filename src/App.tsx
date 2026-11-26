@@ -225,11 +225,11 @@ function MobileSidebarTriggerButton(): ReactElement {
         className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3 [@media(pointer:coarse)]:self-start"
       >
         {paired && (
-          // On the icon's top-right corner, as on the sidebar's Sync icon.
+          // On the icon's top-right corner.
           <span
             className={cn(
               'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2 [@media(pointer:coarse)]:right-2',
-              syncDotClass(syncState, true),
+              syncDotClass(syncState),
             )}
             data-testid="mobile-sync-status-dot"
             data-sync-state={syncState}

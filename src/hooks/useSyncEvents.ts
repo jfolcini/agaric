@@ -212,7 +212,7 @@ export function useSyncEvents(): void {
         // The store writes are unconditional: `ops_*` feed the status panel's
         // honestly-labelled sync-message counters, and `lastSynced` is the
         // liveness signal that makes silence safe. A converged no-op tick still
-        // moved the "last synced" clock and still lit the sidebar status dot —
+        // moved the "last synced" clock and the sidebar's Sync row —
         // the user is not being kept in the dark, they are being kept quiet.
         store.setState('idle')
         store.setOpsReceived(ops_received)

@@ -659,7 +659,7 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     await user.click(screen.getByRole('button', { name: t('sidebar.sync') }))
 
     expect(props.onSyncClick).toHaveBeenCalled()
-    // The sync result shows in the sidebar's own status dot.
+    // The sync result shows in the sidebar's own Sync row.
     expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
   })
 

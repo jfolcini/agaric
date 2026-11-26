@@ -21,7 +21,7 @@ import { useSyncStore } from '@/stores/sync'
  * Maps a backend `PeerRef` to the store-facing `PeerInfo` shape (#1076).
  *
  * Single source of truth for the row → store mapping so `useSyncStore.peers`
- * — consumed by `StatusPanel` (Sync panel) and `AppSidebar` (status dot) —
+ * — consumed by `StatusPanel` (Sync panel) and `AppSidebar` (Sync row) —
  * reflects the SAME paired devices the working `PairingDialog` /
  * `DeviceManagement` components read via `listPeerRefs()`.
  *
@@ -31,7 +31,7 @@ import { useSyncStore } from '@/stores/sync'
  * #4084: it reads `MAX(synced_at, streamed_at)`, matching the device list.
  * `synced_at` alone is the puller's clock — a device that only ever succeeds
  * as responder never advances it (#610 forbids the streamer touching it), so
- * the StatusPanel and sidebar status dot showed "never synced" for a peer that
+ * the StatusPanel and sidebar Sync row showed "never synced" for a peer that
  * was syncing on every tick.
  */
 export function mapPeerRefToInfo(row: PeerRef): PeerInfo {
@@ -270,7 +270,7 @@ export function useSyncTrigger() {
       try {
         const peers = unwrap(await commands.listPeerRefs())
         // #1076: reflect the authoritative backend peer list into the store
-        // so `StatusPanel`'s Sync panel and `AppSidebar`'s status dot (both
+        // so `StatusPanel`'s Sync panel and `AppSidebar`'s Sync row (both
         // gated on `useSyncStore.peers`) become correct. Runs for the empty
         // case too, clearing any stale peers when the last device unpairs.
         useSyncStore.getState().setPeers(peers.map(mapPeerRefToInfo))

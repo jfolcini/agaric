@@ -681,7 +681,7 @@ describe('useSyncTrigger', () => {
 
   // #4305 — the same successful run, reached the way the hook itself reaches it
   // every 60 s. A tick that succeeded answers a question nobody asked; the
-  // sidebar status dot and "last synced" already say it happened. Before this,
+  // sidebar's Sync row and "last synced" already say it happened. Before this,
   // a user with an idle pair got "Sync complete" once a minute, forever, on top
   // of the "Synced 2 changes from device" the backend was feeding them.
   it('is silent on a successful scheduled tick (#4305)', async () => {

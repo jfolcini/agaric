@@ -59,16 +59,9 @@ import type { View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 
-/**
- * Compute the CSS class for the sync status dot colour.
- *
- * Distinguish "offline" (network problem, nothing the user can do)
- * from "no peers" (pairing problem, the user needs to add a device). Offline
- * wins over no-peers because peer state is meaningless without a network.
- */
-export function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
+/** The colour of the sync dot on the phone header's drawer button, shown once a device is paired. */
+export function syncDotClass(syncState: SyncState): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
-  if (!hasPeers) return 'bg-status-pending-foreground'
   switch (syncState) {
     case 'idle': {
       return 'bg-sync-idle'
@@ -459,7 +452,7 @@ function AppSidebarInner({
  * top-level render (see design-system-perf-review-2026-05-09.md item 10).
  * Wrapping with `React.memo` collapses parent-driven rerenders to the
  * subset where a prop identity actually changed; intra-sidebar state
- * (sync dot colour) re-renders on its own subscriptions
+ * (the sync row's state) re-renders on its own subscriptions
  * through `SpaceSwitcher` and `useSidebar()`. Mirrors the
  * `BlockListItem` Inner/memo pattern used elsewhere in the tree.
  */
