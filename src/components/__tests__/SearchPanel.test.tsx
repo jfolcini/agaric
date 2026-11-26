@@ -245,6 +245,27 @@ describe('SearchPanel', () => {
     expect(screen.queryByText('Searching...')).not.toBeInTheDocument()
   })
 
+  // A block written just before the search can miss the index; Enter again retries.
+  it('a second Enter on the same query searches again and shows what appeared since', async () => {
+    let indexed: SearchRow[] = []
+    stubInvoke({ search_blocks: () => searchPage(indexed) })
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const searchCalls = () => mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'search_blocks')
+
+    typeAndSubmit(input, 'test')
+    await waitFor(() => expect(searchCalls()).toHaveLength(1))
+    expect(await screen.findByText(t('search.noResultsFound'))).toBeInTheDocument()
+
+    indexed = [makeSearchResult()]
+    const form = input.closest('form')
+    if (!form) throw new Error('no search form')
+    fireEvent.submit(form)
+
+    await waitFor(() => expect(searchCalls()).toHaveLength(2))
+    expect(await screen.findByText(textContent('test content'))).toBeInTheDocument()
+  })
+
   it('searches via form submit', async () => {
     stubInvoke({
       search_blocks: () => searchPage([makeSearchResult()]),
