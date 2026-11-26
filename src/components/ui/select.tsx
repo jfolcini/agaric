@@ -141,9 +141,12 @@ const SelectItem = ({
   ref,
   className,
   children,
+  startContent,
   endContent,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /** Content rendered BEFORE the ItemText, kept out of the trigger like `endContent`. */
+  startContent?: React.ReactNode
   /**
    * Optional content rendered AFTER `<SelectPrimitive.ItemText>`, OUTSIDE
    * the auto-mirror surface. Use this for trailing affordances (digit
@@ -181,6 +184,7 @@ const SelectItem = ({
         <CheckIcon className="size-4" />
       </SelectPrimitive.ItemIndicator>
     </span>
+    {startContent}
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
     {endContent}
   </SelectPrimitive.Item>
