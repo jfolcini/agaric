@@ -183,7 +183,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeJournalTemplate': 'Remove journal template',
   'pageHeader.menuAddAlias': 'Add alias',
   'pageHeader.menuAddTag': 'Add tag',
-  'pageHeader.menuAddProperty': 'Add property',
+  'pageHeader.menuProperties': 'Properties…',
 
   // Translators: PageHeader kebab menu: screen-reader names of its groups of items: adding things
   // to the page, ways to view it, its template status, and editing it. "Export" is the item that
@@ -744,13 +744,14 @@ export const pages: Record<string, string> = {
   'pageProperty.addFailed': 'Failed to add property',
   'pageProperty.toggleLabel': 'Toggle properties',
 
-  // Translators: Collapsible "Properties" heading under the page title (followed by the count in
-  // parentheses) and the "Add property" picker: button and its aria-label (also the picker's title
+  // Translators: "Properties" chip in the tags row under the page title (followed by the count),
+  // also the title of the dialog it opens, and that dialog's description; the "Add property" picker: button and its aria-label (also the picker's title
   // on phones), the picker's screen-reader name, its search box ("definitions" = named properties
   // with a value type), and a button creating a property named {{name}} (the typed name).
   // addPropertyDisabledInfo = screen-reader label of the (i) button beside a disabled "Add
   // property" button that says why.
   'pageProperty.propertiesButton': 'Properties',
+  'pageProperty.dialogDescription': 'The properties set on this page.',
   'pageProperty.addPropertyLabel': 'Add property',
   'pageProperty.addPropertyButton': 'Add property',
   'pageProperty.addPropertyDisabledInfo': 'Why properties cannot be added yet',

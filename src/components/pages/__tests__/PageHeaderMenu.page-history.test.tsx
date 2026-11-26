@@ -27,7 +27,7 @@ const props: PageHeaderMenuProps = {
   onKebabOpenChange: noop,
   onAddAlias: noop,
   onAddTag: noop,
-  onAddProperty: noop,
+  onOpenProperties: noop,
   onToggleTemplate: noop,
   onToggleJournalTemplate: noop,
   onExport: noop,

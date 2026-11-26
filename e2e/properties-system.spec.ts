@@ -13,6 +13,7 @@ import {
   getConsoleErrors,
   navigateToView,
   openPage,
+  openPagePropertiesFromMenu,
   openPropertySheet,
   openSettingsTab,
   reopenPage,
@@ -420,8 +421,8 @@ test.describe('Property definitions view @editor', () => {
 
   test('creating a select definition from a page asks for its options', async ({ page }) => {
     await openPage(page, 'Quick Notes')
-    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Add property', exact: true }).click()
+    const properties = await openPagePropertiesFromMenu(page)
+    await properties.getByRole('button', { name: 'Add property', exact: true }).click()
     const picker = activePopover(page)
     await picker.getByRole('textbox', { name: 'Search definitions' }).fill('size')
     await picker.getByRole('button', { name: /^Create "size"/ }).click()

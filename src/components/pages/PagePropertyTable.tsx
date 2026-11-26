@@ -1,22 +1,24 @@
 /**
- * PagePropertyTable — collapsible property table for a page.
+ * PagePropertyTable — a page's properties, in a dialog on desktop and a bottom
+ * sheet on a phone (#7155 R13).
  *
- * Rendered below tags in PageHeader. Shows page properties with
- * typed inputs based on property definitions, and a `t('pageProperty.addPropertyButton')`
- * popover for adding new properties from existing definitions or
- * creating new definitions.
+ * Opened from the page header's Properties chip and its ⋮ › Properties….
+ * Shows page properties with typed inputs based on property definitions, and
+ * a `t('pageProperty.addPropertyButton')` popover for adding new properties
+ * from existing definitions or creating new definitions.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { SuggestedPropertyRows } from '@/components/properties/SuggestedPropertyRows'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { SectionCount } from '@/components/ui/section-count'
+import { DialogBody } from '@/components/ui/dialog'
+import { SheetBody } from '@/components/ui/sheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { useSpacePropertyDefList } from '@/hooks/useSpacePropertyDefs'
@@ -44,16 +46,15 @@ const TASK_ONLY_PROPERTIES = new Set(['effort', 'assignee', 'location'])
 
 interface PagePropertyTableProps {
   pageId: string
-  forceExpanded?: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }
 
-export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTableProps) {
+export function PagePropertyTable({ pageId, open, onOpenChange }: PagePropertyTableProps) {
   const { t } = useTranslation()
   // The page is in the active space, whose definitions apply (#5841).
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [expanded, setExpanded] = useState(false)
   const [properties, setProperties] = useState<PropertyRow[]>([])
-  const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   // #2792 — keys of properties added but not yet persisted (`opensDraftRow`). Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such
   // properties have no valid empty value (the real backend rejects it), so we
@@ -65,7 +66,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
   // #6755 — keys the page's tags offer it, shown as empty rows.
   // Read once the table opens, not on every page open (#5445 pins that IPC).
-  const suggestions = useSuggestedProperties(expanded ? pageId : null)
+  const suggestions = useSuggestedProperties(open ? pageId : null)
   // The shared definitions query, so a definition edited elsewhere reaches this
   // header's inputs through `invalidatePropertyCaches()` (#6946).
   const { data: storedDefs, error: defsError, isPending: defsPending } = useSpacePropertyDefList()
@@ -123,16 +124,6 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       fetch: 'listPropertyDefs',
     })
   }, [defsError, pageId, t])
-
-  // Auto-expand and open add-popover when forceExpanded transitions to true
-  const prevForceRef = useRef(false)
-  useEffect(() => {
-    if (forceExpanded && !prevForceRef.current) {
-      setExpanded(true)
-      setShowAddPopover(true)
-    }
-    prevForceRef.current = !!forceExpanded
-  }, [forceExpanded])
 
   const findDef = useCallback(
     (key: string): PropertyDefinition | undefined => definitions.find((d) => d.key === key),
@@ -334,102 +325,97 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 
-  const propertyCount = properties.length
-
-  if (!loading && properties.length === 0 && !expanded && !forceExpanded) {
-    return null
-  }
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description } = parts
+  const Body = parts.isMobile ? SheetBody : DialogBody
 
   return (
-    <div className="page-property-table">
-      <CollapsiblePanelHeader
-        isCollapsed={!expanded}
-        onToggle={() => setExpanded((prev) => !prev)}
-        className="page-property-table-header"
-      >
-        <span>
-          {propertyCount > 0 ? (
-            <SectionCount label={t('pageProperty.propertiesButton')} count={propertyCount} />
-          ) : (
-            t('pageProperty.propertiesButton')
-          )}
-        </span>
-      </CollapsiblePanelHeader>
+    <>
+      <Root open={open} onOpenChange={onOpenChange}>
+        <Content className="page-property-table">
+          <Header>
+            <Title>{t('pageProperty.propertiesButton')}</Title>
+            <Description>{t('pageProperty.dialogDescription')}</Description>
+          </Header>
+          <Body>
+            <div className="space-y-1.5">
+              {loading && (
+                <div aria-busy="true">
+                  <LoadingSkeleton count={2} height="h-6" data-testid="property-loading" />
+                </div>
+              )}
 
-      {expanded && (
-        <div className="mt-1 space-y-1.5 pl-2">
-          {loading && (
-            <div aria-busy="true">
-              <LoadingSkeleton count={2} height="h-6" data-testid="property-loading" />
-            </div>
-          )}
+              {!loading &&
+                properties.map((prop) => {
+                  const def = findDef(prop.key)
+                  const canDelete = !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
+                  return (
+                    <PropertyRowEditor
+                      key={prop.key}
+                      blockId={pageId}
+                      prop={prop}
+                      def={def}
+                      onSave={(rawValue) => void doSaveProperty(prop.key, def, rawValue)}
+                      forceSaveOnBlur={draftKeys.has(prop.key)}
+                      onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
+                      onDefUpdated={(updatedDef) => {
+                        updateDefinitions((prev) =>
+                          prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
+                        )
+                      }}
+                      onRefSaved={() =>
+                        void (async () => {
+                          forgetDraft(prop.key)
+                          const updated = unwrap(await commands.getProperties(pageId))
+                          setProperties(updated)
+                        })()
+                      }
+                    />
+                  )
+                })}
 
-          {!loading &&
-            properties.map((prop) => {
-              const def = findDef(prop.key)
-              const canDelete = !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
-              return (
-                <PropertyRowEditor
-                  key={prop.key}
+              {!loading && (
+                <SuggestedPropertyRows
                   blockId={pageId}
-                  prop={prop}
-                  def={def}
-                  onSave={(rawValue) => void doSaveProperty(prop.key, def, rawValue)}
-                  forceSaveOnBlur={draftKeys.has(prop.key)}
-                  onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
-                  onDefUpdated={(updatedDef) => {
-                    updateDefinitions((prev) =>
-                      prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
-                    )
-                  }}
-                  onRefSaved={() =>
-                    void (async () => {
-                      forgetDraft(prop.key)
-                      const updated = unwrap(await commands.getProperties(pageId))
-                      setProperties(updated)
-                    })()
+                  suggestions={suggestions}
+                  definitions={definitions}
+                  shownKeys={new Set(properties.map((p) => p.key))}
+                  onSave={(key, def, raw) => void doSaveProperty(key, def, raw)}
+                  onWritten={() =>
+                    void commands
+                      .getProperties(pageId)
+                      .then(unwrap)
+                      .then(setProperties)
+                      .catch((err: unknown) => {
+                        logger.warn(
+                          'PagePropertyTable',
+                          'reload after a write failed',
+                          { pageId },
+                          err,
+                        )
+                      })
                   }
                 />
-              )
-            })}
+              )}
 
-          {!loading && (
-            <SuggestedPropertyRows
-              blockId={pageId}
-              suggestions={suggestions}
-              definitions={definitions}
-              shownKeys={new Set(properties.map((p) => p.key))}
-              onSave={(key, def, raw) => void doSaveProperty(key, def, raw)}
-              onWritten={() =>
-                void commands
-                  .getProperties(pageId)
-                  .then(unwrap)
-                  .then(setProperties)
-                  .catch((err: unknown) => {
-                    logger.warn('PagePropertyTable', 'reload after a write failed', { pageId }, err)
-                  })
-              }
-            />
-          )}
-
-          {!loading && (
-            <AddPropertyPopover
-              definitions={availableDefs}
-              onAdd={handleAddFromDef}
-              supportCreateDef
-              onCreateDef={handleCreateDef}
-              open={showAddPopover}
-              onOpenChange={setShowAddPopover}
-            />
-          )}
-        </div>
-      )}
+              {!loading && (
+                <AddPropertyPopover
+                  definitions={availableDefs}
+                  onAdd={handleAddFromDef}
+                  supportCreateDef
+                  onCreateDef={handleCreateDef}
+                />
+              )}
+            </div>
+          </Body>
+        </Content>
+      </Root>
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
+        onOpenChange={(confirmOpen) => {
+          if (!confirmOpen) setDeleteTarget(null)
         }}
         titleKey="property.deleteConfirm"
         descriptionKey="property.deleteConfirmDesc"
@@ -438,6 +424,6 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         variant="destructive"
         onConfirm={handleConfirmDelete}
       />
-    </div>
+    </>
   )
 }

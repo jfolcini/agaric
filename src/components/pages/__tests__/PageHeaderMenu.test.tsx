@@ -68,7 +68,7 @@ const defaultProps: PageHeaderMenuProps = {
   onKebabOpenChange: vi.fn(),
   onAddAlias: vi.fn(),
   onAddTag: vi.fn(),
-  onAddProperty: vi.fn(),
+  onOpenProperties: vi.fn(),
   onToggleTemplate: vi.fn(),
   onToggleJournalTemplate: vi.fn(),
   onExport: vi.fn(),
@@ -134,7 +134,7 @@ describe('PageHeaderMenu rendering', () => {
     expect(screen.getByText(t('pageHeader.insertEmoji'))).toBeInTheDocument()
     expect(screen.getByText('Add alias')).toBeInTheDocument()
     expect(screen.getByText('Add tag')).toBeInTheDocument()
-    expect(screen.getByText('Add property')).toBeInTheDocument()
+    expect(screen.getByText('Properties…')).toBeInTheDocument()
     expect(screen.getByText(/Save as template/i)).toBeInTheDocument()
     expect(screen.getByText(/Set as journal template/i)).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: t('pageHeader.exportMenu') })).toBeInTheDocument()
@@ -237,14 +237,14 @@ describe('PageHeaderMenu interaction', () => {
     expect(onAddTag).toHaveBeenCalledOnce()
   })
 
-  it('calls onAddProperty when "Add property" clicked', async () => {
-    const onAddProperty = vi.fn()
+  it('calls onOpenProperties when "Properties…" clicked', async () => {
+    const onOpenProperties = vi.fn()
     const user = userEvent.setup()
 
-    renderMenu({ kebabOpen: true, onAddProperty })
+    renderMenu({ kebabOpen: true, onOpenProperties })
 
-    await user.click(screen.getByText('Add property'))
-    expect(onAddProperty).toHaveBeenCalledOnce()
+    await user.click(screen.getByText('Properties…'))
+    expect(onOpenProperties).toHaveBeenCalledOnce()
   })
 
   it('calls onToggleTemplate when template option clicked', async () => {
@@ -706,7 +706,7 @@ describe('PageHeaderMenu sections', () => {
       t('pageHeader.sectionEdit'),
     ])
     expect(sections.map(names)).toEqual([
-      ['Add alias', 'Add tag', 'Add property', t('pageHeader.insertEmoji')],
+      ['Add alias', 'Add tag', 'Properties…', t('pageHeader.insertEmoji')],
       [
         t('pageHeader.openOutline'),
         t('pageHeader.pageHistory'),
