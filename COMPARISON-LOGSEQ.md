@@ -21,7 +21,7 @@ Rows below say which one they mean where it matters.
 | Sync | DB version: through a server, over the internet, with real-time collaboration between users. A paid feature for Open Collective backers and sponsors, or self-hosted. File version: its docs describe Logseq Sync, a paid beta for the same contributors; the files can also be carried by any file-sync tool | Directly between your own paired devices on one local network. Free, with no account and no server. Android syncs only in the foreground. Single user |
 | Phones | File version in the App Store and on F-Droid. For the DB version a native iOS app is in testing with backers, and Android testing has been announced | Android as a sideloaded APK. No iOS |
 | Extending it | A plugin API and marketplace, custom CSS and JS, a CLI, a local HTTP API, an MCP server | No plugins or scripting. A custom stylesheet, rebindable keys, and an MCP server |
-| Data model | DB version: tags are classes with inherited properties; properties are typed and can hold several values | Tags are labels, nested by `/` in the name. Properties are typed, and any type but boolean can hold several values |
+| Data model | DB version: tags are classes with inherited properties; properties are typed and can hold several values | A tag has a page of notes and names the properties its blocks are offered, with no defaults; tags nest by `/` in the name. Properties are typed, and any type but boolean can hold several values |
 | Who makes it | A team funded by its backers, with a large community | One maintainer, pre-1.0 |
 
 ## Feature by feature
@@ -34,15 +34,15 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 | Writing a page as one document | An outliner throughout: a page is edited block by block | Block mode, plus page mode (one editor for the page, off by default) and *Edit as Markdown* (the page as plain text) |
 | Block references | File version: `((uuid))`. DB version: blocks are referenced with `[[ ]]` like pages | `((id))` shows a one-line chip with a peek (a hover, or a long press on a phone), not the block's content |
 | Embeds | An embed shows the whole block | An embed shows a block or page live, its rows with their checkboxes and read-only chips, and an embedded task can be ticked where it is embedded. Text is editable in place after an unlock; structure and attachments are not |
-| Properties | DB version: Text, Number, Date, DateTime, Checkbox, Url and Node types; several values per property; defaults and choices; properties that list their reverse side | Text, number, date, select, reference, boolean and URL, every type but boolean also holding several values. Definitions are per space, sync, and can be renamed, merged and retyped |
-| Tags | DB version: a tag is a class ("supertag") whose properties its nodes inherit, with parents through `Extends` | A tag is a label with a colour and its own listing page. `/` in a name nests the tag: a filter on the parent finds it, and the Tags view shows the tree. No classes |
+| Properties | DB version: Text, Number, Date, DateTime, Checkbox, Url and Node types; several values per property; defaults and choices; properties that list their reverse side | Text, number, date, date and time, select, reference, boolean and URL, every type but boolean also holding several values. Definitions are per space, sync, and can be renamed, merged and retyped |
+| Tags | DB version: a tag is a class ("supertag") whose properties its nodes inherit, with parents through `Extends` | A tag has a colour and a page: notes you write (the page `Tag/name`) above the pages and blocks it is on. It names properties its blocks are offered as empty rows, and sets one on them all at once. `/` in a name nests the tag: a filter on the parent finds it, its blocks are offered the parent's properties too, and the Tags view shows the tree. No defaults and no `Extends` |
 | Queries | Simple queries and Datalog advanced queries with custom views and result transforms. DB version: a query builder, and table, list and gallery views with filter, sort and group | A visual builder with nested AND / OR / NOT, sort, group and summaries; query blocks typed in the search syntax; results as a list, a table whose cells edit their block, or a board. No Datalog, no custom transforms, no gallery, and a query reads one space |
 | Tasks | File version: `TODO`/`DOING` or `LATER`/`NOW` markers and more, A/B/C priorities, scheduled and deadline dates, repeaters, time tracking. DB version: statuses you can add to, and a status history with time spent | Four fixed states, three priority levels, due and scheduled dates, repeat rules with an end date or count. No time tracking and no custom states |
 | Seeing your tasks | Queries, and tables on tag pages in the DB version | An Agenda with filters, sort and grouping that also lists future occurrences of repeating tasks; Due and Done panels on each journal day; optional due-date notifications on desktop |
 | Journal | A journal page per day. The DB version no longer reads the journal title format setting | Day, week, month, stream and agenda views; a journal template; a choice of display date formats |
 | Search | Full-text search; the DB version's changelog adds local semantic search | Full-text search with typed filters (`tag:`, `state:`, `due:`, `prop:`), find and replace in a page, and replace across pages. No semantic search |
 | Contexts | Separate graphs | Spaces inside one database, each with its own journal, pages, tags, property definitions and tabs |
-| Plain files | File version: the files are the notes. DB version: Markdown export, and an announced read-only Markdown projection with two-way sync in development | Export to Markdown; on desktop an opt-in mirror folder that is written and read back. The database stays the source of truth |
+| Plain files | File version: the files are the notes. DB version: Markdown export, and an announced read-only Markdown projection with two-way sync in development | Export to Markdown; on desktop an opt-in mirror folder that is written and read back, a new one or a folder of Markdown notes adopted in place, never a Logseq graph. The database stays the source of truth |
 | Import and export | File version exports EDN, JSON, Markdown, OPML, Roam JSON and HTML. DB version imports file graphs, SQLite and EDN, and its EDN export captures the whole graph | Imports Markdown, Logseq graphs, Obsidian vaults, Org, Notion, Evernote, Joplin and bibliographies. Exports Markdown with attachments and property definitions, which a folder import restores without history. No structured dump |
 | Backups | DB version: automatic backups on desktop and in the browser | A daily copy of the database beside it, which Settings › Data restores; the export ZIP is the other restore path |
 | PDF | PDF annotation, on desktop in the file version; the DB version keeps annotations as tagged nodes under the PDF's block | Highlights and pinned comments become blocks under the PDF's block on save |
@@ -57,7 +57,7 @@ The table is the summary. [The feature matrix](COMPARISON-LOGSEQ-MATRIX.md) has 
 ## Where Logseq is the better tool
 
 - **You want your notes as files.** The file version is the only one of the three whose notes are plain files on every platform.
-- **You model data.** Classes, inherited properties, defaults, and table views on a tag are well ahead of Agaric's flat tags and plain property definitions.
+- **You model data.** Classes with `Extends`, defaults, property display control and table views on a tag go well beyond Agaric's tags, which offer their blocks a list of properties to fill and set no defaults.
 - **You write queries.** Datalog reaches joins and transforms that Agaric's builder cannot express.
 - **You depend on plugins**, custom JS, flashcards, whiteboards (file version), publishing or time tracking.
 - **Your devices are not on one network**, you need an iPhone, or you work with other people.
@@ -84,6 +84,7 @@ Pick a graph folder in Settings › Data. [docs/features/import-export.md](docs/
 
 - Custom task keywords fold into the four fixed states (`WAITING` becomes `TODO`, `NOW` becomes `DOING`); the set is fixed by decision (#1431).
 - `:LOGBOOK:` clock entries are dropped, with a warning (#6745).
+- A page the graph also uses as a tag becomes that tag's notes, titled `Tag/project`, and the graph's `[[project]]` links point there; `#[[project]]` stays the tag (#6755).
 - A `{{query}}` simple query whose every clause has a filter becomes a query block; any other stays as a code block, counted in one warning, and advanced (Datalog) queries stay as text (#6754). `(between …)`, a `[[page]]` that is no tag, `namespace`, `sort-by` and the result options (`query-table::` and the rest) have no equivalent.
 - Whiteboards and the `logseq/` config folder are not imported.
 - A `((uuid))` to a block outside the import is stripped and counted in the warnings.
@@ -95,9 +96,9 @@ Import on one device and let sync carry the result; two devices that each import
 
 ### What you will miss, or trip over, at first
 
-- **Your notes stop being files.** No `git log`, no `grep`, no other editor, no Syncthing over the graph folder. The desktop mirror gives files back as a copy Agaric keeps current; it is off by default and starts from an empty folder (#6540).
-- **A block reference is a chip, not the block.** `((ref))` shows one line and a hover peek. To see the content in place you embed the block, and an embedded task shows its text without a checkbox (#6746, #6747).
-- **A tag is not a page.** `#project` and `[[project]]` are two things: a tag has a listing page you cannot write on, and no properties that its blocks inherit (#6755). If your graph leans on tags-as-pages, decide per tag which one it becomes.
+- **Your notes stop being files.** No `git log`, no `grep`, no other editor, no Syncthing over the graph folder. The desktop mirror gives files back as a copy Agaric keeps current. It is off by default, writes Markdown as Obsidian reads it, and adopts a folder of Markdown notes in place but not a Logseq graph, which is imported instead (#6540).
+- **A block reference is a chip, not the block.** `((ref))` shows one line and a hover peek. To see the content in place you embed the block: its rows show their checkboxes and chips, and their text edits after an unlock, their structure only on the source page (#6747).
+- **A tag's page is `Tag/project`.** `#project` and `[[project]]` stay two things. The import turns a graph page that is also a tag into that tag's notes and points its links there (#6755); after that, `[[Tag/project]]` is the link to a tag's page. A tag offers its blocks properties to fill, but sets no defaults and has no `Extends`.
 - **Some queries need rebuilding.** Simple queries of tasks, priorities, tags, properties and pages, joined by `and`, `or` and `not`, import as query blocks (#6754); `(between …)`, other clauses and Datalog arrive as text. The builder, or `{{query tag:#work state:TODO}}`, covers filters (#6742); nothing covers custom views or result transforms (#6757).
 - **Task habits change.** `LATER`, `NOW` and `WAITING` become `TODO` and `DOING`, there are no keywords of your own (#1431), and clock entries are dropped (#6745).
 - **Links and tags are picked, not typed as text you can edit later.** In a block they are chips; *Edit as Markdown* is where a page reads as `[[Title]]` again.
