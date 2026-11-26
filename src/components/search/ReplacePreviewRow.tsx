@@ -90,7 +90,7 @@ export function ReplacePreviewRow({
           className: 'list-none gap-2 text-sm cursor-pointer',
         }),
         'active:bg-accent/70',
-        isFocused && 'bg-accent',
+        isFocused && 'list-cursor',
       )}
       data-testid={`search-replace-row-${blockId}`}
     >
