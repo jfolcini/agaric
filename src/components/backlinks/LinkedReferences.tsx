@@ -355,8 +355,8 @@ export function LinkedReferences({
         )}
         {expanded && filters.length > 0 && (
           <Badge
-            tone="secondary"
-            className="linked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-xs"
+            tone="metadata"
+            className="linked-references-filter-count"
             aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
           >
             {t('references.filtersAppliedBadge', { count: filters.length })}

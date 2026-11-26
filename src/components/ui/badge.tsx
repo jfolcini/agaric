@@ -10,7 +10,9 @@ import { cn } from '@/lib/utils'
  *
  * Axes:
  *  - `tone`:  visual intent (`default | secondary | destructive | outline |
- *             ghost | link | priority | status`).
+ *             ghost | link | priority | status`), and what a chip is, said by
+ *             its shape (#7040): `tag` is a tint, `property` an outline around
+ *             `key: value`, `metadata` plain muted text (a type label, a count).
  *  - `size`:  `xs | sm | compact | default | lg` — `default` matches the
  *             original `text-xs` pill, `sm` is the dense `PriorityBadge` md
  *             size, `xs` is the very-dense priority-badge sm size, `compact`
@@ -51,6 +53,10 @@ const badgeVariants = cva(BASE, {
       // sync with the design tokens.
       priority: 'font-bold leading-none',
       status: 'font-bold leading-none',
+      // A tag's own colour, where it has one, comes in as `tagColorStyle`.
+      tag: 'bg-muted text-muted-foreground',
+      property: 'border-border text-muted-foreground',
+      metadata: 'font-normal text-muted-foreground',
     },
     size: {
       // `xs` / `sm` mirror the dense `PriorityBadge` sm/md cells
@@ -66,6 +72,8 @@ const badgeVariants = cva(BASE, {
       lg: 'h-6 min-w-6 px-2 py-0 text-sm',
     },
   },
+  // Plain text takes no chip padding at any size.
+  compoundVariants: [{ tone: 'metadata', class: 'px-0 py-0' }],
   defaultVariants: { tone: 'default', size: 'default' },
 })
 

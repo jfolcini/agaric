@@ -7,10 +7,10 @@
  * BlockPropertyDrawer (page properties don't have built-in dates).
  */
 
-import { CalendarCheck2, CalendarClock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { PropertyField } from '@/components/properties/PropertyField'
+import { DATE_ICONS } from '@/lib/date-icons'
 
 export interface BuiltinDateFieldsProps {
   dueDate: string | null
@@ -38,7 +38,7 @@ export function BuiltinDateFields({
       {dueDate !== null && (
         <PropertyField
           key={`due-${dueDate}`}
-          icon={CalendarCheck2}
+          icon={DATE_ICONS.due}
           label={t('property.dueDate')}
           value={dueDate}
           inputType="date"
@@ -53,7 +53,7 @@ export function BuiltinDateFields({
       {scheduledDate !== null && (
         <PropertyField
           key={`sched-${scheduledDate}`}
-          icon={CalendarClock}
+          icon={DATE_ICONS.scheduled}
           label={t('property.scheduledDate')}
           value={scheduledDate}
           inputType="date"

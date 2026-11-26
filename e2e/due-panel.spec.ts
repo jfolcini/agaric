@@ -66,7 +66,7 @@ test('an overdue task reads "(3d overdue)" and a click opens it focused on its p
 
   const row = page
     .getByTestId('due-panel')
-    .locator('[data-slot="alert-list-row"]')
+    .getByTestId('due-panel-alert-item')
     .filter({ hasText: 'Renew passport' })
   await expect(row).toContainText('(3d overdue)')
 

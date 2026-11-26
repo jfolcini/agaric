@@ -388,9 +388,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         <span className="font-medium text-sm">{name}</span>
                       )}
                       {/* Type, use count and Built-in are one kind of chip: metadata. */}
-                      <Badge tone="outline">{valueTypeLabel(def, t)}</Badge>
+                      <Badge tone="metadata">{valueTypeLabel(def, t)}</Badge>
                       {usage?.has(def.key) && (
-                        <Badge tone="outline" data-testid={`property-usage-${def.key}`}>
+                        <Badge tone="metadata" data-testid={`property-usage-${def.key}`}>
                           {t('propertiesView.usageCount', { count: usage.get(def.key)?.count })}
                         </Badge>
                       )}
@@ -416,7 +416,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     )}
                     {def.builtin ? (
                       <Badge
-                        tone="outline"
+                        tone="metadata"
                         data-testid={`builtin-lock-${def.key}`}
                         className={cn(
                           'shrink-0 max-sm:col-start-2 max-sm:row-start-1',

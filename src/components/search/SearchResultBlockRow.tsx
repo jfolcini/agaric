@@ -161,7 +161,7 @@ function SearchResultBlockRowImpl({
       </span>
       {loading && <Spinner className="shrink-0 text-muted-foreground" />}
       {(row.block_type === 'tag' || row.block_type === 'page') && (
-        <Badge tone="secondary">{row.block_type}</Badge>
+        <Badge tone="metadata">{row.block_type}</Badge>
       )}
     </li>
   )

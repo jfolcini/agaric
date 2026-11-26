@@ -16,6 +16,7 @@ import { DonePanel } from '@/components/agenda/DonePanel'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { BlockRefPeek } from '@/components/BlockRefPeek'
+import { DateChip, type DateKind } from '@/components/common/DateChip'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
@@ -34,6 +35,12 @@ import { cn } from '@/lib/utils'
 import type { JournalMode } from '@/stores/journal'
 import { useJournalStore } from '@/stores/journal'
 import { PageBlockStoreProvider } from '@/stores/page-blocks'
+
+/** The agenda sources that are a date kind of their own; any other is a date property. */
+const DATE_KIND_OF_SOURCE: Record<string, DateKind | undefined> = {
+  'column:due_date': 'due',
+  'column:scheduled_date': 'scheduled',
+}
 
 /** Stable empty-map defaults so optional count props don't re-create `{}` each render. */
 const EMPTY_COUNTS: Record<string, number> = {}
@@ -356,23 +363,32 @@ function DaySectionInner({
           {mode !== 'daily' && mode !== 'agenda' && (
             <>
               {Object.entries(agendaCountsBySource[entry.dateStr] ?? {}).map(([source, count]) => {
-                const color = getSourceColor(source)
                 const label = getSourceLabel(source)
-                const displayCount = count > 99 ? '99+' : count
+                const text = `${count > 99 ? '99+' : count} ${label}`
+                const props = {
+                  onClick: () => goToDateAndPanel(entry.date, 'due'),
+                  'aria-label': t('journal.agendaCountBadge', { count, label }),
+                }
+                // A due or a scheduled count is that date's own chip (#7040).
+                const kind = DATE_KIND_OF_SOURCE[source]
+                if (kind) {
+                  return (
+                    <DateChip key={source} kind={kind} {...props}>
+                      {text}
+                    </DateChip>
+                  )
+                }
                 return (
                   <button
                     key={source}
                     type="button"
                     className={cn(
-                      'touch-hit-area inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium focus-ring-visible',
-                      color.light,
-                      color.dark,
-                      'hover:opacity-80',
+                      'touch-hit-area inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs font-medium leading-none focus-ring-visible hover:ring-1 hover:ring-ring',
+                      getSourceColor(source).light,
                     )}
-                    onClick={() => goToDateAndPanel(entry.date, 'due')}
-                    aria-label={t('journal.agendaCountBadge', { count, label })}
+                    {...props}
                   >
-                    {displayCount} {label}
+                    {text}
                   </button>
                 )
               })}

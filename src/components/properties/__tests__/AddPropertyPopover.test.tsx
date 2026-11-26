@@ -28,7 +28,7 @@ vi.mock('@/hooks/usePhoneLayout', () => ({
 }))
 
 vi.mock('lucide-react', () => ({
-  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  Flag: () => <svg data-testid="flag-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
   Check: () => <svg data-testid="check-icon" />,
