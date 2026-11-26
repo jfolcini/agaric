@@ -133,7 +133,7 @@ export const pages: Record<string, string> = {
   'templates.variableIsoweek': 'ISO-Kalenderwoche',
   'templates.variableRecording':
     'Allein in einem Block: Dort fügt ein neues Meeting seine Aufnahme ein; beim sonstigen Einfügen wird er weggelassen',
-  'pageHeader.exportMarkdown': 'Als Markdown exportieren',
+  'pageHeader.exportMarkdown': 'Als Markdown kopieren',
   'pageHeader.deletePage': 'Seite löschen',
   'pageHeader.deletePageTitle': 'Seite löschen',
   'pageHeader.deletePageDescription':

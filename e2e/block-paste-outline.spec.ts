@@ -466,7 +466,7 @@ test.describe('Copy/paste through the Markdown grammar (#5140 Phase 3b) @editor'
     await openPage(page, PAGE)
     await page.getByRole('button', { name: 'Page actions' }).click()
     await page.getByRole('menuitem', { name: 'Export', exact: true }).click()
-    await page.getByText('Export as Markdown').click()
+    await page.getByText('Copy as Markdown').click()
     await expect
       .poll(() => readClipboard(page))
       .toMatch(/^---\naliases: \[GS alias\]\n---\n\n# Getting Started\n/)

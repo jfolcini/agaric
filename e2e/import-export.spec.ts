@@ -60,7 +60,7 @@ function localDateStr(d: Date): string {
 }
 
 // ===========================================================================
-// Helper: open the kebab menu on the current page and click Export → "Export as Markdown"
+// Helper: open the kebab menu on the current page and click Export → "Copy as Markdown"
 // ===========================================================================
 
 async function triggerExport(page: import('@playwright/test').Page) {
@@ -69,9 +69,9 @@ async function triggerExport(page: import('@playwright/test').Page) {
   await expect(kebabButton).toBeVisible()
   await kebabButton.click()
 
-  // Open the Export submenu, then click its "Export as Markdown" row
+  // Open the Export submenu, then click its "Copy as Markdown" row
   await page.getByRole('menuitem', { name: 'Export', exact: true }).click()
-  await page.getByText('Export as Markdown').click()
+  await page.getByText('Copy as Markdown').click()
 }
 
 // ===========================================================================
@@ -215,7 +215,7 @@ test.describe('Export all pages as ZIP @markdown', () => {
     )
 
     // Spot-check one entry's content round-trips the same export the
-    // per-page "Export as Markdown" flow produces.
+    // per-page "Copy as Markdown" flow produces.
     // The path names the page, so the file drops its `# Title` line, and the
     // space's typed definitions travel beside it (#6277 decision 8).
     const gettingStarted = await zip.file('Getting Started.md')?.async('string')

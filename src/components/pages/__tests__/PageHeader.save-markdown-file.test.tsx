@@ -1,6 +1,6 @@
 /**
  * The page kebab's *Save as Markdown file* (#6546): it saves the Markdown
- * *Export as Markdown* copies as `<title>.md` through `saveBlob`: the
+ * *Copy as Markdown* copies as `<title>.md` through `saveBlob`: the
  * webview's download, or on macOS and Android a file the backend writes to
  * Downloads. And its *Print…* (#6558), absent on Android.
  */
@@ -248,11 +248,11 @@ describe('PageHeader Save as Markdown file', () => {
     })
   })
 
-  it('is reached by ArrowDown from Export as Markdown and runs on Enter', async () => {
+  it('is reached by ArrowDown from Copy as Markdown and runs on Enter', async () => {
     const user = userEvent.setup()
     renderHeader()
     await openMenu(user)
-    const exportItem = screen.getByRole('menuitem', { name: /Export as Markdown/ })
+    const exportItem = screen.getByRole('menuitem', { name: /Copy as Markdown/ })
     exportItem.focus()
 
     await user.keyboard('{ArrowDown}')
@@ -322,7 +322,7 @@ describe('PageHeader Save as Markdown file', () => {
       renderHeader()
       await openMenu(user)
 
-      expect(screen.getByRole('menuitem', { name: /Export as Markdown/ })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: /Copy as Markdown/ })).toBeInTheDocument()
       expect(
         screen.queryByRole('menuitem', { name: t('pageHeader.print') }),
       ).not.toBeInTheDocument()

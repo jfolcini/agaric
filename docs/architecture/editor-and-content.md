@@ -80,7 +80,7 @@ Every reader is in `src-tauri/agaric-engine/src/import.rs` and reads CRLF, CR an
 
 | Surface | Entry point | Names | Anchors |
 |---|---|---|---|
-| Export as Markdown, page copy, ZIP entry | `export_page_markdown_inner` (`render_page_markdown`) | Always | Addressed |
+| Copy as Markdown, page copy, ZIP entry | `export_page_markdown_inner` (`render_page_markdown`) | Always | Addressed |
 | Markdown mirror's file | `get_page_file_inner` (`render_page_file`) | ReadBack | Addressed |
 | Copy blocks | `get_blocks_source_inner` (`render_clipboard_source`) | ReadBack | Needed |
 | Edit as Markdown buffer, MCP `get_page_markdown` and `get_journal` | `get_page_buffer_inner`, `get_page_for_agent_inner` (`RenderMode::DOCUMENT`) | ReadBack | Every |
