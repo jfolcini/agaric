@@ -12,4 +12,6 @@ interface ImportMetaEnv {
 
 interface Window {
   __TAURI_INTERNALS__?: Record<string, unknown>
+  /** Defined by the Tauri runtime, never by its mocks (`src/lib/touch.ts`). */
+  isTauri?: boolean
 }
