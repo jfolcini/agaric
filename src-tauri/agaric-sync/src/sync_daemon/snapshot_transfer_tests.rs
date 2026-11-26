@@ -1403,16 +1403,23 @@ async fn loro_snapshot_catchup_reports_a_space_it_refuses_to_export_6523() {
 // #6524 — commits are made durable before a catch-up's snapshots leave
 // -----------------------------------------------------------------
 
-/// A responder registry with one space to offer.
-fn registry_with_one_space_6524() -> agaric_engine::loro::registry::LoroEngineRegistry {
+/// A responder registry with two spaces to offer.
+fn registry_with_two_spaces_6524() -> agaric_engine::loro::registry::LoroEngineRegistry {
     let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
-    let space = agaric_store::space::SpaceId::from_trusted("01HZ6524CATCHUPSPACEAAAAAA");
-    registry
-        .for_space(&space, REMOTE_DEV)
-        .expect("for_space")
-        .engine_mut()
-        .apply_create_block("01HZ6524CATCHUPBLOCKAAAAAA", "content", "offered", None, 0)
-        .expect("create");
+    for (space, block) in [
+        ("01HZ6524CATCHUPSPACEAAAAAA", "01HZ6524CATCHUPBLOCKAAAAAA"),
+        ("01HZ6524CATCHUPSPACEBBBBBB", "01HZ6524CATCHUPBLOCKBBBBBB"),
+    ] {
+        registry
+            .for_space(
+                &agaric_store::space::SpaceId::from_trusted(space),
+                REMOTE_DEV,
+            )
+            .expect("for_space")
+            .engine_mut()
+            .apply_create_block(block, "content", "offered", None, 0)
+            .expect("create");
+    }
     registry
 }
 
@@ -1421,7 +1428,7 @@ async fn a_catchup_offer_is_made_durable_once_6524() {
     use agaric_store::test_support::durable_barriers;
 
     let (resp_pool, _resp_dir) = test_pool().await;
-    let resp_registry = registry_with_one_space_6524();
+    let resp_registry = registry_with_two_spaces_6524();
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
@@ -1446,20 +1453,20 @@ async fn a_catchup_offer_is_made_durable_once_6524() {
 
     assert_eq!(
         offer_res.expect("the offer succeeds").spaces_sent,
-        1,
-        "the one space's snapshot was streamed"
+        2,
+        "both spaces' snapshots were streamed"
     );
     assert!(
         matches!(
             first.expect("recv"),
-            SyncMessage::LoroSync { is_last: true, .. }
+            SyncMessage::LoroSync { is_last: false, .. }
         ),
-        "the initiator received the snapshot"
+        "the initiator received the first snapshot"
     );
     assert_eq!(
         durable_barriers(&resp_pool).await,
         1,
-        "one barrier for the offer's stream"
+        "one barrier for the offer's stream, not one per snapshot"
     );
 }
 
@@ -1468,7 +1475,7 @@ async fn a_catchup_offer_is_made_durable_once_6524() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_catchup_offer_whose_barrier_fails_sends_nothing_6524() {
     let (resp_pool, _resp_dir) = test_pool().await;
-    let resp_registry = registry_with_one_space_6524();
+    let resp_registry = registry_with_two_spaces_6524();
     agaric_store::test_support::break_durability_barrier(&resp_pool).await;
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);

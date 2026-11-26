@@ -103,7 +103,7 @@ Nothing in this document should be read as saying the QUIC port *by itself* make
 
 ### Durable before send
 
-The database commits under `synchronous=NORMAL`, so a power cut can roll back a device's last commits ([`data-and-events.md` § Database](data-and-events.md#database)). If a peer already held the ops of those commits, the device would write its next ops under Loro counters and op-log seqs the peer holds for other content: the two could not merge, or would merge with the peer's copy overwritten and no error. So the two places that send this device's ops call `db::make_commits_durable` first (#6524), once per stream, after everything the stream carries has been read and before its first frame:
+The database commits under `synchronous=NORMAL`, so a power cut can roll back a device's last commits ([`data-and-events.md` § Database](data-and-events.md#database)). If a peer already held the ops of those commits, the device would write its next ops under Loro counters and op-log seqs the peer holds for other content: the two could not merge, or would merge with the peer's copy overwritten and no error. So the places that send this device's ops call `db::make_commits_durable` first (#6524), once per stream, after everything the stream carries has been read and before its first frame:
 
 - `SyncOrchestrator::head_exchange_outgoing_loro`, the responder's stream of `LoroSync` updates or snapshots and `OpLogBatch` records;
 - `snapshot_transfer::try_offer_loro_snapshot_catchup`, the responder's snapshots of the catch-up below.

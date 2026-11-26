@@ -55,11 +55,11 @@ fn barrier_connect_options(pool: &SqlitePool) -> SqliteConnectOptions {
 /// Make every transaction committed to `pool`'s database so far durable.
 ///
 /// It takes a connection of its own, so the pool's keep committing under
-/// `NORMAL`. An error means nothing was made durable: the caller sends nothing.
+/// `NORMAL`. After an error they may not be durable: the caller sends nothing.
 pub async fn make_commits_durable(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // A writer outside the queue takes the write lock from the writers in it.
-    // The turn also outlasts a transaction that was open while the caller read
-    // the engine, so that transaction's commit is among those synced.
+    // Waiting for the turn also waits out a transaction that was open while the
+    // caller read the engine, so that transaction's commit is among those synced.
     let _turn = super::write_turns(pool).lock_owned().await;
     let mut conn = barrier_connect_options(pool).connect().await?;
     let now = super::now_ms();
@@ -79,8 +79,6 @@ pub async fn make_commits_durable(pool: &SqlitePool) -> Result<(), sqlx::Error> 
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use super::*;
     use crate::test_support::{break_durability_barrier, durable_barriers, test_pool};
 
@@ -158,77 +156,6 @@ mod tests {
             durable_barriers(&pool).await,
             0,
             "the failed barrier committed nothing"
-        );
-    }
-
-    fn median_and_band(mut samples: Vec<Duration>) -> String {
-        samples.sort();
-        format!(
-            "{:?} [{:?} – {:?}] n={}",
-            samples[samples.len() / 2],
-            samples[0],
-            samples[samples.len() - 1],
-            samples.len()
-        )
-    }
-
-    /// #6524: what a barrier adds to a served sync session, beside its two
-    /// parts that are not the sync: the same write committed on a pool
-    /// connection under `NORMAL`, and a connection opened and closed. The three
-    /// are interleaved sample by sample. Nothing is budgeted: the rest is the
-    /// disk's sync.
-    ///
-    /// ```sh
-    /// cargo nextest run -p agaric-store --run-ignored only --no-capture \
-    ///   -E 'test(durability_barrier_cost)'
-    /// ```
-    #[tokio::test]
-    #[ignore = "a measurement, run by the weekly bench-perf-gates lane"]
-    async fn durability_barrier_cost() {
-        const SAMPLES: usize = 200;
-        let (pool, _dir) = test_pool().await;
-        let mut barrier = Vec::with_capacity(SAMPLES);
-        let mut unsynced = Vec::with_capacity(SAMPLES);
-        let mut connection = Vec::with_capacity(SAMPLES);
-        for sample in 0..SAMPLES {
-            let started = Instant::now();
-            make_commits_durable(&pool).await.expect("a barrier");
-            barrier.push(started.elapsed());
-
-            let started = Instant::now();
-            sqlx::query(
-                "INSERT INTO app_settings (key, value, updated_at) VALUES ('cost.unsynced', ?1, 0) \
-                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            )
-            .bind(sample.to_string())
-            .execute(&pool)
-            .await
-            .expect("the same write on a pool connection");
-            unsynced.push(started.elapsed());
-
-            let started = Instant::now();
-            barrier_connect_options(&pool)
-                .connect()
-                .await
-                .expect("open a barrier connection")
-                .close()
-                .await
-                .expect("close it");
-            connection.push(started.elapsed());
-        }
-        assert_eq!(
-            durable_barriers(&pool).await,
-            i64::try_from(SAMPLES).expect("the sample count fits"),
-            "every timed barrier committed"
-        );
-        println!("durability_cost: barrier = {}", median_and_band(barrier));
-        println!(
-            "durability_cost: the same write, unsynced = {}",
-            median_and_band(unsynced)
-        );
-        println!(
-            "durability_cost: a connection opened and closed = {}",
-            median_and_band(connection)
         );
     }
 }
