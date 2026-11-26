@@ -237,7 +237,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Publish to the web | **Obsidian Publish**: a paid subscription per site, with a site password, custom domain, graph, full-text search and invited collaborators | **None** | Gap |
-| Share one note | Publish, or send the file | Page menu: *Export as Markdown* (copy), *Save as Markdown file* (`<title>.md`; to Downloads on Android, #6546), *Print…* (not on Android); *Copy app link* copies an `agaric://page/<id>` link, which works only on a device with Agaric | Partial |
+| Share one note | Publish, or send the file | Page menu: *Copy as Markdown*, *Save as Markdown file* (`<title>.md`; to Downloads on Android, #6546), *Print…* (not on Android); *Copy app link* copies an `agaric://page/<id>` link, which works only on a device with Agaric | Partial |
 | Export to PDF | Desktop, and mobile since 1.15 | *Print…* in the page menu (not on Android) prints the page alone on the light palette through the system dialog; whether that dialog offers PDF is unchecked on macOS and Windows (`docs/features/appearance.md`, #6514, #6515) | Partial |
 | Real-time collaboration | Not yet: "Multiplayer" is planned | Out of scope by the threat model (`AGENTS.md` § Threat Model) | Design choice |
 
