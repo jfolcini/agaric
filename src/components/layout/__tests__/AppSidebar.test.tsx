@@ -499,7 +499,10 @@ describe('AppSidebar', () => {
     const user = userEvent.setup()
     const { props } = renderSidebar({ isOnline: false })
 
-    const offline = screen.getByRole('button', { name: t('sidebar.offline') })
+    // Its name holds the words it shows (WCAG 2.5.3, label in name).
+    const offline = screen.getByRole('button', {
+      name: `${t('sidebar.sync')} ${t('sidebar.offline')}`,
+    })
     expect(offline).toHaveAttribute('aria-disabled', 'true')
     act(() => offline.focus())
 
