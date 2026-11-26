@@ -73,12 +73,12 @@ describe('DateChip', () => {
     expect(chipOf(container).querySelector('svg')).toHaveAttribute('fill', 'none')
   })
 
-  it('a scheduled date keeps the scheduled colour whatever its day', () => {
+  it('a scheduled date is neutral whatever its day', () => {
     for (const offset of [-1, 0, 1]) {
       const { container, unmount } = render(
         <DateChip kind="scheduled" date={dayFromToday(offset)} />,
       )
-      expect(chipOf(container)).toHaveClass('bg-date-scheduled', 'text-date-scheduled-foreground')
+      expect(chipOf(container)).toHaveClass('bg-secondary', 'text-secondary-foreground')
       unmount()
     }
   })

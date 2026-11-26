@@ -384,14 +384,8 @@ const THEME_PAIRS = [
   { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
   { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
   { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
+  // Also every scheduled date: colour is for urgency (#7040).
   { pair: 'future due chip', fg: 'secondary-foreground', bg: 'secondary', min: AA_NORMAL },
-  // `DateChip`: on a block, in a task row and as a Week header's count (#7040).
-  {
-    pair: 'scheduled chip',
-    fg: 'date-scheduled-foreground',
-    bg: 'date-scheduled',
-    min: AA_NORMAL,
-  },
   { pair: 'today due chip', fg: 'date-due-foreground', bg: 'date-due', min: AA_NORMAL },
   {
     pair: 'search match',
@@ -567,6 +561,7 @@ const HUE_ROLES = {
   overdue: ['alert-error', 'alert-error-foreground'],
   destructive: ['destructive'],
   'due today': DUE_TODAY,
+  // A scheduled chip is neutral; these paint the Month and date-picker dots.
   scheduled: ['date-scheduled', 'date-scheduled-foreground'],
   'DOING / in progress': ['status-active', 'status-active-foreground'],
   'focus ring': ['ring'],
@@ -583,7 +578,6 @@ const HUE_PAIRS: ReadonlyArray<readonly [HueRole, HueRole]> = [
   ['P2', 'due today'],
   ['due today', 'overdue'],
   ['scheduled', 'due today'],
-  ['scheduled', 'overdue'],
   ['P3', 'DOING / in progress'],
   ['P3', 'focus ring'],
   ['today', 'brand'],

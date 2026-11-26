@@ -225,7 +225,7 @@ test.describe('One date chip (#7040 S2) @journal @editor', () => {
     await waitForBoot(page)
   })
 
-  test('due and scheduled each keep one glyph and one colour on a block, in a row and in Week', async ({
+  test('due and scheduled each keep one glyph, and scheduled is neutral, on a block, in a row and in Week', async ({
     page,
   }) => {
     const glyph = (chip: Locator) => chip.locator('svg').first()
@@ -239,6 +239,10 @@ test.describe('One date chip (#7040 S2) @journal @editor', () => {
       /lucide-calendar-clock/,
     )
     const rowScheduled = await fill(row.locator('[data-date-kind="scheduled"]'))
+    // Colour is for urgency: a scheduled date wears a later due date's neutral.
+    expect(rowScheduled, 'scheduled fill vs a due date tomorrow').toBe(
+      await fill(row.locator('[data-date-kind="due"]')),
+    )
 
     // The Week headers count each kind with the same chip.
     await page.getByRole('tab', { name: 'Weekly view' }).click()

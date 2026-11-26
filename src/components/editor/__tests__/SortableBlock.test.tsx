@@ -2670,8 +2670,8 @@ describe('SortableBlock scheduled date chip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  // #7040 — a scheduled date keeps one colour on a block, in a row and in Week.
-  it('renders the scheduled date in the scheduled colour', () => {
+  // #7040 — a scheduled date is neutral on a block, in a row and in Week.
+  it('renders the scheduled date neutral', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2683,8 +2683,7 @@ describe('SortableBlock scheduled date chip', () => {
     )
 
     const chip = container.querySelector('.scheduled-chip')
-    expect(chip?.className).toContain('bg-date-scheduled')
-    expect(chip?.className).toContain('text-date-scheduled-foreground')
+    expect(chip).toHaveClass('bg-secondary', 'text-secondary-foreground')
   })
 
   it('renders both due date and scheduled date chips when both are set', () => {

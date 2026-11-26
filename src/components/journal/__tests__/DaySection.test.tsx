@@ -528,7 +528,7 @@ describe('DaySection', () => {
     expect(due).toHaveClass('bg-date-due', 'text-date-due-foreground')
     const scheduled = screen.getByLabelText('2 Scheduled items, click to view')
     expect(scheduled).toHaveAttribute('data-date-kind', 'scheduled')
-    expect(scheduled).toHaveClass('bg-date-scheduled', 'text-date-scheduled-foreground')
+    expect(scheduled).toHaveClass('bg-secondary', 'text-secondary-foreground')
     const property = screen.getByLabelText('4 Deadline items, click to view')
     expect(property).not.toHaveAttribute('data-date-kind')
     expect(property).toHaveClass('bg-date-property', 'text-date-property-foreground')

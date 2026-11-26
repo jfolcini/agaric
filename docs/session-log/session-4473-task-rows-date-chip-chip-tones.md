@@ -11,7 +11,8 @@ Part of the #7040 UI review, items S6, S2 and S7.
   - Projected rows keep their content and change order: title, "Projected", priority, date.
   - Virtualized Agenda and Due-panel rows are placed by `top`, not `transform`: a transformed row is a stacking context, so the next row covered the lower half of a chip's 44 px hit area.
 - **One date chip (S2).** `common/DateChip.tsx` (`kind`, `date`) on blocks, task rows, projected rows and the Week header counts. `lib/date-icons.ts` holds the one glyph pair, a flag for due and a calendar clock for scheduled, also used by the toolbar, the slash commands and the date fields, which had assigned their glyphs three different ways.
-  - Due is red with a solid flag when past, amber today, neutral later. Scheduled is the `date-scheduled` green everywhere.
+  - Due is red with a solid flag when past, amber today, neutral later. Scheduled is neutral, told apart by its glyph: colour is for urgency (maintainer decision 6). Its old green was close to DONE's.
+  - The Month and date-picker dots keep the scheduled green: a dot has only its colour and a legend, and a neutral one would match the page and backlink dots.
   - Each chip is named for its kind and date ("Due Nov 25"), since a row with both chips had two buttons named "Edit date".
 - **Three chip tones (S7).** `Badge` gains:
   - `tag`, a tint in the tag's colour (`useTagColorStyle`), for tags in text, the page header and the Tags list;
@@ -33,7 +34,8 @@ Part of the #7040 UI review, items S6, S2 and S7.
 
 **Tests**
 
-- e2e `task-rows-chips` (mock lane): phone row heights in the Due panel and the Agenda, no card on Overdue rows, chips after the title on desktop, the glyph pair, and the chip tones. Each was red on main.
-- vitest: `DateChip`, `badge`'s chip vocabulary, and new cases in `BlockListItem`, `AlertSection`, `DaySection`, `DuePanel` and `PageTagSection`. `theme-contrast` checks the scheduled chip, the Overdue heading, and scheduled against due-today and overdue.
+- e2e `task-rows-chips` (mock lane): phone row heights in the Due panel and the Agenda, no card on Overdue rows, chips after the title on desktop, the glyph pair, a neutral scheduled chip, and the chip tones. Each was red on main.
+- e2e `date-chip-editing` (bridge lane): an Overdue row and a Scheduled earlier row, each set to today from its chip, move into the day's list and stay there after navigating away and back.
+- vitest: `DateChip`, `badge`'s chip vocabulary, and new cases in `BlockListItem`, `AlertSection`, `DaySection`, `DuePanel` and `PageTagSection`. `theme-contrast` checks the Overdue heading, and the scheduled dots against due-today.
 - Each was shown red by a mutation, sixteen in all: for example the glyphs swapped, chips before the title, a card back on Overdue rows, rows back on `transform`, and the reschedule button back on `touch-target`.
 - The UI review tour shoots the Tags view's colour picker (#7092), with its custom section open.
