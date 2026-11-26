@@ -10,6 +10,7 @@ import {
   navigateToView,
   openPage,
   reopenPage,
+  settleBackend,
   test,
   waitForBoot,
 } from './helpers'
@@ -20,6 +21,9 @@ import {
  *   - The Agenda due-date chip opens `DateChipEditor` (`BlockListItem.tsx`):
  *     a natural-language input parsed by `parseDate` (`src/lib/parse-date.ts`),
  *     Enter applies the parsed date, Escape closes the popover unchanged.
+ *   - The journal Due panel's task rows carry the same chip (#7040): a date
+ *     set on an Overdue or Scheduled earlier row moves the task into the
+ *     day's list.
  *   - The toolbar's "Set scheduled date" opens `BlockDatePicker`; a calendar
  *     day becomes the block's scheduled date.
  *
@@ -30,8 +34,9 @@ import {
  *
  * The clock is pinned to Wednesday 2026-03-11 so every parsed date is fixed:
  * `+3d` is Mar 14, `next monday` Mar 16, `Apr 15` this year's Apr 15. The
- * clock is the browser's only, so each Agenda test dates "Submit report"
- * (BLOCK_OVERDUE_1) itself: due yesterday, Mar 10.
+ * clock is the browser's only, so each Agenda and Due panel test dates the
+ * tasks it edits itself: "Submit report" (BLOCK_OVERDUE_1) due yesterday,
+ * Mar 10.
  */
 
 const PINNED_NOW = new Date('2026-03-11T12:00:00')
@@ -112,6 +117,62 @@ test.describe('Agenda due-date chip editor @editor @journal', () => {
     await leaveAndReturnToAgenda(page)
     await expect(submitReportChip(page)).toHaveText('Mar 10')
   })
+})
+
+async function leaveAndReturnToJournal(page: Page): Promise<void> {
+  await navigateToView(page, 'Tags')
+  await expect(page.getByTestId('header-label')).toContainText('Tags')
+  await navigateToView(page, 'Journal')
+}
+
+test.describe('Due panel row date chips @editor @journal', () => {
+  test.beforeEach(async ({ page }) => {
+    // Overdue: due yesterday. Scheduled earlier: scheduled two days ago, no due date.
+    await ipc(page, 'set_due_date', { blockId: SEED_IDS.BLOCK_OVERDUE_1, date: '2026-03-10' })
+    await ipc(page, 'set_due_date', { blockId: SEED_IDS.BLOCK_PROJ_4, date: null })
+    await ipc(page, 'set_scheduled_date', { blockId: SEED_IDS.BLOCK_PROJ_4, date: '2026-03-09' })
+    await settleBackend(page)
+    // The panel mounted at boot: remount it so it reads those dates.
+    await leaveAndReturnToJournal(page)
+  })
+
+  for (const { section, task, before, after } of [
+    { section: 'Overdue', task: 'Submit report', before: 'Due Mar 10', after: 'Due Mar 11' },
+    {
+      section: 'Scheduled earlier',
+      task: 'Design new dashboard',
+      before: 'Scheduled Mar 9',
+      after: 'Scheduled Mar 11',
+    },
+  ]) {
+    test(`${section} row: "today" on its chip moves the task into the day's list and it persists`, async ({
+      page,
+    }) => {
+      const panel = page.getByTestId('due-panel')
+      const alertRow = panel.getByTestId('due-panel-alert-item').filter({ hasText: task })
+      const dayRowChip = panel
+        .getByTestId('due-panel-item')
+        .filter({ hasText: task })
+        .getByRole('button', { name: after, exact: true })
+      await expect(panel.getByRole('heading', { name: new RegExp(`^${section} `) })).toBeVisible()
+
+      await alertRow.getByRole('button', { name: before, exact: true }).click()
+      const popover = activePopover(page)
+      const field = popover.getByRole('textbox', { name: 'Type a date' })
+      await expect(field).toBeFocused()
+      await field.fill('today')
+      await expect(popover.locator('strong')).toHaveText('2026-03-11')
+      await page.keyboard.press('Enter')
+      await expect(popover).toBeHidden()
+
+      await expect(dayRowChip).toBeVisible()
+      await expect(alertRow).toHaveCount(0)
+
+      await leaveAndReturnToJournal(page)
+      await expect(dayRowChip).toBeVisible()
+      await expect(alertRow).toHaveCount(0)
+    })
+  }
 })
 
 test('toolbar Set scheduled date: the picked day becomes a scheduled chip that persists @editor @journal', async ({

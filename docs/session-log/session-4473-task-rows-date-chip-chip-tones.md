@@ -1,4 +1,4 @@
-# Session 4471 — one task row, one date chip, and three chip tones
+# Session 4473 — one task row, one date chip, and three chip tones
 
 Part of the #7040 UI review, items S6, S2 and S7.
 
