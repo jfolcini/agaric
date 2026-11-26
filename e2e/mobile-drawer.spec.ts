@@ -6,7 +6,7 @@
  * The touches go through Chromium's own input pipeline (CDP
  * `Input.dispatchTouchEvent`), so any document touch listener sees a real finger.
  *
- * Also (#6532): the drawer's Tasks row, and which touch screens get the drawer
+ * Also (#6532): the drawer's Agenda row, and which touch screens get the drawer
  * rather than the pinned sidebar.
  */
 
@@ -64,17 +64,16 @@ test('the drawer opens from the header button, not from a left-edge swipe @mobil
   await openMobileSidebar(page)
 })
 
-// #6532 — the agenda, retitled "Tasks", was otherwise only the last entry of a
-// header menu that shows one letter on a phone.
-test.describe('Tasks in the drawer @mobile @journal', () => {
+// #6532 — the Agenda gets a drawer row of its own, one tap from anywhere.
+test.describe('Agenda in the drawer @mobile @journal', () => {
   test.use({ viewport: { width: 360, height: 780 } })
 
   test('opens the agenda and closes the drawer', async ({ page }) => {
     await waitForBoot(page)
     const sheet = await openMobileSidebar(page)
-    await sheet.getByRole('button', { name: 'Tasks', exact: true }).click()
+    await sheet.getByRole('button', { name: 'Agenda', exact: true }).click()
     await expect(sheet).toHaveCount(0)
-    await expect(page.getByTestId('date-display')).toHaveText('Tasks')
+    await expect(page.getByTestId('agenda-view')).toBeVisible()
   })
 })
 

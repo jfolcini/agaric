@@ -157,7 +157,7 @@ function AppSidebarInner({
   const { isMobile, setOpenMobile } = useSidebar()
   const journalMode = useJournalStore((s) => s.mode)
   const setJournalMode = useJournalStore((s) => s.setMode)
-  const onTasks = currentView === 'journal' && journalMode === 'agenda'
+  const onAgenda = currentView === 'journal' && journalMode === 'agenda'
   const now = useMinuteClock()
   const trashCount = useTrashCount(currentView)
   const syncUnavailable = syncing || !isOnline
@@ -245,21 +245,20 @@ function AppSidebarInner({
         ),
       ]
     }
-    // #6532 — the agenda, retitled Tasks, gets its own row under Journal, so
-    // a phone reaches it without the one-letter header mode menu. Journal
-    // then always opens a dated mode.
+    // #6532 — the Agenda gets its own row under Journal, one tap from
+    // anywhere. Journal then always opens a dated mode.
     return [
       renderMenuButton(
         item.id,
         item.icon,
         t(item.labelKey),
-        currentView === 'journal' && !onTasks,
+        currentView === 'journal' && !onAgenda,
         () => {
           if (journalMode === 'agenda') setJournalMode('daily')
           onSelectView('journal')
         },
       ),
-      renderMenuButton('tasks', CheckSquare, t('journal.tasks'), onTasks, () => {
+      renderMenuButton('agenda', CheckSquare, t('journal.agendaTab'), onAgenda, () => {
         setJournalMode('agenda')
         onSelectView('journal')
       }),

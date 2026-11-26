@@ -80,7 +80,7 @@ describe('AlertSection', () => {
     )
 
     expect(screen.getByText('Overdue')).toBeInTheDocument()
-    expect(screen.getByText('(2)')).toBeInTheDocument()
+    expect(screen.getByText('2')).toHaveAttribute('data-variant', 'metadata')
   })
 
   it('renders title and count badge with pending variant', () => {
@@ -96,7 +96,7 @@ describe('AlertSection', () => {
     )
 
     expect(screen.getByText('Upcoming')).toBeInTheDocument()
-    expect(screen.getByText('(2)')).toBeInTheDocument()
+    expect(screen.getByText('2')).toHaveAttribute('data-variant', 'metadata')
   })
 
   it('returns null when blocks array is empty', () => {

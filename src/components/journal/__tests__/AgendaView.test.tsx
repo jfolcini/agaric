@@ -901,12 +901,12 @@ describe('AgendaView', () => {
   })
 
   // JournalPage drops its own h1 in agenda mode, so AgendaView must put the
-  // Journal title at the top of the header it portals above the filter bar.
-  it('renders the Journal h1 before the filter and sort controls', async () => {
+  // Agenda title at the top of the header it portals above the filter bar.
+  it('renders the Agenda h1 before the filter and sort controls', async () => {
     render(<AgendaView />)
     const filterBuilder = await screen.findByTestId('agenda-filter-builder')
 
-    const heading = screen.getByRole('heading', { level: 1, name: 'Journal' })
+    const heading = screen.getByRole('heading', { level: 1, name: 'Agenda' })
     expect(
       heading.compareDocumentPosition(filterBuilder) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()

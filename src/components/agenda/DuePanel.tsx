@@ -12,7 +12,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AlertSection } from '@/components/agenda/AlertSection'
@@ -26,6 +26,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
@@ -245,20 +246,22 @@ export function DuePanel({
     return null
   }
 
-  const visibleCount = visibleBlocks.length
-  const headerLabel = (() => {
-    if (sourceFilter === null && visibleCount > 0) {
-      const { due, scheduled, property } = sourceCounts
-      const parts: string[] = []
-      if (due > 0) parts.push(t('duePanel.countDue', { count: due }))
-      if (scheduled > 0) parts.push(t('duePanel.countScheduled', { count: scheduled }))
-      if (property > 0) parts.push(t('duePanel.countProperties', { count: property }))
-      if (parts.length > 1) return parts.join(' \u00B7 ')
-    }
-    return visibleCount === 1
-      ? t('duePanel.headerOne')
-      : t('duePanel.header', { count: visibleCount })
-  })()
+  // The header counts by the filter segments' own names, each source that has
+  // rows; with none, the chosen segment's zero (Due's under All).
+  const sourceParts = [
+    { source: 'column:due_date', label: t('duePanel.filterDue'), count: sourceCounts.due },
+    {
+      source: 'column:scheduled_date',
+      label: t('duePanel.filterScheduled'),
+      count: sourceCounts.scheduled,
+    },
+    { source: 'property:', label: t('duePanel.filterProperties'), count: sourceCounts.property },
+  ]
+  const nonEmptyParts = sourceParts.filter((part) => part.count > 0)
+  const headerParts =
+    nonEmptyParts.length > 0
+      ? nonEmptyParts
+      : sourceParts.filter((part) => part.source === (sourceFilter ?? 'column:due_date'))
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')} data-testid="due-panel">
@@ -269,7 +272,14 @@ export function DuePanel({
         className="due-panel-header"
         testId="due-panel-header"
       >
-        {headerLabel}
+        <span>
+          {headerParts.map((part, i) => (
+            <Fragment key={part.label}>
+              {i > 0 && ' \u00B7 '}
+              <SectionCount label={part.label} count={part.count} />
+            </Fragment>
+          ))}
+        </span>
       </CollapsiblePanelHeader>
 
       {!collapsed && (

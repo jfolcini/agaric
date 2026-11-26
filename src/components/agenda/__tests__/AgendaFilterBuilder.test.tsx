@@ -35,8 +35,6 @@ import type {
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 import { AgendaFilterBuilder } from '@/components/agenda/AgendaFilterBuilder'
-import type { AgendaSortGroupControlsProps } from '@/components/agenda/AgendaSortGroupControls'
-import { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { getTaskStates } from '@/lib/filter-dimension-metadata'
 import { t } from '@/lib/i18n'
@@ -982,87 +980,5 @@ describe('AgendaFilterBuilder', () => {
     // Only the placeholder "__none__" option should be present, no real keys
     expect(options).toHaveLength(1)
     expect(options[0]).toHaveValue('__none__')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// AgendaSortGroupControls
-// ---------------------------------------------------------------------------
-
-describe('AgendaSortGroupControls', () => {
-  const sortGroupDefaultProps: AgendaSortGroupControlsProps = {
-    groupBy: 'date',
-    onGroupByChange: vi.fn(),
-    sortBy: 'date',
-    onSortByChange: vi.fn(),
-  }
-
-  function renderSortGroup(overrides?: Partial<AgendaSortGroupControlsProps>) {
-    const props = { ...sortGroupDefaultProps, ...overrides }
-    return render(<AgendaSortGroupControls {...props} />)
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  // 19. Renders sort/group controls (buttons visible)
-  it('renders sort and group control buttons', () => {
-    renderSortGroup()
-    expect(screen.getByLabelText(t('agenda.groupBy'))).toBeInTheDocument()
-    expect(screen.getByLabelText(t('agenda.sortBy'))).toBeInTheDocument()
-  })
-
-  // 20. Shows current selections
-  it('shows current group and sort selections', () => {
-    renderSortGroup({ groupBy: 'priority', sortBy: 'state' })
-    expect(screen.getByLabelText(t('agenda.groupBy'))).toHaveTextContent(t('agenda.groupPriority'))
-    expect(screen.getByLabelText(t('agenda.sortBy'))).toHaveTextContent(t('agenda.sortState'))
-  })
-
-  // 21. Clicking group-by button shows options, selecting one calls onGroupByChange
-  it('clicking group-by button shows options, selecting one calls onGroupByChange', async () => {
-    const user = userEvent.setup()
-    const onGroupByChange = vi.fn()
-    renderSortGroup({ onGroupByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.groupBy')))
-
-    // All group options should be visible
-    const groupList = screen.getByRole('list', { name: t('agenda.groupBy') })
-    expect(within(groupList).getByText(t('agenda.groupDate'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupPriority'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupState'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupNone'))).toBeInTheDocument()
-
-    // Select Priority
-    await user.click(within(groupList).getByText(t('agenda.groupPriority')))
-    expect(onGroupByChange).toHaveBeenCalledWith('priority')
-  })
-
-  // 22. Clicking sort-by button shows options, selecting one calls onSortByChange
-  it('clicking sort-by button shows options, selecting one calls onSortByChange', async () => {
-    const user = userEvent.setup()
-    const onSortByChange = vi.fn()
-    renderSortGroup({ onSortByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.sortBy')))
-
-    // All sort options should be visible
-    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
-    expect(within(sortList).getByText(t('agenda.sortDate'))).toBeInTheDocument()
-    expect(within(sortList).getByText(t('agenda.sortPriority'))).toBeInTheDocument()
-    expect(within(sortList).getByText(t('agenda.sortState'))).toBeInTheDocument()
-
-    // Select State
-    await user.click(within(sortList).getByText(t('agenda.sortState')))
-    expect(onSortByChange).toHaveBeenCalledWith('state')
-  })
-
-  // 23. A11y audit passes with new controls
-  it('a11y: no violations', async () => {
-    const { container } = renderSortGroup()
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
   })
 })

@@ -167,8 +167,18 @@ beforeEach(() => {
   })
 })
 
+/** Waits for the panel header's counts to add up to `total`. */
+function findHeaderTotal(total: number): Promise<HTMLElement> {
+  return waitFor(() => {
+    const header = screen.getByTestId('due-panel-header')
+    const counts = [...header.querySelectorAll('[data-variant="metadata"]')]
+    expect(counts.reduce((sum, c) => sum + Number(c.textContent), 0)).toBe(total)
+    return header
+  })
+}
+
 describe('DuePanel', () => {
-  // 1. Renders with items showing count header ("3 Agenda")
+  // 1. Renders with items showing count header ("Properties 3": no date matches the day)
   it('renders header with correct count', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
@@ -179,11 +189,11 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('duePanel.header', { count: 3 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Properties 3' })).toBeInTheDocument()
   })
 
   // 1b. Singular count
-  it('renders singular count header ("1 Agenda")', async () => {
+  it('renders singular count header ("Properties 1")', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
@@ -193,7 +203,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('duePanel.headerOne'))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Properties 1' })).toBeInTheDocument()
   })
 
   // 2. Returns null when all sources are empty
@@ -228,7 +238,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText(t('duePanel.header', { count: 3 }))
+    await findHeaderTotal(3)
 
     // Verify group headers appear in correct order
     const groupHeaders = screen.getAllByText(/^(DOING|TODO|Other)$/)
@@ -255,7 +265,7 @@ describe('DuePanel', () => {
 
     // Header counts the TODO and the CANCELLED block; the DONE one is
     // DonePanel's (#5074).
-    await screen.findByText(t('duePanel.header', { count: 2 }))
+    await findHeaderTotal(2)
 
     // The CANCELLED group header and its row are both rendered, so the
     // count and the list agree (2 counted, 2 visible).
@@ -297,7 +307,7 @@ describe('DuePanel', () => {
 
     const { container } = render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText(t('duePanel.header', { count: 2 }))
+    await findHeaderTotal(2)
     expect(screen.getByText('doing block')).toBeInTheDocument()
     expect(screen.getByText('todo block')).toBeInTheDocument()
     expect(screen.queryByText('done 0')).not.toBeInTheDocument()
@@ -325,7 +335,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText(t('duePanel.header', { count: 4 }))
+    await findHeaderTotal(4)
 
     // Get all block text items within the TODO group
     const items = screen.getAllByText(/priority (one|two|three)|no priority/)
@@ -351,7 +361,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    await screen.findByText(t('duePanel.header', { count: 2 }))
+    await findHeaderTotal(2)
 
     const items = screen.getAllByText(/(legacy|level) priority/)
     expect(items).toHaveLength(2)
@@ -651,7 +661,7 @@ describe('DuePanel', () => {
     expect(section.querySelector('.due-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText(t('duePanel.headerOne'))
+    const header = screen.getByTestId('due-panel-header')
     await user.click(header)
 
     // Content should be hidden
@@ -783,6 +793,31 @@ describe('DuePanel', () => {
     })
 
     expect(dueBtn).toHaveAttribute('aria-checked', 'true')
+  })
+
+  // A segment with no rows: the header counts that segment's zero, not Due's.
+  it('header names the chosen segment when it has no rows', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'only due', due_date: '2025-06-15' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+    expect(await screen.findByRole('button', { name: 'Due 1' })).toBeInTheDocument()
+
+    mockedListBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    await user.click(screen.getByRole('radio', { name: /^Scheduled/ }))
+
+    expect(await screen.findByText(t('duePanel.noItemsForFilter'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scheduled 0' })).toBeInTheDocument()
   })
 
   // 15. Clicking "All" clears source filter
@@ -934,7 +969,9 @@ describe('DuePanel', () => {
     await screen.findByText('due1')
 
     // Header should show breakdown with middle dot separator
-    expect(screen.getByText('2 due \u00B7 1 scheduled \u00B7 1 by property')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Due 2 \u00B7 Scheduled 1 \u00B7 Properties 1' }),
+    ).toBeInTheDocument()
   })
 
   // #1540 — the breakdown is a date-equality heuristic, not a per-source
@@ -969,11 +1006,11 @@ describe('DuePanel', () => {
     await screen.findByText('both1')
 
     // Both-dates block buckets as Due (not double-counted), summing to 2 total.
-    expect(screen.getByText('1 due · 1 scheduled')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Due 1 · Scheduled 1' })).toBeInTheDocument()
   })
 
-  // 19. Header falls back to total count when only one source type
-  it('header shows simple count when only one source type', async () => {
+  // 19. One source type: the header names that one
+  it('header shows only the one source type there is', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
         makeBlock({ id: 'B1', content: 'due1', due_date: '2025-06-15', scheduled_date: null }),
@@ -986,8 +1023,8 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    // All blocks are from due_date — falls back to "N Agenda" format
-    expect(await screen.findByText(t('duePanel.header', { count: 2 }))).toBeInTheDocument()
+    // All blocks are from due_date
+    expect(await screen.findByRole('button', { name: 'Due 2' })).toBeInTheDocument()
   })
 
   // 20. Panel returns null when all sources are empty (supersedes B-43)
@@ -1867,7 +1904,7 @@ describe('DuePanel', () => {
       render(<DuePanel date={subjectDate} />)
 
       expect(await screen.findByText('Same-day scheduled task')).toBeInTheDocument()
-      expect(screen.getByText(t('duePanel.headerOne'))).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Due 1' })).toBeInTheDocument()
     })
 
     it('the hide-future-scheduled switch starts off', async () => {

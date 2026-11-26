@@ -119,9 +119,9 @@ describe('AppSidebar', () => {
 
   // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
   // list, in order, so a row that creeps back (or goes missing) reddens this.
-  // #6532 — Tasks, the journal's agenda mode, follows Journal. #7040 D2 —
+  // #6532 — Agenda, the journal's agenda mode, follows Journal. #7040 D2 —
   // Graph, Templates and Trash follow in the lower group.
-  it('renders exactly New Page, the four daily views, Tasks and the lower group as rows, Sync and Settings as one footer row of icons (#5269)', () => {
+  it('renders exactly New Page, the four daily views, Agenda and the lower group as rows, Sync and Settings as one footer row of icons (#5269)', () => {
     renderSidebar()
 
     const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
@@ -130,7 +130,7 @@ describe('AppSidebar', () => {
     expect(rows).toEqual([
       t('sidebar.newPage'),
       t('sidebar.journal'),
-      t('journal.tasks'),
+      t('journal.agendaTab'),
       t('sidebar.pages'),
       t('sidebar.search'),
       t('sidebar.tags'),
@@ -349,12 +349,12 @@ describe('AppSidebar', () => {
   })
 
   // #6532
-  it('opens the journal in agenda mode from Tasks, and marks Tasks, not Journal, current', async () => {
+  it('opens the journal in agenda mode from Agenda, and marks Agenda, not Journal, current', async () => {
     const onSelectView = vi.fn()
     const user = userEvent.setup()
     const { rerender, props } = renderSidebar({ onSelectView, currentView: 'pages' })
 
-    await user.click(screen.getByRole('button', { name: t('journal.tasks') }))
+    await user.click(screen.getByRole('button', { name: t('journal.agendaTab') }))
 
     expect(onSelectView).toHaveBeenCalledWith('journal')
     expect(useJournalStore.getState().mode).toBe('agenda')
@@ -363,16 +363,16 @@ describe('AppSidebar', () => {
         <AppSidebar {...props} currentView="journal" />
       </SidebarProvider>,
     )
-    const tasks = screen.getByRole('button', { name: t('journal.tasks') })
+    const agenda = screen.getByRole('button', { name: t('journal.agendaTab') })
     const journal = screen.getByRole('button', { name: t('sidebar.journal') })
-    expect(tasks).toHaveAttribute('aria-current', 'page')
+    expect(agenda).toHaveAttribute('aria-current', 'page')
     expect(journal).not.toHaveAttribute('aria-current')
 
     await user.click(journal)
 
     expect(useJournalStore.getState().mode).toBe('daily')
     expect(journal).toHaveAttribute('aria-current', 'page')
-    expect(tasks).not.toHaveAttribute('aria-current')
+    expect(agenda).not.toHaveAttribute('aria-current')
   })
 
   it('keeps a dated journal mode when Journal is chosen', async () => {

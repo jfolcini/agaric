@@ -24,6 +24,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
@@ -494,10 +495,7 @@ export function AgendaResults({
                 className={cn('agenda-group-header', row.group.className)}
               >
                 <h2 data-testid="agenda-group-header">
-                  {displayLabel}
-                  <span className="ml-1.5 text-muted-foreground font-normal">
-                    ({row.group.blocks.length})
-                  </span>
+                  <SectionCount label={displayLabel} count={row.group.blocks.length} />
                 </h2>
               </SectionGroupHeader>
             </li>

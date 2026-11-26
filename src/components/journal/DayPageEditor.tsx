@@ -3,14 +3,14 @@
  * (#5691). It opens in page mode where a page view would (`usePageMode`: the
  * *Edit pages as* setting or the Blocks | Page switch, a page within the cap),
  * the switch ending the day's row of actions (on a phone, a *Page actions* menu
- * holding the switch's row instead, so the row fits one line); otherwise in
+ * holding the switch's row and the day's delete instead, so the row fits one line); otherwise in
  * block mode's tree with its Add block button. The week and stream views mount
  * a tree per day and stay in block mode.
  */
 
-import { MoreVertical } from 'lucide-react'
+import { MoreVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
@@ -28,6 +28,7 @@ import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -35,6 +36,8 @@ interface DayPageEditorProps {
   pageId: string
   /** The day's own actions, on the row the switch (on a phone, the menu) ends. */
   actions?: React.ReactNode
+  /** On a phone, the menu's Delete page row; the host confirms. */
+  onDeleteRequest?: (() => void) | undefined
   onNavigateToPage?: NavigateToPageFn | undefined
   onAddBlock: () => void
   /** Block mode's zoom root, or `null` at the day's root, for the day's linked references. */
@@ -44,6 +47,7 @@ interface DayPageEditorProps {
 export function DayPageEditor({
   pageId,
   actions,
+  onDeleteRequest,
   onNavigateToPage,
   onAddBlock,
   onZoomChange,
@@ -53,6 +57,10 @@ export function DayPageEditor({
   const phoneLayout = usePhoneLayout()
   const onPhone = isTouch && phoneLayout
   const [menuOpen, setMenuOpen] = useState(false)
+  // Delete waits for the menu to close, when Radix hands focus back to its
+  // trigger: the confirm dialog returns focus to what held it as it opened, and
+  // until then the menu's focus trap holds it on the row.
+  const deleteOnMenuClose = useRef(false)
   const pageMode = usePageMode(pageId)
   useEditModeShortcut(pageMode.mode, pageMode.changeMode)
   // #6746 — page mode's reference count opens block mode zoomed on its block.
@@ -88,6 +96,11 @@ export function DayPageEditor({
               open={menuOpen}
               onOpenChange={setMenuOpen}
               title={t('pageHeader.pageActions')}
+              onCloseAutoFocus={() => {
+                if (!deleteOnMenuClose.current) return
+                deleteOnMenuClose.current = false
+                onDeleteRequest?.()
+              }}
               trigger={
                 <SheetTrigger asChild>
                   <Button variant="ghost" size="icon-sm" aria-label={t('pageHeader.pageActions')}>
@@ -107,6 +120,23 @@ export function DayPageEditor({
                     pageMode.changeMode(mode)
                   }}
                 />
+                {onDeleteRequest && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={cn(
+                      menuRowVariants(),
+                      'text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive',
+                    )}
+                    onClick={() => {
+                      deleteOnMenuClose.current = true
+                      setMenuOpen(false)
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    {t('pageHeader.deletePage')}
+                  </button>
+                )}
               </div>
             </MenuSheet>
           ) : (

@@ -342,9 +342,6 @@ const NOT_YET_FIXED_CEILING = 0
  */
 const PRE_EXISTING_COUNT_EXEMPT: Readonly<Record<string, string>> = {
   // Manual split via a separate catalog key, chosen by a call-site ternary.
-  'duePanel.header':
-    'Singular case handled by the separate "duePanel.headerOne" key; ' +
-    'DuePanel.tsx only calls this key when visibleCount !== 1.',
   'agenda.resultCount':
     'Singular case handled by the separate "agenda.resultOne" key; ' +
     'AgendaResults.tsx only calls this key when blocks.length !== 1.',

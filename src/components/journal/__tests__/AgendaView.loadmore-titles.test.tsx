@@ -307,7 +307,7 @@ describe('AgendaView load-more page titles (#3340)', () => {
     const headers = screen.getAllByTestId('agenda-group-header')
     expect(headers).toHaveLength(2)
     for (const header of headers) {
-      expect(within(header).getByText('(1)')).toBeInTheDocument()
+      expect(within(header).getByText('1')).toBeInTheDocument()
     }
   })
 })

@@ -5,8 +5,7 @@
  */
 
 export const agenda: Record<string, string> = {
-  'donePanel.header_one': '{{count}} élément terminé',
-  'donePanel.header_other': '{{count}} éléments terminés',
+  'donePanel.title': 'Terminés',
   'donePanel.loading': 'Chargement...',
   'donePanel.loadMore': 'Charger plus',
   'donePanel.breadcrumbArrow': '→',
@@ -44,6 +43,7 @@ export const agenda: Record<string, string> = {
   'agenda.today': 'Aujourd’hui',
   'agenda.tomorrow': 'Demain',
   'agenda.noDate': 'Sans date',
+  'agenda.view': 'Affichage',
   'agenda.sortBy': 'Trier par',
   'agenda.groupBy': 'Regrouper par',
   'agenda.sortDate': 'Date',
@@ -105,8 +105,6 @@ export const agenda: Record<string, string> = {
   'agendaFilter.valuedSubsumedByIsSet':
     'Aucun effet — la propriété est déjà filtrée sur "est défini"',
   'agendaFilter.subsumedInfoLabel': 'Pourquoi le filtre {{label}} est sans effet',
-  'duePanel.headerOne': '1 à l’agenda',
-  'duePanel.header': '{{count}} à l’agenda',
   'duePanel.groupDoing': 'DOING',
   'duePanel.groupTodo': 'TODO',
   'duePanel.groupDone': 'DONE',
@@ -130,12 +128,6 @@ export const agenda: Record<string, string> = {
   'duePanel.filterScheduledTooltip': 'Début planifié indicatif — pas en retard s’il est dépassé',
   'duePanel.filterPropertiesTooltip': 'Filtrer par propriétés de bloc (effort, responsable, etc.)',
   'duePanel.filterInfoLabel': 'À propos de ces filtres',
-  'duePanel.countDue_one': '{{count}} à échéance',
-  'duePanel.countDue_other': '{{count}} à échéance',
-  'duePanel.countScheduled_one': '{{count}} planifié',
-  'duePanel.countScheduled_other': '{{count}} planifiés',
-  'duePanel.countProperties_one': '{{count}} par propriété',
-  'duePanel.countProperties_other': '{{count}} par propriété',
   'duePanel.emptyContent': '(vide)',
   'duePanel.duePanelLabel': 'Agenda',
   'duePanel.hideFutureScheduled': 'Masquer les éléments planifiés à venir',

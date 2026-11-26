@@ -13,6 +13,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BlockListItem } from '@/components/editor/BlockListItem'
+import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useToday } from '@/hooks/useToday'
@@ -81,7 +82,7 @@ export function AlertSection({
     <div className={config.sectionClass}>
       <SectionGroupHeader asChild className={config.titleClass}>
         <h2>
-          {title} <span className="font-normal text-muted-foreground">({blocks.length})</span>
+          <SectionCount label={title} count={blocks.length} />
         </h2>
       </SectionGroupHeader>
       <ul className="m-0 list-none p-0">

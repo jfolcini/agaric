@@ -260,6 +260,34 @@ describe('DayPageEditor', () => {
       expect(await screen.findByTestId('block-tree')).toBeInTheDocument()
       expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
     })
+
+    it('holds the day’s Delete page row, which asks for the delete once the menu has closed', async () => {
+      const user = userEvent.setup()
+      const onDeleteRequest = vi.fn()
+      render(
+        <PageBlockStoreProvider pageId={DAY}>
+          <DayPageEditor pageId={DAY} onAddBlock={vi.fn()} onDeleteRequest={onDeleteRequest} />
+        </PageBlockStoreProvider>,
+      )
+
+      const menu = await openMenu(user)
+      await user.click(within(menu).getByRole('menuitem', { name: t('pageHeader.deletePage') }))
+
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: t('pageHeader.pageActions') })).toBeNull()
+      })
+      expect(onDeleteRequest).toHaveBeenCalledTimes(1)
+    })
+
+    it('has no Delete page row without a delete to ask for', async () => {
+      const user = userEvent.setup()
+      renderDay()
+
+      const menu = await openMenu(user)
+      expect(
+        within(menu).queryByRole('menuitem', { name: t('pageHeader.deletePage') }),
+      ).not.toBeInTheDocument()
+    })
   })
 
   it('Ctrl+E opens page mode on the block being edited, and back saves first, then shows the blocks', async () => {

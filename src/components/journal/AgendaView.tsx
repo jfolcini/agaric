@@ -238,13 +238,14 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         <div className="max-w-reading mx-auto space-y-2">
           {/* In agenda mode JournalPage renders no heading of its own: the title
               lives here so it sits above the filter/sort bar in the outlet. */}
-          <FeaturePageHeader title={t('sidebar.journal')} />
-          <div className="agenda-view-header">
-            {/* Holds the bar's row height (its h-7 / coarse h-11 trigger) while the chunk loads. */}
-            <Suspense fallback={<div className="h-7 [@media(pointer:coarse)]:h-11" />}>
-              <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-            </Suspense>
-            <div className="border-t border-border/40 my-3" aria-hidden="true" />
+          <FeaturePageHeader title={t('journal.agendaTab')} />
+          <div className="agenda-view-header flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              {/* Holds the bar's row height (its h-7 / coarse h-11 trigger) while the chunk loads. */}
+              <Suspense fallback={<div className="h-7 [@media(pointer:coarse)]:h-11" />}>
+                <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+              </Suspense>
+            </div>
             <AgendaSortGroupControls
               groupBy={agendaGroupBy}
               onGroupByChange={setAgendaGroupBy}

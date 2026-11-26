@@ -124,7 +124,12 @@ export function DuePanelFilters({
           checked={hideBeforeScheduled}
           onCheckedChange={() => onToggleHideBeforeScheduled()}
         />
-        <Label htmlFor={hideFutureId} className="font-normal whitespace-nowrap">
+        {/* The segments' type size, on touch too: the row reads as one control strip. */}
+        <Label
+          htmlFor={hideFutureId}
+          size="xs"
+          className="font-normal whitespace-nowrap [@media(pointer:coarse)]:text-sm"
+        >
           {t('duePanel.hideFutureScheduled')}
         </Label>
       </div>

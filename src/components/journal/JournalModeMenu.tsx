@@ -2,8 +2,8 @@
  * JournalModeMenu — the journal's mode switcher as one menu button, used
  * below `lg` in place of the five mode tabs (see `JournalControls`).
  *
- * The trigger names the current mode: its initial on a phone, the word from
- * `sm` up. The accessible name always carries the full mode.
+ * The trigger names the current mode in a word; its accessible name carries
+ * the menu's purpose too.
  */
 
 import { Check, ChevronDown } from 'lucide-react'
@@ -48,13 +48,9 @@ export function JournalModeMenu<M extends string>({
           )}
           aria-label={t('journal.viewModeMenuLabel', { mode: current })}
         >
-          <span className="sm:hidden" aria-hidden="true">
-            {current.charAt(0)}
-          </span>
-          <span className="max-sm:hidden" aria-hidden="true">
-            {current}
-          </span>
-          <ChevronDown aria-hidden="true" />
+          <span aria-hidden="true">{current}</span>
+          {/* A 360 px phone's row has room for the word but not the chevron too. */}
+          <ChevronDown className="max-[380px]:hidden" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <MenuPopoverContent align="start" className="w-40">

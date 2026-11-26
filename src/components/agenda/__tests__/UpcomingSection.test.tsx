@@ -45,7 +45,7 @@ describe('UpcomingSection', () => {
     render(<UpcomingSection blocks={blocks} pageTitles={defaultTitles} />)
 
     expect(screen.getByText(t('duePanel.upcomingTitle'))).toBeInTheDocument()
-    expect(screen.getByText('(2)')).toBeInTheDocument()
+    expect(screen.getByText('2')).toHaveAttribute('data-variant', 'metadata')
   })
 
   it('returns null when blocks array is empty', () => {

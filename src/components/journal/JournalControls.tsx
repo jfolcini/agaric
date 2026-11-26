@@ -96,7 +96,6 @@ export function JournalControls(): React.ReactElement {
   const canGoNext = isBefore(currentDate, getMaxJournalDate())
 
   function getDateDisplay(): string {
-    if (mode === 'agenda') return t('journal.tasks')
     if (mode === 'daily') return formatDateDisplay(currentDate)
     if (mode === 'weekly') return formatWeekRange(currentDate)
     return format(currentDate, 'MMMM yyyy', { locale: getDateLocale() })
@@ -117,7 +116,6 @@ export function JournalControls(): React.ReactElement {
    * every `data-testid="date-display"` assertion keep seeing the full string.
    */
   function getCompactDateDisplay(): string {
-    if (mode === 'agenda') return t('journal.tasks')
     const locale = getDateLocale()
     if (mode === 'daily') return format(currentDate, 'MMM d', { locale })
     if (mode === 'weekly') {
@@ -356,13 +354,6 @@ export function JournalControls(): React.ReactElement {
           </Suspense>
         )}
       </div>
-
-      {/* Agenda mode: show title in place of date nav */}
-      {mode === 'agenda' && (
-        <span className="text-sm font-medium" data-testid="date-display">
-          {dateDisplay}
-        </span>
-      )}
     </div>
   )
 }
