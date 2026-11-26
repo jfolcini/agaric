@@ -627,6 +627,30 @@ describe('a selection with a collapsed heading (#7040 decision 30)', () => {
     ])
     expect(hidden(ed)).toEqual([C, D])
   })
+
+  it('takes only the selected part of a section shown for the caret', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 0, '## Two'],
+      [C, 0, 'c'],
+      [D, 0, 'd'],
+      [E, 0, '## Three'],
+    ])
+    caret(ed, 0, 0)
+    toggle(ed, B)
+    // The selection's head in the section shows it: the heading folds nothing now.
+    ed.commands.setTextSelection({ from: posIn(ed, 1, 1), to: posIn(ed, 2, 1) })
+    expect(hidden(ed)).toEqual([])
+
+    expect(indentBlocks(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 1],
+      [C, 1],
+      [D, 0],
+      [E, 0],
+    ])
+  })
 })
 
 describe('Enter in a collapsed block', () => {
