@@ -1,4 +1,4 @@
-# Session 4506 — the #7040 review notes, batched
+# Session 4508 — the #7040 review notes, batched
 
 The non-blocking notes from the reviews of the merged #7040 PRs, in one follow-up, plus C6 (maintainer decision 9).
 
