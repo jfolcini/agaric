@@ -414,6 +414,9 @@ test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ]
   await url.press('Enter')
   await expect(popover).toHaveCount(0)
   await expect(editor.locator('a')).toHaveAttribute('href', 'https://example.org/new')
+  // The edit leaves the link's text selected, a range, which draws no markers; a caret in it does.
+  expect(await shownMarkers(page)).toEqual([])
+  await setCaret(page, 7)
   expect(await shownMarkers(page)).toEqual(['[', '](https://example.org/new)'])
 
   await page.keyboard.press('Escape')
@@ -482,8 +485,8 @@ test('a mouse drag that starts in bold not yet revealed selects what it covered 
   await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
   await page.mouse.up()
   await expect.poll(() => selectedText(page)).toBe('old and e')
-  // Drawn once the button is up.
-  await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+  // A range draws no markers, once the button is up too (#7040).
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 })
 
 test('after a text drag and drop the markers follow the caret again @editor @markdown', async ({
@@ -491,9 +494,9 @@ test('after a text drag and drop the markers follow the caret again @editor @mar
 }) => {
   await typeBlock(page, 'x **bold** and end')
   const editor = page.locator(EDITOR)
-  // `x |bold| and end`: the whole bold run is selected, so both markers are drawn.
+  // `x |bold| and end`: the whole bold run is selected, a range, which draws no markers.
   await selectEditorRange(page, 2, 6)
-  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
   // Drag the selected word into `end`: a native drag, which sends no mouseup.
   const from = await charBox(page, 'o')
   const to = await charBox(page, 'n', 1)
@@ -505,9 +508,11 @@ test('after a text drag and drop the markers follow the caret again @editor @mar
   await expect(editor).toHaveText(/^x\s+and e/)
   await expect(editor.locator('strong')).toHaveText('bold')
   await expect.poll(() => selectedText(page)).toBe('bold')
-  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 
   // The caret moves by the keyboard: the markers go with it.
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
   await page.keyboard.press('Home')
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 })

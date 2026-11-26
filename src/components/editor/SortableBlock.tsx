@@ -410,94 +410,95 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         </div>
       )}
 
-      {/* ── Inline controls — task checkbox, leading the block text ── */}
-      <BlockInlineControls blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
+      {/* The row's frame: the checkbox, the text and the chips under it. It
+            draws the editing box while the block is edited, and the cursor
+            row's ring, on `:focus` rather than `:focus-visible`: Chromium does
+            not count a Ctrl chord as keyboard use, so after a click into a
+            block, Ctrl+Space and Ctrl+Arrow would move an unmarked cursor.
+            Both inset: on a phone the frame starts at the column's edge, which
+            cuts off a ring drawn outside it. */}
+      <div
+        className={cn(
+          'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
+          isFocused && 'ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting)',
+        )}
+        data-testid="block-frame"
+      >
+        {/* ── Inline controls — task checkbox, leading the block text ── */}
+        <BlockInlineControls blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
 
-      {/* ── Property edit popover / key rename ────────────────── */}
-      <BlockPropertyEditor
-        blockId={blockId}
-        editingProp={editingProp}
-        setEditingProp={setEditingProp}
-        editingKey={editingKey}
-        setEditingKey={setEditingKey}
-        selectOptions={selectOptions}
-        isRefProp={isRefProp}
-        refPages={refPages}
-        refSearch={refSearch}
-        setRefSearch={setRefSearch}
-        valueType={valueType}
-      />
+        {/* ── Property edit popover / key rename ────────────────── */}
+        <BlockPropertyEditor
+          blockId={blockId}
+          editingProp={editingProp}
+          setEditingProp={setEditingProp}
+          editingKey={editingKey}
+          setEditingKey={setEditingKey}
+          selectOptions={selectOptions}
+          isRefProp={isRefProp}
+          refPages={refPages}
+          refSearch={refSearch}
+          setRefSearch={setRefSearch}
+          valueType={valueType}
+        />
 
-      {/* ── Block content + below-block metadata row ──────────────── */}
-      {/* The content column is a vertical stack: the editor text, then the
+        {/* ── Block content + below-block metadata row ──────────────── */}
+        {/* The content column is a vertical stack: the editor text, then the
             interactive metadata chips (priority, dates, repeat, properties,
             attachments) on their own row beneath it, left-aligned with the
             text (user feedback 2026-06-20). */}
-      {/* The cursor row's `focus-ring-visible` ring, on `:focus` rather than
-            `:focus-visible`: Chromium does not count a Ctrl chord as keyboard
-            use, so after a click into a block, Ctrl+Space and Ctrl+Arrow would
-            move an unmarked cursor. */}
-      <div
-        className="flex-1 min-w-0 flex flex-col rounded-md group-focus/row:ring-[3px] group-focus/row:ring-ring"
-        data-testid="block-content"
-      >
-        <div
-          className={cn(
-            'min-w-0 transition-[text-decoration-color,color] duration-moderate',
-            // #1243: NO active-block highlight here. A focused block already
-            // gets its own indicator — the `block-editor` box rendered by
-            // EditableBlock (`ring-1 ring-border bg-accent/[0.06]`, a resting shadow,
-            // rounded). The earlier #1232 red `border-l-primary` bar +
-            // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
-            // top of that grey box and let the tint bleed to the left edge
-            // behind the bar. Removing it leaves a single, calm focus
-            // treatment and tightens the negative space left of the text.
-            // Muted by the token, not by opacity: half opacity measures 3.4:1.
-            isClosedTask && !isFocused ? 'line-through text-muted-foreground' : 'no-underline',
-          )}
-          // #2770 — explicitly opt the editable text OUT of the row's native
-          // reschedule-drag (see `rescheduleDragEnabled` on the outer row
-          // div). Without this, starting a mouse-drag to SELECT text inside
-          // the ProseMirror editor could instead be interpreted as the start
-          // of a native HTML5 drag from the row ancestor in browsers that
-          // resolve drag-vs-select ambiguously.
-          draggable={false}
-        >
-          <EditableBlock
+        <div className="flex-1 min-w-0 flex flex-col" data-testid="block-content">
+          <div
+            className={cn(
+              'min-w-0 transition-[text-decoration-color,color] duration-moderate',
+              // No highlight of its own: the frame above draws the one editing box (#1243).
+              // Muted by the token, not by opacity: half opacity measures 3.4:1.
+              isClosedTask && !isFocused ? 'line-through text-muted-foreground' : 'no-underline',
+            )}
+            // #2770 — explicitly opt the editable text OUT of the row's native
+            // reschedule-drag (see `rescheduleDragEnabled` on the outer row
+            // div). Without this, starting a mouse-drag to SELECT text inside
+            // the ProseMirror editor could instead be interpreted as the start
+            // of a native HTML5 drag from the row ancestor in browsers that
+            // resolve drag-vs-select ambiguously.
+            draggable={false}
+          >
+            <EditableBlock
+              blockId={blockId}
+              content={content}
+              isFocused={isFocused}
+              rovingEditor={rovingEditor}
+              onNavigate={onNavigate}
+              resolveBlockTitle={resolveBlockTitle}
+              resolveTagName={resolveTagName}
+              resolveBlockStatus={resolveBlockStatus}
+              resolveTagStatus={resolveTagStatus}
+              isSelected={isSelected}
+              onSelect={onSelect}
+            />
+          </div>
+
+          <BlockMetadataRow
             blockId={blockId}
-            content={content}
-            isFocused={isFocused}
-            rovingEditor={rovingEditor}
+            priority={priority}
+            onTogglePriority={onTogglePriority}
+            dueDate={dueDate}
+            scheduledDate={scheduledDate}
+            onOpenDatePicker={onOpenDatePicker}
+            properties={properties}
+            filteredProperties={filteredProperties}
+            maxInlineProperties={maxInlineProperties}
+            attachmentCount={attachmentCount}
+            showAttachments={showAttachments}
+            onToggleAttachments={onToggleAttachments}
+            refCount={refCount}
+            onOpenReferences={onZoomIn}
+            onEditProp={onEditProp}
+            onEditKey={onEditKey}
+            onShowProperties={onShowProperties}
             onNavigate={onNavigate}
-            resolveBlockTitle={resolveBlockTitle}
-            resolveTagName={resolveTagName}
-            resolveBlockStatus={resolveBlockStatus}
-            resolveTagStatus={resolveTagStatus}
-            isSelected={isSelected}
-            onSelect={onSelect}
           />
         </div>
-
-        <BlockMetadataRow
-          blockId={blockId}
-          priority={priority}
-          onTogglePriority={onTogglePriority}
-          dueDate={dueDate}
-          scheduledDate={scheduledDate}
-          onOpenDatePicker={onOpenDatePicker}
-          properties={properties}
-          filteredProperties={filteredProperties}
-          maxInlineProperties={maxInlineProperties}
-          attachmentCount={attachmentCount}
-          showAttachments={showAttachments}
-          onToggleAttachments={onToggleAttachments}
-          refCount={refCount}
-          onOpenReferences={onZoomIn}
-          onEditProp={onEditProp}
-          onEditKey={onEditKey}
-          onShowProperties={onShowProperties}
-          onNavigate={onNavigate}
-        />
       </div>
 
       {/* ── Collapse chevron (a phone's top-level row) — the row's right end,

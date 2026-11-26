@@ -104,6 +104,8 @@
   /* Block reference chip */
   --color-block-ref: var(--block-ref);
   --color-block-ref-foreground: var(--block-ref-foreground);
+  /* Page links and URLs: the hue of a block reference's text, so every reference reads as one kind */
+  --color-link: var(--block-ref-foreground);
   /* Scheduled/repeat indicator */
   --color-indicator-scheduled: var(--indicator-scheduled);
   --color-indicator-scheduled-foreground: var(--indicator-scheduled-foreground);
@@ -1986,14 +1988,15 @@ mark[data-highlight-color='purple'] {
   @apply mr-1 font-semibold text-muted-foreground;
 }
 
-/* Page links — [[ULID]] rendered as the page title. Underlined running text,
-   like `.external-link`: a filled chip read as a button (#5332). */
+/* Page links — [[ULID]] rendered as the page title. Underlined running text
+   in the link colour, as `.external-link` is: a filled chip read as a button
+   (#5332). Only an external link's arrow tells the two apart: it leaves the app. */
 .block-link-chip {
-  @apply rounded-xs font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
+  @apply rounded-xs text-link underline decoration-link/50 underline-offset-2 transition-colors;
 }
 .block-link-chip:hover,
 .block-link-chip:active {
-  @apply decoration-foreground;
+  @apply decoration-link;
 }
 /* Broken / deleted block link: visual affordance for [[ULID]] pointing
    to a soft-deleted or purged block. Below `.block-link-chip`: same
@@ -2196,13 +2199,13 @@ mark[data-highlight-color='purple'] {
   }
 }
 
-/* External URL links — both in TipTap editor (a.external-link) and StaticBlock */
+/* External URL links — both in TipTap editor (a.external-link) and StaticBlock; a page link's look */
 .external-link {
-  @apply text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
+  @apply text-link underline decoration-link/50 underline-offset-2 transition-colors;
 }
 .external-link:hover,
 .external-link:active {
-  @apply decoration-foreground;
+  @apply decoration-link;
 }
 
 /* ── Embed container (#4550) ───────────────────────────────────────── */

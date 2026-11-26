@@ -131,7 +131,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 - **Mobile dialog swap.** `useDialogOrSheet` renders dialogs as bottom Sheets on phones (`usePhoneLayout`), same `open` / `onOpenChange` API. AlertDialog auto-closes on action; Sheet needs explicit `onOpenChange(false)`.
 - **Empty / loading / error.** One empty pattern, `EmptyState`: icon, title, optional description and action (`compact` inside a panel). Empty states need a meaningful CTA. Loading shows a skeleton or spinner, never a blank screen, with `aria-busy="true"` on the container. Error states must include a way to retry or recover. A load failure is reported once: a list that shows it inline (`ListViewState`'s alert, above any rows it keeps) raises no toast for it.
 - **Filter UI.** Removable pills, dropdown sort, `Clear all` action.
-- **Inline tokens.** Tag chips, block-link chips, external-link chips share styling conventions and a `deleted` variant.
+- **Inline tokens.** A page link and a URL look alike: text in the link colour (`--color-link`, a block reference's hue) with its underline, at the weight of the text around it; only a URL's ↗ tells them apart, as it leaves the app. A block reference is a tinted chip in the same hue, as it shows another block's text; a tag is a muted pill, a label rather than a link; the link that lists a row in the references panel wears a hairline outline (`ref-chip-anchor`). Each has a `deleted` variant.
 - **Scroll areas.** Use the `ScrollArea` primitive for any scroller that needs styled scrollbars on touch (coarse pointers get a thicker thumb).
 - **`@floating-ui/dom`** for popover placement (`computePosition` + `offset() + flip() + shift()`). Never hand-roll coordinate math.
 

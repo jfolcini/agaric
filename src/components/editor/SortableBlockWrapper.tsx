@@ -251,7 +251,7 @@ function SortableBlockWrapperInner({
       className={cn(
         'list-none m-0 p-0',
         // The row takes the focus; `SortableBlock` draws its ring around the
-        // block's content (`group-focus/row`), clear of the gutter.
+        // block's frame (`group-focus/row`): checkbox, text and chips, clear of the gutter.
         isCursor && 'group/row focus:outline-hidden',
         isAnimating && 'block-children-enter',
         // #991 — committed faint row-level drop-over tint so the whole
