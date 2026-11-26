@@ -2,6 +2,8 @@
  * E2E — the page editor's four inconsistencies (#7040 P4), in blocks and in
  * page mode. The Properties header reads like every other section header: its
  * label, then its count in the muted count tone.
+ * A callout is a tinted card with its style's icon, and a quote keeps its plain
+ * left bar.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -81,6 +83,30 @@ async function expectPropertiesHeader(page: Page): Promise<void> {
   expect(await css(count, 'color'), 'count colour').toBe(await css(header, 'color'))
 }
 
+/** How far a computed colour is from grey: the spread of its sRGB channels, 0–255. */
+function tint(el: Locator, prop: string): Promise<number> {
+  return el.evaluate((node, p) => {
+    const ctx = document.createElement('canvas').getContext('2d')
+    if (!ctx) throw new Error('no 2d canvas')
+    ctx.fillStyle = getComputedStyle(node).getPropertyValue(p)
+    ctx.fillRect(0, 0, 1, 1)
+    const [r = 0, g = 0, b = 0, a = 0] = ctx.getImageData(0, 0, 1, 1).data
+    return a === 0 ? 0 : Math.max(r, g, b) - Math.min(r, g, b)
+  }, prop)
+}
+
+/** The callout is a tinted card with a coloured bar; the quote has no fill. */
+async function expectTintedCallout(callout: Locator, quote: Locator): Promise<void> {
+  await expect(callout).toBeVisible()
+  expect(await tint(callout, 'background-color'), 'callout fill is tinted').toBeGreaterThan(3)
+  expect(await tint(callout, 'border-left-color'), 'callout bar is tinted').toBeGreaterThan(3)
+  expect(await css(quote, 'background-color'), 'quote has no fill').toBe('rgba(0, 0, 0, 0)')
+  expect(await css(quote, 'border-left-style'), 'quote keeps its bar').toBe('solid')
+}
+
+const staticQuote = (page: Page): Locator =>
+  page.locator('.block-static blockquote:not([data-callout-type])')
+
 test.describe('the Properties header @pages', () => {
   test.use(DESKTOP)
 
@@ -91,5 +117,30 @@ test.describe('the Properties header @pages', () => {
     await expectPropertiesHeader(page)
     await toPageMode(page)
     await expectPropertiesHeader(page)
+  })
+})
+
+test.describe('callouts and quotes @editor @pages', () => {
+  test.use(DESKTOP)
+
+  test('a callout is a tinted card with its icon, in blocks and in page mode', async ({ page }) => {
+    await openShowcase(page)
+    const callout = page.getByTestId('callout-block')
+    await expectTintedCallout(callout, staticQuote(page))
+    await expect(callout.locator('svg')).toBeVisible()
+
+    await toPageMode(page)
+    const editor = page.getByTestId('page-mode-editor')
+    const pageCallout = editor.locator('blockquote[data-callout-type]')
+    await expectTintedCallout(pageCallout, editor.locator('blockquote:not([data-callout-type])'))
+    expect(await css(pageCallout, 'mask-image', '::after'), 'page-mode callout icon').toContain(
+      'url(',
+    )
+  })
+
+  test('a callout stays tinted in the dark theme', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('theme-preference', 'dark'))
+    await openShowcase(page)
+    await expectTintedCallout(page.getByTestId('callout-block'), staticQuote(page))
   })
 })
