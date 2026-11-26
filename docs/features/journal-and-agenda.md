@@ -37,10 +37,10 @@ The date picker shows **coloured dots** on days that already have content: one d
 
 The Due Panel, headed *Tasks*, lists a day's open tasks (#7155).
 
-- **Today's tabs**: on today's page, *All · Overdue · Today · This week · Later · No date*, each with its count; the header carries none. A task goes under the tab its earlier date (due or scheduled) names: *Overdue* before today, *Today*, *This week* through the end of the week (Settings › *Week starts on*), *Later* after it, and *No date* with neither. *Today* also lists the day's other dated blocks (a date property) and its projected occurrences. *All* shows each tab's tasks under its name. On a phone the tabs scroll sideways.
-- **Another day**: a past or future day shows no tabs, just the open tasks dated that day.
-- **A flat list**: each list is sorted by date, then priority, with no grouping.
-- **Overdue label**: a task past its due date shows *(Xd overdue)*, one past its scheduled date *(Xd ago)*. Clicking jumps to the task in its source page.
+- **Tabs**: on today's page and every later one, *All · Overdue · Today · This week · Later · No date*, each with its count, counted from that page's date; the header carries none. A task goes under the tab its earlier date (due or scheduled) names: *Overdue* before the page's date, *Today* on it, *This week* through the end of that week (Settings › *Week starts on*), *Later* after it, and *No date* with neither. *Today* also lists the day's other dated blocks (a date property) and its projected occurrences. *All* shows each tab's tasks under its name. On a phone the tabs scroll sideways.
+- **A past day**: no tabs, just the open tasks dated that day.
+- **One list, or by page**: each list is sorted by date, then priority. The panel's *Group* button (None / Page, kept per device like the Agenda's grouping) puts each page's tasks under its heading, the pages in the order of their earliest task, then that task's priority.
+- **Overdue label**: a task past its due date shows *(Xd overdue)*, one past its scheduled date *(Xd ago)*, counted from the real today on every page. Clicking jumps to the task in its source page.
 - **Task checkbox**: each task row carries the block's own checkbox, which steps the task's state as a click in the block does.
 - **One task row**: the panel lists the same row the Agenda does: the checkbox, the task's text, then its priority, its due date (a flag) and scheduled date (a calendar with a clock) as chips, and its source page. On a narrow screen the chips sit under the text, lined up with it.
 

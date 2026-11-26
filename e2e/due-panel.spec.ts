@@ -54,6 +54,45 @@ test('today’s tabs list a task under its date’s tab, and a past day lists it
   await expect(rows).toHaveText([/Renew passport/])
 })
 
+test('Group: Page heads each page’s tasks, kept across views, and a later page counts its tabs from its date @journal', async ({
+  page,
+}) => {
+  await seedSearchBlocks(page, [
+    { content: 'Plan the offsite', todo: 'TODO', due: 2 },
+    // The seeded Meetings page.
+    { content: 'Call the plumber', todo: 'TODO', due: 1, parentId: '00000000000000000000PAGE05' },
+  ])
+  await refetchDuePanel(page)
+
+  const panel = page.getByTestId('due-panel')
+  await panel.getByTestId('due-panel-group').click()
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const groups = panel.getByTestId('due-panel-page-group')
+  await expect(groups.first()).toBeVisible()
+  await expect(groups.filter({ hasText: 'Plan the offsite' }).getByRole('heading')).toHaveText(
+    'Projects',
+  )
+  await expect(groups.filter({ hasText: 'Call the plumber' }).getByRole('heading')).toHaveText(
+    'Meetings',
+  )
+
+  // Kept per device, like the Agenda's grouping.
+  await refetchDuePanel(page)
+  await expect(panel.getByTestId('due-panel-group')).toHaveText(/Group: Page/)
+  await expect(groups.first()).toBeVisible()
+
+  // Tomorrow's page: today's seeded task is overdue there, the offsite is its next day.
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await panel.getByRole('tab', { name: /^Overdue \d+$/ }).click()
+  await expect(
+    panel.getByTestId('due-panel-item').filter({ hasText: 'Fix login bug' }),
+  ).toHaveCount(1)
+  await panel.getByRole('tab', { name: /^This week \d+$/ }).click()
+  await expect(
+    panel.getByTestId('due-panel-item').filter({ hasText: 'Plan the offsite' }),
+  ).toHaveCount(1)
+})
+
 test('an overdue task reads "(3d overdue)" and a click opens it focused on its page @journal', async ({
   page,
 }) => {

@@ -1,23 +1,27 @@
 /**
  * DuePanel -- the journal day's open tasks.
  *
- * On today's page the tasks sit under tabs All · Overdue · Today · This week ·
- * Later · No date (`task-buckets.ts`), each with its count; All shows every
- * tab's rows under its name. Any other day lists the open tasks dated that day.
- * Each list is flat, by date then priority, and every row keeps its due or
- * scheduled chip and its page. Uses cursor-based pagination for the day's own
+ * On today's page and later ones the tasks sit under tabs All · Overdue ·
+ * Today · This week · Later · No date (`task-buckets.ts`), counted from that
+ * page's date, each with its count; All shows every tab's rows under its name.
+ * A past day lists the open tasks dated that day. Each list runs by date then
+ * priority, flat or (the Group choice) under one heading per page, and every
+ * row keeps its due or scheduled chip and its page. Uses cursor-based pagination for the day's own
  * rows with a `t('duePanel.loadMore')` button.
  */
 
 import { endOfWeek } from 'date-fns'
+import { ChevronDown } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ChoiceList } from '@/components/agenda/AgendaSortGroupControls'
 import { ProjectedEntriesSection } from '@/components/agenda/ProjectedEntries'
 import {
   bucketTasks,
   byDateThenPriority,
+  groupByPage,
   TASK_BUCKETS,
   type TaskBucket,
 } from '@/components/agenda/task-buckets'
@@ -27,6 +31,9 @@ import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
@@ -34,10 +41,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
+import { useToday } from '@/hooks/useToday'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatDate } from '@/lib/date-utils'
+import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -61,6 +70,27 @@ const BUCKET_LABEL_KEYS: Record<Tab, string> = {
   noDate: 'duePanel.tabNoDate',
 }
 
+type PanelGroupBy = 'none' | 'page'
+
+const GROUP_LABEL_KEYS: Record<PanelGroupBy, string> = {
+  none: 'agenda.groupNone',
+  page: 'agenda.groupPage',
+}
+const GROUP_CHOICES = [
+  { value: 'none', labelKey: GROUP_LABEL_KEYS.none },
+  { value: 'page', labelKey: GROUP_LABEL_KEYS.page },
+] as const
+
+// Per device, like the Agenda's grouping (`useAgendaPreferences`).
+const GROUP_BY_OPTIONS = {
+  parse: (raw: string): PanelGroupBy => {
+    if (raw === 'none' || raw === 'page') return raw
+    throw new Error('invalid groupBy')
+  },
+  serialize: (value: PanelGroupBy): string => value,
+  source: 'DuePanel',
+}
+
 const DAY_MS = 1000 * 60 * 60 * 24
 
 function daysBetween(from: string, to: string): number {
@@ -77,7 +107,14 @@ export function DuePanel({
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
   const [tab, setTab] = useState<Tab>('all')
+  const [groupOpen, setGroupOpen] = useState(false)
+  const [groupBy, setGroupBy] = useLocalStoragePreference<PanelGroupBy>(
+    'agaric:duePanel:groupBy',
+    'none',
+    GROUP_BY_OPTIONS,
+  )
   const { weekStartsOn } = useWeekStart()
+  const todayStr = useToday()
 
   const {
     blocks,
@@ -88,7 +125,7 @@ export function DuePanel({
     projectedLoading,
     openTasks,
     openTasksLoading,
-    isToday,
+    fromToday,
     loadMore,
   } = useDuePanelData({ date, excludePageId })
 
@@ -103,10 +140,10 @@ export function DuePanel({
   })
 
   const buckets = useMemo(() => {
-    if (!isToday) return null
+    if (!fromToday) return null
     const weekEnd = formatDate(endOfWeek(new Date(`${date}T00:00:00`), { weekStartsOn }))
     return bucketTasks(blocks, openTasks, date, weekEnd)
-  }, [isToday, blocks, openTasks, date, weekStartsOn])
+  }, [fromToday, blocks, openTasks, date, weekStartsOn])
 
   const dayRows = useMemo(() => blocks.toSorted(byDateThenPriority(date)), [blocks, date])
 
@@ -163,14 +200,13 @@ export function DuePanel({
     return counted.reduce((sum, b) => sum + buckets[b].length, projected)
   }
 
-  /** How long ago an overdue row's date was, on today's page only. */
+  /** How long ago a row's passed date was, counted from the real today on every page. */
   const ageNote = (block: BlockRow): string | undefined => {
-    if (!isToday) return undefined
-    if (block.due_date != null && block.due_date < date) {
-      return `(${t('duePanel.daysOverdue', { count: daysBetween(block.due_date, date) })})`
+    if (block.due_date != null && block.due_date < todayStr) {
+      return `(${t('duePanel.daysOverdue', { count: daysBetween(block.due_date, todayStr) })})`
     }
-    if (block.scheduled_date != null && block.scheduled_date < date) {
-      return `(${t('duePanel.scheduledDaysAgo', { count: daysBetween(block.scheduled_date, date) })})`
+    if (block.scheduled_date != null && block.scheduled_date < todayStr) {
+      return `(${t('duePanel.scheduledDaysAgo', { count: daysBetween(block.scheduled_date, todayStr) })})`
     }
     return undefined
   }
@@ -233,7 +269,27 @@ export function DuePanel({
                   <h2>{t(BUCKET_LABEL_KEYS[bucket])}</h2>
                 </SectionGroupHeader>
               )}
-              <ul className="due-panel-blocks m-0 list-none p-0">{rows.map(renderRow)}</ul>
+              {groupBy === 'page' ? (
+                groupByPage(rows).map((group) => {
+                  const PageHeading = bucket === null ? 'h2' : 'h3'
+                  return (
+                    <div key={group.pageId ?? ''} data-testid="due-panel-page-group">
+                      <SectionGroupHeader asChild className="pl-4">
+                        <PageHeading>
+                          {group.pageId
+                            ? (pageTitles.get(group.pageId) ?? t('duePanel.untitled'))
+                            : t('duePanel.untitled')}
+                        </PageHeading>
+                      </SectionGroupHeader>
+                      <ul className="due-panel-blocks m-0 list-none p-0">
+                        {group.rows.map(renderRow)}
+                      </ul>
+                    </div>
+                  )
+                })
+              ) : (
+                <ul className="due-panel-blocks m-0 list-none p-0">{rows.map(renderRow)}</ul>
+              )}
             </div>
           ),
       )}
@@ -259,14 +315,42 @@ export function DuePanel({
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')} data-testid="due-panel">
-      <CollapsiblePanelHeader
-        isCollapsed={collapsed}
-        onToggle={toggleCollapsed}
-        className="due-panel-header"
-        testId="due-panel-header"
-      >
-        {t('duePanel.heading')}
-      </CollapsiblePanelHeader>
+      <div className="flex items-center gap-2">
+        <CollapsiblePanelHeader
+          isCollapsed={collapsed}
+          onToggle={toggleCollapsed}
+          className="due-panel-header flex-1"
+          testId="due-panel-header"
+        >
+          {t('duePanel.heading')}
+        </CollapsiblePanelHeader>
+        {!collapsed && (
+          <Popover open={groupOpen} onOpenChange={setGroupOpen} sheetTitle={t('agenda.groupBy')}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                className="shrink-0 coarse:h-(--touch-target)"
+                data-testid="due-panel-group"
+              >
+                {t('duePanel.groupButton', { choice: t(GROUP_LABEL_KEYS[groupBy]) })}
+                <ChevronDown aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+            <MenuPopoverContent align="end" className="w-40" aria-label={t('agenda.groupBy')}>
+              <ChoiceList
+                label={t('agenda.groupBy')}
+                value={groupBy}
+                options={GROUP_CHOICES}
+                onChange={(value) => {
+                  setGroupBy(value)
+                  setGroupOpen(false)
+                }}
+              />
+            </MenuPopoverContent>
+          </Popover>
+        )}
+      </div>
 
       {!collapsed && (
         <ListViewState

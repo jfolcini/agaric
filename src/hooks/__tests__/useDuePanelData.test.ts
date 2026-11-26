@@ -598,7 +598,7 @@ describe('useDuePanelData', () => {
     expect(extractUlidRefs('')).toHaveLength(0)
   })
 
-  it('reads every open task, page by page, on today only (#7155)', async () => {
+  it('reads every open task, page by page, on today (#7155)', async () => {
     const page = (id: string, next: string | null) => ({
       items: [makeBlock({ id, todo_state: 'TODO', due_date: null, scheduled_date: null })],
       next_cursor: next,
@@ -624,6 +624,23 @@ describe('useDuePanelData', () => {
       }),
       { kind: 'active', space_id: 'SPACE_1' },
     )
+  })
+
+  it('reads the open tasks on a later page too, and none on a past one (#7155)', async () => {
+    const { rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-20' },
+    })
+    await waitFor(() => expect(mockedQueryByProperty).toHaveBeenCalledTimes(1))
+
+    mockedQueryByProperty.mockClear()
+    rerender({ date: '2026-04-14' })
+    await waitFor(() =>
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-04-14' }),
+        expect.anything(),
+      ),
+    )
+    expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
   it('open tasks batchResolve includes page ids and content ULIDs (B-55)', async () => {

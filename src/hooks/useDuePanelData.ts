@@ -1,7 +1,7 @@
 /**
  * useDuePanelData — data fetching hook for DuePanel.
  *
- * Encapsulates the data fetches (the day's agenda rows, today's open tasks,
+ * Encapsulates the data fetches (the day's agenda rows, the open tasks,
  * projected) and their state management. Returns fetched data, loading states,
  * page titles, and a loadMore function.
  *
@@ -11,7 +11,7 @@
  * other paginated panels (HistoryView / HistoryPanel / DonePanel each drive a
  * single cursor list), this hook is a
  * multi-source coordinator, not a thin cursor wrapper:
- *  - It runs distinct fetches (the day's agenda rows, today's open tasks,
+ *  - It runs distinct fetches (the day's agenda rows, the open tasks,
  *    projected agenda), merging all of their parent-title resolutions into a
  *    single shared `pageTitles` map.
  *  - `projected` uses a module-level 30s TTL cache keyed by space+date, and
@@ -162,10 +162,11 @@ export interface UseDuePanelDataReturn {
   pageTitles: Map<string, string>
   projectedEntries: ActiveProjectedAgendaEntry[]
   projectedLoading: boolean
-  /** On today's page only: every open task (TODO, DOING), dated or not. */
+  /** On today's page and later ones: every open task (TODO, DOING), dated or not. */
   openTasks: BlockRow[]
   openTasksLoading: boolean
-  isToday: boolean
+  /** The page is today's or a later one's, which list every open task under tabs. */
+  fromToday: boolean
   loadMore: () => void
 }
 
@@ -230,11 +231,11 @@ export function useDuePanelData({
   const [openTasksLoading, setOpenTasksLoading] = useState(false)
 
   const todayStr = useToday()
-  const isToday = date === todayStr
+  const fromToday = date >= todayStr
 
   useEffect(() => {
-    if (!isToday || currentSpaceId == null) {
-      // oxlint-disable-next-line react/set-state-in-effect -- drops the open tasks when the panel leaves today; its rows only ever arrive from the `queryByProperty` IPC below; see #4407
+    if (!fromToday || currentSpaceId == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the open tasks when the panel moves to a past day; its rows only ever arrive from the `queryByProperty` IPC below; see #4407
       setOpenTasks([])
       setOpenTasksLoading(false)
       return
@@ -258,7 +259,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, date, invalidationKey, currentSpaceId])
+  }, [fromToday, date, invalidationKey, currentSpaceId])
 
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
@@ -447,7 +448,7 @@ export function useDuePanelData({
     projectedLoading,
     openTasks: filteredOpenTasks,
     openTasksLoading,
-    isToday,
+    fromToday,
     loadMore,
   }
 }

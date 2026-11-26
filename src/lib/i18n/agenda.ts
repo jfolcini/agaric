@@ -234,6 +234,9 @@ export const agenda: Record<string, string> = {
   'duePanel.tabLater': 'Later',
   'duePanel.tabNoDate': 'No date',
   'duePanel.emptyTab': 'No tasks here.',
+  // Translators: DuePanel: the button that groups the tasks, followed by the current choice
+  // (agenda.groupNone or agenda.groupPage), e.g. "Group: Page".
+  'duePanel.groupButton': 'Group: {{choice}}',
 
   // Translators: DuePanel: shown in place of the text of a task that has no text.
   'duePanel.emptyContent': '(empty)',

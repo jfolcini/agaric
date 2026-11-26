@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { bucketTasks, taskDate } from '@/components/agenda/task-buckets'
+import { bucketTasks, groupByPage, taskDate } from '@/components/agenda/task-buckets'
 
 const TODAY = '2026-11-25'
 const WEEK_END = '2026-11-29'
@@ -75,6 +75,21 @@ describe('bucketTasks', () => {
       'NOV27_NONE',
       'NOV28_P1',
       'NOV28_P3',
+    ])
+  })
+})
+
+describe('groupByPage', () => {
+  it('runs the pages by their earliest row and keeps the rows’ order inside each', () => {
+    const rows = [
+      makeBlock({ id: 'B1', page_id: 'P_B' }),
+      makeBlock({ id: 'A1', page_id: 'P_A' }),
+      makeBlock({ id: 'B2', page_id: 'P_B' }),
+      makeBlock({ id: 'A2', page_id: 'P_A' }),
+    ]
+    expect(groupByPage(rows).map((g) => [g.pageId, ids(g.rows)])).toEqual([
+      ['P_B', ['B1', 'B2']],
+      ['P_A', ['A1', 'A2']],
     ])
   })
 })

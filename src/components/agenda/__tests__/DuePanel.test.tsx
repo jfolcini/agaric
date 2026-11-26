@@ -1472,6 +1472,85 @@ describe('DuePanel', () => {
       expect(todayRows[1]).toHaveTextContent('Property-dated note')
     })
 
+    it('on a later page, counts the tabs from that page’s date', async () => {
+      render(<DuePanel date="2026-11-26" />)
+
+      await findRows(6)
+      // From Thursday the 26th: the 25th's task is overdue, Friday's is this
+      // week; the day's own property-dated row is the 26th's.
+      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+        'All 6',
+        'Overdue 2',
+        'Today 1',
+        'This week 1',
+        'Later 1',
+        'No date 1',
+      ])
+      // A row's age still counts from the real today (the 25th), not the page's date.
+      expect(screen.getByText(`(${t('duePanel.daysOverdue', { count: 3 })})`)).toBeInTheDocument()
+    })
+
+    it('Group: Page puts each page’s tasks under its heading, and the choice is kept', async () => {
+      mockedQueryByProperty.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'B1',
+            content: 'Beta first',
+            page_id: 'P_B',
+            due_date: '2026-11-20',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'A1',
+            content: 'Alpha first',
+            page_id: 'P_A',
+            due_date: '2026-11-21',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'B2',
+            content: 'Beta second',
+            page_id: 'P_B',
+            due_date: '2026-11-22',
+            todo_state: 'TODO',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'P_A', title: 'Alpha page', block_type: 'page', deleted: false },
+        { id: 'P_B', title: 'Beta page', block_type: 'page', deleted: false },
+      ])
+      const user = userEvent.setup()
+      const { unmount } = render(<DuePanel date={TODAY} />)
+      await findRows(3)
+
+      await user.click(screen.getByTestId('due-panel-group'))
+      await user.click(await screen.findByRole('button', { name: t('agenda.groupPage') }))
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+      const groups = screen.getAllByTestId('due-panel-page-group')
+      expect(within(groups[0] as HTMLElement).getByRole('heading')).toHaveTextContent('Beta page')
+      expect(
+        within(groups[0] as HTMLElement)
+          .getAllByTestId('due-panel-item')
+          .map((r) => r.textContent),
+      ).toEqual([expect.stringContaining('Beta first'), expect.stringContaining('Beta second')])
+      expect(within(groups[1] as HTMLElement).getByRole('heading')).toHaveTextContent('Alpha page')
+
+      unmount()
+      render(<DuePanel date={TODAY} />)
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+      localStorage.removeItem('agaric:duePanel:groupBy')
+    })
+
     it('a tab with no tasks says so', async () => {
       mockedQueryByProperty.mockResolvedValue({
         items: [makeBlock({ id: 'UNDATED', content: 'Someday task', todo_state: 'TODO' })],

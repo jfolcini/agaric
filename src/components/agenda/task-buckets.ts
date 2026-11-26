@@ -1,7 +1,7 @@
 /**
- * The time buckets of today's task panel (#7155 R7): every open task under the
- * one tab its earlier date (due or scheduled) puts it in, sorted by that date,
- * then priority.
+ * The time buckets of a journal day's task panel (#7155 R7), counted from that
+ * day: every open task under the one tab its earlier date (due or scheduled)
+ * puts it in, sorted by that date, then priority.
  */
 
 import type { BlockRow } from '@/lib/bindings'
@@ -32,6 +32,7 @@ export function byDateThenPriority(fallbackDate: string) {
 export function bucketTasks(
   dayRows: BlockRow[],
   openTasks: BlockRow[],
+  /** The page's own date, which the buckets count from. */
   today: string,
   weekEnd: string,
 ): Record<TaskBucket, BlockRow[]> {
@@ -62,4 +63,19 @@ export function bucketTasks(
   const order = byDateThenPriority(today)
   for (const bucket of TASK_BUCKETS) buckets[bucket].sort(order)
   return buckets
+}
+
+/**
+ * `rows` (sorted by date, then priority) under one group per page, each page
+ * where its first row was: groups run by their earliest date, then by that
+ * row's priority, and keep the rows' order inside.
+ */
+export function groupByPage(rows: BlockRow[]): { pageId: string | null; rows: BlockRow[] }[] {
+  const groups = new Map<string | null, BlockRow[]>()
+  for (const row of rows) {
+    const group = groups.get(row.page_id)
+    if (group) group.push(row)
+    else groups.set(row.page_id, [row])
+  }
+  return [...groups].map(([pageId, grouped]) => ({ pageId, rows: grouped }))
 }

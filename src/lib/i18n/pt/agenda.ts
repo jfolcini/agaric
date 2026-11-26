@@ -120,6 +120,7 @@ export const agenda: Record<string, string> = {
   'duePanel.tabLater': 'Mais tarde',
   'duePanel.tabNoDate': 'Sem data',
   'duePanel.emptyTab': 'Nenhuma tarefa.',
+  'duePanel.groupButton': 'Agrupar: {{choice}}',
   'duePanel.emptyContent': '(vazio)',
   'duePanel.duePanelLabel': 'Agenda',
   'duePanel.projectedListLabel': 'Entradas projetadas',

@@ -37,7 +37,13 @@ interface ChoiceListProps<T extends string> {
   onChange: (value: T) => void
 }
 
-function ChoiceList<T extends string>({ label, value, options, onChange }: ChoiceListProps<T>) {
+/** A titled list of choices, the current one checked. */
+export function ChoiceList<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: ChoiceListProps<T>) {
   const { t } = useTranslation()
   const labelId = useId()
   return (
