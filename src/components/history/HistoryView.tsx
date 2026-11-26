@@ -25,6 +25,7 @@ import { ViewHeader } from '@/components/layout/ViewHeader'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { CompactionCard } from '@/components/templates/CompactionCard'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
@@ -272,6 +273,7 @@ export function HistoryView(): React.ReactElement {
 
       <ViewHeader>
         <div className="history-view-header mx-auto max-w-list space-y-2">
+          <FeaturePageHeader title={t('sidebar.history')} />
           {scopedPage != null && (
             <div className="flex items-center justify-between gap-2">
               <p className="min-w-0 truncate text-sm font-medium">

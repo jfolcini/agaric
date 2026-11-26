@@ -6,8 +6,9 @@
  *   2. `axe(container)` reports no a11y violations.
  *   3. The view buttons (#5269) open Tags and Advanced query; Graph,
  *      Templates and Trash live in the app sidebar (#7040 D2).
- *   4. Search first (#5637): the first row is search, sort, saved views and
- *      New page; search is the primary focus only with a fine pointer.
+ *   4. Search first (#5637): the title row holds New page (S3, #7040), the
+ *      row under it search, sort and saved views; search is the primary focus
+ *      only with a fine pointer.
  *   5. Phone (#5927): one row of search, sort, a ⋮ menu holding saved views
  *      and the view buttons, and New page.
  *
@@ -169,17 +170,28 @@ describe('PageBrowserHeader', () => {
 
   // ── search first (#5637) ──────────────────────────────
   describe('search first', () => {
-    it('the first row is search, sort, saved views, then New page, and it wraps', () => {
+    it('New page sits on the title row (S3, #7040)', () => {
+      const { container } = render(<PageBrowserHeader {...makeProps()} />)
+      const titleRow = container.querySelector('[data-slot="feature-page-header"]') as HTMLElement
+      expect(within(titleRow).getByRole('heading', { level: 1 })).toHaveTextContent(
+        t('sidebar.pages'),
+      )
+      expect(
+        within(titleRow).getByRole('button', { name: t('pageBrowser.newPage') }),
+      ).toBeInTheDocument()
+    })
+
+    it('the first row is search, sort, then saved views, and it wraps', () => {
       const { container } = render(<PageBrowserHeader {...makeProps()} />)
       const firstRow = container.querySelector('.page-browser-header > div') as HTMLElement
       // `flex-wrap` stacks the controls on a narrow viewport instead of overflowing.
       expect(firstRow).toHaveClass('flex-wrap')
       const inRow = within(firstRow)
+      expect(inRow.queryByRole('button', { name: t('pageBrowser.newPage') })).toBeNull()
       const order = [
         inRow.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
         inRow.getByRole('combobox', { name: t('pageBrowser.sortLabel') }),
         inRow.getByRole('button', { name: t('pageBrowser.savedViews.trigger') }),
-        inRow.getByRole('button', { name: t('pageBrowser.newPage') }),
       ]
       for (let i = 1; i < order.length; i++) {
         const prev = order[i - 1] as HTMLElement

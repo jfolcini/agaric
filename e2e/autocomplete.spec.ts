@@ -18,7 +18,7 @@ test.describe('Autocomplete @editor', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Search', exact: true })
       .click()
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Search' })).toBeVisible()
   })
 
   test('opens the popover with state values when typing `state:`', async ({ page }) => {
