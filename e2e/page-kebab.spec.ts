@@ -36,8 +36,10 @@ function staticBlock(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
 }
 
-async function pageAction(page: Page, name: string | RegExp): Promise<void> {
+async function pageAction(page: Page, name: string | RegExp, submenu?: string): Promise<void> {
   await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  if (submenu !== undefined)
+    await page.getByRole('menuitem', { name: submenu, exact: true }).click()
   await page.getByRole('menuitem', { name, exact: true }).click()
 }
 
@@ -97,7 +99,7 @@ test.describe('Page actions menu @pages', () => {
     await waitForBoot(page)
     await openPage(page, 'Quick Notes')
 
-    await pageAction(page, 'Copy app link')
+    await pageAction(page, 'Copy app link', 'Export')
 
     await expect(page.getByText('App link copied to clipboard', { exact: true })).toBeVisible()
     expect(await readClipboard(page)).toBe(`agaric://page/${QUICK_NOTES}`)
@@ -108,13 +110,13 @@ test.describe('Page actions menu @pages', () => {
   }) => {
     await waitForBoot(page)
     await openPage(page, 'Quick Notes')
-    await pageAction(page, /^Export as Markdown/)
+    await pageAction(page, /^Export as Markdown/, 'Export')
     await expect(page.getByText('Markdown copied to clipboard', { exact: true })).toBeVisible()
     const copied = await readClipboard(page)
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      pageAction(page, 'Save as Markdown file'),
+      pageAction(page, 'Save as Markdown file', 'Export'),
     ])
 
     expect(download.suggestedFilename()).toBe('Quick Notes.md')

@@ -73,6 +73,17 @@ import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 // importing it from `@/components/editor/BlockContextMenu` unchanged.
 export type { BlockContextMenuProps } from '@/components/editor/block-context-menu/types'
 
+// Whether the last input was a key press, tracked as a Radix menu tracks it. A
+// menu the keyboard opened focuses its first row; one a pointer opened focuses
+// itself, or the row would draw the ring the browser gives any focus that
+// follows a key press, which a right click on text does not reset.
+let keyboardUsedLast = false
+document.addEventListener('keydown', () => (keyboardUsedLast = true), true)
+document.addEventListener('pointerdown', () => (keyboardUsedLast = false), true)
+
+/** The keys that move focus from the menu itself onto its rows. */
+const ENTRY_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End'])
+
 /** Translate fn shape used by the pure builders below. */
 type TFn = ReturnType<typeof useTranslation>['t']
 
@@ -148,7 +159,7 @@ function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
         isBulk && bulkIds
           ? t('contextMenu.deleteSelected', { count: bulkIds.length })
           : t('contextMenu.delete'),
-      icon: <Trash2 className="h-3.5 w-3.5" />,
+      icon: <Trash2 />,
       action: deleteAction,
       className: 'text-destructive hover:bg-destructive/10',
       // #976 (item 16) — surface the delete binding. It's positional
@@ -177,7 +188,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'indent',
       label: t('contextMenu.indent'),
-      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
+      icon: <ArrowRightToLine />,
       action: onIndent ? () => dispatch(onIndent) : undefined,
       shortcut: shortcutHint('indentBlock'),
       indented: true,
@@ -187,7 +198,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'dedent',
       label: t('contextMenu.dedent'),
-      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
+      icon: <ArrowLeftToLine />,
       action: onDedent ? () => dispatch(onDedent) : undefined,
       shortcut: shortcutHint('dedentBlock'),
       indented: true,
@@ -197,7 +208,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'moveUp',
       label: t('contextMenu.moveUp'),
-      icon: <MoveUp className="h-3.5 w-3.5" />,
+      icon: <MoveUp />,
       action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
       shortcut: shortcutHint('moveBlockUp'),
       indented: true,
@@ -207,7 +218,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'moveDown',
       label: t('contextMenu.moveDown'),
-      icon: <MoveDown className="h-3.5 w-3.5" />,
+      icon: <MoveDown />,
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
       shortcut: shortcutHint('moveBlockDown'),
       indented: true,
@@ -221,7 +232,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'duplicate' as const,
             label: t('contextMenu.duplicate'),
-            icon: <CopyPlus className="h-3.5 w-3.5" />,
+            icon: <CopyPlus />,
             action: () => handleAction(onDuplicate),
             shortcut: shortcutHint('duplicateBlock'),
             indented: true,
@@ -235,7 +246,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'merge' as const,
             label: t('contextMenu.merge'),
-            icon: <Merge className="h-3.5 w-3.5" />,
+            icon: <Merge />,
             action: () => handleAction(onMerge),
             shortcut: shortcutHint('mergeWithPrevious'),
             shortcutNote: '(at start)',
@@ -264,7 +275,7 @@ function buildMoveGroup(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'moveArrange',
       label: t('contextMenu.moveArrange'),
-      icon: <MoveVertical className="h-3.5 w-3.5" />,
+      icon: <MoveVertical />,
       action: () => setMoveArrangeOpen((o) => !o),
       expanded: moveArrangeOpen,
       disclosureId: moveArrangeGroupId,
@@ -289,11 +300,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'collapse' as const,
             label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
-            icon: isCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ),
+            icon: isCollapsed ? <ChevronRight /> : <ChevronDown />,
             action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
             shortcut: shortcutHint('collapseExpand'),
           },
@@ -304,7 +311,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'zoomIn' as const,
             label: t('contextMenu.zoomIn'),
-            icon: <ZoomIn className="h-3.5 w-3.5" />,
+            icon: <ZoomIn />,
             action: () => handleAction(onZoomIn),
             shortcut: shortcutHint('zoomIn'),
           },
@@ -329,7 +336,7 @@ function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'cycleTodo',
       label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
-      icon: <CheckSquare className="h-3.5 w-3.5" />,
+      icon: <CheckSquare />,
       action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
       shortcut: shortcutHint('cycleTaskState'),
     },
@@ -340,14 +347,14 @@ function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
             labelKey === null
               ? t('contextMenu.clearTodoSelected')
               : t('contextMenu.setTodoSelected', { state: t(labelKey) }),
-          icon: <CheckSquare className="h-3.5 w-3.5" />,
+          icon: <CheckSquare />,
           action: () => handleAction(() => onBatchSetTodo(state)),
         }))
       : []),
     {
       id: 'cyclePriority',
       label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
-      icon: <Signal className="h-3.5 w-3.5" />,
+      icon: <Signal />,
       action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
       shortcut: priorityHint(),
     },
@@ -364,7 +371,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'history' as const,
             label: t('contextMenu.history'),
-            icon: <Clock className="h-3.5 w-3.5" />,
+            icon: <Clock />,
             action: () => handleAction(onShowHistory),
             shortcut: shortcutHint('openBlockHistory'),
           },
@@ -375,7 +382,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
           {
             id: 'properties' as const,
             label: t('contextMenu.properties'),
-            icon: <Settings2 className="h-3.5 w-3.5" />,
+            icon: <Settings2 />,
             action: () => handleAction(onShowProperties),
             shortcut: shortcutHint('openPropertiesDrawer'),
           },
@@ -394,7 +401,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
       ? {
           id: 'openInNewTab',
           label: t('tabs.openInNewTab'),
-          icon: <ExternalLink className="h-3.5 w-3.5" />,
+          icon: <ExternalLink />,
           action: () => {
             onOpenLinkInNewTab(pageLinkId)
             onClose()
@@ -416,7 +423,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
       ? {
           id: 'openLink',
           label: t('contextMenu.openLink'),
-          icon: <ExternalLink className="h-3.5 w-3.5" />,
+          icon: <ExternalLink />,
           action: () => {
             void (async () => {
               // openUrl never rejects — it returns false when neither the Tauri
@@ -437,7 +444,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
     ? {
         id: 'copyUrl',
         label: t('contextMenu.copyUrl'),
-        icon: <Copy className="h-3.5 w-3.5" />,
+        icon: <Copy />,
         action: async () => {
           try {
             await writeText(linkUrl)
@@ -460,7 +467,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
   const copyBlockRefItem: MenuItem = {
     id: 'copyBlockRef',
     label: t('contextMenu.copyBlockRef'),
-    icon: <Copy className="h-3.5 w-3.5" />,
+    icon: <Copy />,
     action: async () => {
       try {
         await writeText(`((${blockId}))`)
@@ -478,7 +485,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
     ? {
         id: 'copyPageRef',
         label: t('contextMenu.copyPageRef'),
-        icon: <Link2 className="h-3.5 w-3.5" />,
+        icon: <Link2 />,
         action: async () => {
           try {
             await writeText(`[[${pageRefId}]]`)
@@ -543,7 +550,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'copyBlockContent',
       label: t('contextMenu.copyBlockContent'),
-      icon: <Copy className="h-3.5 w-3.5" />,
+      icon: <Copy />,
       action: async () => {
         await copySource([blockId], false, t, 'contextMenu.blockContentCopied', { blockId })
         onClose()
@@ -557,7 +564,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
     items.push({
       id: 'copySubtreeContent',
       label: t('contextMenu.copySubtreeContent'),
-      icon: <ListTree className="h-3.5 w-3.5" />,
+      icon: <ListTree />,
       action: async () => {
         await copySource([blockId], true, t, 'contextMenu.subtreeContentCopied', { blockId })
         onClose()
@@ -572,7 +579,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
     items.push({
       id: 'copySelectionContent',
       label: t('contextMenu.copySelectionContent'),
-      icon: <CopyCheck className="h-3.5 w-3.5" />,
+      icon: <CopyCheck />,
       action: async () => {
         const roots = computeSelectionRoots(blocks, bulkIds)
         await copySource(roots, true, t, 'contextMenu.selectionContentCopied', {
@@ -601,7 +608,7 @@ function buildCalloutRows(
   const toggle: MenuItem = {
     id: 'turnInto',
     label,
-    icon: <CalloutIcon className="h-3.5 w-3.5" />,
+    icon: <CalloutIcon />,
     active: isActive,
     indented: true,
     expanded: calloutOpen,
@@ -616,7 +623,7 @@ function buildCalloutRows(
       return {
         id: 'turnInto',
         label: t(`callout.${type}`),
-        icon: <Icon className="h-3.5 w-3.5" />,
+        icon: <Icon />,
         indented: true,
         nested: true,
         disclosureId: calloutGroupId,
@@ -649,7 +656,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
     {
       id: 'turnInto',
       label: t('contextMenu.turnInto'),
-      icon: <Replace className="h-3.5 w-3.5" />,
+      icon: <Replace />,
       // Reopening shows Callout collapsed, so its variants never sit below the fold.
       action: () => {
         setTurnIntoOpen((o) => !o)
@@ -671,7 +678,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
           const row: MenuItem = {
             id: 'turnInto',
             label: t(turnIntoTypeKey(opt.blockType)),
-            icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
+            icon: Icon ? <Icon /> : <svg aria-hidden="true" />,
             active: isActive,
             ...(headingChord === '' ? {} : { shortcut: headingChord }),
             indented: true,
@@ -1033,44 +1040,57 @@ export function BlockContextMenu({
   // `resetKey`: opening a disclosure adds rows below its toggle, so the cursor
   // keeps its index instead of jumping back to the first row.
   const keyboardHints = useKeyboardHints()
-  const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
     itemCount: visibleItems.length,
     wrap: true,
     homeEnd: true,
     resetKey: blockId,
   })
+  const [openedByKeyboard] = useState(() => keyboardUsedLast)
+  // Until a key moves onto the rows, a pointer-opened menu keeps focus itself.
+  const rowsEntered = useRef(openedByKeyboard)
 
-  // ── Focus the first item on mount, and again if the item set changed under focus ──
+  // ── Focus the menu on mount, and again if the item set changed under focus ──
   // Items are conditional (zoom-in only when `hasChildren`, history only when
   // `onShowHistory` is passed, etc.). A disclosure that opens leaves focus on its
   // toggle: refocusing the first row would scroll a height-capped menu back to
   // the top, away from the rows just revealed.
   useEffect(() => {
     if (menuRef.current?.contains(document.activeElement)) return
-    itemRefs.current[0]?.focus()
-  }, [visibleItems.length])
+    if (openedByKeyboard) itemRefs.current[0]?.focus()
+    else menuRef.current?.focus()
+  }, [visibleItems.length, openedByKeyboard])
 
   // ── Focus item on focusedIndex change ────────────────────────────
   useEffect(() => {
-    itemRefs.current[focusedIndex]?.focus()
+    if (rowsEntered.current) itemRefs.current[focusedIndex]?.focus()
   }, [focusedIndex])
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      // WAI-ARIA menu pattern: Tab (and Shift+Tab) in an open menu dismisses
-      // it rather than moving focus through its roving-tabindex items. Route
-      // through the shared close-with-focus so focus returns to the trigger.
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        handleCloseWithFocus()
-        return
-      }
-      if (navHandleKeyDown(e)) {
-        e.preventDefault()
-      }
-    },
-    [navHandleKeyDown, handleCloseWithFocus],
-  )
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // WAI-ARIA menu pattern: Tab (and Shift+Tab) in an open menu dismisses
+    // it rather than moving focus through its roving-tabindex items. Route
+    // through the shared close-with-focus so focus returns to the trigger.
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      handleCloseWithFocus()
+      return
+    }
+    if (!rowsEntered.current && ENTRY_KEYS.has(e.key)) {
+      rowsEntered.current = true
+      e.preventDefault()
+      const index = e.key === 'ArrowUp' || e.key === 'End' ? visibleItems.length - 1 : 0
+      setFocusedIndex(index)
+      itemRefs.current[index]?.focus()
+      return
+    }
+    if (navHandleKeyDown(e)) {
+      e.preventDefault()
+    }
+  }
 
   // #999/#1003/#1109 — the per-render roving-focus counter; the extracted
   // `renderMenuItem` advances it for each interactive (actionable) row, exactly
@@ -1101,7 +1121,7 @@ export function BlockContextMenu({
       tabIndex={-1}
       aria-label={t('contextMenu.blockActions')}
       className={cn(
-        'block-context-menu',
+        'block-context-menu text-popover-foreground outline-hidden',
         !phoneLayout &&
           'fixed z-50 min-w-[160px] rounded-md border bg-popover p-1 shadow-(--shadow-floating)',
         !phoneLayout && (positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0'),

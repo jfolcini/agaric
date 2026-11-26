@@ -7,10 +7,11 @@
  * module — depends on the shared `MenuItem` type, never back on the menu.
  */
 
-import { Check, ChevronDown, ChevronRight } from 'lucide-react'
+import { Check } from 'lucide-react'
 
 import type { MenuItem } from '@/components/editor/block-context-menu/types'
 import { Kbd } from '@/components/ui/kbd'
+import { MenuRowChevron, menuRowVariants } from '@/components/ui/menu-row'
 import { cn } from '@/lib/utils'
 
 /**
@@ -31,12 +32,11 @@ export function renderTrailing(item: MenuItem, keyboardHints: boolean): React.Re
       </span>
     ) : null
   if (item.expanded !== undefined) {
-    const Chevron = item.expanded ? ChevronDown : ChevronRight
     return (
       <>
         {hint}
-        {item.active && <Check aria-hidden="true" className="h-3.5 w-3.5 text-accent-foreground" />}
-        <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+        {item.active && <Check aria-hidden="true" className="text-accent-foreground" />}
+        <MenuRowChevron expanded={item.expanded} />
       </>
     )
   }
@@ -53,11 +53,16 @@ export interface MenuRowContext {
   keyboardHints: boolean
 }
 
+/** A row's indent: a disclosure's options one level, a nested disclosure's two. */
+function indentOf(item: MenuItem): 0 | 1 | 2 {
+  if (!item.indented) return 0
+  return item.nested ? 2 : 1
+}
+
 /**
- * Render a single menu row. #999 — `indented` rows get `pl-7` (28px) applied
- * once at the row level (not via per-icon `ml-3`) so the checked and
- * unchecked variants of a child option indent identically; ~28px aligns the
- * child icon under the parent label (icon 14px + `gap-2` 8px + `px-2` 8px).
+ * Render a single menu row. #999 — `indented` rows indent once at the row
+ * level (not via per-icon `ml-3`) so the checked and unchecked variants of a
+ * child option indent identically.
  */
 export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElement {
   const { action } = item
@@ -72,11 +77,8 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         aria-disabled="true"
         aria-current="true"
         className={cn(
-          // #1232 — `text-left`: a <button>/<div role> defaults to
-          // text-align:center, which the flex-1 label span inherits and
-          // centers the label text. Force left so labels align under the icons.
-          'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm font-medium text-accent-foreground bg-accent/60',
-          item.indented && (item.nested ? 'pl-12' : 'pl-7'),
+          menuRowVariants({ indent: indentOf(item) }),
+          'pointer-events-none bg-accent/60 font-medium text-accent-foreground',
         )}
       >
         {item.icon}
@@ -84,7 +86,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         {/* #1001 — lucide Check (not a bare ✓), `aria-hidden` since the
             container's `aria-current` carries the semantic. #1002 — unlike a
             shortcut hint, the state indicator is NOT suppressed on touch. */}
-        <Check aria-hidden="true" className="h-3.5 w-3.5 text-accent-foreground" />
+        <Check aria-hidden="true" className="text-accent-foreground" />
       </div>
     )
   }
@@ -105,17 +107,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         ? { 'aria-expanded': item.expanded, 'aria-controls': item.disclosureId }
         : {})}
       aria-current={item.active ? 'true' : undefined}
-      className={cn(
-        // #1000 — `focus-ring-visible` is the app-wide keyboard-focus signal
-        // (ring, not just bg). `ring-inset` keeps the 3px ring from clipping
-        // against the popover edge / `hr` separators. Hover stays bg-only so
-        // focus and hover are visually distinct (WCAG 2.4.7).
-        // #1232 — `text-left`: <button> defaults to text-align:center, which
-        // the flex-1 label span inherits; force left so labels align left.
-        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
-        item.indented && (item.nested ? 'pl-12' : 'pl-7'),
-        item.className,
-      )}
+      className={cn(menuRowVariants({ indent: indentOf(item) }), item.className)}
       onClick={action === undefined ? undefined : () => void action()}
     >
       {item.icon}

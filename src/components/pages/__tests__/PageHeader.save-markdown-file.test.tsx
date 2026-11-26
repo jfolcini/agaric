@@ -6,7 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -118,9 +118,12 @@ function renderHeader(title = TITLE) {
   )
 }
 
+/** Open the page menu and its Export submenu, where these rows live. */
 async function openMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
-  return screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+  const menu = await screen.findByRole('menu', { name: t('pageHeader.pageActions') })
+  await user.click(within(menu).getByRole('menuitem', { name: t('pageHeader.exportMenu') }))
+  return menu
 }
 
 describe('PageHeader Save as Markdown file', () => {

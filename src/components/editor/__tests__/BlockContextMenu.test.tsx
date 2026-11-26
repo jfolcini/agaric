@@ -98,6 +98,9 @@ beforeEach(() => {
   // explicit `selectedBlockIds` prop is passed. Reset it so prop-less tests see
   // an empty (single-block) selection and don't leak between cases.
   useBlockStore.getState().clearSelected()
+  // The menu opens from the keyboard here, so it focuses its first row; the
+  // pointer opening is `BlockContextMenu opening focus` below.
+  fireEvent.keyDown(document.body, { key: 'ContextMenu' })
 })
 
 // A2 (#1020) — the menu now takes a single `actions: BlockActions` bag instead
@@ -1554,7 +1557,7 @@ describe('BlockContextMenu', () => {
 
       // Unchecked option (paragraph): an actionable button, indented at the row.
       const option = screen.getByRole('menuitem', { name: TEXT })
-      expect(option.className).toContain('pl-7')
+      expect(option.className).toContain('pl-8')
       // The old ad-hoc per-icon indent must be gone.
       expect(option.querySelector('.ml-3')).toBeNull()
     })
@@ -1573,9 +1576,9 @@ describe('BlockContextMenu', () => {
       expect(row.textContent).not.toContain('✓')
       // Renders a lucide svg icon (the Check), and is indented at the row level.
       expect(row.querySelector('svg')).not.toBeNull()
-      expect(row.className).toContain('pl-7')
-      // The non-interactive indicator stays ring-less.
-      expect(row.className).not.toContain('focus-ring-visible')
+      expect(row.className).toContain('pl-8')
+      // The non-interactive indicator stays ring-less: nothing can focus it.
+      expect(row).not.toHaveAttribute('tabindex')
     })
 
     it('#1003 — the toggle shows a lucide chevron, not a unicode triangle', () => {
@@ -1649,7 +1652,7 @@ describe('BlockContextMenu', () => {
       expect(group.id).toBe(toggle.getAttribute('aria-controls'))
       const rows = within(group).getAllByRole('menuitem')
       expect(rows.map((r) => r.textContent)).toEqual(VARIANTS)
-      for (const row of rows) expect(row.className).toContain('pl-12')
+      for (const row of rows) expect(row.className).toContain('pl-14')
     })
 
     it.each([
@@ -2385,5 +2388,54 @@ describe('BlockContextMenu on a phone', () => {
     await user.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.delete')) }))
     expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #7040 O6 — as a Radix menu does, the block menu puts its first row's focus
+// (and ring) up only when the keyboard opened it; a pointer opening focuses the
+// menu itself, and the first arrow key enters the rows.
+describe('BlockContextMenu opening focus', () => {
+  it('a pointer opening focuses the menu, not its first row', () => {
+    fireEvent.pointerDown(document.body)
+    renderMenu()
+    const menu = screen.getByRole('menu')
+    expect(menu).toHaveFocus()
+    expect(screen.getAllByRole('menuitem')[0]).not.toHaveFocus()
+  })
+
+  it('ArrowDown then enters at the first row and ArrowUp at the last', () => {
+    fireEvent.pointerDown(document.body)
+    const { unmount } = renderMenu()
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(screen.getAllByRole('menuitem')[0]).toHaveFocus()
+    unmount()
+
+    fireEvent.pointerDown(document.body)
+    renderMenu()
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
+    expect(screen.getAllByRole('menuitem').at(-1)).toHaveFocus()
+  })
+
+  it('a modifier pressed first still lets ArrowDown enter at the first row', () => {
+    fireEvent.pointerDown(document.body)
+    renderMenu()
+    const menu = screen.getByRole('menu')
+    fireEvent.keyDown(menu, { key: 'Shift', shiftKey: true })
+    expect(menu).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(screen.getAllByRole('menuitem')[0]).toHaveFocus()
+  })
+
+  it('a keyboard opening focuses the first row', () => {
+    fireEvent.pointerDown(document.body)
+    fireEvent.keyDown(document.body, { key: 'F10', shiftKey: true })
+    renderMenu()
+    expect(screen.getAllByRole('menuitem')[0]).toHaveFocus()
+  })
+
+  it('the menu itself draws no outline when it holds focus', () => {
+    fireEvent.pointerDown(document.body)
+    renderMenu()
+    expect(screen.getByRole('menu')).toHaveClass('outline-hidden')
   })
 })
