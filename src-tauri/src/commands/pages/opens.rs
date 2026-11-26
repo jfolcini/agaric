@@ -15,7 +15,7 @@ use super::super::sanitize_internal_error;
 
 /// Stamp `page_id` as opened on this device now. Refuses a block that is not
 /// a live page with `NotFound`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn record_page_open_inner(pool: &SqlitePool, page_id: BlockId) -> Result<(), AppError> {
     let now = crate::db::now_ms();
     let page = page_id.as_str();

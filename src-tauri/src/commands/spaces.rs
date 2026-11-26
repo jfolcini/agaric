@@ -65,7 +65,7 @@ pub struct SpaceRow {
 /// The optional `accent_color` property is pulled in via a
 /// LEFT JOIN on `block_properties` so spaces without an explicit
 /// accent token still surface (with `accent_color = None`).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_spaces_inner(pool: &SqlitePool) -> Result<Vec<SpaceRow>, AppError> {
     let rows = sqlx::query_as!(
         SpaceRow,
@@ -121,7 +121,7 @@ pub struct McpSpaceRow {
 /// user-facing name (`content`). Registry rows for soft-deleted space
 /// blocks are retained by design; the JOIN filters them out here the
 /// same way every other live-space query does.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpaceRow>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT
@@ -213,7 +213,7 @@ pub(crate) async fn require_live_space_in_tx(
 /// - [`AppError::NotFound`] — `parent_id` does not refer to a live block.
 /// - Other [`AppError`] variants propagated from
 ///   [`create_block_in_tx`] / [`set_property_in_tx`].
-#[instrument(skip(pool, materializer, content), err)]
+#[instrument(skip(pool, materializer, content), err(level = "info"))]
 pub async fn create_page_in_space_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -242,7 +242,7 @@ pub async fn create_page_in_space_inner(
 /// A new page under `Tag/` is refused with
 /// [`ValidationCode::ReservedTagPageTitle`] (#6755): its tag makes it
 /// (`create_tag_page_inner`). One that exists is answered as any other.
-#[instrument(skip(pool, materializer, content), err)]
+#[instrument(skip(pool, materializer, content), err(level = "info"))]
 pub async fn create_page_in_space_inner_with_id(
     pool: &SqlitePool,
     device_id: &str,
@@ -647,7 +647,7 @@ pub struct ResolvedPageTitle {
 ///
 /// Titles only, as the create resolves: a name another page holds as an alias
 /// answers no page, and the create refuses it.
-#[instrument(skip(pool, title), err)]
+#[instrument(skip(pool, title), err(level = "info"))]
 pub async fn resolve_page_title_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -768,7 +768,7 @@ pub async fn create_page_in_space(
 /// Propagates [`AppError`] variants from
 /// [`create_block_in_tx`] / [`set_property_in_tx`] (e.g. validation
 /// failures on the block-type or property-key path).
-#[instrument(skip(pool, materializer, name, accent_color), err)]
+#[instrument(skip(pool, materializer, name, accent_color), err(level = "info"))]
 pub async fn create_space_inner(
     pool: &SqlitePool,
     device_id: &str,

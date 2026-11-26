@@ -2834,9 +2834,11 @@ async fn run_initiator_file_transfer(
 /// so the caller records the failure and backs off.
 // #647: the message-exchange session loop — the path to instrument for a
 // hung handshake or a session that never reaches a terminal state. `err`
-// records the terminating error; `skip_all` (#632) because the orchestrator
-// + connection carry sync payloads (op/note content).
-#[instrument(name = "sync.run_session", skip_all, err)]
+// records the terminating error at info: `record_session_failure` tells a
+// cancel or a pairing handshake from a failure and logs the failure at WARN;
+// `skip_all` (#632) because the orchestrator + connection carry sync payloads
+// (op/note content).
+#[instrument(name = "sync.run_session", skip_all, err(level = "info"))]
 // Splitting the bi-stream into its two halves is what pushed this past the 7-argument
 // lint, and bundling them back into a struct would undo exactly the thing that makes the
 // borrows work: `&mut side.send` and `&mut side.recv` are disjoint *field* borrows, which

@@ -33,7 +33,7 @@ use crate::materializer::Materializer;
 /// - [`AppError::NotFound`] — `tag_id` is no live tag of a space.
 /// - [`AppError::Validation`] coded [`ValidationCode::DuplicatePageTitle`] —
 ///   another page of the space holds the title as an alias.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn create_tag_page_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -90,7 +90,7 @@ pub async fn create_tag_page(
 /// - [`AppError::Validation`] coded [`ValidationCode::ReservedTagPageTitle`]
 ///   — `title` is not under `Tag/`, or is `Tag/` alone.
 /// - [`AppError::Validation`] — `space_id` is no live space.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn create_tag_page_titled_inner(
     pool: &SqlitePool,
     device_id: &str,

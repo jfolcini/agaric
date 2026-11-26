@@ -220,7 +220,7 @@ pub(crate) fn describe_losses(losses: &[PropertyLoss]) -> String {
 /// # Errors
 ///
 /// - [`AppError::Validation`] — more than `MAX_BATCH_BLOCK_IDS` ids
-#[instrument(skip(pool, block_ids), err)]
+#[instrument(skip(pool, block_ids), err(level = "info"))]
 pub async fn preview_space_move_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,
@@ -262,7 +262,7 @@ pub async fn preview_space_move(
 ///
 /// - [`AppError::Validation`] — more than `MAX_BATCH_BLOCK_IDS` ids, a
 ///   `limit` outside `PageRequest::new`'s range, or a malformed cursor
-#[instrument(skip(pool, block_ids, cursor), err)]
+#[instrument(skip(pool, block_ids, cursor), err(level = "info"))]
 pub async fn list_property_loss_values_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,

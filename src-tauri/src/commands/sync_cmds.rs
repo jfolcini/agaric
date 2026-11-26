@@ -26,7 +26,7 @@ use agaric_sync::sync_scheduler::SyncScheduler;
 use super::*;
 
 /// List all known sync peers, ordered by most-recently-synced first.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError> {
     peer_refs::list_peer_refs(pool).await
 }
@@ -34,12 +34,12 @@ pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, App
 /// Delete (unpair) a sync peer by its `peer_id`.
 ///
 /// Returns [`AppError::NotFound`] if the peer does not exist.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn delete_peer_ref_inner(pool: &SqlitePool, peer_id: String) -> Result<(), AppError> {
     peer_refs::delete_peer_ref(pool, &peer_id).await
 }
 
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn update_peer_name_inner(
     pool: &SqlitePool,
     peer_id: String,
@@ -54,7 +54,7 @@ pub async fn update_peer_name_inner(
 /// `*.local`). The host string is left opaque; the daemon resolves it at
 /// connect time. The port must be a non-zero `u16`. Verifies the peer exists
 /// before persisting.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn set_peer_address_inner(
     pool: &SqlitePool,
     peer_id: String,
@@ -138,7 +138,7 @@ pub struct QuarantinedSlotList {
 ///
 /// Returns [`AppError::Validation`] when `limit` is outside
 /// `[1, MAX_QUARANTINED_SYNC_SLOTS]`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_quarantined_sync_slots_inner(
     pool: &SqlitePool,
     limit: i64,
@@ -159,7 +159,7 @@ pub async fn list_quarantined_sync_slots_inner(
 ///
 /// Returns [`AppError::NotFound`] when no quarantined row has that id, as for a
 /// row already retried.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn readmit_quarantined_sync_slot_inner(
     pool: &SqlitePool,
     id: i64,
@@ -186,7 +186,7 @@ pub struct SyncRelaySettings {
 }
 
 /// Read the sync relay preference; an absent row reads as off.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_sync_relay_settings_inner(
     pool: &SqlitePool,
 ) -> Result<SyncRelaySettings, AppError> {
@@ -203,7 +203,7 @@ pub async fn get_sync_relay_settings_inner(
 
 /// Persist the sync relay preference. The daemon picks it up at the next app
 /// launch; the setting's copy says so.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn set_sync_relay_settings_inner(
     pool: &SqlitePool,
     settings: SyncRelaySettings,
@@ -349,7 +349,7 @@ pub async fn confirm_pairing_inner(
 /// rather than being a bug in its own right, but it regresses a flow that
 /// used to work (by accident) and is worth knowing before assuming "host
 /// closed its dialog" is harmless to an in-flight joiner.
-#[instrument(skip(pool, pairing_state, scheduler), err)]
+#[instrument(skip(pool, pairing_state, scheduler), err(level = "info"))]
 pub async fn cancel_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
@@ -382,7 +382,7 @@ pub async fn cancel_pairing_inner(
 /// bound `endpoint_id`, which only `peer_refs` knows; the key comes from
 /// [`agaric_sync::sync_daemon::peer_lock_key_from_stored`], the same derivation
 /// the daemon's two roles use, so the probe and the lock agree by construction.
-#[instrument(skip(pool, scheduler), err)]
+#[instrument(skip(pool, scheduler), err(level = "info"))]
 pub async fn start_sync_inner(
     pool: &SqlitePool,
     scheduler: &SyncScheduler,
@@ -446,7 +446,7 @@ pub async fn start_sync_inner(
 /// session latched `true` forever, instantly failing every inbound
 /// responder session and burning the next outbound one (recorded as a
 /// backoff-doubling failure) just to clear it.
-#[instrument(skip(cancel_flag, scheduler), err)]
+#[instrument(skip(cancel_flag, scheduler), err(level = "info"))]
 pub fn cancel_sync_inner(
     cancel_flag: &AtomicBool,
     scheduler: &SyncScheduler,
