@@ -483,6 +483,8 @@ export function useBlockCollapse(
 
   const unfoldLanded = useCallback(
     (before: readonly FlatBlock[], after: readonly FlatBlock[]) => {
+      // The saved folds, not the shown ones: the unfold is saved, and a fold only revealed
+      // for the caret would shut over the landed block once the caret leaves.
       const persisted = persistedCollapsedIdsRef.current
       const ids = unfoldedBy(outlineOf(before), outlineOf(after), persisted)
       if (ids.length === 0) return
