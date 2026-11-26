@@ -1605,9 +1605,16 @@
 /* Each paragraph of block text runs, and with `text-align: start` aligns, in
    the direction of its first strong character, so Arabic or Hebrew sits on the
    right while the chrome stays left-to-right (#6558). Not inherited, hence
-   every element that holds a paragraph. */
+   every element that holds a paragraph, and each line of *Edit as Markdown*. */
 :is(.block-static, .ProseMirror),
-:is(.block-static, .ProseMirror) :is(p, h1, h2, h3, h4, h5, h6, li, th, td) {
+:is(.block-static, .ProseMirror) :is(p, h1, h2, h3, h4, h5, h6, li, th, td, [data-source-line]) {
+  unicode-bidi: plaintext;
+}
+
+/* The same for block text shown in a row (search, the palette, the references,
+   the agenda): mixed with English it reads in order, and a truncated Arabic
+   line keeps its start and loses its end (#7040). */
+@utility bidi-plaintext {
   unicode-bidi: plaintext;
 }
 
@@ -1825,6 +1832,11 @@
 .ProseMirror .md-reveal-chip-marker,
 .ProseMirror .md-reveal-syntax-marker {
   @apply text-muted-foreground select-none;
+}
+/* Isolated, so a callout's `[!NOTE]` does not turn an Arabic paragraph
+   left-to-right while it shows (#7040). */
+.ProseMirror .md-reveal-syntax-marker {
+  unicode-bidi: isolate;
 }
 
 /* #5691 — a code block's fences and display math's `$$`, drawn by the block's
