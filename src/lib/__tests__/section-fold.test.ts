@@ -3,17 +3,20 @@ import { describe, expect, it } from 'vitest'
 import {
   canFold,
   carriedEnd,
+  foldedSiblingsAt,
   foldEnd,
   foldsOver,
   headingLevel,
   hiddenRows,
   outlineOf,
   stepOver,
+  unfoldedBy,
+  withFoldedSections,
 } from '@/lib/section-fold'
 
 /** An outline from `[depth, content]` pairs. */
 const outline = (rows: [number, string][]) =>
-  outlineOf(rows.map(([depth, content]) => ({ depth, content })))
+  outlineOf(rows.map(([depth, content], i) => ({ id: `r${i}`, depth, content })))
 
 describe('headingLevel', () => {
   it('reads the level of the heading a block opens with', () => {
@@ -153,9 +156,10 @@ describe('foldsOver', () => {
       [0, '# Two'], // 3
       [0, 'b'], // 4
     ])
-    expect(foldsOver(page, 2, [0, 1, 3])).toEqual([0, 1])
-    expect(foldsOver(page, 4, [0, 1, 3])).toEqual([3])
-    expect(foldsOver(page, 3, [0, 1])).toEqual([])
+    expect(foldsOver(page, 'r2', new Set(['r0', 'r1', 'r3']))).toEqual(['r0', 'r1'])
+    expect(foldsOver(page, 'r4', new Set(['r0', 'r1', 'r3']))).toEqual(['r3'])
+    expect(foldsOver(page, 'r3', new Set(['r0', 'r1']))).toEqual([])
+    expect(foldsOver(page, 'gone', new Set(['r0']))).toEqual([])
   })
 })
 
@@ -194,5 +198,70 @@ describe('carriedEnd and stepOver', () => {
     expect(stepOver(page, carry, 2, -1)).toEqual({ end: 3, to: null })
     expect(stepOver(page, carry, 4, 1)).toEqual({ end: 6, to: null })
     expect(stepOver(page, carry, 0, -1)).toEqual({ end: 1, to: null })
+  })
+})
+
+describe('unfoldedBy', () => {
+  /** An outline of `[id, depth, content]` rows. */
+  const rows = (list: [string, number, string][]) =>
+    outlineOf(list.map(([id, depth, content]) => ({ id, depth, content })))
+
+  it('names a collapsed heading a move lands a shown row in, and every folded heading over it', () => {
+    const before = rows([
+      ['X', 0, 'x'],
+      ['H1', 0, '# One'],
+      ['H2', 0, '## Two'],
+      ['S', 0, 's'],
+    ])
+    const after = rows([
+      ['H1', 0, '# One'],
+      ['H2', 0, '## Two'],
+      ['S', 0, 's'],
+      ['X', 0, 'x'],
+    ])
+    expect(unfoldedBy(before, after, new Set(['H1', 'H2']))).toEqual(['H1', 'H2'])
+  })
+
+  it('leaves a block fold, and a section whose rows were hidden before', () => {
+    const before = rows([
+      ['P', 0, 'p'],
+      ['C', 1, 'c'],
+      ['X', 0, 'x'],
+      ['H', 0, '## H'],
+      ['S', 0, 's'],
+    ])
+    const after = rows([
+      ['P', 0, 'p'],
+      ['C', 1, 'c'],
+      ['X', 1, 'x'],
+      ['H', 0, '## H'],
+      ['S', 0, 's'],
+    ])
+    expect(unfoldedBy(before, after, new Set(['P', 'H']))).toEqual([])
+    expect(unfoldedBy(before, before, new Set(['H']))).toEqual([])
+  })
+})
+
+describe('foldedSiblingsAt and withFoldedSections', () => {
+  const page = outline([
+    [0, 'a'], // r0
+    [0, '## Two'], // r1
+    [0, 'b'], // r2
+    [1, 'b1'], // r3
+    [0, 'c'], // r4
+    [0, '## Three'], // r5
+    [0, 'd'], // r6
+  ])
+
+  it('names the siblings a heading folds, not the rows under them', () => {
+    expect(foldedSiblingsAt(page, 1)).toEqual(['r2', 'r4'])
+    expect(foldedSiblingsAt(page, 0)).toEqual([])
+  })
+
+  it('takes a collapsed heading’s section with it, in document order, once', () => {
+    const collapsed = new Set(['r1'])
+    expect(withFoldedSections(page, ['r5', 'r1'], collapsed)).toEqual(['r1', 'r2', 'r4', 'r5'])
+    expect(withFoldedSections(page, ['r1', 'r2'], collapsed)).toEqual(['r1', 'r2', 'r4'])
+    expect(withFoldedSections(page, ['r1'], new Set())).toEqual(['r1'])
   })
 })

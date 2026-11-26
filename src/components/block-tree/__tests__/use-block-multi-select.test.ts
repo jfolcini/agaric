@@ -295,6 +295,22 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
   })
 
+  it('takes the siblings a selected folded heading hides along (#7040 decision 30)', async () => {
+    const params = {
+      ...makeDefaultParams(),
+      foldedSiblings: (id: string) => (id === 'BLOCK_1' ? ['HIDDEN_1', 'HIDDEN_2'] : []),
+    }
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['BLOCK_1', 'HIDDEN_1', 'HIDDEN_2', 'BLOCK_2'],
+    })
+  })
+
   it('clears selection after delete', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })

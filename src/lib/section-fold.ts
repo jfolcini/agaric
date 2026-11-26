@@ -10,6 +10,7 @@
 /** A page's rows, read by index: block mode's flat tree, page mode's document. */
 export interface Outline {
   readonly length: number
+  id: (index: number) => string
   depth: (index: number) => number
   /** A heading's level (1 to 6); null for any other row. */
   level: (index: number) => number | null
@@ -58,6 +59,39 @@ export function hiddenRows(outline: Outline, folded: (index: number) => boolean)
   return hidden
 }
 
+/** The rows at its depth the fold of the row at `index` hides: the siblings its drag carries. */
+export function foldedSiblingsAt(outline: Outline, index: number): string[] {
+  const depth = outline.depth(index)
+  const end = foldEnd(outline, index)
+  const siblings: string[] = []
+  for (let row = index + 1; row < end; row += 1) {
+    if (outline.depth(row) === depth) siblings.push(outline.id(row))
+  }
+  return siblings
+}
+
+/**
+ * `roots` in document order, each of `collapsed` followed by the siblings its
+ * fold hides: a selection takes a folded heading's section with it, as its
+ * drag does (#7040 decision 30).
+ */
+export function withFoldedSections(
+  outline: Outline,
+  roots: readonly string[],
+  collapsed: ReadonlySet<string>,
+): string[] {
+  const picked = new Set(roots)
+  const result = new Set<string>()
+  for (let index = 0; index < outline.length; index += 1) {
+    const id = outline.id(index)
+    if (!picked.has(id) || result.has(id)) continue
+    result.add(id)
+    if (collapsed.has(id))
+      for (const sibling of foldedSiblingsAt(outline, index)) result.add(sibling)
+  }
+  return [...result]
+}
+
 /**
  * The index just past what a move of the row at `index` takes: its fold if
  * `folded`, else the rows under it.
@@ -96,25 +130,63 @@ export function stepOver(
   return { end, to: unit }
 }
 
-/** The rows of `folded` whose folds hold the row at `target`, however far up, outermost first. */
-export function foldsOver(outline: Outline, target: number, folded: Iterable<number>): number[] {
-  const isFolded = new Set(folded)
-  if (isFolded.size === 0) return []
+/**
+ * The ids of `collapsed` whose folds hold the row `targetId`, however far up,
+ * outermost first; none where no row is `targetId`.
+ */
+export function foldsOver(
+  outline: Outline,
+  targetId: string,
+  collapsed: ReadonlySet<string>,
+): string[] {
+  if (collapsed.size === 0) return []
   // The folds open at the row read, innermost last: a fold ends no later than the one holding it.
   const open: number[] = []
-  for (let index = 0; index <= target; index += 1) {
+  for (let index = 0; index < outline.length; index += 1) {
     while (open.length > 0 && ends(outline, open.at(-1) as number, index)) open.pop()
-    if (index < target && isFolded.has(index)) open.push(index)
+    const id = outline.id(index)
+    if (id === targetId) return open.map((fold) => outline.id(fold))
+    if (collapsed.has(id)) open.push(index)
   }
-  return open
+  return []
+}
+
+/**
+ * The collapsed headings to unfold after a move from `before` to `after`: each
+ * whose fold holds a row `before` showed (#7040 decision 30, a block moved or
+ * dropped into a folded section unfolds it). A block fold does not unfold.
+ */
+export function unfoldedBy(
+  before: Outline,
+  after: Outline,
+  collapsed: ReadonlySet<string>,
+): string[] {
+  if (collapsed.size === 0) return []
+  const hidden = hiddenRows(before, (index) => collapsed.has(before.id(index)))
+  const shown = new Set<string>()
+  for (let index = 0; index < before.length; index += 1) {
+    if (!hidden[index]) shown.add(before.id(index))
+  }
+  const unfold = new Set<string>()
+  const open: number[] = []
+  for (let index = 0; index < after.length; index += 1) {
+    while (open.length > 0 && ends(after, open.at(-1) as number, index)) open.pop()
+    const id = after.id(index)
+    if (shown.has(id)) {
+      for (const fold of open) if (after.level(fold) !== null) unfold.add(after.id(fold))
+    }
+    if (collapsed.has(id)) open.push(index)
+  }
+  return [...unfold]
 }
 
 /** A flat tree's rows as an outline. */
 export function outlineOf(
-  rows: readonly { depth: number; content?: string | null | undefined }[],
+  rows: readonly { id: string; depth: number; content?: string | null | undefined }[],
 ): Outline {
   return {
     length: rows.length,
+    id: (index) => (rows[index] as { id: string }).id,
     depth: (index) => (rows[index] as { depth: number }).depth,
     level: (index) => headingLevel(rows[index]?.content),
   }

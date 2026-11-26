@@ -333,6 +333,8 @@ export function BlockTree({
     foldableSet,
     foldedSiblings,
     foldedMove,
+    foldedIndent,
+    unfoldLanded,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
@@ -803,6 +805,7 @@ export function BlockTree({
     currentSpaceId,
     t,
     handleTogglePriority,
+    foldedSiblings,
   })
 
   // Reload + reset zoom when the page changes (parentId). `load` and
@@ -944,6 +947,19 @@ export function BlockTree({
     scrollContainerRef.current = document.getElementById('main-content')
   }, [])
 
+  // #7040 decision 30 — a move or a drop that lands shown blocks in a folded
+  // section unfolds it, as Enter does.
+  const landing = useCallback(
+    <A extends unknown[], R>(move: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        const before = pageStore.getState().blocks
+        const result = await move(...args)
+        unfoldLanded(before, pageStore.getState().blocks)
+        return result
+      },
+    [pageStore, unfoldLanded],
+  )
+
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   // #712: when zoomed, the DnD projection's "root" is the zoomed block, not
   // the page root. `zoomedVisible` rebases `depth` to 0 at the zoomed block's
@@ -961,9 +977,9 @@ export function BlockTree({
     selectedBlockIds,
     handleFlush,
     setFocused,
-    reorder,
-    moveToParent,
-    moveBlocks,
+    reorder: useMemo(() => landing(reorder), [landing, reorder]),
+    moveToParent: useMemo(() => landing(moveToParent), [landing, moveToParent]),
+    moveBlocks: useMemo(() => landing(moveBlocks), [landing, moveBlocks]),
     foldedSiblings,
     scrollContainerRef,
   })
@@ -1072,13 +1088,23 @@ export function BlockTree({
   // heading's move carries its section, as their drags do (`foldedMove`).
   const moveOver = useCallback(
     async (id: string, direction: -1 | 1): Promise<boolean> => {
-      const move = foldedMove(id, direction)
+      const move = foldedMove(pageStore.getState().blocks, id, direction)
       if (move === 'stay') return false
       if (move === null) return direction < 0 ? moveUp(id) : moveDown(id)
-      await moveBlocks(move.ids, move.parentId, move.index)
-      return true
+      return moveBlocks(move.ids, move.parentId, move.index)
     },
-    [foldedMove, moveUp, moveDown, moveBlocks],
+    [foldedMove, moveUp, moveDown, moveBlocks, pageStore],
+  )
+
+  // #7040 decision 30 — a folded heading's indent and outdent take its section.
+  const indentOver = useCallback(
+    async (id: string, direction: 'in' | 'out'): Promise<boolean> => {
+      const move = foldedIndent(pageStore.getState().blocks, id, direction)
+      if (move === 'stay') return false
+      if (move === null) return direction === 'in' ? indent(id) : dedent(id)
+      return moveBlocks(move.ids, move.parentId, move.index)
+    },
+    [foldedIndent, indent, dedent, moveBlocks, pageStore],
   )
 
   // ── Keyboard handlers hook ─────────────────────────────────────────
@@ -1168,10 +1194,10 @@ export function BlockTree({
     ),
     splitOff,
     mergeInto,
-    indent,
-    dedent,
-    moveUp: useCallback((id: string) => moveOver(id, -1), [moveOver]),
-    moveDown: useCallback((id: string) => moveOver(id, 1), [moveOver]),
+    indent: useMemo(() => landing((id: string) => indentOver(id, 'in')), [landing, indentOver]),
+    dedent: useMemo(() => landing((id: string) => indentOver(id, 'out')), [landing, indentOver]),
+    moveUp: useMemo(() => landing((id: string) => moveOver(id, -1)), [landing, moveOver]),
+    moveDown: useMemo(() => landing((id: string) => moveOver(id, 1)), [landing, moveOver]),
     createBelow,
     // #7040 — Enter at a folded heading's end opens its section: under one with
     // children the new block is the first of them, so none of them moves under it.

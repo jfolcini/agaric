@@ -258,7 +258,7 @@ export interface UseBlockActionOrchestrationParams {
    * of a blank block to move its children onto the row above before the block
    * is removed. Same action the multi-select drag uses.
    */
-  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
+  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<unknown>
   /** Enter inside a block's text, as the page store's `splitOff`. */
   splitOff: (
     blockId: string,

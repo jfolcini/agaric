@@ -963,7 +963,7 @@ describe('PageBlockStore', () => {
 
       stubInvoke(mockedInvoke, { move_blocks_batch: () => batchResp(['A', 'B'], 'P') })
 
-      await store.getState().moveBlocks(['A', 'B'], 'P', 0)
+      expect(await store.getState().moveBlocks(['A', 'B'], 'P', 0)).toBe(true)
 
       expect(batchCallCount()).toBe(1)
       expect(batchCall()).toEqual({ blockIds: ['A', 'B'], newParentId: 'P', newIndex: 0 })
@@ -1032,7 +1032,7 @@ describe('PageBlockStore', () => {
         move_blocks_batch: () => Promise.reject(new Error('move failed')),
       })
 
-      await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)
+      expect(await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)).toBe(false)
 
       // No reconciling reload — nothing was applied optimistically, so the
       // pre-move state is still in place (R26: no snapshot restore either).

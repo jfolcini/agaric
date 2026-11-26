@@ -54,6 +54,8 @@ import {
   hiddenRows,
   type Outline,
   stepOver,
+  unfoldedBy,
+  withFoldedSections,
 } from '@/lib/section-fold'
 
 /** A block with blocks under it: collapsed, or not. */
@@ -76,7 +78,7 @@ interface CollapseState {
 
 export const pageCollapseKey = new PluginKey<CollapseState>('pageCollapse')
 
-/** The meta that expands the block it names, whether it is revealed for the caret or not. */
+/** The meta that expands the blocks it names, whether revealed for the caret or not. */
 const EXPAND = 'pageCollapseExpand'
 
 // A block's id is null only inside the transaction that made the block, until
@@ -99,6 +101,7 @@ function headingLevelOf(node: PMNode): number | null {
 function outlineOf(doc: PMNode): Outline {
   return {
     length: doc.childCount,
+    id: (index) => idOf(doc.child(index)),
     depth: (index) => depthOf(doc.child(index)),
     level: (index) => headingLevelOf(doc.child(index)),
   }
@@ -106,11 +109,7 @@ function outlineOf(doc: PMNode): Outline {
 
 /** The blocks of `collapsed` whose folds hold the block at `index`. */
 function collapsedAbove(doc: PMNode, index: number, collapsed: ReadonlySet<string>): Set<string> {
-  const folded: number[] = []
-  doc.forEach((node, _pos, i) => {
-    if (i < index && collapsed.has(idOf(node))) folded.push(i)
-  })
-  return new Set(foldsOver(outlineOf(doc), index, folded).map((i) => idOf(doc.child(i))))
+  return new Set(foldsOver(outlineOf(doc), idOf(doc.child(index)), collapsed))
 }
 
 /** What `collapsed`, less `revealed`, hides of `doc`, and each block's chevron. */
@@ -187,6 +186,25 @@ export function moveStep(
   return stepOver(outlineOf(doc), (i) => carriedEnd(state, i, doc), index, direction)
 }
 
+/**
+ * `tr`, a move of `state`'s blocks, unfolding each collapsed heading it lands a
+ * shown block in (#7040 decision 30), as Enter does.
+ */
+export function unfoldLanded(state: EditorState, tr: Transaction): Transaction {
+  const ids = unfoldedBy(outlineOf(state.doc), outlineOf(tr.doc), stateOf(state).collapsed)
+  return ids.length === 0 ? tr : tr.setMeta(EXPAND, ids)
+}
+
+/**
+ * `ids` in document order, each collapsed heading followed by the siblings its
+ * fold hides: a selection takes a folded section with it (#7040 decision 30).
+ */
+export function withSections(state: EditorState, ids: readonly string[]): string[] {
+  const { collapsed, revealed } = stateOf(state)
+  const folded = new Set([...collapsed].filter((id) => !revealed.has(id)))
+  return withFoldedSections(outlineOf(state.doc), ids, folded)
+}
+
 /** The fold of block `id`, for its block menu. */
 export function foldOf(state: EditorState, id: string): Fold | null {
   const index = blockIndex(state.doc, id)
@@ -254,7 +272,7 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   while (made < first && depthOf(doc.child(made)) > depth) made += 1
   if (made === first) return null
   if (headingLevelOf(before.doc.child(index)) !== null) {
-    const tr = after.tr.setMeta(EXPAND, id)
+    const tr = after.tr.setMeta(EXPAND, [id])
     // Under a heading with blocks under it the new blocks go first among them,
     // taking none of them as theirs.
     if (depthOf(doc.child(first)) > depth) {
@@ -304,7 +322,7 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
           },
           apply: (tr, value, _old, state) => {
             const toggled = tr.getMeta(pageCollapseKey) as string | undefined
-            const expanded = tr.getMeta(EXPAND) as string | undefined
+            const expanded = tr.getMeta(EXPAND) as readonly string[] | undefined
             let { collapsed } = value
             if (toggled !== undefined) {
               collapsed =
@@ -312,7 +330,7 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
                   ? withoutId(collapsed, toggled)
                   : withId(collapsed, toggled)
             }
-            if (expanded !== undefined) collapsed = withoutId(collapsed, expanded)
+            for (const id of expanded ?? []) collapsed = withoutId(collapsed, id)
             const reshaped =
               toggled !== undefined ||
               expanded !== undefined ||

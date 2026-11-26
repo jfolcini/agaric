@@ -11,7 +11,7 @@ import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
-import { carriedEnd, moveStep } from '@/editor/page-mode/page-collapse'
+import { carriedEnd, moveStep, unfoldLanded, withSections } from '@/editor/page-mode/page-collapse'
 import {
   blockIndex,
   firstTokenPos,
@@ -112,7 +112,7 @@ export const moveBlocks =
             : 'announce.moveFailed',
         ),
       )
-      if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+      if (moved) dispatch(unfoldLanded(state, restoreSelection(tr, ends).scrollIntoView()))
     }
     return true
   }
@@ -162,7 +162,8 @@ export const dropBlock =
         rows.findIndex((row) => row.id === id),
       )
       const start = firstTokenPos(tr.doc.nodeAt(at) as PMNode, at)
-      dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(start))).scrollIntoView())
+      tr.setSelection(TextSelection.near(tr.doc.resolve(start))).scrollIntoView()
+      dispatch(unfoldLanded(state, tr))
     }
     return true
   }
@@ -195,7 +196,7 @@ export const deleteBlocks =
   (state, dispatch) => {
     const tr = state.tr
     let deleted = false
-    for (const id of ids) {
+    for (const id of withSections(state, ids)) {
       const range = subtreeRange(tr.doc, id)
       if (range === null) continue
       tr.delete(range.start, range.end)
