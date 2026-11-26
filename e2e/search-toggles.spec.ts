@@ -2,7 +2,7 @@
  * E2E — search-view toggles (E2E-1) + invalid-regex inline error
  * (E2E-2).
  *
- *   - clicking each toggle flips its `aria-pressed` + `data-state`;
+ *   - clicking each toggle flips its `aria-pressed` and outlines it while pressed;
  *   - each toggle changes which seeded blocks the results render;
  *   - regex mode is symmetric with normal mode (cluster-1): structured tokens
  *     are parsed out and applied as filters, only the free-text remainder is
@@ -20,6 +20,20 @@ import {
   submitSearch,
   test,
 } from './helpers'
+
+/** Where two buttons' looks differ: border, fill and ink, or `same`. */
+async function cueDiff(
+  a: import('@playwright/test').Locator,
+  b: import('@playwright/test').Locator,
+): Promise<string> {
+  const cue = (btn: import('@playwright/test').Locator) =>
+    btn.evaluate((el) => {
+      const style = getComputedStyle(el)
+      return `${style.borderTopWidth} ${style.borderTopColor} ${style.backgroundColor} ${style.color}`
+    })
+  const [left, right] = [await cue(a), await cue(b)]
+  return left === right ? 'same' : `${left} | ${right}`
+}
 
 interface MockErrorWindow extends Window {
   __injectMockError?: (
@@ -44,9 +58,16 @@ test.describe('Search toggles (E2E-1) @search', () => {
     ])) as [string, string, string]
   })
 
-  test('case / word / regex toggles flip aria-pressed and data-state', async ({ page }) => {
-    const toggleRow = page.getByTestId('search-toggle-row')
-    await expect(toggleRow).toHaveAttribute('role', 'toolbar')
+  test('case / word / regex toggles flip aria-pressed and outline the pressed one', async ({
+    page,
+  }) => {
+    await expect(page.getByRole('group', { name: 'Search modes' })).toBeVisible()
+    // The outline is the non-colour cue: the pressed fill barely differs from the ground.
+    const outline = (btn: import('@playwright/test').Locator) =>
+      btn.evaluate((el) => {
+        const style = getComputedStyle(el)
+        return `${style.borderTopWidth} ${style.borderTopColor === style.color}`
+      })
 
     for (const testId of [
       'search-toggle-case-sensitive',
@@ -55,16 +76,28 @@ test.describe('Search toggles (E2E-1) @search', () => {
     ]) {
       const btn = page.getByTestId(testId)
       await expect(btn).toHaveAttribute('aria-pressed', 'false')
-      await expect(btn).toHaveAttribute('data-state', 'off')
       await btn.click()
       await expect(btn).toHaveAttribute('aria-pressed', 'true')
-      await expect(btn).toHaveAttribute('data-state', 'on')
-      // Shape-only active dot renders when pressed.
-      await expect(page.getByTestId(`${testId}-active-dot`)).toBeVisible()
+      await expect.poll(() => outline(btn)).toBe('1px true')
       // Reset so toggles don't interact across the loop.
       await btn.click()
       await expect(btn).toHaveAttribute('aria-pressed', 'false')
+      await expect.poll(() => outline(btn)).toBe('1px false')
     }
+  })
+
+  test('Replace takes the mode toggles’ cue: plain while closed, outlined while open', async ({
+    page,
+  }) => {
+    const mode = page.getByTestId('search-toggle-case-sensitive')
+    const replace = page.getByTestId('search-replace-toggle')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
+    await mode.click()
+    await replace.click()
+    await page.mouse.move(0, 0)
+    await expect(mode).toHaveAttribute('aria-pressed', 'true')
+    await expect(replace).toHaveAttribute('aria-expanded', 'true')
+    await expect.poll(() => cueDiff(replace, mode)).toBe('same')
   })
 
   test('default search folds case and matches inside words', async ({ page }) => {

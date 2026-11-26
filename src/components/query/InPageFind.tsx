@@ -7,23 +7,25 @@
  * module. A container holding block trees is searched over its blocks'
  * text, not its DOM (#6557, `block-text.ts`).
  *
- * Two render variants:
+ * Three render variants:
+ *  - `variant="header"` — in the App header, so it covers nothing: in its
+ *    row left of Today and Search, or, in the journal, whose row is full, on
+ *    a line of its own under them. This is the desktop Ctrl+F path.
  *  - `variant="overlay"` (default) — free-floating overlay anchored at
- *    the top-right of the viewport. This is the desktop Ctrl+F path.
+ *    the top-right of the viewport, below the header. This is the Ctrl+F
+ *    path on a phone, whose header has no room for it.
  *  - `variant="embedded"` — same toolbar, no fixed positioning. The
  *    parent container (the unified mobile search sheet's "In this page"
  *    segment) provides positioning and sizing. Mutually exclusive with the
- *    overlay variant: when the search sheet is open in `'in-page'`
- *    mode the overlay returns `null` so the matcher / highlighter
- *    effects only run once.
+ *    other two: when the search sheet is open in `'in-page'` mode App
+ *    mounts neither, so the matcher / highlighter effects only run once.
  *
- * Inputs (both variants):
+ * Inputs (every variant):
  *  - Toolbar input is autofocused on mount; whatever was selected in
  *    the page becomes the initial query (browser convention). When no
  *    selection exists the store restores the previous query (Q3).
- *  - `Aa` toggles case sensitivity. `Ab|` toggles whole-word.
- *    `.*` toggles regex (Phase 2 of the plan — landed together with
- *    Phase 1).
+ *  - Search's `SearchToggleRow` toggles case sensitivity, whole-word
+ *    and regex.
  *  - `↑`/`↓` arrows and `Enter`/`Shift+Enter` cycle matches.
  *  - `Esc` closes the toolbar and restores editor focus to the
  *    previously-focused element captured on open.
@@ -39,7 +41,7 @@
  */
 
 import type { TFunction } from 'i18next'
-import { CaseSensitive, ChevronDown, ChevronUp, Regex, Replace, WholeWord, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Replace, X } from 'lucide-react'
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -53,8 +55,10 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { InPageReplaceRow } from '@/components/query/InPageReplaceRow'
 import { type ReplaceCursor, useInPageReplace } from '@/components/query/use-in-page-replace'
+import { SearchToggleRow, TOGGLE_CUE } from '@/components/search/SearchToggleRow'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import { useBlockFindVersion } from '@/hooks/useBlockFindVersion'
 import {
   type BlockFindMatch,
@@ -105,20 +109,20 @@ function regexErrorText(t: TFunction, error: FindRegexError): string {
   }
 }
 
-export type InPageFindVariant = 'overlay' | 'embedded'
+export type InPageFindVariant = 'header' | 'overlay' | 'embedded'
 
 interface InPageFindProps {
   /**
-   * Render style. `'overlay'` (default) is the free-floating toolbar
-   * used by the desktop Ctrl+F path. `'embedded'` drops the fixed
-   * positioning so a parent container (the
-   * mobile search sheet's "In this page" body) can mount the same
-   * toolbar inline.
+   * Render style. `'header'` sits in the App header's row (desktop Ctrl+F).
+   * `'overlay'` (default) is the free-floating toolbar of a phone's Ctrl+F.
+   * `'embedded'` drops the fixed positioning so a parent container (the
+   * mobile search sheet's "In this page" body) can mount the same toolbar
+   * inline.
    */
   variant?: InPageFindVariant
   /**
    * Embedded-variant only: override what happens when the user
-   * presses Escape (the embedded toolbar has no close button). The overlay variant calls
+   * presses Escape (the embedded toolbar has no close button). The other variants call
    * `useInPageFindStore.close()` directly — but doing the same in
    * the embedded path leaves the parent Sheet rendering a now-empty
    * toolbar (because the find store flips `open=false` while the
@@ -524,8 +528,13 @@ export function InPageFind({
           // Single-row free-floating overlay anchored top-right: a
           // rounded card holding the input + toggles + counter + arrows.
           // `fixed` so it floats above whichever view is rendered
-          // without each view having to participate.
-          'fixed top-2 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating)',
+          // without each view having to participate. It hangs below the
+          // App header, whose Today and Search it covered (#7040 O5).
+          'fixed top-14 right-2 md:right-4 z-50 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating)',
+        variant === 'header' &&
+          // The same strip in the header's flow; it wraps, and the header
+          // grows, when the replace row opens.
+          'my-1 flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1',
         variant === 'embedded' &&
           // Two intentional rows inside the search sheet — row 1 is
           // the input across the full width; row 2 is the controls.
@@ -550,28 +559,29 @@ export function InPageFind({
         data-testid="in-page-find-input"
         className={cn(
           'text-sm',
-          // Overlay: compact 7-row inline strip. Embedded: full row 1
+          // Overlay and header: compact 7-row inline strip, narrow enough to
+          // fit the header's row beside Today and Search. Embedded: full row 1
           // inside the sheet — default Input height matches the
           // 44-px touch targets on row 2.
-          variant === 'overlay' ? 'h-7 w-48 md:w-64' : 'w-full',
+          variant === 'embedded' ? 'w-full' : 'h-7 w-48',
         )}
       />
-      {/* Controls split into two logical groups: toggles (replace /
-          case / whole-word / regex) and navigation (counter + prev/next/
-          close). On the overlay both groups inline into a single
-          flat row (outer `flex items-center`); on embedded the outer
+      {/* Controls split into two logical groups: toggles (case /
+          whole-word / regex, then replace) and navigation (counter +
+          prev/next/close). On the overlay and in the header both groups
+          inline into a single flat row (outer `flex items-center`); on embedded the outer
           is `flex flex-col` so the groups stack — overlapping the
-          input at row 1 — into a stable 3-row layout that fits 390 px
-          phones without flex-wrap chaos.
-
-          Single-row math at 390 px (sheet padding 48 → 342 px usable):
-          row 2 toggles 4 × 44 + 3 × 6 = 194 ✓; row 3 counter (4.5rem)
-          + 2 × 44 + 3 × 6 = 178 ✓. */}
+          input at row 1 — into a stable 3-row layout whose rows each fit
+          a phone's width at the 44 px touch size, without flex-wrap chaos. */}
       <div className="flex items-center gap-1.5" data-testid="in-page-find-toggles">
+        {/* Search's mode toggles, then Replace, which opens a row instead. */}
+        <SearchToggleRow toggles={toggles} onChange={setToggles} size="icon-xs" />
+        <Separator orientation="vertical" className="data-[orientation=vertical]:h-4" />
         <IconButton
           type="button"
-          variant={replaceOpen ? 'secondary' : 'ghost'}
+          variant="ghost"
           size="icon-xs"
+          className={TOGGLE_CUE}
           aria-expanded={replaceOpen}
           // The binding stays in the name: the replace row's own button is also named Replace.
           ariaLabel={`${t('findInPage.toggleReplace')} (${replaceKeys})`}
@@ -585,49 +595,13 @@ export function InPageFind({
         >
           <Replace aria-hidden="true" />
         </IconButton>
-        <IconButton
-          type="button"
-          variant={toggles.caseSensitive ? 'secondary' : 'ghost'}
-          size="icon-xs"
-          aria-pressed={toggles.caseSensitive}
-          ariaLabel={t('findInPage.toggleCaseSensitive')}
-          tooltip={t('findInPage.toggleCaseSensitive')}
-          data-testid="in-page-find-toggle-case"
-          onClick={() => setToggles({ caseSensitive: !toggles.caseSensitive })}
-        >
-          <CaseSensitive aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          type="button"
-          variant={toggles.wholeWord ? 'secondary' : 'ghost'}
-          size="icon-xs"
-          aria-pressed={toggles.wholeWord}
-          ariaLabel={t('findInPage.toggleWholeWord')}
-          tooltip={t('findInPage.toggleWholeWord')}
-          data-testid="in-page-find-toggle-word"
-          onClick={() => setToggles({ wholeWord: !toggles.wholeWord })}
-        >
-          <WholeWord aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          type="button"
-          variant={toggles.isRegex ? 'secondary' : 'ghost'}
-          size="icon-xs"
-          aria-pressed={toggles.isRegex}
-          ariaLabel={t('findInPage.toggleRegex')}
-          tooltip={t('findInPage.toggleRegex')}
-          data-testid="in-page-find-toggle-regex"
-          onClick={() => setToggles({ isRegex: !toggles.isRegex })}
-        >
-          <Regex aria-hidden="true" />
-        </IconButton>
       </div>
 
       <div
         className={cn(
           'flex items-center gap-1.5',
           // On embedded, push the close button to the right by
-          // stretching this row to full width; on overlay the row
+          // stretching this row to full width; elsewhere the row
           // sits inline with the toggle group above.
           variant === 'embedded' && 'w-full',
         )}
@@ -673,7 +647,7 @@ export function InPageFind({
           <ChevronDown aria-hidden="true" />
         </IconButton>
         {/* Embedded, the sheet's own close button is the one close. */}
-        {variant === 'overlay' && (
+        {variant !== 'embedded' && (
           <IconButton
             type="button"
             variant="ghost"
