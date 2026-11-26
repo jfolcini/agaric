@@ -70,6 +70,15 @@ describe('mergeAndRankGroups', () => {
     expect(out[0]?.pageTitle).toBe('Untitled')
   })
 
+  // #7040 — a block row names only its page; the caller knows the page's title.
+  it("titles a content-only group from the caller's page titles", () => {
+    const out = mergeAndRankGroups([], [blockRow('B1', 'orphan', 'P9')], 'orphan', {
+      P9: '2026-11-25',
+    })
+    expect(out[0]?.pageTitle).toBe('2026-11-25')
+    expect(out[0]?.hasPageNameMatch).toBe(false)
+  })
+
   it('caps matches per group at 2 and reports surplus', () => {
     const blocks = [
       blockRow('B1', 'one', 'P1'),

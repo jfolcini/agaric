@@ -489,8 +489,6 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Coincidencias en {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} más en esta página',
   'palette.moreInThisPage_other': '+{{count}} más en esta página',
-  'palette.welcomeEmpty':
-    'Escribe para buscar páginas o bloques, o [[ para enlazar. Pulsa > para ver los comandos.',
   'palette.noResults':
     'No hay coincidencias para “{{query}}”. Prueba la búsqueda ampliada de abajo.',
   'palette.footerHintOpen': 'abrir',
@@ -533,7 +531,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Recientes',
   'palette.modeTags': 'Etiquetas',
   'palette.modeHelp': 'Ayuda',
-  'palette.modeHint': '> comandos · # etiquetas · ? ayuda',
+  'palette.modeHint': '> comandos · # etiquetas · ? ayuda · [[ enlace',
   'palette.modeBackHint': 'Haz clic en la ficha para volver a la búsqueda',
   'palette.tagsTitle': 'Etiquetas',
   'palette.tagsWelcomeEmpty':

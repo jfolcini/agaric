@@ -21,10 +21,12 @@
  *    `t('quickCapture.saveButton')` button; submitting an empty textarea via Cmd+Enter is a
  *    no-op (matches the disabled-button semantics).
  *
- * The global shortcut opens it on desktop and the floating quick-capture
- * button on a touch phone, which is why its description has a touch
- * wording that names no key. An `agaric://capture?text=…` link opens it
- * holding the link's text (#6555); the link never saves by itself.
+ * The global shortcut opens it on desktop, and its description names that
+ * key combination (#7040). The floating quick-capture button opens it on a
+ * touch phone, which registers no global shortcut, so there and wherever no
+ * keyboard has shown itself the description has a wording that names no key.
+ * An `agaric://capture?text=…` link opens it holding the link's text (#6555);
+ * the link never saves by itself.
  *
  * On a phone (`usePhoneLayout`) the dialog
  * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
@@ -36,21 +38,24 @@
 
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
+import { Kbd } from '@/components/ui/kbd'
 import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import type { QuickCapturePrefill } from '@/hooks/useAppDialogs'
-import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isMobilePlatform } from '@/lib/platform'
+import { acceleratorToKeys, loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
 import { useSpaceStore } from '@/stores/space'
 
 interface QuickCaptureDialogProps {
@@ -79,8 +84,9 @@ export function QuickCaptureDialog({
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  // A phone opens this from the floating button; it has no key combination to press.
-  const touch = useShouldShowMobileChrome()
+  // The key combination is system-wide, which a phone or tablet does not register (as
+  // `QuickCaptureRow` hides it there), and is pressed on a keyboard.
+  const showShortcut = useKeyboardHints() && !isMobilePlatform()
 
   // Reset content + autofocus the textarea each time the dialog opens.
   // Without the explicit reset, content from a previous capture session
@@ -152,7 +158,14 @@ export function QuickCaptureDialog({
         <Header>
           <Title>{t('quickCapture.dialogTitle')}</Title>
           <Description>
-            {t(touch ? 'quickCapture.descriptionTouch' : 'settings.quickCapture.description')}
+            {showShortcut ? (
+              <Trans
+                i18nKey="quickCapture.descriptionShortcut"
+                components={{ keys: <Kbd keys={acceleratorToKeys(loadQuickCaptureShortcut())} /> }}
+              />
+            ) : (
+              t('quickCapture.descriptionTouch')
+            )}
           </Description>
         </Header>
         <Body>
