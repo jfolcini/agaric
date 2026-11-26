@@ -42,6 +42,10 @@ vi.mock('lucide-react', () => ({
     <svg data-testid="icon-calendar-check" {...props} />
   ),
   FilterX: (props: Record<string, unknown>) => <svg data-testid="icon-filter-x" {...props} />,
+  CalendarClock: (props: Record<string, unknown>) => (
+    <svg data-testid="calendar-clock" {...props} />
+  ),
+  Flag: (props: Record<string, unknown>) => <svg data-testid="flag" {...props} />,
   AlertCircle: (props: Record<string, unknown>) => (
     <svg data-testid="icon-alert-circle" {...props} />
   ),
@@ -942,17 +946,17 @@ describe('AgendaResults', () => {
     })
   })
 
-  // The due date chip must get extra vertical padding on touch devices
-  //         so the pill meets the 44px hit-target when embedded in the list row.
-  it('due date chip has touch padding override', () => {
+  // #7040 — the due date chip is the one date chip: its 44 px target is the
+  // invisible hit area, never a taller painted pill.
+  it('due date chip takes its touch target from the hit area', () => {
     const blocks = [makeBlock({ id: 'B1', content: 'Has deadline', due_date: '2025-04-15' })]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
 
     const chip = document.querySelector('.agenda-results-due')
-    expect(chip).not.toBeNull()
-    // Touch-only py-1 override complements px-2 → ~32px tall pill on coarse pointers.
-    expect(chip?.className).toContain('[@media(pointer:coarse)]:py-1')
+    expect(chip).toHaveAttribute('data-date-kind', 'due')
+    expect(chip).toHaveClass('touch-hit-area')
+    expect(chip?.className).not.toContain('[@media(pointer:coarse)]')
   })
 
   // Agenda items no longer truncate content with line-clamp-2
@@ -967,16 +971,15 @@ describe('AgendaResults', () => {
     expect(contentSpan.className).not.toContain('line-clamp-2')
   })
 
-  // Priority badge text scales up on coarse pointer to match the
-  //              sibling due-date chip (text-xs → text-sm) for visual consistency.
-  it('priority badge has text-sm override on coarse pointer', () => {
+  // #7040 — the priority badge is the one every task row draws, at one size.
+  it('priority badge is the shared priority Badge, with no coarse-pointer size of its own', () => {
     const blocks = [makeBlock({ id: 'B1', priority: '1', content: 'Urgent task' })]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
 
     const badge = document.querySelector('.agenda-results-priority')
-    expect(badge).not.toBeNull()
-    expect(badge?.className).toContain('[@media(pointer:coarse)]:text-sm')
+    expect(badge).toHaveAttribute('data-variant', 'priority')
+    expect(badge?.className).not.toContain('[@media(pointer:coarse)]')
   })
 })
 

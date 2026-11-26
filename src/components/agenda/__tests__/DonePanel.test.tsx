@@ -72,6 +72,10 @@ vi.mock('lucide-react', () => ({
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
+  CalendarClock: (props: Record<string, unknown>) => (
+    <svg data-testid="calendar-clock" {...props} />
+  ),
+  Flag: (props: Record<string, unknown>) => <svg data-testid="flag" {...props} />,
 }))
 
 vi.mock('@/components/RichContentRenderer', () => ({

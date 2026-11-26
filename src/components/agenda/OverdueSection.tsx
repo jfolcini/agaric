@@ -1,7 +1,7 @@
 /**
- * OverdueSection — renders overdue blocks with count badge.
+ * OverdueSection — renders overdue blocks under their heading.
  *
- * Thin wrapper around AlertSection with destructive variant and PriorityBadge.
+ * Thin wrapper around AlertSection with destructive variant.
  *
  * Shows blocks whose due_date is before today and are not DONE.
  * Each item is clickable and navigates to the parent page.
@@ -24,12 +24,5 @@ export interface OverdueSectionProps {
 
 export function OverdueSection(props: OverdueSectionProps): React.ReactElement | null {
   const { t } = useTranslation()
-  return (
-    <AlertSection
-      variant="destructive"
-      title={t('duePanel.overdueTitle')}
-      showPriorityBadge
-      {...props}
-    />
-  )
+  return <AlertSection variant="destructive" title={t('duePanel.overdueTitle')} {...props} />
 }

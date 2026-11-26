@@ -429,6 +429,10 @@ impl LoroEngine {
             }
             Err(error) => return Err(error),
         };
+        // An error from these two would leave what landed unresolved, but none
+        // is met here: only sync deliveries and their inbox replay import
+        // through this body, and the handshake turns away a peer on another
+        // engine format before anything is imported (`on_head_exchange`).
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;

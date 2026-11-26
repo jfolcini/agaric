@@ -182,7 +182,7 @@ export function PropertyDefinitionSheet({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="font-medium">{t('propertiesView.typeLabel')}</span>
-          <Badge tone="secondary">{valueTypeLabel(definition, t)}</Badge>
+          <Badge tone="metadata">{valueTypeLabel(definition, t)}</Badge>
         </div>
         <ChangePropertyType
           definition={definition}

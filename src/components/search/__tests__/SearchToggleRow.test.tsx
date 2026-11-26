@@ -1,11 +1,10 @@
 /**
- * Tests for `<SearchToggleRow>`.
+ * Tests for `<SearchToggleRow>`, the match-mode toggles of Search and of find in page.
  *
  * Coverage:
- * - `role="toolbar"` on the container.
- * - Each toggle exposes its full label as `aria-label` (accessible name).
- * Each toggle shows its always-visible abbreviation (#154 —
- *   touch-safe, no tooltip reliance).
+ * - A named group (a `fieldset`; find in page nests it in its toolbar).
+ * - Each toggle is an icon button whose full label is its accessible name and
+ *   its tooltip (hover, or a press-and-hold on touch).
  * - `aria-pressed` reflects the controlled state and flips on click.
  * - axe finds no violations.
  */
@@ -20,10 +19,10 @@ import { SearchToggleRow, type SearchToggleState } from '@/components/search/Sea
 const OFF: SearchToggleState = { caseSensitive: false, wholeWord: false, isRegex: false }
 
 describe('SearchToggleRow', () => {
-  it('exposes a toolbar landmark with the localised label', () => {
+  it('groups the toggles under the localised label', () => {
     render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
-    const toolbar = screen.getByRole('toolbar', { name: /Search modes/i })
-    expect(toolbar).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: /Search modes/i })
+    expect(group).toBeInTheDocument()
   })
 
   it('renders three toggles in VS Code order: Aa / Ab| / .*', () => {
@@ -35,21 +34,18 @@ describe('SearchToggleRow', () => {
     expect(buttons[2]).toHaveAttribute('aria-label', expect.stringMatching(/Regex/))
   })
 
-  it('shows an always-visible abbreviation on each toggle (#154)', () => {
-    // The abbreviation text is what makes the mode legible on touch,
-    // where the old hover tooltip never fired. It is decorative
-    // (aria-hidden) since the button already carries the full aria-label.
+  // #7040 S12 — the name shows on hover, and on touch with a press-and-hold (`IconButton`).
+  it.each([
+    ['search-toggle-case-sensitive', 'Case-sensitive'],
+    ['search-toggle-whole-word', 'Whole word'],
+    ['search-toggle-regex', 'Regex'],
+  ])('%s names itself in a tooltip', async (testId, name) => {
+    const user = userEvent.setup()
     render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
-    expect(screen.getByTestId('search-toggle-case-sensitive-abbr')).toHaveTextContent('Aa')
-    expect(screen.getByTestId('search-toggle-whole-word-abbr')).toHaveTextContent('Ab|')
-    expect(screen.getByTestId('search-toggle-regex-abbr')).toHaveTextContent('.*')
-    for (const testId of [
-      'search-toggle-case-sensitive-abbr',
-      'search-toggle-whole-word-abbr',
-      'search-toggle-regex-abbr',
-    ]) {
-      expect(screen.getByTestId(testId)).toHaveAttribute('aria-hidden', 'true')
-    }
+    const button = screen.getByTestId(testId)
+    expect(button).toHaveAttribute('data-slot', 'icon-button')
+    await user.hover(button)
+    expect((await screen.findAllByRole('tooltip'))[0]).toHaveTextContent(name)
   })
 
   it('reflects controlled state via aria-pressed', () => {
@@ -99,19 +95,6 @@ describe('SearchToggleRow', () => {
     for (const btn of screen.getAllByRole('button')) {
       expect(btn).toBeDisabled()
     }
-  })
-
-  it('renders a non-colour active indicator only on pressed toggles', () => {
-    render(
-      <SearchToggleRow
-        toggles={{ caseSensitive: true, wholeWord: false, isRegex: false }}
-        onChange={vi.fn()}
-      />,
-    )
-    // The pressed toggle gets a shape-only dot; the others do not.
-    expect(screen.getByTestId('search-toggle-case-sensitive-active-dot')).toBeInTheDocument()
-    expect(screen.queryByTestId('search-toggle-whole-word-active-dot')).toBeNull()
-    expect(screen.queryByTestId('search-toggle-regex-active-dot')).toBeNull()
   })
 
   it('has no axe violations', async () => {

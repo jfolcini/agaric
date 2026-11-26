@@ -94,7 +94,7 @@ Set properties appear as chips on the block:
 
 - Up to a small handful of chips render inline; the rest collapse into a *"+N"* badge.
 - Click a chip's key to rename the key, and its value to open the inline editor for that property.
-- Priority, due and scheduled dates have their own chips: priority pip + label, date chip with overdue colour.
+- Priority, due and scheduled dates have their own chips: the priority label, and a date chip per kind, a flag for the due date (red once past, amber today) and a calendar with a clock for the scheduled date (neutral: colour is for urgency). A property chip is outlined, `key: value`, with no fill, so it never reads as a tag.
 - A ref chip shows its target's current title (a rename shows at once); clicking the title opens the target. A boolean chip says *Yes* or *No*; clicking it opens the Property Drawer, where the value is a checkbox.
 
 ## Inline syntax (`::`)

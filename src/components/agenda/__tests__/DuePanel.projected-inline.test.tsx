@@ -6,8 +6,7 @@
  * Without `inline`, a recurring task written with leading markdown
  * (`- pick up keys`, `# standup`) put a `<ul>` / `<h1>` block box
  * inside a wrapper sized for one clamped line. `inline: true` (#1533) exists
- * to downgrade block-level nodes before they enter such a wrapper, and the
- * sibling `AlertSection` rows in this same panel already pass it (#4705).
+ * to downgrade block-level nodes before they enter such a wrapper.
  *
  * A SEPARATE file from `DuePanel.test.tsx` because that suite stubs
  * `renderRichContent` with an identity function (`(markdown) => markdown`),
@@ -162,8 +161,7 @@ describe('DuePanel — projected rows render inline (#4719)', () => {
   it('keeps tag chips interactive — the row is not fully inert', async () => {
     // `interactive: true` is deliberate here and survives the fix: `DuePanel`
     // wires `useTagClickHandler()` down to this row on purpose, so its chips
-    // stay focusable (unlike `AlertSection`'s, whose row is the sole target).
-    // Pinned so a later "match AlertSection" edit is a decision, not a slip.
+    // stay focusable, as every task row's in the panel do.
     projectOne('- ship it #[01KP36KDG2ZZZZZZZZZZZZZZZZ]')
     render(<DuePanel date={DATE} />)
 

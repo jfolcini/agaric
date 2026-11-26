@@ -16,7 +16,7 @@
  *  12. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -91,6 +91,10 @@ vi.mock('lucide-react', () => ({
   CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
   CalendarDays: (props: Record<string, unknown>) => <svg data-testid="calendar-days" {...props} />,
+  CalendarClock: (props: Record<string, unknown>) => (
+    <svg data-testid="calendar-clock" {...props} />
+  ),
+  Flag: (props: Record<string, unknown>) => <svg data-testid="flag" {...props} />,
   Repeat: (props: Record<string, unknown>) => <svg data-testid="repeat-icon" {...props} />,
   Check: (props: Record<string, unknown>) => <svg data-testid="check-icon" {...props} />,
   Info: (props: Record<string, unknown>) => <svg data-testid="info-icon" {...props} />,
@@ -1044,6 +1048,42 @@ describe('DuePanel', () => {
         await screen.findByRole('heading', { level: 2, name: t('due.projected') }),
       ).toBeInTheDocument()
       expect(screen.getByText(/Projected task/)).toBeInTheDocument()
+    })
+
+    // #7040 — a projected occurrence shows its date as the chip of the date it
+    // was projected from, after its text, in place of an emoji before it.
+    it.each([
+      ['due_date', 'due'],
+      ['scheduled_date', 'scheduled'],
+    ] as const)('a row projected from %s ends in the %s date chip', async (source, kind) => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ1',
+              content: 'Projected task',
+              parent_id: 'PAGE1',
+              page_id: 'PAGE1',
+              todo_state: 'TODO',
+            }),
+            projected_date: '2026-04-13',
+            source,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2026-04-13" />)
+
+      const row = await screen.findByTestId('projected-entry')
+      const chip = row.querySelector('[data-date-kind]') as HTMLElement
+      expect(chip).toHaveAttribute('data-date-kind', kind)
+      expect(chip.querySelector('time')).toHaveAttribute('datetime', '2026-04-13')
+      const text = within(row).getByText(/Projected task/)
+      expect(text.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('does not render projected section when no projections', async () => {

@@ -51,7 +51,8 @@ import { useSearchHistoryControls } from '@/components/SearchPanel/useSearchHist
 import { useSearchReplace, useSearchReplaceMode } from '@/components/SearchPanel/useSearchReplace'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { Button } from '@/components/ui/button'
-import { CardButton } from '@/components/ui/card-button'
+import { listCardVariants, listHeaderVariants, listRowVariants } from '@/components/ui/list-item'
+import { Separator } from '@/components/ui/separator'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -626,7 +627,7 @@ export function SearchPanel(): React.ReactElement {
         // Phase 3.U5 — synchronous blur. The history dropdown's rows
         // preventDefault on mousedown, which keeps the input focused through
         // the click; no defer needed. So do the controls below the dropdown
-        // (filter chips, Add filter, Recent cards), which its closing would
+        // (filter chips, Add filter, Recent rows), which its closing would
         // shift.
         onInputBlur={() => setInputFocused(false)}
         invalid={!!regexError}
@@ -637,6 +638,7 @@ export function SearchPanel(): React.ReactElement {
         toggleRow={
           <>
             <SearchToggleRow toggles={toggles} onChange={setToggles} />
+            <Separator orientation="vertical" className="data-[orientation=vertical]:h-6" />
             <SearchReplaceToggle open={replaceMode.open} onToggle={toggleReplace} />
           </>
         }
@@ -694,29 +696,31 @@ export function SearchPanel(): React.ReactElement {
       />
 
       {query === '' && recentPages.length > 0 && (
-        <div className="recent-pages">
+        // One list card with its own header row, its rows the results' shape.
+        <div className={listCardVariants()}>
           {/* label the list via its heading so screen readers announce
               it as a named "Recent" group distinct from the results listbox. */}
-          <h3
-            id="search-recent-heading"
-            className="text-sm font-medium text-muted-foreground px-3 py-2"
-          >
+          <h3 id="search-recent-heading" className={listHeaderVariants()}>
             {t('search.recentTitle')}
           </h3>
-          <ul aria-labelledby="search-recent-heading" className="space-y-1 list-none m-0 p-0">
+          <ul aria-labelledby="search-recent-heading" className="m-0 list-none p-0">
             {recentPages.map((page) => (
-              <li key={page.id}>
+              <li key={page.id} className="list-row">
                 <NewTabTarget pageId={page.id} title={page.title}>
-                  <CardButton
-                    className="text-sm"
+                  <button
+                    type="button"
+                    className={listRowVariants({
+                      density: 'compact',
+                      className: 'w-full cursor-pointer text-left text-sm',
+                    })}
                     onClick={() => handleRecentClick(page)}
                     // Keeps the input focused: its blur closes the history
-                    // dropdown above, which moves this card from under the
+                    // dropdown above, which moves this row from under the
                     // pointer before the click.
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     {page.title}
-                  </CardButton>
+                  </button>
                 </NewTabTarget>
               </li>
             ))}

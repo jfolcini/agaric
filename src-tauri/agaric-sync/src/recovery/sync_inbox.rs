@@ -224,8 +224,11 @@ async fn next_chunk_grouped_by_space(
             );
         }
 
-        let tombstone_purged =
-            decode_purged_tombstone(row.id, &row.space_id, row.purged_ids.as_deref());
+        let tombstone_purged = crate::sync_protocol::loro_sync::decode_purged_tombstone(
+            row.id,
+            &row.space_id,
+            row.purged_ids.as_deref(),
+        );
 
         let slot = crate::sync_protocol::loro_sync::InboxSlot {
             id: row.id,
@@ -239,35 +242,6 @@ async fn next_chunk_grouped_by_space(
     }
 
     Ok(groups)
-}
-
-/// #2292: decode this row's durable purged-id tombstone (a JSON
-/// array written by the crashed apply BEFORE its projection tx).
-/// NULL → no purge delta → empty set. A malformed tombstone must
-/// NOT wedge boot: log + fall back to empty (the pre-#2292 additive
-/// behaviour), never propagate the parse error out of the walk.
-fn decode_purged_tombstone(
-    inbox_id: i64,
-    space_id: &str,
-    purged_ids: Option<&str>,
-) -> Vec<agaric_core::ulid::BlockId> {
-    match purged_ids {
-        None => Vec::new(),
-        Some(json) => match serde_json::from_str(json) {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!(
-                    inbox_id,
-                    space_id = %space_id,
-                    error = %e,
-                    "#2292: sync-inbox slot has an unparseable purged_ids \
-                     tombstone — re-sweeping nothing from it (additive \
-                     fallback still applies)"
-                );
-                Vec::new()
-            }
-        },
-    }
 }
 
 /// Replay each space's slots as one batch, folding every outcome into `tally`.
@@ -941,6 +915,94 @@ mod tests {
             row,
             (Some(kept_page), "written on B".to_owned()),
             "and its row sits under that page"
+        );
+    }
+
+    /// A batch imports a purge and its projection fails; the per-slot retry
+    /// then commits in the same boot. The batch stamped the purge on the slot
+    /// after the walk read it, and the retry's re-import resolves no purge, so
+    /// the retry reads the slot's tombstone again.
+    ///
+    /// The trigger fails the batch's transaction only: an import whose
+    /// projection failed has its delta saved on its own (#6521), so the retry
+    /// finds one more `loro_doc_delta` row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_after_a_failed_projection_sweeps_what_the_batch_purged() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let (page, block) = (block_id_for(1), block_id_for(2));
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+
+        let mut peer = LoroEngine::with_peer_id("device-A").expect("engine");
+        peer.apply_create_block(&page, "page", "Trip notes", None, 0)
+            .expect("create page");
+        peer.apply_create_block(&block, "content", "both have this", Some(&page), 0)
+            .expect("create block");
+        seed_inbox(
+            &pool,
+            space.as_str(),
+            &peer.export_snapshot().expect("export"),
+            None,
+        )
+        .await;
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 1, "this device holds the peer's page");
+
+        let before_purge = peer.version_vector();
+        peer.apply_purge_block(&page).expect("purge");
+        let purge = peer.export_update_since(&before_purge).expect("export");
+        seed_inbox(&pool, space.as_str(), &purge, None).await;
+
+        let saved_deltas: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_delta")
+            .fetch_one(&pool)
+            .await
+            .expect("count deltas");
+        sqlx::query(
+            "CREATE TABLE deltas_before_the_purge AS SELECT COUNT(*) AS n FROM loro_doc_delta",
+        )
+        .execute(&pool)
+        .await
+        .expect("record the delta count");
+        sqlx::query(
+            "CREATE TRIGGER first_purge_projection_aborts BEFORE INSERT ON sync_deferred_purges \
+             WHEN (SELECT COUNT(*) FROM loro_doc_delta) = (SELECT n FROM deltas_before_the_purge) \
+             BEGIN SELECT RAISE(ABORT, 'the batch projection fails'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install abort trigger");
+
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a failed projection must not fail the boot walk");
+        assert_eq!(replayed, 1, "the retry clears the purge's slot");
+        let saved_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_delta")
+            .fetch_one(&pool)
+            .await
+            .expect("count deltas");
+        assert_eq!(
+            saved_after,
+            saved_deltas + 1,
+            "precondition: the batch projection failed and left its delta"
+        );
+
+        crate::sync_protocol::loro_sync::sweep_deferred_purges(&pool, &registry)
+            .await
+            .expect("sweep");
+        let purged_rows: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM blocks WHERE id IN (?, ?) ORDER BY id")
+                .bind(&page)
+                .bind(&block)
+                .fetch_all(&pool)
+                .await
+                .expect("purged rows");
+        assert_eq!(
+            purged_rows,
+            Vec::<String>::new(),
+            "what the peer purged has no row"
         );
     }
 

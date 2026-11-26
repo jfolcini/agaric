@@ -506,6 +506,35 @@ describe('DaySection', () => {
     expect(scheduledBadge).toHaveTextContent(/Scheduled/)
   })
 
+  // #7040 — a due or scheduled count is that date's own chip; a date
+  // property's count is not one of the two kinds.
+  it('draws a due and a scheduled count as their date chips, a property count as neither', () => {
+    const entry = makeDayEntry({ dateStr: '2025-06-15', displayDate: 'Sun, Jun 15, 2025' })
+    const agendaCountsBySource = {
+      '2025-06-15': { 'column:due_date': 3, 'column:scheduled_date': 2, 'property:deadline': 4 },
+    }
+
+    render(
+      <DaySection
+        entry={entry}
+        mode="weekly"
+        agendaCountsBySource={agendaCountsBySource}
+        onAddBlock={noop}
+      />,
+    )
+
+    const due = screen.getByLabelText('3 Due items, click to view')
+    expect(due).toHaveAttribute('data-date-kind', 'due')
+    expect(due).toHaveClass('bg-date-due', 'text-date-due-foreground')
+    const scheduled = screen.getByLabelText('2 Scheduled items, click to view')
+    expect(scheduled).toHaveAttribute('data-date-kind', 'scheduled')
+    expect(scheduled).toHaveClass('bg-secondary', 'text-secondary-foreground')
+    const property = screen.getByLabelText('4 Deadline items, click to view')
+    expect(property).not.toHaveAttribute('data-date-kind')
+    expect(property).toHaveClass('bg-date-property', 'text-date-property-foreground')
+    expect(property).toHaveTextContent('4 Deadline')
+  })
+
   // #3882 — `journal.agendaCountBadge` interpolated {{count}} with no
   // _one/_other plural forms, so a count of 1 showed "1 Due items, click to
   // view".
