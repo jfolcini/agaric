@@ -93,7 +93,7 @@ test.describe('on a phone @mobile @search @pages @journal @editor', () => {
       key: 'blocked_by',
       value: { value_ref: SHIP_RELEASE },
     })
-    await navigateMobile(page, 'Tasks')
+    await navigateMobile(page, 'Agenda')
 
     const row = page.getByTestId('agenda-results-item').filter({ hasText: 'Fix login bug' })
     const indicator = row.getByRole('button', { name: 'Blocked by: Ship v2.0 release' })
