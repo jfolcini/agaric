@@ -353,6 +353,7 @@ export function renderCodeBlock(block: CodeBlockNode, key: string): React.ReactE
   const language = block.attrs?.language ?? ''
   if (language === 'mermaid') return renderMermaidBlock(code, key)
   return (
+    // Its root writes `dir="ltr"`, which keeps code left to right in a right-to-left block (#7040).
     <ScrollArea key={key} className="bg-muted rounded-md text-block-sm font-mono">
       <pre className="px-3 py-2">
         <code className={language ? `language-${language} hljs` : 'hljs'}>

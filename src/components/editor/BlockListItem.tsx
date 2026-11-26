@@ -502,7 +502,7 @@ function BlockListItemInner({
           (e.g. SearchPanel). Agenda shows full content. */}
       <span
         className={cn(
-          'tag-chip-row text-sm min-w-0 max-sm:basis-full bidi-plaintext',
+          'tag-chip-row text-block-sm min-w-0 max-sm:basis-full bidi-plaintext',
           contentClassName,
         )}
       >

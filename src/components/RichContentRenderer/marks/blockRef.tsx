@@ -106,6 +106,7 @@ export function renderBlockRef(
         refId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-ref-chip"
+      dir="auto"
       // #4551 — the same identity pair the TipTap NodeView already sets
       // (`@/editor/extensions/block-ref.ts`), so ONE delegated selector,
       // `[data-type="block-ref"][data-id]`, reaches the peek host from both

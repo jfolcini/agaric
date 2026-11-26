@@ -57,7 +57,7 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('inline-flex')
     expect(chip?.className).toContain('items-center')
     expect(chip?.className).toContain('font-medium')
-    expect(chip?.className).toContain('text-xs')
+    expect(chip?.className).toContain('text-block-chip')
   })
 
   // #1678: PropertyChip overrides the Badge default padding/gap with its own

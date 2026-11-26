@@ -525,3 +525,29 @@ test.describe('Repeating tasks on a phone (#6532) @journal @mobile', () => {
     },
   )
 })
+
+// #7040: a projected entry is a block's text in a list, which follows the note text size.
+for (const [size, text] of [
+  ['medium', '14px / 20px'],
+  ['large', '15.75px / 22.5px'],
+] as const) {
+  test.describe(`a projected entry at ${size} note text @journal`, () => {
+    test('its text keeps its ratio to the note text', { tag: '@real-only' }, async ({ page }) => {
+      await page.addInitScript((s) => localStorage.setItem('agaric-font-size', s), size)
+      await waitForBoot(page)
+      const tomorrow = localDay(1)
+      await seedTasks(page, `Projected ${size}`, [
+        { task: 'daily standup', due: localDay(0), repeat: 'daily' },
+      ])
+      await stepJournalOver(page, [tomorrow])
+      const entry = projectedEntries(page, tomorrow).filter({ hasText: 'daily standup' })
+      await expect(entry).toBeVisible()
+      expect(
+        await entry.evaluate((el) => {
+          const style = getComputedStyle(el)
+          return `${style.fontSize} / ${style.lineHeight}`
+        }),
+      ).toBe(text)
+    })
+  })
+}

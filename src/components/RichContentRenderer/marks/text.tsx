@@ -57,7 +57,7 @@ function renderExternalLink(
     >
       {label}
       <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
-      <ArrowUpRight className="inline-block ml-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
+      <ArrowUpRight className="inline-block ms-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
     </span>
   )
 }
@@ -77,7 +77,7 @@ function renderAttachmentLink(
       data-attachment-id={attachmentId}
       {...linkProps(() => openAttachmentLink(attachmentId), ctx.interactive)}
     >
-      <Paperclip className="inline-block mr-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
+      <Paperclip className="inline-block me-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
       {label}
     </span>
   )

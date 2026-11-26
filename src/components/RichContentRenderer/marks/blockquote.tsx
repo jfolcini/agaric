@@ -94,14 +94,19 @@ function CalloutBlock({
   const label = i18n.t(`callout.${style}`)
   return (
     <blockquote
-      className={cn('border-l-[3px] pl-4 py-2 rounded-r-md', config.borderClass, config.bgClass)}
+      className={cn('border-s-[3px] ps-4 py-2 rounded-e-md', config.borderClass, config.bgClass)}
       data-callout-type={calloutType}
       data-testid="callout-block"
     >
-      <div className={cn('flex items-center gap-1.5 font-semibold text-sm mb-1', config.textClass)}>
-        {/* The header pins text-sm, so the icon sizes from the setting itself (#5369). */}
+      <div
+        className={cn(
+          'flex items-center gap-1.5 font-semibold text-block-sm mb-1',
+          config.textClass,
+        )}
+      >
         <CalloutIcon className="size-[var(--agaric-font-size,1rem)] shrink-0" aria-hidden="true" />
-        <span>{label}</span>
+        {/* The app's word, which does not decide the block's direction (#7040). */}
+        <span dir="auto">{label}</span>
         {fold !== undefined && (
           <button
             type="button"
@@ -178,7 +183,7 @@ export function renderBlockquoteBlock(
     )
   }
   return (
-    <blockquote key={key} className="border-l-[3px] border-border pl-4 text-muted-foreground">
+    <blockquote key={key} className="border-s-[3px] border-border ps-4 text-muted-foreground">
       {children}
     </blockquote>
   )

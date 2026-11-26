@@ -298,7 +298,7 @@ export function BlockHistoryItem({
           <section
             data-testid={`block-history-preview-${index}`}
             aria-label={t('history.previewLabel')}
-            className="block-history-preview rounded-md border border-border/30 bg-muted/30 p-2 text-sm"
+            className="block-history-preview rounded-md border border-border/30 bg-muted/30 p-2 text-block-sm"
           >
             {renderRichContent(rawContent, {
               interactive: false,

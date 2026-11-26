@@ -154,7 +154,7 @@ function SearchResultBlockRowImpl({
       )}
       data-testid={`search-result-row-${row.id}`}
     >
-      <span className="flex-1 text-sm line-clamp-2 bidi-plaintext">
+      <span className="flex-1 text-block-sm line-clamp-2 bidi-plaintext">
         {hasOffsets ? (
           offsetNodes
         ) : hasSnippet ? (

@@ -54,6 +54,8 @@ interface Layout {
   table: DOMRect
   row: DOMRect
   cell: DOMRect
+  /** The table runs right to left (#7040): its start is its right edge. */
+  rtl: boolean
 }
 
 function measure(editor: Editor, at: TableCaret): Layout | null {
@@ -65,6 +67,7 @@ function measure(editor: Editor, at: TableCaret): Layout | null {
     table: table.getBoundingClientRect(),
     row: row.getBoundingClientRect(),
     cell: cell.getBoundingClientRect(),
+    rtl: getComputedStyle(table).direction === 'rtl',
   }
 }
 
@@ -115,7 +118,8 @@ function dropAt(editor: Editor, at: TableCaret, axis: Axis, x: number, y: number
             height: 0,
           }
         : {
-            left: after ? box.right : box.left,
+            // After is further left in a right-to-left table (#7040).
+            left: after !== (getComputedStyle(table).direction === 'rtl') ? box.right : box.left,
             top: tableBox.top,
             width: 0,
             height: tableBox.height,
@@ -256,7 +260,7 @@ export function TableHandles({ editor }: { editor: Editor }): React.ReactElement
     )
   }
 
-  const { table, row, cell } = layout
+  const { table, row, cell, rtl } = layout
   const addButton = (kind: 'row' | 'column', style: React.CSSProperties) => (
     <div className={PLACED} style={style}>
       <IconButton
@@ -277,10 +281,13 @@ export function TableHandles({ editor }: { editor: Editor }): React.ReactElement
 
   return createPortal(
     <div data-editor-portal data-testid="table-handles" {...STOPPED}>
-      {handle('row', { left: table.left, top: row.top + row.height / 2 })}
+      {handle('row', { left: rtl ? table.right : table.left, top: row.top + row.height / 2 })}
       {handle('column', { left: cell.left + cell.width / 2, top: table.top })}
       {addButton('row', { left: table.left + table.width / 2, top: table.bottom })}
-      {addButton('column', { left: table.right, top: table.top + table.height / 2 })}
+      {addButton('column', {
+        left: rtl ? table.left : table.right,
+        top: table.top + table.height / 2,
+      })}
       {drop !== null && (
         <div
           aria-hidden
