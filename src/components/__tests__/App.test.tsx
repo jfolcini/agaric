@@ -2677,12 +2677,11 @@ describe('App', () => {
   })
 })
 
-// #3308 — the shell header label is the per-view `<h1>` for every view that
-// does not render one of its own. Before this, `pages` / `tags` / `history` /
-// `query` / `search` exposed no heading at all, so screen-reader heading
-// navigation had nothing to land on after a view switch.
-describe('App shell heading ownership', () => {
-  it('renders the header label as a level-1 heading on a shell-owned view', async () => {
+// S3 (#7040) — every view titles itself with its own `<h1>` in the content, so
+// the shell label is never a heading, and it shows only below `md`, where the
+// view's title is visually hidden.
+describe('App shell label', () => {
+  it("is a plain span shown only on a phone, beside the view's own <h1>", async () => {
     useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
 
     render(<App />)
@@ -2692,27 +2691,15 @@ describe('App shell heading ownership', () => {
     })
 
     const headerLabel = screen.getByTestId('header-label')
-    expect(headerLabel.tagName).toBe('H1')
-    expect(screen.getByRole('heading', { level: 1, name: t('sidebar.pages') })).toBe(headerLabel)
-  })
-
-  it('keeps the header label a non-heading on a view that owns its own <h1>', async () => {
-    // `trash` renders `FeaturePageHeader`. Promoting the shell label here too
-    // would announce "Trash" as two separate level-1 headings.
-    useNavigationStore.setState({ currentView: 'trash', selectedBlockId: null })
-
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    const headerLabel = screen.getByTestId('header-label')
     expect(headerLabel.tagName).toBe('SPAN')
-    expect(headerLabel).not.toHaveAttribute('role', 'heading')
+    expect(headerLabel).toHaveTextContent(t('sidebar.pages'))
+    expect(headerLabel).toHaveClass('md:hidden')
+    expect(await screen.findByRole('heading', { level: 1, name: t('sidebar.pages') })).not.toBe(
+      headerLabel,
+    )
   })
 
-  it('never promotes an empty label to an empty heading (page-editor)', async () => {
+  it('is empty on the page editor, whose title is its own', async () => {
     useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: null })
     useTabsStore.setState({
       tabs: [
@@ -2731,9 +2718,7 @@ describe('App shell heading ownership', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    const headerLabel = screen.getByTestId('header-label')
-    expect(headerLabel.textContent).toBe('')
-    expect(headerLabel.tagName).toBe('SPAN')
+    expect(screen.getByTestId('header-label').textContent).toBe('')
   })
 })
 

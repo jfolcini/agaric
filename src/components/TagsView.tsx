@@ -8,8 +8,10 @@
  */
 
 import type { ReactElement } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { TagList } from '@/components/TagList'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 
 export interface TagsViewProps {
   /** Open a tag's page when a tag is clicked in the list. */
@@ -17,8 +19,10 @@ export interface TagsViewProps {
 }
 
 export function TagsView({ onTagClick }: TagsViewProps): ReactElement {
+  const { t } = useTranslation()
   return (
-    <div className="mx-auto w-full max-w-list">
+    <div className="mx-auto w-full max-w-list space-y-4">
+      <FeaturePageHeader title={t('sidebar.tags')} />
       <TagList onTagClick={onTagClick} />
     </div>
   )
