@@ -19,8 +19,9 @@
  *  - `visible`: items that fit inline. Separators are auto-included
  *    only when both adjacent groups still have at least one visible
  *    button.
- *  - `overflowed`: buttons that didn't fit, in their original order.
- *    Separators never overflow (they collapse instead).
+ *  - `overflowed`: buttons that didn't fit, and those marked `inMore`,
+ *    in their original order. Separators never overflow (they collapse
+ *    instead).
  *
  * Algorithm: greedy drop. Start with all items visible; if the total
  * width exceeds the container budget (minus a reserve for the overflow
@@ -56,7 +57,12 @@ export interface ToolbarItemBase {
 }
 
 export type ToolbarItem =
-  | (ToolbarItemBase & { kind: 'button'; isPopoverTrigger?: boolean })
+  | (ToolbarItemBase & {
+      kind: 'button'
+      isPopoverTrigger?: boolean
+      /** In the overflow menu whatever the width. */
+      inMore?: boolean
+    })
   | (ToolbarItemBase & { kind: 'separator' })
 
 export interface UseToolbarOverflowResult<T extends ToolbarItem> {
@@ -87,7 +93,10 @@ export function computeOverflow<T extends ToolbarItem>(
   itemWidths: Map<string, number>,
   overflowTriggerWidth: number,
 ): UseToolbarOverflowResult<T> {
-  if (containerWidth <= 0) {
+  const forced = new Set(
+    items.flatMap((item) => (item.kind === 'button' && item.inMore === true ? [item.key] : [])),
+  )
+  if (containerWidth <= 0 && forced.size === 0) {
     // Container hasn't been measured yet — show everything, defer split.
     return { visible: items.slice(), overflowed: [] }
   }
@@ -115,34 +124,36 @@ export function computeOverflow<T extends ToolbarItem>(
    * groups have a kept button.
    *
    * Single left-to-right pass: track `keptBefore` (kept buttons seen so
-   * far) and derive "any kept button after" as
-   * `totalKept - keptBefore > 0`. This avoids the per-separator
-   * `slice().some()` prefix/suffix rescans (previously O(n) each, making
-   * the whole call O(n²) and the greedy loop O(n³)).
+   * far) and `keptSinceSeparator` (kept buttons since the last kept
+   * separator, so a group with none left leaves one rule, not two), and
+   * derive "any kept button after" as `totalKept - keptBefore > 0`. This
+   * avoids the per-separator `slice().some()` prefix/suffix rescans
+   * (previously O(n) each, making the whole call O(n²) and the greedy loop
+   * O(n³)).
    */
   const totalKeptWidth = (droppedKeys: Set<string>, totalKept: number): number => {
     let total = 0
     let keptBefore = 0
+    let keptSinceSeparator = 0
     for (const item of items) {
       if (!item) continue
       if (item.kind === 'button') {
         if (!droppedKeys.has(item.key)) {
           total += widthOf(item)
           keptBefore++
+          keptSinceSeparator++
         }
-      } else if (keptBefore > 0 && totalKept - keptBefore > 0) {
-        // separator — include only if at least one kept button exists on
-        // each side (before: keptBefore; after: totalKept - keptBefore).
+      } else if (keptSinceSeparator > 0 && totalKept - keptBefore > 0) {
         total += widthOf(item)
+        keptSinceSeparator = 0
       }
     }
     return total
   }
 
   // First pass: do all items fit without an overflow trigger?
-  const noDrops = new Set<string>()
-  const allButtonsKept = countKeptButtons(noDrops)
-  if (totalKeptWidth(noDrops, allButtonsKept) <= containerWidth) {
+  const allButtonsKept = countKeptButtons(forced)
+  if (forced.size === 0 && totalKeptWidth(forced, allButtonsKept) <= containerWidth) {
     return { visible: items.slice(), overflowed: [] }
   }
 
@@ -160,11 +171,13 @@ export function computeOverflow<T extends ToolbarItem>(
     return b.idx - a.idx
   })
 
-  const droppedKeys = new Set<string>()
+  const droppedKeys = new Set(forced)
   // `keptButtons` tracks the live count as candidates drop, so each
   // `totalKeptWidth` call is O(n) (no separate recount).
   let keptButtons = allButtonsKept
-  for (const candidate of dropOrder) {
+  // Unmeasured, only the `inMore` buttons go.
+  for (const candidate of containerWidth > 0 ? dropOrder : []) {
+    if (droppedKeys.has(candidate.item.key)) continue
     if (totalKeptWidth(droppedKeys, keptButtons) <= budget) break
     droppedKeys.add(candidate.item.key)
     keptButtons--
@@ -175,6 +188,7 @@ export function computeOverflow<T extends ToolbarItem>(
   const visible: T[] = []
   const overflowed: T[] = []
   let keptBefore = 0
+  let keptSinceSeparator = 0
   for (const item of items) {
     if (!item) continue
     if (item.kind === 'button') {
@@ -182,11 +196,13 @@ export function computeOverflow<T extends ToolbarItem>(
       else {
         visible.push(item)
         keptBefore++
+        keptSinceSeparator++
       }
-    } else if (keptBefore > 0 && keptButtons - keptBefore > 0) {
+    } else if (keptSinceSeparator > 0 && keptButtons - keptBefore > 0) {
       // separator: keep only if a kept button exists on each side
       // (separators never go to overflowed).
       visible.push(item)
+      keptSinceSeparator = 0
     }
   }
 

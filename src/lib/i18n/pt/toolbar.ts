@@ -82,6 +82,8 @@ export const toolbar: Record<string, string> = {
   'toolbar.plainText': 'Texto simples',
   'toolbar.noLanguageMatch': 'Nenhuma linguagem corresponde',
   'toolbar.useCustomLanguage': 'Usar "{{language}}"',
+  'toolbar.date': 'Data',
+  'toolbar.dateTip': 'Inserir uma data, ou definir a data de vencimento ou agendada',
   'toolbar.more': 'Mais',
   'toolbar.moreTip': 'Mais ações da barra de ferramentas',
   'toolbar.tableOps': 'Tabela',

@@ -85,11 +85,13 @@ test.describe('toolbar labels on desktop @editor', () => {
   test('hover on a toolbar button shows its name and its shortcut @editor', async ({ page }) => {
     await waitForBoot(page)
     await focusBlock(page, 0)
-    const button = page.getByTestId('formatting-toolbar').getByRole('button', { name: 'New line' })
+    const button = page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'Properties', exact: true })
 
     await button.hover()
     const tip = page.locator('[data-slot="tooltip-content"]')
-    await expect(tip).toContainText('New line')
-    await expect(tip.locator('kbd')).toHaveText('Shift+Enter')
+    await expect(tip).toContainText('Block properties')
+    await expect(tip.locator('kbd')).toHaveText('Ctrl+Shift+P')
   })
 })
