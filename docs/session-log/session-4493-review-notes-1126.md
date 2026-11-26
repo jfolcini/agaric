@@ -1,4 +1,4 @@
-# Session 4492 — review notes from the PRs merged on 2026-11-25 and 2026-11-26
+# Session 4493 — review notes from the PRs merged on 2026-11-25 and 2026-11-26
 
 **Ask.** Read every PR merged in the 24 hours to 08:30 on 2026-11-26 (#7046 to #7116, 64 PRs), and find the reviewer's non-blocking notes that no later PR addressed.
 
