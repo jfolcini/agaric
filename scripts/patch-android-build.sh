@@ -8,7 +8,8 @@
 #   - jvmTarget: "1.8" -> "17"  (Java 17 LTS, matches JAVA_HOME in CI)
 #   - compileOptions.sourceCompatibility / targetCompatibility = VERSION_17
 #   - distributionSha256Sum in the Gradle wrapper properties, so the wrapper
-#     refuses a Gradle distribution that differs from the one we vetted.
+#     refuses a Gradle distribution that differs from the one we vetted, and
+#     retries for its download.
 #   - asserts gradle/verification-metadata.xml is present, so Gradle checks
 #     every dependency's sha256 (regenerate: scripts/update-gradle-verification.sh).
 #   - launcher icons: replace Tauri's generic placeholder with the agaric
@@ -100,13 +101,19 @@ case "$distribution_url" in
     ;;
 esac
 
-sed -i.bak '/^distributionSha256Sum=/d' "$WRAPPER"
+sed -i.bak -E '/^(distributionSha256Sum|retries|retryBackOffMs)=/d' "$WRAPPER"
 rm -f "$WRAPPER.bak"
 # The properties file may lack a trailing newline.
 [[ -z "$(tail -c1 "$WRAPPER")" ]] || echo >>"$WRAPPER"
-echo "distributionSha256Sum=$gradle_sha256" >>"$WRAPPER"
+{
+  echo "distributionSha256Sum=$gradle_sha256"
+  # The wrapper tries the download once by default, so one connection reset
+  # from services.gradle.org fails the build. Four tries, 2 s apart and doubling.
+  echo "retries=3"
+  echo "retryBackOffMs=2000"
+} >>"$WRAPPER"
 
-echo "patched $WRAPPER — distributionSha256Sum pinned"
+echo "patched $WRAPPER — distributionSha256Sum pinned, download retried"
 
 # ── Backup opt-out (#6538) ────────────────────────────────────────────
 # The tracked overrides keep the device identity and the vault out of Auto

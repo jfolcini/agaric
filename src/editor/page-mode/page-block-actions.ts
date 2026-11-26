@@ -11,7 +11,9 @@ import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
+import { carriedEnd, moveStep } from '@/editor/page-mode/page-collapse'
 import {
+  blockIndex,
   firstTokenPos,
   restoreSelection,
   selectionEnds,
@@ -26,7 +28,6 @@ import {
 } from '@/editor/page-mode/page-keys'
 import { blockIdOf } from '@/editor/token-ids'
 import { announce } from '@/lib/announcer'
-import { findPrevSiblingAt } from '@/lib/block-tree-ops'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import type { TreeItem } from '@/lib/tree-utils'
@@ -49,47 +50,54 @@ function shallower(range: readonly TreeItem[], parentId: string | null): TreeIte
 }
 
 /**
- * The page as block mode's `moveUp` or `moveDown` leaves it: the block and
- * the blocks under it swap with the sibling before or after, and a first or
- * last child leaves its parent for the place before or after it (#922). Null
- * where the block stays.
+ * The page as block mode's `moveUp` or `moveDown` leaves it: the block at
+ * `index` and what it carries (to `end`, `moveStep`) go before the block at
+ * `to`, and with no sibling that way a first or last child leaves its parent for
+ * the place before or after it (#922). Null where the block stays.
  */
-function movedRows(rows: readonly TreeItem[], id: string, direction: -1 | 1): TreeItem[] | null {
-  const index = rows.findIndex((row) => row.id === id)
-  if (index === -1) return null
+function movedRows(
+  rows: readonly TreeItem[],
+  index: number,
+  direction: -1 | 1,
+  { end, to }: { end: number; to: number | null },
+): TreeItem[] | null {
   const block = rows[index] as TreeItem
-  const end = subtreeEnd(rows, index)
   const range = rows.slice(index, end)
   const rest = [...rows.slice(0, index), ...rows.slice(end)]
-  const parent = rows.find((row) => row.id === block.parent_id)
-  const popOut = (before: boolean): TreeItem[] | null => {
+  if (to === null) {
+    const parent = rows.find((row) => row.id === block.parent_id)
     if (parent === undefined) return null
     const out = shallower(range, parent.parent_id)
-    if (!before) return [...rows.slice(0, index), ...out, ...rows.slice(end)]
+    if (direction > 0) return [...rows.slice(0, index), ...out, ...rows.slice(end)]
     const at = rest.findIndex((row) => row.id === parent.id)
     return [...rest.slice(0, at), ...out, ...rest.slice(at)]
   }
-  if (direction < 0) {
-    const previous = findPrevSiblingAt(rows, index)
-    if (previous === null) return popOut(true)
-    const at = rest.findIndex((row) => row.id === previous.id)
-    return [...rest.slice(0, at), ...range, ...rest.slice(at)]
-  }
-  const next = rows[end]
-  if (next === undefined || next.depth < block.depth) return popOut(false)
-  const after = subtreeEnd(rows, end) - range.length
-  return [...rest.slice(0, after), ...range, ...rest.slice(after)]
+  const at = to < index ? to : to - range.length
+  return [...rest.slice(0, at), ...range, ...rest.slice(at)]
 }
 
-/** Move each of `ids` one place up or down, the first first going up, the last first going down. */
+/**
+ * Move each of `ids` one place up or down, the first first going up, the last
+ * first going down; a block a collapsed heading among them carries moves with it.
+ */
 export const moveBlocks =
   (ids: readonly string[], direction: -1 | 1): Command =>
   (state, dispatch) => {
     const tr = state.tr
     const ends = selectionEnds(state.doc, state.selection)
+    const carried = new Set<string>()
+    for (const id of ids) {
+      const index = blockIndex(state.doc, id)
+      if (index === null) continue
+      const end = carriedEnd(state, index)
+      for (let i = index + 1; i < end; i += 1) carried.add(blockIdOf(state.doc.child(i)) ?? '')
+    }
     let moved = false
     for (const id of direction < 0 ? ids : ids.toReversed()) {
-      const rows = movedRows(treeRows(tr.doc), id, direction)
+      const index = carried.has(id) ? null : blockIndex(tr.doc, id)
+      if (index === null) continue
+      const step = moveStep(state, tr.doc, index, direction)
+      const rows = movedRows(treeRows(tr.doc), index, direction, step)
       if (rows === null) continue
       applyRows(tr, rows)
       moved = true
@@ -110,20 +118,19 @@ export const moveBlocks =
   }
 
 /**
- * The page with block `id` and the blocks under it moved to `slot`, the index
- * of the block they then go before (the page's length for its end), `id` at
- * `depth` and the others as deep under it as they were. A slot among them, or
- * just past them, is where they are. Null where nothing changes.
+ * The page with the blocks from `from` to `end` (a block and what it carries,
+ * `carriedEnd`) moved to `slot`, the index of the block they then go before
+ * (the page's length for its end), the first at `depth` and the others as deep
+ * against it as they were. A slot among them, or just past them, is where they
+ * are. Null where nothing changes.
  */
 function droppedRows(
   rows: readonly TreeItem[],
-  id: string,
+  from: number,
+  end: number,
   slot: number,
   depth: number,
 ): TreeItem[] | null {
-  const from = rows.findIndex((row) => row.id === id)
-  if (from === -1) return null
-  const end = subtreeEnd(rows, from)
   const at = slot > from && slot <= end ? from : slot
   const shift = depth - (rows[from] as TreeItem).depth
   if (at === from && shift === 0) return null
@@ -136,13 +143,16 @@ function droppedRows(
 }
 
 /**
- * Move block `id` with the blocks under it to `slot` at `depth` (`droppedRows`),
- * and the caret to its start, as block mode's drop focuses the block dragged.
+ * Move block `id` with what it carries (`carriedEnd`: the blocks under it, a
+ * collapsed heading's section) to `slot` at `depth` (`droppedRows`), and the
+ * caret to its start, as block mode's drop focuses the block dragged.
  */
 export const dropBlock =
   (id: string, slot: number, depth: number): Command =>
   (state, dispatch) => {
-    const rows = droppedRows(treeRows(state.doc), id, slot, depth)
+    const from = blockIndex(state.doc, id)
+    if (from === null) return false
+    const rows = droppedRows(treeRows(state.doc), from, carriedEnd(state, from), slot, depth)
     if (rows === null) return false
     if (dispatch) {
       const tr = state.tr

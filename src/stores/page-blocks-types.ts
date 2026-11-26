@@ -75,11 +75,17 @@ export interface PageBlockState {
   load: () => Promise<void>
 
   /**
-   * Create a block below `afterBlockId`; resolves its id, or `null` on failure.
+   * Create a block below `afterBlockId`, after the blocks under it, or with
+   * `firstChild` first among them; resolves its id, or `null` on failure.
    * The row is in the store when the call returns, so a caller that passes
    * `blockId` can focus it before the create answers.
    */
-  createBelow: (afterBlockId: string, content?: string, blockId?: string) => Promise<string | null>
+  createBelow: (
+    afterBlockId: string,
+    content?: string,
+    blockId?: string,
+    firstChild?: boolean,
+  ) => Promise<string | null>
   /**
    * Edit a block's content; `false` when the write failed (rolled back and
    * toasted), so a caller can show its own error. `merge: false` makes the edit

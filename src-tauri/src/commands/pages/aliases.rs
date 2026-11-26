@@ -49,7 +49,7 @@ pub struct PageAliases {
 ///   another page, in any space or the Trash, holds one of the aliases, or
 ///   another live page of this page's space holds one as its title or an
 ///   alias under `name_key` (#6278).
-#[instrument(skip(pool, device_id, materializer, aliases), err)]
+#[instrument(skip(pool, device_id, materializer, aliases), err(level = "info"))]
 pub async fn set_page_aliases_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -209,7 +209,7 @@ pub(crate) async fn write_page_aliases_in_tx(
 }
 
 /// Return all aliases for a page, sorted alphabetically.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_page_aliases_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -229,7 +229,7 @@ pub async fn get_page_aliases_inner(
 /// `b.space_id` equals the scope's [`SpaceId`](agaric_store::space::SpaceId)
 /// (#533, migration 0086 — `space_id` is a first-class column), the same
 /// scoping rule [`list_page_aliases_by_prefix_inner`] applies.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn resolve_page_by_alias_inner(
     pool: &SqlitePool,
     alias: &str,
@@ -293,7 +293,7 @@ struct PageAliasPrefixRow {
 /// neighbours that merely contain the query), then alphabetical. The
 /// in-memory sort runs over the LIKE candidate set; the `LIMIT` keeps
 /// that set small (≤ 50) so the sort is effectively free.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_page_aliases_by_prefix_inner(
     pool: &SqlitePool,
     prefix: &str,

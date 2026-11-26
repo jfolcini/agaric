@@ -1641,7 +1641,7 @@ async fn apply_reverse_add_attachment(
 /// query to ops whose `payload.block_id` belongs to the named space.
 /// The `scope` is ignored in per-page mode (a real ULID `page_id` is
 /// already space-bound).
-#[instrument(skip_all, fields(page_id, limit), err)]
+#[instrument(skip_all, fields(page_id, limit), err(level = "info"))]
 pub async fn list_page_history_inner(
     pool: &SqlitePool,
     page_id: String,
@@ -1666,7 +1666,7 @@ pub async fn list_page_history_inner(
 /// All ops are processed in a single transaction for atomicity. Ops are
 /// sorted newest-first (by `created_at DESC, seq DESC`) and reversed in
 /// that order. Non-reversible ops cause early abort (before any are applied).
-#[instrument(skip_all, fields(ops_count = ops.len()), err)]
+#[instrument(skip_all, fields(ops_count = ops.len()), err(level = "info"))]
 pub async fn revert_ops_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2212,7 +2212,7 @@ async fn apply_reverses_in_order(
 /// it reads a single already-committed op by `(device_id, seq)` whose
 /// timestamp is immutable, so it is not part of the membership decision and
 /// cannot be affected by a concurrent write.
-#[instrument(skip_all, fields(page_id, target_seq), err)]
+#[instrument(skip_all, fields(page_id, target_seq), err(level = "info"))]
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2425,7 +2425,7 @@ async fn select_ops_after_target(
 /// `undo_depth` is 0-based: 0 = most recent op, 1 = second most recent, etc.
 /// Queries the page's op history (using recursive CTE), applies OFFSET to
 /// skip `undo_depth` ops, then computes and applies the reverse.
-#[instrument(skip_all, fields(page_id, undo_depth), err)]
+#[instrument(skip_all, fields(page_id, undo_depth), err(level = "info"))]
 pub async fn undo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2757,7 +2757,7 @@ async fn find_positional_undo_target(
 /// The `(undo_device_id, undo_seq)` identifies the UNDO op that was
 /// previously appended. Reversing the undo effectively re-applies the
 /// original operation.
-#[instrument(skip_all, fields(undo_seq), err)]
+#[instrument(skip_all, fields(undo_seq), err(level = "info"))]
 pub async fn redo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2933,7 +2933,7 @@ pub async fn redo_page_op_inner(
 /// this is no longer a command. It stays as the sizing oracle for
 /// `undo_page_group_enumeration_matches_find_undo_group_differential`.
 #[cfg(any(test, feature = "test-util"))]
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn find_undo_group_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -3135,7 +3135,7 @@ async fn undo_group_size(
 /// `find_undo_group_inner`); `window_ms` is the same grouping window the FE
 /// passes to `find_undo_group`. An empty group (seed op doesn't exist / page
 /// has no undoable ops) returns `Ok(vec![])` after releasing the write lock.
-#[instrument(skip_all, fields(page_id, depth, window_ms), err)]
+#[instrument(skip_all, fields(page_id, depth, window_ms), err(level = "info"))]
 pub async fn undo_page_group_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3339,7 +3339,7 @@ async fn enumerate_undo_group_in_tx(
 /// [`UndoResult`]s whose `new_op_ref`s are the frontend's redo targets.
 ///
 /// An empty `ops` returns `Ok(vec![])` (mirrors `revert_ops_inner`).
-#[instrument(skip_all, fields(ops_count = ops.len()), err)]
+#[instrument(skip_all, fields(ops_count = ops.len()), err(level = "info"))]
 pub async fn undo_ops_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3416,7 +3416,7 @@ pub async fn undo_ops_inner(
 /// skip), but the target is the exact `(device_id, seq)` the frontend
 /// captured when the action was performed, not the Nth row of a shifting
 /// positional walk. See [`undo_ops_inner`] for the guard semantics.
-#[instrument(skip_all, fields(device_id = %op_ref.device_id, seq = op_ref.seq), err)]
+#[instrument(skip_all, fields(device_id = %op_ref.device_id, seq = op_ref.seq), err(level = "info"))]
 pub async fn undo_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3679,7 +3679,7 @@ pub async fn undo_page_group(
 ///
 /// Returns `Ok(None)` if the op is not `edit_block` or if no prior text exists
 /// (i.e. the block was just created and this is the first edit).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn compute_edit_diff_inner(
     pool: &SqlitePool,
     device_id: String,
@@ -3771,7 +3771,7 @@ pub async fn compute_edit_diff(
 ///   has been soft-deleted, or if no `create_block` / `edit_block` op
 ///   exists for the block at or before the selected point
 ///   `(historical_created_at, historical_seq)`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn compute_block_vs_current_diff_inner(
     pool: &SqlitePool,
     block_id: BlockId,

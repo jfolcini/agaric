@@ -89,7 +89,7 @@ pub struct PageLinksResponse {
 /// then drops any whose endpoint is not in the post-filtered node
 /// set. The unfiltered path passes a SQL NULL via the `(?2 IS NULL OR
 /// …)` short-circuit so the planner picks the same shape as before.
-#[instrument(skip(pool, tag_ids), err)]
+#[instrument(skip(pool, tag_ids), err(level = "info"))]
 pub async fn list_page_links_inner(
     pool: &SqlitePool,
     scope: &SpaceScope,
@@ -113,7 +113,7 @@ pub async fn list_page_links_inner(
 /// All reads (the cache-empty probe, the `block_links` presence probe, and
 /// the final SELECT) go through `read_pool`; only the rebuild touches
 /// `write_pool` via [`agaric_store::cache::rebuild_page_link_cache_split`].
-#[instrument(skip(write_pool, read_pool, tag_ids), err)]
+#[instrument(skip(write_pool, read_pool, tag_ids), err(level = "info"))]
 pub async fn list_page_links_inner_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
@@ -129,7 +129,7 @@ pub async fn list_page_links_inner_split(
 /// Production always passes [`PAGE_LINKS_EDGE_CAP`]; tests inject a tiny
 /// `cap` so the over-cap / truncation behaviour is exercised without
 /// seeding 20K+ rows.
-#[instrument(skip(write_pool, read_pool, tag_ids), err)]
+#[instrument(skip(write_pool, read_pool, tag_ids), err(level = "info"))]
 pub async fn list_page_links_inner_split_with_cap(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,

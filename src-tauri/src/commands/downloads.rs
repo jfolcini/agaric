@@ -91,7 +91,7 @@ pub(crate) fn require_bare_file_name(file_name: &str) -> Result<(), AppError> {
 /// [`save_through`] (#6546).
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn save_to_downloads<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     android: tauri::State<'_, FileSaveState>,

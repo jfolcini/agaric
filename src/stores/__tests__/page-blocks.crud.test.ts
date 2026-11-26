@@ -1136,6 +1136,34 @@ describe('PageBlockStore', () => {
       )
     })
 
+    it('with firstChild makes the new block the first of the blocks under the anchor (#7040)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'H', content: '## H', position: 0 }),
+          makeBlock({ id: 'K', parent_id: 'H', depth: 1, position: 0 }),
+          makeBlock({ id: 'B', position: 1 }),
+        ],
+      })
+      stubInvoke(mockedInvoke, {
+        create_block: () =>
+          withOps(makeBlockRow({ id: 'CID_1', content: '', parent_id: 'H', position: 0 })),
+      })
+
+      await store.getState().createBelow('H', '', 'CID_1', true)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ parentId: 'H', index: 0 }),
+      )
+      const blocks = store.getState().blocks
+      expect(blocks.map((b) => [b.id, b.parent_id, b.depth])).toEqual([
+        ['H', null, 0],
+        ['CID_1', 'H', 1],
+        ['K', 'H', 1],
+        ['B', null, 0],
+      ])
+    })
+
     it('defaults content to empty string', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
 

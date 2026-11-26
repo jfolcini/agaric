@@ -60,7 +60,7 @@ pub fn open_data_folder_inner(app_data_dir: &Path) -> Result<(), AppError> {
 /// [`daily_snapshot::last_daily_snapshot_ms`].
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub fn get_last_snapshot_ms<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<i64>, AppError> {
@@ -73,7 +73,7 @@ pub fn get_last_snapshot_ms<R: tauri::Runtime>(
 /// Delegates to [`open_data_folder_inner`].
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub fn open_data_folder<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), AppError> {
     let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     open_data_folder_inner(&app_data_dir).map_err(sanitize_internal_error)
@@ -83,7 +83,7 @@ pub fn open_data_folder<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 /// [`list_daily_snapshots_inner`].
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub fn list_daily_snapshots<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Vec<DailySnapshot>, AppError> {
@@ -95,7 +95,7 @@ pub fn list_daily_snapshots<R: tauri::Runtime>(
 /// Delegates to [`request_snapshot_restore_inner`].
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub fn request_snapshot_restore<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     day: String,

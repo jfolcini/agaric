@@ -101,7 +101,7 @@ vi.mock('@/lib/logger', () => ({
 // ── Imports ──────────────────────────────────────────────────────────────
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { useBlockDnD } from '@/components/block-tree/use-block-dnd'
+import { slotAmongAll, useBlockDnD } from '@/components/block-tree/use-block-dnd'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { logger } from '@/lib/logger'
 import { capturePreDragFocus, consumePreDragFocus } from '@/lib/pre-drag-focus'
@@ -1937,5 +1937,53 @@ describe('useBlockDnD', () => {
       expect(params.moveBlocks).toHaveBeenCalledWith(['A', 'B'], null, 2)
       expect(params.setFocused).toHaveBeenCalledWith('A')
     })
+  })
+})
+
+describe('folded heading sections (#7040)', () => {
+  const H = makeBlock({ id: 'H', depth: 0, parent_id: null, content: '## H' })
+  const S1 = makeBlock({ id: 'S1', depth: 0, parent_id: null, content: 's1' })
+  const S2 = makeBlock({ id: 'S2', depth: 0, parent_id: null, content: 's2' })
+  const X = makeBlock({ id: 'X', depth: 0, parent_id: null, content: 'x' })
+  const Y = makeBlock({ id: 'Y', depth: 0, parent_id: null, content: 'y' })
+  const folded = (id: string): string[] => (id === 'H' ? ['S1', 'S2'] : [])
+
+  describe('slotAmongAll', () => {
+    it('lands a drop before a shown sibling right before it, past what a fold hides', () => {
+      const all = [H, S1, S2, X, Y]
+      expect(slotAmongAll(all, [H, X, Y], null, 1, new Set(['Y']), folded)).toBe(3)
+      expect(slotAmongAll(all, [H, X, Y], null, 0, new Set(['Y']), folded)).toBe(0)
+    })
+
+    it('lands a drop after a folded last sibling past its section', () => {
+      expect(slotAmongAll([Y, H, S1, S2], [Y, H], null, 1, new Set(['Y']), folded)).toBe(3)
+    })
+
+    it('leaves a slot alone when nothing is folded', () => {
+      const all = [H, S1, S2, X]
+      expect(slotAmongAll(all, all, null, 2, new Set(['X']), () => [])).toBe(2)
+      expect(slotAmongAll(all, all, null, 3, new Set(['X']), () => [])).toBe(3)
+    })
+  })
+
+  it("a folded heading's drag moves it with its hidden siblings in one batch", () => {
+    const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+    mockedGetProjection.mockReturnValue(projection)
+    mockedComputeDropIndex.mockReturnValue(1)
+    const params = makeDefaultParams({
+      blocks: [H, S1, S2, X],
+      collapsedVisible: [H, X],
+      foldedSiblings: folded,
+    })
+    const { result } = renderHook(() => useBlockDnD(params))
+    act(() => {
+      result.current.handleDragStart(makeDragStartEvent('H') as never)
+    })
+    expect(result.current.dragRoots).toEqual(['H', 'S1', 'S2'])
+    act(() => {
+      result.current.handleDragEnd(makeDragEndEvent('H', 'X') as never)
+    })
+    expect(params.moveBlocks).toHaveBeenCalledExactlyOnceWith(['H', 'S1', 'S2'], null, 1)
+    expect(params.reorder).not.toHaveBeenCalled()
   })
 })

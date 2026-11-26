@@ -76,7 +76,7 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// Tauri updater.
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn check_latest_release<R: Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, ReleaseCheckState>,

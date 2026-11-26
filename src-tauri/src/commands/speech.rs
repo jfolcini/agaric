@@ -133,7 +133,7 @@ pub fn get_speech_status() -> Result<SpeechStatus, AppError> {
 /// Whether the backend engine can speak now (see [`SpeechEngine::available`]).
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn get_speech_engine_available(state: State<'_, SpeechState>) -> Result<bool, AppError> {
     Ok(engine_available_inner(state.engine.as_deref(), AVAILABILITY_TIMEOUT).await)
 }
@@ -141,7 +141,7 @@ pub async fn get_speech_engine_available(state: State<'_, SpeechState>) -> Resul
 /// Speaks one utterance through the backend engine and settles when it ends.
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn speak_text(
     state: State<'_, SpeechState>,
     text: String,
@@ -152,7 +152,7 @@ pub async fn speak_text(
 /// Cuts off the utterance the backend engine is speaking, if any.
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip_all, err)]
+#[tracing::instrument(skip_all, err(level = "info"))]
 pub async fn stop_speaking(state: State<'_, SpeechState>) -> Result<(), AppError> {
     stop_speaking_inner(state.engine.as_deref()).await
 }

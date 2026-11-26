@@ -66,7 +66,7 @@ pub struct TaggedWriteCounts {
 /// # Errors
 ///
 /// Returns [`AppError`] if the query fails.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_suggested_properties_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -252,7 +252,7 @@ async fn plan(conn: &mut SqliteConnection, write: &TaggedBlocksWrite) -> Result<
 /// - [`AppError::NotFound`] — `tag_id` is not a live tag.
 /// - [`AppError::Validation`] — the value does not fit the key's definition
 ///   in the tag's space, or the key is built in or the app's own.
-#[instrument(skip(pool, write), err)]
+#[instrument(skip(pool, write), err(level = "info"))]
 pub async fn preview_set_property_on_tagged_blocks_inner(
     pool: &SqlitePool,
     write: TaggedBlocksWrite,
@@ -276,7 +276,7 @@ pub async fn preview_set_property_on_tagged_blocks_inner(
 ///   when the counts differ from `acknowledged`.
 /// - [`AppError::Validation`] when it would write more ops than one undo
 ///   reverts (`MAX_REVERT_OPS`).
-#[instrument(skip(pool, device_id, materializer, write), err)]
+#[instrument(skip(pool, device_id, materializer, write), err(level = "info"))]
 pub async fn set_property_on_tagged_blocks_inner(
     pool: &SqlitePool,
     device_id: &str,
