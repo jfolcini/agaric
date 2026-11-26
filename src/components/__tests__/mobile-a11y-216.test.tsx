@@ -153,19 +153,12 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
 
   // #5332 item 10: on touch there is no drag handle — the row itself is the
   // activator — so the reorder shortcut is announced by the context menu's
-  // Move items. The chevron keeps the collapse shortcut; a leaf has no control.
-  it('on touch the chevron exposes the collapse shortcut and a leaf exposes no control', () => {
+  // Move items. The chevron keeps the collapse shortcut.
+  it('on touch the chevron exposes the collapse shortcut', () => {
     setCoarse(true)
-    const { unmount } = renderWithTooltip(
-      <BlockCollapseControl blockId="b1" hasChildren isCollapsed={false} isTouch />,
-    )
+    renderWithTooltip(<BlockCollapseControl blockId="b1" isCollapsed={false} isTouch />)
     expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-toggle')).toHaveAttribute('aria-keyshortcuts', 'Control+.')
-    unmount()
-    const { container } = renderWithTooltip(
-      <BlockCollapseControl blockId="b1" hasChildren={false} isCollapsed={false} isTouch />,
-    )
-    expect(container).toBeEmptyDOMElement()
   })
 })
 
@@ -174,7 +167,6 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
 describe('#216 C4 — colour-blind collapse cue (BlockCollapseControl)', () => {
   const baseProps = {
     blockId: 'b1',
-    hasChildren: true,
     isCollapsed: false,
     isTouch: false,
     onToggleCollapse: vi.fn(),

@@ -151,7 +151,6 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
           {availableSpaces.map((space) => (
             <PopoverMenuItem
               key={space.id}
-              className="flex items-center gap-2"
               active={space.id === currentSpaceId}
               aria-current={space.id === currentSpaceId ? 'true' : undefined}
               onClick={() => pick(space.id)}

@@ -104,7 +104,7 @@ export function SavedViewsDropdown({
                   <PopoverMenuItem
                     active={isActive}
                     aria-current={isActive ? 'true' : undefined}
-                    className="flex items-center gap-2 flex-1 min-w-0"
+                    className="flex-1 min-w-0"
                     onClick={() => {
                       onApply(view)
                       setOpen(false)
@@ -112,9 +112,12 @@ export function SavedViewsDropdown({
                     aria-label={t('pageBrowser.savedViews.apply', { name: view.name })}
                   >
                     {isActive ? (
-                      <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <Check aria-hidden="true" />
                     ) : (
-                      <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span
+                        className="size-4 shrink-0 [@media(pointer:coarse)]:size-5"
+                        aria-hidden="true"
+                      />
                     )}
                     <span className="truncate">{view.name}</span>
                   </PopoverMenuItem>
@@ -138,14 +141,13 @@ export function SavedViewsDropdown({
         <>
           <hr className="my-1 h-px bg-border border-none" />
           <PopoverMenuItem
-            className="flex items-center gap-2"
             onClick={() => {
               setOpen(false)
               setSaveDialogOpen(true)
             }}
             data-testid="saved-views-save-current"
           >
-            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <Save aria-hidden="true" />
             {t('pageBrowser.savedViews.saveCurrentView')}
           </PopoverMenuItem>
         </>

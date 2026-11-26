@@ -17,7 +17,6 @@ import {
   createHistoryButtons,
   createMarkToggles,
   createDateButtons,
-  createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
   createTaskButtons,
@@ -394,33 +393,31 @@ describe('createStructureButtons', () => {
   it('New line outranks the long-tail inserts so it stays on a phone-width bar', () => {
     const [newLine] = createStructureButtons(makeEditor())
     const longTail = Math.max(
-      ...[...createDateButtons(), ...createMetadataButtons()].map((b) => b.priority ?? 0),
+      ...[...createDateButtons(), ...createTaskButtons().slice(1)].map((b) => b.priority ?? 0),
     )
     expect(newLine?.priority ?? 0).toBeGreaterThan(longTail)
   })
 })
 
-// ── createTaskButtons / createDateButtons / createMetadataButtons ───────
+// ── createTaskButtons / createDateButtons ───────
 
 describe('the Task group configs', () => {
   it('each button has valid config shape', () => {
-    for (const btn of [
-      ...createTaskButtons(),
-      ...createDateButtons(),
-      ...createMetadataButtons(),
-    ]) {
+    for (const btn of [...createTaskButtons(), ...createDateButtons()]) {
       assertValidConfig(btn)
     }
   })
 
   it('the state toggle, the Date menu’s rows, then Properties', () => {
-    expect(createTaskButtons().map((b) => b.label)).toEqual(['toolbar.todoToggle'])
+    expect(createTaskButtons().map((b) => b.label)).toEqual([
+      'toolbar.todoToggle',
+      'toolbar.properties',
+    ])
     expect(createDateButtons().map((b) => b.label)).toEqual([
       'toolbar.insertDate',
       'toolbar.setDueDate',
       'toolbar.setScheduledDate',
     ])
-    expect(createMetadataButtons().map((b) => b.label)).toEqual(['toolbar.properties'])
   })
 
   // #265 — the three date pickers have `/date`, `/due`, `/scheduled` slash
