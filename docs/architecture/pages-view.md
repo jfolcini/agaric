@@ -74,7 +74,7 @@ Each sort reads its rows in order from an index and stops at the page size inste
 
 - `title_sort_key` is the title NFKD-decomposed, combining marks stripped, lowercased (`agaric_core::title_sort::title_sort_key`), compared as UTF-8 bytes: `Émile` sorts with `E`, `ángel` before `Zebra`.
 - `last_edited_ms` is the newest op on the page or any block on it, else the page's ULID creation time. Every path that lands an op raises it in the same transaction (`agaric_store::cache::raise_pages_last_edited_ms`), so editing a page's body moves the page up, and op-log compaction (#5286) cannot lower it. The `last-edited` filter reads the same column, so a page the sort ranks as recently edited also passes the filter's seven-day window.
-- `page_opens` is device-local: `record_page_open` stamps it when a page opens (`navigateToPage`, beside the `recent-pages` visit), it appends no op, and nothing syncs or exports it. The Pages list refetches this sort on every return, since an open marks nothing stale.
+- `page_opens` is device-local: `record_page_open` stamps it when a page opens (`navigateToPage`, beside the `recent-pages` visit; a tag open stamps nothing), it appends no op, and nothing syncs or exports it. The Pages list refetches this sort on every return, since an open marks nothing stale.
 - A stored `default` sort, preference or saved view, reads as `created`.
 
 Each sort encodes its primary key into an **existing** `Cursor` slot (`deleted_at` for the string key, `seq` for an i64). `Cursor.position` carries a sort-mode discriminator (`sort_discriminator`); a cursor whose discriminator does not match the requested sort is rejected (see "Cursor recovery" below).

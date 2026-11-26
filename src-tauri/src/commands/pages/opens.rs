@@ -13,8 +13,9 @@ use agaric_core::ulid::BlockId;
 
 use super::super::sanitize_internal_error;
 
-/// Stamp `page_id` as opened on this device now. Refuses a block that is not
-/// a live page with `NotFound`.
+/// Stamp `page_id` as opened on this device now. A live tag opens through the
+/// same navigation but has no "Last opened" to keep, so it is `Ok` with
+/// nothing stamped; anything else that is not a live page is `NotFound`.
 #[instrument(skip(pool), err(level = "info"))]
 pub async fn record_page_open_inner(pool: &SqlitePool, page_id: BlockId) -> Result<(), AppError> {
     let now = crate::db::now_ms();
@@ -33,7 +34,17 @@ pub async fn record_page_open_inner(pool: &SqlitePool, page_id: BlockId) -> Resu
     .await?
     .rows_affected();
     if written == 0 {
-        return Err(AppError::NotFound(format!("page {page}")));
+        let live_tag = sqlx::query_scalar!(
+            "SELECT 1 AS \"live!: i64\" FROM blocks \
+              WHERE id = ? AND block_type = 'tag' AND deleted_at IS NULL",
+            page,
+        )
+        .fetch_optional(pool)
+        .await?
+        .is_some();
+        if !live_tag {
+            return Err(AppError::NotFound(format!("page {page}")));
+        }
     }
     Ok(())
 }
