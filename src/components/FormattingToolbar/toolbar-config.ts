@@ -357,7 +357,10 @@ export function createDateButtons(): ToolbarButtonConfig[] {
   ]
 }
 
-/** The Task group's state toggle, which leads it. */
+/**
+ * The Task group's own buttons: the state toggle leads it, Properties ends it, and
+ * `buildToolbarItems` sets the priority cycle and the Date menu between them.
+ */
 export function createTaskButtons(): ToolbarButtonConfig[] {
   return [
     {
@@ -367,12 +370,6 @@ export function createTaskButtons(): ToolbarButtonConfig[] {
       priority: 80,
       action: () => dispatchBlockCommand('TOGGLE_TODO_STATE'),
     },
-  ]
-}
-
-/** The Task group's last button, after the Date menu. */
-export function createMetadataButtons(): ToolbarButtonConfig[] {
-  return [
     {
       icon: Settings2,
       label: 'toolbar.properties',

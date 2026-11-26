@@ -1695,6 +1695,53 @@ describe('LinkedReferences', () => {
     expect(backlinkCalls).toBe(2)
   })
 
+  // 35c. The collapse carries over to the next page, whose shut panel shows only
+  // its neutral name: the failure toasts, as the unlinked panel's does (#7040).
+  it('error: a failed read under a collapsed panel toasts', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'first block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        if (args?.blockId === 'PAGE2') return Promise.reject(new Error('backend unavailable'))
+        return resp
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    const { rerender } = renderLinkedReferences({ targetId: 'PAGE1' })
+    await screen.findByText('first block')
+    await user.click(
+      screen.getByRole('button', {
+        name: t('common.collapse', { section: t('references.headerOne') }),
+      }),
+    )
+    expect(toast.error).not.toHaveBeenCalled()
+
+    rerender(
+      <TooltipProvider>
+        <LinkedReferences targetId="PAGE2" />
+      </TooltipProvider>,
+    )
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        t('references.loadFailed'),
+        expect.objectContaining({ id: 'linked-refs-load-failed' }),
+      ),
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   // 36. pagination failure: shows its alert and preserves existing groups
   it('error: pagination failure preserves existing groups and shows its alert, no toast', async () => {
     const user = userEvent.setup()

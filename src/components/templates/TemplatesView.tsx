@@ -17,6 +17,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
@@ -220,6 +221,7 @@ export function TemplatesView(): React.ReactElement {
 
   return (
     <section className="mx-auto w-full max-w-list space-y-4" aria-label={t('sidebar.templates')}>
+      <FeaturePageHeader title={t('sidebar.templates')} />
       <p className="text-sm text-muted-foreground">{t('templates.description')}</p>
 
       {/* Create template form — always visible, including empty state */}

@@ -416,8 +416,8 @@ function DaySectionInner({
           )}
           {/*  Part A — star + delete. Guarded on `entry.pageId` so the
               auto-create placeholder day (no note yet) doesn't show
-              destructive controls. Hover-reveal on desktop, always-
-              visible on touch (handled inside PageQuickActions). */}
+              destructive controls. Always visible (the 'journal'
+              variant of PageQuickActions). */}
           {entry.pageId && (
             <PageQuickActions
               pageId={entry.pageId}
@@ -465,9 +465,7 @@ function DaySectionInner({
                   pageId={entry.pageId}
                   actions={dailyActions}
                   onDeleteRequest={
-                    onPhone && dayPageId != null
-                      ? () => handleRequestDayDelete(dayPageId)
-                      : undefined
+                    dayPageId != null ? () => handleRequestDayDelete(dayPageId) : undefined
                   }
                   onNavigateToPage={onNavigateToPage}
                   onAddBlock={() => void onAddBlock(entry.dateStr)}

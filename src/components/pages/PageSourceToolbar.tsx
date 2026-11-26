@@ -42,7 +42,6 @@ import {
   createDateButtons,
   createHistoryButtons,
   createMarkToggles,
-  createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
   createTaskButtons,
@@ -203,7 +202,6 @@ export function PageSourceToolbar({
       structureButtons: swap(createStructureButtons(editor)),
       taskButtons: swap(createTaskButtons()),
       dateButtons: swap(createDateButtons()),
-      metadataButtons: swap(createMetadataButtons()),
       historyButtons: swap([...createHistoryButtons(editor), CANCEL_BUTTON]),
     }
   }, [editor])

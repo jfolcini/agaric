@@ -105,7 +105,7 @@ function drawing(svg: Element | null | undefined) {
 /** Block mode's chevron, collapsed or not. */
 function blockChevron(collapsed: boolean): Element | null {
   return render(
-    <BlockCollapseControl blockId={A} hasChildren isCollapsed={collapsed} isTouch={false} />,
+    <BlockCollapseControl blockId={A} isCollapsed={collapsed} isTouch={false} />,
   ).container.querySelector('[data-testid="collapse-toggle"]')
 }
 

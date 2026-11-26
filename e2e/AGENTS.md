@@ -157,7 +157,7 @@ It judges `position: absolute` children against their CSS containing block, not 
 
 ## Header label selection
 
-`<FeaturePageHeader>` renders an `<h1>` with the same text as the App-shell `<header>`'s `data-testid="header-label"` span, so `header > getByText` hits both and trips strict mode. Use `page.getByTestId('header-label')` (reference: `editor-lifecycle.spec.ts`).
+`<FeaturePageHeader>` renders an `<h1>` with the same text as the App-shell `<header>`'s `data-testid="header-label"` span, so `header > getByText` hits both and trips strict mode. Use `page.getByRole('heading', { level: 1 })`, the view's title at every width; the label shows only on a phone, so on desktop `getByTestId('header-label')` holds for `toHaveText` but not `toBeVisible`.
 
 ## Performance runs
 

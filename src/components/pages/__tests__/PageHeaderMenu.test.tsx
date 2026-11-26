@@ -610,12 +610,13 @@ describe('PageHeaderMenu delete button danger zone', () => {
     expect(deleteButton?.className).not.toContain('hover:bg-accent')
   })
 
-  it('uses destructive focus ring color', () => {
+  // A half-alpha ring falls under the 3:1 non-text minimum (#5332).
+  it('keeps the opaque focus ring, with no half-alpha ring colour over it', () => {
     renderMenu({ kebabOpen: true })
 
     const deleteButton = screen.getByText(/Delete page/i).closest('button')
-    expect(deleteButton?.className).toContain('focus-visible:ring-destructive/50')
-    expect(deleteButton?.className).not.toContain('focus-visible:ring-ring/50')
+    expect(deleteButton).toHaveClass('focus-ring-visible')
+    expect(deleteButton?.className).not.toMatch(/ring-[a-z-]+\/\d+/)
   })
 })
 

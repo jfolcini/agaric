@@ -30,6 +30,7 @@ import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { SpacesTab } from '@/components/settings/SpacesTab'
 import { Card, CardContent } from '@/components/ui/card'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { ListItem, listCardVariants, listHeaderVariants } from '@/components/ui/list-item'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -255,42 +256,48 @@ export function SettingsView(): React.ReactElement {
     />
   )
 
+  const title = <FeaturePageHeader title={t('sidebar.settings')} />
+
   if (showList) {
     return (
-      <nav aria-label={t('sidebar.settings')} className="settings-view space-y-4">
-        {tabGroups.map((group) => (
-          <div key={group.id} className={listCardVariants()}>
-            <h2 id={`settings-group-${group.id}`} className={listHeaderVariants()}>
-              {t(group.labelKey)}
-            </h2>
-            <ul
-              aria-labelledby={`settings-group-${group.id}`}
-              className="[&>:last-child]:rounded-b-[inherit]"
-            >
-              {group.tabs.map((tab) => (
-                // The row is one button, so the whole 44 px row takes the tap.
-                <ListItem key={tab} className="p-0">
-                  <button
-                    type="button"
-                    id={`settings-section-${tab}`}
-                    className="flex min-h-11 w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
-                    onClick={() => openSection(tab)}
-                  >
-                    <span className="min-w-0 flex-1">{t(TAB_LABEL_KEYS[tab])}</span>
-                    <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground" />
-                  </button>
-                </ListItem>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </nav>
+      <div className="settings-view">
+        {title}
+        <nav aria-label={t('sidebar.settings')} className="space-y-4">
+          {tabGroups.map((group) => (
+            <div key={group.id} className={listCardVariants()}>
+              <h2 id={`settings-group-${group.id}`} className={listHeaderVariants()}>
+                {t(group.labelKey)}
+              </h2>
+              <ul
+                aria-labelledby={`settings-group-${group.id}`}
+                className="[&>:last-child]:rounded-b-[inherit]"
+              >
+                {group.tabs.map((tab) => (
+                  // The row is one button, so the whole 44 px row takes the tap.
+                  <ListItem key={tab} className="p-0">
+                    <button
+                      type="button"
+                      id={`settings-section-${tab}`}
+                      className="flex min-h-11 w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
+                      onClick={() => openSection(tab)}
+                    >
+                      <span className="min-w-0 flex-1">{t(TAB_LABEL_KEYS[tab])}</span>
+                      <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground" />
+                    </button>
+                  </ListItem>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </div>
     )
   }
 
   if (phoneLayout) {
     return (
       <div className="settings-view">
+        {title}
         <ViewHeader>
           <div className="flex items-center gap-2">
             <IconButton
@@ -322,10 +329,11 @@ export function SettingsView(): React.ReactElement {
   }
 
   return (
-    <div className="settings-view">
+    <div className="settings-view settings-column">
       {/* #1108 — grouped settings layout. A vertical rail on the left holds
           the tabs bucketed into labeled sections (Workspace / Integrations /
-          Data & Sync / Help); the active tab's panel renders to the right. */}
+          Data & Sync / Help); the title and the active tab's panel take the
+          reading column to its right. */}
       <div className="flex items-start gap-6">
         {/* The whole rail is one tablist; each section is a labeled group of
             tabs so screen-reader users hear the grouping without the tabs
@@ -379,22 +387,19 @@ export function SettingsView(): React.ReactElement {
           </TabsList>
         </Tabs>
 
-        {/* Tab panels.
-
-            #1731 — the tabpanel host owns the one width decision (`max-w-2xl`)
-            so every tab shares the same content cap. Previously each pane root
-            set its own (max-w-md / max-w-xl / none) plus a divergent
-            vertical-rhythm token (space-y-4 vs space-y-6), so switching tabs
-            visibly re-widthed and re-spaced the content. The width cap is unified
-            here; panes that stack several Cards (Data, Help) space them with `space-y-6`. */}
-        <div
-          role="tabpanel"
-          id={`settings-panel-${activeTab}`}
-          aria-labelledby={`settings-tab-${activeTab}`}
-          data-testid={`settings-panel-${activeTab}`}
-          className="min-w-0 flex-1 max-w-2xl"
-        >
-          {panel}
+        {/* #1731 — the column owns the one width decision (`max-w-reading`), so
+            every tab shares the same content cap; panes that stack several
+            Cards (Data, Help) space them with `space-y-6`. */}
+        <div className="min-w-0 flex-1 max-w-reading space-y-4">
+          {title}
+          <div
+            role="tabpanel"
+            id={`settings-panel-${activeTab}`}
+            aria-labelledby={`settings-tab-${activeTab}`}
+            data-testid={`settings-panel-${activeTab}`}
+          >
+            {panel}
+          </div>
         </div>
       </div>
     </div>

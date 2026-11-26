@@ -128,7 +128,7 @@ Once a device is paired, the aggregated sync state (overall state, last successf
 
 ## Settings
 
-Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups, which stays in view while the panel scrolls. A phone opens on the same groups as a list of sections; tapping one shows it under its title, with an arrow back to the list, where Android's Back also goes. Each tab is named once, by the rail or the section title: panels carry no title of their own. No capture button shows on Settings, whose switches it would cover. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
+Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups, which stays in view while the panel scrolls; the title and the panel take the reading column on the journal's axis, the rail to their left. A phone opens on the same groups as a list of sections; tapping one shows it under its title, with an arrow back to the list, where Android's Back also goes. Each tab is named once, by the rail or the section title: panels carry no title of their own. No capture button shows on Settings, whose switches it would cover. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
   - **General** — language, week start, journal date format, launch-at-login (desktop). The journal date format names a journal page wherever a list or picker shows its title (the `[[` picker, the Agenda, Search, references, History and Advanced Query), not in the journal alone; a page stays stored, searched and matched as `YYYY-MM-DD`, and a link chip in a block's text keeps that title, as the text holds it.

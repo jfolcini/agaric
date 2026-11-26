@@ -1214,13 +1214,11 @@ export const common: Record<string, string> = {
 
   // Translators: in-page find toolbar (Ctrl+F, searches the open page only): screen-reader name of
   // the toolbar, placeholder and screen-reader label of its search field.
-  // \u2014 in-page find toolbar.
   'findInPage.toolbarLabel': 'Find in page',
   'findInPage.inputPlaceholder': 'Find in page\u2026',
   'findInPage.inputLabel': 'Find in page',
 
-  // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label). Keep the
-  // glyphs in parentheses (Aa, Ab|, .*).
+  // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label).
   'findInPage.previousMatch': 'Previous match',
   'findInPage.nextMatch': 'Next match',
   'findInPage.close': 'Close',

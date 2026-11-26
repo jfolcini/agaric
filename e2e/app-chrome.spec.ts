@@ -49,14 +49,16 @@ test.describe('desktop chrome @mobile', () => {
     expect([sync.h, settings.h, sync.x]).toEqual([nav.h, nav.h, nav.x])
   })
 
-  test('Settings names itself once, as the header h1', async ({ page }) => {
+  test('Settings names itself once, as its in-content h1', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Settings')
     await expect(page.getByTestId('settings-tab-rail')).toBeVisible()
     const h1 = page.getByRole('heading', { level: 1 })
     await expect(h1).toHaveCount(1)
     await expect(h1).toHaveText('Settings')
-    await expect(page.locator('main').getByText('Settings', { exact: true })).toHaveCount(1)
+    await expect(
+      page.locator('main').getByText('Settings', { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1)
   })
 })
 

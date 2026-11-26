@@ -52,6 +52,7 @@ import { QueryResultList } from '@/components/query/QueryResultList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { listCardVariants } from '@/components/ui/list-item'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { useSpacePropertyDefs } from '@/hooks/useSpacePropertyDefs'
@@ -212,6 +213,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
       {/* Builder pane — the #1280 D3 recursive nested-boolean tree. It keeps
           the list column's width beside a board. */}
       <div className="advanced-query-builder mx-auto flex w-full max-w-list flex-col gap-3">
+        <FeaturePageHeader title={t('sidebar.query')} />
         <div className="flex items-center gap-2">
           <p className="min-w-0 flex-1 truncate text-sm" data-testid="advanced-query-summary">
             {summary}

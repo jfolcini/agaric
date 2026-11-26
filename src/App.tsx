@@ -31,7 +31,7 @@ import {
 import { QuickCaptureFab } from '@/components/mobile/QuickCaptureFab'
 import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { BootGate } from '@/components/pages/BootGate'
-import { shellOwnsHeading, useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
+import { useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
@@ -393,10 +393,6 @@ function App() {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
-  // #3308 — promote the shell label to the view's `<h1>` unless the view
-  // renders its own (see `VIEW_HEADING_OWNER`). An empty label must never
-  // become an empty heading, so a blank label stays a `<span>`.
-  const HeaderLabelTag = headerLabel !== '' && shellOwnsHeading(currentView) ? 'h1' : 'span'
   const { isDark } = useTheme()
   // Apply the editor font-size preference from boot, before Settings mounts.
   useFontSize()
@@ -738,25 +734,18 @@ function App() {
                   </>
                 ) : (
                   <>
-                    {/* #3308 — the shell label is the `<h1>` for every view that
-                        does not render one of its own (pages / tags / history /
-                        query / search previously had NO heading at all, so
-                        screen-reader heading navigation had nothing to land on).
-                        Views that own an `<h1>` via `FeaturePageHeader` keep a
-                        plain `<span>` here so the same title is not announced as
-                        two separate level-1 headings. `VIEW_HEADING_OWNER` in
-                        ViewDispatcher is the single, exhaustive owner map. */}
-                    {/* `max-sm:` block sizing so the title's optical centre
-                        lines up with the 44px hamburger beside it. Without it
-                        the ~20px text row top-aligns against a 44px button and
-                        sits visibly high. Scoped below `sm` because the
-                        desktop header is a single centred row already. */}
-                    <HeaderLabelTag
-                      className="font-medium max-sm:flex max-sm:min-h-11 max-sm:items-center"
+                    {/* A phone's bar names the view. From `md` up the view's
+                        `FeaturePageHeader` shows its title in the content, so the
+                        bar leaves it out; at every width that h1 is the view's
+                        heading, so this stays a plain span (S3, #7040).
+                        `max-sm:` block sizing puts the name's optical centre on
+                        the 44 px hamburger beside it. */}
+                    <span
+                      className="font-medium md:hidden max-sm:flex max-sm:min-h-11 max-sm:items-center"
                       data-testid="header-label"
                     >
                       {headerLabel}
-                    </HeaderLabelTag>
+                    </span>
                     <div className="flex flex-1 justify-end">
                       <FindBar variant="header" />
                     </div>
@@ -805,7 +794,7 @@ function App() {
              */}
             {/* The hairline is the header's own (each is a centred column), so it runs
                 the column's width, not the window's. */}
-            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 space-y-2 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-3" />
+            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-3" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
