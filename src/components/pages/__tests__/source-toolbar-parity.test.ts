@@ -18,9 +18,11 @@ import { buildToolbarItems } from '@/components/FormattingToolbar/items'
 import {
   createHistoryButtons,
   createMarkToggles,
+  createDateButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
+  createTaskButtons,
 } from '@/components/FormattingToolbar/toolbar-config'
 import {
   SOURCE_MARKS,
@@ -34,15 +36,21 @@ import {
 // The config only closes over the editor; no button is pressed here.
 const editor = {} as Editor
 
-const TOOLBAR_IDS = buildToolbarItems(
-  {
-    refsAndBlocks: createRefsAndBlocks(editor),
-    structureButtons: createStructureButtons(editor),
-    metadataButtons: createMetadataButtons(),
-    historyButtons: createHistoryButtons(editor),
-  },
-  { includeTableOps: true },
-).flatMap((item) => (item.kind === 'button' ? [item.key] : []))
+// The bar's buttons, and the Date menu's rows.
+const TOOLBAR_IDS = [
+  ...buildToolbarItems(
+    {
+      refsAndBlocks: createRefsAndBlocks(editor),
+      structureButtons: createStructureButtons(editor),
+      taskButtons: createTaskButtons(),
+      dateButtons: createDateButtons(),
+      metadataButtons: createMetadataButtons(),
+      historyButtons: createHistoryButtons(editor),
+    },
+    { includeTableOps: true },
+  ).flatMap((item) => (item.kind === 'button' ? [item.key] : [])),
+  ...createDateButtons().map((date) => date.label),
+]
 
 const MARK_IDS = createMarkToggles(editor).map((mark) => mark.label)
 

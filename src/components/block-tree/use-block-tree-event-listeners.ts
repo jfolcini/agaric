@@ -27,7 +27,7 @@
 
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
 import { pasteIntoBlock, type PastePayload } from '@/components/block-tree/paste-into-block'
@@ -110,7 +110,8 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   // journal week/month's N trees from racing conflicting side effects:
   // duplicate IPCs, N dialogs, todo-cycle values computed from a foreign store)
   // is now performed once by the bus, by construction.
-  useEffect(() => {
+  // Layout: passive readers such as in-page find must not see this tree unregistered mid-commit.
+  useLayoutEffect(() => {
     // ── Priority cycling command (from FormattingToolbar) ─────────────
     const onCyclePriority: BlockCommandHandler = (blockId) => {
       void handleTogglePriority(blockId)

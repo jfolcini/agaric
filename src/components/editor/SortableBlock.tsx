@@ -433,7 +433,14 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             interactive metadata chips (priority, dates, repeat, properties,
             attachments) on their own row beneath it, left-aligned with the
             text (user feedback 2026-06-20). */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      {/* The cursor row's `focus-ring-visible` ring, on `:focus` rather than
+            `:focus-visible`: Chromium does not count a Ctrl chord as keyboard
+            use, so after a click into a block, Ctrl+Space and Ctrl+Arrow would
+            move an unmarked cursor. */}
+      <div
+        className="flex-1 min-w-0 flex flex-col rounded-md group-focus/row:ring-[3px] group-focus/row:ring-ring"
+        data-testid="block-content"
+      >
         <div
           className={cn(
             'min-w-0 transition-[text-decoration-color,color] duration-moderate',

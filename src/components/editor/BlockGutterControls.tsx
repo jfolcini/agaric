@@ -21,6 +21,7 @@ import { GripVertical } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { capturePreDragFocus } from '@/lib/pre-drag-focus'
@@ -140,34 +141,40 @@ export const BlockGutterControls = React.memo(
     //   - a multi-selection is already active → hover-revealed on other rows so
     //     you can extend the selection by clicking their checkboxes.
     // With no active selection it is omitted entirely (the start affordance is
-    // Ctrl/Cmd+Click — the documented chord). Coarse pointers have no hover, so
-    // the checkbox is suppressed there (long-press context menu owns touch ops).
+    // Ctrl/Cmd+Click — the documented chord). Touch has no hover, so there only
+    // a selected row shows it (long-press context menu owns touch ops).
     const selectCheckbox =
-      onSelect && (isSelected || hasSelection) ? (
+      onSelect && (isSelected || (hasSelection && !isTouch)) ? (
         <Tooltip>
           <TooltipTrigger asChild>
-            <input
-              type="checkbox"
-              checked={isSelected ?? false}
-              onChange={() => onSelect(blockId, 'toggle')}
-              // The gutter row also handles clicks (long-press, focus); keep the
-              // checkbox's own click from bubbling into block focus/selection.
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
+            {/* The tooltip sits on a wrapper: on the Checkbox it would replace
+                the `data-state` the checked styles key on. */}
+            <span
               className={cn(
-                'block-select-checkbox flex-shrink-0 size-[0.875em] rounded border-border cursor-pointer',
-                'transition-opacity focus-ring-visible',
+                'inline-flex flex-shrink-0',
                 !isTouch && 'absolute right-full top-1/2 -translate-y-1/2 mr-0.5',
-                isSelected
-                  ? // Selected → always visible (selection feedback).
-                    'opacity-100'
-                  : // A selection is active → hover-reveal so you can extend it.
-                    'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:hidden',
               )}
-              aria-label={t('block.selectBlock')}
-              data-testid="block-select-checkbox"
-              tabIndex={-1}
-            />
+            >
+              <Checkbox
+                checked={isSelected ?? false}
+                onCheckedChange={() => onSelect(blockId, 'toggle')}
+                // The gutter row also handles clicks (long-press, focus); keep the
+                // checkbox's own click from bubbling into block focus/selection.
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={cn(
+                  'transition-opacity',
+                  isSelected
+                    ? // Selected → always visible (selection feedback).
+                      'opacity-100'
+                    : // A selection is active → hover-reveal so you can extend it.
+                      'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
+                )}
+                aria-label={t('block.selectBlock')}
+                data-testid="block-select-checkbox"
+                tabIndex={-1}
+              />
+            </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
             {t('block.selectTip')}

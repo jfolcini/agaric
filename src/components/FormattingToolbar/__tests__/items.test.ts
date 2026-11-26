@@ -13,9 +13,11 @@ import { buildToolbarItems } from '@/components/FormattingToolbar/items'
 import {
   createHistoryButtons,
   createIndentButtons,
+  createDateButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
+  createTaskButtons,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { computeOverflow, OVERFLOW_TRIGGER_WIDTH_PX } from '@/hooks/useToolbarOverflow'
 
@@ -31,12 +33,17 @@ const SEPARATOR_PX = 5
 /** The bar's items; on touch with Indent and Outdent, as `FormattingToolbar` builds it there. */
 function items(touch: boolean) {
   const indent = touch ? createIndentButtons(noop, noop) : []
-  return buildToolbarItems({
-    refsAndBlocks: createRefsAndBlocks(editor),
-    structureButtons: [...createStructureButtons(editor), ...indent],
-    metadataButtons: createMetadataButtons(),
-    historyButtons: createHistoryButtons(editor, touch),
-  })
+  return buildToolbarItems(
+    {
+      refsAndBlocks: createRefsAndBlocks(editor),
+      structureButtons: [...createStructureButtons(editor), ...indent],
+      taskButtons: createTaskButtons(),
+      dateButtons: createDateButtons(),
+      metadataButtons: createMetadataButtons(),
+      historyButtons: createHistoryButtons(editor, touch),
+    },
+    { touch },
+  )
 }
 
 /** The keys left on the bar at `width` px of content box. */
@@ -59,6 +66,63 @@ function outlives(touch: boolean, keeper: string, dropped: string): void {
     if (bar.has(dropped)) expect(bar.has(keeper), `${keeper} at ${width} px`).toBe(true)
   }
 }
+
+describe('the Task group', () => {
+  it('holds Toggle TODO, Cycle priority, one Date menu and Properties, in that order', () => {
+    const task = items(false).filter((item) => item.kind === 'button' && item.group === 2)
+    expect(task.map((item) => item.key)).toEqual([
+      'toolbar.todoToggle',
+      'toolbar.cyclePriority',
+      'toolbar.date',
+      'toolbar.properties',
+    ])
+  })
+})
+
+describe('the rarer inserts', () => {
+  /** The bar and More at a width with room for every button. */
+  function split(touch: boolean) {
+    const all = items(touch)
+    const { visible, overflowed } = computeOverflow(all, 5000, new Map(), 0)
+    return { bar: visible.map((item) => item.key), more: overflowed.map((item) => item.key) }
+  }
+
+  it('with a fine pointer, are in More with room on the bar, one rule where their group was', () => {
+    const { bar, more } = split(false)
+    expect(more).toEqual([
+      'toolbar.insertBlockRef',
+      'toolbar.insertQuery',
+      'toolbar.emoji',
+      'toolbar.newLine',
+      'toolbar.insertTable',
+    ])
+    expect(bar).toEqual([
+      'toolbar.format',
+      'toolbar.turnInto',
+      'toolbar.internalLink',
+      'toolbar.insertTag',
+      'sep-0',
+      'toolbar.todoToggle',
+      'toolbar.cyclePriority',
+      'toolbar.date',
+      'toolbar.properties',
+      'sep-2',
+      'toolbar.undo',
+      'toolbar.redo',
+    ])
+  })
+
+  it('on touch, New line stays on the bar', () => {
+    const { bar, more } = split(true)
+    expect(more).toEqual([
+      'toolbar.insertBlockRef',
+      'toolbar.insertQuery',
+      'toolbar.emoji',
+      'toolbar.insertTable',
+    ])
+    expect(bar).toContain('toolbar.newLine')
+  })
+})
 
 describe('the toolbar under width pressure', () => {
   it.each([false, true])('Toggle TODO outlives Cycle priority (touch: %s)', (touch) => {
