@@ -1214,9 +1214,6 @@ export const common: Record<string, string> = {
 
   // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label). Keep the
   // glyphs in parentheses (Aa, Ab|, .*).
-  'findInPage.toggleCaseSensitive': 'Match case (Aa)',
-  'findInPage.toggleWholeWord': 'Match whole word (Ab|)',
-  'findInPage.toggleRegex': 'Regular expression (.*)',
   'findInPage.previousMatch': 'Previous match',
   'findInPage.nextMatch': 'Next match',
   'findInPage.close': 'Close',
