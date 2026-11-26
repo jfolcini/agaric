@@ -22,7 +22,6 @@ import {
   OPEN_DELIMITER,
   writesBareUrl,
 } from '@/editor/markdown-serialize'
-import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
 import {
   unresolvedBlockLabel,
   unresolvedBlockRefLabel,
@@ -145,7 +144,7 @@ function runCollector(state: EditorState) {
   const visitAt = ($pos: ResolvedPos): void => {
     for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
   }
-  return { visit, visitAt, runs: () => [...runs.values()] }
+  return { visitAt, runs: () => [...runs.values()] }
 }
 
 /** The runs with revealed syntax that `$pos` is inside of or touches. */
@@ -155,34 +154,20 @@ export function revealedRunsAt(state: EditorState, $pos: ResolvedPos): MarkRun[]
   return runs()
 }
 
-/** Every run with revealed syntax the selection is inside of or touches. */
+/** Every run with revealed syntax the caret, or a selected atom's two sides, is inside of or touches. */
 function runsAtSelection(state: EditorState): MarkRun[] {
-  const { visit, visitAt, runs } = runCollector(state)
-  const { selection, doc } = state
-  visitAt(selection.$from)
-  visitAt(selection.$to)
-  // Only a range has children strictly inside it; a caret skips the walk, which
-  // would cover the block's children up to the caret on every transaction.
-  if (!selection.empty) {
-    doc.nodesBetween(selection.from, selection.to, (_node, pos, parent, index) => {
-      if (parent) visit(parent, index, pos)
-    })
-  }
+  const { visitAt, runs } = runCollector(state)
+  visitAt(state.selection.$from)
+  visitAt(state.selection.$to)
   return runs()
 }
 
-/** The text start and level of every heading the selection is in. */
-function headingsAtSelection(state: EditorState): Map<number, number> {
-  const headings = new Map<number, number>()
-  const add = (node: PMNode, start: number): void => {
-    if (node.type.name === 'heading') headings.set(start, Number(node.attrs['level']))
-  }
-  const { selection, doc } = state
-  for (const $pos of [selection.$from, selection.$to]) add($pos.parent, $pos.start())
-  if (!selection.empty) {
-    doc.nodesBetween(selection.from, selection.to, (node, pos) => add(node, pos + 1))
-  }
-  return headings
+/** The heading the caret, or a selected atom, is in. */
+function headingAtSelection(state: EditorState): HeadingMarker[] {
+  const { $from } = state.selection
+  const block = $from.parent
+  if (block.type.name !== 'heading') return []
+  return [headingMarker(state, $from.start(), Number(block.attrs['level']))]
 }
 
 /**
@@ -260,7 +245,7 @@ function markersOf(state: EditorState, run: MarkRun): MarkMarker[] {
 }
 
 function headingMarker(state: EditorState, start: number, level: number): HeadingMarker {
-  // A caret reveals only its own heading, so a caret left of a `#` run is left of this one.
+  // A caret left of a `#` run is left of its own heading's.
   const outside = isOutsideHeadingMarker(state.selection)
   return {
     kind: 'heading',
@@ -274,22 +259,27 @@ function headingMarker(state: EditorState, start: number, level: number): Headin
   }
 }
 
-/** A page-mode selection that reaches into more than one block: it reveals nothing, and is never walked. */
-function spansPageBlocks({ doc, selection }: EditorState): boolean {
-  if (selection.empty || doc.firstChild?.type.name !== PAGE_BLOCK) return false
-  const { $from, $to } = selection
-  // A position between blocks (Ctrl+A ends there) belongs to the block before it.
-  const last = $to.depth === 0 ? $to.index(0) - 1 : $to.index(0)
-  return $from.index(0) !== last
+/**
+ * A range of text, by a drag or Shift (decision 19 of #7040): it reveals
+ * nothing, so the text being selected holds still. Only a caret, or a selected
+ * atom (a chip, math), shows the syntax it is at.
+ */
+function isRange(selection: Selection): boolean {
+  return !selection.empty && !('node' in selection)
 }
 
-/** The markers `state` reveals, none with the preference off. */
+/** Whether `state` reveals anything: the preference is on and the selection is no range. */
+function reveals(state: EditorState): boolean {
+  return isMarkdownRevealEnabled() && !isRange(state.selection)
+}
+
+/** The markers `state` reveals. */
 export function revealedMarkers(state: EditorState): Marker[] {
-  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
-  const headings = [...headingsAtSelection(state)].map(([start, level]) =>
-    headingMarker(state, start, level),
-  )
-  return [...headings, ...runsAtSelection(state).flatMap((run) => markersOf(state, run))]
+  if (!reveals(state)) return []
+  return [
+    ...headingAtSelection(state),
+    ...runsAtSelection(state).flatMap((run) => markersOf(state, run)),
+  ]
 }
 
 /**
@@ -348,7 +338,7 @@ export function revealedChipMarkers(
   state: EditorState,
   showsOwnSyntax: (chip: PMNode, unresolvedLabel: string) => boolean,
 ): ReadOnlyMarker[] {
-  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  if (!reveals(state)) return []
   return nodesAtSelection(state.selection).flatMap(({ node, pos }) => {
     const syntax = CHIP_SYNTAX[node.type.name]
     if (!syntax || showsOwnSyntax(node, syntax.unresolved(String(node.attrs['id'])))) return []
@@ -407,17 +397,6 @@ export interface BlockSyntax {
   close: string
 }
 
-/** The textblocks the selection is in: the caret's, or every one a range touches, as headings are. */
-function linesAtSelection({ selection, doc }: EditorState): ResolvedPos[] {
-  if (selection.empty) return [selection.$from]
-  const lines: ResolvedPos[] = []
-  doc.nodesBetween(selection.from, selection.to, (node, pos) => {
-    if (node.isTextblock) lines.push(doc.resolve(pos + 1))
-    return !node.isTextblock
-  })
-  return lines
-}
-
 /** What the serializer writes around an inline atom, drawn beside it. */
 const ATOM_SYNTAX: Readonly<Record<string, readonly [open: string, close: string]>> = {
   math_inline: ['$', '$'],
@@ -432,7 +411,7 @@ const ATOM_SYNTAX: Readonly<Record<string, readonly [open: string, close: string
  * view.
  */
 export function revealedConstructMarkers(state: EditorState): ReadOnlyMarker[] {
-  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  if (!reveals(state)) return []
   const atoms = nodesAtSelection(state.selection).flatMap(({ node, pos }): ReadOnlyMarker[] => {
     const syntax = ATOM_SYNTAX[node.type.name]
     return syntax === undefined
@@ -442,27 +421,29 @@ export function revealedConstructMarkers(state: EditorState): ReadOnlyMarker[] {
           { pos: pos + node.nodeSize, text: syntax[1], side: CHIP_CLOSE_SIDE },
         ]
   })
-  return [...linesAtSelection(state).flatMap(lineMarkers), ...atoms]
+  return [...lineMarkers(state.selection.$from), ...atoms]
 }
 
-/** The fences of the code blocks the selection is in, and the `$$` of selected display math. */
+/** A code block's fences, while the caret is in it. */
+function codeFences($pos: ResolvedPos): BlockSyntax[] {
+  const block = $pos.parent
+  if (block.type.name !== 'codeBlock') return []
+  const language = (block.attrs['language'] as string | null) ?? ''
+  const fence = codeFence(block.textContent, language)
+  return [
+    { from: $pos.before(), to: $pos.after(), open: codeFenceOpen(fence, language), close: fence },
+  ]
+}
+
+/** The fences of the code block the caret is in, and the `$$` of selected display math. */
 export function revealedBlockSyntax(state: EditorState): BlockSyntax[] {
-  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
-  const code = linesAtSelection(state).flatMap(($pos): BlockSyntax[] => {
-    const block = $pos.parent
-    if (block.type.name !== 'codeBlock') return []
-    const language = (block.attrs['language'] as string | null) ?? ''
-    const fence = codeFence(block.textContent, language)
-    return [
-      { from: $pos.before(), to: $pos.after(), open: codeFenceOpen(fence, language), close: fence },
-    ]
-  })
+  if (!reveals(state)) return []
   const math = nodesAtSelection(state.selection).flatMap(({ node, pos }): BlockSyntax[] =>
     node.type.name === 'math_block'
       ? [{ from: pos, to: pos + node.nodeSize, open: '$$', close: '$$' }]
       : [],
   )
-  return [...code, ...math]
+  return [...codeFences(state.selection.$from), ...math]
 }
 
 /** A selected node, or the nodes right before and after a caret, with their positions. */

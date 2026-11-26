@@ -104,6 +104,8 @@
   /* Block reference chip */
   --color-block-ref: var(--block-ref);
   --color-block-ref-foreground: var(--block-ref-foreground);
+  /* Page links and URLs: the hue of a block reference's text, so every reference reads as one kind */
+  --color-link: var(--block-ref-foreground);
   /* Scheduled/repeat indicator */
   --color-indicator-scheduled: var(--indicator-scheduled);
   --color-indicator-scheduled-foreground: var(--indicator-scheduled-foreground);
@@ -281,9 +283,11 @@
   --alert-error: oklch(0.97 0.02 25);
   --alert-error-foreground: oklch(0.45 0.2 25);
   --alert-error-border: oklch(0.88 0.08 25);
-  --alert-note: oklch(0.96 0 0);
-  --alert-note-foreground: oklch(0.45 0 0);
-  --alert-note-border: oklch(0.85 0 0);
+  /* A note is tinted like the other callouts, in a violet none of them takes,
+   * so it never reads as a quote's grey bar (#7040). */
+  --alert-note: oklch(0.97 0.02 305);
+  --alert-note-foreground: oklch(0.47 0.13 305);
+  --alert-note-border: oklch(0.86 0.07 305);
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
@@ -467,9 +471,9 @@
   --alert-error: oklch(0.28 0.04 25);
   --alert-error-foreground: oklch(0.88 0.08 25);
   --alert-error-border: oklch(0.5 0.11 25);
-  --alert-note: oklch(0.25 0 0);
-  --alert-note-foreground: oklch(0.85 0 0);
-  --alert-note-border: oklch(0.45 0 0);
+  --alert-note: oklch(0.27 0.04 305);
+  --alert-note-foreground: oklch(0.85 0.07 305);
+  --alert-note-border: oklch(0.5 0.11 305);
   /* Task checkbox state colors */
   --task-done: oklch(0.74 0.17 149);
   /* White fell under 3:1 on the lifted greens of Dark, Dracula and One Dark Pro (#6528). */
@@ -1637,16 +1641,18 @@
   border-top-right-radius: var(--radius-md); /* rounded-r-md */
   border-bottom-right-radius: var(--radius-md);
   color: var(--foreground);
+  position: relative;
+  /* The view mode's icon size and gap (`CalloutBlock`). */
+  --callout-icon-size: var(--agaric-font-size, 1rem);
 }
 
 /* Bold, coloured type label rendered above the callout body, matching the
- * view-mode header. (The view-mode header also shows a lucide icon; the
- * editor omits it because injecting React iconography into a ProseMirror
- * node-view is out of scope for a CSS-only parity fix.) */
+ * view-mode header, with room on its left for the icon. */
 .ProseMirror blockquote[data-callout-type]::before {
   content: attr(data-callout-type);
   display: block;
   margin-bottom: 0.25rem;
+  padding-left: calc(var(--callout-icon-size) + 0.375rem);
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.25rem;
@@ -1655,9 +1661,26 @@
   user-select: none;
 }
 
+/* The style's icon, the view mode's lucide glyph (`CALLOUT_CONFIG`) as an SVG
+ * mask painted in the label's colour, centred on the label's line.
+ * Pseudo-elements never enter the ProseMirror document. */
+.ProseMirror blockquote[data-callout-type]::after {
+  content: '';
+  position: absolute;
+  top: calc(0.5rem + (1.25rem - var(--callout-icon-size)) / 2);
+  left: 1rem;
+  width: var(--callout-icon-size);
+  height: var(--callout-icon-size);
+  background-color: var(--callout-icon-color);
+  mask: var(--callout-icon) center / contain no-repeat;
+  pointer-events: none;
+}
+
 .ProseMirror blockquote[data-callout-style='info'] {
   border-left-color: var(--alert-info-border);
   background-color: var(--alert-info);
+  --callout-icon-color: var(--alert-info-foreground);
+  --callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4'/%3E%3Cpath d='M12 8h.01'/%3E%3C/svg%3E");
 }
 .ProseMirror blockquote[data-callout-style='info']::before {
   color: var(--alert-info-foreground);
@@ -1665,6 +1688,8 @@
 .ProseMirror blockquote[data-callout-style='warning'] {
   border-left-color: var(--alert-warning-border);
   background-color: var(--alert-warning);
+  --callout-icon-color: var(--alert-warning-foreground);
+  --callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
 }
 .ProseMirror blockquote[data-callout-style='warning']::before {
   color: var(--alert-warning-foreground);
@@ -1672,6 +1697,8 @@
 .ProseMirror blockquote[data-callout-style='tip'] {
   border-left-color: var(--alert-tip-border);
   background-color: var(--alert-tip);
+  --callout-icon-color: var(--alert-tip-foreground);
+  --callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5'/%3E%3Cpath d='M9 18h6'/%3E%3Cpath d='M10 22h4'/%3E%3C/svg%3E");
 }
 .ProseMirror blockquote[data-callout-style='tip']::before {
   color: var(--alert-tip-foreground);
@@ -1679,6 +1706,8 @@
 .ProseMirror blockquote[data-callout-style='error'] {
   border-left-color: var(--alert-error-border);
   background-color: var(--alert-error);
+  --callout-icon-color: var(--alert-error-foreground);
+  --callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m15 9-6 6'/%3E%3Cpath d='m9 9 6 6'/%3E%3C/svg%3E");
 }
 .ProseMirror blockquote[data-callout-style='error']::before {
   color: var(--alert-error-foreground);
@@ -1686,9 +1715,17 @@
 .ProseMirror blockquote[data-callout-style='note'] {
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
+  --callout-icon-color: var(--alert-note-foreground);
+  --callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z'/%3E%3Cpath d='M15 3v5a1 1 0 0 0 1 1h5'/%3E%3C/svg%3E");
 }
 .ProseMirror blockquote[data-callout-style='note']::before {
   color: var(--alert-note-foreground);
+}
+/* Forced colours paint every background Canvas, which would blank the icon. */
+@media (forced-colors: active) {
+  .ProseMirror blockquote[data-callout-type]::after {
+    background-color: CanvasText;
+  }
 }
 
 /* Heading styles inside the editor: the same classes as the static render's
@@ -1829,16 +1866,32 @@
 .ProseMirror .tableWrapper {
   @apply my-1 overflow-x-auto;
 }
+/* The static table's look (`renderTableBlock`): the code block's corners, a
+   frame in the border token and lighter rules between cells (#7040). Cells
+   keep separate borders, as a collapsed table draws no rounded corners. */
 .ProseMirror table {
-  @apply w-auto border-collapse border border-border;
+  @apply w-auto border-separate border-spacing-0 rounded-md border border-border;
 }
 .ProseMirror th,
 .ProseMirror td {
-  @apply border border-border px-3 py-1.5 text-sm align-top;
+  @apply border-0 border-border/60 px-3 py-1.5 text-sm align-top;
   min-width: 5rem;
+}
+.ProseMirror :is(th, td):not(:last-child) {
+  @apply border-r;
+}
+.ProseMirror tr:not(:first-child) > :is(th, td) {
+  @apply border-t;
 }
 .ProseMirror th {
   @apply bg-muted/60 text-left font-medium;
+}
+/* The header's fill stays inside the frame's rounded corners. */
+.ProseMirror tr:first-child > :first-child {
+  border-top-left-radius: calc(var(--radius-md) - 1px);
+}
+.ProseMirror tr:first-child > :last-child {
+  border-top-right-radius: calc(var(--radius-md) - 1px);
 }
 /* Cells hold a single paragraph; drop its default margin so rows stay tight. */
 .ProseMirror th > p,
@@ -2005,14 +2058,15 @@ mark[data-highlight-color='purple'] {
   @apply mr-1 font-semibold text-muted-foreground;
 }
 
-/* Page links — [[ULID]] rendered as the page title. Underlined running text,
-   like `.external-link`: a filled chip read as a button (#5332). */
+/* Page links — [[ULID]] rendered as the page title. Underlined running text
+   in the link colour, as `.external-link` is: a filled chip read as a button
+   (#5332). Only an external link's arrow tells the two apart: it leaves the app. */
 .block-link-chip {
-  @apply rounded-xs font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
+  @apply rounded-xs text-link underline decoration-link/50 underline-offset-2 transition-colors;
 }
 .block-link-chip:hover,
 .block-link-chip:active {
-  @apply decoration-foreground;
+  @apply decoration-link;
 }
 /* Broken / deleted block link: visual affordance for [[ULID]] pointing
    to a soft-deleted or purged block. Below `.block-link-chip`: same
@@ -2215,13 +2269,13 @@ mark[data-highlight-color='purple'] {
   }
 }
 
-/* External URL links — both in TipTap editor (a.external-link) and StaticBlock */
+/* External URL links — both in TipTap editor (a.external-link) and StaticBlock; a page link's look */
 .external-link {
-  @apply text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
+  @apply text-link underline decoration-link/50 underline-offset-2 transition-colors;
 }
 .external-link:hover,
 .external-link:active {
-  @apply decoration-foreground;
+  @apply decoration-link;
 }
 
 /* ── Embed container (#4550) ───────────────────────────────────────── */
@@ -2510,9 +2564,9 @@ mark[data-highlight-color='purple'] {
     --alert-error: oklch(0.93 0.11 25);
     --alert-error-foreground: oklch(0.35 0.28 25);
     --alert-error-border: oklch(0.55 0.22 25);
-    --alert-note: oklch(0.9 0 0);
-    --alert-note-foreground: oklch(0.2 0 0);
-    --alert-note-border: oklch(0.4 0 0);
+    --alert-note: oklch(0.92 0.05 305);
+    --alert-note-foreground: oklch(0.3 0.18 305);
+    --alert-note-border: oklch(0.5 0.16 305);
 
     /* Diff operation chips. */
     --op-create: oklch(0.93 0.13 163);
@@ -2580,9 +2634,9 @@ mark[data-highlight-color='purple'] {
     --alert-error: oklch(0.36 0.14 25);
     --alert-error-foreground: oklch(0.95 0.18 25);
     --alert-error-border: oklch(0.6 0.26 25);
-    --alert-note: oklch(0.35 0 0);
-    --alert-note-foreground: oklch(0.98 0 0);
-    --alert-note-border: oklch(0.6 0 0);
+    --alert-note: oklch(0.36 0.12 305);
+    --alert-note-foreground: oklch(0.96 0.06 305);
+    --alert-note-border: oklch(0.65 0.2 305);
 
     /* Diff operation chips. */
     --op-create: oklch(0.26 0.08 163);
@@ -2662,6 +2716,12 @@ mark[data-highlight-color='purple'] {
    `.block-static`), so a control centred in it centres on that line. */
 @utility min-h-block-line {
   min-height: calc(var(--block-first-line) + 0.5rem);
+}
+
+/* The box around the block being edited: its row's frame (`SortableBlock`), or
+   the row an unlocked embed edits. */
+@utility block-editing {
+  @apply rounded-md ring-1 ring-inset ring-border bg-accent/[0.06] shadow-(--shadow-resting);
 }
 
 /* Explicit block selection (StaticBlock / EditableBlock multi-select). */

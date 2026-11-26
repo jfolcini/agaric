@@ -156,7 +156,7 @@ test.describe('Boolean property @editor', () => {
     await expect(box).toBeChecked()
 
     await reopenPage(page, 'Quick Notes')
-    await page.getByRole('button', { name: 'Properties (1)', exact: true }).click()
+    await page.getByRole('button', { name: 'Properties 1', exact: true }).click()
     await expect(box).toBeChecked()
   })
 })

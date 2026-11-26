@@ -327,11 +327,11 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
   test('a mouse drag that starts in bold, a link or a heading not yet revealed selects what it covered', async ({
     page,
   }) => {
-    // `**bold** end`, from the `o` of bold to the `n` of end: the markers appear only on release.
+    // `**bold** end`, from the `o` of bold to the `n` of end: a range, which draws no markers (#7040).
     await caret(page, 0, 0)
     await drag(page, await charBox(page, 1, 'o'), await charBox(page, 1, 'n'))
     await expect.poll(() => selectedText(page)).toBe('old e')
-    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+    await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 
     await caret(page, 0, 0)
     await drag(page, await charBox(page, 3, 'a'), await charBox(page, 3, 'x'))
