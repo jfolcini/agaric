@@ -115,7 +115,7 @@ test.describe('Keyboard fundamentals @editor', () => {
     await clearInvokeCalls(page)
     await editor.press('Enter')
 
-    await expect.poll(async () => (await lastCall(page, 'create_block'))?.content).toBe('')
+    await expect.poll(async () => (await lastCall(page, 'create_block'))?.['content']).toBe('')
   })
 
   // ── #912 Tab / Shift+Tab indent / dedent ────────────────────────────────
@@ -130,10 +130,10 @@ test.describe('Keyboard fundamentals @editor', () => {
     await clearInvokeCalls(page)
     await page.keyboard.press('Tab')
 
-    await expect.poll(async () => (await lastCall(page, 'move_block'))?.blockId).toBe(gs3)
+    await expect.poll(async () => (await lastCall(page, 'move_block'))?.['blockId']).toBe(gs3)
     const move = await lastCall(page, 'move_block')
-    expect(move?.newParentId).toBe(gs2) // becomes a child of GS_2
-    expect(move?.newIndex).toBe(0)
+    expect(move?.['newParentId']).toBe(gs2) // becomes a child of GS_2
+    expect(move?.['newIndex']).toBe(0)
     void gs1
   })
 
@@ -150,16 +150,16 @@ test.describe('Keyboard fundamentals @editor', () => {
     await expect
       .poll(async () => {
         const m = await lastCall(page, 'move_block')
-        return m?.blockId === gs3 && m?.newParentId === gs2
+        return m?.['blockId'] === gs3 && m?.['newParentId'] === gs2
       })
       .toBe(true)
 
     // …then Shift+Tab dedents GS_3 back out from under GS_2.
     await clearInvokeCalls(page)
     await page.keyboard.press('Shift+Tab')
-    await expect.poll(async () => (await lastCall(page, 'move_block'))?.blockId).toBe(gs3)
+    await expect.poll(async () => (await lastCall(page, 'move_block'))?.['blockId']).toBe(gs3)
     const move = await lastCall(page, 'move_block')
-    expect(move?.newParentId).not.toBe(gs2) // no longer nested under GS_2
+    expect(move?.['newParentId']).not.toBe(gs2) // no longer nested under GS_2
   })
 
   // ── #910 Shift+Arrow at a boundary does not navigate ────────────────────
