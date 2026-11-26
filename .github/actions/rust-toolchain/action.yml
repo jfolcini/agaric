@@ -9,8 +9,8 @@ description: >-
 inputs:
   toolchain:
     description: >-
-      Exact toolchain, kept in lockstep with rust-toolchain.toml and
-      src-tauri/Cargo.toml `rust-version` (#640), or a dated `nightly-YYYY-MM-DD`.
+      Exact toolchain, rust-toolchain.toml's channel as `pins.sh github-output`
+      reads it (`steps.pins.outputs.rust`, #640), or a dated `nightly-YYYY-MM-DD`.
     required: true
   components:
     description: Comma-separated rustup components, e.g. `clippy,rustfmt`.

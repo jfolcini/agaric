@@ -27,8 +27,8 @@ members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "
 name = "agaric"
 version = "0.26.0"
 edition = "2024"
-# #640: MSRV documentation — keep in lockstep with rust-toolchain.toml and
-# the `toolchain:` inputs in .github/workflows/{ci,release,_validate}.yml.
+# #640: MSRV documentation — keep in lockstep with rust-toolchain.toml, which
+# the CI workflows read for their toolchain.
 # cargo refuses (resolver) / warns (build) when a consumer's toolchain is
 # older than this, instead of failing with inscrutable syntax errors.
 rust-version = "1.100.0"

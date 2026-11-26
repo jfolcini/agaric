@@ -60,13 +60,18 @@ runs:
         mkdir -p .cargo
         cp .cargo/config.toml.example .cargo/config.toml
 
+    - name: Read pins.txt
+      if: inputs.rust == 'true'
+      id: pins
+      shell: bash
+      run: bash scripts/pins.sh github-output
+
     - name: Install Rust toolchain
       if: inputs.rust == 'true'
       uses: ./.github/actions/rust-toolchain
       with:
-        # #640: exact pin, kept in lockstep with rust-toolchain.toml and
-        # src-tauri/Cargo.toml `rust-version`.
-        toolchain: 1.100.0
+        # #640: rust-toolchain.toml's exact channel.
+        toolchain: ${{ steps.pins.outputs.rust }}
         # The install is `--profile minimal`, which ships neither component;
         # the cargo-fmt / clippy prek hooks need both.
         components: clippy,rustfmt

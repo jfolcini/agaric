@@ -268,13 +268,16 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force >/dev/null || true
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # #640: rust-toolchain.toml's exact channel.
           # The cross `targets` below install onto this exact toolchain.
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Rust cache
@@ -292,10 +295,6 @@ jobs:
           # would defeat both caches.
           shared-key: rust-android
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Read pins.txt
-        id: pins
-        run: bash scripts/pins.sh github-output
 
       - name: Install cargo-auditable
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
