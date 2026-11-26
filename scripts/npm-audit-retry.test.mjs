@@ -79,7 +79,7 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
   assert.equal(run.status, 0)
   assert.equal(run.npxCalls, 2)
   assert.equal(retryLines(run.stderr).length, 1)
-  assert.match(run.stderr, /attempt 1 of 3 failed \(exit 1\); retrying in 5s\./)
+  assert.match(run.stderr, /attempt 1 of 5 failed \(exit 1\); retrying in 5s\./)
   assert.deepEqual(run.sleeps, ['5'])
 })
 
@@ -88,11 +88,11 @@ void test('a failure that clears on the next attempt is absorbed, with one logge
 void test('a failure that never clears fails closed, inside the attempt budget', () => {
   const run = runWrapper(Infinity)
   assert.notEqual(run.status, 0)
-  assert.equal(run.npxCalls, 3)
-  assert.deepEqual(run.sleeps, ['5', '15'])
+  assert.equal(run.npxCalls, 5)
+  assert.deepEqual(run.sleeps, ['5', '15', '60', '120'])
   // The underlying command's own output still reaches the reader.
   assert.match(run.stderr, /npm error audit endpoint returned an error/)
-  assert.match(run.stderr, /attempt 3 of 3 failed \(exit 1\); no attempts left\./)
+  assert.match(run.stderr, /attempt 5 of 5 failed \(exit 1\); no attempts left\./)
 })
 
 // npm caches what the registry answered (the attestations endpoint sends a
@@ -100,9 +100,9 @@ void test('a failure that never clears fails closed, inside the attempt budget',
 // response instead of asking again.
 void test('every attempt runs with its own empty npm cache', () => {
   const run = runWrapper(Infinity, ['npm', 'audit', 'signatures'])
-  assert.equal(run.caches.length, 3)
+  assert.equal(run.caches.length, 5)
   const dirs = run.caches.map((line) => line.split(' ')[0])
-  assert.equal(new Set(dirs).size, 3)
+  assert.equal(new Set(dirs).size, 5)
   for (const line of run.caches) assert.match(line, /^\/\S+ 0$/)
 })
 
