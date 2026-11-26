@@ -11,8 +11,10 @@
  * there. A row's move and typed text are read back after leaving the page and
  * coming back. Typing at the foot of the screen keeps the cursor above the
  * pinned toolbar, and a tap in a link shows page mode's link bubble alone,
- * inside the screen. The lane left of the text is narrower than a desktop's,
- * its chevron and checkbox still 44 px to a finger.
+ * inside the screen. A top-level task's checkbox starts the column's edge, as
+ * block mode's does, and its chevron ends its line, as block mode's does on a
+ * phone: the checkbox takes a tap either side of the edge up to its text box,
+ * the text a tap on it, and the chevron one anywhere in its 44 px.
  */
 
 import { devices, type Page } from '@playwright/test'
@@ -326,7 +328,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     })
   })
 
-  test('the lane left of the text is narrow, its chevron and checkbox 44 px to a finger', async ({
+  test("a top-level block's chevron ends its line; it, the checkbox and the text each take their own taps", async ({
     page,
   }) => {
     const [task] = await seedPage(page, 'Touch lane', ['task'])
@@ -357,26 +359,51 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
           return el?.closest('.page-block-content') ? 'text' : 'other'
         }
         const text = block.querySelector(':scope > .page-block-content') as HTMLElement
-        const textLeft = text.getBoundingClientRect().left
-        const chevron = center(block.querySelector('[data-testid="collapse-toggle"]'))
+        const textBox = text.getBoundingClientRect()
+        const toggle = block.querySelector('[data-testid="collapse-toggle"]') as HTMLElement
+        const toggleBox = toggle.getBoundingClientRect()
+        const area = getComputedStyle(toggle, '::before')
+        const chevron = center(toggle)
         const checkbox = center(block.querySelector('[data-testid="task-marker"]'))
+        const edge = (block.querySelector('.task-checkbox') as HTMLElement).getBoundingClientRect()
         return {
-          offset: textLeft - editor.getBoundingClientRect().left,
+          offset: edge.left - editor.getBoundingClientRect().left,
+          chevron: {
+            pastText: toggleBox.left - textBox.right,
+            beforeEnd: block.getBoundingClientRect().right - toggleBox.right,
+            width: Number.parseFloat(area.width),
+            height: Number.parseFloat(area.height),
+          },
           hits: [
             hit(chevron.x - 21, chevron.y),
+            hit(chevron.x + 21, chevron.y),
             hit(chevron.x, chevron.y - 21),
             hit(chevron.x, chevron.y + 21),
-            hit(checkbox.x - 21, checkbox.y),
-            hit(checkbox.x + 21, checkbox.y),
-            hit(textLeft + 1, checkbox.y),
+            hit(edge.left - 3, checkbox.y),
+            hit(checkbox.x + 12, checkbox.y),
+            hit(textBox.left + 1, checkbox.y),
           ],
         }
       },
       { selector: EDITOR, id: task },
     )
-    // A phone's `pl-14` (`index.css`), not the desktop lane the controls' boxes take side by side.
-    expect(lane.offset).toBeLessThan(60)
-    expect(lane.hits).toEqual(['chevron', 'chevron', 'chevron', 'checkbox', 'checkbox', 'text'])
+    // The checkbox starts the column's edge, the margin before it the frame's
+    // (`--block-hang`, `index.css`).
+    expect(lane.offset).toBeCloseTo(16, 0)
+    // The margin is too narrow for the chevron's 44 px, so it ends the line, right of the text.
+    expect(lane.chevron.pastText, 'chevron right of the text').toBeGreaterThanOrEqual(0)
+    expect(lane.chevron.beforeEnd, 'chevron ends the line').toBeCloseTo(0, 0)
+    expect(lane.chevron.width, 'chevron hit area width').toBeGreaterThanOrEqual(44)
+    expect(lane.chevron.height, 'chevron hit area height').toBeGreaterThanOrEqual(44)
+    expect(lane.hits).toEqual([
+      'chevron',
+      'chevron',
+      'chevron',
+      'chevron',
+      'checkbox',
+      'checkbox',
+      'text',
+    ])
   })
 
   test('a tap in a link shows its bubble alone, inside the screen', async ({ page }) => {

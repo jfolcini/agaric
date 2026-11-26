@@ -191,7 +191,10 @@ export function JournalPage({
     <div
       ref={journalRef}
       tabIndex={-1}
-      className={cn('space-y-4 outline-none', mode !== 'monthly' && 'w-full max-w-reading mx-auto')}
+      className={cn(
+        'space-y-4 outline-none',
+        mode !== 'monthly' && 'outline-column w-full max-w-reading mx-auto',
+      )}
     >
       {/* PEND-UX item 5 — `<h1>` landmark for the Journal view: the day
           itself in the day view, "Journal" in the multi-day modes. The App-

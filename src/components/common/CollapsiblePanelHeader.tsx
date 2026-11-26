@@ -28,7 +28,8 @@ export function CollapsiblePanelHeader({
       // `className` LAST: tailwind-merge is last-wins, so caller overrides have
       // to follow the base or they are silently dropped (#4713).
       className={cn(
-        'flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2',
+        // `collapsible-panel-header`: an outline column hangs its padding (`outline-column`).
+        'collapsible-panel-header flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2',
         'text-sm font-semibold text-muted-foreground',
         'hover:bg-accent/50 active:bg-accent/70 transition-colors',
         'focus-ring-visible',

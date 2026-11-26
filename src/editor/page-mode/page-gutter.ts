@@ -1,8 +1,10 @@
 /**
  * Page mode's gutter (#5691): block mode's grip and chevron
- * (`BlockGutterControls`, `BlockCollapseControl`), where block mode's control
- * lane sits, left of a task's checkbox or a plain line's text and on the first
- * line, the chevron nearer the text, as plain DOM with block mode's classes, labels and glyphs.
+ * (`BlockGutterControls`, `BlockCollapseControl`), where block mode's sit, left
+ * of a task's checkbox or a plain line's text and on the first line, the
+ * chevron just left of it and the grip left of that, as plain DOM with block
+ * mode's classes, labels and glyphs. On a phone a top-level block's chevron
+ * ends its line instead, as block mode's does (`index.css`).
  *
  * A block with blocks under it draws its chevron in its node view, outside its
  * editable text (`PageGutter`); the chevron collapses the block
@@ -266,10 +268,6 @@ export class PageGrip {
       this.block?.removeAttribute(GRIP_ON)
       this.block = block
       block.setAttribute(GRIP_ON, '')
-      element.toggleAttribute(
-        'data-chevron',
-        block.querySelector(':scope > .page-block-gutter') !== null,
-      )
       // Outside the block, it takes the block's first line box: a heading's differs.
       element.style.setProperty(
         '--block-first-line',
@@ -305,7 +303,6 @@ function drawChevron(chevron: HTMLButtonElement, collapsed: boolean): void {
   chevron.className = cn(
     COLLAPSE_TOGGLE_BASE,
     collapsed ? 'text-foreground' : COLLAPSE_TOGGLE_HIDDEN_AT_REST,
-    'max-sm:flex max-sm:items-center max-sm:justify-center',
   )
   chevron.setAttribute('data-collapsed', String(collapsed))
   chevron.setAttribute(

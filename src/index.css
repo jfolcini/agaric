@@ -998,46 +998,60 @@
 }
 @media (pointer: coarse) {
   :root {
-    --indent-width: 16px;
     --block-row-gap: 0.375rem; /* 6px — desktop + one scale step */
   }
 }
-/* Narrow-desktop / split-screen tablet windows in fine-pointer
- * mode never trip the `pointer: coarse` query, so a 360 px responsive-mode
- * window keeps 24 px indent and a depth-5 block consumes 120 px before any
- * content. Catch viewport width independently from pointer type. Both queries
- * can apply on a narrow phone (coarse + ≤640px); last-declared wins, and
- * 12 px ≤ 16 px so the phone case still tightens, not loosens. */
-@media (max-width: 640px) {
+/* A phone's window (`usePhoneLayout`'s width) spares less per level, but still
+ * room for a child's chevron between its parent's guide and its text. */
+@media (width < 48rem) {
   :root {
-    --indent-width: 12px;
+    --indent-width: 20px;
   }
 }
 
-/* A block's leading controls on a fine pointer, in block mode's row
- * (`SortableBlock`) and page mode's gutter alike, so a line's text lands at one
- * x in both. The lane fits the grip (a 1em glyph and `p-0.5`), its `gap-0.5`
- * and the chevron (`w-5`), and keeps 0.25rem clear of the box it starts;
- * a task's checkbox (`task-marker`, built as the grip) follows it; the gap
- * separates each from the next; the inset is the text box's own `px-3`
- * (`.ProseMirror`, `StaticBlock`). A task's text sits the checkbox and its gap
- * further in, and so does each block under a task, once per task above it
- * (`countTasksAtOrAbove`): a child starts one indent step past its parent's
- * text. Block mode on a coarse pointer adds none (`--block-tree-task-shift`):
- * there a task's checkbox sits on the text edge inside its own row
- * (`BlockInlineControls`), and a phone's narrow column cannot spare the shift
- * once per nested task. */
+/* A block's leading controls, in block mode's row (`SortableBlock`) and page
+ * mode's gutter alike, so a line's text lands at one x in both. The text starts
+ * the column's edge, and what leads it hangs left of that edge
+ * (`--block-hang`): the lane, which holds the grip (a 1em glyph and `p-0.5`)
+ * and keeps 0.25rem clear of the box it starts; the gap; the text box's own
+ * inset (`px-3`, `.ProseMirror`, `StaticBlock`), where the chevron sits. A
+ * task's checkbox (`task-marker`) starts on the edge, its `p-0.5` hanging, so
+ * its text sits the checkbox, the gap and the inset further in
+ * (`--block-task-shift`), and so does each block under a task, once per task
+ * above it (`countTasksAtOrAbove`): a child starts one indent step past its
+ * parent's text. A coarse pointer has no lane, and block mode there adds no
+ * shift per task (`--block-tree-task-shift`): a phone's narrow column cannot
+ * spare it once per nested task. The column keeps room for what hangs
+ * (`--block-room`, `outline-column`): the lane, and the selection checkbox
+ * left of it. */
 :root {
-  --block-lane: calc(var(--agaric-font-size, 1rem) + 1.875rem);
+  --block-lane: calc(var(--agaric-font-size, 1rem) + 0.5rem);
   --block-checkbox: calc(var(--agaric-font-size, 1rem) + 0.25rem);
   --block-gap: 0.25rem;
   --block-inset: 0.75rem;
-  --block-task-shift: calc(var(--block-checkbox) + var(--block-gap));
+  --block-hang: calc(var(--block-lane) + var(--block-gap) + var(--block-inset));
+  --block-room: calc(var(--block-hang) + 1rem);
+  /* How far before the edge the checkbox's box (`BlockInlineControls`) starts. */
+  --block-controls-lead: var(--block-inset);
+  --block-task-shift: calc(
+    var(--block-checkbox) - 0.125rem + var(--block-gap) + var(--block-inset)
+  );
   --block-tree-task-shift: var(--block-task-shift);
 }
 @media (pointer: coarse) {
   :root {
+    --block-hang: calc(var(--block-gap) + var(--block-inset));
+    /* A top-level chevron's 44 px hit area, which ends at its block's first glyph,
+     * so a tablet's pane does not clip it against the sidebar. */
+    --block-room: calc(var(--block-hang) + 1.75rem);
+    --block-controls-lead: var(--block-hang);
     --block-tree-task-shift: 0px;
+  }
+  /* A phone's top-level chevron ends its row instead (`SortableBlock`, `.page-mode-phone`). */
+  @media (width < 48rem) {
+    :root {
+      --block-room: var(--block-hang);
+    }
   }
   /* Block mode's checkbox sits on the text edge (`BlockInlineControls`); its hit
    * area ends where the text box starts, so a tap just left of the text edits
@@ -1047,10 +1061,43 @@
     right: calc(-1 * var(--block-gap));
     transform: translateY(-50%);
   }
+  /* The chevron's hit area ends at the block's first glyph, so a tap there edits the
+   * text or cycles the task rather than folding. */
+  .collapse-toggle::before {
+    left: auto;
+    right: 0;
+    transform: translateY(-50%);
+  }
+}
+
+/* A faint line down each nesting level of block mode's tree (`SortableBlock`),
+ * under the chevron of the block it hangs from, or, for a phone's top-level
+ * parent, whose chevron ends its row, where that chevron would sit. The border
+ * token's hairline, which `prefers-contrast` darkens. */
+.indent-guide {
+  @apply pointer-events-none absolute bottom-0 w-px bg-border/70;
+  top: calc(-1 * var(--block-row-gap));
+}
+
+/* A column the outline's text starts (`PageHeader`, `PageEditor`, `JournalPage`):
+ * where it meets the pane's padding (`p-4 md:p-6`, `App`), it keeps room inside
+ * itself for what its blocks hang left of its edge (`--block-room`). A section
+ * heading's button hangs its own `px-3`, as a block's text box hangs its
+ * inset, so its chevron starts the edge. */
+@utility outline-column {
+  --outline-margin: max(0px, (100% - var(--container-reading)) / 2);
+  padding-left: max(0px, calc(var(--block-room) - 1rem - var(--outline-margin)));
+  @media (width >= 48rem) {
+    padding-left: max(0px, calc(var(--block-room) - 1.5rem - var(--outline-margin)));
+  }
+  & .collapsible-panel-header {
+    margin-left: -0.75rem;
+  }
 }
 
 /* ── Responsive typography scale ───────────────────────────── */
-@media (max-width: 640px) {
+/* Under 768 px, where `usePhoneLayout` lays the app out as a phone. */
+@media (width < 48rem) {
   :root {
     --text-2xl: 1.25rem; /* 20px on mobile (down from 24px) */
     --text-3xl: 1.5rem; /* 24px on mobile (down from 30px) */
@@ -1318,13 +1365,18 @@
    editor lays one out (decision of 2026-10-28): no box per block and no mark on
    the one the cursor is in, a document's spacing between blocks, and the indent
    per depth and per task above (`PageBlock` sets it as a margin). The text sits in a frame
-   (`PageModeEditor`) where block mode's sits in the page column: past the lane
-   (`::before` below) that holds a block's chevron and grip, the gap and the
-   inset, less the frame's border. A task's checkbox and its gap push its text
-   further in, as block mode's row does. */
+   (`PageModeEditor`) that starts what block mode's row hangs (`--block-hang`)
+   left of the column, so the text starts the column's edge, as block mode's
+   does: past the lane (`::before` below) that holds a block's grip, the gap
+   and the inset, where its chevron sits, less the frame's border. A task's
+   checkbox, its gap and the inset push its text further in, as block mode's
+   row does. */
+.page-mode-frame {
+  margin-left: calc(-1 * var(--block-hang));
+}
 .ProseMirror.page-mode-editor {
   @apply py-3 pr-4;
-  padding-left: calc(var(--block-lane) + var(--block-gap) + var(--block-inset) - 1px);
+  padding-left: calc(var(--block-hang) - 1px);
   min-height: 0;
 }
 .page-mode-editor [data-page-block] {
@@ -1350,30 +1402,26 @@
 .page-mode-editor > [data-page-block]:first-child :is(h1, h2, h3, h4, h5, h6) {
   margin-top: 0;
 }
-/* A task's checkbox (`page-tasks.ts`) sits left of the text, centred on its
+/* A task's checkbox (`page-tasks.ts`) starts the block's edge, centred on its
    first line: its box (`min-h-block-line`) counts block mode's `py-1`, which
    page mode's text lacks, so it starts that much (`-top-1`) above the text. */
 .page-mode-editor .page-block-controls {
-  @apply absolute -top-1 -left-(--block-inset) select-none;
+  @apply absolute -top-1 -left-(--block-controls-lead) select-none;
 }
 .page-mode-editor [data-page-block][data-todo-state] {
   padding-left: var(--block-task-shift);
 }
-/* A block's chevron (`page-gutter.ts`) ends the lane, on the first line. */
+/* A block's chevron (`page-gutter.ts`) ends just left of its edge, on the first line. */
 .page-mode-editor .page-block-gutter {
-  @apply absolute -top-1 right-full mr-[calc(var(--block-gap)+var(--block-inset))] flex min-h-block-line min-w-(--block-lane) items-center justify-end gap-0.5 select-none;
+  @apply absolute -top-1 right-full z-10 flex min-h-block-line items-center select-none;
 }
 /* The editor's one grip (`page-gutter.ts`), outside its text, placed at the top
    left corner of the block under the pointer and moved from there into that
-   block's lane as the gutter above would hold it: its margin, then the
-   chevron (`w-5`) and the gutter's gap, when the block has one. The text's
+   block's lane, left of the gap and the inset the chevron sits in. The text's
    font size, as the lane's. */
 .page-grip {
   @apply absolute -mt-1 -ml-[calc(var(--block-gap)+var(--block-inset))] flex min-h-block-line -translate-x-full items-center select-none;
   font-size: var(--agaric-font-size, 1rem);
-}
-.page-grip[data-chevron] {
-  @apply -ml-[calc(var(--block-gap)+var(--block-inset)+1.375rem)];
 }
 /* Its block's chevron stays shown while the pointer is on the grip, outside the
    block, as it is while the pointer is on the block. */
@@ -1384,31 +1432,26 @@
    pointing anywhere in it puts the grip there and shows the chevron. */
 .page-mode-editor [data-page-block]::before {
   content: '';
-  @apply absolute bottom-0 right-full w-[calc(var(--block-lane)+var(--block-gap)+var(--block-inset))];
+  @apply absolute bottom-0 right-full w-(--block-hang);
   top: calc(-1 * var(--page-block-gap, 0px));
 }
-/* On a phone (`PageModeEditor`) the lane is as narrow as the chevron and the
-   checkbox drawn side by side: each reaches 44 px as a hit area
-   (`touch-hit-area`) rather than as its box, and the checkbox's stops at the
-   text. The checkbox is in the lane, so a task's text, and its children's, sit
-   where a plain block's do. */
-.page-mode-phone {
-  --block-task-shift: 0px;
-}
+/* On a phone (`PageModeEditor`) the frame runs to the screen's sides, with no
+   side borders, so the text starts the column's edge as block mode's does. */
 .page-mode-phone > .page-mode-editor {
-  @apply pl-14;
+  padding-left: var(--block-hang);
 }
-.page-mode-phone :is(.collapse-toggle, .task-marker) {
-  @apply min-h-0 min-w-0 touch-hit-area;
+/* There a top-level block's chevron ends its line, as block mode's does: the
+   margin left of the column is too narrow for a 44 px target. Its hit area
+   (`touch-hit-area`) stays centred on the first line, so the line keeps its
+   height. */
+.page-mode-phone [data-page-block][data-depth='0']:has(> .page-block-gutter) {
+  padding-right: 2.75rem;
 }
-.page-mode-phone .page-block-controls {
-  @apply left-auto right-full mr-3;
+.page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter {
+  @apply right-0;
 }
-.page-mode-phone .page-block-gutter {
-  @apply mr-9 min-w-0;
-}
-.page-mode-phone [data-page-block]::before {
-  @apply w-14;
+.page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter > .collapse-toggle {
+  @apply w-11;
 }
 /* And no grip: a tap brought it to the tapped block, a drag handle a phone
    does without; the toolbar's Block actions opens the menu it would (#7040). */
@@ -2762,6 +2805,21 @@ mark[data-highlight-color='purple'] {
   & > svg {
     width: 1rem;
     height: 1rem;
+  }
+}
+
+/* A row's secondary control that a mouse finds by hovering the row (`group`).
+ * A coarse pointer has no hover, so the control shows at rest there; a fine
+ * pointer reveals it on hover, or when the keyboard focuses into the row. A
+ * control that must show regardless (a set bookmark) leaves the utility off. */
+@utility hover-reveal {
+  @apply transition-opacity;
+  @media (pointer: fine) {
+    opacity: 0;
+    :where(.group):hover &,
+    :where(.group):has(:focus-visible) & {
+      opacity: 1;
+    }
   }
 }
 

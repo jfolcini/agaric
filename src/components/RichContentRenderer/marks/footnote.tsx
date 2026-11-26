@@ -1,7 +1,7 @@
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { InfoPopover } from '@/components/ui/info-popover'
 import type { FootnoteRefNode, ParagraphNode } from '@/editor/types'
 import { i18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -9,7 +9,8 @@ import { cn } from '@/lib/utils'
 /**
  * A footnote reference `[^label]` (#6033): its number on the page, which
  * focuses the label's definition when clicked, or, muted, a reference whose
- * label nothing on the page defines. With no page to number it (`ctx.footnotes`
+ * label nothing on the page defines, which says so on a click, tap or Enter
+ * where the content is interactive. With no page to number it (`ctx.footnotes`
  * unset: a search hit, a history row), the label as written.
  */
 export function renderFootnoteRef(
@@ -29,23 +30,16 @@ export function renderFootnoteRef(
   const definition = ctx.footnotes.definitions.get(label)
   if (definition === undefined) {
     const missing = i18n.t('editor.footnoteMissing')
+    const shown = (
+      <>
+        {number}
+        <span className="sr-only"> {missing}</span>
+      </>
+    )
     return (
-      <Tooltip key={key}>
-        <TooltipTrigger asChild>
-          <sup
-            className={cn(
-              'footnote-ref footnote-ref-missing',
-              ctx.interactive === true && 'focus-ring-visible',
-            )}
-            data-testid="footnote-ref"
-            {...(ctx.interactive === true ? { tabIndex: 0 } : {})}
-          >
-            {number}
-            <span className="sr-only"> {missing}</span>
-          </sup>
-        </TooltipTrigger>
-        <TooltipContent>{missing}</TooltipContent>
-      </Tooltip>
+      <sup key={key} className="footnote-ref footnote-ref-missing" data-testid="footnote-ref">
+        {ctx.interactive === true ? <InfoPopover content={missing}>{shown}</InfoPopover> : shown}
+      </sup>
     )
   }
   const onNavigate = ctx.interactive === true ? ctx.onNavigate : undefined

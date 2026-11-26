@@ -4,7 +4,8 @@
  * Validates:
  *  1. Shows Link2 icon when block has `blocked_by` property
  *  2. Shows nothing when block has no `blocked_by` property
- *  3. Tooltip shows "Blocked by" text
+ *  3. "Blocked by" names the indicator and opens on a click (an InfoPopover,
+ *     so a tap reaches it too)
  *  4. axe a11y audit
  * 5. when wrapped in `BatchPropertiesProvider`,
  *     the indicator does NOT fire its own `getProperties` IPC; it reads
@@ -12,6 +13,7 @@
  */
 
 import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -195,6 +197,29 @@ describe('DependencyIndicator', () => {
       'aria-label',
       expect.stringContaining('Fix login bug'),
     )
+  })
+
+  it('opens "Blocked by: {title}" on a click, with no a11y violations open', async () => {
+    const user = userEvent.setup()
+    mockGetProperties.mockResolvedValue([
+      {
+        key: 'blocked_by',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: 'BLOCKING_BLOCK',
+      },
+    ])
+    mockBatchResolve.mockResolvedValue([
+      { id: 'BLOCKING_BLOCK', title: 'Fix login bug', block_type: 'block', deleted: false },
+    ])
+
+    render(<DependencyIndicator {...defaultProps()} />)
+
+    await user.click(await screen.findByRole('button', { name: 'Blocked by: Fix login bug' }))
+    const popover = await screen.findByRole('dialog', { name: 'Blocked by: Fix login bug' })
+    expect(popover).toHaveTextContent('Blocked by: Fix login bug')
+    expect(await axe(popover)).toHaveNoViolations()
   })
 
   it('shows fallback aria-label when title resolution fails', async () => {

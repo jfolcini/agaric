@@ -357,9 +357,8 @@ describe('BlockInlineControls', () => {
   })
 })
 
-// #1968: the collapse chevron, extracted from BlockInlineControls into the
-// gutter lane (desktop) and, on touch, rendered at the right end of the row. A
-// leaf renders nothing on either.
+// #1968: the collapse chevron, extracted from BlockInlineControls; the row
+// places it just left of the block's text (#7040). A leaf renders nothing.
 describe('BlockCollapseControl (#1968)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -432,19 +431,12 @@ describe('BlockCollapseControl (#1968)', () => {
     expect(onToggleCollapse).toHaveBeenCalledWith('BLOCK_1')
   })
 
-  it('the chevron (non-touch) uses max-sm: classes, not [@media(pointer:coarse)]', () => {
-    renderCollapse(makeCollapseProps({ hasChildren: true, isTouch: false }))
-    const chevron = screen.getByTestId('collapse-toggle')
-    expect(chevron.className).not.toContain('[@media(pointer:coarse)]')
-    expect(chevron.className).toContain('max-sm:')
-  })
-
-  // ── Touch: a plain collapse toggle at the right end of the row (#5332 item 10) ──
-  it('on touch, the chevron is a plain, always-visible 44px collapse toggle', () => {
+  // ── Touch: a plain collapse toggle (#5332 item 10) ──
+  it('on touch, the chevron is a plain, always-visible collapse toggle with a 44px hit area', () => {
     renderCollapse(makeCollapseProps({ hasChildren: true, isTouch: true }))
     const chevron = screen.getByTestId('collapse-toggle')
     expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
-    expect(chevron.className).toContain('touch-target')
+    expect(chevron.className).toContain('touch-hit-area')
     expect(chevron.className).not.toContain('opacity-0')
     expect(chevron.className).not.toContain('touch-none')
     expect(chevron.className).not.toContain('cursor-grab')

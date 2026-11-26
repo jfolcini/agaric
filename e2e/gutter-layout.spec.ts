@@ -1,14 +1,16 @@
 /**
  * A block's gutter on desktop, laid out alike in block mode and page mode
  * against the mock backend: a line's text lands at one x in both modes, at
- * every font size; a plain line reserves no room for a task's checkbox; the
- * grip, the chevron and a task's checkbox sit inside the mode's box, the grip's
+ * every font size; a plain line reserves no room for a task's checkbox, which
+ * starts where a plain line's text does; block mode's grip and chevron hang
+ * left of the page column, the chevron between the grip and the text, while a
+ * task's checkbox sits inside it; page mode's sit inside its frame, the grip's
  * glyph `SLACK` px clear of its edge; hovering a row moves no text; a child's
  * text starts one indent step past its parent's, a task's included, and moves
  * as its parent becomes a task or stops being one; on a phone, where neither
- * mode moves a task's children, a child starts where a plain block's would; and
- * `/todo`, Ctrl+Enter and the block menu each still make a plain line a task,
- * read back from the backend.
+ * mode moves a task's children, a child starts where a plain block's would, and
+ * a task's text where block mode's does; and `/todo`, Ctrl+Enter and the block
+ * menu each still make a plain line a task, read back from the backend.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -101,6 +103,8 @@ const pageText = (page: Page, id: string | undefined): Locator =>
 
 const pageCheckbox = (page: Page, id: string | undefined): Locator =>
   pageBlock(page, id).locator(':scope > .page-block-controls [data-testid="task-marker"]')
+/** The checkbox's drawn box, inside its button's `p-0.5`. */
+const drawn = (marker: Locator): Locator => marker.locator('.task-checkbox')
 
 /** Put page mode's cursor at the end of block `index`'s text, and focus the document. */
 async function caretAtEnd(page: Page, index: number): Promise<void> {
@@ -233,12 +237,14 @@ for (const size of ['small', 'medium', 'large'] as const) {
       // Block mode's box: the page column (`PageEditor`'s root), which the title starts.
       const column = await box(page.locator('.page-editor'))
       const blockXs = await textXs((id) => blockText(page, id), ids)
-      // A plain line's text starts the inset past where a task's checkbox starts, and a
-      // task's text the gap and the inset past where its checkbox ends.
-      const blockCheckbox = await box(blockRow(page, ids[SHAPE.task]).getByTestId('task-marker'))
-      expect(blockXs.parent - blockCheckbox.x, 'plain parent').toBeCloseTo(INSET, 0)
-      expect(blockXs.leaf - blockCheckbox.x, 'plain leaf').toBeCloseTo(INSET, 0)
-      expect(blockXs.task - blockCheckbox.right, 'task').toBeCloseTo(GAP + INSET, 0)
+      // A plain line's text starts where a task's checkbox does, and a task's text the
+      // gap and the inset past where its checkbox's button ends.
+      const marker = blockRow(page, ids[SHAPE.task]).getByTestId('task-marker')
+      const blockCheckbox = await box(drawn(marker))
+      expect(blockXs.parent - blockCheckbox.x, 'plain parent').toBeCloseTo(0, 0)
+      expect(blockXs.leaf - blockCheckbox.x, 'plain leaf').toBeCloseTo(0, 0)
+      expect(blockXs.leaf - column.x, 'plain leaf vs the column').toBeCloseTo(0, 0)
+      expect(blockXs.task - (await box(marker)).right, 'task').toBeCloseTo(GAP + INSET, 0)
       for (const name of NAMES) {
         const row = blockRow(page, ids[SHAPE[name]])
         await row.hover()
@@ -247,17 +253,22 @@ for (const size of ['small', 'medium', 'large'] as const) {
         expect(await textX(blockText(page, ids[SHAPE[name]])), `${name}: x, hovered`).toBe(
           blockXs[name],
         )
-        expectInside(await box(grip), column, `${name}: grip`)
-        expect(
-          (await box(grip.locator('svg'))).x - column.x,
-          `${name}: grip glyph inside the column`,
-        ).toBeGreaterThanOrEqual(SLACK)
+        const gripBox = await box(grip)
+        expect(gripBox.right, `${name}: grip left of the column`).toBeLessThanOrEqual(column.x)
         if (HAS_CHEVRON.has(name)) {
-          expectInside(await box(row.getByTestId('collapse-toggle')), column, `${name}: chevron`)
+          const chevron = await box(row.getByTestId('collapse-toggle'))
+          expect(chevron.x, `${name}: chevron right of the grip`).toBeGreaterThanOrEqual(
+            gripBox.right,
+          )
+          expect(chevron.right, `${name}: chevron left of the column`).toBeLessThanOrEqual(column.x)
         }
         // No checkbox on a plain line, even hovered.
         if (IS_TASK.has(name)) {
-          expectInside(await box(row.getByTestId('task-marker')), column, `${name}: checkbox`)
+          expectInside(
+            await box(drawn(row.getByTestId('task-marker'))),
+            column,
+            `${name}: checkbox`,
+          )
         } else {
           await expect(row.getByTestId('task-marker')).toHaveCount(0)
         }
@@ -274,10 +285,13 @@ for (const size of ['small', 'medium', 'large'] as const) {
           `${name}: page x vs block x`,
         ).toBeLessThanOrEqual(1)
       }
-      const pageBox = await box(pageCheckbox(page, ids[SHAPE.task]))
-      expect(pageXs.parent - pageBox.x, 'page plain parent').toBeCloseTo(INSET, 0)
-      expect(pageXs.leaf - pageBox.x, 'page plain leaf').toBeCloseTo(INSET, 0)
-      expect(pageXs.task - pageBox.right, 'page task').toBeCloseTo(GAP + INSET, 0)
+      const pageBox = await box(drawn(pageCheckbox(page, ids[SHAPE.task])))
+      expect(pageXs.parent - pageBox.x, 'page plain parent').toBeCloseTo(0, 0)
+      expect(pageXs.leaf - pageBox.x, 'page plain leaf').toBeCloseTo(0, 0)
+      expect(
+        pageXs.task - (await box(pageCheckbox(page, ids[SHAPE.task]))).right,
+        'page task',
+      ).toBeCloseTo(GAP + INSET, 0)
       for (const name of NAMES) {
         const at = pageBlock(page, ids[SHAPE[name]])
         await at.hover()
@@ -386,7 +400,7 @@ test.describe('gutter layout on a phone @editor @pages @mobile', () => {
     const { ids } = await seed(page, 'Indent phone', NESTED)
     await openPageMobile(page, 'Indent phone')
     const step = await indentStep(page)
-    expect(step, '--indent-width').toBe(12)
+    expect(step, '--indent-width').toBe(20)
     await expect(blockText(page, ids[5])).toBeVisible()
     // A phone's column cannot spare a checkbox per nested task (`--block-tree-task-shift`).
     const expectLikePlain = async (text: (index: number) => Locator, what: string) => {
@@ -402,14 +416,15 @@ test.describe('gutter layout on a phone @editor @pages @mobile', () => {
       )
     }
     await expectLikePlain((i) => blockText(page, ids[i]), 'phone block mode')
+    const blockTask = await textX(blockText(page, ids[0]))
 
     await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
     await page.getByRole('menuitem', { name: 'Edit as page', exact: true }).tap()
     await expect(pageCheckbox(page, ids[0])).toBeVisible()
     await expectLikePlain((i) => pageText(page, ids[i]), 'phone page mode')
-    // Page mode's phone checkbox sits in the lane.
-    expect(await textX(pageText(page, ids[0])), 'phone page mode: task vs plain').toBeCloseTo(
-      await textX(pageText(page, ids[3])),
+    // A task's text starts past its checkbox, as block mode's does.
+    expect(await textX(pageText(page, ids[0])), 'phone page mode: task vs block mode').toBeCloseTo(
+      blockTask,
       0,
     )
   })

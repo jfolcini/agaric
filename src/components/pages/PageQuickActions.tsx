@@ -33,7 +33,7 @@
  *     journal day header were too easy to miss when gated behind
  *     group-hover, so a live UX review asked for them to render
  *     unconditionally (same as 'header', just the smaller `icon-xs` size).
- *   - 'row' — `icon-xs`, same hover-reveal as journal. Kept here so a
+ *   - 'row' — `icon-xs`, hidden at rest until hovered (`hover-reveal`). Kept here so a
  * Future `PageRow` refactor (deferred) can switch
  *     without touching this file's surface area.
  */
@@ -100,15 +100,6 @@ const PRESETS: Record<PageQuickActionsVariant, VariantPreset> = {
   },
 }
 
-/**
- * Shared class fragment that delivers:
- *   - hover-reveal opacity transition (desktop only),
- *   - always-visible on coarse pointers (touch),
- *   - focus-visible opacity bump (keyboard nav can still find the button),
- *   - 44 px hit target on coarse pointers via `[@media(pointer:coarse)]:h-11`.
- */
-const HOVER_REVEAL =
-  'shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity'
 const TOUCH_TARGET = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11'
 
 export function PageQuickActions({
@@ -137,7 +128,7 @@ export function PageQuickActions({
   const bookmarkLabel = starred ? t('pageHeader.removeBookmark') : t('pageHeader.addBookmark')
   const deleteLabel = t('pageHeader.deletePage')
 
-  const revealClass = preset.hoverReveal ? HOVER_REVEAL : 'shrink-0'
+  const revealClass = preset.hoverReveal ? 'shrink-0 hover-reveal' : 'shrink-0'
 
   return (
     <div
