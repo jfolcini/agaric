@@ -57,11 +57,12 @@ pub async fn durable_barriers(pool: &SqlitePool) -> i64 {
 /// Make every later durability barrier on `pool`'s database fail, as an I/O
 /// error on its commit would.
 pub async fn break_durability_barrier(pool: &SqlitePool) {
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER break_durability_barrier BEFORE INSERT ON app_settings \
-         WHEN NEW.key = 'sync.durable_barriers' \
+         WHEN NEW.key = '{}' \
          BEGIN SELECT RAISE(ABORT, 'the durability barrier is broken'); END",
-    )
+        crate::db::durability::DURABLE_BARRIERS_KEY
+    )))
     .execute(pool)
     .await
     .expect("install the trigger that fails the barrier");

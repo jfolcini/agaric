@@ -2,7 +2,7 @@
 # The npm floor, in one place. package.json carries both halves:
 #   engines.npm      the floor (">=12.0.0"); `npm install` / `npm ci` enforce it
 #                    through .npmrc `engine-strict`, `npm run` does not.
-#   packageManager   the exact npm every installer pulls ("npm@12.2.3").
+#   packageManager   the exact npm every installer pulls ("npm@X.Y.Z").
 #
 #   scripts/require-npm.sh             fail unless the npm on PATH meets the floor
 #   scripts/require-npm.sh --install   first install the pinned npm globally when it does not
@@ -30,7 +30,7 @@ read -r floor pin < <(node -e '
   const f = /^>=(\d+)\.\d+\.\d+$/.exec((p.engines || {}).npm || "");
   const m = /^npm@(\d+\.\d+\.\d+)$/.exec(p.packageManager || "");
   if (!f || !m) {
-    console.error("package.json needs engines.npm like \">=12.0.0\" and packageManager like \"npm@12.2.3\"");
+    console.error("package.json needs engines.npm like \">=12.0.0\" and packageManager like \"npm@X.Y.Z\"");
     process.exit(1);
   }
   console.log(f[1], m[1]);

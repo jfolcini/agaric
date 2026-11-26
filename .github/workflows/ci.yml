@@ -515,10 +515,11 @@ jobs:
         run: df -h /
 
   # ---------------------------------------------------------------------------
-  # Keep the real-backend lane's runtime `.deb` cache warm. When
-  # `e2e-tauri-weekly` ran on main only weekly, its own saves were evicted
-  # before anything read them (#5853), and a runner downloading from a slow
-  # mirror stalled the lane. A hit stops at the probe.
+  # Keep the real-backend lane's runtime `.deb` cache warm. A PR's lane run
+  # restores it but cannot save it (#5853), and its key moves with the runner
+  # image, so without this a PR can meet a key no nightly run has saved yet and
+  # download from the mirror, where a slow one stalls the lane. A hit stops at
+  # the probe.
   # ---------------------------------------------------------------------------
   e2e-tauri-apt-cache:
     # `refs/heads/main` is only ever a push here: PR runs carry `refs/pull/N/merge`.

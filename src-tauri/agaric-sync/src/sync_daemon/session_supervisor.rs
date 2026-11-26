@@ -1687,7 +1687,7 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// The retry itself is owed and is not touched: the backoff ladder already caps
 /// at the resync cadence, and [`SyncScheduler::peers_due_for_resync`] reads
 /// `synced_at` only. A history fork is the exception: no retry heals it, so the
-/// peer is held ([`SyncScheduler::hold`]).
+/// booking holds the peer ([`SyncScheduler::record_failure_and_take_report`]).
 ///
 /// `still_serving` ([`peer_pulled_from_us_recently`]: has this peer streamed to
 /// us inside two resync intervals) is part of the key, not a switch: "our pull
@@ -1730,6 +1730,10 @@ fn record_initiator_failure(
     // those are the peers the eviction policy protects. See `PeerMembership`.
     let membership = PeerMembership::of(peer_refs, peer_id);
 
+    let code = match report_as {
+        Some(ReportAs::Code(code)) => Some(code),
+        Some(ReportAs::Nothing) | None => None,
+    };
     // One acquisition books the failure and decides the report together.
     // Keyed on the message, not the streak count: a failure whose cause changes
     // mid-streak is news. A churning text degrades to reporting every cycle,
@@ -1739,19 +1743,9 @@ fn record_initiator_failure(
         &message,
         still_serving_this_peer,
         membership,
+        code,
     );
 
-    let code = match report_as {
-        Some(ReportAs::Code(code)) => Some(code),
-        Some(ReportAs::Nothing) | None => None,
-    };
-    // #7065: a retry meets the same fork, after the whole snapshot crosses again.
-    if matches!(
-        code,
-        Some(SyncErrorCode::OwnHistoryFork | SyncErrorCode::PeerHistoryFork)
-    ) {
-        scheduler.hold(peer_id);
-    }
     // #6523: an away peer is a state the frontend shows without a toast, so
     // every attempt restates it. A withheld repeat would end the attempt's
     // progress channel in a bare error, which the frontend reads as a failure.
