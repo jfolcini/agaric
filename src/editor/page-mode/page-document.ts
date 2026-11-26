@@ -43,7 +43,7 @@ export const PageBlock = Node.create({
             ? {
                 'data-depth': String(depth),
                 // Past a task's checkbox per task above it (`PageLists`), as block mode's row.
-                style: `margin-left: calc(var(--indent-width) * ${depth} + var(--block-task-shift) * var(--tasks-above, 0))`,
+                style: `margin-left: calc(var(--indent-width) * ${depth} + var(--block-tree-task-shift) * var(--tasks-above, 0))`,
               }
             : { 'data-depth': '0' }
         },

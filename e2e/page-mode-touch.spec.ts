@@ -11,8 +11,10 @@
  * there. A row's move and typed text are read back after leaving the page and
  * coming back. Typing at the foot of the screen keeps the cursor above the
  * pinned toolbar, and a tap in a link shows page mode's link bubble alone,
- * inside the screen. The lane left of the text is narrower than a desktop's,
- * its chevron and checkbox still 44 px to a finger.
+ * inside the screen. A task's checkbox starts the column's edge, as block
+ * mode's does, the chevron in the margin left of it: the chevron takes a tap
+ * left of the edge, the checkbox one right of it up to its text box, and the
+ * text a tap on it.
  */
 
 import { devices, type Page } from '@playwright/test'
@@ -326,7 +328,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
     })
   })
 
-  test('the lane left of the text is narrow, its chevron and checkbox 44 px to a finger', async ({
+  test('the chevron sits in the margin left of the checkbox, each taking its own taps', async ({
     page,
   }) => {
     const [task] = await seedPage(page, 'Touch lane', ['task'])
@@ -360,23 +362,25 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
         const textLeft = text.getBoundingClientRect().left
         const chevron = center(block.querySelector('[data-testid="collapse-toggle"]'))
         const checkbox = center(block.querySelector('[data-testid="task-marker"]'))
+        const edge = (block.querySelector('.task-checkbox') as HTMLElement).getBoundingClientRect()
         return {
-          offset: textLeft - editor.getBoundingClientRect().left,
+          offset: edge.left - editor.getBoundingClientRect().left,
           hits: [
-            hit(chevron.x - 21, chevron.y),
+            hit(chevron.x - 6, chevron.y),
             hit(chevron.x, chevron.y - 21),
             hit(chevron.x, chevron.y + 21),
-            hit(checkbox.x - 21, checkbox.y),
-            hit(checkbox.x + 21, checkbox.y),
+            hit(edge.left - 3, checkbox.y),
+            hit(checkbox.x + 12, checkbox.y),
             hit(textLeft + 1, checkbox.y),
           ],
         }
       },
       { selector: EDITOR, id: task },
     )
-    // A phone's `pl-14` (`index.css`), not the desktop lane the controls' boxes take side by side.
-    expect(lane.offset).toBeLessThan(60)
-    expect(lane.hits).toEqual(['chevron', 'chevron', 'chevron', 'checkbox', 'checkbox', 'text'])
+    // The checkbox starts the column's edge, the margin before it the frame's
+    // (`--block-hang`, `index.css`).
+    expect(lane.offset).toBeCloseTo(16, 0)
+    expect(lane.hits).toEqual(['chevron', 'chevron', 'chevron', 'chevron', 'checkbox', 'text'])
   })
 
   test('a tap in a link shows its bubble alone, inside the screen', async ({ page }) => {

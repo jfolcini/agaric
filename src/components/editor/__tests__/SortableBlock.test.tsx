@@ -1597,7 +1597,7 @@ describe('SortableBlock inline controls', () => {
     expect(container.querySelector('.inline-controls')).toBeInTheDocument()
   })
 
-  it('chevron is inside the control lane, not the inline-controls (#1968)', () => {
+  it('chevron sits outside the control lane and the inline-controls, after the grip and before the checkbox (#7040)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1609,12 +1609,19 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    // #1968: the chevron moved into the gutter control lane (co-located with the
-    // drag handle); the inline-controls now holds only the task marker.
-    const lane = container.querySelector('.block-control-lane')
-    expect(lane?.querySelector('.collapse-toggle')).toBeInTheDocument()
-    const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.querySelector('.collapse-toggle')).not.toBeInTheDocument()
+    // #7040: the chevron sits just left of the first glyph, out of the lane, so
+    // the grip, the chevron and the checkbox keep their order for the keyboard.
+    const lane = container.querySelector('.block-control-lane') as HTMLElement
+    const chevron = container.querySelector('.collapse-toggle') as HTMLElement
+    const inlineControls = container.querySelector('.inline-controls') as HTMLElement
+    expect(lane.querySelector('.collapse-toggle')).not.toBeInTheDocument()
+    expect(inlineControls.querySelector('.collapse-toggle')).not.toBeInTheDocument()
+    expect(lane.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(chevron.compareDocumentPosition(inlineControls) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
   })
 
   it('checkbox is inside inline-controls', () => {
@@ -1678,20 +1685,6 @@ describe('SortableBlock inline controls', () => {
 
     const wrapper = container.querySelector('.sortable-block')
     expect(wrapper?.className).toContain('gap-1')
-  })
-
-  it('control lane uses a tight gap-0.5 between drag handle and chevron (#1968)', () => {
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-      />,
-    )
-
-    const gutter = container.querySelector('.block-control-lane')
-    expect(gutter?.className).toContain('gap-0.5')
   })
 
   it('gutter holds only the drag handle (no delete button, no spacer) at rest', () => {
@@ -3438,7 +3431,7 @@ describe('SortableBlock vertical alignment', () => {
     expect(chevron.classList.contains('w-4')).toBe(true)
   })
 
-  it('control lane and inline-controls each set an explicit gap (#1968)', () => {
+  it('inline-controls set an explicit gap (#1968)', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3450,12 +3443,9 @@ describe('SortableBlock vertical alignment', () => {
       />,
     )
 
-    const gutter = container.querySelector('.block-control-lane')
     const inlineControls = container.querySelector('.inline-controls')
 
-    // #1968: the lane tightened to gap-0.5 (drag + chevron pack snugly); the
-    // inline-controls keep their gap-1 rhythm for the task marker + metadata.
-    expect(gutter?.className).toContain('gap-0.5')
+    // The inline-controls keep their gap-1 rhythm for the task marker.
     expect(inlineControls?.className).toContain('gap-1')
   })
 
@@ -4451,7 +4441,7 @@ describe(' responsive layout', () => {
 // On a coarse pointer there is no leading lane and no drag grip: text starts
 // where the row starts, a hold anywhere on the row lifts it (dnd-kit's
 // TouchSensor is wired to the row's `touchstart`), and a parent's collapse
-// chevron sits at the right end of the row. These tests force coarse-pointer
+// chevron sits just left of its text. These tests force coarse-pointer
 // (`matchMedia('(pointer: coarse)')` + `maxTouchPoints`), which drives both
 // SortableBlock's `isTouchDevice` gate and `useIsTouch`.
 describe('SortableBlock touch rows (#5332 item 10)', () => {
@@ -4587,17 +4577,17 @@ describe('SortableBlock touch rows (#5332 item 10)', () => {
     }
   })
 
-  it("a parent's collapse chevron sits after the text column; a leaf has none", () => {
+  it("a parent's collapse chevron comes before the text column; a leaf has none", () => {
     const { unmount } = renderTouchRow({ hasChildren: true })
     const chevron = screen.getByTestId('collapse-toggle')
     const content = screen.getByTestId('swipe-content')
     const textColumn = content.querySelector('.flex-1') as HTMLElement
-    expect(chevron.parentElement).toBe(content)
-    expect(textColumn.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(content.contains(chevron)).toBe(true)
+    expect(chevron.compareDocumentPosition(textColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    // Always visible, a 44px target, no drag role.
-    expect(chevron.className).toContain('touch-target')
+    // Always visible, a 44px hit area, no drag role.
+    expect(chevron.className).toContain('touch-hit-area')
     expect(chevron.className).not.toContain('opacity-0')
     expect(chevron.className).not.toContain('touch-none')
     expect(chevron.className).not.toContain('cursor-grab')

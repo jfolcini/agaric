@@ -206,19 +206,19 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     const parentText = await text(ids[0])
     const parentGrip = await box(grip(page))
     const parentChevron = await box(chevron(page, ids[0]))
-    // In the frame, the grip just left of the chevron, the chevron left of the text, on its line.
+    // In the frame, the grip just left of the chevron, the chevron just left of the text, on its line.
     expect(parentGrip.x).toBeGreaterThanOrEqual(frame.x)
-    expect(parentChevron.x - parentGrip.right).toBe(2)
-    expect(parentChevron.right).toBeLessThan(parentText.x)
+    expect(parentChevron.x - parentGrip.right).toBeCloseTo(0, 0)
+    expect(parentChevron.right).toBeLessThanOrEqual(parentText.x)
     expect(Math.abs(parentGrip.middle - parentText.middle)).toBeLessThanOrEqual(1)
     expect(Math.abs(parentChevron.middle - parentText.middle)).toBeLessThanOrEqual(1)
-    // A block with no chevron has its grip where the chevron would be, as far left of its text.
+    // A block with no chevron has its grip as far left of its text as one with a chevron.
     await block(page, ids[1]).hover()
     await expect(chevron(page, ids[1])).toHaveCount(0)
     const childText = await text(ids[1])
     await expect
       .poll(async () => (await box(grip(page))).right)
-      .toBe(parentChevron.right + childText.x - parentText.x)
+      .toBe(parentGrip.right + childText.x - parentText.x)
     expect(Math.abs((await box(grip(page))).middle - childText.middle)).toBeLessThanOrEqual(1)
 
     expect(await axeViolations(page, '.page-editor')).toEqual([])
@@ -508,12 +508,12 @@ test.describe('page mode gutter (#5691) @editor @pages', () => {
     await expect.poll(() => readClipboard(page)).toBe(`((${ids[0]}))`)
     await expect(page.locator(EDITOR)).toBeFocused()
 
-    // In the second block's lane, left of where the grip sits on it.
+    // In the second block's lane, left of where the grip sits on it, inside the frame.
     await pointAt(page, ids[1])
     const second = await block(page, ids[1]).boundingBox()
     const handle = await grip(page).boundingBox()
     if (second === null || handle === null) throw new Error('no box')
-    await page.mouse.click(handle.x - 8, second.y + second.height / 2)
+    await page.mouse.click(handle.x - 2, second.y + second.height / 2)
     await page.keyboard.type('!')
     expect(await shown(page)).toEqual([
       ['first!', 0],

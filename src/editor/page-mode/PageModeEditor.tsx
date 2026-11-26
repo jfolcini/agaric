@@ -1168,10 +1168,14 @@ function PageModeDocument({
   return (
     <>
       {/* The document's frame, as GitLab's editor draws one: the toolbar, the text, and a footer
-          under it with a hint and the switch to Edit as Markdown. */}
+          under it with a hint and the switch to Edit as Markdown. It starts what block mode's
+          rows hang left of the column (`page-mode-frame`); a phone's runs to the screen's sides. */}
       <div
         ref={frameRef}
-        className="rounded-md border border-border"
+        className={cn(
+          'page-mode-frame rounded-md border border-border',
+          isTouch && phoneLayout && '-mr-(--block-hang) rounded-none border-x-0',
+        )}
         onBlur={
           isTouch
             ? (e) => {

@@ -235,7 +235,7 @@ describe('the grip', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
-  it('goes to the block under the pointer, beside its chevron if it has one, and acts on that block', async () => {
+  it('goes to the block under the pointer and acts on that block', async () => {
     const { container, editor } = mount(TREE)
     const menus: string[] = []
     editor.view.dom.addEventListener(GRIP_MENU, (event) => {
@@ -246,12 +246,10 @@ describe('the grip', () => {
 
     await point(textOf(container, C))
     expect(frame(container).style.top).toBe('64px')
-    expect(frame(container)).not.toHaveAttribute('data-chevron')
     fireEvent.click(grip(container))
 
     await point(textOf(container, A))
     expect(frame(container).style.top).toBe('0px')
-    expect(frame(container)).toHaveAttribute('data-chevron')
     fireEvent.click(grip(container))
 
     expect(menus).toEqual([C, A])

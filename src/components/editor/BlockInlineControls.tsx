@@ -100,9 +100,15 @@ export interface BlockMetadataRowProps {
   readOnly?: boolean | undefined
 }
 
-/** The collapse chevron's classes, page mode's chevron's too. */
+/**
+ * The collapse chevron's classes, page mode's chevron's too: the glyph's own
+ * width, so it fits the text box's inset left of the block's first glyph, and a
+ * 44 px hit area that adds no width (`touch-hit-area`, ending at that glyph,
+ * `index.css`). It takes the pointer though its frame does not, so a hidden one
+ * leaves a click in the inset to the text box.
+ */
 export const COLLAPSE_TOGGLE_BASE =
-  'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target'
+  'collapse-toggle pointer-events-auto flex w-4 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-hit-area'
 
 /** An expanded parent's chevron on a fine pointer: hidden at rest (see `BlockCollapseControl`). */
 export const COLLAPSE_TOGGLE_HIDDEN_AT_REST =
@@ -112,17 +118,17 @@ export interface BlockCollapseControlProps {
   blockId: string
   hasChildren: boolean
   isCollapsed: boolean
-  /** Coarse pointer: the chevron sits at the right end of the row, always visible. */
+  /** Coarse pointer: the chevron is always visible. */
   isTouch: boolean
   onToggleCollapse?: ((blockId: string) => void) | undefined
 }
 
 /**
- * The collapse chevron of a block WITH children; a leaf renders nothing.
- * Desktop: the row-leading control in the gutter lane (#1968), hover-revealed
- * while expanded. Touch: after the block text at the right end of the row,
- * always visible and centred on the first text line (#5332 item 10); the row
- * itself is the touch drag activator, so the chevron only toggles.
+ * The collapse chevron of a block WITH children; a leaf renders nothing. It
+ * sits just left of the block's first glyph, in the text box's inset, centred on
+ * the first text line, where the block's indent guides hang from (#7040).
+ * Desktop: hover-revealed while expanded. Touch: always visible; the row itself
+ * is the touch drag activator, so the chevron only toggles.
  */
 export function BlockCollapseControl({
   blockId,
@@ -168,14 +174,6 @@ export function BlockCollapseControl({
             // collapsed block ALSO stays visible at rest (above): it is the
             // only affordance to reveal the hidden children.
             isCollapsed && 'text-foreground',
-            // Touch: a 44px target at the row's top edge (the row is
-            // `items-start`), its glyph 8px down — the centre of the text's
-            // first line (`py-1` + half a 24px line), measured in
-            // `e2e/block-dnd-touch.spec.ts`. The text box is top-aligned too,
-            // so this holds for a single line and a wrap alike.
-            isTouch
-              ? 'flex items-start justify-center pt-2'
-              : 'max-sm:flex max-sm:items-center max-sm:justify-center',
           )}
           data-testid="collapse-toggle"
           data-collapsed={isCollapsed}
@@ -485,10 +483,12 @@ export const BlockInlineControls = React.memo(
           // `min-h-block-line` is the first text line box, so the checkbox
           // centres on the first line of a wrapped block (#5332).
           'inline-controls flex items-center flex-shrink-0 gap-1 min-h-block-line max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
-          // Touch: the checkbox starts on the text edge of a plain line (the text box's
-          // `px-3`), and the row's gap is all that parts it from the text box, so the
-          // editing frame starts clear of it.
-          isTouch && task !== null && 'pl-3.5 [&>.task-marker]:pr-0',
+          // The checkbox starts on the text edge of a plain line (the text box's
+          // `px-3`), its own `p-0.5` hanging before it (`--block-controls-lead`).
+          task !== null && 'pl-[calc(var(--block-controls-lead)-0.125rem)]',
+          // Touch: its larger box takes the right padding, and the row's gap is all
+          // that parts it from the text box, so the editing frame starts clear of it.
+          isTouch && task !== null && '[&>.task-marker]:pr-0',
         )}
       >
         {task !== null && (
