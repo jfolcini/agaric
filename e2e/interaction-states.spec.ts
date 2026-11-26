@@ -122,6 +122,31 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
     await expectTheRing(reference)
   })
 
+  test('the search results take the list cursor, and the list box no outline @search', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Search')
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.fill('Review')
+    await input.press('Enter')
+    const listbox = page.getByTestId('search-result-region').getByRole('listbox').first()
+    await expect(listbox.getByRole('option')).toHaveCount(2)
+    await tabTo(page, listbox)
+    await listbox.press('ArrowDown')
+    const cursor = listbox.locator('[role="option"][aria-selected="true"]')
+    await expect(cursor).toHaveCount(1)
+    // The list family's cursor: the 2 px bar and the inset 2 px ring.
+    await expect
+      .poll(() =>
+        cursor.evaluate((el) => ({
+          bar: getComputedStyle(el, '::before').width,
+          ring: /0px 0px 0px 2px inset/.test(getComputedStyle(el).boxShadow),
+        })),
+      )
+      .toEqual({ bar: '2px', ring: true })
+    await expect(listbox).toHaveCSS('outline-style', 'none')
+  })
+
   test('a breadcrumb link in a task row shows its whole ring @journal', async ({ page }) => {
     await navigateToView(page, 'Journal')
     const link = page
