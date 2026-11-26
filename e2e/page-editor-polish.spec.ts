@@ -6,13 +6,15 @@
  * left bar.
  * A table takes the code block's corners, with lighter inner rules than its
  * frame.
+ * The linked references' controls (link kind, source page, Add filter, sort
+ * field and direction) are one height, and each is a 44 px target on a phone.
  */
 
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
 import { SEED_IDS } from '@/lib/tauri-mock/seed'
 
-import { expect, ipc, settleBackend, test, waitForBoot } from './helpers'
+import { expect, expect44, ipc, openPageMobile, settleBackend, test, waitForBoot } from './helpers'
 
 const TITLE = 'Polish showcase'
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
@@ -121,6 +123,37 @@ async function expectTableLikeCode(table: Locator, code: Locator): Promise<void>
   )
 }
 
+interface ReferenceControls {
+  kind: Locator
+  source: Locator
+  addFilter: Locator
+  sortField: Locator
+  sortDirection: Locator
+}
+
+function referenceControls(page: Page): ReferenceControls {
+  const refs = page.getByTestId('linked-references')
+  return {
+    kind: refs.getByRole('radiogroup', { name: 'Filter by link kind' }),
+    source: refs.getByRole('button', { name: 'Filter by source page' }),
+    addFilter: refs.getByRole('button', { name: 'Add filter' }),
+    sortField: refs.getByRole('combobox', { name: 'Sort by' }),
+    sortDirection: refs.getByTestId('backlink-sort-direction'),
+  }
+}
+
+/** Every control's painted height, which the first one's must match. */
+async function expectOneHeight(page: Page): Promise<void> {
+  const controls = referenceControls(page)
+  await controls.kind.scrollIntoViewIfNeeded()
+  const heights: Record<string, number> = {}
+  for (const [name, el] of Object.entries(controls)) {
+    heights[name] = Math.round(((await el.boundingBox())?.height ?? 0) * 10) / 10
+  }
+  const first = heights['kind'] ?? 0
+  expect(heights).toEqual(Object.fromEntries(Object.keys(heights).map((k) => [k, first])))
+}
+
 test.describe('the Properties header @pages', () => {
   test.use(DESKTOP)
 
@@ -171,5 +204,37 @@ test.describe('tables @editor @pages', () => {
     await toPageMode(page)
     const editor = page.getByTestId('page-mode-editor')
     await expectTableLikeCode(editor.locator('table'), editor.locator('pre'))
+  })
+})
+
+test.describe('the linked references’ controls @pages', () => {
+  test.use(DESKTOP)
+
+  test('are one height', async ({ page }) => {
+    await openShowcase(page)
+    await expectOneHeight(page)
+  })
+})
+
+test.describe('the linked references’ controls on a phone @pages @mobile', () => {
+  const pixel = devices['Pixel 7']
+  test.use({
+    viewport: { width: 412, height: 915 },
+    userAgent: pixel.userAgent,
+    hasTouch: true,
+    isMobile: true,
+    deviceScaleFactor: 2,
+  })
+
+  test('are one height, each a 44 px target', async ({ page }) => {
+    await waitForBoot(page)
+    await seed(page)
+    await openPageMobile(page, TITLE)
+    await expectOneHeight(page)
+    const { kind, ...rest } = referenceControls(page)
+    for (const radio of await kind.getByRole('radio').all()) {
+      await expect44(radio, `kind ${await radio.textContent()}`)
+    }
+    for (const [name, el] of Object.entries(rest)) await expect44(el, name)
   })
 })
