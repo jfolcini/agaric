@@ -1216,8 +1216,7 @@ export const common: Record<string, string> = {
   'findInPage.inputPlaceholder': 'Find in page\u2026',
   'findInPage.inputLabel': 'Find in page',
 
-  // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label). Keep the
-  // glyphs in parentheses (Aa, Ab|, .*).
+  // Translators: in-page find toolbar icon buttons (tooltip and screen-reader label).
   'findInPage.previousMatch': 'Previous match',
   'findInPage.nextMatch': 'Next match',
   'findInPage.close': 'Close',
