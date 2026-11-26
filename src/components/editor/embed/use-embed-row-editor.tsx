@@ -31,7 +31,9 @@ export function useEmbedRowEditorValue(rovingEditor: RovingEditorHandle): EmbedR
     // inside the branch that already established it (`editable && isFocused`),
     // so the prop could only ever be the literal `true`.
     () => (props: EmbedRowEditorProps) => (
-      <EditableBlock {...props} isFocused rovingEditor={rovingEditor} />
+      <div className="block-editing">
+        <EditableBlock {...props} isFocused rovingEditor={rovingEditor} />
+      </div>
     ),
     [rovingEditor],
   )

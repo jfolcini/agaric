@@ -419,7 +419,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       <div
         className={cn(
           'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
-          isFocused && 'ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting)',
+          isFocused && 'block-editing',
         )}
         data-testid="block-frame"
       >
