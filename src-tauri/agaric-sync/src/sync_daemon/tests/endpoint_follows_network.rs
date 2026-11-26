@@ -300,8 +300,13 @@ async fn the_endpoint_follows_the_bind_decision_and_then_syncs_6526() {
         scheduler.record_failure(&b.id);
     }
     // #7065: held for a history fork, which a new network does not end.
-    scheduler.record_failure("DEV6526FORKED");
-    scheduler.hold("DEV6526FORKED");
+    scheduler.record_failure_and_take_report(
+        "DEV6526FORKED",
+        "forked",
+        true,
+        crate::sync_scheduler::PeerMembership::Known,
+        Some(crate::sync_events::SyncErrorCode::OwnHistoryFork),
+    );
 
     bind.move_to(bind_on(NEW_NETWORK));
     tick_until(

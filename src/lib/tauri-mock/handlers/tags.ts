@@ -1,5 +1,5 @@
 /**
- * Tauri mock handlers -- Tag attach/detach and tag/tag-expr queries.
+ * Tauri mock handlers -- Tag attach/detach and tag queries.
  *
  * Split out of the former monolithic `handlers.ts` (#2931). Every handler
  * body below is UNCHANGED from the original -- only relocated. Shared

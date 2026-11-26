@@ -108,7 +108,20 @@ mod tests {
             "the barrier's sync is F_FULLFSYNC where the platform has one"
         );
 
-        make_commits_durable(&pool).await.expect("run a barrier");
+        // The settings above sync nothing unless the barrier commits through
+        // them: refuse its row from any connection under less than FULL.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER barrier_under_full BEFORE INSERT ON app_settings \
+             WHEN NEW.key = '{DURABLE_BARRIERS_KEY}' \
+             AND (SELECT synchronous FROM pragma_synchronous) <> 2 \
+             BEGIN SELECT RAISE(ABORT, 'the barrier committed under synchronous < FULL'); END"
+        )))
+        .execute(&pool)
+        .await
+        .expect("install the trigger");
+        make_commits_durable(&pool)
+            .await
+            .expect("the barrier commits on its own connection");
         let mut pooled = pool.acquire().await.expect("a pool connection");
         assert_eq!(
             pragma(&mut pooled, "PRAGMA synchronous").await,
