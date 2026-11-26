@@ -1284,7 +1284,6 @@ describe('PairingDialog', () => {
   // the next tick, with the TTL as the ultimate backstop (see the
   // `#3469 waiting/success/failure/timeout` describe block for that path).
   it('a transient listPeerRefs polling failure while waiting does not surface an error or leave the waiting state', async () => {
-    const user = userEvent.setup()
     let listCallCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_peer_refs') {
@@ -1300,30 +1299,26 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    render(<PairingDialog open onOpenChange={vi.fn()} />)
-    await selectJoinerRole(user)
-    await screen.findByLabelText('Passphrase word 1')
+    vi.useFakeTimers()
+    try {
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await enterWaitingStateFake()
 
-    const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0] as HTMLElement, 'echo')
-    await user.type(inputs[1] as HTMLElement, 'foxtrot')
-    await user.type(inputs[2] as HTMLElement, 'golf')
-    await user.type(inputs[3] as HTMLElement, 'hotel')
-
-    const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
-    await user.click(pairBtn)
-
-    expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
-    // #3495 — `toBeGreaterThanOrEqual(3)` was vacuous: that condition is
-    // already true the instant `findByTestId` above resolves (per the
-    // comment on `listCallCount <= 3`), so it never forced a later poll
-    // tick to actually happen. Capture a baseline here and require the
-    // count to move PAST it, which does force the wait to span a real
-    // poll tick.
-    const baselineListCallCount = listCallCount
-    await waitFor(() => expect(listCallCount).toBeGreaterThan(baselineListCallCount))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+      // #3495 — `toBeGreaterThanOrEqual(3)` was vacuous: that condition is
+      // already true the instant the waiting state shows (per the comment on
+      // `listCallCount <= 3`), so it never forced a later poll tick to
+      // actually happen. Capture a baseline here and require the count to
+      // move PAST it, which does force the wait to span a poll tick.
+      const baselineListCallCount = listCallCount
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(listCallCount).toBeGreaterThan(baselineListCallCount)
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // -----------------------------------------------------------------------
