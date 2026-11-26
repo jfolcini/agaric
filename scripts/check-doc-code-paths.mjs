@@ -3072,7 +3072,7 @@ function guardSelfPathDerivationScenarios(root) {
   } catch (err) {
     // Recorded as text: a thrown non-`Error` has no `String()` form beyond
     // "[object Object]", which would make every one of them read alike.
-    threw = err instanceof Error ? `${err.name}: ${errorMessage(err)}` : JSON.stringify(err)
+    threw = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err)
   }
   record(
     'a null GUARD_SELF_PATH makes the known-intentional battery report itself skipped instead of throwing TypeError',

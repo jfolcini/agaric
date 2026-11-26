@@ -25,7 +25,12 @@ import { CRATE_ROOTS } from './rust-scan.mjs'
 // when the test fails, so there is nothing for a caller to await or catch.
 
 const SCRIPTS = join(import.meta.dirname, '..')
-const GUARD_FILES = ['check-dynamic-sql.mjs', 'lib/rust-scan.mjs', 'lib/guard-file-source.mjs']
+const GUARD_FILES = [
+  'check-dynamic-sql.mjs',
+  'lib/rust-scan.mjs',
+  'lib/guard-file-source.mjs',
+  'lib/error-message.mjs',
+]
 const RS = 'src-tauri/src/a.rs'
 const BASELINE = 'src-tauri/dynamic-sql-baseline.txt'
 const BAD = 'async fn f() {\n    let rows = sqlx::query("SELECT 1").fetch_all(&pool).await?;\n}\n'

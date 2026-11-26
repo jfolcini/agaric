@@ -1208,7 +1208,6 @@ jobs:
             --shard=${{ matrix.shard }}/2 \
             --reporter=blob \
             --reporter=dot \
-            --silent=passed-only \
             --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
             --coverage \
             --coverage.reporter=json \
@@ -1296,7 +1295,6 @@ jobs:
           npx vitest run \
             --mergeReports=.vitest-reports \
             --reporter=dot \
-            --silent=passed-only \
             --coverage \
             --coverage.reportsDirectory=coverage-merged \
             --coverage.reporter=json \
@@ -1390,7 +1388,7 @@ jobs:
         run: npm ci
 
       - name: Vitest (e2e-tauri only)
-        run: npx vitest run e2e-tauri --reporter=dot --silent=passed-only
+        run: npx vitest run e2e-tauri --reporter=dot
 
   # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 3 ways (#5848). Per-shard report
@@ -2034,8 +2032,9 @@ jobs:
         # deps. Cheap while there are few doc-tests; the per-example binary
         # is the real cost as adoption grows, which is why the convention is
         # pure helpers only.
+        # `--quiet`: one character per doc-test instead of a line; a failure still prints in full.
         working-directory: src-tauri
-        run: cargo test --doc --workspace
+        run: cargo test --doc --workspace --quiet
 
   # ---------------------------------------------------------------------------
   # validate-all — the single required aggregate gate (branch protection + the

@@ -39,6 +39,7 @@ import {
 import { dirname, join, resolve, sep } from 'node:path'
 import { deflateSync } from 'node:zlib'
 
+import { errorMessage } from './error-message.mjs'
 import {
   listTrackedEntries,
   parseBatchStream,
@@ -846,7 +847,7 @@ function verifyLeakedGitContext({
       encoding: 'utf8',
     })
   } catch (err) {
-    gitHonoursForgeryError = err instanceof Error ? err.message : String(err)
+    gitHonoursForgeryError = errorMessage(err)
   }
   check(
     "leaked alternates: …and git itself DOES serve the forged body under the violation's oid (the leak is real)",

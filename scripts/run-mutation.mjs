@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
+import process from 'node:process'
+
+import { MODULE_NAMES, MODULES } from '../stryker.modules.mjs'
 /**
  * #886 — driver for Stryker mutation testing.
  *
@@ -28,11 +33,7 @@
  * (`.github/workflows/scheduled-deep-checks.yml`'s `mutants-frontend` job)
  * additionally wraps the whole run in `|| true`.
  */
-import { spawnSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
-import process from 'node:process'
-
-import { MODULE_NAMES, MODULES } from '../stryker.modules.mjs'
+import { errorMessage } from './lib/error-message.mjs'
 
 /** The modules of group `k` of `n` (1-based), from a `k/n` spec. */
 export function groupModules(spec, names = MODULE_NAMES) {
@@ -51,7 +52,7 @@ function main(argv) {
     try {
       names = groupModules(argv[1])
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(errorMessage(err))
       process.exit(2)
     }
   }

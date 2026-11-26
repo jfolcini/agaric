@@ -169,6 +169,7 @@ beforeEach(() => {
   mockCheckLatestRelease.mockReset()
   mockOpenUrl.mockReset()
   vi.mocked(logger.warn).mockReset()
+  vi.mocked(logger.debug).mockReset()
   vi.mocked(notify.message).mockReset()
   vi.mocked(notify.error).mockReset()
   vi.mocked(notify.success).mockReset()
@@ -613,7 +614,29 @@ describe('update status (#3076)', () => {
       expect(readPreference(PREFERENCES.updateStatus).status).toBe('error')
     })
     expect(readPreference(PREFERENCES.updateStatus).error).toBe('boot blip')
-    // Silent path: no toast raised.
+    // Silent path: no toast raised, but the failure reaches the log.
+    expect(notify.error).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(
+      'updater',
+      'Update check failed (silent boot path)',
+      undefined,
+      expect.any(Error),
+    )
+  })
+
+  it('logs a missing updater plugin on the boot path as expected, not as a failure', async () => {
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, old)
+    // The runtime's own rejection for an unregistered plugin (the browser).
+    mockCheck.mockRejectedValueOnce('plugin updater not found')
+
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() => {
+      expect(logger.debug).toHaveBeenCalledWith('updater', 'no updater plugin; boot check skipped')
+    })
+    expect(readPreference(PREFERENCES.updateStatus).status).toBe('error')
+    expect(logger.warn).not.toHaveBeenCalled()
     expect(notify.error).not.toHaveBeenCalled()
   })
 
