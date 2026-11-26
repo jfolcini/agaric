@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { EditModeItem } from '@/components/pages/EditModeItem'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
@@ -34,7 +35,6 @@ import { TruncatedText } from '@/components/ui/truncated-text'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { usePhoneLayout } from '@/hooks/usePhoneLayout'
-import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { EditMode } from '@/lib/preferences'
 
 /** A space shown in the "Move to space" sub-menu. */
@@ -334,7 +334,7 @@ export function PageHeaderMenu({
         <Undo2 className="h-3.5 w-3.5" />
         {t('pageHeader.undoAction')}
         {keyboardHints && (
-          <Kbd keys={getShortcutKeys('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
+          <Kbd keys={shortcutHint('undoLastPageOp')} className={SHORTCUT_HINT_CLASS} />
         )}
       </button>
       <button
@@ -347,7 +347,7 @@ export function PageHeaderMenu({
         <Redo2 className="h-3.5 w-3.5" />
         {t('pageHeader.redoAction')}
         {keyboardHints && (
-          <Kbd keys={getShortcutKeys('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
+          <Kbd keys={shortcutHint('redoLastUndoneOp')} className={SHORTCUT_HINT_CLASS} />
         )}
       </button>
       {onOpenHistory != null && (
@@ -380,7 +380,7 @@ export function PageHeaderMenu({
         <Network className="h-3.5 w-3.5" />
         {t('pageHeader.showInGraph')}
         {keyboardHints && (
-          <Kbd keys={getShortcutKeys('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
+          <Kbd keys={shortcutHint('showPageInGraph')} className={SHORTCUT_HINT_CLASS} />
         )}
       </button>
       <button
@@ -451,7 +451,7 @@ export function PageHeaderMenu({
         <Copy className="h-3.5 w-3.5" />
         {t('pageHeader.exportMarkdown')}
         {keyboardHints && (
-          <Kbd keys={getShortcutKeys('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
+          <Kbd keys={shortcutHint('exportPageMarkdown')} className={SHORTCUT_HINT_CLASS} />
         )}
       </button>
       {onSaveMarkdownFile != null && (

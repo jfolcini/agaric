@@ -60,6 +60,18 @@ export function getPriorityLabel(
 // ── Shortcut-hint helpers ─────────────────────────────────────────────
 
 /**
+ * #1728 — a menu row's shortcut, read live from the catalog by id so a rebind
+ * shows, in the catalog's `Ctrl + K` format that `Kbd` draws.
+ *
+ * Not inlined: `keyboard-config-rebindable-drift.test.ts` counts a literal
+ * `getShortcutKeys('id')` as the binding being consumed, and a hint only shows
+ * it (`deleteBlock`'s is not rebindable).
+ */
+export function shortcutHint(id: string): string {
+  return getShortcutKeys(id)
+}
+
+/**
  * #1728 — the "Set priority" row cycles through three independent catalog
  * bindings (`priority1`/`priority2`/`priority3`, default `Ctrl+Shift+1..3`).
  * The first binding in full, then the last key of the other two as
@@ -67,7 +79,7 @@ export function getPriorityLabel(
  * shows.
  */
 export function priorityHint(): string {
-  const tail = (id: string): string => getShortcutKeys(id).split(' + ').at(-1) ?? ''
+  const tail = (id: string): string => shortcutHint(id).split(' + ').at(-1) ?? ''
   const alts = [tail('priority2'), tail('priority3')].filter((tok) => tok.length > 0)
-  return [getShortcutKeys('priority1'), ...alts].join(' / ')
+  return [shortcutHint('priority1'), ...alts].join(' / ')
 }

@@ -31,6 +31,7 @@ import {
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
@@ -44,7 +45,6 @@ import {
   tableCaret,
 } from '@/editor/table-edit'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
-import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
 /** Which operations a menu shows: a handle's row or column, or all of them. */
@@ -218,7 +218,7 @@ export function TableOpsSelector({
               <Icon className="h-4 w-4 shrink-0" />
               {t(op.labelKey)}
               {op.shortcutId !== undefined && keyboardHints && (
-                <Kbd keys={getShortcutKeys(op.shortcutId)} className="ml-auto" />
+                <Kbd keys={shortcutHint(op.shortcutId)} className="ml-auto" />
               )}
             </Button>
           </div>
