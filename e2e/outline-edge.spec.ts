@@ -144,6 +144,8 @@ for (const [name, profile] of Object.entries(PROFILES)) {
       page,
     }) => {
       const edge = await glyphX(page.locator('[aria-label="Page title"]'))
+      // A phone's column spends none of its width on room for a chevron: its top-level one ends the row.
+      if (phone) expect(edge, "the title on the pane's padding").toBeCloseTo(16, 0)
       const xs: Record<string, number> = {
         'Add block': await glyphX(page.getByRole('button', { name: 'Add block' })),
         references: await glyphX(page.locator('.linked-references-header')),
@@ -268,3 +270,33 @@ for (const [name, profile] of Object.entries(PROFILES)) {
     })
   })
 }
+
+test.describe('the outline on one left edge, a touch tablet with the sidebar open @editor @pages @mobile', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true, colorScheme: 'light' })
+
+  test("a top-level parent's chevron sits left of its text, its whole 44 px hit area inside the pane", async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const ids = await seed(page)
+    await openPage(page, TITLE)
+    const chevron = row(page, ids[PARENT]).getByTestId('collapse-toggle')
+    await expect(chevron).toBeVisible()
+    const at = await box(chevron)
+    expect(at.right, 'chevron left of its text').toBeLessThanOrEqual(
+      (await blockGlyphX(page, ids[PARENT])) + 0.5,
+    )
+    // Its hit area ends at the glyph and reaches 44 px left, where the column
+    // keeps room for it (`--block-room`), so the sidebar takes none of it.
+    const hitWidth = await chevron.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      let width = 0
+      for (let x = r.right - 44; x < r.right; x += 1) {
+        const under = document.elementFromPoint(x + 0.5, r.top + r.height / 2)
+        if (under !== null && el.contains(under)) width += 1
+      }
+      return width
+    })
+    expect(hitWidth, 'chevron hit area width').toBe(44)
+  })
+})

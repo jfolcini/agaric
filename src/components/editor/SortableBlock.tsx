@@ -8,8 +8,8 @@
  *   checkbox while a selection is active), then a parent's collapse chevron,
  *   just left of the edge, then the task checkbox, then the text.
  * - Touch: no lane. The chevron, the task checkbox, then the text; on a phone a
- *   top-level parent's chevron ends the row instead, as the 16 px margin left of
- *   its text cannot hold a 44 px target. The row itself takes the one touch
+ *   top-level parent's chevron ends the row instead, as the margin left of its
+ *   text cannot hold a 44 px target. The row itself takes the one touch
  *   gesture: hold, then drag to move or release to open the menu (#5332 item 10).
  * - Below-block metadata row: priority badge, due / scheduled chips, repeat
  *   indicator, property chips and the attachment badge, left-aligned under the

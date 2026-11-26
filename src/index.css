@@ -1041,9 +1041,17 @@
 @media (pointer: coarse) {
   :root {
     --block-hang: calc(var(--block-gap) + var(--block-inset));
-    --block-room: var(--block-hang);
+    /* A top-level chevron's 44 px hit area, which ends at its block's first glyph,
+     * so a tablet's pane does not clip it against the sidebar. */
+    --block-room: calc(var(--block-hang) + 1.75rem);
     --block-controls-lead: var(--block-hang);
     --block-tree-task-shift: 0px;
+  }
+  /* A phone's ends its row instead (`SortableBlock`, `.page-mode-phone`). */
+  @media (width < 48rem) {
+    :root {
+      --block-room: var(--block-hang);
+    }
   }
   /* Block mode's checkbox sits on the text edge (`BlockInlineControls`); its hit
    * area ends where the text box starts, so a tap just left of the text edits
