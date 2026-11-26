@@ -55,7 +55,8 @@ test.describe('Block side sheets @editor', () => {
     await chord(page, 'Y')
     const history = page.getByRole('dialog', { name: 'Block history' })
     await expect(history).toBeVisible()
-    expect((await history.boundingBox())?.width).toBe(propertiesWidth)
+    // The two boxes can round a sub-pixel apart.
+    expect((await history.boundingBox())?.width).toBeCloseTo(propertiesWidth ?? 0, 0)
   })
 
   test('a property name is a plain label and a date reads as it does on the chip', async ({
