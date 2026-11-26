@@ -540,6 +540,13 @@ describe('useJournalBlockCreation — blank last block', () => {
 
   const blank = makeBlock({ id: 'BLANK', content: '', parent_id: 'PEXIST', page_id: 'PEXIST' })
 
+  /** The id of the block added to the day beside `existing`, which the store holds. */
+  function addedBlockId(existing: string): string | undefined {
+    return getPageStore('PEXIST')
+      ?.getState()
+      .blocks.find((b) => b.id !== existing)?.id
+  }
+
   it('focuses an unfocused blank last block instead of creating another', async () => {
     stubInvoke({ create_block: () => createdBlock('PEXIST', 1) })
     mountDay([blank])
@@ -566,7 +573,7 @@ describe('useJournalBlockCreation — blank last block', () => {
       await result.current.handleAddBlock('2025-06-15')
     })
 
-    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    expect(useBlockStore.getState().focusedBlockId).toBe(addedBlockId('BLANK'))
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
   })
 
@@ -582,8 +589,38 @@ describe('useJournalBlockCreation — blank last block', () => {
       await result.current.handleAddBlock('2025-06-15')
     })
 
-    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    expect(useBlockStore.getState().focusedBlockId).toBe(addedBlockId('BLANK'))
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
+  })
+
+  it('focuses the new block before the create answers', async () => {
+    // Never answers: keys typed meanwhile go to the focused block.
+    stubInvoke({ create_block: () => new Promise(() => undefined) })
+    mountDay([{ ...blank, content: 'words' }])
+    useBlockStore.getState().setFocused('BLANK')
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      void result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe(addedBlockId('BLANK'))
+  })
+
+  it('returns focus to the block being edited when the create fails', async () => {
+    stubInvoke({
+      create_block: () => Promise.reject(new Error('backend error')),
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    })
+    mountDay([{ ...blank, content: 'words' }])
+    useBlockStore.getState().setFocused('BLANK')
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('BLANK')
   })
 
   // A new day's BlockTree is still creating its first block when "Add block" is

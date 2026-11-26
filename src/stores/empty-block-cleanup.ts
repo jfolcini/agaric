@@ -28,11 +28,13 @@
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { newBlockId } from '@/lib/block-id'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
+import type { PageBlockState } from '@/stores/page-blocks-types'
 import { settlePendingSaves } from '@/stores/unmount-flush'
 
 /**
@@ -42,7 +44,7 @@ import { settlePendingSaves } from '@/stores/unmount-flush'
  * one; a focused blank tail it drops when the new block takes focus. The flat
  * tree's tail is a direct child of the page only when it is childless.
  */
-export function unfocusedBlankTail(blocks: readonly FlatBlock[], pageId: string): string | null {
+function unfocusedBlankTail(blocks: readonly FlatBlock[], pageId: string): string | null {
   const last = blocks.at(-1)
   if (
     last?.parent_id === pageId &&
@@ -57,6 +59,37 @@ export function unfocusedBlankTail(blocks: readonly FlatBlock[], pageId: string)
     return last.id
   }
   return null
+}
+
+/**
+ * "Add block" on a page that has blocks: the caret goes to its unfocused blank
+ * tail, or to a new block after its last top-level one. That block is focused
+ * as soon as the store holds it, not once the create answers, so keys typed
+ * meanwhile land in it rather than in the block being edited (as Enter does,
+ * #6559); a failed create, which the store rolls back and toasts, puts the
+ * focus back. `false` when the page has no block to add after.
+ */
+export async function addBlockAtEnd(
+  { blocks, createBelow }: Pick<PageBlockState, 'blocks' | 'createBelow'>,
+  pageId: string,
+): Promise<boolean> {
+  const { focusedBlockId: editing, setFocused } = useBlockStore.getState()
+  const blankTail = unfocusedBlankTail(blocks, pageId)
+  if (blankTail !== null) {
+    setFocused(blankTail)
+    return true
+  }
+  // The last direct child of the page, not the flat tree's tail, which can be
+  // nested under it.
+  const lastTopLevel = blocks.findLast((b) => b.parent_id === pageId)
+  if (!lastTopLevel) return false
+  const newId = newBlockId()
+  const created = createBelow(lastTopLevel.id, '', newId)
+  setFocused(newId)
+  if ((await created) === null && useBlockStore.getState().focusedBlockId === newId) {
+    setFocused(editing)
+  }
+  return true
 }
 
 export interface EmptyBlockGuardInput {
