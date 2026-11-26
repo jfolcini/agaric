@@ -4,8 +4,10 @@
 # the hook is a blocking step feeding the required `validate / validate-all`
 # context, so one `read ECONNRESET` reddened `main` and every open PR with it.
 #
-# 3 attempts, 5s then 15s: modest picks around that one data point, not a
-# measured optimum.
+# The attestations endpoint has twice answered `OK` where JSON belongs on
+# every attempt for over 20 s (#7050, and main's lint on 2026-11-25), so the
+# later waits give such an episode minutes to clear. A real failure still
+# fails, only later.
 #
 # Each attempt gets its own empty npm cache. npm stores what the registry
 # answered, and the attestations endpoint sends a one-year max-age, so a retry
@@ -19,7 +21,7 @@
 set -euo pipefail
 
 # One entry per RETRY, so the attempt budget is this many plus the first try.
-BACKOFF_SECONDS=(5 15)
+BACKOFF_SECONDS=(5 15 60 120)
 
 # The advisory scan also fails on a `.nsprc` waiver that matches nothing, so a
 # waiver goes the first run after its advisory is withdrawn or fixed; the
