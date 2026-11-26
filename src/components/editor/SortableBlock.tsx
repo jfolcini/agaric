@@ -7,9 +7,10 @@
  * - Desktop: a narrow control lane (grip handle, hover-gated; the multi-select
  *   checkbox while a selection is active), then a parent's collapse chevron,
  *   just left of the edge, then the task checkbox, then the text.
- * - Touch: no lane. The chevron, the task checkbox, then the text. The row
- *   itself takes the one touch gesture: hold, then drag to move or release to
- *   open the menu (#5332 item 10).
+ * - Touch: no lane. The chevron, the task checkbox, then the text; on a phone a
+ *   top-level parent's chevron ends the row instead, as the 16 px margin left of
+ *   its text cannot hold a 44 px target. The row itself takes the one touch
+ *   gesture: hold, then drag to move or release to open the menu (#5332 item 10).
  * - Below-block metadata row: priority badge, due / scheduled chips, repeat
  *   indicator, property chips and the attachment badge, left-aligned under the
  *   text and always visible.
@@ -19,6 +20,8 @@
  *   Desktop: [grip] [chevron?] | [checkbox] [content]
  *                                           [metadata row]
  *   Touch:          [chevron?] | [checkbox] [content]
+ *                                           [metadata row]
+ *   Phone, top level:          | [checkbox] [content] [chevron?]
  *                                           [metadata row]
  *
  * History, Delete, Zoom and the indent/dedent + move ops live in the
@@ -233,7 +236,8 @@ type PropertyEditorProps = Pick<
 /**
  * One faint line per ancestor (`guides`), each under that ancestor's chevron:
  * the chevron's centre, half its width left of the ancestor's first glyph,
- * which starts past the ancestor's hang, depth and the tasks above it.
+ * which starts past the ancestor's hang, depth and the tasks above it. A
+ * phone's top-level parent keeps its guide there, its chevron ending its row.
  */
 function IndentGuides({ guides }: { guides: string }): React.ReactElement | null {
   if (guides === '') return null
@@ -260,6 +264,9 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   content: string
   isFocused: boolean
   isTouchDevice: boolean
+  /** Touch in a phone's layout: a top-level row's chevron ends the row (`BlockCollapseControl`'s `atRowEnd`). */
+  isPhone: boolean
+  depth: number
   swipeTranslateX: number
   hasChildren: boolean
   isCollapsed: boolean
@@ -306,6 +313,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     content,
     isFocused,
     isTouchDevice,
+    isPhone,
+    depth,
     swipeTranslateX,
     hasChildren,
     isCollapsed,
@@ -351,6 +360,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   } = props
 
   const isSliding = isTouchDevice && swipeTranslateX !== 0
+  const chevronAtRowEnd = isPhone && depth === 0
   const isClosedTask = todoState === 'DONE' || todoState === 'CANCELLED'
 
   return (
@@ -388,7 +398,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
 
       {/* ── Collapse chevron — out of flow, in the text box's inset just left
             of the first glyph (`--block-hang`), on the first line ── */}
-      {hasChildren && (
+      {hasChildren && !chevronAtRowEnd && (
         <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] flex min-h-block-line items-center">
           <BlockCollapseControl
             blockId={blockId}
@@ -482,6 +492,19 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           onNavigate={onNavigate}
         />
       </div>
+
+      {/* ── Collapse chevron (a phone's top-level row) — the row's right end,
+            first text line, after the text in the tab order as on screen ── */}
+      {hasChildren && chevronAtRowEnd && (
+        <BlockCollapseControl
+          blockId={blockId}
+          hasChildren
+          isCollapsed={isCollapsed}
+          isTouch
+          atRowEnd
+          onToggleCollapse={onToggleCollapse}
+        />
+      )}
 
       {/* ── Collapsible attachment list ────────────────────────────── */}
       {showAttachments && attachmentCount > 0 && (
@@ -895,6 +918,8 @@ function SortableBlockInner({
         content={content}
         isFocused={isFocused}
         isTouchDevice={isTouchDevice}
+        isPhone={isPhone}
+        depth={depth}
         swipeTranslateX={swipeTranslateX}
         hasChildren={hasChildren}
         isCollapsed={isCollapsed}

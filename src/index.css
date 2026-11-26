@@ -1063,8 +1063,9 @@
 }
 
 /* A faint line down each nesting level of block mode's tree (`SortableBlock`),
- * under the chevron of the block it hangs from. The border token's hairline,
- * which `prefers-contrast` darkens. */
+ * under the chevron of the block it hangs from, or, for a phone's top-level
+ * parent, whose chevron ends its row, where that chevron would sit. The border
+ * token's hairline, which `prefers-contrast` darkens. */
 .indent-guide {
   @apply pointer-events-none absolute bottom-0 w-px bg-border/70;
   top: calc(-1 * var(--block-row-gap));
@@ -1429,6 +1430,19 @@
    side borders, so the text starts the column's edge as block mode's does. */
 .page-mode-phone > .page-mode-editor {
   padding-left: var(--block-hang);
+}
+/* There a top-level block's chevron ends its line, as block mode's does: the
+   margin left of the column is too narrow for a 44 px target. Its hit area
+   (`touch-hit-area`) stays centred on the first line, so the line keeps its
+   height. */
+.page-mode-phone [data-page-block][data-depth='0']:has(> .page-block-gutter) {
+  padding-right: 2.75rem;
+}
+.page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter {
+  @apply right-0;
+}
+.page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter > .collapse-toggle {
+  @apply w-11;
 }
 /* And no grip: a tap brought it to the tapped block, a drag handle a phone
    does without; the toolbar's Block actions opens the menu it would (#7040). */

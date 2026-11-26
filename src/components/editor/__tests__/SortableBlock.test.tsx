@@ -4598,6 +4598,34 @@ describe('SortableBlock touch rows (#5332 item 10)', () => {
     expect(screen.queryByTestId('collapse-toggle')).not.toBeInTheDocument()
   })
 
+  it("on a phone, a top-level parent's chevron ends the row after its checkbox and text, a 44px box; a nested one comes before the text", () => {
+    const narrow = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(400)
+    try {
+      const { unmount } = renderTouchRow({ hasChildren: true, todoState: 'TODO' })
+      let chevron = screen.getByTestId('collapse-toggle')
+      const marker = screen.getByTestId('task-marker')
+      let textColumn = screen.getByTestId('swipe-content').querySelector('.flex-1') as HTMLElement
+      expect(marker.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+      expect(textColumn.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+      expect(chevron.className).toContain('touch-target')
+      unmount()
+
+      renderTouchRow({ hasChildren: true, depth: 1 })
+      chevron = screen.getByTestId('collapse-toggle')
+      textColumn = screen.getByTestId('swipe-content').querySelector('.flex-1') as HTMLElement
+      expect(chevron.compareDocumentPosition(textColumn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+      expect(chevron.className).not.toContain('touch-target')
+    } finally {
+      narrow.mockRestore()
+    }
+  })
+
   it('one tap on the touch chevron toggles collapse', () => {
     const onToggleCollapse = vi.fn()
     render(

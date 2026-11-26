@@ -4,7 +4,8 @@
  * Runs under an iPhone-class coarse-pointer + touch context so the product
  * takes its touch code paths:
  *   - no leading control lane and no drag grip: the text starts where the row
- *     starts, and a parent's collapse chevron sits just left of its text;
+ *     starts, and a top-level parent's collapse chevron sits at the right end
+ *     of the row;
  *   - `useBlockDnD` wires a TouchSensor (`{ delay: 400, tolerance: 5 }`) to
  *     the whole row, so a hold-then-move on the row body reorders;
  *   - `useBlockTouchLongPress` shares the hold: a hold released without moving
@@ -200,10 +201,10 @@ test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
     await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
   })
 
-  // A parent's chevron sits just left of its text, level with the first text
-  // line, and one tap toggles collapse. The seed has no nesting, so GS_2 is
-  // nested under GS_1 through the menu's Indent first.
-  test("a parent's chevron sits left of the text on the first line, and one tap collapses", async ({
+  // A top-level parent's chevron sits at the right end of its row, level with
+  // the first text line, and one tap toggles collapse. The seed has no nesting,
+  // so GS_2 is nested under GS_1 through the menu's Indent first.
+  test("a top-level parent's chevron sits right of the text on the first line, and one tap collapses", async ({
     page,
   }) => {
     await openPageMobile(page, PAGE)
@@ -226,21 +227,12 @@ test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
     await expect(rowOf(page, gs2).getByTestId('collapse-toggle')).toHaveCount(0)
 
     const text = parent.getByTestId('block-static')
+    const textBox = await box(text)
     const chevronBox = await box(chevron)
-    const textLeft = await text.evaluate((el) => {
-      const range = document.createRange()
-      range.selectNodeContents(el)
-      return [...range.getClientRects()].find((r) => r.width > 0)?.left ?? Number.NaN
-    })
-    expect(chevronBox.x + chevronBox.width).toBeLessThanOrEqual(textLeft + 0.5)
-    // A 44 px hit area that adds no width (`touch-hit-area`).
-    const area = await chevron.evaluate((el) => {
-      const s = getComputedStyle(el, '::before')
-      return { width: Number.parseFloat(s.width), height: Number.parseFloat(s.height) }
-    })
-    expect(area.width).toBeGreaterThanOrEqual(44)
-    expect(area.height).toBeGreaterThanOrEqual(44)
-    // The glyph is what sits on the first line.
+    expect(chevronBox.x).toBeGreaterThanOrEqual(textBox.x + textBox.width)
+    expect(chevronBox.width).toBeGreaterThanOrEqual(44)
+    expect(chevronBox.height).toBeGreaterThanOrEqual(44)
+    // The glyph, not the 44px box, is what sits on the first line.
     const glyphBox = await box(chevron.locator('[data-slot="chevron-toggle"]'))
     const glyphCentre = glyphBox.y + glyphBox.height / 2
     expect(Math.abs(glyphCentre - (await firstLineCentre(text)))).toBeLessThanOrEqual(1)

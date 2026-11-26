@@ -120,6 +120,8 @@ export interface BlockCollapseControlProps {
   isCollapsed: boolean
   /** Coarse pointer: the chevron is always visible. */
   isTouch: boolean
+  /** A phone's top-level parent: the chevron ends the row, a 44 px box (`SortableBlock`). */
+  atRowEnd?: boolean | undefined
   onToggleCollapse?: ((blockId: string) => void) | undefined
 }
 
@@ -128,13 +130,16 @@ export interface BlockCollapseControlProps {
  * sits just left of the block's first glyph, in the text box's inset, centred on
  * the first text line, where the block's indent guides hang from (#7040).
  * Desktop: hover-revealed while expanded. Touch: always visible; the row itself
- * is the touch drag activator, so the chevron only toggles.
+ * is the touch drag activator, so the chevron only toggles. On a phone a
+ * top-level parent's ends the row instead (`atRowEnd`): the margin left of its
+ * text is too narrow for a 44 px target.
  */
 export function BlockCollapseControl({
   blockId,
   hasChildren,
   isCollapsed,
   isTouch,
+  atRowEnd = false,
   onToggleCollapse,
 }: BlockCollapseControlProps): React.ReactElement | null {
   const { t } = useTranslation()
@@ -174,6 +179,10 @@ export function BlockCollapseControl({
             // collapsed block ALSO stays visible at rest (above): it is the
             // only affordance to reveal the hidden children.
             isCollapsed && 'text-foreground',
+            // A 44px box at the row's top edge (the row is `items-start`), its
+            // glyph 8px down: the centre of the text's first line (`py-1` + half a
+            // 24px line), measured in `e2e/block-dnd-touch.spec.ts`.
+            atRowEnd && 'touch-target items-start pt-2',
           )}
           data-testid="collapse-toggle"
           data-collapsed={isCollapsed}

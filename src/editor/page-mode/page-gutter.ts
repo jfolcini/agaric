@@ -3,7 +3,8 @@
  * (`BlockGutterControls`, `BlockCollapseControl`), where block mode's sit, left
  * of a task's checkbox or a plain line's text and on the first line, the
  * chevron just left of it and the grip left of that, as plain DOM with block
- * mode's classes, labels and glyphs.
+ * mode's classes, labels and glyphs. On a phone a top-level block's chevron
+ * ends its line instead, as block mode's does (`index.css`).
  *
  * A block with blocks under it draws its chevron in its node view, outside its
  * editable text (`PageGutter`); the chevron collapses the block

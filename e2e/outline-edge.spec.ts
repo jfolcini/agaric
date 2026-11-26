@@ -5,7 +5,9 @@
  * checkbox) start at one x, the grip and the chevron hanging left of it; a
  * child starts one indent step in, wider on a phone than before; a faint guide
  * runs down each nesting level without taking a click; and a parent's chevron
- * sits just left of its first glyph, folding its children.
+ * sits just left of its first glyph, folding its children, except a top-level
+ * parent's on a phone, which ends its row with a 44 px target and leaves the
+ * checkbox's whole hit area to a top-level task.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -200,10 +202,11 @@ for (const [name, profile] of Object.entries(PROFILES)) {
       }
     })
 
-    test("a parent's chevron sits just left of its first glyph and folds its children", async ({
+    test("a parent's chevron sits just left of its first glyph, or ends a phone's top-level row, and folds its children", async ({
       page,
     }) => {
-      for (const i of [PARENT, TASK_PARENT]) {
+      // Every depth on a desktop; on a phone, a nested parent only.
+      for (const i of phone ? [CHILD] : [PARENT, TASK_PARENT]) {
         const parent = row(page, ids[i])
         const chevron = parent.getByTestId('collapse-toggle')
         const glyph = await blockGlyphX(page, ids[i])
@@ -220,6 +223,37 @@ for (const [name, profile] of Object.entries(PROFILES)) {
           expect(area.w, `${ROWS[i]?.[1]}: touch target width`).toBeGreaterThanOrEqual(44)
           expect(area.h, `${ROWS[i]?.[1]}: touch target height`).toBeGreaterThanOrEqual(44)
         }
+      }
+      if (phone) {
+        // A top-level parent's margin is too narrow for a 44 px target, so its
+        // chevron ends the row, right of its text.
+        for (const i of [PARENT, TASK_PARENT]) {
+          const parent = row(page, ids[i])
+          const at = await box(parent.getByTestId('collapse-toggle'))
+          const text = await box(parent.getByTestId('block-static'))
+          const end = (await box(parent)).right
+          const what = ROWS[i]?.[1]
+          expect(at.x, `${what}: chevron right of its text`).toBeGreaterThanOrEqual(text.right)
+          expect(Math.abs(at.right - end), `${what}: chevron ends the row`).toBeLessThanOrEqual(1)
+          expect(at.right - at.x, `${what}: touch target width`).toBeGreaterThanOrEqual(44)
+          expect(at.height, `${what}: touch target height`).toBeGreaterThanOrEqual(44)
+        }
+        // So nothing covers a top-level task's checkbox hit area: a tap anywhere
+        // across it cycles the task, one past the screen's edge landing on the edge.
+        const marker = row(page, ids[TASK_PARENT]).getByTestId('task-marker')
+        const hitWidth = await marker.evaluate((el) => {
+          const at = el.getBoundingClientRect()
+          const area = getComputedStyle(el, '::before')
+          const left = at.left + Number.parseFloat(area.left)
+          const y = at.top + at.height / 2
+          let width = 0
+          for (let x = left; x < left + Number.parseFloat(area.width); x += 1) {
+            const under = document.elementFromPoint(Math.max(0, x + 0.5), y)
+            if (under !== null && el.contains(under)) width += 1
+          }
+          return width
+        })
+        expect(hitWidth, 'a top-level task: checkbox hit area width').toBeGreaterThanOrEqual(44)
       }
 
       const chevron = row(page, ids[PARENT]).getByTestId('collapse-toggle')
