@@ -2356,6 +2356,74 @@ mod incremental_detection_tests {
         );
         assert_eq!(d.tag_scope, TagScope::Global);
     }
+
+    /// `blob` with a byte of its header checksum flipped: loro's batch metadata
+    /// still decodes it, and the import of its body fails.
+    fn broken_checksum(blob: &[u8]) -> Vec<u8> {
+        let mut poison = blob.to_vec();
+        poison[18] ^= 0xFF;
+        poison
+    }
+
+    /// From `seed`: a purge of BB, then an edit of AA, as two update blobs.
+    fn purge_then_edit(a: &mut LoroEngine, b: &LoroEngine) -> (Vec<u8>, Vec<u8>) {
+        let since = b.version_vector();
+        a.apply_purge_block("BB").unwrap();
+        let purge = a.export_update_since(&since).unwrap();
+        let after_purge = a.version_vector();
+        a.apply_edit_content("AA", 0, 0, "X").unwrap();
+        (purge, a.export_update_since(&after_purge).unwrap())
+    }
+
+    fn is_import_error(error: &AppError) -> bool {
+        matches!(error, AppError::Validation { message, .. }
+            if message.starts_with("loro: import_with_changed_blocks"))
+    }
+
+    /// #7075: a batch that fails after one blob landed still resolves that
+    /// blob's purge, and carries the error in `failed`.
+    #[test]
+    fn failed_batch_resolves_the_blob_that_landed_7075() {
+        let (mut a, mut b) = seed();
+        let (purge, edit) = purge_then_edit(&mut a, &b);
+
+        let d = b
+            .import_batch_with_changed_purged_tagscope(&[purge, broken_checksum(&edit)])
+            .expect("a batch that landed a blob resolves it");
+
+        assert_eq!(ids(&d.purged), vec!["BB"], "the landed purge");
+        assert_eq!(ids(&d.changed), Vec::<String>::new());
+        assert!(
+            d.failed.as_ref().is_some_and(is_import_error),
+            "the broken blob's error, got {:?}",
+            d.failed
+        );
+        assert_eq!(b.read_block("BB").unwrap(), None);
+        assert_eq!(b.read_block("AA").unwrap().unwrap().content, "a");
+    }
+
+    /// A batch in which no blob lands is an `Err`, not an empty delta.
+    #[test]
+    fn failed_batch_that_landed_nothing_is_an_error() {
+        let (mut a, mut b) = seed();
+        let (purge, edit) = purge_then_edit(&mut a, &b);
+        let before = b.doc.oplog_frontiers();
+
+        let result = b.import_batch_with_changed_purged_tagscope(&[
+            broken_checksum(&purge),
+            broken_checksum(&edit),
+        ]);
+
+        assert!(
+            result.as_ref().is_err_and(is_import_error),
+            "got {result:?}"
+        );
+        assert_eq!(
+            b.doc.oplog_frontiers(),
+            before,
+            "precondition: nothing landed"
+        );
+    }
 }
 
 #[cfg(test)]
