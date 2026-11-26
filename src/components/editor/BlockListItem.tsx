@@ -25,17 +25,8 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { listRowVariants } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
 import { StatusIcon } from '@/components/ui/status-icon'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useTaskStateCycle } from '@/hooks/useTaskStateCycle'
@@ -86,9 +77,6 @@ function DueDateChipInner({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const overdue = isOverdue(dueDate)
-  // A (#216): on coarse pointers render the date editor in a bottom Sheet so
-  // the on-screen keyboard can't cover the natural-language date input.
-  const isTouch = useIsTouch()
 
   const chipButton = (
     <button
@@ -107,46 +95,8 @@ function DueDateChipInner({
     </button>
   )
 
-  // Editor closes the surface + refreshes; DateChipEditor already fires its
-  // own notify.success + announce on save, so no redundant toast here.
-  const editor = blockId ? (
-    <DateChipEditor
-      blockId={blockId}
-      dateType="due"
-      currentDate={dueDate}
-      onSuccess={() => {
-        setOpen(false)
-        onDateChanged?.()
-      }}
-    />
-  ) : null
-
-  // A (#216): coarse pointer → bottom Sheet (keyboard-safe).
-  if (isTouch) {
-    return (
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetTrigger asChild>{chipButton}</SheetTrigger>
-        {blockId && (
-          <SheetContent
-            side="bottom"
-            data-testid="due-date-sheet"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <SheetHeader>
-              <SheetTitle>{t('dateChip.editDate')}</SheetTitle>
-              <SheetDescription>{t('dateChip.inputLabel')}</SheetDescription>
-            </SheetHeader>
-            {editor}
-          </SheetContent>
-        )}
-      </Sheet>
-    )
-  }
-
-  // Desktop → anchored Popover (unchanged).
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} sheetTitle={t('dateChip.editDate')}>
       <PopoverTrigger asChild>{chipButton}</PopoverTrigger>
       {blockId && (
         <PopoverContent
@@ -156,7 +106,17 @@ function DueDateChipInner({
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
-          {editor}
+          {/* Closes the surface and refreshes; DateChipEditor fires its own
+              notify.success + announce on save, so no toast here. */}
+          <DateChipEditor
+            blockId={blockId}
+            dateType="due"
+            currentDate={dueDate}
+            onSuccess={() => {
+              setOpen(false)
+              onDateChanged?.()
+            }}
+          />
         </PopoverContent>
       )}
     </Popover>

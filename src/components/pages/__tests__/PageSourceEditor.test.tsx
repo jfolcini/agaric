@@ -47,6 +47,9 @@ import '@/components/pages/PageSourceBuffer'
 
 vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
 
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
+
 // The real diff, counted: the Changes view's laziness is how often it runs.
 vi.mock('@/lib/line-diff', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/line-diff')>()
@@ -1688,6 +1691,31 @@ describe('PageSourceEditor save report', () => {
 
 describe('PageSourceConflictDialog', () => {
   const base = { text: '- one\n- two\n', line_ids: [A, B, null] }
+
+  afterEach(() => {
+    mockUsePhoneLayout.mockReturnValue(false)
+  })
+
+  it('is a bottom sheet on a phone, its changes scrolling above its buttons', () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    render(
+      <PageSourceConflictDialog
+        base={base}
+        current={{ text: '- two\n- one\n', line_ids: [B, A, null] }}
+        onMerge={vi.fn()}
+        onReload={vi.fn()}
+        onOverwrite={vi.fn()}
+        onKeepEditing={vi.fn()}
+        onCloseAutoFocus={vi.fn()}
+      />,
+    )
+
+    const sheet = screen.getByRole('dialog', { name: t('pageSource.conflictTitle') })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    const body = sheet.querySelector('[data-slot="sheet-body"]')
+    expect(body).toContainElement(screen.getByText(t('pageSource.onlyOrderChanged')))
+    expect(body).not.toContainElement(screen.getByRole('button', { name: t('pageSource.merge') }))
+  })
 
   it('says only the order changed when no block did', () => {
     render(

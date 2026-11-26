@@ -1,6 +1,16 @@
 import { Popover as PopoverPrimitive } from 'radix-ui'
+import { createContext, use } from 'react'
 import type * as React from 'react'
 
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { cn } from '@/lib/utils'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
@@ -128,7 +138,7 @@ const POPOVER_CONTENT_BASE =
  *
  * - The default itself IS pinned by a test
  *   (`src/components/ui/__tests__/popover.test.tsx`, "defaults collisionPadding to
- *   EDGE_PADDING_PX"). It calls `PopoverContent` directly as a function and
+ *   EDGE_PADDING_PX"). It calls `AnchoredPopoverContent` directly as a function and
  *   reads the element tree it returns, because `collisionPadding` isn't
  *   reflected anywhere in the rendered DOM (no attribute, no style) — it
  *   only affects floating-ui's internal geometry once `size()`/`flip`/`shift`
@@ -155,22 +165,74 @@ const POPOVER_CONTENT_BASE =
  */
 const EDGE_PADDING_PX = 4
 
-function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+/**
+ * The title of the bottom sheet a popover is on a phone, or `null` for an
+ * anchored popover. Set by `Popover`, read by its trigger, anchor and content.
+ */
+const PopoverSheetContext = createContext<string | null>(null)
+
+interface PopoverProps extends React.ComponentProps<typeof PopoverPrimitive.Root> {
+  /**
+   * The phone form: on a phone (`usePhoneLayout`) the popover is a bottom sheet
+   * with this title, in thumb reach and above the soft keyboard, whose top the
+   * layout viewport ends at on Android (`MainActivity.kt`, #6790; #216). Give it
+   * to a popover holding a field to type in; one holding a small control
+   * (a swatch grid, a short list) stays anchored.
+   */
+  sheetTitle?: string
+}
+
+function Popover({ sheetTitle, ...props }: PopoverProps) {
+  if (sheetTitle === undefined) return <AnchoredPopover {...props} />
+  return <PhoneSheetPopover sheetTitle={sheetTitle} {...props} />
 }
 Popover.displayName = 'Popover'
 
+// The `null` keeps an anchored popover nested in a sheet one from taking the
+// sheet's parts.
+function AnchoredPopover(props: React.ComponentProps<typeof PopoverPrimitive.Root>) {
+  return (
+    <PopoverSheetContext value={null}>
+      <PopoverPrimitive.Root data-slot="popover" {...props} />
+    </PopoverSheetContext>
+  )
+}
+
+function PhoneSheetPopover({
+  sheetTitle,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Root> & { sheetTitle: string }) {
+  const phoneLayout = usePhoneLayout()
+  if (!phoneLayout) return <AnchoredPopover {...props} />
+  return (
+    <PopoverSheetContext value={sheetTitle}>
+      <Sheet {...props} />
+    </PopoverSheetContext>
+  )
+}
+
 function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
+  if (use(PopoverSheetContext) !== null) return <SheetTrigger {...props} />
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 PopoverTrigger.displayName = 'PopoverTrigger'
 
-function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
-  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
+function PopoverAnchor({
+  children,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
+  // A sheet has nothing to anchor; what the anchor wraps still renders.
+  if (use(PopoverSheetContext) !== null) return <>{children}</>
+  return (
+    <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props}>
+      {children}
+    </PopoverPrimitive.Anchor>
+  )
 }
 PopoverAnchor.displayName = 'PopoverAnchor'
 
-const PopoverContent = ({
+/** The anchored form of `PopoverContent`, hook-free so a test can call it as a function. */
+const AnchoredPopoverContent = ({
   ref,
   className,
   align = 'center',
@@ -191,6 +253,44 @@ const PopoverContent = ({
   </PopoverPrimitive.Portal>
 )
 
+// A popover's width, height cap, padding and scroll are an anchored box's; in
+// a sheet the content takes the sheet's width, padding and scroll instead.
+const SHEET_BODY_RESET = 'w-auto max-w-none max-h-none overflow-visible p-0'
+
+const PopoverSheetContent = ({
+  sheetTitle,
+  className,
+  children,
+  // Placement, which a sheet has none of.
+  side: _side,
+  sideOffset: _sideOffset,
+  align: _align,
+  alignOffset: _alignOffset,
+  avoidCollisions: _avoidCollisions,
+  collisionBoundary: _collisionBoundary,
+  collisionPadding: _collisionPadding,
+  arrowPadding: _arrowPadding,
+  sticky: _sticky,
+  hideWhenDetached: _hideWhenDetached,
+  updatePositionStrategy: _updatePositionStrategy,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & { sheetTitle: string }) => (
+  <SheetContent aria-describedby={undefined} {...props} side="bottom">
+    <SheetHeader>
+      <SheetTitle>{sheetTitle}</SheetTitle>
+    </SheetHeader>
+    <SheetBody>
+      <div className={cn(className, SHEET_BODY_RESET)}>{children}</div>
+    </SheetBody>
+  </SheetContent>
+)
+
+const PopoverContent = (props: React.ComponentProps<typeof PopoverPrimitive.Content>) => {
+  const sheetTitle = use(PopoverSheetContext)
+  if (sheetTitle === null) return <AnchoredPopoverContent {...props} />
+  return <PopoverSheetContent {...props} sheetTitle={sheetTitle} />
+}
+
 PopoverContent.displayName = 'PopoverContent'
 
-export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger }
+export { AnchoredPopoverContent, Popover, PopoverAnchor, PopoverContent, PopoverTrigger }

@@ -49,6 +49,7 @@ import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -330,11 +331,11 @@ describe('CommandPalette — empty state', () => {
   })
 
   // #6548 — a first open has no recents; the Navigate commands fill the panel.
-  it('lists the Navigate commands under the welcome copy when there are no recents', () => {
+  // #7040 — under the input's placeholder and the mode row's hint, with no third hint between.
+  it('lists the Navigate commands, with no hint copy above them, when there are no recents', () => {
     render(<CommandPalette />)
     openPalette()
     expect(useCommandPaletteStore.getState().mode).toBe('search')
-    expect(screen.getByTestId('palette-welcome-empty')).toBeInTheDocument()
     expect(screen.getByTestId('palette-commands-navigate')).toBeInTheDocument()
     expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
     expect(screen.queryByTestId('palette-commands-action')).toBeNull()
@@ -350,12 +351,18 @@ describe('CommandPalette — empty state', () => {
     expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
   })
 
-  it('keeps the phone search sheet on the welcome copy alone', () => {
+  it('leaves the phone search sheet empty below its input on a cold open', () => {
     mockedUseIsMobile.mockReturnValue(true)
     render(<CommandPalette />)
     openPalette()
-    expect(screen.getByTestId('palette-welcome-empty')).toBeInTheDocument()
     expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
+  })
+
+  // #7040 — the one hint left names every prefix, the [[ link one included.
+  it("names the [[ link prefix in the mode row's hint", () => {
+    render(<CommandPalette />)
+    openPalette()
+    expect(screen.getByTestId('palette-mode-row')).toHaveTextContent('[[')
   })
 
   it('runs a Navigate command from the welcome state', async () => {
@@ -653,6 +660,52 @@ describe('CommandPalette — partitioned query', () => {
     expect(await screen.findByTestId('palette-page-header-DAY')).toHaveTextContent('11/11/2026')
   })
 
+  // #7040 — a block row carries only its page's id: the title comes from the resolve cache.
+  it("titles a page that matched by its blocks alone with the page's title", async () => {
+    const navigateToPage = vi.fn()
+    useTabsStore.setState({ navigateToPage })
+    useResolveStore.setState({ cache: new Map(), version: 0 })
+    useResolveStore.getState().batchSet([{ id: 'DAY', title: '2026-11-11', deleted: false }])
+    localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp([], [makeBlockRow('B1', 'Buy groceries', 'DAY')]),
+    )
+
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), {
+      target: { value: 'groceries' },
+    })
+
+    const header = await screen.findByTestId('palette-page-header-DAY')
+    expect(header).toHaveTextContent(/^11\/11\/2026$/)
+    await userEvent.click(header)
+    expect(navigateToPage).toHaveBeenCalledWith('DAY', '2026-11-11')
+  })
+
+  // #7040 — with no snippet, a row shows the text its block renders, not the Markdown.
+  it("shows a snippet-less block row as the block's plain text", async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0 })
+    const linked = '00000000000000000000GARDEN'
+    useResolveStore.getState().batchSet([{ id: linked, title: 'Garden', deleted: false }])
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp(
+        [makePageRow('PAGE_A', 'Alpha')],
+        [makeBlockRow('B1', `**Use the search** panel, see [[${linked}]]`, 'PAGE_A')],
+      ),
+    )
+
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), {
+      target: { value: 'search' },
+    })
+
+    expect(await screen.findByTestId('palette-block-B1')).toHaveTextContent(
+      /^Use the search panel, see Garden$/,
+    )
+  })
+
   it('discards stale responses via the generation counter', async () => {
     // Use fake timers so we can manually drive both debounce windows —
     // without this, the second `fireEvent.change` simply replaces the
@@ -835,7 +888,7 @@ describe('CommandPalette — caps and surplus pill', () => {
         makeBlockRow(`B${i}_2`, 'm2', `PAGE_${i}`),
       )
     }
-    const groups = mergeAndRankGroups(pages, blocks, 'page')
+    const groups = mergeAndRankGroups(pages, blocks, 'page', {})
     expect(groups.length).toBe(8)
     for (const g of groups) {
       expect(g.matches.length).toBeLessThanOrEqual(2)
@@ -2004,14 +2057,6 @@ describe('CommandPalette —  regressions', () => {
     await userEvent.keyboard('{Enter}')
     expect(navigateToPage).toHaveBeenCalledWith('PAGE_X', 'Xenial')
     expect(useCommandPaletteStore.getState().open).toBe(false)
-  })
-
-  it('shows a welcome empty copy on cold open with no recents', () => {
-    // (UX-should-5): the welcome state has its own copy
-    // distinct from the no-results-for-typed-query state.
-    render(<CommandPalette />)
-    openPalette()
-    expect(screen.getByTestId('palette-welcome-empty')).toBeInTheDocument()
   })
 
   it('shows a "no results for query" copy when the typed query has zero matches', async () => {

@@ -3,7 +3,8 @@
  * (`FormattingToolbar`) and *Edit as Markdown*'s (`PageSourceToolbar`,
  * #5160). It lays out the items it is given, collapses the lowest-priority
  * ones into a `MoreHorizontal` overflow popover when the bar is too narrow
- * (`useToolbarOverflow`, measured on an off-screen sentinel), keeps one tab
+ * (`useToolbarOverflow`, measured on an off-screen sentinel; a bottom-sheet
+ * list on a phone, as the block menu is), keeps one tab
  * stop with arrow-key roving (#1724), and on touch pins the bar to the bottom
  * of the screen, on top of the soft keyboard (#925 f3). What each item is, and what it does, is the
  * caller's `renderItem`.
@@ -18,9 +19,11 @@ import { usePinToolbar } from '@/components/FormattingToolbar/pinned-toolbar'
 import { type RenderMode, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
 import { cn } from '@/lib/utils'
@@ -56,6 +59,7 @@ export function ToolbarFrame({
   // keyboard's top (`MainActivity.kt`, #6790). Desktop keeps the inline layout.
   const isTouch = useIsTouch()
   usePinToolbar(isTouch)
+  const phoneLayout = usePhoneLayout()
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -90,6 +94,52 @@ export function ToolbarFrame({
     )
   }
 
+  const moreButton = (
+    <IconButton
+      variant="ghost"
+      size="icon-xs"
+      tooltip={t('toolbar.moreTip')}
+      ariaLabel={t('toolbar.more')}
+      aria-haspopup="dialog"
+      aria-expanded={overflowPopoverOpen}
+      aria-controls={overflowMenuId}
+      {...toolbarPressHandlers(() => setOverflowPopoverOpen((prev) => !prev))}
+    >
+      <MoreHorizontal />
+    </IconButton>
+  )
+  const overflowMenuProps = {
+    id: overflowMenuId,
+    'data-editor-portal': '',
+    'data-testid': 'toolbar-overflow-menu',
+  }
+  const overflowRows = (
+    <div className="flex flex-col gap-0.5">
+      {/*
+       * #217 A2 — preserve group structure in the overflow popover.
+       * `render` drops separator items in overflow mode, so the
+       * list was previously flat. Filter the separators out and
+       * re-insert a divider whenever the group index changes,
+       * mirroring the inline toolbar's inter-group dividers (and the
+       * block context menu) on both desktop and pointer:coarse.
+       */}
+      {overflowed
+        .filter((item) => item.kind !== 'separator')
+        .map((item, i, buttons) => {
+          const prev = buttons[i - 1]
+          const showDivider = prev != null && item.group !== prev.group
+          return (
+            <span key={`o-${item.key}`}>
+              {showDivider && (
+                <hr className="my-1 h-px border-0 bg-border" data-testid="overflow-group-divider" />
+              )}
+              {render(item, 'overflow')}
+            </span>
+          )
+        })}
+    </div>
+  )
+
   return (
     <div
       tabIndex={-1}
@@ -117,58 +167,27 @@ export function ToolbarFrame({
         </span>
       ))}
 
-      {overflowed.length > 0 && (
-        <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
-          <PopoverAnchor asChild>
-            <IconButton
-              variant="ghost"
-              size="icon-xs"
-              tooltip={t('toolbar.moreTip')}
-              ariaLabel={t('toolbar.more')}
-              aria-haspopup="dialog"
-              aria-expanded={overflowPopoverOpen}
-              aria-controls={overflowMenuId}
-              {...toolbarPressHandlers(() => setOverflowPopoverOpen((prev) => !prev))}
+      {overflowed.length > 0 &&
+        (phoneLayout ? (
+          <>
+            {moreButton}
+            <MenuSheet
+              open={overflowPopoverOpen}
+              onOpenChange={setOverflowPopoverOpen}
+              title={t('toolbar.more')}
+              {...overflowMenuProps}
             >
-              <MoreHorizontal />
-            </IconButton>
-          </PopoverAnchor>
-          <MenuPopoverContent
-            id={overflowMenuId}
-            align="end"
-            data-editor-portal
-            data-testid="toolbar-overflow-menu"
-          >
-            <div className="flex flex-col gap-0.5">
-              {/*
-               * #217 A2 — preserve group structure in the overflow popover.
-               * `render` drops separator items in overflow mode, so the
-               * list was previously flat. Filter the separators out and
-               * re-insert a divider whenever the group index changes,
-               * mirroring the inline toolbar's inter-group dividers (and the
-               * block context menu) on both desktop and pointer:coarse.
-               */}
-              {overflowed
-                .filter((item) => item.kind !== 'separator')
-                .map((item, i, buttons) => {
-                  const prev = buttons[i - 1]
-                  const showDivider = prev != null && item.group !== prev.group
-                  return (
-                    <span key={`o-${item.key}`}>
-                      {showDivider && (
-                        <hr
-                          className="my-1 h-px border-0 bg-border"
-                          data-testid="overflow-group-divider"
-                        />
-                      )}
-                      {render(item, 'overflow')}
-                    </span>
-                  )
-                })}
-            </div>
-          </MenuPopoverContent>
-        </Popover>
-      )}
+              {overflowRows}
+            </MenuSheet>
+          </>
+        ) : (
+          <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
+            <PopoverAnchor asChild>{moreButton}</PopoverAnchor>
+            <MenuPopoverContent align="end" {...overflowMenuProps}>
+              {overflowRows}
+            </MenuPopoverContent>
+          </Popover>
+        ))}
 
       {/*
        * Off-screen sentinel used by `useToolbarOverflow` to measure

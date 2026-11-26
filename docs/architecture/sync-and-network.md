@@ -101,13 +101,22 @@ Nothing in this document should be read as saying the QUIC port *by itself* make
 5. **`is_last: true`** transitions both sides to `SyncComplete`.
 6. **File-transfer phase** streams attachment blobs on the same QUIC stream after op convergence, copied through one 5 MB buffer (`BULK_COPY_BYTES`).
 
+### Durable before send
+
+The database commits under `synchronous=NORMAL`, so a power cut can roll back a device's last commits ([`data-and-events.md` § Database](data-and-events.md#database)). If a peer already held the ops of those commits, the device would write its next ops under Loro counters and op-log seqs the peer holds for other content: the two could not merge, or would merge with the peer's copy overwritten and no error. So the places that send this device's ops call `db::make_commits_durable` first (#6524), once per stream, after everything the stream carries has been read and before its first frame:
+
+- `SyncOrchestrator::head_exchange_outgoing_loro`, the responder's stream of `LoroSync` updates or snapshots and `OpLogBatch` records;
+- `snapshot_transfer::try_offer_loro_snapshot_catchup`, the responder's snapshots of the catch-up below.
+
+A barrier that fails fails the dispatch or the offer with its error: nothing is queued or sent, and the dialling device retries. The dialling device sends no ops of its own, only its frontiers (`HeadExchange`) and `SyncComplete`, so the round a local edit asks for needs no barrier; the attachment phase sends file bytes, not ops. A power cut can still lose edits no peer has received. A database put back by hand from an older copy remains the one way into the fork ([`features/sync.md` § Pitfalls](../features/sync.md#pitfalls-to-know)).
+
 ## Snapshot catch-up
 
 When the responder cannot satisfy the initiator's advertised version vectors by delta replay, the session exits the delta loop into `ResetRequired` and hands off to `sync_daemon/snapshot_transfer.rs`.
 
 Since **#2503** the production catch-up is a **Loro-snapshot merge**, not a wipe-and-replace: the responder exports a per-space `LoroDoc` snapshot, the initiator *merges* it into its own engine and reprojects SQL from the merged state. Loro import is monotonic, so it never rolls the receiver back and the initiator's unsynced local content **survives** — the exact inversion of the old CBOR contract.
 
-The merge cannot take a snapshot that carries the initiator's own `(peer, counter)` ops beyond what its engine holds while that engine holds any op of its own (#792): `apply_remote`'s fork guard turns it away, and `merge_one_snapshot` fails the session. `record_session_failure` reports that failure as `SyncErrorCode::OwnHistoryFork` under a constant text, so it is told once per failure streak, with the cause and the recovery in the frontend's words (#6523). Healing it needs an engine-only reset, which does not exist (#2503).
+The merge cannot take a snapshot that carries the initiator's own `(peer, counter)` ops beyond what its engine holds while that engine holds any op of its own (#792): `apply_remote`'s fork guard turns it away, and `merge_one_snapshot` fails the session. `record_session_failure` reports that failure as `SyncErrorCode::OwnHistoryFork` under a constant text, so it is told once per failure streak, with the cause and the recovery in the frontend's words (#6523). The peer of such a device meets the fork from the other side when it dials: that device's responder asks for the reset and offers its snapshot, which reuses `(peer, counter)` ids the peer holds with other content. Loro refuses the import (`LoroError::UsedOpID`) and leaves the doc as it was; the engine names that refusal (`is_used_op_id`), `apply_remote` drops the blob's write-ahead slot, which no replay could import, `merge_one_snapshot` fails the session, and it is reported the same way as `SyncErrorCode::PeerHistoryFork`, with the recovery to do on the other device (#7065). Booking either failure holds the peer (`SyncScheduler::record_failure_and_take_report`): a retry would meet the same fork after being sent the whole snapshot again, so the daemon dials it only once a press on Sync or a pairing act has dropped its backoff entry, or after a restart. Healing it needs an engine-only reset, which does not exist (#2503).
 
 The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → `apply_snapshot()`, which wiped core tables and re-seeded from the blob) was deleted in #3487: the iroh cutover made it unreachable, since `SYNC_ALPN` is negotiated before any application byte moves and a build predating the port cannot open a session at all. #4699 deleted the restore, the blob and the `SnapshotAccept` / `SnapshotReject` wire variants with it — nothing read the blob once `apply_snapshot()` lost its last caller, and it duplicated the derived SQL view rather than `loro_doc_state`, the merge truth disaster recovery reprojects from. Compaction survives as a bare op-log purge (see [`crdt-and-recovery.md § Op-log compaction`](crdt-and-recovery.md)); the wire-level detail of the flow that replaced the CBOR one is in [`sync-protocol-spec.md § Snapshot-fallback flow`](sync-protocol-spec.md).
 
@@ -138,7 +147,7 @@ The endpoint is not bound for the daemon's life (#6526). `daemon_loop` is an out
 - **The bind policy picks another LAN address.** The periodic resync tick asks `lan_interface::select_bind_target` again, backgrounded or not, and compares its address with the bound one: Wi-Fi that came up after a launch on the loopback fallback, or a better interface. A decision with no LAN moves nothing, so an interface that reads as down for a moment does not take a working endpoint to loopback. A live endpoint is closed only when no session is active (`SyncScheduler::has_active_session`); otherwise the next tick asks again.
 - **The bring-up failed.** It is retried from a fresh interface sweep, doubling from `MIN_BACKOFF` to `MAX_BACKOFF`.
 
-Each new endpoint has the same identity (`endpoint_secret`) and, with the internet fallback on, the same relay; the old one is closed first, so two never run side by side. A rebind clears every peer's backoff, since failures booked on the old network say nothing about the new one, and the new loop's first tick dials the peers that are due.
+Each new endpoint has the same identity (`endpoint_secret`) and, with the internet fallback on, the same relay; the old one is closed first, so two never run side by side. A rebind clears every peer's backoff but a held one's (`clear_backoff_for_new_network`), since failures booked on the old network say nothing about the new one and a history fork is not the network's, and the new loop's first tick dials the peers that are due.
 
 ### Lifecycle-aware
 
@@ -148,7 +157,7 @@ Each new endpoint has the same identity (`endpoint_secret`) and, with the intern
 
 Two independent schedules, **intentionally not coordinated**:
 
-- **Backend** (`src-tauri/agaric-sync/src/sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → `MAX_BACKOFF` (60 s) cap, with ±10 % jitter so two devices don't lock-step on resync ticks. A per-peer mutex prevents concurrent connections to the same peer.
+- **Backend** (`src-tauri/agaric-sync/src/sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → `MAX_BACKOFF` (60 s) cap, with ±10 % jitter so two devices don't lock-step on resync ticks. A peer whose session failed as a history fork is held instead: its wait does not run out (#7065). A per-peer mutex prevents concurrent connections to the same peer.
 - **Frontend** (`useSyncTrigger.ts`): coarse 60 s → 600 s cadence for the UI's "wake the scheduler" hint. Backend is authoritative: a scheduled `startSync()` for a peer in backoff dials nothing and resolves with state `backoff`, while a press on Sync clears that peer's backoff and dials at once, so the press reports the dial's own result (#6523).
 
 The dual layer is deliberate: backend handles failure recovery; frontend handles "the user clicked Sync".

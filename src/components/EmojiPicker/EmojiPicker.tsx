@@ -269,7 +269,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
     return out
   }, [rows, isSearching])
 
-  // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. There is none here: `getVirtualItems()`/`getTotalSize()` are read in this render body and `measureElement` goes straight onto a plain `<div ref>`. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`, read fresh on every render. (#4409)
+  // oxlint-disable-next-line react/incompatible-library -- the Compiler skips this component, its virtualizer reads stay in this render body, and `measureElement` (bound once when the Virtualizer is built) goes onto a plain `<div ref>`, so no memoized consumer can hold a stale value (#4409)
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -584,8 +584,8 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                         {groupLabel(t, row.group)}
                       </p>
                     ) : (
-                      /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
                       <div
+                        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid row inside a virtualizer's absolutely positioned item; a <tr> needs <table> ancestry, which that layout cannot provide
                         role="row"
                         className="grid justify-items-center"
                         style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
@@ -597,6 +597,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                             <button
                               key={entry.name}
                               type="button"
+                              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA gridcell in a virtualized grid; a <td> needs <table> ancestry (see the row above)
                               role="gridcell"
                               data-cell={`${vi.index}-${col}`}
                               aria-label={entry.name}
@@ -609,7 +610,6 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                           )
                         })}
                       </div>
-                      /* oxlint-enable jsx-a11y/prefer-tag-over-role */
                     )}
                   </div>
                 )
@@ -688,10 +688,10 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
       {SKIN_TONES.map((tone) => {
         const label = t(tone.labelKey)
         return (
-          /* oxlint-disable jsx-a11y/prefer-tag-over-role -- role="radio" on a styled emoji <button>; a native <input type="radio"> would lose the swatch styling and aria-checked toggle behavior */
           <button
             key={tone.id}
             type="button"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a radio whose face is the toned emoji; a native <input type="radio"> cannot render content
             role="radio"
             aria-checked={value === tone.id}
             aria-label={label}
@@ -705,7 +705,6 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
               ? sample
               : applySkinTone(sample, tone.id, tonable)}
           </button>
-          /* oxlint-enable jsx-a11y/prefer-tag-over-role */
         )
       })}
     </div>

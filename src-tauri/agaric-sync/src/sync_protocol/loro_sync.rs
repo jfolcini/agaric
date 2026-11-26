@@ -697,7 +697,7 @@ pub async fn apply_remote(
     // below is conditional on the op-log actually having reached it.
     let require_covered = [(inbox_id, screen.declared_end_vv)];
 
-    let (changed_blocks, kept) = import_and_project(
+    let projected = import_and_project(
         pool,
         registry,
         device_id,
@@ -724,7 +724,18 @@ pub async fn apply_remote(
         &require_covered,
         InboundDeliveryKind::Live,
     )
-    .await?;
+    .await;
+    // #7065: a replay of these bytes is refused the same way, and the peer
+    // sends them again on every retry, so the slot would only pile up.
+    if projected
+        .as_ref()
+        .is_err_and(agaric_engine::loro::engine::is_used_op_id)
+    {
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+            .execute(pool)
+            .await?;
+    }
+    let (changed_blocks, kept) = projected?;
 
     // #1071: resolve the owning page id of every changed block so the
     // orchestrator can thread a targeted-invalidation set out via

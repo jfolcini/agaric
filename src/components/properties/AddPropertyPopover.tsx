@@ -26,15 +26,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
@@ -79,10 +70,6 @@ export function AddPropertyPopover({
   disabledTooltip,
 }: AddPropertyPopoverProps) {
   const { t } = useTranslation()
-  // A (#216): on coarse pointers render the picker in a bottom Sheet so the
-  // on-screen keyboard can't cover the search input / list. Desktop keeps the
-  // anchored Popover path unchanged.
-  const isTouch = useIsTouch()
   const [internalOpen, setInternalOpen] = useState(false)
   const [defSearch, setDefSearch] = useState('')
   const [creatingDef, setCreatingDef] = useState(false)
@@ -166,7 +153,6 @@ export function AddPropertyPopover({
     )
   }
 
-  // Picker body (search + list + create-flow) is identical in both variants.
   const pickerBody = (
     <>
       <Input
@@ -271,29 +257,12 @@ export function AddPropertyPopover({
     </>
   )
 
-  // A (#216): coarse pointer → bottom Sheet (keyboard-safe).
-  if (isTouch) {
-    return (
-      <Sheet open={popoverOpen} onOpenChange={setPopoverOpen}>
-        <SheetTrigger asChild>{triggerButton}</SheetTrigger>
-        <SheetContent
-          side="bottom"
-          data-testid="add-property-sheet"
-          onCloseAutoFocus={keepFocusThatMovedOn}
-        >
-          <SheetHeader>
-            <SheetTitle>{t('pageProperty.addPropertyButton')}</SheetTitle>
-            <SheetDescription>{t('pageProperty.pickerLabel')}</SheetDescription>
-          </SheetHeader>
-          <div className="space-y-2">{pickerBody}</div>
-        </SheetContent>
-      </Sheet>
-    )
-  }
-
-  // Desktop → anchored Popover (unchanged).
   return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+    <Popover
+      open={popoverOpen}
+      onOpenChange={setPopoverOpen}
+      sheetTitle={t('pageProperty.addPropertyButton')}
+    >
       <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
       <MenuPopoverContent
         className="space-y-2 p-3"

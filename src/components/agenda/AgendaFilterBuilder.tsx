@@ -206,7 +206,7 @@ function AddFilterPopover({
   }, [dimension, values, onAdd, reset])
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange} sheetTitle={t('agendaFilter.addFilter')}>
       <PopoverTrigger asChild>
         <Button
           ref={triggerRef}
@@ -232,14 +232,9 @@ function AddFilterPopover({
           // before reading individual labels. Group definitions live in
           // DIMENSION_GROUPS (filter-dimension-metadata.ts).
           //
-          // role="group" carries the picker's accessible name (preserving the
-          // Pre- single-<ul> semantics); a nested <fieldset> inside the
-          // AgendaFilterBuilder's outer fieldset would be the wrong
-          // form-grouping primitive here.
-          <div
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a nested <fieldset> inside the outer form fieldset is the wrong grouping primitive (see comment above); role="group" carries the accessible name without that semantic
-            role="group"
-            className="flex flex-col gap-2"
+          // `min-w-0` resets the fieldset's UA `min-inline-size: min-content`.
+          <fieldset
+            className="flex min-w-0 flex-col gap-2"
             aria-label={t('agendaFilter.filterDimensions')}
           >
             {DIMENSION_GROUPS.map((group) => (
@@ -272,7 +267,7 @@ function AddFilterPopover({
                 </ul>
               </div>
             ))}
-          </div>
+          </fieldset>
         )}
 
         {step === 'pick-values' && dimension && (
@@ -315,7 +310,7 @@ function EditFilterPopover({
   const [open, setOpen] = useState(false)
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} sheetTitle={dimensionLabel(filter.dimension)}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         <div className="flex flex-col gap-2">

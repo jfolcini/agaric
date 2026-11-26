@@ -383,7 +383,7 @@ function AttachmentImage({
       // While dragging, the live preview percent overrides the stored width.
       style={{ maxWidth: `${dragWidth ?? imageWidth}%` }}
       data-testid="image-resize-wrapper"
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable disclosure wrapper around an <img> + nested toolbar buttons; <fieldset>/<optgroup> etc. break the inline-block resize layout and add form/list semantics
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the focusable image wrapper that toggles its resize toolbar, a widget rather than a group of form controls, so <fieldset> does not fit
       role="group"
       aria-label={t('attachment.toggleResizeToolbar')}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- image container needs keyboard focus to expose the inner resize toolbar

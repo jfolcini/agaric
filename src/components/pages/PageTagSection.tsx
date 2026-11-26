@@ -113,6 +113,7 @@ export function PageTagSection({
 
       <Popover
         open={showTagPicker}
+        sheetTitle={t('pageHeader.addTag')}
         onOpenChange={(open) => {
           // Keep the tag picker open while the emoji dialog has focus — the
           // dialog is a logical child of this picker even though it portals

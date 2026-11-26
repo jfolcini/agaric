@@ -1398,3 +1398,117 @@ async fn loro_snapshot_catchup_reports_a_space_it_refuses_to_export_6523() {
         .collect();
     assert_eq!(refusals, vec![vec![space.as_str().to_owned()]]);
 }
+
+// -----------------------------------------------------------------
+// #6524 — commits are made durable before a catch-up's snapshots leave
+// -----------------------------------------------------------------
+
+/// A responder registry with two spaces to offer.
+fn registry_with_two_spaces_6524() -> agaric_engine::loro::registry::LoroEngineRegistry {
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
+    for (space, block) in [
+        ("01HZ6524CATCHUPSPACEAAAAAA", "01HZ6524CATCHUPBLOCKAAAAAA"),
+        ("01HZ6524CATCHUPSPACEBBBBBB", "01HZ6524CATCHUPBLOCKBBBBBB"),
+    ] {
+        registry
+            .for_space(
+                &agaric_store::space::SpaceId::from_trusted(space),
+                REMOTE_DEV,
+            )
+            .expect("for_space")
+            .engine_mut()
+            .apply_create_block(block, "content", "offered", None, 0)
+            .expect("create");
+    }
+    registry
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catchup_offer_is_made_durable_once_6524() {
+    use agaric_store::test_support::durable_barriers;
+
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_registry = registry_with_two_spaces_6524();
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    assert_eq!(
+        durable_barriers(&resp_pool).await,
+        0,
+        "nothing has been offered yet"
+    );
+
+    let (offer_res, first) = tokio::join!(
+        try_offer_loro_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &resp_pool,
+            &resp_registry,
+            &sink,
+            REMOTE_DEV,
+            LOCAL_DEV,
+        ),
+        async { recv_sync_message(&mut client.recv).await },
+    );
+
+    assert_eq!(
+        offer_res.expect("the offer succeeds").spaces_sent,
+        2,
+        "both spaces' snapshots were streamed"
+    );
+    assert!(
+        matches!(
+            first.expect("recv"),
+            SyncMessage::LoroSync { is_last: false, .. }
+        ),
+        "the initiator received the first snapshot"
+    );
+    assert_eq!(
+        durable_barriers(&resp_pool).await,
+        1,
+        "one barrier for the offer's stream, not one per snapshot"
+    );
+}
+
+/// A barrier that fails ends the offer with its error before one byte of a
+/// snapshot is written: a barrier run after the sends would leave bytes here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catchup_offer_whose_barrier_fails_sends_nothing_6524() {
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_registry = registry_with_two_spaces_6524();
+    agaric_store::test_support::break_durability_barrier(&resp_pool).await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let offer_res = try_offer_loro_snapshot_catchup(
+        &mut server.send,
+        &mut server.recv,
+        &resp_pool,
+        &resp_registry,
+        &sink,
+        REMOTE_DEV,
+        LOCAL_DEV,
+    )
+    .await;
+
+    let error = match offer_res {
+        Err(error) => error.to_string(),
+        Ok(sent) => panic!("a failed barrier must fail the offer, but it sent {sent:?}"),
+    };
+    assert!(
+        error.contains("the durability barrier is broken"),
+        "the offer fails with the barrier's own error: {error}"
+    );
+    server.send.finish().expect("end the responder's stream");
+    let received = client
+        .recv
+        .read_to_end(64 * 1024)
+        .await
+        .expect("read the responder's stream to its end");
+    assert!(
+        received.is_empty(),
+        "no byte of a snapshot left before the barrier held: {} bytes",
+        received.len()
+    );
+}

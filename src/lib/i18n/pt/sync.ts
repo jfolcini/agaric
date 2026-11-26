@@ -165,6 +165,10 @@ export const sync: Record<string, string> = {
     '{{peer}} contém alterações que este dispositivo fez e não tem mais, como após restaurar um backup mais antigo aqui, então os dois não podem ser mesclados. Exporte as notas deste dispositivo, configure o Agaric do zero nele, pareie-o novamente e depois importe as notas.',
   'sync.ownHistoryForkUnnamed':
     'O outro dispositivo contém alterações que este dispositivo fez e não tem mais, como após restaurar um backup mais antigo aqui, então os dois não podem ser mesclados. Exporte as notas deste dispositivo, configure o Agaric do zero nele, pareie-o novamente e depois importe as notas.',
+  'sync.peerHistoryFork':
+    'Este dispositivo contém alterações que {{peer}} fez e não tem mais, como após restaurar um backup mais antigo em {{peer}}, então os dois não podem ser mesclados. Exporte as notas de {{peer}}, configure o Agaric do zero nele, pareie-o novamente e depois importe as notas.',
+  'sync.peerHistoryForkUnnamed':
+    'Este dispositivo contém alterações que o outro dispositivo fez e não tem mais, como após restaurar nele um backup mais antigo, então os dois não podem ser mesclados. Exporte as notas do outro dispositivo, configure o Agaric do zero nele, pareie-o novamente e depois importe as notas.',
   'sync.retryAction': 'Tentar sincronizar novamente',
   'sync.noPeersTitle': 'Nenhum dispositivo pareado',
   'sync.noPeersBody':

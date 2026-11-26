@@ -23,8 +23,8 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   PageBrowserHeader,

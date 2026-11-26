@@ -28,9 +28,10 @@
  *  - Expiry is checked lazily on read (no timers) — an entry past its TTL
  *    is treated as absent and swept on the next read that touches it.
  *  - A graph-structure change (`graph-structure-events`: a page-store write,
- *    a restore, a local commit's change-feed event, an applied sync batch)
- *    expires every entry parked before it, so a page restored from the Trash never opens from the
- *    pre-restore snapshot the Pages list parked on the way there.
+ *    a restore, a page removal, a local commit's change-feed event, an applied
+ *    sync batch) expires every entry parked before it, so a page restored from
+ *    the Trash never opens from the pre-restore snapshot the Pages list parked
+ *    on the way there, nor a trashed page from the pre-delete one.
  */
 
 import { unwrap } from '@/lib/app-error'

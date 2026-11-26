@@ -327,8 +327,10 @@ describe('searchTags', () => {
       kind: 'active',
       space_id: 'SPACE_TEST',
     })
-    // Non-exact match, so a "Create new tag" option is prepended (F-26)
-    expect(items[0]).toEqual({ id: '__create__', label: 'pr', isCreate: true })
+    // Non-exact match, so a "Create new tag" option comes last: Enter on a
+    // partial match picks the existing tag, not a near-duplicate (#7040).
+    expect(items).toHaveLength(3)
+    expect(items.at(-1)).toEqual({ id: '__create__', label: 'pr', isCreate: true })
     const tagItems = items.filter((i) => !i.isCreate)
     expect(tagItems).toHaveLength(2)
     expect(tagItems).toEqual(

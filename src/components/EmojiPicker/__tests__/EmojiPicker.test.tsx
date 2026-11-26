@@ -12,10 +12,11 @@ import { i18n } from '@/lib/i18n'
 // rows. Use the shared virtualizer mock, but render only a bounded window of
 // rows (like the real virtualizer) so the full ~1900-emoji set doesn't mount
 // 1900 buttons per render and grind the suite to a halt. The window is wide
-// enough to include the first few category headers; tests that need a
-// far-down emoji (e.g. rocket) search for it first. `getTotalSize` still
-// reflects the full count so the spacer height stays honest.
-vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 80 }))
+// enough to include the second category header; tests that need a
+// far-down emoji (e.g. rocket) search for it first. Rows past it only
+// lengthen the axe audits. `getTotalSize` still reflects the full count so
+// the spacer height stays honest.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 30 }))
 
 const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
 vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: mockUseIsTouch }))

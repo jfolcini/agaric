@@ -168,6 +168,10 @@ export const sync: Record<string, string> = {
     '{{peer}} enthält Änderungen, die dieses Gerät gemacht hat und nicht mehr besitzt, etwa nachdem hier ein älteres Backup wiederhergestellt wurde. Daher lassen sich die beiden nicht zusammenführen. Exportiere die Notizen von diesem Gerät, richte Agaric darauf neu ein, kopple es erneut und importiere sie dann.',
   'sync.ownHistoryForkUnnamed':
     'Das andere Gerät enthält Änderungen, die dieses Gerät gemacht hat und nicht mehr besitzt, etwa nachdem hier ein älteres Backup wiederhergestellt wurde. Daher lassen sich die beiden nicht zusammenführen. Exportiere die Notizen von diesem Gerät, richte Agaric darauf neu ein, kopple es erneut und importiere sie dann.',
+  'sync.peerHistoryFork':
+    'Dieses Gerät enthält Änderungen, die {{peer}} gemacht hat und nicht mehr besitzt, etwa nachdem auf {{peer}} ein älteres Backup wiederhergestellt wurde. Daher lassen sich die beiden nicht zusammenführen. Exportiere die Notizen von {{peer}}, richte Agaric dort neu ein, kopple das Gerät erneut und importiere sie dann.',
+  'sync.peerHistoryForkUnnamed':
+    'Dieses Gerät enthält Änderungen, die das andere Gerät gemacht hat und nicht mehr besitzt, etwa nachdem dort ein älteres Backup wiederhergestellt wurde. Daher lassen sich die beiden nicht zusammenführen. Exportiere die Notizen vom anderen Gerät, richte Agaric dort neu ein, kopple das Gerät erneut und importiere sie dann.',
   'sync.retryAction': 'Synchronisierung wiederholen',
   'sync.noPeersTitle': 'Keine Geräte gekoppelt',
   'sync.noPeersBody':

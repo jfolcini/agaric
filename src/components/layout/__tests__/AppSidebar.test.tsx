@@ -536,7 +536,9 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
     const { user } = await openMobileSheet()
 
-    await user.selectOptions(screen.getByRole('combobox', { name: /Switch space/ }), '__manage__')
+    // On a phone the switcher is a bottom-sheet menu, not a Select.
+    await user.click(screen.getByRole('button', { name: t('space.switch') }))
+    await user.click(await screen.findByRole('button', { name: t('space.manage') }))
 
     expect(useNavigationStore.getState().pendingSettingsTab).toBe('spaces')
     await waitFor(() => {

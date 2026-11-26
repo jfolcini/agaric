@@ -36,7 +36,7 @@ use rand::RngExt;
 use tokio::sync::{Mutex, watch};
 
 use crate::mdns::DiscoveredPeer;
-use crate::sync_events::SyncEventSink;
+use crate::sync_events::{SyncErrorCode, SyncEventSink};
 
 /// #2621 (agaric-sync split): a factory that wraps a base sync-event sink with
 /// a per-session progress channel.
@@ -298,6 +298,13 @@ struct BackoffState {
     membership: PeerMembership,
     /// When the peer may next be retried.
     next_retry_at: Instant,
+    /// The last failure was a history fork (#7065), which every retry meets
+    /// again once the whole snapshot has crossed: the wait does not run out,
+    /// and ends only with the entry, on a press on Sync
+    /// ([`SyncScheduler::clear_peer_backoff`]), a pairing act
+    /// ([`SyncScheduler::clear_backoff`]) or a restart. The device that forked
+    /// comes back through a pairing, so nothing else has to end the wait.
+    held: bool,
     /// Current backoff duration (doubles on each failure).
     backoff: Duration,
     /// Number of consecutive failures.
@@ -406,6 +413,7 @@ fn book_failure<'a>(
     let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
         membership,
         next_retry_at: Instant::now(),
+        held: false,
         backoff: MIN_BACKOFF,
         consecutive_failures: 0,
         reported_errors: Vec::new(),
@@ -819,7 +827,7 @@ impl SyncScheduler {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match backoff.get(peer_id) {
             None => true,
-            Some(state) => Instant::now() >= state.next_retry_at,
+            Some(state) => !state.held && Instant::now() >= state.next_retry_at,
         }
     }
 
@@ -900,7 +908,7 @@ impl SyncScheduler {
     /// window instead of documenting it, and does so **without** holding the
     /// lock across the event-sink call: the caller emits after this returns.
     ///
-    /// # The two inputs
+    /// # The inputs
     ///
     /// * `message` — the exact user-facing text the caller would emit. It is
     ///   the suppression key, so "repeat" means *this peer, this text, this
@@ -920,6 +928,10 @@ impl SyncScheduler {
     ///   caller that already has the rows, and `evict_for_new_peer` needs
     ///   the answer stored on the entry to rank it. See [`PeerMembership`] for
     ///   why the predicate is row-presence and not `endpoint_id.is_some()`.
+    /// * `code` — the failure's code, if it has one. A history fork (#7065)
+    ///   holds the peer: [`may_retry`](Self::may_retry) refuses it until its
+    ///   entry goes, because a retry meets the same fork after the whole
+    ///   snapshot crosses again.
     ///
     /// # What it can and cannot suppress
     ///
@@ -937,12 +949,17 @@ impl SyncScheduler {
         message: &str,
         peer_still_serving: bool,
         membership: PeerMembership,
+        code: Option<SyncErrorCode>,
     ) -> FailureBooking {
         let mut backoff = self
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let state = book_failure(&mut backoff, peer_id, membership);
+        state.held |= matches!(
+            code,
+            Some(SyncErrorCode::OwnHistoryFork | SyncErrorCode::PeerHistoryFork)
+        );
         let consecutive_failures = state.consecutive_failures;
         let entry = ReportedFailure {
             message: message.to_string(),
@@ -1027,14 +1044,22 @@ impl SyncScheduler {
     /// about is whichever unpaired endpoint answers. The blast radius is one
     /// extra dial round for any peer that happened to be in backoff, bounded to
     /// the moment a user pressed a button in the pairing dialog.
-    ///
-    /// The daemon also calls it when it binds its endpoint again (#6526): what
-    /// failed on the old network says nothing about the new one.
     pub fn clear_backoff(&self) {
         self.backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+    }
+
+    /// Forget every backoff a new network can end, which a
+    /// [held](Self::record_failure_and_take_report) peer's is not: the daemon
+    /// calls it when it binds its endpoint again (#6526), since what failed on
+    /// the old network says nothing about the new one.
+    pub fn clear_backoff_for_new_network(&self) {
+        self.backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, state| state.held);
     }
 
     /// Forget `peer_id`'s backoff and what was reported in its streak. A
@@ -1338,6 +1363,7 @@ mod tests {
         let mut state = BackoffState {
             membership: PeerMembership::Known,
             next_retry_at: Instant::now(),
+            held: false,
             backoff: MIN_BACKOFF,
             consecutive_failures: 0,
             reported_errors: Vec::new(),
@@ -1508,6 +1534,7 @@ mod tests {
             "Sync failed: sync ended in terminal state",
             true,
             PeerMembership::Known,
+            None,
         );
         {
             let mut backoff = sched.backoff.lock().unwrap();
@@ -1578,6 +1605,7 @@ mod tests {
                 "boom",
                 true,
                 PeerMembership::Known,
+                None,
             );
         }
         assert_eq!(
@@ -1599,7 +1627,13 @@ mod tests {
             }
         }
 
-        sched.record_failure_and_take_report("member-new", "boom", true, PeerMembership::Known);
+        sched.record_failure_and_take_report(
+            "member-new",
+            "boom",
+            true,
+            PeerMembership::Known,
+            None,
+        );
 
         let backoff = sched.backoff.lock().unwrap();
         assert_eq!(
@@ -1639,6 +1673,7 @@ mod tests {
                 "boom",
                 true,
                 PeerMembership::Known,
+                None,
             );
         }
         {
@@ -2196,6 +2231,39 @@ mod tests {
         assert!(due.is_empty());
     }
 
+    /// #7065 — a held peer's wait does not run out, and a new network, which
+    /// ends every other wait, leaves it: the fork is not the network's.
+    #[test]
+    fn a_held_peer_outwaits_its_backoff_and_a_new_network_7065() {
+        let sched = SyncScheduler::new();
+        sched.record_failure_and_take_report(
+            "forked",
+            "forked",
+            true,
+            PeerMembership::Known,
+            Some(SyncErrorCode::OwnHistoryFork),
+        );
+        sched.record_failure("unreachable");
+
+        sched.expire_backoff("forked");
+        assert!(
+            !sched.may_retry("forked"),
+            "the backoff running out does not end the hold"
+        );
+
+        sched.clear_backoff_for_new_network();
+        assert!(
+            !sched.may_retry("forked"),
+            "a new network does not end the hold"
+        );
+        assert_eq!(sched.failure_count("forked"), 1, "the entry is kept whole");
+        assert!(
+            sched.may_retry("unreachable"),
+            "what failed on the old network is dialled on the new one"
+        );
+        assert_eq!(sched.failure_count("unreachable"), 0);
+    }
+
     // ======================================================================
     // #458 — sync_scheduler edge cases
     // ======================================================================
@@ -2463,6 +2531,7 @@ mod tests {
                                 MESSAGE,
                                 true,
                                 PeerMembership::Known,
+                                None,
                             )
                             .report
                         {
@@ -2523,14 +2592,20 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
+                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known, None)
                 .report,
             "precondition: the first report of a streak always lands"
         );
         for _ in 0..20 {
             assert!(
                 !sched
-                    .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
+                    .record_failure_and_take_report(
+                        PEER,
+                        "cause A",
+                        true,
+                        PeerMembership::Known,
+                        None
+                    )
                     .report,
                 "precondition: its repeats are suppressed"
             );
@@ -2538,7 +2613,7 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause B", true, PeerMembership::Known)
+                .record_failure_and_take_report(PEER, "cause B", true, PeerMembership::Known, None)
                 .report,
             "a text the user has never been shown is news, no matter how long the \
              peer has been failing for another reason"
@@ -2561,7 +2636,7 @@ mod tests {
         for _ in 0..6 {
             for cause in ["cause A", "cause B"] {
                 if sched
-                    .record_failure_and_take_report(PEER, cause, true, PeerMembership::Known)
+                    .record_failure_and_take_report(PEER, cause, true, PeerMembership::Known, None)
                     .report
                 {
                     reported.push(cause);
@@ -2599,7 +2674,13 @@ mod tests {
         for i in 0..MAX_REMEMBERED_REPORTS {
             assert!(
                 sched
-                    .record_failure_and_take_report(PEER, &cause(i), true, PeerMembership::Known)
+                    .record_failure_and_take_report(
+                        PEER,
+                        &cause(i),
+                        true,
+                        PeerMembership::Known,
+                        None
+                    )
                     .report,
                 "precondition: each distinct cause is news the first time"
             );
@@ -2617,7 +2698,8 @@ mod tests {
                     PEER,
                     &cause(MAX_REMEMBERED_REPORTS),
                     true,
-                    PeerMembership::Known
+                    PeerMembership::Known,
+                    None,
                 )
                 .report
         );
@@ -2631,7 +2713,7 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, &cause(0), true, PeerMembership::Known)
+                .record_failure_and_take_report(PEER, &cause(0), true, PeerMembership::Known, None)
                 .report,
             "the OLDEST remembered text is the one evicted, so it is reported again — \
              the safe direction (a duplicate toast), not a swallowed one"
@@ -2642,7 +2724,8 @@ mod tests {
                     PEER,
                     &cause(MAX_REMEMBERED_REPORTS),
                     true,
-                    PeerMembership::Known
+                    PeerMembership::Known,
+                    None,
                 )
                 .report,
             "…while the newest text is still remembered and still suppressed, which is \
@@ -2668,14 +2751,20 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause A", false, PeerMembership::Known)
+                .record_failure_and_take_report(PEER, "cause A", false, PeerMembership::Known, None)
                 .report,
             "the first report of a failure always lands, dark or not"
         );
         for cycle in 0..5 {
             assert!(
                 !sched
-                    .record_failure_and_take_report(PEER, "cause A", false, PeerMembership::Known)
+                    .record_failure_and_take_report(
+                        PEER,
+                        "cause A",
+                        false,
+                        PeerMembership::Known,
+                        None
+                    )
                     .report,
                 "#4305: cycle {cycle} of an unchanged failure against an unchanged \
                  dark peer must be silent — the durable surfaces are the peer row \
@@ -2703,7 +2792,13 @@ mod tests {
         let sched = SyncScheduler::new();
         let take = |serving: bool| {
             sched
-                .record_failure_and_take_report(PEER, "cause A", serving, PeerMembership::Known)
+                .record_failure_and_take_report(
+                    PEER,
+                    "cause A",
+                    serving,
+                    PeerMembership::Known,
+                    None,
+                )
                 .report
         };
 
@@ -2737,7 +2832,7 @@ mod tests {
         let sched = SyncScheduler::new();
         let take = |sched: &SyncScheduler| {
             sched
-                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
+                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known, None)
                 .report
         };
 

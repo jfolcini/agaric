@@ -2,8 +2,8 @@
  * Issue #216 — mobile & accessibility regression tests (items A, B, C4).
  *
  *   A: the inline due-date editor (BlockListItem → DueDateChip) and the
- *      add-property picker (AddPropertyPopover) render as a bottom Sheet on
- *      coarse pointers and as an anchored Popover on fine pointers.
+ *      add-property picker (AddPropertyPopover) render as a bottom Sheet on a
+ *      phone (`usePhoneLayout`) and as an anchored Popover elsewhere.
  *   B (drag handle): BlockGutterControls' drag handle exposes aria-keyshortcuts
  *      + an accessible name. (The swipe-row aria-description is covered in
  *      SortableBlock.test.tsx where the full mock surface already exists.)
@@ -35,6 +35,9 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 vi.mock('@/components/properties/DateChipEditor', () => ({
   DateChipEditor: () => <div data-testid="date-chip-editor-stub" />,
 }))
+
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
 
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import { BlockCollapseControl } from '@/components/editor/BlockInlineControls'
@@ -74,6 +77,7 @@ function renderWithTooltip(ui: React.ReactElement) {
 afterEach(() => {
   // Restore the shared fine-pointer default from src/test-setup.ts.
   setCoarse(false)
+  mockUsePhoneLayout.mockReturnValue(false)
 })
 
 // Radix Popover/Sheet triggers toggle on pointerdown; userEvent's synthetic
@@ -88,21 +92,18 @@ describe('#216 A — keyboard-aware due-date chip (BlockListItem)', () => {
     )
   }
 
-  it('renders the editor in a Popover on fine pointers', () => {
-    setCoarse(false)
+  it('renders the editor in a Popover off a phone', () => {
     renderChip()
     fireEvent.click(screen.getByLabelText('Edit date'))
-    expect(screen.getByTestId('due-date-popover')).toBeInTheDocument()
-    expect(screen.queryByTestId('due-date-sheet')).not.toBeInTheDocument()
+    expect(screen.getByTestId('due-date-popover')).toHaveAttribute('data-slot', 'popover-content')
     expect(screen.getByTestId('date-chip-editor-stub')).toBeInTheDocument()
   })
 
-  it('renders the editor in a bottom Sheet on coarse pointers', () => {
-    setCoarse(true)
+  it('renders the editor in a bottom Sheet on a phone', () => {
+    mockUsePhoneLayout.mockReturnValue(true)
     renderChip()
     fireEvent.click(screen.getByLabelText('Edit date'))
-    expect(screen.getByTestId('due-date-sheet')).toBeInTheDocument()
-    expect(screen.queryByTestId('due-date-popover')).not.toBeInTheDocument()
+    expect(screen.getByTestId('due-date-popover')).toHaveAttribute('data-slot', 'sheet-content')
     expect(screen.getByTestId('date-chip-editor-stub')).toBeInTheDocument()
   })
 })
@@ -114,21 +115,23 @@ describe('#216 A — keyboard-aware add-property picker', () => {
   // triggers don't toggle on a synthetic `fireEvent.click` under happy-dom
   // (they listen on pointerdown), so opening through the controlled API is the
   // reliable way to assert which branch (Sheet vs Popover) renders.
-  it('renders the picker in a Popover on fine pointers', () => {
-    setCoarse(false)
+  it('renders the picker in a Popover off a phone', () => {
     renderWithTooltip(
       <AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />,
     )
-    expect(screen.queryByTestId('add-property-sheet')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull()
     expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
   })
 
-  it('renders the picker in a bottom Sheet on coarse pointers', () => {
-    setCoarse(true)
+  it('renders the picker in a bottom Sheet on a phone', () => {
+    mockUsePhoneLayout.mockReturnValue(true)
     renderWithTooltip(
       <AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />,
     )
-    expect(screen.getByTestId('add-property-sheet')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Add property' })).toHaveAttribute(
+      'data-slot',
+      'sheet-content',
+    )
     expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
   })
 })

@@ -331,7 +331,11 @@ function PageCodeBubble({ editor }: { editor: Editor }): React.ReactElement {
     >
       {code !== null && (
         <>
-          <Popover open={open} onOpenChange={(next) => setOpenOn(next ? code.pos : null)}>
+          <Popover
+            open={open}
+            onOpenChange={(next) => setOpenOn(next ? code.pos : null)}
+            sheetTitle={t('toolbar.codeBlockLanguage')}
+          >
             <PopoverAnchor virtualRef={popoverAnchor} />
             <Button
               variant="ghost"

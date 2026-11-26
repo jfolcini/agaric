@@ -233,6 +233,11 @@ pub enum SyncErrorCode {
     /// catch-up cannot merge that (#792, #6523). The frontend gives the cause
     /// and the recovery.
     OwnHistoryFork,
+    /// The peer's snapshot reuses operation ids this device holds with other
+    /// content, as after an older database was restored on the peer, and the
+    /// snapshot catch-up cannot merge that (#7065). The frontend gives the
+    /// cause and the recovery, which is done on the peer.
+    PeerHistoryFork,
     /// The dial to a paired peer timed out, mDNS is not announcing it, and it
     /// has not pulled from us lately (#6523): the device is away, and the frontend
     /// shows a neutral waiting state rather than a failure.
@@ -688,6 +693,7 @@ mod tests {
             (SyncErrorCode::PeerAway, "peer_away"),
             (SyncErrorCode::HandshakeUnanswered, "handshake_unanswered"),
             (SyncErrorCode::OwnHistoryFork, "own_history_fork"),
+            (SyncErrorCode::PeerHistoryFork, "peer_history_fork"),
         ] {
             let json = serde_json::to_value(&SyncEvent::Error {
                 message: String::new(),
