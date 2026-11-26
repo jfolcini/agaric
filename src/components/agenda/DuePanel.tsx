@@ -247,14 +247,21 @@ export function DuePanel({
   }
 
   // The header counts by the filter segments' own names, each source that has
-  // rows; with none, the day's due count, zero.
+  // rows; with none, the chosen segment's zero (Due's under All).
   const sourceParts = [
-    { label: t('duePanel.filterDue'), count: sourceCounts.due },
-    { label: t('duePanel.filterScheduled'), count: sourceCounts.scheduled },
-    { label: t('duePanel.filterProperties'), count: sourceCounts.property },
+    { source: 'column:due_date', label: t('duePanel.filterDue'), count: sourceCounts.due },
+    {
+      source: 'column:scheduled_date',
+      label: t('duePanel.filterScheduled'),
+      count: sourceCounts.scheduled,
+    },
+    { source: 'property:', label: t('duePanel.filterProperties'), count: sourceCounts.property },
   ]
   const nonEmptyParts = sourceParts.filter((part) => part.count > 0)
-  const headerParts = nonEmptyParts.length > 0 ? nonEmptyParts : sourceParts.slice(0, 1)
+  const headerParts =
+    nonEmptyParts.length > 0
+      ? nonEmptyParts
+      : sourceParts.filter((part) => part.source === (sourceFilter ?? 'column:due_date'))
 
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')} data-testid="due-panel">

@@ -795,6 +795,31 @@ describe('DuePanel', () => {
     expect(dueBtn).toHaveAttribute('aria-checked', 'true')
   })
 
+  // A segment with no rows: the header counts that segment's zero, not Due's.
+  it('header names the chosen segment when it has no rows', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'only due', due_date: '2025-06-15' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+    expect(await screen.findByRole('button', { name: 'Due 1' })).toBeInTheDocument()
+
+    mockedListBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    await user.click(screen.getByRole('radio', { name: /^Scheduled/ }))
+
+    expect(await screen.findByText(t('duePanel.noItemsForFilter'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scheduled 0' })).toBeInTheDocument()
+  })
+
   // 15. Clicking "All" clears source filter
   it('clicking "All" clears source filter', async () => {
     const user = userEvent.setup()
