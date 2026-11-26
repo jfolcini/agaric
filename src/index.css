@@ -1304,8 +1304,8 @@
   font-size: var(--heading-6-size);
   line-height: var(--heading-6-leading);
 }
-/* A table's cells, a code block and a callout's label: note text a step under
-   the body, so they follow the font-size setting like it; `text-sm` at Medium. */
+/* Note text a step under the body, following the font-size setting like it;
+   `text-sm` at Medium. */
 @utility text-block-sm {
   font-size: calc(var(--agaric-font-size, 1rem) * 0.875);
   line-height: var(--text-sm--line-height);
@@ -1314,7 +1314,7 @@
    grows with their icons; `text-xs` at Medium. `cn` knows both as font sizes. */
 @utility text-block-chip {
   font-size: calc(var(--agaric-font-size, 1rem) * 0.75);
-  line-height: var(--tw-leading, var(--text-xs--line-height));
+  line-height: var(--text-xs--line-height);
 }
 
 /* The first line box of a block's text, on which its grip, chevron and
