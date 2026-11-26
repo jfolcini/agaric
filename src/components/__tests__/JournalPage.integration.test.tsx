@@ -331,9 +331,20 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
   }
 
   async function deleteTodayPage(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-    await user.click(
-      await within(todaySection()).findByRole('button', { name: t('pageHeader.deletePage') }),
-    )
+    // The day view's delete is in its title row's Page actions menu (#7155 R6);
+    // the multi-day views keep it on the day's heading.
+    const day = within(todaySection())
+    const trigger = await waitFor(() => {
+      const found =
+        day.queryByRole('button', { name: t('pageHeader.pageActions') }) ??
+        day.queryByRole('button', { name: t('pageHeader.deletePage') })
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    await user.click(trigger)
+    if (trigger.getAttribute('aria-label') === t('pageHeader.pageActions')) {
+      await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
+    }
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
     // The mock sends no change feed: once the delete commits, send the `names`

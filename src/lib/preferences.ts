@@ -1051,8 +1051,7 @@ const INTERFACE_ZOOM_PREFERENCE: PreferenceDefinition<InterfaceZoom> = {
 
 /**
  * `agaric:deadlineWarningDays` — overdue-warning lead time in days
- * (`src/hooks/useDuePanelData.ts`,
- * `src/components/agenda/DeadlineWarningSection.tsx`). Legacy on-disk
+ * (`src/components/agenda/DeadlineWarningSection.tsx`). Legacy on-disk
  * format is a bare integer (not JSON).
  */
 const DEADLINE_WARNING_DAYS_PREFERENCE: PreferenceDefinition<number> = {

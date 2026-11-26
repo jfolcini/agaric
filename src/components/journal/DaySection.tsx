@@ -21,14 +21,12 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
-import { DayPageEditor } from '@/components/journal/DayPageEditor'
+import { DayHeader, DayPageEditor } from '@/components/journal/DayPageEditor'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
-import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useToday } from '@/hooks/useToday'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
@@ -291,21 +289,15 @@ function DaySectionInner({
     }
   }, [isWindowControlled, hasEntered])
 
-  // In daily mode (heading hidden), the page's star and delete still sit on the
-  // row the day page's Blocks | Page switch ends. On a phone that row ends in
-  // the *Page actions* menu, which takes the delete: a one-tap trash above the
-  // day's blocks was too easy to hit (#7040).
-  const isTouch = useIsTouch()
-  const phoneLayout = usePhoneLayout()
-  const onPhone = isTouch && phoneLayout
+  // In daily mode (heading hidden) the day page's bookmark sits on its title
+  // row; the delete is in that row's *Page actions* menu (#7155 R6).
   const dailyActions =
     hideHeading && entry.pageId ? (
       <PageQuickActions
         pageId={entry.pageId}
         title={entry.displayDate}
-        variant="journal"
-        showDelete={!onPhone}
-        deleting={isDeletingThisDay}
+        variant="header"
+        showDelete={false}
         onDeleteRequest={handleRequestDayDelete}
       />
     ) : null
@@ -440,8 +432,10 @@ function DaySectionInner({
           )}
         </div>
       )}
+      {/* A daily day with no page yet still names itself, with nothing to act on. */}
+      {hideHeading && !entry.pageId && <DayHeader displayDate={entry.displayDate} />}
       {/* Single delete-confirm dialog (Part A) — the heading's and the daily
-          row's delete both route through `usePageDeleteAction.requestDelete`. */}
+          menu's delete both route through `usePageDeleteAction.requestDelete`. */}
       <ConfirmDialog {...deleteConfirmDialogProps} />
 
       {entry.pageId &&
@@ -460,6 +454,7 @@ function DaySectionInner({
               {mode === 'daily' ? (
                 <DayPageEditor
                   pageId={entry.pageId}
+                  displayDate={entry.displayDate}
                   actions={dailyActions}
                   onDeleteRequest={
                     dayPageId != null ? () => handleRequestDayDelete(dayPageId) : undefined
