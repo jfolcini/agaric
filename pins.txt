@@ -16,7 +16,9 @@
 #   github:<repo>[@<tag-prefix>]   newest GitHub release
 #   crate:<name>     newest stable version on crates.io
 #   lock:<crate>     the version of <crate> in src-tauri/Cargo.lock
-#   temurin:<major>  newest Temurin JDK release of that major
+#   temurin:<major>  newest Temurin JDK release of that major, in the Adoptium
+#                    API's semver form, which folds a point release's fourth
+#                    field into the build number; setup-java matches that form
 #   android-emulator newest stable-channel emulator build
 #   android-sdk:<pkg>;<major>   newest stable <pkg> release of that major
 #   tauri-bundler:<tool>   the name tauri-bundler's prepare_tools fetches at the
@@ -31,12 +33,12 @@
 # Platforms: linux-x86_64 linux-aarch64 darwin-x86_64 darwin-arm64 windows-x86_64
 
 # --- Hook and CI tools (taiki-e/install-action in CI, setup-hooks.sh locally) ---
-version prek          0.5.10   taiki:prek
+version prek          0.5.11   taiki:prek
 version zizmor        1.32.0   taiki:zizmor
 version taplo-cli     0.10.0   taiki:taplo-cli
 version typos-cli     1.52.2   taiki:typos-cli
-version cargo-deny    0.20.2   taiki:cargo-deny
-version cargo-machete 0.9.2    taiki:cargo-machete
+version cargo-deny    0.21.0   taiki:cargo-deny
+version cargo-machete 0.10.1   taiki:cargo-machete
 version cargo-audit   0.23.0   taiki:cargo-audit
 version cargo-mutants 27.1.0   taiki:cargo-mutants
 version cargo-auditable 0.7.7  taiki:cargo-auditable
@@ -109,8 +111,8 @@ version linuxdeploy-plugin-appimage 1-alpha-20250213-1 github:linuxdeploy/linuxd
 asset   linuxdeploy-plugin-appimage linux-x86_64  992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/{version}/linuxdeploy-plugin-appimage-x86_64.AppImage
 
 # --- Toolchains whose installers take no hash (exact version is the pin) ---
-version temurin       17.0.21+9   temurin:17
+version temurin       17.0.21+100000002   temurin:17
 version android-emulator 16970787 android-emulator
-version android-ndk   27.2.12479018 android-sdk:ndk;27
-version android-build-tools 36.0.0 android-sdk:build-tools;36
+version android-ndk   27.3.13750724 android-sdk:ndk;27
+version android-build-tools 36.1.0 android-sdk:build-tools;36
 version rust-nightly  2026-11-10  rust-nightly
