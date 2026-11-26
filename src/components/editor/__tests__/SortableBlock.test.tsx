@@ -1446,12 +1446,8 @@ describe('SortableBlock visibility controls', () => {
     expect(handle.className).toContain('[.block-active_&]:opacity-100')
   })
 
-  // #1232 kept `block-active` as the gutter-reveal hook on the row. #1243 then
-  // REMOVED the SortableBlock-level visual highlight entirely: a focused block
-  // already gets its own calm indicator from EditableBlock's `block-editor` box
-  // (`ring-1 ring-border bg-accent/[0.06]`). The earlier red `border-l-primary`
-  // bar + `bg-sidebar-accent` tint layered a second, alarm-red highlight on top
-  // of that box and bled the tint to the left edge, so it was dropped.
+  // `block-active` is the gutter-reveal hook on the row; the frame's editing box is the one
+  // highlight (#1243), with no red accent bar or tint beside it.
   it('focused block: keeps block-active reveal hook, but no red accent bar / sidebar tint', () => {
     const { container } = render(
       <SortableBlock
@@ -1463,8 +1459,6 @@ describe('SortableBlock visibility controls', () => {
     )
     const row = container.querySelector('.sortable-block') as HTMLElement
     expect(row.className).toContain('block-active')
-    // No red left-accent bar or warm-grey tint anywhere on the row subtree —
-    // the focused `block-editor` box is the sole active indicator.
     expect(container.innerHTML).not.toContain('bg-sidebar-accent')
     expect(container.innerHTML).not.toContain('border-l-primary')
   })
@@ -4499,10 +4493,11 @@ describe('SortableBlock touch rows (#5332 item 10)', () => {
     expect(container.querySelector('.block-control-lane')).not.toBeInTheDocument()
     expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
     expect(container.querySelector('.block-drag-bullet')).not.toBeInTheDocument()
-    // The text column is the first child after the (empty) inline controls.
-    const content = screen.getByTestId('swipe-content')
-    expect(content.children[0]?.className).toContain('inline-controls')
-    expect(content.children[1]?.className).toContain('flex-1')
+    // The row opens on its frame, where the text column follows the (empty) inline controls.
+    const frame = screen.getByTestId('block-frame')
+    expect(screen.getByTestId('swipe-content').children[0]).toBe(frame)
+    expect(frame.children[0]?.className).toContain('inline-controls')
+    expect(frame.children[1]).toBe(screen.getByTestId('block-content'))
   })
 
   it('the row carries the TouchSensor activator (touchstart), not dnd-kit attributes or keydown', () => {

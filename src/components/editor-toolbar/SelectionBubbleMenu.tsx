@@ -17,6 +17,7 @@
  * get `aria-pressed="true"` + `bg-accent`.
  */
 
+import type { Rect } from '@floating-ui/dom'
 import { getMarkRange, posToDOMRect } from '@tiptap/core'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
@@ -56,6 +57,22 @@ interface SelectionBubbleMenuProps {
   caretInLinkOnTouch?: boolean
 }
 
+/** The gap between the bubble and the selection. */
+const BUBBLE_GAP = 8
+
+/**
+ * Where the bubble may open: the window below the editing toolbar, which stays at the top of
+ * the view (block mode's view bar, page mode's sticky bar) and would cover a bubble opened above
+ * a line just under it. A toolbar pinned to the bottom on touch is no bound.
+ */
+function belowEditingToolbar(): Rect {
+  const bottoms = [...document.querySelectorAll('.formatting-toolbar:not([data-pinned])')].map(
+    (bar) => bar.getBoundingClientRect().bottom,
+  )
+  const top = Math.min(window.innerHeight, Math.max(0, ...bottoms))
+  return { x: 0, y: top, width: window.innerWidth, height: window.innerHeight - top }
+}
+
 /** Resolve the link mark range around the cursor, or undefined if not inside a link. */
 function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefined {
   try {
@@ -84,7 +101,7 @@ function ariaKeyshortcutsFor(label: string): string | undefined {
 const Tip = ({ label, children }: { label: string; children: React.ReactElement }) => (
   <Tooltip>
     <TooltipTrigger asChild>{children}</TooltipTrigger>
-    <TooltipContent side="bottom" sideOffset={6}>
+    <TooltipContent side="top" sideOffset={6}>
       {label}
     </TooltipContent>
   </Tooltip>
@@ -327,18 +344,17 @@ export function SelectionBubbleMenu({
       onKeyDown={rovingOnKeyDown}
       onFocus={rovingOnFocus}
       editor={editor}
-      // #1958 — open the bubble BELOW the selection (end/last line) rather than
-      // above it. The always-visible FormattingToolbar sits at the top edge of
-      // `.block-editor`; an upward-opening bubble overlapped it. `flip` (on by
-      // default) still lifts the bubble above the selection only when there is
-      // no room below (near the viewport bottom).
+      // Above the selection, where it hides text already read rather than the next block
+      // (#7040), and below it only when there is no room above (`belowEditingToolbar`).
       //
       // Each plugin view TipTap builds makes the container a tab stop ahead of the buttons,
       // and ProseMirror rebuilds the views whenever a plugin registers; the toolbar's one
       // stop is its active button.
       options={{
-        placement: 'bottom',
-        offset: 8,
+        placement: 'top',
+        offset: BUBBLE_GAP,
+        // A derived option: read on each placement, as the page scrolls under the toolbar.
+        flip: () => ({ boundary: belowEditingToolbar(), padding: BUBBLE_GAP }),
         onShow: () => {
           if (menuEl.current) menuEl.current.tabIndex = -1
         },
@@ -379,12 +395,8 @@ export function SelectionBubbleMenu({
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}
-      // #1958 — `z-50` so the bubble paints above sibling blocks. Now that it
-      // opens BELOW the selection it overlaps the following block, whose
-      // `sortable-block` is a later sibling in the same `block-tree` (z-10)
-      // stacking context and would otherwise paint on top — intercepting clicks
-      // on the mark buttons. A z-index lifts the (position:absolute) bubble
-      // above those z-auto siblings within that context.
+      // `z-50` (`bubbleMenuClass`) paints it above the sibling blocks it overlaps, which would
+      // otherwise take the clicks on its buttons.
       className={`selection-bubble-menu ${bubbleMenuClass}`}
       data-testid="selection-bubble-menu"
     >

@@ -36,9 +36,9 @@ const ALIGN_CLASS: Record<TableCellAlign, string> = {
  *     cell resolve the same way they do everywhere else).
  *
  * Header cells are grouped into a `<thead>`; the remaining rows into a
- * `<tbody>`. Styling is inline Tailwind (there is no global table CSS) so
- * the view-mode table reads as a real table — bordered, collapsed,
- * padded, header emphasised — instead of unstyled inline text.
+ * `<tbody>`. Styling is inline Tailwind (the editor's `.ProseMirror table`
+ * rules in `index.css` draw the same table): the code block's corners, a
+ * frame in the border token and lighter rules between cells (#7040).
  */
 export function renderTableBlock(
   block: TableNode,
@@ -76,7 +76,8 @@ export function renderTableBlock(
               key={cellKey}
               scope="col"
               className={cn(
-                'border border-border bg-muted/60 px-3 py-1.5 text-block-sm font-medium align-top',
+                'border-b border-border/60 bg-muted/60 px-3 py-1.5 text-block-sm font-medium align-top not-last:border-r',
+                'first:rounded-tl-[calc(var(--radius-md)-1px)] last:rounded-tr-[calc(var(--radius-md)-1px)]',
                 ALIGN_CLASS[align ?? 'left'],
               )}
             >
@@ -86,7 +87,7 @@ export function renderTableBlock(
             <td
               key={cellKey}
               className={cn(
-                'border border-border px-3 py-1.5 text-block-sm align-top',
+                'border-border/60 px-3 py-1.5 text-block-sm align-top not-last:border-r [tr:not(:first-child)>&]:border-t',
                 align && ALIGN_CLASS[align],
               )}
             >
@@ -106,7 +107,10 @@ export function renderTableBlock(
 
   return (
     <ScrollArea key={key} orientation="horizontal" className="my-1">
-      <table data-testid="rich-table" className="w-auto border-collapse border border-border">
+      <table
+        data-testid="rich-table"
+        className="w-auto border-separate border-spacing-0 rounded-md border border-border"
+      >
         {headerRows.length > 0 && (
           <thead>{headerRows.map((row, r) => renderRow(row, `${key}-h-${r}`))}</thead>
         )}

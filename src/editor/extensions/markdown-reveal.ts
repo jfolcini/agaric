@@ -1,9 +1,11 @@
 /**
  * MarkdownReveal (#5689) — with the "Show Markdown syntax around the cursor"
- * preference on, the selection shows the Markdown syntax it is in or touches:
+ * preference on, the caret shows the Markdown syntax it is in or touches:
  * the markers of bold, italic, code, strikethrough, highlight and external
- * links at a range's edges, and a heading's `#` run at the start of its line,
- * drawn as widget decorations (`revealed-markers.ts` says which). The marker
+ * links at a run's edges, and a heading's `#` run at the start of its line,
+ * drawn as widget decorations (`revealed-markers.ts` says which). A range
+ * selection, by a drag or Shift, shows none, so the text it covers holds still
+ * (decision 19 of #7040). The marker
  * text comes from the serializer, so it is what the block stores (italic is
  * always `*`).
  * Widgets live outside the document: they never reach the stored Markdown, the
@@ -27,7 +29,7 @@
  * stays an atom whose id is not text, so Backspace and Delete take it whole as
  * before and the syntax is no part of the selection. An unresolved chip's
  * label already reads in its syntax (`[[01ABCDEF...]]`), so it gets none.
- * So do the block constructs, on the selection's lines: a quote's `> ` run (a
+ * So do the block constructs, on the caret's line: a quote's `> ` run (a
  * callout's `> [!TYPE] ` on its first line) and the `$` of inline math selected
  * or beside the caret, whose LaTeX its node view edits; a code block's fences
  * and selected display math's `$$` are drawn by the block's own element, above

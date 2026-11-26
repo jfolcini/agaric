@@ -18,6 +18,7 @@
 
 'use client'
 
+import { cva, type VariantProps } from 'class-variance-authority'
 import { ToggleGroup as ToggleGroupPrimitive } from 'radix-ui'
 import type * as React from 'react'
 import { useRef } from 'react'
@@ -36,24 +37,39 @@ const ROVING_KEYS = new Set([
   'PageDown',
 ])
 
+const toggleGroupVariants = cva(
+  // On a coarse pointer the frame is one button high (`Button`): 32 px
+  // items, a 1 px inset and the border make 36 px, at every size.
+  'inline-flex items-center rounded-md border border-input bg-background p-0.5 [@media(pointer:coarse)]:p-px',
+  {
+    variants: {
+      size: {
+        // 32 px on a fine pointer.
+        default: '',
+        // 28 px on a fine pointer, as tall as an `xs` Button and a `sm` Select
+        // in the same row.
+        sm: '[&>[data-slot=toggle-group-item]]:py-0.5',
+      },
+    },
+    defaultVariants: { size: 'default' },
+  },
+)
+
 function ToggleGroup({
   className,
+  size,
   onKeyDown,
   onFocus,
   ...props
-}: React.ComponentProps<typeof ToggleGroupPrimitive.Root>) {
+}: React.ComponentProps<typeof ToggleGroupPrimitive.Root> &
+  VariantProps<typeof toggleGroupVariants>) {
   // Roving focus moves focus in a timeout after the keydown, so the focus
   // handler learns from this flag that a roving key, not Tab or a click, moved it.
   const rovingKeyRef = useRef(false)
   return (
     <ToggleGroupPrimitive.Root
       data-slot="toggle-group"
-      className={cn(
-        // On a coarse pointer the frame is one button high (`Button`): 32 px
-        // items, a 1 px inset and the border make 36 px.
-        'inline-flex items-center rounded-md border border-input bg-background p-0.5 [@media(pointer:coarse)]:p-px',
-        className,
-      )}
+      className={cn(toggleGroupVariants({ size }), className)}
       onKeyDown={(event) => {
         // Radix ignores a roving key with a modifier, so no focus move follows it.
         rovingKeyRef.current =

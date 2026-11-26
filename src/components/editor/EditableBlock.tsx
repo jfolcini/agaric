@@ -618,7 +618,7 @@ function EditableBlockInner({
       ref={wrapperRef}
       id={`editor-${blockId}`}
       className={cn(
-        'block-editor rounded-md ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting)',
+        'block-editor rounded-md',
         isSelected && 'block-selected',
         isDragOver && 'ring-2 ring-ring bg-ring/5',
       )}
