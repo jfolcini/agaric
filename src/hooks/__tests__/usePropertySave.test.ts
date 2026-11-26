@@ -17,6 +17,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
+import type { Dispatch, SetStateAction } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -263,7 +264,8 @@ describe('usePropertySave handleSave', () => {
       usePropertySave({
         blockId: 'BLOCK_1',
         setProperties,
-        toasts: { saveFailed: 'pageProperty.saveFailed' },
+        // Any key whose text differs from the default's, so ignoring it fails.
+        toasts: { saveFailed: 'pageProperty.addFailed' },
       }),
     )
 
@@ -271,7 +273,7 @@ describe('usePropertySave handleSave', () => {
       await result.current.handleSave('status', 'val', 'text')
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to save property')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to add property')
   })
 })
 
@@ -387,7 +389,8 @@ describe('usePropertySave handleDelete', () => {
       usePropertySave({
         blockId: 'BLOCK_1',
         setProperties,
-        toasts: { deleteFailed: 'pageProperty.deleteFailed' },
+        // Any key whose text differs from the default's, so ignoring it fails.
+        toasts: { deleteFailed: 'pageProperty.loadFailed' },
       }),
     )
 
@@ -395,18 +398,13 @@ describe('usePropertySave handleDelete', () => {
       await result.current.handleDelete('status')
     })
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to delete property')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to load properties')
   })
 
   it('filter function removes the deleted key from the list', async () => {
     stubInvoke({ delete_property: () => withOps({ block_id: 'BLOCK_1', key: 'status' }) })
 
-    let capturedUpdater: ((prev: PropertyRow[]) => PropertyRow[]) | null = null
-    const setProperties = vi.fn((updater) => {
-      if (typeof updater === 'function') {
-        capturedUpdater = updater
-      }
-    })
+    const setProperties = vi.fn<Dispatch<SetStateAction<PropertyRow[]>>>()
 
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
 
@@ -414,13 +412,13 @@ describe('usePropertySave handleDelete', () => {
       await result.current.handleDelete('status')
     })
 
-    expect(capturedUpdater).not.toBeNull()
+    const updater = setProperties.mock.calls[0]?.[0]
+    if (typeof updater !== 'function') throw new Error('handleDelete passed no updater function')
     const prev = [
       makeProp('status', { value_text: 'active' }),
       makeProp('priority', { value_num: 1 }),
     ]
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- verified not-null above; capturedUpdater is assigned only inside an act() closure that TS flow-analysis can't see through, so a guard narrows to `never`
-    const filtered = capturedUpdater!(prev)
+    const filtered = updater(prev)
     expect(filtered).toHaveLength(1)
     expect(filtered[0]?.key).toBe('priority')
   })

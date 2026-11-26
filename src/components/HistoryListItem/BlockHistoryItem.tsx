@@ -129,7 +129,6 @@ export function BlockHistoryItem({
   // / are loading / failed for this expansion". The cleanup also
   // resets `comparedLoading` so a collapse mid-fetch doesn't leave
   // the spinner stuck on subsequent re-expand.
-  /* oxlint-disable react-hooks/exhaustive-deps -- comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above. */
   React.useEffect(() => {
     if (!isExpanded || !isRestorable) return
     if (comparedDiff != null || comparedLoading || comparedFailed) return
@@ -168,8 +167,8 @@ export function BlockHistoryItem({
       // flag.
       setComparedLoading(false)
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- the comparedDiff/comparedLoading/comparedFailed guards are set by this effect; listing them cancels its own fetch (see above)
   }, [isExpanded, isRestorable, blockId, entry.seq, t, retryNonce])
-  /* oxlint-enable react-hooks/exhaustive-deps */
 
   // #1736: clear the failure guard (and any stale diff) and bump the nonce so
   // the lazy-fetch effect re-runs. comparedFailed/comparedDiff alone can't

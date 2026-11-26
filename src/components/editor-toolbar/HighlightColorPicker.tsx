@@ -44,11 +44,9 @@ export function HighlightColorPicker({
   })
 
   return (
-    <div
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a labelled row of buttons; a fieldset would bring a form group's border and legend into a toolbar
-      role="group"
+    <fieldset
       aria-label={t('toolbar.highlightColor')}
-      className="flex items-center gap-0.5"
+      className="flex min-w-0 items-center gap-0.5"
       data-testid="highlight-color-picker"
     >
       {SWATCHES.map(({ color, label, fill }) => {
@@ -70,6 +68,6 @@ export function HighlightColorPicker({
           </Button>
         )
       })}
-    </div>
+    </fieldset>
   )
 }

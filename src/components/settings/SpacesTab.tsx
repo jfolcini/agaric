@@ -123,12 +123,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
       />
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
-        <div
-          className="flex flex-wrap gap-1.5"
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- toolbar-like group of swatch buttons; <fieldset>/<optgroup> etc. break the flex layout and add unwanted form/list semantics
-          role="group"
-          aria-label={t('space.accentColorLabel')}
-        >
+        <fieldset className="flex flex-wrap gap-1.5" aria-label={t('space.accentColorLabel')}>
           {ACCENT_SWATCHES.map((swatch) => (
             <button
               key={swatch.token}
@@ -157,7 +152,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
               ) : null}
             </button>
           ))}
-        </div>
+        </fieldset>
       </div>
       <div className="flex justify-end gap-2">
         <Button

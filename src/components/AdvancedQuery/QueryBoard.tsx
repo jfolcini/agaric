@@ -230,7 +230,7 @@ function QueryBoardCards({
   }, [focusedIndex])
 
   return (
-    /* oxlint-disable jsx-a11y/no-noninteractive-element-interactions -- the keys bubble up from the cards' own buttons; the list takes no focus itself */
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the keys bubble up from the cards' own buttons; the list takes no focus itself
     <ul
       ref={listRef}
       className="m-0 flex list-none flex-col gap-2 p-0"
@@ -265,7 +265,6 @@ function QueryBoardCards({
         )
       })}
     </ul>
-    /* oxlint-enable jsx-a11y/no-noninteractive-element-interactions */
   )
 }
 
