@@ -1,4 +1,4 @@
-# Session 4473 — the Node floor moves to 24, and `npm ci` stops printing deprecations
+# Session 4480 — the Node floor moves to 24, and `npm ci` stops printing deprecations
 
 The nightly deep checks printed eight `npm warn deprecated` lines in every job. Seven came from `license-checker` 25, which is unmaintained: `read-installed`, `read-package-json`, `readdir-scoped-modules`, `debuglog`, `osenv`, `inflight` and `glob` 7. The eighth, `whatwg-encoding`, came through `webdriverio` → `cheerio` → `encoding-sniffer` 0.2. The maintained fork, `license-checker-rseidelsohn`, needs Node 24 from 5.0 on. Its 4.x line still pulls `read-package-json` 6 and `glob` 10. The maintainer chose to raise the Node floor.
 
