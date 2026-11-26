@@ -1,4 +1,4 @@
-# Session 4492 — Graph, Templates and Trash in the sidebar, and Pages rows that start at the card's edge
+# Session 4494 — Graph, Templates and Trash in the sidebar, and Pages rows that start at the card's edge
 
 Part of the #7040 UI review, item D2.
 
