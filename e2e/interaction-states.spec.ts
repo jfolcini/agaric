@@ -14,9 +14,17 @@
  * "Quick Notes", and the "Projects" tasks with priority and date chips, one
  * due today (on the journal's Due panel, under its "→ Projects" breadcrumb).
  */
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
-import { activeAlertDialog, expect, navigateToView, openPage, test, waitForBoot } from './helpers'
+import {
+  activeAlertDialog,
+  expect,
+  navigateMobile,
+  navigateToView,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 interface Ring {
   focusVisible: boolean
@@ -219,5 +227,43 @@ test.describe('Interaction states: one keyboard ring, whole-row selection @pages
       expect(p.x + p.width).toBeLessThanOrEqual(box.x + box.width)
       expect(p.y + p.height).toBeLessThanOrEqual(box.y + box.height)
     }
+  })
+})
+
+const pixel = devices['Pixel 7']
+
+test.describe('Focus rings on a bare phone @mobile @pages', () => {
+  test.use({
+    viewport: pixel.viewport,
+    hasTouch: pixel.hasTouch,
+    isMobile: pixel.isMobile,
+    deviceScaleFactor: pixel.deviceScaleFactor,
+    userAgent: pixel.userAgent,
+  })
+
+  test('a tapped field shows its border, not the ring, until a hardware key is pressed', async ({
+    page,
+  }) => {
+    // Android's WebView has no Keyboard Map API; desktop Chromium's reports the host's keyboard.
+    await page.addInitScript(() => Reflect.deleteProperty(Navigator.prototype, 'keyboard'))
+    await waitForBoot(page)
+    await navigateMobile(page, 'Pages')
+    const field = page.getByPlaceholder('Search pages...')
+    await field.tap()
+    await expect(field).toBeFocused()
+    expect(await ringOf(field)).toMatchObject({ focusVisible: true, width: 0, outline: 'none' })
+    const borderIsRing = () =>
+      field.evaluate((el) => {
+        const probe = document.createElement('div')
+        probe.style.color = 'var(--ring)'
+        document.body.append(probe)
+        const ring = getComputedStyle(probe).color
+        probe.remove()
+        return getComputedStyle(el).borderTopColor === ring
+      })
+    expect(await borderIsRing()).toBe(true)
+
+    await page.keyboard.press('a')
+    await expectTheRing(field)
   })
 })

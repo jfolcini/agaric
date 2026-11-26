@@ -9,6 +9,9 @@
  * writes `<html data-touch>`), so CSS and `useIsTouch` agree. Not
  * `@media (pointer: coarse)`, which WebKitGTK reports for a mouse (#1236). */
 @custom-variant coarse (&:where([data-touch], [data-touch] *));
+/* A touch device no hardware keyboard has shown itself on (`useHasHardwareKeyboard`
+ * writes `<html data-keyboard>`): no keys to move focus with, so no focus ring. */
+@custom-variant bare-touch (&:where([data-touch]:not([data-keyboard]) *));
 
 @theme inline {
   /* A bare `transition-*` runs at the Animations setting's speed (see the token utilities). */
@@ -2735,11 +2738,21 @@ mark[data-highlight-color='purple'] {
   &:focus-visible {
     @apply outline-hidden ring-[3px] ring-ring;
   }
+  @variant bare-touch {
+    &:focus-visible {
+      @apply ring-0;
+    }
+  }
 }
 
 @utility focus-outline {
   &:focus-visible {
     @apply outline-2 outline-ring;
+  }
+  @variant bare-touch {
+    &:focus-visible {
+      @apply outline-hidden;
+    }
   }
 }
 
