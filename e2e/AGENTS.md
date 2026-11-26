@@ -23,13 +23,13 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 ### One run per port
 
-`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on its port: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Give each worktree its own port (`PW_PORT=5557 npx playwright test …`). Before a run, kill the PID from `lsof -ti :$PW_PORT`, never `pkill -f`, which also matches unrelated shells.
+`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on its port: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Give each worktree its own port (`PW_PORT=5557 npx playwright test …`), and one run at a time per worktree on any port: each run's web server rebuilds the worktree's `dist/` under the other's. Before a run, kill the PID from `lsof -ti :$PW_PORT`, never `pkill -f`, which also matches unrelated shells.
 
 In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec.ts` runs just those specs on one leg (`playwright_specs`), a diff of only vitest tests or `e2e-tauri/` files runs no Playwright, and any other frontend change, like the nightly full suite, runs every shard.
 
 ## Mock backend
 
-`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading. It answers every command at once; `window.__setMockLatency(ms)` makes it answer `ms` later, to race a handler that awaits an IPC and then moves the editor (`enter-merge-latency.spec.ts`).
+`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading. It answers every command at once; `window.__setMockLatency(ms)` makes it answer `ms` later, to race a handler that awaits an IPC and then moves the editor (`enter-merge-latency.spec.ts`). It slows every command, the probe you race included; to delay one command, wrap `window.__TAURI_INTERNALS__.invoke` in the page (`block-paste-outline.spec.ts`), which works on the bridge too.
 
 ## The real backend, through the bridge (#6529)
 
@@ -45,14 +45,14 @@ AGARIC_E2E_BRIDGE=$PWD/src-tauri/target/debug/bridge PW_PORT=<port> npx playwrig
 What a spec can rely on there differs from the mock:
 
 - **The vault holds the mock's seed**, written into its Personal space through the real commands once per worker (`seedCommands`, `src/lib/tauri-mock/seed-commands.ts`). `SEED_IDS` name the seeded rows, the two spaces included: `SEED_IDS.SPACE_PERSONAL` and `SEED_IDS.SPACE_WORK` are the backend's own space ids, on the mock too, so name a space by them, never by a literal. Inside a `page.evaluate` or `addInitScript` callback, pass the id in as its argument; the closure does not reach the browser. The seed's backdated op-log rows and its opt-in `localStorage` fixtures are not reproduced. A spec that makes its own pages runs.
-- **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event.
+- **The mock's hooks are absent**: `__injectMockError`, `__setMockLatency` and the `__addMock*` seeds do not exist, and `page.clock` moves the browser's clock only. `emitMockEvent` works: the backend emits the event. An optional-chained hook (`__injectMockError?.(…)`) is a silent no-op there and the test runs on without its precondition: tag the test `@mock-only`.
 - **`plugin:*` commands stay in the browser**, on the mock's handlers.
-- **A seed's events arrive late**: the backend sends a write's `blocks:changed` once its cache rebuilds, debounced ones included, have run, seconds after the command answered, and a view open by then refetches. Seed through the real commands, then `settleBackend(page)` before opening the view (`seedBulkPages` and `seedFacetPage` do).
+- **A seed's events arrive late**: the backend sends a write's `blocks:changed` once its cache rebuilds, debounced ones included, have run, seconds after the command answered, and a view open by then refetches. Seed through the real commands, then `settleBackend(page)` before opening the view, in a spec-local seed too (`seedBulkPages`, `seedFacetPage`, `seedLinkedPages` in `graph-view.spec.ts`).
 - **A slow materializer on request**: `test.use({ slowMaterializerMs: 1000 })` at a spec's top level gives it a worker whose bridge starts every background batch that much later, for a view that must not re-read before a cache rebuild has run.
 - **Not carried**: a `Channel` argument's messages (an import's progress).
 - **The mirror runs; MCP and sync do not**: each vault copy runs the Markdown mirror, which writes once a spec chooses a folder (`set_mirror_folder` with a temp directory of the spec's own). MCP and sync keep their state, so their Settings panels read it, but no server or peer runs behind them.
 
-Every PR whose diff reaches them runs specs this way, in `_validate.yml`'s `bridge-specs` job, and the nightly `full-suite` lane of `scheduled-deep-checks.yml` again: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`; a test tagged `@real-only` asserts what only the real backend does (BM25 ranking, a second page of results). The mock run skips the listed specs and runs only their `@mock-only` tests, in its `mock-only` project; a listed spec run without the bridge runs nothing else. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it.
+Every PR whose diff reaches them runs specs this way, in `_validate.yml`'s `bridge-specs` job, and the nightly `full-suite` lane of `scheduled-deep-checks.yml` again: the `real-backend` project, the specs `REAL_BACKEND_SPECS` lists in `playwright.config.ts`, minus tests tagged `@mock-only`; a test tagged `@real-only` asserts what only the real backend does (BM25 ranking, a second page of results). The mock run skips the listed specs and runs only their `@mock-only` tests, in its `mock-only` project; a listed spec run without the bridge runs nothing else. Tag a test `@mock-only` only when it drives one of the mock's hooks, or when its precondition only the mock's seed can produce (e.g. backdated op-log rows). Show a spec red on the bridge by breaking the Rust command it reads, rebuilding the binary and running it. A build that failed leaves the previous binary in place, so its red is not a kill.
 
 ## The mock is a contract, not a convenience
 
@@ -64,6 +64,7 @@ Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-ant
 
   ```sh
   cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
+  npx oxfmt --write conformance/fixtures/   # the update run rewrites every fixture's layout
   npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts
   ```
 
@@ -99,7 +100,7 @@ test('edits a block', async ({ page }) => {
 - `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic. The recorder sees only calls made after boot; counting boot IPC wraps the assignment instead (`boot-ipc-counts.spec.ts`).
 - `fullyParallel` is on; a spec whose tests share global state sets `test.describe.configure({ mode: 'serial' })`.
 - Changing a shared control's visibility, a label, a selector or seed data, or removing a behaviour: grep `e2e/` (including `helpers.ts`), `e2e-tauri/` and `scripts/` (`android-e2e-safe-area.mjs`, `android-e2e-persist.mjs`) in the same PR, and run the specs it hits. A spec may assert the bug itself; re-premise it rather than keep the bug.
-- Mobile behaviour keys on the user agent (`src/lib/platform/index.ts`), not the viewport. A mobile spec sets the whole device (`viewport`, `userAgent`, `isMobile`, `hasTouch` from `devices['iPhone 13']`, as `mobile-editor.spec.ts` does).
+- Touch is `detectTouch()` (a coarse pointer with touch points) and phone surfaces are `usePhoneLayout()` (a window under 768 px, or a touch screen under 500 px tall), so a mobile spec sets the whole device (`devices['iPhone 13']`, as `mobile-editor.spec.ts` does). A landscape phone also sets `screen`: the viewport alone leaves a desktop-height screen (`phone-bottom-sheets.spec.ts`).
 - Focus on a hidden element, Escape-listener order, CSS specificity and forced-colors are invisible to the vitest DOM; reproduce them here, and assert focus with `toBeFocused()`.
 
 ## Flakes
@@ -112,7 +113,8 @@ test('edits a block', async ({ page }) => {
 - `expect(promise).resolves`, `locator.evaluateAll`, `allTextContents` and `count()` read once and never retry. Use web-first matchers (`toHaveCount`, `toHaveText([...])`) or `expect.poll`.
 - Assert the thing under test before any remount or navigation, which re-fetch and hide stale UI; a persistence round-trip is a separate assertion. `toContainText` passes with extra text, and a negative matcher (`toBeHidden`, `not.toBeVisible`) passes for unrelated reasons; see either go red without the fix.
 - Click a block through `focusBlock` / `focusBlockById`, which hit a corner: a centre click lands on a chip or link. Wait first for a lazy block (KaTeX, Mermaid) to finish rendering: its fallback has another height, so the click point goes stale and lands in the block below.
-- Drive time with `page.clock`, installed before boot, never a sleep. A paused clock reaches a path a debounce hides, a relative-time label needs `fastForward`, and edits closer than `UNDO_GROUP_WINDOW_MS` merge into one undo entry.
+- Drive time with `page.clock`, installed before boot, never a sleep. A paused clock reaches a path a debounce hides, a relative-time label needs `fastForward`, and edits closer than `UNDO_GROUP_WINDOW_MS` merge into one undo entry. On the bridge the backend stamps the undo group itself: wait the window out with `outlastUndoGroup()`, not `fastForward`.
+- A block's text gains its list marker (`.list-marker`, `1.` or `•`) once its `listStyle` loads: wait for the marker before an exact `toHaveText`, or the read passes only by timing.
 - dnd-kit swallows every click until 50 ms after a drop: a drag helper ends on `dndClickGuardLifted`, or the next click is lost.
 - A drag aims at the target's centre measured on each move (`carryOver` in `helpers.ts`), never a point taken before the press: dnd-kit's edge auto-scroll moves the target mid-drag and the drop misses.
 - A negative toast assertion (`toHaveCount(0)`) is vacuous until a toast could have rendered: sonner mounts on `setTimeout(0)`, which a paused `page.clock` never fires. A replaced toast lingers beside the new one until its removal frame, so wait for it to leave before counting.

@@ -10,7 +10,7 @@ After a parallel `git stash` / `reset` / `checkout` sweeps up another agent's ed
 
 ### Stacked PRs merge bottom-up and get no CI
 
-A PR opened against another PR's branch merges into that branch, not `main`; if the base PR already merged, the child's content never reaches `main`. Merge oldest first and check each landed (`git log origin/main -- <path>`). `ci.yml` runs only on PRs based on `main`, so a stacked PR's green rollup is the review bot alone. Recovery: rebase the open branch onto `origin/main`, force-push, and repoint with `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main` (`gh pr edit` no-ops here or fails on a Projects (classic) GraphQL error; change the body with the same PATCH, `-f body=…` or `--input` a JSON file).
+A PR opened against another PR's branch merges into that branch, not `main`; if the base PR already merged, the child's content never reaches `main`. Merge oldest first and check each landed (`git log origin/main -- <path>`). `ci.yml` runs only on PRs based on `main`, so a stacked PR's green rollup is the review bot alone. Recovery: `git rebase --onto origin/main <the base branch's last SHA>` (a plain rebase replays the squash-merged base's commits), force-push, and repoint with `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main` (`gh pr edit` no-ops here or fails on a Projects (classic) GraphQL error; change the body with the same PATCH, `-f body=…` or `--input` a JSON file).
 
 ### Scratch files read back after a long wait
 
@@ -24,7 +24,11 @@ Worktrees share one `.git`, so `origin/main` can advance under you. Resetting on
 
 Dependabot force-pushes its branch on rebase or supersession, sometimes under a new PR number, and a human commit on it vanishes. A fix that stands alone (a test assertion, an `overrides` entry) goes in its own PR off `main`. One that cannot (a relock without the bump is meaningless) goes on the Dependabot branch: comment on the PR with what broke and what you did, verify the push by SHA, and merge with `gh pr merge <n> --squash --subject "<human commit subject>"` so the diagnosis is the headline.
 
-Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `main` and reverts any bump landed since (an advisory fix). Apply its lock hunks three-way onto `main`; a local `cargo update -p X --precise V` can re-point unrelated edges, so read the lock diff either way.
+Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `main` and reverts any bump landed since (an advisory fix). Apply its lock hunks three-way onto `main`; a local `cargo update -p X --precise V`, or adding a dependency, can re-point unrelated edges (`windows-sys`, `syn`), so read the lock diff either way, put stray edges back by hand, and confirm with `cargo metadata --locked` in `src-tauri` and `src-tauri/fuzz`.
+
+### A parked `wip:` commit is unreviewed
+
+A cut-off builder's `wip:` commit may have skipped the hooks or hold a falsification still applied. Run `prek run --files` over its diff and read every hunk before building on it.
 
 ### Another session ships your item while it builds
 
@@ -66,7 +70,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - The pre-push clippy runs sqlx online against `dev.db`, so the DB must match the branch's migrations. When switching between migration-divergent branches: `cd src-tauri && set -a && . ./.env && set +a && sqlx database drop -y && sqlx database create && sqlx migrate run --source migrations`.
 - Before migrating a timestamp or enum column, grep the column name for cross-table `> ?` / `< ?` predicates and for values copied between columns; migrate a coupled cluster in one PR. Backfill with `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`, NULL-guarded.
 - Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
-- Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook). Links in a `mod x;` declaration resolve in the parent's scope.
+- Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook), and so does a `pub` item's doc linking a private or `pub(in …)` one: write that name as a plain code span. Neither clippy nor nextest sees either. When the error names no location, `cargo doc --message-format=json` does. Links in a `mod x;` declaration resolve in the parent's scope.
 - `cargo deny` newly reds every Rust PR on an advisory with no upgrade path: find the feature that pulls the crate (`cargo tree -i <crate> --target all -e features`); if we never use it, take the dependency with `default-features = false` plus the rest of its default set, refresh both lockfiles (`src-tauri` and `src-tauri/fuzz`), and show the old manifest reds `cargo deny check`.
 - `internal compiler error: encountered incremental compilation error` is the toolchain, not the code: delete that crate's `src-tauri/target/debug/incremental/<crate>-*` directory and rebuild.
 

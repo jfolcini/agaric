@@ -2,7 +2,9 @@
 
 ## Append-only
 
-The migrator records each applied file's hash and refuses to start on a mismatch, so editing a shipped `.sql` breaks every existing database. Schema changes land as a new `NNNN_short_description.sql` (next integer, 4 digits). An unreleased migration may be edited until the release tag; the `migrations-immutable` hook blocks edits to any existing file.
+The migrator records each applied file's hash and refuses to start on a mismatch, so editing a shipped `.sql` breaks every existing database. Schema changes land as a new `NNNN_short_description.sql` (next integer, 4 digits). An unreleased migration may be edited until the release tag, but the `migrations-immutable` hook's staged mode compares with `HEAD` and blocks edits to any existing file, so editing one an earlier commit of the same unmerged branch added needs `SKIP=migrations-immutable` on that commit (CI's `--range` mode accepts it). Parallel branches take the same next number: the one that merges second renumbers its file, its test and every reference to it.
+
+`sqlx::migrate!` embeds the directory at compile time, and nothing tells cargo a new `.sql` exists: after adding one, touch a file of each crate that calls `migrate!` and check that it recompiled, or the tests run the old set.
 
 ## New tables
 

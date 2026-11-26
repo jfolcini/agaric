@@ -136,7 +136,7 @@ The Tauri wrapper is not unit-tested.
 
 ## Add a new command
 
-1. Write `*_inner(...)` in the domain module (block CRUD: `src-tauri/src/commands/blocks/crud.rs`; properties: `src-tauri/src/commands/properties.rs`).
+1. Write `*_inner(...)` in the domain module (block CRUD: `src-tauri/src/commands/blocks/crud.rs`; properties: `src-tauri/src/commands/properties.rs`). Instrument it with `#[instrument(skip(...), err(level = "info"))]`, never a bare `err`: the IPC boundary already logs internal failures at ERROR, and a caller's `NotFound` or `Validation` is not a bug. A field of an argument or return type takes no serde codec attribute (`deserialize_with`, `skip_serializing_if`): specta splits every type holding one into `_Serialize` and `_Deserialize` twins in `bindings.ts`. Use a newtype with its own impls (`Base64Bytes`), or send `None` as `null`.
 2. Write the wrapper in the same module:
 
    ```rust

@@ -87,7 +87,7 @@ Materializer tests need `multi_thread`; on the single-threaded executor backgrou
 
 ### Materializer settle
 
-After ops that dispatch background cache work (edit, delete, restore, purge, create page or tag, `apply_snapshot`), call `materializer.flush_background().await` (the shared `settle(&mat)`) before the next write or any cache assertion; a fixed sleep races the consumer. For the block-count cache, `Materializer::wait_for_initial_block_count_cache` waits for startup population (call it before overwriting `cached_block_count`) and `wait_for_pending_block_count_refreshes` for in-flight refreshes.
+After ops that dispatch background cache work (edit, delete, restore, purge, create page or tag, `apply_snapshot`), call the shared `settle(&mat)` before the next write or any cache assertion; a fixed sleep races the consumer. It runs `settle_background`, which also re-runs the tasks a full queue shed, so a test of shedding asserts the shed counter as well: with the fix reverted, the derived rows still appear. `flush_background` alone is a barrier and runs no shed task. For the block-count cache, `Materializer::wait_for_initial_block_count_cache` waits for startup population (call it before overwriting `cached_block_count`) and `wait_for_pending_block_count_refreshes` for in-flight refreshes.
 
 ### Naming and helpers
 
@@ -123,7 +123,9 @@ Tests and fresh vaults have no `sqlite_stat1` (only `maintenance.rs`'s periodic 
 ### Determinism
 
 - `FIXED_TS` over `now()`; `append_local_op_at` (caller timestamp) over `append_local_op` (wall clock).
-- `now_rfc3339()` has millisecond precision, so two calls can collide; use constants before `assert_ne!` on timestamps.
+- `now_rfc3339()` has millisecond precision, so two calls can collide; use constants before `assert_ne!` on timestamps. To tell apart two ops stamped from `now_ms()`, call `agaric_store::db::distinct_now_ms()` first.
+- Never pause tokio time (`start_paused`) in a test that waits on SQLite: sqlx runs statements on its own threads, so the runtime looks idle mid-statement and the clock jumps past every sleep and `timeout`.
+- A test that holds the write lock so a contender fails busy opens its transaction with `pool.begin_with("BEGIN IMMEDIATE")`: through `begin_immediate_logged` the contender queues for its turn instead of failing.
 - A fixture that stamps from `now_ms()` and code that re-reads the clock disagree by a tick, so an arm at exactly a window's edge flakes; unless the clock is injectable, pin the edge a second either side.
 - `FxHashSet` iteration order is unstable: use `BTreeSet` or sort before comparing.
 - After changing a proptest generator, run it at volume (about 20000 cases, a few times). `PROPTEST_CASES` is ignored by a `with_cases(N)` or `cases: N` config, so raise the constant locally. Delete any `proptest-regressions/*.txt` seed that recorded a mutant rather than a real defect. A seed replays only from `<crate>/proptest-regressions/`, at the source file's path below the directory holding `lib.rs` or `main.rs`; a seed file anywhere else is silently never read.
@@ -167,5 +169,7 @@ npx oxfmt --write conformance/fixtures/   # from the repo root
 - `conformance_fuzz` runs a fixed seed's chains with the Rust tests (`mock_matches_backend_on_fixed_seed_op_chains_6567`) and a random seed's, `#[ignore]`d, in the weekly `bench-perf-gates` lane. A PR that changes only `src/lib/tauri-mock/` skips the Rust tests, so its drift reddens on the next PR that runs them (#6567). After changing what a command requires or the mock refuses, run the random one too: `cargo nextest run --workspace --run-ignored only -E 'test(conformance_fuzz)'`.
 
 ## Mutants
+
+A mutant runs only its own package's tests (the weekly shards run `cargo mutants -p <crate>`), so a behaviour pinned only from a consumer crate survives: test it in the crate that owns the code.
 
 An equivalent (unkillable) mutant is recorded in `mutation-accepted.tsv` (see `src/__tests__/AGENTS.md` § Mutation triage), not chased with tests.

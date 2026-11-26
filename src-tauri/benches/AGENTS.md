@@ -12,7 +12,7 @@ Criterion benches under `src-tauri/benches/`. `interactive_slo` additionally enf
 
 ## Verifying a bench change: CI is the arbiter
 
-Do not compile the release bench graph locally: `[profile.release]` is thin LTO with `codegen-units = 1`, which takes hours and gets OOM-killed on a shared box. Dispatch the lane on your branch instead; a non-`main` dispatch is a dry run that files nothing:
+Do not compile the release bench graph locally: `[profile.release]` is thin LTO with `codegen-units = 1`, which takes hours and gets OOM-killed on a shared box. To measure locally, override it (`CARGO_PROFILE_BENCH_LTO=off CARGO_PROFILE_BENCH_CODEGEN_UNITS=16`, as `docs/architecture/operations.md` does) and label the numbers "release without LTO". A name filter skips other groups' timed loops but not their seeders, so cap the scale knobs too (`LORO_SNAPSHOT_MAX_BLOCKS`). The lane's numbers are the ones that count: dispatch it on your branch; a non-`main` dispatch is a dry run that files nothing:
 
 ```bash
 gh workflow run scheduled-deep-checks.yml --ref <branch> -f lanes=bench-smoke   # or bench-slo (also runs bench-perf-gates)
