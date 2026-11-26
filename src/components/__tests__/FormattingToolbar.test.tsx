@@ -296,6 +296,32 @@ describe('FormattingToolbar', () => {
       }
     })
 
+    it('one Date button opens a menu holding Insert date, Set due date and Set scheduled date', () => {
+      const onDue = vi.fn()
+      document.addEventListener('open-due-date-picker', onDue)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        const date = screen.getByRole('button', { name: t('toolbar.date') })
+        expect(date).toHaveAttribute('aria-haspopup', 'dialog')
+        const menu = screen.getByTestId('toolbar-date-menu')
+        for (const key of [
+          'toolbar.insertDate',
+          'toolbar.setDueDate',
+          'toolbar.setScheduledDate',
+        ]) {
+          // Each date action is in the menu only, never a button of its own on the bar.
+          const [only, ...others] = screen.getAllByRole('button', { name: t(key) })
+          expect(others).toEqual([])
+          expect(menu).toContainElement(only as HTMLElement)
+          expect(only).toHaveTextContent(t(key))
+        }
+        fireEvent.pointerDown(within(menu).getByRole('button', { name: t('toolbar.setDueDate') }))
+        expect(onDue).toHaveBeenCalledTimes(1)
+      } finally {
+        document.removeEventListener('open-due-date-picker', onDue)
+      }
+    })
+
     it('exposes the mark toggles via the Format popover, not as inline buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // #1958 — the mark toggles live inside the Format popover (and the
@@ -362,12 +388,16 @@ describe('FormattingToolbar', () => {
       }
     })
 
-    it('renders separators between button groups', () => {
+    // With a fine pointer the structure group's buttons are all in More, so one
+    // rule stands where it was; on touch New line keeps it on the bar.
+    it.each([
+      [false, 2],
+      [true, 3],
+    ])('renders one rule between each two groups on the bar (touch: %s)', (touch, rules) => {
+      mockIsTouch = touch
       render(<FormattingToolbar editor={makeEditor()} />)
       const seps = screen.getAllByTestId('separator')
-      // After Layer A: refs+blocks → structure → priority+metadata
-      // → history. Three separators between four groups.
-      expect(seps).toHaveLength(3)
+      expect(seps).toHaveLength(rules)
       for (const sep of seps) {
         expect(sep).toHaveAttribute('data-orientation', 'vertical')
       }
@@ -784,11 +814,20 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toHaveClass('formatting-toolbar')
     })
 
-    it('does not render the More overflow trigger when nothing overflows', () => {
-      // Default jsdom container width is 0 → hook returns all visible,
-      // No overflow trigger rendered (Layer B).
+    it('puts the rarer inserts in More before anything overflows', () => {
+      // The container is unmeasured (width 0), so nothing overflows for width.
       render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.queryByRole('button', { name: t('toolbar.more') })).toBeNull()
+      expect(screen.getByRole('button', { name: t('toolbar.more') })).toBeInTheDocument()
+      const rows = within(screen.getByTestId('toolbar-overflow-menu'))
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('aria-label'))
+      expect(rows).toEqual([
+        t('toolbar.insertBlockRef'),
+        t('toolbar.insertQuery'),
+        t('toolbar.emoji'),
+        t('toolbar.newLine'),
+        t('toolbar.insertTable'),
+      ])
     })
 
     it('renders an off-screen sentinel for ResizeObserver-driven measurement', () => {
@@ -796,15 +835,11 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (17 buttons + 3 separators = 20) must
-      // have a measurable child carrying its data-toolbar-item-key. #1960
-      // replaced the 6 standalone block buttons (code/heading/blockquote/
-      // ordered-list/divider/callout) with the single Format + Turn into pair,
-      // dropping the count from 21 buttons to 16; #281 then added the emoji
-      // button, bringing it to 17; #5160 the New line button, 18; #6541 took
-      // Discard off, 17.
+      // Each item in the flattened list (15 buttons + 3 separators) must
+      // have a measurable child carrying its data-toolbar-item-key; the Date
+      // menu is one item for its three dates.
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(20)
+      expect(measurableChildren.length).toBe(18)
     })
   })
 

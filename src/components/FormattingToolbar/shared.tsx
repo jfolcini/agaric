@@ -18,6 +18,8 @@ import {
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { Kbd } from '@/components/ui/kbd'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
@@ -44,6 +46,14 @@ export function toolbarShortcut(label: string): { shortcut?: string } {
   const id = TOOLBAR_SHORTCUT_IDS[label]
   const keys = id ? getShortcutKeys(id) : ''
   return keys ? { shortcut: keys } : {}
+}
+
+/** A menu row's shortcut, as its button's tooltip on the bar shows it; none without a keyboard. */
+function RowShortcut({ label }: { label: string }): React.ReactElement | null {
+  const keyboardHints = useKeyboardHints()
+  const { shortcut } = toolbarShortcut(label)
+  if (shortcut === undefined || !keyboardHints) return null
+  return <Kbd keys={shortcut} className="ml-auto" aria-hidden="true" />
 }
 
 /**
@@ -97,8 +107,8 @@ export function toolbarPressHandlers(
 /**
  * Render a config-driven button. In `inline` and `sentinel` modes the
  * button is icon-only (matches the existing toolbar). In `overflow`
- * mode the button widens into a list row with icon + label, matching
- * `CodeLanguageSelector` so the 44 px touch floor is honoured.
+ * mode the button widens into a list row with icon, label and shortcut,
+ * matching `CodeLanguageSelector` so the 44 px touch floor is honoured.
  */
 export function renderConfigButton(
   btn: ToolbarButtonConfig,
@@ -126,6 +136,7 @@ export function renderConfigButton(
       >
         <btn.icon className="mr-2" />
         <span>{t(btn.label)}</span>
+        <RowShortcut label={btn.label} />
       </Button>
     )
   }

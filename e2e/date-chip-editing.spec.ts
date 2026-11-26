@@ -24,7 +24,7 @@ import {
  *   - The journal Due panel's task rows carry the same chip (#7040): a date
  *     set on an Overdue or Scheduled earlier row moves the task into the
  *     day's list.
- *   - The toolbar's "Set scheduled date" opens `BlockDatePicker`; a calendar
+ *   - The toolbar Date menu's "Set scheduled date" opens `BlockDatePicker`; a calendar
  *     day becomes the block's scheduled date.
  *
  * Both persist through `set_due_date` / `set_scheduled_date`, so each test
@@ -180,7 +180,11 @@ test('toolbar Set scheduled date: the picked day becomes a scheduled chip that p
 }) => {
   await openPage(page, 'Getting Started')
   await focusBlockById(page, SEED_IDS.BLOCK_GS_1)
-  await page.getByRole('button', { name: 'Set scheduled date' }).click()
+  await page.getByRole('button', { name: 'Date', exact: true }).click()
+  await page
+    .getByTestId('toolbar-date-menu')
+    .getByRole('button', { name: 'Set scheduled date' })
+    .click()
 
   const picker = activeDialog(page)
   await expect(picker).toHaveAttribute('data-testid', 'date-picker-popup')

@@ -287,7 +287,8 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     const checkbox = screen.getByTestId('block-select-checkbox')
     expect(checkbox).toBeInTheDocument()
-    expect(checkbox).toHaveAttribute('type', 'checkbox')
+    // The design-system Checkbox, not a native input (#7040).
+    expect(checkbox).toHaveAttribute('data-slot', 'checkbox')
     expect(checkbox).toHaveAttribute('aria-label', t('block.selectBlock'))
     expect(checkbox.className).toContain('opacity-0')
     expect(checkbox.className).toContain('group-hover:opacity-100')
@@ -308,8 +309,8 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
 
   it('reflects the selected state and forces full visibility when selected', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} isSelected />)
-    const checkbox = screen.getByTestId('block-select-checkbox') as HTMLInputElement
-    expect(checkbox.checked).toBe(true)
+    const checkbox = screen.getByTestId('block-select-checkbox')
+    expect(checkbox).toBeChecked()
     // When selected it is always visible (feedback), not opacity-0.
     expect(checkbox.className).toContain('opacity-100')
     expect(checkbox.className).not.toContain('opacity-0')
@@ -317,24 +318,21 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
 
   it('renders the checkbox on touch only when selected (feedback, not chrome)', () => {
     const original = setMatchMedia(true)
-    // An active selection so the unselected-but-revealable branch (which carries
-    // the coarse-pointer hide class) is exercised.
+    // An active selection, which on a desktop would reveal the checkbox on hover.
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     try {
       const { rerender } = renderWithTooltip(
         <BlockGutterControls blockId="B1" onSelect={vi.fn()} />,
       )
-      // Unselected on touch: checkbox is suppressed via the coarse-pointer hide class.
-      const unselected = screen.getByTestId('block-select-checkbox')
-      expect(unselected.className).toContain('[@media(pointer:coarse)]:hidden')
-      // Selected on touch: forced visible (no coarse-hide class branch).
+      // Unselected on touch: no checkbox, so it holds no room in the row.
+      expect(screen.queryByTestId('block-select-checkbox')).not.toBeInTheDocument()
+      // Selected on touch: shown.
       rerender(
         <TooltipProvider>
           <BlockGutterControls blockId="B1" onSelect={vi.fn()} isSelected />
         </TooltipProvider>,
       )
-      const selected = screen.getByTestId('block-select-checkbox')
-      expect(selected.className).not.toContain('[@media(pointer:coarse)]:hidden')
+      expect(screen.getByTestId('block-select-checkbox')).toBeChecked()
     } finally {
       if (original) Object.defineProperty(window, 'matchMedia', original)
       resetMaxTouchPoints()
@@ -424,7 +422,7 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
     const original = setMatchMedia(true)
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     try {
-      renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
+      renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} isSelected />)
       expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
       expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
       expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()

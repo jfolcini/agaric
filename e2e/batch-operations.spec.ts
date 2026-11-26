@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test'
+
 import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
@@ -150,5 +152,47 @@ test.describe('Batch block operations @editor', () => {
         /block-selected/,
       )
     }
+  })
+
+  // =========================================================================
+  // 5. How a selection looks (#7040 O4)
+  // =========================================================================
+
+  async function selectSecondAndThird(page: Page): Promise<void> {
+    const blocks = page.locator('[data-testid="sortable-block"]')
+    for (const n of [1, 2]) {
+      await blocks
+        .nth(n)
+        .locator('[data-testid="block-static"]')
+        .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
+    }
+    await expect(page.getByTestId('batch-toolbar')).toBeVisible()
+  }
+
+  test('selection checkboxes are the app Checkbox', async ({ page }) => {
+    await selectSecondAndThird(page)
+    // A selection gives every row its checkbox.
+    const boxes = page.getByTestId('block-select-checkbox')
+    await expect(boxes).toHaveCount(5)
+    for (const box of await boxes.all()) await expect(box).toHaveAttribute('data-slot', 'checkbox')
+  })
+
+  test("the cursor's focus ring wraps the block's text, not the gutter", async ({ page }) => {
+    await selectSecondAndThird(page)
+    // The last Ctrl+Click leaves the cursor on its row.
+    const cursor = page.locator('li[data-block-id]:focus')
+    await expect(cursor).toHaveCount(1)
+    const { ringLefts, handleRight } = await cursor.evaluate((li) => {
+      const ringed = [li, ...li.querySelectorAll('*')].filter((el) =>
+        /0px 0px 0px 3px(?! inset)/.test(getComputedStyle(el).boxShadow),
+      )
+      const handle = li.querySelector('[data-testid="drag-handle"]') as HTMLElement
+      return {
+        ringLefts: ringed.map((el) => el.getBoundingClientRect().left),
+        handleRight: handle.getBoundingClientRect().right,
+      }
+    })
+    expect(ringLefts).toHaveLength(1)
+    expect(ringLefts[0]).toBeGreaterThanOrEqual(handleRight)
   })
 })
