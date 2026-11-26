@@ -1,4 +1,4 @@
-# Session 4489 — the four import edge cases #7075 left open
+# Session 4491 — the four import edge cases #7075 left open
 
 Session 4439 (#7075) left four import edge cases open. One was a real bug and is fixed. The other three cannot be reached; two now say why in a comment, and one was dropped because its premise was false.
 
