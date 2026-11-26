@@ -40,6 +40,12 @@ frontend	src/editor/page-mode/page-collapse.ts	EqualityOperator	5	1	if (anchor >
 frontend	src/editor/page-mode/page-collapse.ts	StringLiteral	61	1	export const pageCollapseKey = new PluginKey<CollapseState>('pageCollapse')
 # #6107 page-collapse: tiptap reads an extension's name only for its storage, commands or a lookup by name; this one has none and pageModeExtensions passes it by reference. Only page-mode-surface-parity.test.tsx compares the text, outside this module's mutation scope.
 frontend	src/editor/page-mode/page-collapse.ts	StringLiteral	7	1	name: 'pageCollapse',
+# #7040 page-collapse: the expand meta is set and read only through the `EXPAND` constant, so its text names nothing another reader could match.
+frontend	src/editor/page-mode/page-collapse.ts	StringLiteral	16	1	const EXPAND = 'pageCollapseExpand'
+# #7040 page-collapse: a page block's content is `block+` (`page-document.ts`), so `firstChild` is never null and the `?.` only satisfies its type.
+frontend	src/editor/page-mode/page-collapse.ts	OptionalChaining	8	1	return first?.type.name === 'heading' ? (first.attrs['level'] as number) : null
+# #7040 page-collapse: `false` arm: each transaction that carries the expand meta re-lays the page another way, a move or drop by changing the blocks, a split's `keepHidden` by taking the caret out of the reveal. The arm keeps the plugin right for a transaction that only expands.
+frontend	src/editor/page-mode/page-collapse.ts	ConditionalExpression	1	1	expanded !== undefined ||
 # #6108 page-gutter: the frame is out of the document until place() inserts it, which unhides it
 frontend	src/editor/page-mode/page-gutter.ts	BooleanLiteral	18	1	element.hidden = true
 # #6108 page-gutter: a lane-press listener left on after destroy() only prevents what the live grip's listener prevents
