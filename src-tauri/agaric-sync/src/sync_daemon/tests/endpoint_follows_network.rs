@@ -641,16 +641,20 @@ async fn the_next_launch_binds_the_port_the_last_one_bound_6526() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_taken_port_falls_back_and_the_new_one_is_kept_6526() {
     let (device, ..) = lone_device().await;
-    let secret = SecretKey::generate();
-    let first = launch_and_stop(&device, &secret).await;
+    // Taken before the launch, never after one released it: anything can bind a
+    // released port in between, and the test's own bind then fails.
+    let taken = std::net::UdpSocket::bind((OLD_NETWORK, 0)).expect("the test takes a port");
+    let kept = taken.local_addr().unwrap();
+    peer_refs::set_sync_port(&device.pool, kept.port())
+        .await
+        .unwrap();
 
-    let taken = std::net::UdpSocket::bind(first).expect("the test takes the kept port");
-    let second = launch_and_stop(&device, &secret).await;
-    assert_eq!(second.ip(), first.ip());
-    assert_ne!(second.port(), first.port());
+    let bound = launch_and_stop(&device, &SecretKey::generate()).await;
+    assert_eq!(bound.ip(), kept.ip());
+    assert_ne!(bound.port(), kept.port());
     assert_eq!(
         peer_refs::get_sync_port(&device.pool).await.unwrap(),
-        Some(second.port())
+        Some(bound.port())
     );
     drop(taken);
 
