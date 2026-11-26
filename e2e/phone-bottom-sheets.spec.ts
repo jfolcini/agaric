@@ -14,6 +14,7 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { expectToastCloseInside, runSlashCommand } from './domain'
 import {
   activeMenu,
@@ -28,6 +29,7 @@ import {
   openMobileSidebar,
   openPage,
   openPageMobile,
+  saveBlock,
   test,
   touchLongPress,
   waitForBoot,
@@ -613,6 +615,41 @@ test.describe('Phone popovers with a field, dialogs and menus are bottom sheets 
     await focusBlock(page)
     await runSlashCommand(page, 'voice', 'VOICE — Record a voice note')
     await expectBottomSheet(page, page.getByTestId('voice-note-dialog'))
+  })
+
+  // A tap in the sheet, or on its scrim, is the sheet's: it must not reach the
+  // query block through React's portal and put the query's text in an editor.
+  test("a query table cell's page picker is a bottom sheet a tap leaves the table up", async ({
+    page,
+  }) => {
+    await ipc(page, 'create_property_def', {
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+      key: 'owner',
+      valueType: 'ref',
+      options: null,
+    })
+    await ipc(page, 'set_property', {
+      blockId: SEED_IDS.BLOCK_MTG_1,
+      key: 'owner',
+      value: { value_ref: SEED_IDS.PAGE_QUICK_NOTES },
+    })
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type('{{query type:property key:owner table:true}}', { delay: 20 })
+    await saveBlock(page)
+    const block = page.locator('[data-testid="sortable-block"]').first()
+    const cell = block.getByRole('button', { name: /^Edit owner/ })
+    await cell.tap()
+    const sheet = page.getByRole('dialog', { name: 'Select a page' })
+    await expectBottomSheet(page, sheet)
+
+    await sheet.getByRole('heading', { name: 'Select a page' }).tap()
+    await expect(sheet).toBeVisible()
+    await page.touchscreen.tap(200, (await box(sheet)).y / 2)
+    await expect(sheet).toHaveCount(0)
+    await expect(cell).toBeVisible()
+    await expect(block.locator('[contenteditable="true"]')).toHaveCount(0)
   })
 })
 
