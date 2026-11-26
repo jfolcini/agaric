@@ -1,7 +1,7 @@
 /**
  * Issue #216 — mobile & accessibility regression tests (items A, B, C4).
  *
- *   A: the inline due-date editor (BlockListItem → DueDateChip) and the
+ *   A: the inline due-date editor (BlockListItem → RowDateChip) and the
  *      add-property picker (AddPropertyPopover) render as a bottom Sheet on a
  *      phone (`usePhoneLayout`) and as an anchored Popover elsewhere.
  *   B (drag handle): BlockGutterControls' drag handle exposes aria-keyshortcuts
@@ -24,11 +24,11 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { TooltipProvider } from '@/components/ui/tooltip'
 // Side-effect import: src/test-setup.ts already initialises i18next, but make
 // the dependency explicit so `useTranslation()` resolves real English strings
 // (aria-labels / aria-keyshortcuts) rather than dropping the attributes.
-import '@/lib/i18n'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { t } from '@/lib/i18n'
 
 // DateChipEditor pulls in tauri-backed reschedule hooks; stub it to a sentinel
 // so the date-chip surface tests focus on the Sheet-vs-Popover wrapper.
@@ -43,6 +43,7 @@ import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import { BlockCollapseControl } from '@/components/editor/BlockInlineControls'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
+import { formatCompactDate } from '@/lib/date-utils'
 
 /** Override window.matchMedia so `(pointer: coarse)` reports the given value. */
 function setCoarse(coarse: boolean): void {
@@ -84,6 +85,8 @@ afterEach(() => {
 // pointer events don't open them reliably under happy-dom, so use fireEvent.
 
 describe('#216 A — keyboard-aware due-date chip (BlockListItem)', () => {
+  const DUE_CHIP = t('block.dueDate', { date: formatCompactDate('2026-01-15') })
+
   function renderChip() {
     return render(
       <ul>
@@ -94,7 +97,7 @@ describe('#216 A — keyboard-aware due-date chip (BlockListItem)', () => {
 
   it('renders the editor in a Popover off a phone', () => {
     renderChip()
-    fireEvent.click(screen.getByLabelText('Edit date'))
+    fireEvent.click(screen.getByLabelText(DUE_CHIP))
     expect(screen.getByTestId('due-date-popover')).toHaveAttribute('data-slot', 'popover-content')
     expect(screen.getByTestId('date-chip-editor-stub')).toBeInTheDocument()
   })
@@ -102,7 +105,7 @@ describe('#216 A — keyboard-aware due-date chip (BlockListItem)', () => {
   it('renders the editor in a bottom Sheet on a phone', () => {
     mockUsePhoneLayout.mockReturnValue(true)
     renderChip()
-    fireEvent.click(screen.getByLabelText('Edit date'))
+    fireEvent.click(screen.getByLabelText(DUE_CHIP))
     expect(screen.getByTestId('due-date-popover')).toHaveAttribute('data-slot', 'sheet-content')
     expect(screen.getByTestId('date-chip-editor-stub')).toBeInTheDocument()
   })

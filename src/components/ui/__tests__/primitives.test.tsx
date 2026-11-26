@@ -1087,7 +1087,7 @@ describe('MetricCard', () => {
 
 // ---------------------------------------------------------------------------
 // SectionGroupHeader — sub-section label used in DuePanel /
-// DonePanel. Sibling to SectionTitle (kept separate; see component header).
+// DonePanel.
 // ---------------------------------------------------------------------------
 
 describe('SectionGroupHeader', () => {

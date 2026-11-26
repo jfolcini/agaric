@@ -323,11 +323,12 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('tabindex', '-1')
   })
 
-  // #2057: the cell itself keeps its >=44px coarse-pointer floor.
+  // #2057: the cell itself keeps a >=44px coarse-pointer floor. #7040: the floor
+  // fits the date and its count line, so a week without counts is as tall as the rest.
   it('cell meets the 44px coarse-pointer minimum height', () => {
     render(<MonthlyDayCell {...defaultProps} />)
     const cell = screen.getByRole('gridcell')
-    expect(cell.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+    expect(cell.className).toContain('[@media(pointer:coarse)]:min-h-16')
   })
 
   // #2057: roving tabindex — MonthlyView passes an explicit tabIndex so only

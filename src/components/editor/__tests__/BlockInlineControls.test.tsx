@@ -12,17 +12,17 @@ vi.mock('@/hooks/useIsTouch', () => ({
 }))
 
 vi.mock('lucide-react', () => ({
-  Calendar: (props: { size: number; className?: string }) => (
+  CalendarClock: (props: { size: number; className?: string }) => (
     <svg
-      data-testid="calendar-icon"
+      data-testid="calendar-clock-icon"
       width={props.size}
       height={props.size}
       className={props.className}
     />
   ),
-  CalendarDays: (props: { size: number; className?: string }) => (
+  Flag: (props: { size: number; className?: string }) => (
     <svg
-      data-testid="calendar-days-icon"
+      data-testid="flag-icon"
       width={props.size}
       height={props.size}
       className={props.className}
@@ -136,8 +136,6 @@ vi.mock('@/components/properties/PropertyChip', () => ({
   ),
 }))
 
-import type { LucideIcon } from 'lucide-react'
-
 import {
   BlockCollapseControl,
   type BlockCollapseControlProps,
@@ -145,7 +143,6 @@ import {
   type BlockInlineControlsProps,
   BlockMetadataRow,
   type BlockMetadataRowProps,
-  DateChip,
   dueDateColor,
   formatCompactDate,
   getInlinePropertyLimit,
@@ -295,46 +292,6 @@ describe('TaskCheckbox', () => {
   it('renders custom style for unknown state', () => {
     const { container } = render(<TaskCheckbox state="UNKNOWN" />)
     expect(container.querySelector('.task-checkbox-custom')).toBeInTheDocument()
-  })
-})
-
-describe('DateChip', () => {
-  it('renders date text and icon', () => {
-    render(
-      <DateChip
-        date="2099-06-15"
-        icon={
-          (({ size, className }: { size: number; className?: string }) => (
-            <svg data-testid="test-icon" width={size} className={className} />
-          )) as unknown as LucideIcon
-        }
-        colorClass="bg-muted"
-        onOpen={vi.fn()}
-        i18nKey="block.dueDate"
-        chipClass="test-chip"
-      />,
-    )
-    expect(screen.getByText('Jun 15, 2099')).toBeInTheDocument()
-    expect(screen.getByTestId('test-icon')).toBeInTheDocument()
-  })
-
-  // #2282 — the compact date + translated label are computed once and reused
-  // for the aria-label and the visible text, so both stay in lockstep.
-  it('reuses one computed label for aria-label and text', () => {
-    render(
-      <DateChip
-        date="2099-06-15"
-        icon={(() => <svg />) as unknown as LucideIcon}
-        colorClass="bg-muted"
-        onOpen={vi.fn()}
-        i18nKey="block.dueDate"
-        chipClass="test-chip"
-      />,
-    )
-    const compact = formatCompactDate('2099-06-15')
-    const button = screen.getByRole('button', { name: t('block.dueDate', { date: compact }) })
-    // Visible text is the bare compact date.
-    expect(button).toHaveTextContent(compact)
   })
 })
 
@@ -807,11 +764,20 @@ describe('BlockMetadataRow', () => {
       expect(overflow.className).toContain('focus-ring-visible')
     })
 
-    it('applies max-sm: touch target padding', () => {
+    // #7040 — the 44 px target is the invisible hit area, never a taller chip.
+    it('takes its touch target from the hit area, not from padding', () => {
       renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
-      expect(overflow.className).toContain('max-sm:px-2.5')
-      expect(overflow.className).toContain('max-sm:py-1')
+      expect(overflow).toHaveClass('touch-hit-area')
+      expect(overflow.className).not.toContain('max-sm:py-1')
+    })
+
+    // #7040 — the chip stands for more properties, so it is outlined as one is.
+    it('is outlined, with no fill', () => {
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow).toHaveClass('border', 'border-border')
+      expect(overflow.className).not.toMatch(/(^|\s)bg-/)
     })
 
     it('has no a11y violations when overflow button is rendered', async () => {

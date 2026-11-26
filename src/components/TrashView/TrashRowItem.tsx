@@ -152,13 +152,13 @@ export function TrashRowItem({
           data-testid="trash-item-checkbox"
           tabIndex={-1}
         />
-        <Badge tone="secondary" className="trash-item-type shrink-0">
+        <Badge tone="metadata" className="trash-item-type">
           {block.block_type}
         </Badge>
         {descendantCount > 0 && (
           <Badge
-            tone="outline"
-            className="trash-item-batch-count shrink-0 whitespace-nowrap"
+            tone="metadata"
+            className="trash-item-batch-count"
             data-testid="trash-descendant-badge"
           >
             {t('trash.itemsInBatch', { count: descendantCount })}

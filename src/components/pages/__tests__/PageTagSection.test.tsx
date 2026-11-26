@@ -7,6 +7,7 @@ import { axe } from 'vitest-axe'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import type { TagEntry } from '@/hooks/useBlockTags'
 import { t } from '@/lib/i18n'
+import { useResolveStore } from '@/stores/resolve'
 
 vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
@@ -52,9 +53,24 @@ const defaultProps = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useResolveStore.setState({ tagColors: {} })
+  localStorage.clear()
 })
 
 describe('PageTagSection rendering', () => {
+  // #7040 — a tag is one chip everywhere: the tag tone, in the tag's colour.
+  it('draws an applied tag as the tag chip, in its colour where it has one', () => {
+    useResolveStore.setState({ tagColors: { TAG_1: '#1e3a8a' } })
+    render(<PageTagSection {...defaultProps} appliedTags={[TAG_1, TAG_2]} allTags={[TAG_1]} />)
+
+    const coloured = screen.getByText('urgent').closest('[data-slot="badge"]') as HTMLElement
+    expect(coloured).toHaveAttribute('data-variant', 'tag')
+    expect(coloured.style.getPropertyValue('--tag-color')).toBe('#1e3a8a')
+    const plain = screen.getByText('review').closest('[data-slot="badge"]') as HTMLElement
+    expect(plain).toHaveAttribute('data-variant', 'tag')
+    expect(plain.style.getPropertyValue('--tag-color')).toBe('')
+  })
+
   it('renders applied tag badges', () => {
     render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1, TAG_2]} />)
 
