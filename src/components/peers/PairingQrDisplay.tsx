@@ -40,7 +40,7 @@ export function PairingQrDisplay({
   const { t } = useTranslation()
 
   return (
-    <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
+    <div className="flex flex-col sm:flex-row coarse:flex-col gap-4 items-center mb-4">
       {/* #290: Use backend QR SVG instead of react-qr-code. The SVG paints its
           own white quiet zone, so the tile adds no padding; it stays light in
           every theme because scanners need dark modules on a light ground. */}

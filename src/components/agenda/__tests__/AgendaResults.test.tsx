@@ -956,7 +956,7 @@ describe('AgendaResults', () => {
     const chip = document.querySelector('.agenda-results-due')
     expect(chip).toHaveAttribute('data-date-kind', 'due')
     expect(chip).toHaveClass('touch-hit-area')
-    expect(chip?.className).not.toContain('[@media(pointer:coarse)]')
+    expect(chip?.className).not.toContain('coarse:')
   })
 
   // Agenda items no longer truncate content with line-clamp-2
@@ -979,7 +979,7 @@ describe('AgendaResults', () => {
 
     const badge = document.querySelector('.agenda-results-priority')
     expect(badge).toHaveAttribute('data-variant', 'priority')
-    expect(badge?.className).not.toContain('[@media(pointer:coarse)]')
+    expect(badge?.className).not.toContain('coarse:')
   })
 })
 

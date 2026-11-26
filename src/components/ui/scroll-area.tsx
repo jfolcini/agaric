@@ -100,10 +100,8 @@ const ScrollBar = ({
     orientation={orientation}
     className={cn(
       'flex touch-none p-px transition-colors select-none',
-      orientation === 'vertical' &&
-        'h-full w-1.5 border-l border-l-transparent [@media(pointer:coarse)]:w-2',
-      orientation === 'horizontal' &&
-        'h-1.5 flex-col border-t border-t-transparent [@media(pointer:coarse)]:h-2',
+      orientation === 'vertical' && 'h-full w-1.5 border-l border-l-transparent coarse:w-2',
+      orientation === 'horizontal' && 'h-1.5 flex-col border-t border-t-transparent coarse:h-2',
       className,
     )}
     {...props}

@@ -46,7 +46,7 @@ describe('EmojiPickerDialog', () => {
     render(<EmojiPickerDialog open onOpenChange={vi.fn()} onSelect={vi.fn()} />)
 
     const sheet = screen.getByRole('dialog')
-    expect(sheet).toHaveClass('max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]')
+    expect(sheet).toHaveClass('max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))]')
     expect(sheet).not.toHaveClass('max-h-[80dvh]')
   })
 

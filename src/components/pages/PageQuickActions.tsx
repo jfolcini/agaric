@@ -23,7 +23,7 @@
  *   - Bookmark: `aria-pressed`, state-driven `aria-label`, fills when set.
  *   - Delete: state-driven `aria-label` (always "Delete page" for now).
  *   - 44 px touch targets on coarse pointers via the standard
- *     `[@media(pointer:coarse)]:h-11` pattern (reused from PageRow).
+ *     `coarse:h-(--touch-target)` pattern (reused from PageRow).
  *   - Focus-visible rings inherited from `IconButton` → `Button`.
  *
  * Layout variants:
@@ -100,7 +100,7 @@ const PRESETS: Record<PageQuickActionsVariant, VariantPreset> = {
   },
 }
 
-const TOUCH_TARGET = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11'
+const TOUCH_TARGET = 'coarse:h-(--touch-target) coarse:w-(--touch-target)'
 
 export function PageQuickActions({
   pageId,

@@ -368,7 +368,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     key={def.key}
                     className="relative max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
                   >
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 [@media(pointer:coarse)]:min-h-11">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 coarse:min-h-(--touch-target)">
                       {editable ? (
                         <PropertyDefinitionSheet
                           definition={def}

@@ -614,7 +614,7 @@ describe('BacklinkFilterBuilder', () => {
 
     // Apply / Cancel rows hard-code `h-7`, which overrides the
     // `Button size="xs"` coarse-pointer height bump. Without an explicit
-    // `[@media(pointer:coarse)]:h-11` the buttons render at 28 px on touch,
+    // `coarse:h-(--touch-target)` the buttons render at 28 px on touch,
     // below the 44 px minimum touch target.
     it('Apply and Cancel buttons take the one touch height, their 44 px target a hit area', async () => {
       const user = userEvent.setup()
@@ -628,8 +628,8 @@ describe('BacklinkFilterBuilder', () => {
       const cancelBtn = screen.getByRole('button', { name: /Cancel adding filter/i })
 
       for (const btn of [applyBtn, cancelBtn]) {
-        expect(btn).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
-        expect(btn.className).not.toContain('[@media(pointer:coarse)]:h-11')
+        expect(btn).toHaveClass('coarse:h-9', 'touch-hit-area')
+        expect(btn.className).not.toContain('coarse:h-(--touch-target)')
       }
     })
   })

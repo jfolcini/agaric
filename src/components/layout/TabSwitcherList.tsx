@@ -95,7 +95,7 @@ export function TabSwitcherList({
             <span
               data-tab-switcher-close=""
               aria-hidden="true"
-              className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+              className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 coarse:min-h-(--touch-target) coarse:min-w-(--touch-target)"
               onClick={(e) => {
                 e.stopPropagation()
                 onClose(index)

@@ -97,7 +97,7 @@ export function ReplacePreviewRow({
       <span
         aria-hidden="true"
         className={cn(
-          'inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-muted-foreground/80 bg-background [@media(pointer:coarse)]:size-5',
+          'inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-muted-foreground/80 bg-background coarse:size-5',
           ticked && 'border-primary bg-primary text-primary-foreground',
         )}
       >

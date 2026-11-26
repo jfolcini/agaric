@@ -335,10 +335,7 @@ function DaySectionInner({
         // On touch a wrapped line sits a hit area's overhang down, so the
         // heading's and the chips' `touch-hit-area`s do not overlap.
         <div
-          className={cn(
-            'flex flex-wrap items-center gap-2 [@media(pointer:coarse)]:gap-y-6',
-            !emptyRow && 'mb-2',
-          )}
+          className={cn('flex flex-wrap items-center gap-2 coarse:gap-y-6', !emptyRow && 'mb-2')}
         >
           <Heading
             className={cn(

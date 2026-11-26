@@ -63,7 +63,7 @@ describe('PopoverMenuItem', () => {
   it('includes coarse pointer touch-target class', () => {
     render(<PopoverMenuItem>Touch item</PopoverMenuItem>)
     const btn = screen.getByRole('button', { name: 'Touch item' })
-    expect(btn.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(btn.className).toContain('coarse:min-h-(--touch-target)')
   })
 
   it('includes focus-visible ring classes', () => {

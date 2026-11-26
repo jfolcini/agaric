@@ -779,7 +779,7 @@ describe('HistoryListItem', () => {
       // Label is in the DOM but visually hidden on pointer:fine devices.
       expect(label).toBeInTheDocument()
       expect(label.className).toContain('hidden')
-      expect(label.className).toContain('[@media(pointer:coarse)]:inline')
+      expect(label.className).toContain('coarse:inline')
       // aria-hidden so SRs read aria-label, not the visible+aria-label duplicate.
       expect(label).toHaveAttribute('aria-hidden', 'true')
     })

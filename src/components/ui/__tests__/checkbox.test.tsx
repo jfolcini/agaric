@@ -190,7 +190,7 @@ describe('Checkbox', () => {
     render(<Checkbox aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
-    expect(cb.className).toContain('[@media(pointer:coarse)]:size-5')
+    expect(cb.className).toContain('coarse:size-5')
   })
 
   it('wraps checkbox in a 44 px coarse-pointer hitbox', () => {
@@ -199,8 +199,8 @@ describe('Checkbox', () => {
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })
     const hitbox = cb.closest('[data-slot="checkbox-hitbox"]') as HTMLElement
     expect(hitbox).toBeInTheDocument()
-    expect(hitbox.className).toContain('[@media(pointer:coarse)]:min-h-11')
-    expect(hitbox.className).toContain('[@media(pointer:coarse)]:min-w-11')
+    expect(hitbox.className).toContain('coarse:min-h-(--touch-target)')
+    expect(hitbox.className).toContain('coarse:min-w-(--touch-target)')
   })
 
   // -- Focus-visible ring -----------------------------------------------------

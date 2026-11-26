@@ -303,7 +303,7 @@ export const SuggestionList = ({
     if (Icon) {
       return (
         <span className={cn('flex min-w-0 items-center', item.breadcrumb && 'items-start')}>
-          <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground [@media(pointer:coarse)]:h-[18px] [@media(pointer:coarse)]:w-[18px]" />
+          <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground coarse:h-[18px] coarse:w-[18px]" />
           {labelNode}
         </span>
       )
@@ -335,7 +335,7 @@ export const SuggestionList = ({
       key={item.id}
       id={optionIds[index]}
       className={cn(
-        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
+        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors coarse:py-3 coarse:min-h-(--touch-target) touch-target focus-outline',
         index === selectedIndex
           ? 'bg-accent text-accent-foreground'
           : 'hover:bg-accent hover:text-accent-foreground',
@@ -385,7 +385,7 @@ export const SuggestionList = ({
           // #1009 — scale the whole list up on coarse pointers so the label,
           // breadcrumb and kbd chip grow in lockstep with the `py-3` rows
           // (the footer keeps its own `text-xs` outside this container).
-          className="flex flex-col gap-0.5 [@media(pointer:coarse)]:text-base"
+          className="flex flex-col gap-0.5 coarse:text-base"
           data-testid="suggestion-list"
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom editor-suggestion listbox driven by aria-activedescendant; <datalist>/<select> can't host the grouped clickable <button> options
           role="listbox"

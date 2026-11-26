@@ -75,8 +75,8 @@ describe('Button', () => {
     '%s size paints 36 px on a coarse pointer, with a hit area',
     (size) => {
       const btn = renderButton(size)
-      expect(btn.className).toContain('[@media(pointer:coarse)]:h-9')
-      expect(btn.className).toContain('[@media(pointer:coarse)]:text-sm')
+      expect(btn.className).toContain('coarse:h-9')
+      expect(btn.className).toContain('coarse:text-sm')
       expect(btn.className).toContain('touch-hit-area')
     },
   )
@@ -84,23 +84,23 @@ describe('Button', () => {
   it('default size is 36 px everywhere, with a hit area on a coarse pointer', () => {
     const btn = renderButton('default')
     expect(btn.className).toContain('h-9')
-    expect(btn.className).not.toMatch(/\[@media\(pointer:coarse\)\]:h-/)
+    expect(btn.className).not.toMatch(/coarse:h-/)
     expect(btn.className).toContain('touch-hit-area')
   })
 
   it('icon size includes coarse pointer size override', () => {
     const btn = renderButton('icon')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(btn.className).toContain('coarse:size-(--touch-target)')
   })
 
   it('icon-xs size includes coarse pointer size override', () => {
     const btn = renderButton('icon-xs')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(btn.className).toContain('coarse:size-(--touch-target)')
   })
 
   it('icon-sm size includes coarse pointer size override', () => {
     const btn = renderButton('icon-sm')
-    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(btn.className).toContain('coarse:size-(--touch-target)')
   })
 
   // -- active-press scale (#1012) ---------------------------------------------
@@ -140,7 +140,7 @@ describe('Button', () => {
     const xs = renderButton('xs', 'icons-xs')
     expect(xs.className).toContain(`${iconRule}3`)
     // On a coarse pointer the xs button is the others' height, so its icon is too.
-    expect(xs.className).toContain(`[@media(pointer:coarse)]:${iconRule}4`)
+    expect(xs.className).toContain(`coarse:${iconRule}4`)
   })
 
   // -- palette icons (#5368) ---------------------------------------------------

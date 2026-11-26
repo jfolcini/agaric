@@ -114,10 +114,7 @@ export function SavedViewsDropdown({
                     {isActive ? (
                       <Check aria-hidden="true" />
                     ) : (
-                      <span
-                        className="size-4 shrink-0 [@media(pointer:coarse)]:size-5"
-                        aria-hidden="true"
-                      />
+                      <span className="size-4 shrink-0 coarse:size-5" aria-hidden="true" />
                     )}
                     <span className="truncate">{view.name}</span>
                   </PopoverMenuItem>

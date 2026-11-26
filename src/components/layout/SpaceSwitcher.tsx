@@ -199,7 +199,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
                 'w-full *:data-[slot=select-value]:flex-1',
                 // Inherit the sidebar's tight typography while preserving
                 // the 44px touch target via the Select's built-in
-                // `[@media(pointer:coarse)]:h-11` rule.
+                // `coarse:h-(--touch-target)` rule.
                 'text-sm font-medium',
               )}
             >

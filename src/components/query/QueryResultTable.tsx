@@ -156,7 +156,7 @@ export function QueryResultTable({
             return (
               <tr key={block.id} className="hover:bg-muted/40 transition-colors">
                 {columns.map((col) => (
-                  <td key={col.key} className="px-3 py-1.5 [@media(pointer:coarse)]:py-3">
+                  <td key={col.key} className="px-3 py-1.5 coarse:py-3">
                     {col.key === 'content' ? (
                       <button
                         type="button"
@@ -190,7 +190,7 @@ export function QueryResultTable({
                     )}
                   </td>
                 ))}
-                <td className="px-3 py-1.5 [@media(pointer:coarse)]:py-3 text-muted-foreground truncate max-w-[120px]">
+                <td className="px-3 py-1.5 coarse:py-3 text-muted-foreground truncate max-w-[120px]">
                   {pageTitle && block.parent_id && block.page_id ? (
                     <PageLink pageId={block.page_id} title={pageTitle} />
                   ) : (

@@ -99,7 +99,7 @@ describe('Textarea', () => {
 
     const ta = screen.getByRole('textbox', { name: 'Notes' })
     expect(ta.className).toContain('min-h-[80px]')
-    expect(ta.className).toContain('[@media(pointer:coarse)]:min-h-[120px]')
+    expect(ta.className).toContain('coarse:min-h-[120px]')
   })
 
   // Bumps font-size to `text-base` on coarse pointers so iOS
@@ -109,7 +109,7 @@ describe('Textarea', () => {
     render(<Textarea aria-label="Notes" />)
 
     const ta = screen.getByRole('textbox', { name: 'Notes' })
-    expect(ta.className).toContain('[@media(pointer:coarse)]:text-base')
+    expect(ta.className).toContain('coarse:text-base')
   })
 
   // -- Ref forwarding ---------------------------------------------------------

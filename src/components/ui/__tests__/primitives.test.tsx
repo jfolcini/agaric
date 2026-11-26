@@ -166,7 +166,7 @@ describe('CloseButtonIcon', () => {
   it('closeButtonClassName contains expected classes', () => {
     expect(closeButtonClassName).toContain('opacity-70')
     expect(closeButtonClassName).toContain('focus-ring-visible')
-    expect(closeButtonClassName).toContain('[@media(pointer:coarse)]')
+    expect(closeButtonClassName).toContain('coarse:')
   })
 
   it('renders sr-only "Close" text', () => {
@@ -201,7 +201,7 @@ describe('CloseButtonIcon', () => {
     expect(svg).toBeInTheDocument()
     const cls = svg?.getAttribute('class') ?? ''
     expect(cls).toContain('size-4')
-    expect(cls).toContain('[@media(pointer:coarse)]:size-5')
+    expect(cls).toContain('coarse:size-5')
   })
 
   it('has no a11y violations when wrapped in a button', async () => {
@@ -277,7 +277,7 @@ describe('CardButton', () => {
   it('includes coarse pointer touch-target class', () => {
     render(<CardButton>Touch</CardButton>)
     const btn = screen.getByRole('button', { name: 'Touch' })
-    expect(btn.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(btn.className).toContain('coarse:min-h-(--touch-target)')
   })
 
   it('includes focus-visible ring classes', () => {
@@ -435,7 +435,7 @@ describe('ListItem', () => {
       </ul>,
     )
     const li = q(container, 'li')
-    expect(li).toHaveClass('list-row', 'py-2.5', '[@media(pointer:coarse)]:min-h-11')
+    expect(li).toHaveClass('list-row', 'py-2.5', 'coarse:min-h-(--touch-target)')
     expect(li.className).not.toMatch(/\brounded/)
   })
 
@@ -502,7 +502,7 @@ describe('ListItem', () => {
       </ul>,
     )
     const li = q(container, 'li')
-    expect(li.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(li.className).toContain('coarse:min-h-(--touch-target)')
   })
 
   it('includes focus-visible ring classes', () => {
@@ -549,7 +549,7 @@ describe('Input', () => {
   it('includes coarse pointer touch-target class', () => {
     render(<Input data-testid="test-input" />)
     const el = screen.getByTestId('test-input')
-    expect(el.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(el.className).toContain('coarse:h-(--touch-target)')
   })
 
   it('includes focus-visible ring classes', () => {
@@ -602,7 +602,7 @@ describe('RecentPageChip', () => {
   it('paints a button’s 36 px on touch and keeps a 44 px target', () => {
     render(<RecentPageChip>Touch</RecentPageChip>)
     const btn = screen.getByRole('button', { name: 'Touch' })
-    expect(btn).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
+    expect(btn).toHaveClass('coarse:h-9', 'touch-hit-area')
   })
 
   it('merges custom className', () => {
@@ -692,9 +692,9 @@ describe('ToggleGroup', () => {
       </ToggleGroup>,
     )
     const item = screen.getByRole('radio', { name: 'A' })
-    expect(item.className).toContain('[@media(pointer:coarse)]:h-8')
+    expect(item.className).toContain('coarse:h-8')
     expect(item.className).toContain('touch-hit-area')
-    expect(item.className).not.toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(item.className).not.toContain('coarse:min-h-(--touch-target)')
   })
 
   it('merges custom className on group and item', () => {

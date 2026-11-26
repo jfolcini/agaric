@@ -278,7 +278,7 @@ export function SettingsView(): React.ReactElement {
                     <button
                       type="button"
                       id={`settings-section-${tab}`}
-                      className="flex min-h-11 w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
+                      className="flex min-h-(--touch-target) w-full items-center gap-3 rounded-[inherit] px-3 py-2.5 text-left text-sm focus-ring-visible"
                       onClick={() => openSection(tab)}
                     >
                       <span className="min-w-0 flex-1">{t(TAB_LABEL_KEYS[tab])}</span>
@@ -345,7 +345,7 @@ export function SettingsView(): React.ReactElement {
           variant="vertical"
           value={activeTab}
           onValueChange={(tab) => setActiveTab(tab as SettingsTab)}
-          className="w-48 shrink-0 [@media(min-height:44rem)_and_(pointer:fine)]:sticky [@media(min-height:48rem)]:sticky top-0"
+          className="w-48 shrink-0 not-coarse:[@media(min-height:44rem)]:sticky [@media(min-height:48rem)]:sticky top-0"
         >
           <TabsList
             aria-label={t('sidebar.settings')}

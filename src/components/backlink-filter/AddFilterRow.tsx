@@ -275,7 +275,7 @@ export function AddFilterRow({
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- form-level onKeyDown intercepts Escape to cancel; belongs on the form container, not a child control
     <form
-      className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-stretch"
+      className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2 coarse:flex-col coarse:items-stretch"
       aria-label={t('backlink.addFilterLabel')}
       onSubmit={(e) => {
         e.preventDefault()
@@ -329,7 +329,7 @@ export function AddFilterRow({
           type="button"
           variant="default"
           size="xs"
-          className="[@media(pointer:coarse)]:w-full"
+          className="coarse:w-full"
           onClick={handleApply}
           aria-label={t('backlink.applyFilterLabel')}
         >
@@ -340,7 +340,7 @@ export function AddFilterRow({
         type="button"
         variant="ghost"
         size="xs"
-        className="[@media(pointer:coarse)]:w-full"
+        className="coarse:w-full"
         onClick={onCancel}
         aria-label={t('backlink.cancelAddingFilterLabel')}
       >

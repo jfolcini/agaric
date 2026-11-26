@@ -380,7 +380,7 @@ describe('BlockListItem', () => {
 
     const li = screen.getByRole('listitem')
     // The touch-only minimum-height utility ensures embedded pills don't get clipped.
-    expect(li.className).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(li.className).toContain('coarse:min-h-(--touch-target)')
   })
 
   it('shows custom emptyContentFallback for null content', () => {

@@ -549,7 +549,7 @@ function BlockListItemInner({
               type="button"
               // Its 44 px target is the invisible hit area: as a 44 px box it
               // made every row two targets tall.
-              className="reschedule-btn hidden [@media(pointer:coarse)]:inline-flex shrink-0 items-center justify-center rounded-md p-0.5 max-sm:ml-auto text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-hit-area focus-ring-visible"
+              className="reschedule-btn hidden coarse:inline-flex shrink-0 items-center justify-center rounded-md p-0.5 max-sm:ml-auto text-muted-foreground hover:text-foreground hover:bg-accent transition-colors touch-hit-area focus-ring-visible"
               aria-label={t('block.reschedule')}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => e.stopPropagation()}

@@ -155,7 +155,7 @@ export function PageBrowserHeader({
   const moreTrigger = (
     <IconButton
       variant="ghost"
-      className="[@media(pointer:coarse)]:size-11"
+      className="coarse:size-(--touch-target)"
       tooltip={t('pageBrowser.moreMenu')}
       ariaLabel={t('pageBrowser.moreMenu')}
       data-testid="page-browser-more"
@@ -186,7 +186,7 @@ export function PageBrowserHeader({
   const newPageButton = (
     <Button
       variant={captureButtonShown ? 'ghost' : 'default'}
-      className={cn(isMobile && 'ml-auto w-9 px-0 [@media(pointer:coarse)]:w-11')}
+      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target)')}
       aria-label={t('pageBrowser.newPage')}
       onClick={() => openNewPageDialog()}
     >
@@ -241,7 +241,7 @@ export function PageBrowserHeader({
                     // An icon button on a phone; the chevron goes with the label.
                     className={
                       isMobile
-                        ? 'w-9 justify-center px-0 [@media(pointer:coarse)]:w-11 [&>svg:last-child]:hidden'
+                        ? 'w-9 justify-center px-0 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
                         : 'w-auto min-w-[7rem]'
                     }
                     aria-label={t('pageBrowser.sortLabel')}
@@ -298,7 +298,7 @@ export function PageBrowserHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="px-2 @sm:px-3 [@media(pointer:coarse)]:min-w-11"
+                      className="px-2 @sm:px-3 coarse:min-w-(--touch-target)"
                       aria-label={label}
                       onClick={() => setView(view)}
                     >

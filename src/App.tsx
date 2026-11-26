@@ -222,13 +222,13 @@ function MobileSidebarTriggerButton(): ReactElement {
         // stack. A mouse header has no such padding, so there the trigger
         // centres like the controls beside it. The negative margin puts the
         // icon, not the button, on the header's 16px content edge.
-        className="relative -ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3 [@media(pointer:coarse)]:self-start"
+        className="relative -ml-1.5 shrink-0 self-center coarse:-ml-3 coarse:self-start"
       >
         {paired && (
           // On the icon's top-right corner.
           <span
             className={cn(
-              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full [@media(pointer:coarse)]:top-2 [@media(pointer:coarse)]:right-2',
+              'pointer-events-none absolute top-0.5 right-0.5 h-2 w-2 rounded-full coarse:top-2 coarse:right-2',
               syncDotClass(syncState),
             )}
             data-testid="mobile-sync-status-dot"
@@ -709,7 +709,7 @@ function App() {
               className={cn(
                 'flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4 max-md:gap-1',
                 // Room for the 44 px touch targets; a mouse window has none.
-                isTouch && phoneLayout && 'min-h-14 py-1.5',
+                isTouch && phoneLayout && 'min-h-(--phone-header-h) py-1.5',
               )}
             >
               {/* Leads the header row, before the view title, because that
@@ -741,7 +741,7 @@ function App() {
                         `max-sm:` block sizing puts the name's optical centre on
                         the 44 px hamburger beside it. */}
                     <span
-                      className="font-medium md:hidden max-sm:flex max-sm:min-h-11 max-sm:items-center"
+                      className="font-medium md:hidden max-sm:flex max-sm:min-h-(--touch-target) max-sm:items-center"
                       data-testid="header-label"
                     >
                       {headerLabel}
@@ -803,14 +803,14 @@ function App() {
               // under the iPhone home indicator / Android gesture bar.
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
               // scroll-into-view stops short of the inset as well.
-              // Where `QuickCaptureFab` shows, it floats 1rem up and is 3.5rem
-              // tall; 6rem keeps the last control clear of it (the `md:` copy
-              // outranks `md:p-6`), except where `keepsCaptureRoom` says not.
+              // Where `QuickCaptureFab` shows, `--fab-clearance` keeps the last
+              // control clear of it (the `md:` copy outranks `md:p-6`), except
+              // where `keepsCaptureRoom` says not.
               viewportClassName={cn(
                 'p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
                   keepsCaptureRoom(currentView) &&
-                  'pb-[calc(6rem+var(--safe-area-bottom))] md:pb-[calc(6rem+var(--safe-area-bottom))]',
+                  'pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))] md:pb-[calc(var(--fab-clearance)+var(--safe-area-bottom))]',
               )}
               data-slot="main-content"
             >

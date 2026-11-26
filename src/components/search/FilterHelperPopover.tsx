@@ -370,7 +370,7 @@ export function FilterHelperPopover({
                         aria-selected={idx === activeIndex}
                         tabIndex={-1}
                         onClick={() => handleTagSelect(tag)}
-                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent focus-ring-visible text-sm [@media(pointer:coarse)]:min-h-11 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
+                        className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent focus-ring-visible text-sm coarse:min-h-(--touch-target) data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
                         data-active={idx === activeIndex}
                       >
                         #{tag.name}

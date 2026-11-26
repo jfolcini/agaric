@@ -45,7 +45,7 @@ const CommandInput = ({
     <CommandPrimitive.Input
       data-slot="command-input"
       className={cn(
-        'flex h-10 [@media(pointer:coarse)]:h-11 w-full rounded-md bg-transparent py-3 text-sm [@media(pointer:coarse)]:text-base outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+        'flex h-10 coarse:h-(--touch-target) w-full rounded-md bg-transparent py-3 text-sm coarse:text-base outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
       {...props}
@@ -113,7 +113,7 @@ const CommandItem = ({
   <CommandPrimitive.Item
     data-slot="command-item"
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:text-base",
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 coarse:py-2.5 coarse:text-base",
       className,
     )}
     {...props}

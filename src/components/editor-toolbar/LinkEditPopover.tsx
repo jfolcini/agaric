@@ -164,7 +164,7 @@ export function LinkEditPopover({
             onKeyDown={handleKeyDown}
             // oxlint-disable-next-line jsx-a11y/no-autofocus -- the popover opens on demand over the chip; the label is its one field
             autoFocus
-            className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+            className="h-8 coarse:h-(--touch-target) text-sm"
             data-testid="block-link-label-input"
           />
         </div>
@@ -192,7 +192,7 @@ export function LinkEditPopover({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={handleKeyDown}
-          className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+          className="h-8 coarse:h-(--touch-target) text-sm"
           data-testid="link-label-input"
         />
       </div>
@@ -212,10 +212,7 @@ export function LinkEditPopover({
           onKeyDown={handleKeyDown}
           // oxlint-disable-next-line jsx-a11y/no-autofocus -- this URL input lives in the link-edit popover that opens on demand; focusing it lets the user type/paste the link URL immediately without an extra click/tab
           autoFocus
-          className={cn(
-            'h-8 [@media(pointer:coarse)]:h-11 text-sm',
-            urlError && 'border-destructive',
-          )}
+          className={cn('h-8 coarse:h-(--touch-target) text-sm', urlError && 'border-destructive')}
           aria-invalid={urlError ? true : undefined}
           data-testid="link-url-input"
         />

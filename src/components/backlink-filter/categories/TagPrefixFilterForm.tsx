@@ -22,7 +22,7 @@ export function TagPrefixFilterForm({ ref }: TagPrefixFilterFormProps): React.Re
 
   return (
     <SearchInput
-      className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
+      className="h-7 w-40 text-xs coarse:w-full"
       placeholder={t('backlink.tagPrefixPlaceholder')}
       value={prefixValue}
       onChange={(e) => setPrefixValue(e.target.value)}

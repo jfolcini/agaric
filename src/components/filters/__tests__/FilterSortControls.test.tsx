@@ -179,8 +179,8 @@ describe('FilterSortControls', () => {
     renderControls()
 
     const toggle = directionButton('ascending')
-    expect(toggle).toHaveClass('[@media(pointer:coarse)]:size-9', 'touch-hit-area')
-    expect(toggle.className).not.toContain('[@media(pointer:coarse)]:size-11')
+    expect(toggle).toHaveClass('coarse:size-9', 'touch-hit-area')
+    expect(toggle.className).not.toContain('coarse:size-(--touch-target)')
   })
 
   it('loads no property definitions until asked', () => {

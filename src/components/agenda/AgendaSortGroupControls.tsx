@@ -85,7 +85,7 @@ export function AgendaSortGroupControls({
       {/* Open while choosing, so a grouping and a sort are set in one visit. */}
       <Popover open={open} onOpenChange={setOpen} sheetTitle={t('agenda.view')}>
         <PopoverTrigger asChild>
-          <Button variant="outline" size="xs" className="[@media(pointer:coarse)]:h-11">
+          <Button variant="outline" size="xs" className="coarse:h-(--touch-target)">
             {t('agenda.view')}
             <ChevronDown aria-hidden="true" />
           </Button>

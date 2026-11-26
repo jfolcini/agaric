@@ -105,7 +105,7 @@ export function PageTreeItem({
           </button>
           <button
             type="button"
-            className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible coarse:h-(--touch-target) coarse:w-(--touch-target) active:bg-accent active:scale-95"
             aria-label={t('pageTree.createUnder', { path: node.fullPath })}
             onClick={(e) => {
               e.stopPropagation()
@@ -162,7 +162,7 @@ export function PageTreeItem({
         {node.duplicateTitle && <DuplicateTitleCue pageId={hybridId} />}
         <button
           type="button"
-          className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px] active:bg-accent active:scale-95"
+          className="h-5 w-5 flex items-center justify-center rounded hover:bg-accent focus-ring-visible coarse:h-(--touch-target) coarse:w-(--touch-target) active:bg-accent active:scale-95"
           aria-label={t('pageTree.createUnder', { path: node.fullPath })}
           onClick={(e) => {
             e.stopPropagation()

@@ -35,14 +35,12 @@ const buttonVariants = cva(
         // the rest of its 44 px target invisibly (`touch-hit-area`), so a row
         // of buttons reads as one height however long each label is.
         default: 'h-9 gap-1.5 px-4 py-2 touch-hit-area',
-        sm: 'h-8 gap-1.5 rounded-md px-3 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:text-sm touch-hit-area',
-        xs: 'h-7 gap-1 rounded-md px-2.5 text-xs [:where(&)_svg]:size-3 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:[:where(&)_svg]:size-4 touch-hit-area',
+        sm: 'h-8 gap-1.5 rounded-md px-3 coarse:h-9 coarse:text-sm touch-hit-area',
+        xs: 'h-7 gap-1 rounded-md px-2.5 text-xs [:where(&)_svg]:size-3 coarse:h-9 coarse:px-3 coarse:text-sm coarse:[:where(&)_svg]:size-4 touch-hit-area',
         // An icon button's touch box grows to 44 px, and its glyph to 20 px with it.
-        icon: 'size-9 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
-        'icon-xs':
-          'size-6 rounded-md [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
-        'icon-sm':
-          'size-8 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:[:where(&)_svg]:size-5',
+        icon: 'size-9 coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
+        'icon-xs': 'size-6 rounded-md coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
+        'icon-sm': 'size-8 coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
       },
     },
     defaultVariants: {

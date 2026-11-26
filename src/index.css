@@ -1156,6 +1156,16 @@
     --safe-area-bottom: env(safe-area-inset-bottom);
     --safe-area-left: env(safe-area-inset-left);
     --safe-area-right: env(safe-area-inset-right);
+
+    /* Touch measurements, each named once (#7040 M6). In a class:
+     * `coarse:min-h-(--touch-target)`. */
+    /* The smallest side of a control under the `coarse` variant: 44 px. */
+    --touch-target: 2.75rem;
+    /* The phone header's height (`App.tsx`), where a bottom sheet stops. */
+    --phone-header-h: 3.5rem;
+    /* Bottom room a view keeps under the floating capture button
+     * (`QuickCaptureFab`): it floats 1rem up and is 3.5rem tall. */
+    --fab-clearance: 6rem;
   }
 
   body {
@@ -1373,7 +1383,7 @@
 }
 .ProseMirror {
   @variant coarse {
-    min-height: 2.75rem;
+    min-height: var(--touch-target);
   }
 }
 
@@ -1477,13 +1487,13 @@
    (`touch-hit-area`) stays centred on the first line, so the line keeps its
    height. */
 .page-mode-phone [data-page-block][data-depth='0']:has(> .page-block-gutter) {
-  padding-right: 2.75rem;
+  padding-right: var(--touch-target);
 }
 .page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter {
   @apply right-0;
 }
 .page-mode-phone [data-page-block][data-depth='0'] > .page-block-gutter > .collapse-toggle {
-  @apply w-11;
+  @apply w-(--touch-target);
 }
 /* And no grip: a tap brought it to the tapped block, a drag handle a phone
    does without; the toolbar's Block actions opens the menu it would (#7040). */
@@ -2925,8 +2935,8 @@ mark[data-highlight-color='purple'] {
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
   @variant coarse {
-    min-height: 44px;
-    min-width: 44px;
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
   }
 }
 
@@ -2947,8 +2957,8 @@ mark[data-highlight-color='purple'] {
       position: absolute;
       top: 50%;
       left: 50%;
-      width: max(44px, 100%);
-      height: max(44px, 100%);
+      width: max(var(--touch-target), 100%);
+      height: max(var(--touch-target), 100%);
       transform: translate(-50%, -50%);
       z-index: 1;
     }

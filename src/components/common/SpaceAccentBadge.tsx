@@ -12,7 +12,7 @@
  * Accessibility:
  *  - `aria-label` carries the space name + click affordance.
  *  - `title` (tooltip) shows the name + click affordance.
- *  - 44px touch target on `[@media(pointer:coarse)]` per AGENTS.md.
+ *  - 44px touch target on `coarse:` per AGENTS.md.
  *  - `focus-ring-visible` matches the Button / Input focus pattern.
  *
  * The accent background is sourced from the per-space `--accent-…`
@@ -97,7 +97,7 @@ export function SpaceAccentBadge({
         // Touch target — bumps the hit area to 44px on coarse pointers
         // without changing the 32px visual footprint, matching
         // AGENTS.md "Mandatory patterns" for touch-target sizing.
-        '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+        'coarse:h-(--touch-target) coarse:w-(--touch-target)',
         // Focus ring matches the Button / Input pattern in the design
         // system — see AGENTS.md "Mandatory patterns".
         'outline-none focus-ring-visible',

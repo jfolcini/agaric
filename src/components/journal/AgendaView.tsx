@@ -241,8 +241,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
           <FeaturePageHeader title={t('journal.agendaTab')} />
           <div className="agenda-view-header flex items-start gap-2">
             <div className="min-w-0 flex-1">
-              {/* Holds the bar's row height (its h-7 / coarse h-11 trigger) while the chunk loads. */}
-              <Suspense fallback={<div className="h-7 [@media(pointer:coarse)]:h-11" />}>
+              {/* Holds the bar's row height (its trigger: h-7, 44 px on touch) while the chunk loads. */}
+              <Suspense fallback={<div className="h-7 coarse:h-(--touch-target)" />}>
                 <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
               </Suspense>
             </div>

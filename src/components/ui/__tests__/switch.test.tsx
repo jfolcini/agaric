@@ -106,9 +106,9 @@ describe('Switch', () => {
 
     const sw = screen.getByRole('switch', { name: 'Toggle feature' })
     // Width = 48 px on coarse, meeting the 44 px minimum.
-    expect(sw.className).toContain('[@media(pointer:coarse)]:w-12')
+    expect(sw.className).toContain('coarse:w-12')
     // Height = 28 px on coarse — see file-level caveat.
-    expect(sw.className).toContain('[@media(pointer:coarse)]:h-7')
+    expect(sw.className).toContain('coarse:h-7')
   })
 
   // -- Focus-visible ring -----------------------------------------------------

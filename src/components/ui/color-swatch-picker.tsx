@@ -94,7 +94,7 @@ function ColorSwatchPicker({
   const customId = useId()
   return (
     <div data-slot="color-swatch-picker" className={cn('flex flex-col gap-2', className)}>
-      <div className="flex items-center gap-1 [@media(pointer:coarse)]:gap-2">
+      <div className="flex items-center gap-1 coarse:gap-2">
         <ToggleGroupPrimitive.Root
           type="single"
           aria-label={ariaLabel}
@@ -104,7 +104,7 @@ function ColorSwatchPicker({
           onValueChange={(next) => {
             if (next !== '') onValueChange(next)
           }}
-          className="flex items-center gap-1 [@media(pointer:coarse)]:gap-2"
+          className="flex items-center gap-1 coarse:gap-2"
         >
           {swatches.map((swatch) => (
             <ToggleGroupPrimitive.Item
@@ -215,7 +215,7 @@ function CustomColor({
         <span
           aria-hidden
           data-testid="custom-color-preview"
-          className="size-9 shrink-0 rounded-md border [@media(pointer:coarse)]:size-11"
+          className="size-9 shrink-0 rounded-md border coarse:size-(--touch-target)"
           style={{ backgroundColor: draft }}
         />
         <Input

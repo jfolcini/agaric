@@ -72,7 +72,7 @@ export function TaskCheckbox({ state }: { state: string | null | undefined }) {
   return (
     <div
       className={cn(
-        'task-checkbox size-[1em] rounded border-2 [@media(pointer:coarse)]:size-[1.125em]',
+        'task-checkbox size-[1em] rounded border-2 coarse:size-[1.125em]',
         style.className,
       )}
       data-testid={style.testId}

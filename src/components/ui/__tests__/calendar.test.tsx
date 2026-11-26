@@ -205,7 +205,7 @@ describe('Calendar', () => {
   // assertions were dropped — the click contract is covered by the block above).
   // #2246: the pure Tailwind class-substring tests from that file ("hover
   // bg-accent styling" and "coarse pointer overrides") were NOT carried over —
-  // jsdom applies neither `hover:` nor `[@media(pointer:coarse)]:` variants,
+  // jsdom applies neither `hover:` nor `coarse:` variants,
   // so they only re-stated the source className; hover/touch sizing is a
   // runtime concern for the e2e/visual layer.
   describe('caption affordances & week numbers', () => {

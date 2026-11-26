@@ -80,7 +80,7 @@ const SKIN_TONE_KEY = 'emoji_skin_tone'
 const COLUMNS = 8
 /** 7 touch cells (44px, no gap) fit a 360px phone sheet's 312px content; 8 do not. */
 const TOUCH_COLUMNS = 7
-// #2057: emoji cells grow to the 44px coarse-pointer touch floor (`size-11`),
+// #2057: emoji cells grow to the 44px touch floor (`--touch-target`),
 // so the virtualizer reserves >=44px per row. `measureElement` corrects the
 // real height per row after mount; this is the pre-measure estimate. On fine
 // pointers the cell is 36px — overestimating the row height here is harmless
@@ -447,7 +447,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             role="tablist"
             aria-label={t('emojiPicker.categories')}
             data-testid="emoji-categories"
-            className="flex items-center justify-between gap-0.5 border-b pb-1 [@media(pointer:coarse)]:gap-0"
+            className="flex items-center justify-between gap-0.5 border-b pb-1 coarse:gap-0"
             // Not a tab stop itself; the roving tab moves the single tabindex 0.
             tabIndex={-1}
             onKeyDown={categoryRoving.onKeyDown}
@@ -465,7 +465,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                   data-active={active}
                   onClick={() => jumpToCategory(index)}
                   className={cn(
-                    'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
+                    'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible coarse:size-(--touch-target) touch-target',
                     active && 'bg-accent text-foreground',
                   )}
                 >
@@ -506,7 +506,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                   push(char)
                   onSelect(char)
                 }}
-                className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
+                className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible coarse:size-(--touch-target) touch-target"
               >
                 {char}
               </button>
@@ -603,7 +603,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                               aria-label={entry.name}
                               tabIndex={isFocused ? 0 : -1}
                               onClick={() => handleSelect(entry)}
-                              className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target"
+                              className="grid size-9 place-items-center rounded-md text-xl leading-none hover:bg-accent focus-ring-visible coarse:size-(--touch-target) touch-target"
                             >
                               {char}
                             </button>
@@ -697,7 +697,7 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
             aria-label={label}
             onClick={() => onChange(tone.id)}
             className={cn(
-              'grid size-7 place-items-center rounded-md text-base leading-none hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
+              'grid size-7 place-items-center rounded-md text-base leading-none hover:bg-accent focus-ring-visible coarse:size-(--touch-target) touch-target',
               value === tone.id && 'bg-accent ring-1 ring-ring',
             )}
           >

@@ -294,7 +294,7 @@ describe('SuggestionList', () => {
 
   // -- Touch target spec matches docs/UX.md "Touch Target Sizing" --------
 
-  it('list items declare both [@media(pointer:coarse)]:min-h-[44px] and touch-target classes', async () => {
+  it('list items declare both coarse:min-h-(--touch-target) and touch-target classes', async () => {
     const command = vi.fn()
     const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
@@ -303,7 +303,7 @@ describe('SuggestionList', () => {
     const options = screen.getAllByRole('option')
     expect(options.length).toBeGreaterThan(0)
     for (const option of options) {
-      expect(option.className).toContain('[@media(pointer:coarse)]:min-h-[44px]')
+      expect(option.className).toContain('coarse:min-h-(--touch-target)')
       expect(option.className).toContain('touch-target')
     }
 
@@ -990,7 +990,7 @@ describe('SuggestionList', () => {
     const command = vi.fn()
     render(<SuggestionList items={sampleItems} command={command} />)
     const list = screen.getByTestId('suggestion-list')
-    expect(list.className).toContain('[@media(pointer:coarse)]:text-base')
+    expect(list.className).toContain('coarse:text-base')
   })
 
   // -- #211 P0-5: per-row keyboard shortcut chips -----------------------------

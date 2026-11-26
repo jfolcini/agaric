@@ -51,7 +51,7 @@ export function PropertySetFilterForm({
 
   return (
     <SearchInput
-      className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
+      className="h-7 w-24 text-xs coarse:w-full"
       placeholder={t('backlink.keyPlaceholder')}
       value={propSetKey}
       onChange={(e) => setPropSetKey(e.target.value)}

@@ -27,7 +27,7 @@ const CardButton = ({ ref, className, asChild = false, ...props }: CardButtonPro
       ref={ref}
       data-slot="card-button"
       className={cn(
-        'w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
+        'w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 coarse:min-h-(--touch-target) focus-ring-visible',
         className,
       )}
       {...buttonOnlyProps}

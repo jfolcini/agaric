@@ -210,7 +210,7 @@ export function ProjectedEntriesSection({
   if (entries.length === 0) return null
   return (
     <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-      <h2 className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
+      <h2 className="text-xs coarse:text-sm font-medium text-muted-foreground mb-2">
         {t('due.projected')}
       </h2>
       <ul className="space-y-1" aria-label={t('duePanel.projectedListLabel')}>

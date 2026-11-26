@@ -21,9 +21,9 @@ import { MenuRowChevron, menuRowVariants } from '@/components/ui/menu-row'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 
 const PRESSED_FILL = 'active:bg-accent'
-const COARSE_HEIGHT = '[@media(pointer:coarse)]:min-h-11'
+const COARSE_HEIGHT = 'coarse:min-h-(--touch-target)'
 const ICON = '[:where(&)_svg]:size-4'
-const COARSE_ICON = '[@media(pointer:coarse)]:[:where(&)_svg]:size-5'
+const COARSE_ICON = 'coarse:[:where(&)_svg]:size-5'
 
 describe('menuRowVariants', () => {
   it('carries the pressed fill, the coarse-pointer height and the icon sizes', () => {
@@ -35,10 +35,10 @@ describe('menuRowVariants', () => {
 
   it('indents a submenu row past the parent icon, more on a coarse pointer', () => {
     expect(menuRowVariants({ indent: 1 }).split(' ')).toEqual(
-      expect.arrayContaining(['pl-8', '[@media(pointer:coarse)]:pl-9']),
+      expect.arrayContaining(['pl-8', 'coarse:pl-9']),
     )
     expect(menuRowVariants({ indent: 2 }).split(' ')).toEqual(
-      expect.arrayContaining(['pl-14', '[@media(pointer:coarse)]:pl-16']),
+      expect.arrayContaining(['pl-14', 'coarse:pl-16']),
     )
   })
 })

@@ -964,12 +964,12 @@ describe('BlockMetadataRow', () => {
     })
   })
 
-  it('indicator buttons use max-sm: classes instead of [@media(pointer:coarse)]', () => {
+  it('indicator buttons use max-sm: classes instead of coarse:', () => {
     renderMetadata(makeMetaProps({ priority: '1' }))
     const priorityBadge = screen.getByTestId('priority-badge')
     const priorityChip = screen.getByText('P1')
-    expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]')
-    expect(priorityChip.className).not.toContain('[@media(pointer:coarse)]')
+    expect(priorityBadge.className).not.toContain('coarse:')
+    expect(priorityChip.className).not.toContain('coarse:')
     expect(priorityChip.className).toContain('max-sm:')
   })
 

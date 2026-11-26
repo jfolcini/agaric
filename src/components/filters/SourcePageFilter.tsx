@@ -121,7 +121,7 @@ export function SourcePageFilter({
           className={cn(
             // As tall as the linked references' other controls, on a touch screen
             // too; the rest of its 44 px target is invisible.
-            'source-page-filter-trigger size-7 p-0 [@media(pointer:coarse)]:size-9 touch-hit-area',
+            'source-page-filter-trigger size-7 p-0 coarse:size-9 touch-hit-area',
             buttonColor,
           )}
           aria-label={t('sourceFilter.filterLabel')}

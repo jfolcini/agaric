@@ -280,7 +280,7 @@ const SidebarTrigger = ({
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon"
-      className={cn('size-7 [@media(pointer:coarse)]:size-11', className)}
+      className={cn('size-7 coarse:size-(--touch-target)', className)}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
@@ -325,7 +325,7 @@ const SidebarRail = ({ ref, className, ...props }: React.ComponentProps<'button'
         // coarse devices (docs/UX.md § Touch & responsive, line 47:
         // "Mobile sidebar … Distinct from desktop's SidebarRail (resize
         // handle)").
-        'absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex [@media(pointer:coarse)]:hidden',
+        'absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex coarse:hidden',
         'in-data-[side=left]:cursor-col-resize in-data-[side=right]:cursor-col-resize',
         '[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize',
         'group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full hover:group-data-[collapsible=offcanvas]:bg-sidebar',
@@ -551,10 +551,9 @@ const SidebarMenuItem = ({ ref, className, ...props }: React.ComponentProps<'li'
 SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 const sidebarMenuButtonVariants = cva(
-  // A coarse pointer gets 44 px targets: the default size's rows are `h-11`,
-  // and the desktop icon-only rail's buttons are `size-11!`. A fine pointer
-  // keeps 32 px.
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:hover:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg:not([class*='text-'])]:text-icon",
+  // Touch gets 44 px targets (`--touch-target`): the default size's rows and
+  // the desktop icon-only rail's buttons. A fine pointer keeps 32 px.
+  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center coarse:group-data-[collapsible=icon]:size-(--touch-target)! hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:hover:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg:not([class*='text-'])]:text-icon",
   {
     variants: {
       variant: {
@@ -563,7 +562,7 @@ const sidebarMenuButtonVariants = cva(
           'bg-background border border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]',
       },
       size: {
-        default: 'h-8 text-sm [@media(pointer:coarse)]:h-11',
+        default: 'h-8 text-sm coarse:h-(--touch-target)',
         sm: 'h-7 text-xs',
         lg: 'h-12 text-sm group-data-[collapsible=icon]:p-0!',
       },

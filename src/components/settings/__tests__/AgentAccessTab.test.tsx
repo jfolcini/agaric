@@ -1610,11 +1610,10 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
 // the icon on coarse-pointer (touch) devices.
 //
 // Desktop keeps the minimal icon-only chrome. Touch users see "Undo"
-// text rendered inside a `<span>` with a Tailwind arbitrary-media
-// class `[@media(pointer:coarse)]:inline` that flips the default
-// `hidden` class on coarse pointers. jsdom does NOT evaluate
-// `@media(pointer:coarse)` rules, so the tests assert DOM structure
-// (span present, class pinned) rather than computed visibility.
+// text rendered inside a `<span>` whose `coarse:inline` class flips the
+// default `hidden` class on touch. The test DOM applies no stylesheet, so
+// the tests assert DOM structure (span present, class pinned) rather than
+// computed visibility.
 // ---------------------------------------------------------------------------
 
 describe('AgentAccessTab — touch discoverability', () => {
@@ -1631,13 +1630,13 @@ describe('AgentAccessTab — touch discoverability', () => {
 
     const btn = await screen.findByLabelText(undoLabel)
     // Text label is always in the DOM when the icon is shown (not
-    // while in-flight). CSS `[@media(pointer:coarse)]:inline` flips
+    // while in-flight). CSS `coarse:inline` flips
     // it visible on coarse pointers — jsdom can't evaluate that, so
     // we pin the class instead.
     const label = within(btn).getByText('Undo')
     expect(label).toBeInTheDocument()
     expect(label).toHaveClass('hidden')
-    expect(label).toHaveClass('[@media(pointer:coarse)]:inline')
+    expect(label).toHaveClass('coarse:inline')
   })
 
   it('replaces the icon+text fragment with a spinner while the revert is in flight', async () => {

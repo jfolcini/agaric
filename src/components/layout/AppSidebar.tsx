@@ -235,7 +235,7 @@ function AppSidebarInner({
       </SidebarMenuButton>
       {badge && (
         // A coarse pointer's row is taller; the badge stays centred in it.
-        <SidebarMenuBadge className="[@media(pointer:coarse)]:peer-data-[size=default]/menu-button:top-3">
+        <SidebarMenuBadge className="coarse:peer-data-[size=default]/menu-button:top-3">
           {badge.count}
         </SidebarMenuBadge>
       )}

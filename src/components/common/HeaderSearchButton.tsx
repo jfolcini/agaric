@@ -30,7 +30,7 @@ export function HeaderSearchButton(): React.ReactElement {
         <Button
           variant="ghost"
           size="sm"
-          className="shrink-0 text-muted-foreground max-xl:min-w-8 max-xl:px-0 [@media(pointer:coarse)]:min-w-11"
+          className="shrink-0 text-muted-foreground max-xl:min-w-8 max-xl:px-0 coarse:min-w-(--touch-target)"
           aria-label={label}
           aria-keyshortcuts={toAriaKeyshortcuts(paletteKeys)}
           data-testid="header-search-button"

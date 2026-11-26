@@ -22,7 +22,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const listRowVariants = cva(
-  'list-row group flex items-center gap-3 px-3 transition-colors [@media(pointer:coarse)]:min-h-11',
+  'list-row group flex items-center gap-3 px-3 transition-colors coarse:min-h-(--touch-target)',
   {
     variants: {
       density: {

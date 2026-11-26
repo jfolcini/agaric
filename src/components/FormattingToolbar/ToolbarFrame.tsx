@@ -121,7 +121,7 @@ export function ToolbarFrame({
        * list was previously flat. Filter the separators out and
        * re-insert a divider whenever the group index changes,
        * mirroring the inline toolbar's inter-group dividers (and the
-       * block context menu) on both desktop and pointer:coarse.
+       * block context menu) on both desktop and touch.
        */}
       {overflowed
         .filter((item) => item.kind !== 'separator')

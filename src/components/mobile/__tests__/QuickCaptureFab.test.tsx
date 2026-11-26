@@ -53,7 +53,7 @@ describe('QuickCaptureFab', () => {
     const fab = screen.getByTestId('quick-capture-fab')
     expect(fab.className).toContain('bottom-[calc(1rem+var(--safe-area-bottom))]')
     expect(fab.className).toContain('size-14')
-    expect(fab.className).not.toContain('pointer:coarse')
+    expect(fab.className).not.toContain('coarse:')
     expect(fab.className).not.toContain('env(safe-area-inset-bottom)')
   })
 

@@ -132,7 +132,7 @@ export function DiagramViewer({
           size="icon-sm"
           tooltip={t('diagramViewer.expand')}
           ariaLabel={t('diagramViewer.expand')}
-          className="absolute top-2 right-2 bg-background [@media(pointer:fine)]:opacity-0 group-hover/diagram:opacity-100 focus-visible:opacity-100"
+          className="absolute top-2 right-2 bg-background not-coarse:opacity-0 group-hover/diagram:opacity-100 focus-visible:opacity-100"
           onClick={stop}
           data-testid="diagram-expand"
         >

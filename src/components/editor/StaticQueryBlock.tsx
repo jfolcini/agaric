@@ -74,7 +74,7 @@ export function StaticQueryBlock({
     // owns keyboard + focus. Click capture forwards bare-card clicks to
     // onFocus while yielding to inner button/link targets.
     <div
-      className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm [@media(pointer:coarse)]:min-h-[2.75rem]"
+      className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm coarse:min-h-(--touch-target)"
       data-testid="block-static"
       data-block-id={blockId}
       onClickCapture={handleQueryBlockClickCapture}

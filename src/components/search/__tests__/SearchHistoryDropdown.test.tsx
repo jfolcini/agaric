@@ -199,13 +199,9 @@ describe('SearchHistoryDropdown', () => {
   it('gives the rows and footer controls a coarse-pointer 44px target', () => {
     renderDropdown({ entries: ['alpha', 'beta'] })
     expect(screen.getByTestId('search-history-entry-0')).toHaveClass(
-      '[@media(pointer:coarse)]:min-h-11',
+      'coarse:min-h-(--touch-target)',
     )
-    expect(screen.getByTestId('search-history-clear')).toHaveClass(
-      '[@media(pointer:coarse)]:min-h-11',
-    )
-    expect(screen.getByTestId('search-history-toggle')).toHaveClass(
-      '[@media(pointer:coarse)]:min-h-11',
-    )
+    expect(screen.getByTestId('search-history-clear')).toHaveClass('coarse:min-h-(--touch-target)')
+    expect(screen.getByTestId('search-history-toggle')).toHaveClass('coarse:min-h-(--touch-target)')
   })
 })
