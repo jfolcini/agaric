@@ -28,6 +28,7 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import type { BacklinkFilter, BacklinkSort, LinkKind } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['list-cursor'] as const
@@ -143,6 +144,15 @@ export function LinkedReferences({
     invalidationKey,
     kind,
   })
+
+  // The open panel shows a failed read in its alert; the shut one has only its
+  // neutral name, so it toasts, as the unlinked panel does. The `{ id }`
+  // coalesces repeats.
+  useEffect(() => {
+    if (isError && !expanded) {
+      notify.error(t('references.loadFailed'), { id: 'linked-refs-load-failed' })
+    }
+  }, [isError, expanded, t])
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
