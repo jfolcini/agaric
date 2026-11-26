@@ -4,8 +4,8 @@
  * Coverage:
  *   1. All 6 `SortOption` items are reachable via the sort select.
  *   2. `axe(container)` reports no a11y violations.
- *   3. The view buttons (#5269) open their views and the Trash button
- *      carries the trash count.
+ *   3. The view buttons (#5269) open Tags and Advanced query; Graph,
+ *      Templates and Trash live in the app sidebar (#7040 D2).
  *   4. Search first (#5637): the first row is search, sort, saved views and
  *      New page; search is the primary focus only with a fine pointer.
  *   5. Phone (#5927): one row of search, sort, a ⋮ menu holding saved views
@@ -18,14 +18,12 @@
  * by accessible name.
  */
 
-import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   PageBrowserHeader,
   type PageBrowserHeaderProps,
@@ -35,7 +33,6 @@ import { PrimaryFocusProvider, usePrimaryFocusRegistry } from '@/hooks/usePrimar
 import { t } from '@/lib/i18n'
 import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import { useNavigationStore } from '@/stores/navigation'
-import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 
@@ -296,34 +293,11 @@ describe('PageBrowserHeader', () => {
   describe('view buttons', () => {
     const VIEW_BUTTONS = [
       ['sidebar.tags', 'tags'],
-      ['sidebar.graph', 'graph'],
       ['sidebar.query', 'query'],
-      ['sidebar.templates', 'templates'],
-      ['sidebar.trash', 'trash'],
     ] as const
-
-    /** Render with an active space whose `count_trash` answers with `countTrash`. */
-    async function renderWithTrash(countTrash: () => number) {
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
-      vi.mocked(invoke).mockImplementation(mockInvokeCommands({ count_trash: countTrash }))
-      const result = render(<PageBrowserHeader {...makeProps()} />)
-      await waitFor(() => {
-        expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'count_trash')).toBe(true)
-      })
-      // Let the count land in state before asserting on its absence.
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0))
-      })
-      return result
-    }
 
     beforeEach(() => {
       useNavigationStore.setState({ currentView: 'pages' })
-    })
-
-    afterEach(() => {
-      vi.mocked(invoke).mockReset()
-      useSpaceStore.setState({ currentSpaceId: null })
     })
 
     it.each(VIEW_BUTTONS)('%s opens the %s view', async (labelKey, view) => {
@@ -335,37 +309,12 @@ describe('PageBrowserHeader', () => {
       expect(useNavigationStore.getState().currentView).toBe(view)
     })
 
-    it('the Trash button shows the trash count as a badge', async () => {
-      await renderWithTrash(() => 3)
-      const trash = screen.getByRole('button', {
-        name: t('pageBrowser.viewButtons.trashWithCount', { count: 3 }),
-      })
-      expect(within(trash).getByText('3')).toBeInTheDocument()
-    })
-
-    it('the Trash button shows no badge when the trash is empty', async () => {
-      await renderWithTrash(() => 0)
-      const trash = screen.getByRole('button', { name: t('sidebar.trash') })
-      expect(trash.querySelector('[data-slot="badge"]')).toBeNull()
-    })
-
-    it('the Trash button shows no badge when count_trash rejects', async () => {
-      await renderWithTrash(() => {
-        throw new Error('boom')
-      })
-      const trash = screen.getByRole('button', { name: t('sidebar.trash') })
-      expect(trash.querySelector('[data-slot="badge"]')).toBeNull()
-    })
-
-    it('has no axe violations with the trash badge present', async () => {
-      const { container } = await renderWithTrash(() => 3)
-      expect(
-        screen.getByRole('button', {
-          name: t('pageBrowser.viewButtons.trashWithCount', { count: 3 }),
-        }),
-      ).toBeInTheDocument()
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+    // #7040 D2 — they moved to the app sidebar's lower group.
+    it('has no Graph, Templates or Trash button', () => {
+      render(<PageBrowserHeader {...makeProps()} />)
+      for (const labelKey of ['sidebar.graph', 'sidebar.templates', 'sidebar.trash']) {
+        expect(screen.queryByRole('button', { name: new RegExp(t(labelKey)) })).toBeNull()
+      }
     })
   })
 
@@ -373,10 +322,7 @@ describe('PageBrowserHeader', () => {
   describe('on a phone', () => {
     const MENU_VIEWS = [
       ['sidebar.tags', 'tags'],
-      ['sidebar.graph', 'graph'],
       ['sidebar.query', 'query'],
-      ['sidebar.templates', 'templates'],
-      ['sidebar.trash', 'trash'],
     ] as const
 
     beforeEach(() => {
@@ -409,7 +355,7 @@ describe('PageBrowserHeader', () => {
       }
       expect(screen.queryByTestId('page-browser-count')).toBeNull()
       expect(screen.queryByRole('button', { name: t('pageBrowser.savedViews.trigger') })).toBeNull()
-      expect(screen.queryByRole('button', { name: t('sidebar.graph') })).toBeNull()
+      expect(screen.queryByRole('button', { name: t('sidebar.tags') })).toBeNull()
     })
 
     it('the ⋮ menu holds the saved views', async () => {
@@ -461,8 +407,8 @@ describe('PageBrowserHeader', () => {
         }),
       )
       expect(onDeleteSavedView).toHaveBeenCalledWith(view)
-      await user.click(within(menu).getByRole('button', { name: t('sidebar.graph') }))
-      expect(useNavigationStore.getState().currentView).toBe('graph')
+      await user.click(within(menu).getByRole('button', { name: t('sidebar.tags') }))
+      expect(useNavigationStore.getState().currentView).toBe('tags')
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     })
 
@@ -481,25 +427,14 @@ describe('PageBrowserHeader', () => {
       },
     )
 
-    it('the ⋮ menu names the trash count', async () => {
-      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
-      vi.mocked(invoke).mockImplementation(mockInvokeCommands({ count_trash: () => 4 }))
-      try {
-        const user = userEvent.setup()
-        render(<PageBrowserHeader {...makeProps()} />)
-        await waitFor(() => {
-          expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'count_trash')).toBe(true)
-        })
-        await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
-        const menu = await screen.findByTestId('saved-views-menu')
-        expect(
-          await within(menu).findByRole('button', {
-            name: t('pageBrowser.viewButtons.trashWithCount', { count: 4 }),
-          }),
-        ).toBeInTheDocument()
-      } finally {
-        vi.mocked(invoke).mockReset()
-        useSpaceStore.setState({ currentSpaceId: null })
+    it('the ⋮ menu has no Graph, Templates or Trash item (#7040 D2)', async () => {
+      const user = userEvent.setup()
+      render(<PageBrowserHeader {...makeProps()} />)
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+      const menu = await screen.findByTestId('saved-views-menu')
+      expect(within(menu).getByRole('button', { name: t('sidebar.tags') })).toBeInTheDocument()
+      for (const labelKey of ['sidebar.graph', 'sidebar.templates', 'sidebar.trash']) {
+        expect(within(menu).queryByRole('button', { name: new RegExp(t(labelKey)) })).toBeNull()
       }
     })
 

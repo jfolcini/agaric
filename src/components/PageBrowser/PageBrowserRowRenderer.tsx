@@ -16,9 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { PageRow } from '@/components/PageBrowser/PageRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
 import { listHeaderVariants } from '@/components/ui/list-item'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
-import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { PageWithMetadataRow } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -145,21 +143,8 @@ function TreePageRow({
   onPageSelect,
   onCreateUnder,
   onDeleteRequest,
-  selectedIds,
 }: TreePageRowProps): React.ReactElement {
   const { node, pageIndex, depth } = row
-  // A touch phone's `PageRow` hides its checkbox and star, so the gutter
-  // that mirrors them would push the tree a third of the screen in.
-  const isTouch = useIsTouch()
-  const phoneLayout = usePhoneLayout()
-  const touchSelect = isTouch && phoneLayout
-  // In selection mode a phone's row shows its checkbox again (no star), so
-  // the tree steps in by that one cell.
-  const gutter = !touchSelect
-    ? 'page-tree-gutter'
-    : selectedIds.size > 0
-      ? 'page-tree-gutter-phone-select'
-      : 'pl-3'
   // Tree-page rows wrap a recursive `PageTreeItem` whose own
   // Buttons handle activation/expand. Under the page-list
   // viewport is `role="grid"`, so each tree-page wrapper is a
@@ -193,8 +178,10 @@ function TreePageRow({
       className={cn('list-row', focusedIndex === pageIndex && 'list-cursor')}
       style={rowStyle(virtualRow.start)}
     >
+      {/* #7040 D2 — a flat row's title starts at the row's padding, so the
+          tree steps in by that padding alone. */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className={gutter}>
+      <div role="gridcell" className="pl-3">
         <PageTreeItem
           node={node}
           depth={depth}

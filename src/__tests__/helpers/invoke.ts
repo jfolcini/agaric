@@ -126,8 +126,6 @@ function isPagesViewPropertyQuery(args: unknown): boolean {
  * mock slot, and then falling through to a fallback resolving `undefined`, is
  * exactly what #3217 was.
  *
- * The Pages header's Trash button polls `count_trash` for its badge (#5269),
- * so every Pages-view render makes that call too; it answers an empty trash.
  * The Pages view reads the space's bookmarks and saved views
  * (`query_by_property` on the `bookmark` and `saved_view` keys, #6544); it
  * answers none. A suite that asserts either stubs that query itself.
@@ -149,10 +147,6 @@ export function pageRowInvokeFallback(command: string, args?: unknown): Promise<
     // drift this module exists to type.
     const empty: CommandReturns['load_page_subtree'] = { blocks: [], truncated: false, total: 0 }
     return Promise.resolve(empty)
-  }
-  if (command === 'count_trash') {
-    const emptyTrash: CommandReturns['count_trash'] = 0
-    return Promise.resolve(emptyTrash)
   }
   return strictInvokeFallback(command)
 }

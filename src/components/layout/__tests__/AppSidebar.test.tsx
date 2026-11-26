@@ -119,8 +119,9 @@ describe('AppSidebar', () => {
 
   // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
   // list, in order, so a row that creeps back (or goes missing) reddens this.
-  // #6532 — Tasks, the journal's agenda mode, follows Journal.
-  it('renders exactly New Page, the four daily views and Tasks as rows, Sync and Settings as one footer row of icons (#5269)', () => {
+  // #6532 — Tasks, the journal's agenda mode, follows Journal. #7040 D2 —
+  // Graph, Templates and Trash follow in the lower group.
+  it('renders exactly New Page, the four daily views, Tasks and the lower group as rows, Sync and Settings as one footer row of icons (#5269)', () => {
     renderSidebar()
 
     const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
@@ -133,6 +134,9 @@ describe('AppSidebar', () => {
       t('sidebar.pages'),
       t('sidebar.search'),
       t('sidebar.tags'),
+      t('sidebar.graph'),
+      t('sidebar.templates'),
+      t('sidebar.trash'),
     ])
     expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
 
@@ -206,6 +210,119 @@ describe('AppSidebar', () => {
     expect(sidebar).toHaveAttribute('data-state', 'collapsed')
     await user.click(screen.getByRole('button', { name: t('sidebar.expandSidebar') }))
     expect(sidebar).toHaveAttribute('data-state', 'expanded')
+  })
+
+  describe('the lower group (#7040 D2)', () => {
+    const LOWER_VIEWS = [
+      ['sidebar.graph', 'graph'],
+      ['sidebar.templates', 'templates'],
+      ['sidebar.trash', 'trash'],
+    ] as const
+
+    /** The menu buttons of the sidebar group after the main nav, in order. */
+    function lowerGroupRows(): string[] {
+      const groups = document.querySelectorAll('[data-sidebar="group"]')
+      const lower = groups[1] as HTMLElement
+      return [...lower.querySelectorAll('[data-sidebar="menu-button"]')].map(
+        (row) => row.textContent ?? '',
+      )
+    }
+
+    function mockTrashCount(count: () => number) {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
+        if (cmd === 'count_trash') return count()
+        return emptyPage
+      })
+    }
+
+    it('holds Graph, Templates and Trash in a group of their own, after the main nav', () => {
+      renderSidebar()
+      expect(lowerGroupRows()).toEqual([
+        t('sidebar.graph'),
+        t('sidebar.templates'),
+        t('sidebar.trash'),
+      ])
+    })
+
+    it.each(LOWER_VIEWS)('%s opens the %s view and marks it current', async (labelKey, view) => {
+      const onSelectView = vi.fn()
+      const user = userEvent.setup()
+      const { rerender, props } = renderSidebar({ onSelectView })
+
+      await user.click(screen.getByRole('button', { name: t(labelKey) }))
+      expect(onSelectView).toHaveBeenCalledWith(view)
+
+      rerender(
+        <SidebarProvider>
+          <AppSidebar {...props} currentView={view} />
+        </SidebarProvider>,
+      )
+      expect(screen.getByRole('button', { name: t(labelKey) })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+    })
+
+    it('Trash shows the trash count as a menu badge, and names it', async () => {
+      mockTrashCount(() => 3)
+      renderSidebar()
+      const trash = await screen.findByRole('button', {
+        name: t('sidebar.trashWithCount', { count: 3 }),
+      })
+      const badge = trash.parentElement?.querySelector('[data-sidebar="menu-badge"]')
+      expect(badge).toHaveTextContent(/^3$/u)
+    })
+
+    it('Trash shows no badge when the trash is empty, or when count_trash fails', async () => {
+      mockTrashCount(() => 0)
+      const { unmount } = renderSidebar()
+      await waitFor(() => {
+        expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'count_trash')).toBe(true)
+      })
+      expect(screen.getByRole('button', { name: t('sidebar.trash') })).toBeInTheDocument()
+      expect(document.querySelector('[data-sidebar="menu-badge"]')).toBeNull()
+      unmount()
+
+      mockTrashCount(() => {
+        throw new Error('boom')
+      })
+      renderSidebar()
+      await waitFor(() => {
+        expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'count_trash')).toHaveLength(2)
+      })
+      expect(screen.getByRole('button', { name: t('sidebar.trash') })).toBeInTheDocument()
+      expect(document.querySelector('[data-sidebar="menu-badge"]')).toBeNull()
+    })
+
+    // The sidebar stays mounted, so the count must not wait for its poll to
+    // catch up after the user trashed or restored something elsewhere.
+    it('recounts the trash when the view changes', async () => {
+      let count = 1
+      mockTrashCount(() => count)
+      const { rerender, props } = renderSidebar({ currentView: 'trash' })
+      expect(
+        await screen.findByRole('button', { name: t('sidebar.trashWithCount', { count: 1 }) }),
+      ).toBeInTheDocument()
+
+      count = 2
+      rerender(
+        <SidebarProvider>
+          <AppSidebar {...props} currentView="pages" />
+        </SidebarProvider>,
+      )
+      expect(
+        await screen.findByRole('button', { name: t('sidebar.trashWithCount', { count: 2 }) }),
+      ).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with the trash badge present', async () => {
+      mockTrashCount(() => 3)
+      const { container } = renderSidebar()
+      await screen.findByRole('button', { name: t('sidebar.trashWithCount', { count: 3 }) })
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 
   it('calls onSelectView when a menu item is clicked', async () => {

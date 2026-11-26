@@ -326,8 +326,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostLinked': 'Am meisten verknüpft',
   'pageBrowser.sortMostContent': 'Meiste Inhalte',
   'pageBrowser.sortPersistedTooltip': 'Deine Sortierung bleibt sitzungsübergreifend gespeichert',
-  'pageBrowser.viewButtons.trashWithCount_one': 'Papierkorb, {{count}} Element',
-  'pageBrowser.viewButtons.trashWithCount_other': 'Papierkorb, {{count}} Elemente',
   'pageBrowser.savedViews.trigger': 'Gespeicherte Ansichten',
   'pageBrowser.moreMenu': 'Weitere Optionen für Seiten',
   'pageBrowser.savedViews.triggerActive': 'Gespeicherte Ansichten – {{name}} angewendet',

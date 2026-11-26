@@ -68,14 +68,14 @@ App
 | --- | --- | --- |
 | **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Sidebar |
 | **Search** | Debounced + cursor-paginated FTS; filter chips for page-path globs, tags and the other filter-DSL tokens. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Sidebar |
-| **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
+| **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the Tags and Query buttons. | Sidebar |
 | **Tags** | Tag CRUD + colour picker. | Sidebar, Pages header |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |
 | **Settings** | Tabbed (incl. a **Spaces** tab, which the SpaceSwitcher's *Manage spaces…* opens, a **Properties** tab for property-definition CRUD, an **App health** tab with the integrity check plus materializer metrics — queue depths, op counts — that poll periodically, and a **Data** tab whose *Open edit history* row opens History); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
-| **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its button's count badge polls periodically. | Pages header |
+| **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its sidebar item's count badge polls periodically and recounts on each view change and each restore or purge. | Sidebar |
 | **History** | Global op log; multi-select revert; diff toggle. | Settings › Data |
-| **Templates** | Template-tagged pages with first-block preview. | Pages header |
-| **Graph** | Force-directed page-relationship graph. Web Worker; reduced-motion friendly. | Pages header |
+| **Templates** | Template-tagged pages with first-block preview. | Sidebar |
+| **Graph** | Force-directed page-relationship graph. Web Worker; reduced-motion friendly. | Sidebar |
 | **PageEditor** | Single page (title + BlockTree). Reached by navigation, not the sidebar. | — |
 
 The **DuePanel** and **DonePanel** are not separate views — they're children of the Journal modes (agenda, daily, weekly). Clicking a Due / Done badge scrolls into view inside the active mode rather than switching views.
@@ -111,7 +111,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 ## Navigation chrome
 
-- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Pages / Search / Tags, then Bookmarks, reordered by drag or Space + arrow keys and kept in that order by each page's synced `bookmark` property), footer (one row of icons: Sync, with the status dot and the last-synced time in its tooltip, and Settings). Open/closed state persists in a cookie; width in localStorage.
+- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Tasks / Pages / Search / Tags, a lower group of Graph / Templates / Trash with the trash count, then Bookmarks, reordered by drag or Space + arrow keys and kept in that order by each page's synced `bookmark` property), footer (one row of icons: Sync, with the status dot and the last-synced time in its tooltip, and Settings). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
 - **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts`; rebindable entries are user-customisable in Settings → Keyboard, while structural bindings and picker triggers are not. See [Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) for the current catalogs.
 - **Search surfaces**: three distinct entry points (mirrors README § Search):

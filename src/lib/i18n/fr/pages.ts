@@ -325,8 +325,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostLinked': 'Les plus liées',
   'pageBrowser.sortMostContent': 'Le plus de contenu',
   'pageBrowser.sortPersistedTooltip': 'Votre choix de tri est conservé d’une session à l’autre',
-  'pageBrowser.viewButtons.trashWithCount_one': 'Corbeille, {{count}} élément',
-  'pageBrowser.viewButtons.trashWithCount_other': 'Corbeille, {{count}} éléments',
   'pageBrowser.savedViews.trigger': 'Vues enregistrées',
   'pageBrowser.moreMenu': 'Plus d’options pour les pages',
   'pageBrowser.savedViews.triggerActive': 'Vues enregistrées — {{name}} appliquée',

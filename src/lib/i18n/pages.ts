@@ -199,7 +199,7 @@ export const pages: Record<string, string> = {
   'pageHeader.exportMenu': 'Export',
   'pageHeader.exportBack': 'Back',
 
-  // Translators: Templates view (opened from the Pages view header): intro text at the top
+  // Translators: Templates view (opened from the Sidebar): intro text at the top
   // ("/template" is a slash command the user types, keep it as is; "placeholders below" = the list
   // at the bottom), the empty state, the search box (placeholder and aria-label), and the
   // "Journal template" badge on a template that is applied to new journal days.
@@ -598,12 +598,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostLinked': 'Most linked',
   'pageBrowser.sortMostContent': 'Most content',
   'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
-
-  // #5269 — the Pages header's Trash button while its count badge shows.
-  // Translators: Pages view header: name of the Trash button while items are in the Trash.
-  // {{count}} = number of items in the Trash.
-  'pageBrowser.viewButtons.trashWithCount_one': 'Trash, {{count}} item',
-  'pageBrowser.viewButtons.trashWithCount_other': 'Trash, {{count}} items',
 
   // #2003 piece 1 — saved Pages views (sort + filters snapshot).
   // Translators: Pages view saved views (a saved sort and set of filters): the dropdown button in
