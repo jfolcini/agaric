@@ -52,14 +52,14 @@ fn emit_property_changed_events<R: tauri::Runtime>(
 }
 
 /// List all distinct property keys currently in use across all blocks.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
     backlink::list_property_keys(pool).await
 }
 
 /// List the distinct text values in use for a single property `key`,
 /// usage-ranked (#1425).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_property_values_inner(
     pool: &SqlitePool,
     key: &str,
@@ -86,7 +86,7 @@ pub async fn list_property_values_inner(
 /// live in the MCP `handle_set_property` boundary purely to carry the
 /// tool name.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_property_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -127,7 +127,7 @@ pub async fn set_property_inner(
 /// [`set_property_inner`] for a list value (#6741), which only a key its
 /// space declares `multiple` takes. `value` is every slot the caller sent, so
 /// a list beside a single value is refused as two values are.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_property_list_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -483,7 +483,7 @@ pub(crate) async fn write_todo_timestamp_transitions_in_tx(
 /// can never leave a `done` state with no `completed_at` and no
 /// next-occurrence sibling. Either every step commits, or every step
 /// rolls back.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -761,7 +761,7 @@ pub(crate) async fn resolve_prior_task_states_batch(
 /// next-occurrence sibling fall through to the single-row path;
 /// `warn_if_batch_skips_recurrence` logs when a `repeat` carrier rides
 /// in a batch that sets a state.
-#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[instrument(skip(pool, device_id, materializer, block_ids), err(level = "info"))]
 pub async fn set_todo_state_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -956,7 +956,7 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// `set_todo_state_batch`, so skipping the stamp here dropped a bulk-completed
 /// page out of the agenda (which excludes DONE in SQL) and out of `DonePanel`
 /// (which selects on `completed_at`) at the same time.
-#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[instrument(skip(pool, device_id, materializer, block_ids), err(level = "info"))]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1053,7 +1053,7 @@ pub async fn set_property_batch_inner(
 /// The levels are the built-in `priority` options (#5841); `set_property_in_tx`
 /// refuses any other. A block that already holds an out-of-range level from
 /// before keeps it until this sets another.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_priority_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1088,7 +1088,7 @@ pub async fn set_priority_inner(
 ///
 /// Validates the date format and delegates to [`set_property_inner`] with the
 /// reserved `"due_date"` key.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_due_date_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1123,7 +1123,7 @@ pub async fn set_due_date_inner(
 ///
 /// Validates the date format and delegates to [`set_property_inner`] with the
 /// reserved `"scheduled_date"` key.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn set_scheduled_date_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1177,7 +1177,7 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 ///   `SYSTEM_MANAGED_PROPERTY_KEYS`; direct FE/MCP deletion is rejected to
 ///   protect that bookkeeping (#658).
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn delete_property_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1234,7 +1234,7 @@ pub(crate) async fn delete_repeat_bounds_in_tx(
 }
 
 /// Get all properties for a block (read-only).
-#[instrument(skip(executor), err)]
+#[instrument(skip(executor), err(level = "info"))]
 pub async fn get_properties_inner<'e>(
     executor: impl sqlx::SqliteExecutor<'e>,
     block_id: BlockId,
@@ -1272,7 +1272,7 @@ pub async fn get_properties_inner<'e>(
 /// The column projection mirrors `get_properties_inner` so the FE
 /// `PropertyRow` shape is byte-identical between the bulk and single-key
 /// paths.
-#[instrument(skip(executor), err)]
+#[instrument(skip(executor), err(level = "info"))]
 pub async fn get_property_inner<'e>(
     executor: impl sqlx::SqliteExecutor<'e>,
     block_id: &BlockId,
@@ -1623,7 +1623,7 @@ async fn count_values_out_of_options(
 /// (`renameMayDeclareKey`, `src/lib/property-save-utils.ts`) cannot be the
 /// guarantee — it reads the read pool while the write goes to the write
 /// pool, and it only sees the 1000 most-used keys.
-#[instrument(skip(pool, device_id, materializer, options), err)]
+#[instrument(skip(pool, device_id, materializer, options), err(level = "info"))]
 pub async fn create_property_def_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1643,7 +1643,7 @@ pub async fn create_property_def_inner(
 
 /// [`create_property_def_inner`] for any definition, one that holds a list
 /// among them (#6741).
-#[instrument(skip(pool, device_id, materializer, def), err)]
+#[instrument(skip(pool, device_id, materializer, def), err(level = "info"))]
 pub async fn create_property_def_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1896,7 +1896,7 @@ pub async fn seed_default_property_defs_in_tx(
 /// is consistent with the rest of the paginated read commands. The
 /// frontend `listPropertyDefs()` wrapper destructures `.items`; MCP
 /// agents thread `cursor` / `next_cursor` / `has_more`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_property_defs_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -1953,7 +1953,7 @@ pub async fn list_property_defs_inner(
 /// ?`. Two FE call sites previously called `list_property_defs` (the
 /// full vocabulary) just to read one well-known key; the dedicated PK
 /// SELECT collapses that O(N) wire payload to one row.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_property_def_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -2012,7 +2012,7 @@ pub async fn get_property_def_inner(
 /// would also break the legitimate retire-an-option flow the paragraph
 /// above describes, which has no equivalent on the create path — there
 /// is no such thing as retiring a declaration you have not made yet.
-#[instrument(skip(pool, device_id, materializer, options), err)]
+#[instrument(skip(pool, device_id, materializer, options), err(level = "info"))]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2135,7 +2135,7 @@ pub async fn update_property_def_options_inner(
 /// race in between the count and the delete and create a fresh
 /// `block_properties` row that the caller never saw in the rejection
 /// message.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn delete_property_def_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2212,7 +2212,7 @@ pub struct PropertyUsage {
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — `space_id` is not a registered space
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn count_property_usage_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -2292,7 +2292,7 @@ pub async fn count_property_usage_inner(
 /// # Errors
 /// - [`AppError::Validation`] — `block_ids.len()` >
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
-#[instrument(skip(pool, block_ids), err)]
+#[instrument(skip(pool, block_ids), err(level = "info"))]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,

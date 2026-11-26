@@ -48,7 +48,7 @@ fn ensure_draft_within_max_content_length(content: &str) -> Result<(), AppError>
 ///   or superseded is reaped rather than erroring on every flush.
 /// - **Happy path** — appends one `edit_block` op and deletes the draft row
 ///   atomically.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -314,7 +314,7 @@ pub struct FlushAllDraftsResult {
 /// Returns the number of draft rows consumed — flushed, dropped as an
 /// orphan (H-12a) or dropped as stale. A skipped oversized row is not
 /// consumed and does not count.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn flush_all_drafts_inner(
     pool: &SqlitePool,
     device_id: &str,

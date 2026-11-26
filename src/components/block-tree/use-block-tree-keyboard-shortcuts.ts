@@ -45,7 +45,7 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
    * lives in THIS store, and must not `preventDefault()` otherwise.
    */
   pageStore: StoreApi<PageBlockState>
-  hasChildrenSet: Set<string>
+  foldableSet: Set<string>
   /**
    * IDs Ctrl/Cmd+A selects. At the page root this is the full page; while
    * zoomed it is the complete (uncapped) zoom projection. This is separate
@@ -211,7 +211,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   const {
     focusedBlockId,
     pageStore,
-    hasChildrenSet,
+    foldableSet,
     selectAllIds,
     visibleIds,
     toggleCollapse,
@@ -255,11 +255,11 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // the tree that owns the focused block reaches here, and
         // `preventDefault()` stays inside the handled branch so the chord
         // passes through when this tree doesn't handle it.
-        if (!hasChildrenSet.has(ownedBlockId)) return
+        if (!foldableSet.has(ownedBlockId)) return
         e.preventDefault()
         toggleCollapse(ownedBlockId)
       }),
-    [focusedBlockId, pageStore, hasChildrenSet, toggleCollapse],
+    [focusedBlockId, pageStore, foldableSet, toggleCollapse],
   )
 
   // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────

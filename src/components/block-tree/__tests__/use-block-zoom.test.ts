@@ -352,6 +352,22 @@ describe('useBlockZoom', () => {
       expect(result.current.zoomedVisible.map((b) => b.id)).toEqual(['C'])
     })
 
+    it("hides a collapsed heading's section inside the pane, up to the pane's end (#7040)", () => {
+      const tree: FlatBlock[] = [
+        makeBlock({ id: 'P', depth: 0, parent_id: null, content: 'parent' }),
+        makeBlock({ id: 'H', depth: 1, parent_id: 'P', content: '## H' }),
+        makeBlock({ id: 'S', depth: 1, parent_id: 'P', content: 'in H' }),
+        makeBlock({ id: 'AFTER', depth: 0, parent_id: null, content: 'after P' }),
+      ]
+      const { result } = renderHook(() => useBlockZoom(tree, tree, new Set(['H'])))
+
+      act(() => {
+        result.current.zoomIn('P')
+      })
+
+      expect(result.current.zoomedVisible.map((b) => b.id)).toEqual(['H'])
+    })
+
     it('scopes Ctrl+A to the same pane-filtered projection', () => {
       const { result } = renderHook(() => useBlockZoom(allBlocks, allBlocks, new Set(['B'])))
 

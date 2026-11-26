@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { BACK_PRIORITY_ZOOM, registerBackHandler } from '@/lib/back-chain'
+import { hiddenRows, outlineOf } from '@/lib/section-fold'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import type { SelectAllScopeIds, ZoomedBlocks } from '@/lib/zoom-scope'
@@ -186,10 +187,9 @@ export function useBlockZoom(
   // unfiltered tree removes the whole class: nothing above the zoom root can
   // subtract from the pane's contents, whatever releases it and whenever.
   //
-  // Collapse INSIDE the pane still filters, by the same single-pass
-  // skip-the-collapsed-subtree scan as `useBlockCollapse`'s page-wide
-  // `visibleBlocks` (kept inline here because this pass also restricts to the
-  // zoom root's descendants and rebases `depth` in the same walk). The zoom
+  // Collapse INSIDE the pane still filters, by the same `hiddenRows` scan as
+  // `useBlockCollapse`'s page-wide `visibleBlocks` (a heading's section
+  // included, #7040), over the zoom root's descendants rebased. The zoom
   // root's own collapsed flag is deliberately NOT consulted: it is the pane's
   // root, and "zoom into a block" means show its contents.
   const zoomedVisible = useMemo<ZoomedBlocks>(() => {
@@ -236,14 +236,9 @@ export function useBlockZoom(
     // write would leave it empty exactly when it is read.
     const prevRebased = rebaseCacheRef.current as RebaseCache
     const nextRebased: RebaseCache = new Map()
-    const result: FlatBlock[] = []
-    const skipUntilDepth: number[] = []
+    const pane: FlatBlock[] = []
     for (const block of blocks) {
       if (!descendants.has(block.id)) continue
-      while (skipUntilDepth.length > 0 && block.depth <= (skipUntilDepth.at(-1) as number)) {
-        skipUntilDepth.pop()
-      }
-      if (skipUntilDepth.length > 0) continue
       // oxlint-disable-next-line react/refs -- `rebaseCacheRef` is a `useMemo` rebase cache built and consumed within the same run (frontend.md § Latest-value mirrors' "different hazard" bucket); a commit-time write would leave it empty exactly when it is read (the per-block hit test); see the invariant note above and #4406
       const cached = prevRebased.get(block.id)
       const rebased =
@@ -251,9 +246,10 @@ export function useBlockZoom(
           ? cached.out
           : Object.assign({}, block, { depth: block.depth - depthOffset })
       nextRebased.set(block.id, { src: block, depthOffset, out: rebased })
-      result.push(rebased)
-      if (collapsedIds.has(block.id)) skipUntilDepth.push(block.depth)
+      pane.push(rebased)
     }
+    const hidden = hiddenRows(outlineOf(pane), (i) => collapsedIds.has((pane[i] as FlatBlock).id))
+    const result = pane.filter((_, i) => !hidden[i])
     // oxlint-disable-next-line react/refs -- `rebaseCacheRef` is a `useMemo` rebase cache built and consumed within the same run (frontend.md § Latest-value mirrors' "different hazard" bucket); a commit-time write would leave it empty exactly when it is read (the idempotent publish of this run's cache); see the invariant note above and #4406
     rebaseCacheRef.current = nextRebased
     return viewScope(result)

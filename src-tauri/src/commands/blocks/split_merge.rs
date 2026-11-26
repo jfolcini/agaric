@@ -66,7 +66,7 @@ pub struct MergeResponse {
 /// - [`AppError::NotFound`] — the block does not exist or is deleted
 /// - [`AppError::Conflict`] / [`AppError::Ulid`] — `new_block_id` is taken or malformed
 /// - [`AppError::Validation`] — either text is over the length cap or links into another space
-#[instrument(skip_all, fields(block_id = ?request.block_id), err)]
+#[instrument(skip_all, fields(block_id = ?request.block_id), err(level = "info"))]
 pub async fn split_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -122,7 +122,7 @@ pub async fn split_block_inner(
 /// - [`AppError::Validation`] — the text is over the length cap or links into
 ///   another space, `into_id` sits deeper under `block_id`, or a child would
 ///   pass the depth cap
-#[instrument(skip_all, fields(block_id = ?request.block_id), err)]
+#[instrument(skip_all, fields(block_id = ?request.block_id), err(level = "info"))]
 pub async fn merge_blocks_inner(
     pool: &SqlitePool,
     device_id: &str,

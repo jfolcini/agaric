@@ -42,7 +42,7 @@ pub const MAX_FILTER_TAG_IDS: usize = 1000;
 ///
 /// - [`AppError::NotFound`] — block or tag block does not exist or is deleted
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a tag block, or tag already applied
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn add_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -384,7 +384,7 @@ async fn apply_tag_to_block_resolved(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist, is deleted, or tag association missing
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn remove_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -537,7 +537,7 @@ pub(crate) async fn remove_tag_in_tx(
 /// bind count safely bounded. Oversized input is rejected up-front with
 /// [`AppError::Validation`]`("tag_ids.too_many")` before any expression is
 /// built.
-#[instrument(skip(pool, tag_ids), err)]
+#[instrument(skip(pool, tag_ids), err(level = "info"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags_inner(
     pool: &SqlitePool,
@@ -592,7 +592,7 @@ pub async fn query_by_tags_inner(
 }
 
 /// List the tags in `space_id` matching a name prefix (autocomplete / UI).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_tags_by_prefix_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -614,7 +614,7 @@ pub async fn list_tags_by_prefix_inner(
 /// `add_tag_inner`'s cross-space guard), so this command takes a
 /// `space_id` and applies the same filter shape as
 /// `list_all_pages_in_space_inner`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_all_tags_in_space_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -632,7 +632,7 @@ pub async fn list_all_tags_in_space_inner(
 /// [`pagination::PageRequest::new`]; the MCP tool boundary applies its
 /// stricter `LIST_RESULT_CAP` validation first. Space membership is the tag
 /// block's own `blocks.space_id`, as in [`list_all_tags_in_space_inner`].
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_tags_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -669,7 +669,7 @@ pub async fn list_tags_inner(
 }
 
 /// List all tag_ids currently associated with a block.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_tags_for_block_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -685,7 +685,7 @@ pub async fn list_tags_for_block_inner(
 ///
 /// #1423 — paired with [`list_tags_for_block_inner`] so the UI can render
 /// derived (inherited) tag chips distinctly from directly-applied ones.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_inherited_tags_for_block_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -752,7 +752,7 @@ pub async fn add_tag(
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
-#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[instrument(skip(pool, device_id, materializer, block_ids), err(level = "info"))]
 pub async fn add_tags_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,

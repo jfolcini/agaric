@@ -52,7 +52,7 @@ use crate::commands::tag_pages::import_tag_page_title;
 ///
 /// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
 /// - [`AppError::NotFound`] — block not found
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -112,7 +112,7 @@ pub struct AgentPage {
 /// As [`export_page_markdown_inner`], and [`AppError::Validation`] for a
 /// cursor whose block is no longer on the page, rather than skipping the
 /// blocks after it.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_page_for_agent_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -154,7 +154,7 @@ pub struct PageBuffer {
 /// # Errors
 ///
 /// As [`export_page_markdown_inner`].
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_page_buffer_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -178,7 +178,7 @@ pub async fn get_page_buffer_inner(
 /// # Errors
 ///
 /// As [`export_page_markdown_inner`].
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_page_file_inner(pool: &SqlitePool, page_id: &str) -> Result<PageFile, AppError> {
     BlockId::from_string(page_id)?;
     let mut tx = pool.begin().await?;
@@ -198,7 +198,7 @@ pub async fn get_page_file_inner(pool: &SqlitePool, page_id: &str) -> Result<Pag
 /// # Errors
 ///
 /// - [`AppError::Validation`] — more ids than one batch takes
-#[instrument(skip(pool, block_ids), err)]
+#[instrument(skip(pool, block_ids), err(level = "info"))]
 pub async fn get_blocks_source_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,
@@ -246,7 +246,7 @@ pub async fn get_blocks_source_inner(
 ///   block, a copied value doesn't read back from the buffer's grammar (a
 ///   carriage return in the text), the copy would append more ops than one
 ///   undo reverts, or a copied block would be nested past `MAX_BLOCK_DEPTH`
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn duplicate_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -342,7 +342,10 @@ pub async fn duplicate_block_inner(
 /// - [`AppError::Validation`] — the input holds no block, the anchor is
 ///   soft-deleted or not a content block, the paste would append more ops
 ///   than one undo reverts, or a block would be nested past `MAX_BLOCK_DEPTH`
-#[instrument(skip(pool, device_id, materializer, input, splice), err)]
+#[instrument(
+    skip(pool, device_id, materializer, input, splice),
+    err(level = "info")
+)]
 pub async fn paste_blocks_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -436,7 +439,7 @@ pub async fn paste_blocks_inner(
 /// - [`AppError::Validation`] — the markdown holds no block, the parent is
 ///   soft-deleted, the append would append more ops than one undo reverts,
 ///   or a block would be nested past `MAX_BLOCK_DEPTH`
-#[instrument(skip(pool, device_id, materializer, markdown), err)]
+#[instrument(skip(pool, device_id, materializer, markdown), err(level = "info"))]
 pub async fn append_markdown_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -483,7 +486,7 @@ pub async fn append_markdown_inner(
 /// as too invasive for the available signal.
 #[instrument(
     skip(pool, device_id, materializer, content, app_data_dir, vault_files),
-    err
+    err(level = "info")
 )]
 #[allow(clippy::too_many_arguments)]
 pub async fn import_markdown_inner(
@@ -658,7 +661,7 @@ pub async fn import_markdown_with_progress(
         run_pages
     ),
     fields(blocks_total = tracing::field::Empty, space = %space_id),
-    err
+    err(level = "info")
 )]
 #[allow(clippy::too_many_arguments)]
 pub async fn import_markdown_in_run(
@@ -867,7 +870,10 @@ async fn write_import(
 /// block not live in `space_id` is left alone. Each block that changes is
 /// edited once, and one that cannot be is warned of rather than failing the
 /// pass, which runs after the imports are durable. Returns the warnings.
-#[instrument(skip(pool, device_id, materializer, anchors, blocks), err)]
+#[instrument(
+    skip(pool, device_id, materializer, anchors, blocks),
+    err(level = "info")
+)]
 pub async fn link_import_anchors_inner(
     pool: &SqlitePool,
     device_id: &str,

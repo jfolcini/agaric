@@ -4,8 +4,9 @@
  * Extracted from BlockTree to encapsulate:
  * - Collapsed block IDs state (persisted in localStorage)
  * - Toggle callback with optional pre-collapse hook (e.g. focus rescue)
- * - Visible block computation (filters out descendants of collapsed blocks)
- * - hasChildren lookup set
+ * - Visible block computation (filters out what collapsed blocks fold: their
+ *   descendants, and a heading's section, `section-fold.ts`)
+ * - hasChildren and foldable lookup sets
  *
  * Persistence (#752): one localStorage entry PER PAGE (`collapsed_ids:<pageKey>`),
  * pruned on every write to ids that still exist on the page. The pre-#752
@@ -28,6 +29,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { hasPreference, PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import {
+  canFold,
+  carriedEnd,
+  foldEnd,
+  foldsOver,
+  hiddenRows,
+  outlineOf,
+  stepOver,
+} from '@/lib/section-fold'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /**
@@ -98,7 +108,8 @@ export interface UseBlockCollapseReturn {
   expandBlock: (blockId: string) => void
   /**
    * #3276 — reveal `blockId` by expanding every collapsed ANCESTOR of it (not
-   * the block itself) in one update, so a block hidden under a collapsed
+   * the block itself), and every collapsed heading whose section holds it
+   * (#7040), in one update, so a block hidden under a collapsed
    * grandparent becomes reachable in a single call instead of requiring the
    * caller to walk the chain and call `expandBlock` per level.
    *
@@ -126,6 +137,28 @@ export interface UseBlockCollapseReturn {
   visibleBlocks: FlatBlock[]
   /** Set of block IDs that have children (next block has greater depth). */
   hasChildrenSet: Set<string>
+  /** Blocks with something to fold: children, or a heading's section (#7040). */
+  foldableSet: Set<string>
+  /**
+   * The siblings a collapsed heading hides, in order, which its drag carries;
+   * none for any other block.
+   */
+  foldedSiblings: (blockId: string) => string[]
+  /**
+   * Ctrl+Shift+↑/↓ on `blockId` where a fold is in play, as a drop one shown row
+   * away makes it (#7040): it and the siblings it hides go past the shown
+   * sibling next to it and the siblings that one hides (`stepOver`). Null where
+   * no fold is in play and the store's one-block move does the same; 'stay'
+   * where it has nowhere to go.
+   */
+  foldedMove: (blockId: string, direction: -1 | 1) => FoldedMove | 'stay' | null
+}
+
+/** A move of the roots `ids` under `parentId`, from sibling slot `index`, in one batch. */
+export interface FoldedMove {
+  ids: string[]
+  parentId: string | null
+  index: number
 }
 
 export function useBlockCollapse(
@@ -273,9 +306,9 @@ export function useBlockCollapse(
   // ── Reveal (transiently un-collapse the ancestor chain) ──────────────
   // #3276 — the navigation-intent consumer (PageEditor) only knows the
   // TARGET block id; it has no way to find and expand whichever ancestors
-  // are hiding it. Walk the parent chain from the ref (event-time reads,
-  // same discipline as `toggleCollapse` above) and collect every collapsed id
-  // found along the way.
+  // are hiding it. Find, from the ref (event-time reads, same discipline as
+  // `toggleCollapse` above), every collapsed block whose fold holds it: its
+  // collapsed ancestors and any collapsed heading whose section it is in.
   //
   // #4002 — the result becomes the transient overlay INSTEAD of a write to
   // the persisted set, and it REPLACES whatever was revealed before. Callers
@@ -299,14 +332,20 @@ export function useBlockCollapse(
       // Nothing saved as collapsed and nothing revealed — skip the O(n) map
       // build entirely (this runs on every focus move).
       if (persisted.size === 0) return prev.size === 0 ? prev : NO_REVEAL
-      const byId = new Map(blocksRef.current.map((b) => [b.id, b]))
+      const rows = blocksRef.current
+      const indexOf = new Map(rows.map((b, i) => [b.id, i]))
+      const target = indexOf.get(blockId)
       const next = new Set<string>()
-      let cursor = byId.get(blockId)?.parent_id ?? null
-      const visited = new Set<string>()
-      while (cursor !== null && !visited.has(cursor)) {
-        visited.add(cursor)
-        if (persisted.has(cursor)) next.add(cursor)
-        cursor = byId.get(cursor)?.parent_id ?? null
+      if (target !== undefined) {
+        const folded: number[] = []
+        for (const id of persisted) {
+          const index = indexOf.get(id)
+          if (index !== undefined) folded.push(index)
+        }
+        // #7040 — a collapsed heading hides its section too, not only its subtree.
+        for (const index of foldsOver(outlineOf(rows), target, folded)) {
+          next.add((rows[index] as FlatBlock).id)
+        }
       }
       if (sameIds(prev, next)) return prev
       return next.size === 0 ? NO_REVEAL : next
@@ -326,27 +365,78 @@ export function useBlockCollapse(
     return set
   }, [blocks])
 
+  // ── Foldable set (#7040: a heading folds its section too) ────────────
+  const outline = useMemo(() => outlineOf(blocks), [blocks])
+  const foldableSet = useMemo(() => {
+    const set = new Set<string>()
+    for (let i = 0; i < blocks.length; i++) {
+      if (canFold(outline, i)) set.add((blocks[i] as FlatBlock).id)
+    }
+    return set
+  }, [blocks, outline])
+
   // ── Visible blocks after collapse filtering ────────────────────────
   const visibleBlocks = useMemo(() => {
     if (collapsedIds.size === 0) return blocks
-    const result: typeof blocks = []
-    const skipUntilDepth: number[] = []
+    const hidden = hiddenRows(outline, (i) => collapsedIds.has((blocks[i] as FlatBlock).id))
+    return blocks.filter((_, i) => !hidden[i])
+  }, [blocks, outline, collapsedIds])
 
-    for (const block of blocks) {
-      while (skipUntilDepth.length > 0 && block.depth <= (skipUntilDepth.at(-1) as number)) {
-        skipUntilDepth.pop()
+  const foldedSiblings = useCallback(
+    (blockId: string): string[] => {
+      if (!collapsedIds.has(blockId)) return []
+      const index = blocks.findIndex((b) => b.id === blockId)
+      if (index === -1) return []
+      const depth = (blocks[index] as FlatBlock).depth
+      const siblings: string[] = []
+      const end = foldEnd(outline, index)
+      for (let i = index + 1; i < end; i++) {
+        const block = blocks[i] as FlatBlock
+        if (block.depth === depth) siblings.push(block.id)
       }
+      return siblings
+    },
+    [blocks, outline, collapsedIds],
+  )
 
-      if (skipUntilDepth.length > 0) continue
-
-      result.push(block)
-
-      if (collapsedIds.has(block.id)) {
-        skipUntilDepth.push(block.depth)
+  const foldedMove = useCallback(
+    (blockId: string, direction: -1 | 1): FoldedMove | 'stay' | null => {
+      const index = blocks.findIndex((b) => b.id === blockId)
+      if (index === -1) return null
+      const block = blocks[index] as FlatBlock
+      const parentId = block.parent_id ?? null
+      const carry = (i: number) =>
+        carriedEnd(outline, i, collapsedIds.has((blocks[i] as FlatBlock).id))
+      const { end, to } = stepOver(outline, carry, index, direction)
+      const roots = (from: number, until: number) =>
+        blocks
+          .slice(from, until)
+          .filter((b) => b.depth === block.depth)
+          .map((b) => b.id)
+      const ids = roots(index, end)
+      if (to === null) {
+        // A first or last child leaves its parent (#922), with the siblings it hides.
+        if (ids.length === 1) return null
+        const parent = blocks.find((b) => b.id === parentId)
+        if (parent === undefined) return 'stay'
+        const outer = blocks.filter(
+          (b) => b.parent_id === parent.parent_id && b.depth === parent.depth,
+        )
+        const slot = outer.indexOf(parent) + (direction > 0 ? 1 : 0)
+        return { ids, parentId: parent.parent_id ?? null, index: slot }
       }
-    }
-    return result
-  }, [blocks, collapsedIds])
+      const neighbour = direction < 0 ? roots(to, index) : roots(end, to)
+      if (ids.length === 1 && neighbour.length === 1) return null
+      const moving = new Set(ids)
+      const slot = blocks
+        .slice(0, to)
+        .filter(
+          (b) => (b.parent_id ?? null) === parentId && b.depth === block.depth && !moving.has(b.id),
+        ).length
+      return { ids, parentId, index: slot }
+    },
+    [blocks, outline, collapsedIds],
+  )
 
   return {
     collapsedIds,
@@ -355,5 +445,8 @@ export function useBlockCollapse(
     expandAncestors,
     visibleBlocks,
     hasChildrenSet,
+    foldableSet,
+    foldedSiblings,
+    foldedMove,
   }
 }

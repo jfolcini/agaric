@@ -37,6 +37,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **Animation.** `var(--duration-fast | --duration-normal | --duration-moderate)` for durations; `var(--ease-out | --ease-in-out)` for easings. Reduced-motion overrides apply globally. The `duration-*` classes also time an overlay's `animate-in` / `animate-out`, and a bare `transition-*` or `animate-in` without one takes `--duration-normal`, so the Animations setting reaches all of them.
 - **Indent width.** `var(--indent-width)` — narrower in a phone's window (under `md`, the phone rule's width). JS DnD calculations multiply by this CSS variable, not a literal.
 - **One left edge.** A page's title, its blocks' first glyph (text or a task's checkbox), Add block and its section headings start one x. What leads a block (the grip, the chevron) hangs left of that edge (`--block-hang`), except a top-level parent's chevron on a phone, which ends its row: the margin there is too narrow for a 44 px target. A column that holds an outline takes `outline-column` so the pane keeps room for it.
+- **Headings fold their sections.** A heading with something to fold carries a parent's chevron, in the same place. Its fold hides its children, then the blocks after it at its depth up to the next heading of the same or a higher level, never past its parent's end (`src/lib/section-fold.ts`). It is a block fold like any other, per page and device, so the folds inside a folded section come back as they were.
 
 ## Touch & responsive
 

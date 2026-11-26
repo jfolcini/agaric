@@ -330,7 +330,7 @@ pub(super) async fn unfit_counts(
 ///
 /// - [`AppError::Validation`] — a `limit` outside `PageRequest::new`'s range,
 ///   or a malformed cursor.
-#[instrument(skip(pool, cursor), err)]
+#[instrument(skip(pool, cursor), err(level = "info"))]
 pub async fn list_unfit_property_values_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -373,7 +373,7 @@ pub async fn list_unfit_property_values_inner(
 ///
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when the counts differ from `acknowledged`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn remove_unfit_property_values_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -455,7 +455,7 @@ fn with_unfit_texts(def: &PropertyDefState, held: &[Unfit]) -> Result<Option<Str
 ///   when the key is built in.
 /// - [`AppError::NotFound`] when the space does not declare the key.
 /// - [`AppError::Validation`] when the key is not a select.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn add_unfit_values_to_options_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -497,7 +497,7 @@ pub async fn add_unfit_values_to_options_inner(
 ///
 /// - [`AppError::Validation`] — a `limit` outside `PageRequest::new`'s range,
 ///   or a malformed cursor.
-#[instrument(skip(pool, cursor), err)]
+#[instrument(skip(pool, cursor), err(level = "info"))]
 pub async fn list_distinct_unfit_property_values_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -640,7 +640,7 @@ fn acknowledged_counts(
 /// - [`AppError::NotFound`] when the space does not declare the key.
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when a mapped value's counts differ from its `acknowledged`.
-#[instrument(skip(pool, device_id, materializer, replacements), err)]
+#[instrument(skip(pool, device_id, materializer, replacements), err(level = "info"))]
 pub async fn convert_unfit_property_values_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -769,7 +769,7 @@ async fn plan_move(
 ///
 /// The refusals of [`move_unfit_property_values_inner`] but the stale
 /// acknowledgement's.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn preview_unfit_property_move_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -799,7 +799,7 @@ pub async fn preview_unfit_property_move_inner(
 /// - [`AppError::NotFound`] when the space does not declare `into_key`.
 /// - [`AppError::Validation`] coded [`ValidationCode::UnacknowledgedPropertyLoss`]
 ///   when the counts differ from `acknowledged`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn move_unfit_property_values_inner(
     pool: &SqlitePool,
     device_id: &str,
