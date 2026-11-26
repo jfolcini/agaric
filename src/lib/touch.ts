@@ -24,13 +24,9 @@ import { isAndroid } from '@/lib/platform'
 
 export const COARSE_POINTER_QUERY = '(pointer: coarse)'
 
-function isTauri(): boolean {
-  return window.isTauri === true
-}
-
 export function detectTouch(): boolean {
   if (typeof window === 'undefined') return false
-  if (isTauri()) return isAndroid()
+  if (window.isTauri === true) return isAndroid()
   if (typeof window.matchMedia !== 'function') return false
   return window.matchMedia(COARSE_POINTER_QUERY).matches && navigator.maxTouchPoints > 0
 }
