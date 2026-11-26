@@ -1,0 +1,28 @@
+{
+  "//": "The flags every project shares, so no project drifts from the others (the Playwright one once ran without two of the app's): each tsconfig.*.json extends this and adds only its files, libs, types and buildinfo path.",
+  "compilerOptions": {
+    /* Never put the buildinfo under node_modules: worktrees symlink it, and with `incremental` one worktree's buildinfo makes another's edited tree look up to date (#5848). After any tsconfig change, or a file copied in with an old mtime (`cp -p`, `tar`), run `npm run typecheck -- --force`: the incremental build keeps stale diagnostics across a `module` change and skips a new file older than the build info. */
+    "incremental": true,
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitOverride": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
+  }
+}

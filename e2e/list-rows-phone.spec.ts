@@ -207,7 +207,7 @@ test.describe('List rows on a phone @pages @mobile', () => {
             const rows = [...el.querySelectorAll<HTMLElement>('[data-history-item]')]
             const spacer = rows[0]?.parentElement
             const last = rows.toSorted(
-              (a, b) => Number(b.dataset.index) - Number(a.dataset.index),
+              (a, b) => Number(b.dataset['index']) - Number(a.dataset['index']),
             )[0]
             const pillEl = document.querySelector('[data-testid="history-touch-nav"]')
             if (!spacer || !last || !pillEl) return 'not laid out'
