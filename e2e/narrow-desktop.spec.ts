@@ -26,7 +26,13 @@ test('Settings › Properties keeps the new property name readable @settings', a
     const ctx = document.createElement('canvas').getContext('2d')
     if (ctx === null) throw new Error('no 2d canvas')
     ctx.font = style.font
-    const inner = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+    // From the border box: Chromium's clientWidth of an input already leaves out the padding.
+    const inner =
+      el.getBoundingClientRect().width -
+      parseFloat(style.paddingLeft) -
+      parseFloat(style.paddingRight) -
+      parseFloat(style.borderLeftWidth) -
+      parseFloat(style.borderRightWidth)
     return { inner, needed: ctx.measureText(el.placeholder).width }
   })
   expect(room.inner).toBeGreaterThanOrEqual(room.needed)
