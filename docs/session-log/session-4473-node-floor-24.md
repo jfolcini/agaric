@@ -18,3 +18,5 @@ The nightly deep checks printed eight `npm warn deprecated` lines in every job. 
 - The old and new license checkers give the same per-license summary for the production tree. Both exit 1 when MIT is dropped from the allowlist, and the fork also exits 1 without OFL-1.1.
 - Node 24.22.1 and 24.22.3 load `node:sqlite` without a warning; Node 22 prints one.
 - `prek run` over the changed files at the pre-commit and manual stages, including the license check and the `verify-ci-equivalent.sh` self-test.
+- `scripts/setup.sh`'s Node steps in a sandboxed `HOME`, starting from this VM's Node 22 with no nvm. It fetched nvm.sh against its `pins.txt` sha256, installed `.nvmrc`'s Node (checksum matched), shimmed `node`, `npm` and `npx`, and moved npm to the `packageManager` pin. `npm ci` then installed with no deprecation.
+- `pins.txt` pins no Node version: `.nvmrc` is the file pin, and the floor lane's `24.22.1` is the `engines` floor, as its `22.23.4` was.
