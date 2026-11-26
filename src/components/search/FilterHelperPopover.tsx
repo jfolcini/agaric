@@ -250,7 +250,7 @@ export function FilterHelperPopover({
       : undefined
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange} sheetTitle={t('search.addFilter')}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"

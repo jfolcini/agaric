@@ -31,12 +31,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
-const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
-
-vi.mock('@/hooks/useIsTouch', () => ({
-  useIsTouch: mockUseIsTouch,
-}))
-
 // Mock the IPC commands used by handleDateSelect.
 //
 // #2927 — `useBlockReschedule` calls the generated bindings directly, so the
@@ -158,7 +152,6 @@ function defaultProps(overrides: Partial<BlockListItemProps> = {}): BlockListIte
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockUseIsTouch.mockReturnValue(false)
   mockGetBlock.mockReset()
   mockSetDueDate.mockReset()
   mockSetScheduledDate.mockReset()
@@ -168,27 +161,6 @@ beforeEach(() => {
 describe('BlockListItem', () => {
   afterEach(() => {
     localStorage.clear()
-  })
-
-  it('inherits the shared viewport cap for the coarse-pointer date sheet', async () => {
-    const user = userEvent.setup()
-    mockUseIsTouch.mockReturnValue(true)
-    render(
-      <ul>
-        <BlockListItem {...defaultProps({ blockId: 'BLOCK1', dueDate: '2026-08-09' })} />
-      </ul>,
-    )
-
-    await user.click(
-      screen.getByRole('button', {
-        name: t('block.dueDate', { date: formatCompactDate('2026-08-09') }),
-      }),
-    )
-
-    expect(screen.getByTestId('due-date-sheet')).toHaveClass(
-      'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]',
-    )
-    expect(screen.getByTestId('due-date-sheet')).not.toHaveClass('max-h-[80vh]')
   })
 
   // 1. Renders truncated content text

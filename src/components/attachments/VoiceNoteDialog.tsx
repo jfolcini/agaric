@@ -5,7 +5,8 @@
  * QR scanner already uses, and a `VoiceRecorder` (`voice-recorder.ts`), and
  * saves the audio as an attachment on the block the command ran in. The
  * microphone is released on stop, on cancel and on unmount: a track left
- * running keeps recording and keeps the OS microphone indicator lit.
+ * running keeps recording and keeps the OS microphone indicator lit. On a
+ * phone (`usePhoneLayout`) it is a bottom sheet.
  */
 
 import { format } from 'date-fns'
@@ -20,15 +21,8 @@ import {
   type VoiceRecorder,
 } from '@/components/attachments/voice-recorder'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
+import { type DialogOrSheetParts, useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { MAX_ATTACHMENT_BYTES, blobToBase64 } from '@/lib/file-utils'
@@ -88,24 +82,27 @@ export interface VoiceNoteDialogProps {
 
 /** Open while mounted: closing unmounts the recorder, whose cleanup releases the microphone. */
 export function VoiceNoteDialog({ blockId, onClose }: VoiceNoteDialogProps): React.ReactElement {
+  const parts = useDialogOrSheet('dialog')
   return (
-    <Dialog
+    <parts.Root
       open
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
     >
-      <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
-    </Dialog>
+      <VoiceNoteRecorder blockId={blockId} onClose={onClose} parts={parts} />
+    </parts.Root>
   )
 }
 
 function VoiceNoteRecorder({
   blockId,
   onClose,
+  parts,
 }: {
   blockId: string
   onClose: () => void
+  parts: DialogOrSheetParts
 }): React.ReactElement {
   const { t } = useTranslation()
   const [phase, setPhase] = useState<Phase>('idle')
@@ -264,8 +261,9 @@ function VoiceNoteRecorder({
     failed: t('voiceNote.saveFailed'),
   }[phase]
 
+  const { Content, Header, Title, Description, Footer } = parts
   return (
-    <DialogContent
+    <Content
       data-testid="voice-note-dialog"
       className="sm:max-w-sm"
       onOpenAutoFocus={(e) => {
@@ -281,10 +279,10 @@ function VoiceNoteRecorder({
         if (phase !== 'idle') e.preventDefault()
       }}
     >
-      <DialogHeader>
-        <DialogTitle>{t('voiceNote.title')}</DialogTitle>
-        <DialogDescription>{t('voiceNote.description')}</DialogDescription>
-      </DialogHeader>
+      <Header>
+        <Title>{t('voiceNote.title')}</Title>
+        <Description>{t('voiceNote.description')}</Description>
+      </Header>
       <div className="flex flex-col items-center gap-1 py-2">
         <span
           role="timer"
@@ -303,7 +301,7 @@ function VoiceNoteRecorder({
           {status}
         </span>
       </div>
-      <DialogFooter>
+      <Footer>
         <Button variant="outline" onClick={onClose} disabled={phase === 'saving'}>
           {t('action.cancel')}
         </Button>
@@ -311,7 +309,7 @@ function VoiceNoteRecorder({
           {primary.icon}
           {primary.label}
         </Button>
-      </DialogFooter>
-    </DialogContent>
+      </Footer>
+    </Content>
   )
 }

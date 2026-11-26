@@ -1,22 +1,17 @@
 /**
  * PageSourceConflictDialog — a source save found the page changed since the
  * buffer was loaded (#5140). Lists what changed elsewhere and offers Merge,
- * Reload, Overwrite, or Keep editing.
+ * Reload, Overwrite, or Keep editing. On a phone (`usePhoneLayout`) it is a
+ * bottom sheet.
  */
 
 import { useId, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
+import { SheetBody } from '@/components/ui/sheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { type BufferLines, diffBuffers, type SourceChange } from '@/lib/page-source-diff'
 import { cn } from '@/lib/utils'
 
@@ -67,20 +62,22 @@ export function PageSourceConflictDialog({
     () => (current === null ? [] : diffBuffers(base, current)),
     [base, current],
   )
+  const { Root, Content, Header, Title, Description, Footer, isMobile } = useDialogOrSheet('dialog')
+  const Body = isMobile ? SheetBody : DialogBody
 
   return (
-    <Dialog
+    <Root
       open={current !== null}
       onOpenChange={(open) => {
         if (!open) onKeepEditing()
       }}
     >
-      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus}>
-        <DialogHeader>
-          <DialogTitle>{t('pageSource.conflictTitle')}</DialogTitle>
-          <DialogDescription>{t('pageSource.conflictDescription')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
+      <Content className="sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus}>
+        <Header>
+          <Title>{t('pageSource.conflictTitle')}</Title>
+          <Description>{t('pageSource.conflictDescription')}</Description>
+        </Header>
+        <Body>
           {changes.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t('pageSource.onlyOrderChanged')}</p>
           ) : (
@@ -99,14 +96,14 @@ export function PageSourceConflictDialog({
               ))}
             </ul>
           )}
-        </DialogBody>
+        </Body>
         <p id={mergeHintId} className="text-sm text-muted-foreground">
           {t('pageSource.mergeHint')}
         </p>
         <p id={overwriteWarningId} className="text-sm text-muted-foreground">
           {t('pageSource.overwriteWarning')}
         </p>
-        <DialogFooter>
+        <Footer>
           <Button variant="destructive" onClick={onOverwrite} aria-describedby={overwriteWarningId}>
             {t('pageSource.overwrite')}
           </Button>
@@ -124,8 +121,8 @@ export function PageSourceConflictDialog({
           >
             {t('pageSource.merge')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }

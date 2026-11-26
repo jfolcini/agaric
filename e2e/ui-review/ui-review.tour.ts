@@ -92,8 +92,9 @@ function goToPage(page: Page, profile: Profile, title: string): Promise<void> {
 
 async function switchSpace(page: Page, profile: Profile, name: string): Promise<void> {
   if (profile === 'phone') await openMobileSidebar(page)
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  await page.getByRole('option', { name, exact: true }).click()
+  // A Select on desktop, a bottom-sheet menu on a phone.
+  await page.getByLabel('Switch space', { exact: true }).click()
+  await page.getByRole(profile === 'phone' ? 'button' : 'option', { name, exact: true }).click()
   if (profile === 'phone') await closeDrawer(page)
 }
 
@@ -244,7 +245,7 @@ async function shell({ page, profile, shot }: Scene): Promise<void> {
       await openMobileSidebar(page)
     })
     await shot('drawer-space-switcher', () =>
-      page.getByRole('combobox', { name: 'Switch space', exact: true }).click(),
+      page.getByLabel('Switch space', { exact: true }).click(),
     )
     await dismiss(page, 1)
     await closeDrawer(page)

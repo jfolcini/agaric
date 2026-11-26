@@ -5,14 +5,28 @@
  *  - displayName is set on all exports
  *  - PopoverContent forwards ref
  *  - Render output and a11y compliance
+ *  - `sheetTitle`: a bottom sheet on a phone, an anchored popover elsewhere
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import * as React from 'react'
-import { describe, expect, it } from 'vitest'
-import { axe } from 'vitest-axe'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { axe } from '@/__tests__/helpers/axe'
+import {
+  AnchoredPopoverContent,
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
+
+beforeEach(() => {
+  mockUsePhoneLayout.mockReturnValue(false)
+})
 
 describe('Popover displayNames', () => {
   it('Popover has displayName', () => {
@@ -108,7 +122,7 @@ describe('PopoverContent', () => {
   // attribute, no style — until layout runs. So this asserts the one thing
   // this environment CAN observe: that `PopoverContent`'s default flows
   // through to the underlying Radix element unchanged. It calls
-  // `PopoverContent` as a plain function rather than rendering it — React 19
+  // `AnchoredPopoverContent` as a plain function rather than rendering it — React 19
   // allows `ref` as an ordinary prop, so the component is a plain arrow
   // function with no ref-forwarding wrapper of any kind, and calling it runs
   // exactly the body React would run — and reads the element tree it returns
@@ -127,13 +141,9 @@ describe('PopoverContent', () => {
   // comment points back to this paragraph instead, so the claim has one
   // home and cannot go stale in one copy while the other still reads as
   // current.
-  // The direct-call technique is hook-fragile in a way the paragraph above
-  // does not say: it is justified against the REF-FORWARDING concern
-  // specifically (there is none to bypass), not against hooks in general.
-  // `PopoverContent` has none today, but if it ever gains a `useContext` or
-  // `useId`, calling it as a plain function outside a component render
-  // breaks the rules of hooks, and both direct-call tests below die with
-  // "Invalid hook call" rather than any assertion about `collisionPadding`.
+  // The direct-call technique is hook-fragile: `PopoverContent` reads the
+  // popover's sheet context, so these tests call its hook-free anchored form,
+  // `AnchoredPopoverContent`, which carries the default.
   // Both direct-call tests assume `PopoverContent` returns exactly
   // Portal -> Content. If a wrapper element is ever inserted between them,
   // `portal.props.children` is undefined and the padding assertion dies with
@@ -186,7 +196,7 @@ describe('PopoverContent', () => {
   // change-detector: bumping the default is a decision that should have to
   // touch its test, test title included.
   it('defaults collisionPadding to EDGE_PADDING_PX (4), not Radix default of 0', () => {
-    const portal = PopoverContent({ children: 'Content' })
+    const portal = AnchoredPopoverContent({ children: 'Content' })
     expect(contentOf(portal).props.collisionPadding).toBe(4)
   })
 
@@ -196,7 +206,7 @@ describe('PopoverContent', () => {
   // in the first place: an app-wide value change with nothing pinning the
   // contract around it. Same direct-call technique as the default test.
   it('still passes through a caller-supplied collisionPadding instead of forcing the default', () => {
-    const portal = PopoverContent({ children: 'Content', collisionPadding: 12 })
+    const portal = AnchoredPopoverContent({ children: 'Content', collisionPadding: 12 })
     expect(contentOf(portal).props.collisionPadding).toBe(12)
   })
 
@@ -209,5 +219,77 @@ describe('PopoverContent', () => {
     )
     const results = await axe(baseElement)
     expect(results).toHaveNoViolations()
+  })
+})
+
+describe('Popover sheetTitle (the phone form)', () => {
+  function renderPicker(sheetTitle?: string) {
+    return render(
+      <Popover {...(sheetTitle === undefined ? {} : { sheetTitle })}>
+        <PopoverTrigger>Open picker</PopoverTrigger>
+        <PopoverContent className="w-64 p-3" aria-label="Tag picker">
+          <input aria-label="Search tags" />
+        </PopoverContent>
+      </Popover>,
+    )
+  }
+
+  it('is a bottom sheet named by the title on a phone', async () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    const { baseElement } = renderPicker('Add tag')
+    fireEvent.click(screen.getByRole('button', { name: 'Open picker' }))
+
+    const sheet = await screen.findByRole('dialog', { name: 'Add tag' })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    expect(sheet.className).toContain('bottom-0')
+    expect(screen.getByRole('textbox', { name: 'Search tags' })).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()
+    // The anchored box's width and padding do not narrow the sheet's body.
+    const body = screen.getByRole('textbox', { name: 'Search tags' }).parentElement
+    expect(body).toHaveClass('w-auto', 'p-0')
+    expect(body).not.toHaveClass('w-64')
+    expect(await axe(baseElement)).toHaveNoViolations()
+  })
+
+  it('stays an anchored popover off a phone', async () => {
+    const { baseElement } = renderPicker('Add tag')
+    fireEvent.click(screen.getByRole('button', { name: 'Open picker' }))
+
+    const content = await screen.findByRole('dialog', { name: 'Tag picker' })
+    expect(content).toHaveAttribute('data-slot', 'popover-content')
+    expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull()
+    expect(await axe(baseElement)).toHaveNoViolations()
+  })
+
+  it('without sheetTitle stays anchored on a phone', async () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    renderPicker()
+    fireEvent.click(screen.getByRole('button', { name: 'Open picker' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Tag picker' })).toHaveAttribute(
+      'data-slot',
+      'popover-content',
+    )
+  })
+
+  it('leaves a plain popover nested in its sheet anchored', async () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    render(
+      <Popover sheetTitle="Add filter" defaultOpen>
+        <PopoverTrigger>Open filter</PopoverTrigger>
+        <PopoverContent>
+          <Popover defaultOpen>
+            <PopoverTrigger>Pick colour</PopoverTrigger>
+            <PopoverContent aria-label="Colours">Swatches</PopoverContent>
+          </Popover>
+        </PopoverContent>
+      </Popover>,
+    )
+
+    expect(await screen.findByRole('dialog', { name: 'Add filter' })).toHaveAttribute(
+      'data-slot',
+      'sheet-content',
+    )
+    expect(await screen.findByText('Swatches')).toHaveAttribute('data-slot', 'popover-content')
   })
 })

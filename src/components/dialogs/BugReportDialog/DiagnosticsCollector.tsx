@@ -10,8 +10,9 @@
  *      `t('bugReport.includeLogsLabel')` is ON.
  *   2. The zip-download hint that names the eventual ZIP and reminds the
  *      user the file must be dragged into the GitHub issue manually.
- * 3. The nested per-log preview sub-dialog — a Radix Dialog
- *      portalled to `document.body` so it stacks above the parent dialog.
+ * 3. The nested per-log preview sub-dialog, portalled to `document.body` so
+ *      it stacks above the parent dialog; on a phone (`usePhoneLayout`) a
+ *      bottom sheet over the bug report's.
  *
  * State + IPC remain in the orchestrator: this component is a controlled
  * presentation layer that receives `logs`, `loadingLogs`, and the preview
@@ -25,17 +26,10 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import type { LogFileEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 
@@ -81,6 +75,7 @@ export function DiagnosticsCollector({
   onToggleShowFullLog,
 }: DiagnosticsCollectorProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const { Root, Content, Header, Title, Description, Footer } = useDialogOrSheet('dialog')
   const logsSectionId = 'bug-report-logs-list'
 
   // When logs are OFF we still render the preview sub-dialog (it lives in
@@ -135,24 +130,21 @@ export function DiagnosticsCollector({
       )}
 
       {/* per-log preview sub-dialog. Radix portals this to
-          document.body so it stacks correctly above the parent dialog.
-          Kept as a regular Dialog primitive across viewports — nesting a
-          Sheet inside a Sheet would compound the focus-trap and
-          overlay-stacking edge cases the parent migration is avoiding. */}
-      <Dialog open={previewOpen} onOpenChange={onPreviewOpenChange}>
-        <DialogContent
+          document.body so it stacks above the parent dialog, or on a phone
+          its sheet over the bug report's, as a sheet opened from a sheet
+          does elsewhere (`PropertyDefinitionSheet`'s Change type). */}
+      <Root open={previewOpen} onOpenChange={onPreviewOpenChange}>
+        <Content
           className="sm:max-w-2xl"
           data-testid="bug-report-log-preview"
           aria-busy={previewLoading}
         >
-          <DialogHeader>
-            <DialogTitle>{t('bugReport.previewTitle')}</DialogTitle>
+          <Header>
+            <Title>{t('bugReport.previewTitle')}</Title>
             {previewFilename != null && (
-              <DialogDescription className="font-mono break-all">
-                {previewFilename}
-              </DialogDescription>
+              <Description className="font-mono break-all">{previewFilename}</Description>
             )}
-          </DialogHeader>
+          </Header>
 
           {previewLoading && (
             <output
@@ -208,7 +200,7 @@ export function DiagnosticsCollector({
             </div>
           )}
 
-          <DialogFooter>
+          <Footer>
             <Button
               variant="outline"
               onClick={() => {
@@ -226,9 +218,9 @@ export function DiagnosticsCollector({
             >
               {t('bugReport.cancel')}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </Footer>
+        </Content>
+      </Root>
     </>
   )
 }

@@ -11,6 +11,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
+  activeSheet,
   expect,
   expect44,
   hits44,
@@ -52,7 +53,7 @@ test.describe('phone touch targets @mobile', () => {
     ]
     for (const row of rows) await expect44(row, (await row.textContent()) ?? 'drawer row')
 
-    const gutter = await left(sheet.getByRole('combobox', { name: 'Switch space', exact: true }))
+    const gutter = await left(sheet.getByRole('button', { name: 'Switch space', exact: true }))
     expect(await left(newPage), 'New page').toBe(gutter)
     for (const name of ['Journal', 'Tags', 'Sync']) {
       expect(await left(sheet.getByRole('button', { name, exact: true })), name).toBe(gutter)
@@ -89,7 +90,7 @@ test.describe('phone touch targets @mobile', () => {
     await navigateToView(page, 'Advanced query')
     const root = page.getByRole('group', { name: 'Filter', exact: true })
     await root.getByRole('button', { name: 'Add filter', exact: true }).click()
-    const pop = activePopover(page)
+    const pop = activeSheet(page)
     await pop.getByRole('button', { name: /^State/ }).click()
     await pop.getByRole('checkbox', { name: 'DONE', exact: true }).click()
     await pop.getByRole('button', { name: 'Apply', exact: true }).click()

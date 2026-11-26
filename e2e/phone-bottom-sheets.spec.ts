@@ -14,16 +14,23 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
-import { expectToastCloseInside } from './domain'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { expectToastCloseInside, runSlashCommand } from './domain'
 import {
   activeMenu,
+  activePopover,
   activeSheet,
   centerOf,
   emitMockEvent,
   expect,
   focusBlock,
+  ipc,
   navigateMobile,
+  navigateToView,
+  openMobileSidebar,
+  openPage,
   openPageMobile,
+  saveBlock,
   test,
   touchLongPress,
   waitForBoot,
@@ -511,5 +518,298 @@ test.describe('A tablet stays a tablet with its keyboard up (#7040) @mobile @pag
     await expect(dialog).toHaveAttribute('data-slot', 'dialog-content')
     await expect(title).toHaveValue('Typed before the keyboard')
     await expect(page.locator('[data-slot="sidebar"]:not([data-mobile])')).toBeInViewport()
+  })
+})
+
+const MEETINGS = '00000000000000000000PAGE05'
+
+/** Open the Pages view on a phone or a desktop. */
+async function openPages(page: Page, phone: boolean): Promise<void> {
+  if (phone) await navigateMobile(page, 'Pages')
+  else await page.getByRole('button', { name: 'Pages', exact: true }).first().click()
+  await expect(page.locator('[data-page-item]').first()).toBeVisible()
+}
+
+/** Meetings with a select property, whose row in its Properties offers Edit options. */
+async function openMeetingsProperties(page: Page, phone: boolean): Promise<void> {
+  await ipc(page, 'set_property', {
+    blockId: MEETINGS,
+    key: 'project',
+    value: { value_text: 'alpha' },
+  })
+  if (phone) await openPageMobile(page, 'Meetings')
+  else await openPage(page, 'Meetings')
+  await page.getByRole('button', { name: /^Properties/ }).click()
+  await page.getByRole('button', { name: 'Edit options for project', exact: true }).click()
+}
+
+/** The page ⋮ menu's Add tag, which opens the page's tag picker. */
+async function openTagPicker(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add tag', exact: true }).click()
+}
+
+/** The Tags view's colour picker for `work`, opened from its row. */
+async function openTagColorPicker(page: Page): Promise<Locator> {
+  await navigateToView(page, 'Tags')
+  const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })
+  await row.hover()
+  await row.getByRole('button', { name: 'Set tag color', exact: true }).click()
+  return page.getByRole('dialog', { name: 'Set tag color' })
+}
+
+/** A page `title` holding one JavaScript code block. */
+async function seedCodePage(page: Page, title: string): Promise<void> {
+  const pageId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: title,
+    spaceId: SEED_IDS.SPACE_PERSONAL,
+  })
+  await ipc(page, 'create_block', {
+    blockType: 'content',
+    content: '```javascript\nconst x = 1\n```',
+    parentId: pageId,
+    index: null,
+    scope: { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL },
+  })
+}
+
+/** Open the toolbar's Turn into, inline or under More; on a code block it shows the language filter. */
+async function openTurnInto(page: Page): Promise<void> {
+  const toolbar = page.getByTestId('formatting-toolbar')
+  const inline = toolbar.getByRole('button', { name: 'Turn into', exact: true })
+  if (await inline.isVisible()) {
+    await inline.click()
+    return
+  }
+  await toolbar.getByRole('button', { name: 'More' }).click()
+  await page
+    .getByTestId('toolbar-overflow-menu')
+    .getByRole('button', { name: 'Turn into', exact: true })
+    .click()
+}
+
+const codeFilter = (page: Page) => page.getByRole('textbox', { name: 'Code block language' })
+
+// One rule, `usePhoneLayout`, makes a popover holding a field, the four
+// dialogs that were still centred, and every menu a bottom sheet on a phone
+// (#7040 M8, M9, S13); a desktop keeps them anchored or centred.
+test.describe('Phone popovers with a field, dialogs and menus are bottom sheets (#7040) @mobile @editor @pages @spaces', () => {
+  test.use({
+    viewport: { width: 412, height: 915 },
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await waitForBoot(page)
+  })
+
+  test('the page tag picker is a bottom sheet', async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await openTagPicker(page)
+    const sheet = page.getByRole('dialog', { name: 'Add tag' })
+    await expectBottomSheet(page, sheet)
+    await expect(sheet.getByPlaceholder('Search or create tag...')).toBeVisible()
+    // The first Escape closes it, as it closes the desktop popover.
+    await page.keyboard.press('Escape')
+    await expect(sheet).toHaveCount(0)
+  })
+
+  test("a select property's options editor is a bottom sheet", async ({ page }) => {
+    await openMeetingsProperties(page, true)
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Edit options for project' }))
+  })
+
+  test('the Pages ⋮ menu is a bottom-sheet list', async ({ page }) => {
+    await openPages(page, true)
+    await page.getByTestId('page-browser-more').tap()
+    await expectBottomSheet(page, page.getByTestId('saved-views-menu'))
+  })
+
+  test('the Pages filter is a bottom sheet', async ({ page }) => {
+    await openPages(page, true)
+    await page.getByRole('button', { name: 'Add filter', exact: true }).tap()
+    await expectBottomSheet(page, page.getByRole('dialog', { name: 'Add filter' }))
+  })
+
+  test("the toolbar's More is a bottom-sheet list", async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await page.getByTestId('formatting-toolbar').getByRole('button', { name: 'More' }).tap()
+    await expectBottomSheet(page, page.getByTestId('toolbar-overflow-menu'))
+  })
+
+  test('the space switcher is a bottom-sheet list', async ({ page }) => {
+    const drawer = await openMobileSidebar(page)
+    await drawer.getByLabel('Switch space', { exact: true }).tap()
+    const sheet = page.getByRole('dialog', { name: 'Switch space' })
+    await expectBottomSheet(page, sheet)
+    // Its rows still act: Manage spaces opens Settings › Spaces.
+    await sheet.getByRole('button', { name: 'Manage spaces…' }).tap()
+    await expect(page.getByRole('region', { name: 'Spaces' })).toBeVisible()
+  })
+
+  test('the voice note recorder is a bottom sheet', async ({ page }) => {
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await runSlashCommand(page, 'voice', 'VOICE — Record a voice note')
+    await expectBottomSheet(page, page.getByTestId('voice-note-dialog'))
+  })
+
+  // A tap in the sheet, or on its scrim, is the sheet's: it must not reach the
+  // query block through React's portal and put the query's text in an editor.
+  test("a query table cell's page picker is a bottom sheet a tap leaves the table up", async ({
+    page,
+  }) => {
+    await ipc(page, 'create_property_def', {
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+      key: 'owner',
+      valueType: 'ref',
+      options: null,
+    })
+    await ipc(page, 'set_property', {
+      blockId: SEED_IDS.BLOCK_MTG_1,
+      key: 'owner',
+      value: { value_ref: SEED_IDS.PAGE_QUICK_NOTES },
+    })
+    await openPageMobile(page, PAGE)
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type('{{query type:property key:owner table:true}}', { delay: 20 })
+    await saveBlock(page)
+    const block = page.locator('[data-testid="sortable-block"]').first()
+    const cell = block.getByRole('button', { name: /^Edit owner/ })
+    await cell.tap()
+    const sheet = page.getByRole('dialog', { name: 'Select a page' })
+    await expectBottomSheet(page, sheet)
+
+    await sheet.getByRole('heading', { name: 'Select a page' }).tap()
+    await expect(sheet).toBeVisible()
+    await page.touchscreen.tap(200, (await box(sheet)).y / 2)
+    await expect(sheet).toHaveCount(0)
+    await expect(cell).toBeVisible()
+    await expect(block.locator('[contenteditable="true"]')).toHaveCount(0)
+  })
+
+  // #7092: anchored, the custom colour ran off the foot of the screen.
+  test('the tag colour picker is a bottom sheet with its hex field on screen', async ({ page }) => {
+    const sheet = await openTagColorPicker(page)
+    await expectBottomSheet(page, sheet)
+    await sheet.getByRole('button', { name: 'Custom color', exact: true }).tap()
+    await expect(sheet.getByRole('textbox', { name: 'Hex color', exact: true })).toBeInViewport({
+      ratio: 1,
+    })
+  })
+
+  // The pick lands on the block being edited, which is still being edited after it.
+  test("Turn into's code language picker is a bottom sheet the editor keeps its block through", async ({
+    page,
+  }) => {
+    await seedCodePage(page, 'Phone code')
+    await openPageMobile(page, 'Phone code')
+    await focusBlock(page)
+    await openTurnInto(page)
+    await expectBottomSheet(page, codeFilter(page))
+    await codeFilter(page).fill('python')
+    await codeFilter(page).press('Enter')
+    await expect(codeFilter(page)).toHaveCount(0)
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(editor).toBeFocused()
+    await expect(editor.locator('pre > code')).toHaveClass('language-python')
+  })
+
+  test("page mode's code language picker is a bottom sheet", async ({ page }) => {
+    await seedCodePage(page, 'Phone page code')
+    await openPageMobile(page, 'Phone page code')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).tap()
+    await page.getByRole('menuitem', { name: 'Edit as page', exact: true }).tap()
+    const editor = page.locator('[data-testid="page-mode-editor"]')
+    await editor.locator('pre').tap()
+    const language = page.getByTestId('page-code-bubble').getByRole('button', {
+      name: 'Code block language',
+    })
+    await language.tap()
+    await expectBottomSheet(page, codeFilter(page))
+    await codeFilter(page).fill('python')
+    await codeFilter(page).press('Enter')
+    await expect(codeFilter(page)).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    await expect(language).toHaveText('python')
+  })
+})
+
+test.describe('A desktop keeps the anchored popovers, dropdowns and dialogs (#7040) @editor @pages @spaces', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the page tag picker is an anchored popover', async ({ page }) => {
+    await openPage(page, PAGE)
+    await openTagPicker(page)
+    const search = activePopover(page).getByPlaceholder('Search or create tag...')
+    await expect(search).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(search).toHaveCount(0)
+  })
+
+  test("a select property's options editor is an anchored popover", async ({ page }) => {
+    await openMeetingsProperties(page, false)
+    await expect(activePopover(page).getByTestId('options-editor-header-project')).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('saved views and the Pages filter are anchored popovers', async ({ page }) => {
+    await openPages(page, false)
+    await page.getByTestId('saved-views-trigger').click()
+    await expect(page.getByTestId('saved-views-menu')).toHaveAttribute(
+      'data-slot',
+      'popover-content',
+    )
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await expect(activePopover(page).getByRole('button', { name: /^Tag/ }).first()).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('the space switcher is a dropdown', async ({ page }) => {
+    await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+  })
+
+  test('the voice note recorder is a centred dialog', async ({ page }) => {
+    await openPage(page, PAGE)
+    await focusBlock(page)
+    await runSlashCommand(page, 'voice', 'VOICE — Record a voice note')
+    await expect(page.getByTestId('voice-note-dialog')).toHaveAttribute(
+      'data-slot',
+      'dialog-content',
+    )
+  })
+
+  test('the tag colour picker and the code language picker are anchored popovers', async ({
+    page,
+  }) => {
+    await openTagColorPicker(page)
+    await expect(
+      activePopover(page).getByRole('radiogroup', { name: 'Color palette' }),
+    ).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await seedCodePage(page, 'Desktop code')
+    await openPage(page, 'Desktop code')
+    await focusBlock(page)
+    await openTurnInto(page)
+    await expect(
+      activePopover(page).getByRole('textbox', { name: 'Code block language' }),
+    ).toBeVisible()
+    await expect(activeSheet(page)).toHaveCount(0)
   })
 })

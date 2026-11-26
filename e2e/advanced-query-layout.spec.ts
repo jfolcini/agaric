@@ -9,7 +9,6 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
 import {
-  activePopover,
   chooseSelectOption,
   expect,
   expectNoHorizontalOverflow,
@@ -53,7 +52,8 @@ async function box(el: Locator): Promise<{ x: number; y: number; width: number; 
 async function loadWorkView(page: Page): Promise<void> {
   await navigateToView(page, 'Advanced query')
   await rootGroup(page).getByRole('button', { name: 'Add filter', exact: true }).click()
-  const pop = activePopover(page)
+  // An anchored popover on a desktop, a bottom sheet on a phone.
+  const pop = page.locator('[data-slot="popover-content"], [data-slot="sheet-content"]').last()
   await pop.getByRole('button', { name: /^Tag/ }).click()
   await pop.getByRole('button', { name: 'work', exact: true }).click()
   await page.getByRole('button', { name: 'Add sort', exact: true }).click()

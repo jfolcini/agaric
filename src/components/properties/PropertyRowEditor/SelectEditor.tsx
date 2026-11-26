@@ -85,7 +85,11 @@ export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverPro
   const { t } = useTranslation()
   const { open, setOpen, options, handleOpen, handleSave } = state
   return (
-    <Popover open={open} onOpenChange={(next) => (next ? handleOpen() : setOpen(false))}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => (next ? handleOpen() : setOpen(false))}
+      sheetTitle={t('pageProperty.editOptionsLabel', { key: propKey })}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
