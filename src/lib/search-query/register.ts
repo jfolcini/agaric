@@ -98,14 +98,21 @@ function stripSurroundingQuotes(value: string): string {
   return value
 }
 
-function parseTagToken(value: string, span: [number, number], kind: 'tag' | 'under'): FilterToken {
+const TAG_PREFIXES = { tag: 'tag:', under: 'under:', notTag: 'not-tag:' } as const
+
+function parseTagToken(
+  value: string,
+  span: [number, number],
+  kind: keyof typeof TAG_PREFIXES,
+): FilterToken {
   const unquoted = stripSurroundingQuotes(value)
   const cleaned = unquoted.startsWith('#') ? stripSurroundingQuotes(unquoted.slice(1)) : unquoted
   if (cleaned.length === 0) {
+    const prefix = TAG_PREFIXES[kind]
     return {
       kind: 'invalid',
-      source: `${kind}:${value}`,
-      error: t('searchQuery.valueRequired', { prefix: `${kind}:` }),
+      source: `${prefix}${value}`,
+      error: t('searchQuery.valueRequired', { prefix }),
       span,
     }
   }
@@ -128,6 +135,8 @@ export function ensureRegistered(): void {
   // under: — the same value as tag:, matched attached, inline or inherited
   // (#5679, "Search everything under #tag").
   registerTokenPrefix('under:', (value, span) => parseTagToken(value, span, 'under'))
+  // not-tag: — excludes the blocks tag: with the same value keeps.
+  registerTokenPrefix('not-tag:', (value, span) => parseTagToken(value, span, 'notTag'))
 
   // path: — page-name glob include. #718 — `path:"glob with spaces"`
   // strips the surrounding quotes (mirrors prop:'s #152 rule), so page

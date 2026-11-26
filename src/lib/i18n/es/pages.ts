@@ -77,7 +77,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeTag': 'Quitar la etiqueta {{name}}',
   'pageHeader.inheritedTag': 'Etiqueta heredada {{name}}',
   'pageHeader.inheritedTagHint':
-    'Heredada de un bloque padre. La vista Etiquetas solo la encuentra con "Incluir bloques anidados" activado.',
+    'Heredada de un bloque padre. Una búsqueda solo la encuentra con under:#tag.',
   'pageHeader.inheritedTagInfo': 'Acerca de las etiquetas heredadas',
   'pageHeader.searchTags': 'Busca o crea una etiqueta...',
   'pageHeader.searchTagsLabel': 'Buscar etiquetas',

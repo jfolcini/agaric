@@ -1,5 +1,5 @@
 {
-  "description": "#3827 — READ-command differential over `query_by_property`, `query_by_tags` and `query_by_tag_expr` at their BOUNDARIES, not their centres. Every step is aimed at one decision a second implementation gets nearly right: the comparison operator (`neq` matches a NULL value, `lt` excludes the bound), the half-open `valueDateRange` (`>= from AND < to`), `valueTextIn` as set membership, the three push-downs `filtered_blocks_query` does not offer (`excludeParentId` keeps NULL parents, `contentNonEmpty` trims space/tab/LF/CR, `excludeTodoStates` passes a NULL todo), reserved-key column routing, the two mutual-exclusion refusals, `mode: not` as the complement over EVERY live block (pages and tag blocks included), `Prefix` over `tags_cache` (so `work` matches `workshop`), `includeInherited` reaching a descendant through `block_tag_inherited`, and `And` inside `Or`. Tags are `block_type = 'tag'` seeds because `tags_cache` (the `Prefix` leaf's source) holds only those; they sit under the page S1 and the inherited case runs page S8 -> S9, because the two harnesses seed `page_id` differently for a grandchild and for a parentless non-page block (backend: immediate parent / self; mock: root page / null), which is seed drift, not filter semantics. Content `#[id]` refs (`block_tag_refs`) are pinned by `query_tag_inline_refs`.",
+  "description": "#3827 — READ-command differential over `query_by_property` and `query_by_tags` at their BOUNDARIES, not their centres. Every step is aimed at one decision a second implementation gets nearly right: the comparison operator (`neq` matches a NULL value, `lt` excludes the bound), the half-open `valueDateRange` (`>= from AND < to`), `valueTextIn` as set membership, the three push-downs `filtered_blocks_query` does not offer (`excludeParentId` keeps NULL parents, `contentNonEmpty` trims space/tab/LF/CR, `excludeTodoStates` passes a NULL todo), reserved-key column routing, the two mutual-exclusion refusals, `mode: not` as the complement over EVERY live block (pages and tag blocks included), `Prefix` over `tags_cache` (so `work` matches `workshop`), and `includeInherited` reaching a descendant through `block_tag_inherited`. Tags are `block_type = 'tag'` seeds because `tags_cache` (the `Prefix` leaf's source) holds only those; they sit under the page S1 and the inherited case runs page S8 -> S9, because the two harnesses seed `page_id` differently for a grandchild and for a parentless non-page block (backend: immediate parent / self; mock: root page / null), which is seed drift, not filter semantics. Content `#[id]` refs (`block_tag_refs`) are pinned by `query_tag_inline_refs`.",
   "expected": {
     "block_tags": [
       {
@@ -572,50 +572,6 @@
       "cursor": null,
       "error": null,
       "has_more": false,
-      "name": "expr_and_inside_or",
-      "rows": [
-        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
-        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
-      "name": "expr_not_prefix_inside_and",
-      "rows": ["B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
-      "name": "expr_not_with_inherited",
-      "rows": [
-        "B1#parent_id=null#page_id=B1#position=1#deleted_at=null",
-        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
-        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
-        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
-        "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
-        "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
-        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null",
-        "B12#parent_id=B1#page_id=B1#position=9#deleted_at=null"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
-      "name": "expr_and_of_nothing_is_empty",
-      "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
       "name": "prefix_leaf_like_folds_ascii_only",
       "rows": ["B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"],
       "total_count": null
@@ -626,22 +582,6 @@
       "has_more": false,
       "name": "prefix_leaf_lower_umlaut_reaches_nothing",
       "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
-      "name": "expr_prefix_leaf_lower_umlaut_reaches_nothing",
-      "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": false,
-      "name": "expr_prefix_leaf_upper_umlaut_reaches_s3",
-      "rows": ["B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"],
       "total_count": null
     }
   ],
@@ -1175,105 +1115,6 @@
     },
     {
       "args": {
-        "expr": {
-          "type": "Or",
-          "value": [
-            {
-              "type": "And",
-              "value": [
-                {
-                  "type": "Tag",
-                  "value": "S10"
-                },
-                {
-                  "type": "Tag",
-                  "value": "S12"
-                }
-              ]
-            },
-            {
-              "type": "Tag",
-              "value": "S11"
-            }
-          ]
-        },
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "`(work AND home) OR workshop`: S2 from the conjunction, S3 from the disjunct. Flattening the nesting into one `Or` would add S4, S5 and S8.",
-      "name": "expr_and_inside_or"
-    },
-    {
-      "args": {
-        "expr": {
-          "type": "And",
-          "value": [
-            {
-              "type": "Tag",
-              "value": "S12"
-            },
-            {
-              "type": "Not",
-              "value": {
-                "type": "Prefix",
-                "value": "work"
-              }
-            }
-          ]
-        },
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "`home AND NOT work*`: S4 only; S2 is excluded by the `Not` over the prefix.",
-      "name": "expr_not_prefix_inside_and"
-    },
-    {
-      "args": {
-        "expr": {
-          "type": "Not",
-          "value": {
-            "type": "Tag",
-            "value": "S10"
-          }
-        },
-        "includeInherited": true,
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "`NOT work` with inheritance on: S9 inherits `work` from S8, so it leaves the complement too (S1, S3, S4, S6, S10, S11, S12).",
-      "name": "expr_not_with_inherited"
-    },
-    {
-      "args": {
-        "expr": {
-          "type": "And",
-          "value": []
-        },
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "`And` over no children is the EMPTY set (`resolve.rs`), not the identity of intersection; a mock built on `[].every()` returns every live block.",
-      "expect_empty": true,
-      "name": "expr_and_of_nothing_is_empty"
-    },
-    {
-      "args": {
         "limit": 100,
         "mode": "or",
         "prefixes": ["Ärg"],
@@ -1302,39 +1143,6 @@
       "comment": "The discriminating arm: LIKE folds `A`-`Z` only, so `är%` does not reach `Ärger` and the leaf selects no tag at all. A prefix resolver that folds through `toLowerCase()` answers S3 here. Empty on purpose; non-vacuous because the arm above serves a row through the same command.",
       "expect_empty": true,
       "name": "prefix_leaf_lower_umlaut_reaches_nothing"
-    },
-    {
-      "args": {
-        "expr": {
-          "type": "Prefix",
-          "value": "är"
-        },
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "The same ASCII-only fold through the EXPRESSION compiler rather than the flat `prefixes` list — a second code path in the mock (`evalTagQuery`'s `prefixTagIds`), pinned beside the `Ärg` arm below so it is not a half-covered pair.",
-      "expect_empty": true,
-      "name": "expr_prefix_leaf_lower_umlaut_reaches_nothing"
-    },
-    {
-      "args": {
-        "expr": {
-          "type": "Prefix",
-          "value": "Ärg"
-        },
-        "limit": 100,
-        "scope": {
-          "kind": "active",
-          "space_id": "$SPACE"
-        }
-      },
-      "command": "query_by_tag_expr",
-      "comment": "The other arm of the expression pair: `Ärg%` reaches `Ärger` and answers its holder S3.",
-      "name": "expr_prefix_leaf_upper_umlaut_reaches_s3"
     }
   ],
   "seed": {

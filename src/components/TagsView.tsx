@@ -1,20 +1,15 @@
 /**
- * TagsView — the `tags` sidebar view.
+ * TagsView — the `tags` sidebar view: the tag browser (`TagList`).
  *
- * Composes the tag browser (`TagList`) with the tag-filter panel
- * (`TagFilterPanel`), separated by a labelled section divider; the panel
- * shows only while the space has a tag. Extracted
- * from the inline `tags` branch of `ViewDispatcher` (#1649) so the router
- * delegates to a single view component like every other case, and so the
- * section label flows through i18n rather than a hardcoded literal.
+ * Extracted from the inline `tags` branch of `ViewDispatcher` (#1649) so the
+ * router delegates to a single view component like every other case. Blocks
+ * are filtered by tag in Search (`tag:` / `under:` / `not-tag:`, joined by
+ * `OR`), not here.
  */
 
 import type { ReactElement } from 'react'
-import { useTranslation } from 'react-i18next'
 
-import { TagFilterPanel } from '@/components/filters/TagFilterPanel'
 import { TagList } from '@/components/TagList'
-import { Separator } from '@/components/ui/separator'
 
 export interface TagsViewProps {
   /** Open a tag's page when a tag is clicked in the list. */
@@ -22,21 +17,9 @@ export interface TagsViewProps {
 }
 
 export function TagsView({ onTagClick }: TagsViewProps): ReactElement {
-  const { t } = useTranslation()
   return (
     <div className="mx-auto w-full max-w-list">
-      <TagList onTagClick={onTagClick}>
-        <div className="space-y-8 pt-4">
-          <div className="flex items-center gap-4">
-            <Separator className="flex-1" />
-            <span className="text-xs font-medium text-muted-foreground">
-              {t('tagFilter.sectionLabel')}
-            </span>
-            <Separator className="flex-1" />
-          </div>
-          <TagFilterPanel />
-        </div>
-      </TagList>
+      <TagList onTagClick={onTagClick} />
     </div>
   )
 }

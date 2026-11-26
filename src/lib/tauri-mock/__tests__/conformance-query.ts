@@ -587,12 +587,6 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
-  query_by_tag_expr: {
-    rows: PAGED,
-    token: BLOCK_TOKEN,
-    hasMoreKey: 'has_more',
-    totalKey: 'total_count',
-  },
   search_blocks: { rows: PAGED, token: ID_TOKEN, hasMoreKey: 'has_more', totalKey: 'total_count' },
   search_blocks_partitioned: {
     rows: { kind: 'partitions', keys: ['pages', 'blocks'] },

@@ -395,6 +395,22 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "search_excluded_tag_drops_its_nested_tags",
+      "rows": ["B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_excluded_tag_stays_attached_beside_under",
+      "rows": ["B6", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "advanced_parent_tag_finds_nested_tags",
       "rows": ["B11", "B4", "B3", "B2"],
       "total_count": 4
@@ -553,6 +569,41 @@
       "command": "search_blocks",
       "comment": "A group AND-s with `tagIds`: under `projects/web`, only S4 carries one of the group.",
       "name": "search_tag_any_of_and_tag_ids"
+    },
+    {
+      "args": {
+        "filter": {
+          "excludedTagIds": ["S8"],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`excludedTagIds` (`not-tag:`) drops what the same `tagIds` entry keeps: under `projects`, every block carrying `projects/web` or a tag under it goes, leaving S2.",
+      "name": "search_excluded_tag_drops_its_nested_tags"
+    },
+    {
+      "args": {
+        "filter": {
+          "excludedTagIds": ["S8"],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"],
+          "tagsMatchInlineAndInherited": true
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`tagsMatchInlineAndInherited` does not widen the exclusion: S6 only inherits `projects/web`, so it stays beside S2.",
+      "name": "search_excluded_tag_stays_attached_beside_under"
     },
     {
       "args": {

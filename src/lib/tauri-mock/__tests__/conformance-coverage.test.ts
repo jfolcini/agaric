@@ -350,8 +350,8 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // #3872) that the waiver had been quietly covering for.
 
   // ── Legacy tag / property query surface ──
-  // `query_by_property`, `query_by_tags` and `query_by_tag_expr` are NOT
-  // waived: their boundary steps are in `query_tag_and_property_boundaries.json`;
+  // `query_by_property` and `query_by_tags` are NOT waived: their boundary
+  // steps are in `query_tag_and_property_boundaries.json`;
   // `list_all_tags_in_space`, `list_tags_by_prefix`, `list_property_keys` and
   // `list_property_values` are in `query_tag_and_property_listings.json` (#3827).
 

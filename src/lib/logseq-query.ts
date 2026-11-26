@@ -199,6 +199,7 @@ function negate(node: Node): Node {
             case 'notPriority':
             case 'notProp':
             case 'notState':
+            case 'notTag':
             case 'pathExclude':
             case 'scheduled':
             case 'tag':

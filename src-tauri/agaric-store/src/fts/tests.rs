@@ -9124,6 +9124,108 @@ async fn tag_any_of_needs_one_tag_of_every_group_6760() {
     );
 }
 
+/// `excluded_tag_ids` (`not-tag:`): a block carrying the tag or one nested
+/// under it, attached, leaves the filter-only scan, the FTS match, the regex
+/// scan and the partitioned scan alike; an untagged block stays.
+#[tokio::test]
+async fn excluded_tags_drop_their_blocks_and_nested_tags_on_every_surface() {
+    let (pool, _dir) = test_pool().await;
+    seed_nested_tags(&pool).await;
+    insert_block(&pool, "UNTAGGED", "content", "projects", None, Some(30)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+    let not = |tags: &[&str]| MetadataPredicates {
+        excluded_tag_ids: tags.iter().map(ToString::to_string).collect(),
+        ..MetadataPredicates::default()
+    };
+
+    // `tag:#projects not-tag:#projects/web`: `projects/web/site` is nested
+    // under the excluded tag, so its block goes too.
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_PARENT], not(&[NEST_WEB])).await,
+        ["ON-API", "ON-PROJECTS"],
+    );
+    assert_eq!(
+        nested_tag_search(&pool, &[NEST_PARENT], not(&[NEST_SITE, NEST_API])).await,
+        ["ON-PROJECTS", "ON-WEB"],
+        "several exclusions drop a block carrying any of them"
+    );
+    let content = |ids: Vec<String>| -> Vec<String> {
+        ids.into_iter()
+            .filter(|id| id.starts_with("ON-") || id == "UNTAGGED")
+            .collect()
+    };
+    assert_eq!(
+        content(nested_tag_search(&pool, &[], not(&[NEST_PARENT])).await),
+        ["ON-LOOKALIKE", "ON-OTHER-SPACE", "ON-TRASHED", "UNTAGGED"],
+        "alone it keeps the untagged block and the blocks of tags not nested under it"
+    );
+
+    assert_eq!(
+        content(nested_tag_search_for(&pool, "projects", &[], not(&[NEST_WEB])).await),
+        [
+            "ON-API",
+            "ON-LOOKALIKE",
+            "ON-OTHER-SPACE",
+            "ON-PROJECTS",
+            "ON-TRASHED",
+            "UNTAGGED"
+        ],
+    );
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![NEST_PARENT.to_owned()];
+    let regex = SearchToggles {
+        is_regex: true,
+        ..new3_toggles_off()
+    };
+    let mut ids: Vec<String> = search_with_toggles(
+        &pool,
+        "proj",
+        &page,
+        None,
+        Some(&tags),
+        &SearchScope::AllSpaces,
+        &[],
+        &[],
+        regex,
+        None,
+        &not(&[NEST_WEB]),
+        None,
+    )
+    .await
+    .unwrap()
+    .items
+    .iter()
+    .map(|r| r.id.as_str().to_owned())
+    .collect();
+    ids.sort();
+    assert_eq!(ids, ["ON-API", "ON-PROJECTS"], "regex scan");
+
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "projects",
+        10,
+        50,
+        None,
+        Some(&tags),
+        &SearchScope::AllSpaces,
+        &[],
+        &[],
+        new3_toggles_off(),
+        &not(&[NEST_WEB]),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut ids: Vec<String> = scan
+        .blocks
+        .iter()
+        .map(|r| r.id.as_str().to_owned())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["ON-API", "ON-PROJECTS"], "partitioned scan");
+}
+
 /// #6742 — `filter_expr`, the tree the app sends for a query whose `OR` joins
 /// filters: one parenthesised clause, AND-ed with the rest, on the filter-only
 /// scan and beside a MATCH.

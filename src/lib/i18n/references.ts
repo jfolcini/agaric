@@ -1138,6 +1138,8 @@ export const references: Record<string, string> = {
   'search.help.filter.cell.bareTag': 'Bare alias for tag:#name.',
   'search.help.filter.cell.underTag':
     'Block carries the tag, or a tag nested under it, attached, written inline, or inherited from its page or a parent block.',
+  'search.help.filter.cell.notTag':
+    'Block carries neither the tag nor a tag nested under it, attached; inline and inherited tags do not count. Repeats exclude more.',
   'search.help.filter.cell.path': 'Page-name glob include. Comma-separated values OR-combine.',
   'search.help.filter.cell.notPath': 'Page-name glob exclude.',
   'search.help.filter.cell.state':

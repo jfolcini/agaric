@@ -162,3 +162,68 @@ describe('useSearchResults — tag resolution gating (#717)', () => {
     expect(searchPayloads()[0]?.query).toBe('meeting')
   })
 })
+
+describe('useSearchResults — not-tag: resolution', () => {
+  it('holds the search while a not-tag: name resolves, then excludes its id', async () => {
+    let resolveLookup!: (tags: TagCacheRow[]) => void
+    mockedListTags.mockReturnValue(
+      new Promise<TagCacheRow[]>((resolve) => {
+        resolveLookup = resolve
+      }),
+    )
+
+    renderSearch('meeting not-tag:#wip')
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(mockedSearchBlocks).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveLookup([wipTag])
+    })
+
+    await waitFor(() => {
+      expect(mockedSearchBlocks).toHaveBeenCalled()
+    })
+    expect(searchPayloads()[0]?.excludedTagIds).toEqual(['TAG_WIP'])
+    expect(searchPayloads()[0]?.tagIds).toBeUndefined()
+  })
+
+  it('excludes the tags nested under a name no tag holds, and nothing for an unknown name', async () => {
+    mockedListTags.mockResolvedValue([
+      { ...wipTag, tag_id: 'TAG_WEB', name: 'projects/web' },
+      { ...wipTag, tag_id: 'TAG_API', name: 'projects/api' },
+    ])
+
+    renderSearch('meeting not-tag:#projects not-tag:#typo')
+
+    await waitFor(() => {
+      expect(mockedSearchBlocks).toHaveBeenCalled()
+    })
+    for (const payload of searchPayloads()) {
+      expect(payload.excludedTagIds).toEqual(['TAG_WEB', 'TAG_API'])
+      expect(payload.tagIds).toBeUndefined()
+    }
+  })
+
+  it('compiles a not-tag: in an OR query to the complement of its resolved tag', async () => {
+    mockedListTags.mockResolvedValue([wipTag])
+
+    renderSearch('state:DONE OR not-tag:#wip')
+
+    await waitFor(() => {
+      expect(mockedSearchBlocks).toHaveBeenCalled()
+    })
+    expect(searchPayloads()[0]?.filterExpr).toEqual({
+      type: 'Or',
+      children: [
+        {
+          type: 'Leaf',
+          primitive: { type: 'State', values: ['DONE'], is_null: false, exclude: false },
+        },
+        { type: 'Not', child: { type: 'Leaf', primitive: { type: 'Tag', tag: 'TAG_WIP' } } },
+      ],
+    })
+  })
+})

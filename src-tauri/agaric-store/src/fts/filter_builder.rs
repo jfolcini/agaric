@@ -32,7 +32,7 @@ use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
     PropertyValue, SearchProjection,
 };
-use crate::filters::{CompileExpr, SqlFragment};
+use crate::filters::{CompileExpr, FilterExpr, SqlFragment};
 use crate::search_types::{DateOp, SearchPropertyFilter, SearchScope};
 use crate::space::SpaceId;
 
@@ -778,6 +778,20 @@ impl StructuralFilterBuilder {
             self.add_last_edited_via_projection(METADATA_AND_PREFIX, spec);
         }
 
+        // `not-tag:` — the complement of the `Tag` leaves, attached only.
+        if !metadata.excluded_tag_ids.is_empty() {
+            let leaves = metadata
+                .excluded_tag_ids
+                .iter()
+                .map(|tag| FilterExpr::leaf(FilterPrimitive::Tag { tag: tag.clone() }));
+            let wc = SearchProjection.compile_expr(&FilterExpr::Not {
+                child: Box::new(FilterExpr::Or {
+                    children: leaves.collect(),
+                }),
+            });
+            self.add_projection_clause(METADATA_AND_PREFIX, &wc.sql, &wc.binds);
+        }
+
         // #6742 — an OR of filters, as one parenthesised clause.
         if let Some(expr) = &metadata.filter_expr {
             let wc = SearchProjection.compile_expr(expr);
@@ -1442,6 +1456,7 @@ mod tests {
             last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
             tags_match_inline_and_inherited: false,
             tag_any_of: Vec::new(),
+            excluded_tag_ids: Vec::new(),
             filter_expr: None,
         };
         let mut fb = StructuralFilterBuilder::new(6);

@@ -239,28 +239,6 @@ describe('TagList', () => {
     expect(await screen.findByText(/No tags yet/)).toBeInTheDocument()
   })
 
-  // #7040 — a tag filter with no tag to pick was shown all the same.
-  it('shows what goes under the list only while there is a tag', async () => {
-    stubTags([])
-    const { unmount } = render(
-      <TagList>
-        <p>below the list</p>
-      </TagList>,
-    )
-    expect(await screen.findByText(/No tags yet/)).toBeInTheDocument()
-    expect(screen.queryByText('below the list')).not.toBeInTheDocument()
-    unmount()
-
-    stubTags([makeTag('T1', 'work')])
-    render(
-      <TagList>
-        <p>below the list</p>
-      </TagList>,
-    )
-    expect(await screen.findByTestId('tag-item-work')).toBeInTheDocument()
-    expect(screen.getByText('below the list')).toBeInTheDocument()
-  })
-
   it('shows skeleton loaders during initial load', () => {
     // Mock that never resolves — keeps loading state
     stubInvoke({ list_all_tags_in_space: () => new Promise<TagCacheRow[]>(() => {}) })

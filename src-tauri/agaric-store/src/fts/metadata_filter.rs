@@ -108,6 +108,9 @@ pub struct MetadataPredicates {
     /// [`SearchFilter::tag_any_of`], carried here for the same reason as
     /// [`Self::last_edited`].
     pub tag_any_of: Vec<Vec<String>>,
+    /// [`SearchFilter::excluded_tag_ids`], deduped and uppercased, carried
+    /// here for the same reason as [`Self::last_edited`].
+    pub excluded_tag_ids: Vec<String>,
     /// [`SearchFilter::filter_expr`], carried here for the same reason as
     /// [`Self::last_edited`].
     pub filter_expr: Option<FilterExpr>,
@@ -215,6 +218,7 @@ impl MetadataPredicates {
             && self.property_excludes.is_empty()
             && self.last_edited.is_none()
             && self.tag_any_of.is_empty()
+            && self.excluded_tag_ids.is_empty()
             && self.filter_expr.is_none()
     }
 }
@@ -229,9 +233,6 @@ impl MetadataPredicates {
 pub fn prepare_metadata(filter: &SearchFilter) -> Result<MetadataPredicates, AppError> {
     let today = chrono::Local::now().date_naive();
     let mut out = prepare_metadata_with_today(filter, today)?;
-    // Set here, not in `prepare_metadata_with_today`: the mock's conformance
-    // ratchet reads that body as the list of fields `is_empty` checks, and
-    // this mode is not a filter.
     out.tags_match_inline_and_inherited = filter.tags_match_inline_and_inherited;
     Ok(out)
 }
@@ -319,6 +320,7 @@ pub fn prepare_metadata_with_today(
     }
     out.last_edited = filter.last_edited.clone();
     out.tag_any_of = filter.tag_any_of.clone();
+    out.excluded_tag_ids = super::filter_builder::normalize_tag_ids(Some(&filter.excluded_tag_ids));
     if let Some(expr) = &filter.filter_expr {
         validate_search_expr(expr)?;
     }

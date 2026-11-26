@@ -1166,6 +1166,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         last_edited: Some(agaric_store::filters::primitive::LastEditedSpec::Rolling { days: 7 }),
         tags_match_inline_and_inherited: true,
         tag_any_of: Vec::new(),
+        excluded_tag_ids: Vec::new(),
         filter_expr: None,
     };
 

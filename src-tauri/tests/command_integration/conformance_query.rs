@@ -107,8 +107,7 @@ use super::common::pages::{
 use super::common::properties::{list_property_keys_inner, list_property_values_inner};
 use super::common::queries::{query_by_property_inner, search_blocks_partitioned_inner};
 use super::common::tags::{
-    list_all_tags_in_space_inner, list_tags_by_prefix_inner, query_by_tag_expr_inner,
-    query_by_tags_inner,
+    list_all_tags_in_space_inner, list_tags_by_prefix_inner, query_by_tags_inner,
 };
 use super::common::*;
 use super::conformance::{
@@ -118,7 +117,6 @@ use super::conformance_snapshot::token_key;
 use agaric_core::ulid::{BlockId, PageId};
 use agaric_store::backlink::{BacklinkFilter, BacklinkSort, LinkKind};
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
-use agaric_store::tag_query::TagExpr;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -1069,24 +1067,6 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 arg_or(args, "tagIds"),
                 arg_or(args, "prefixes"),
                 arg_req(args, "mode"),
-                opt_arg_as(args, "includeInherited"),
-                opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
-                opt_arg(args, "limit").and_then(|v| v.as_i64()),
-                &scope,
-                opt_arg(args, "blockType").and_then(|v| v.as_str().map(str::to_owned)),
-            )
-            .await?;
-            page_result_with(
-                &serde_json::to_value(&resp).expect("serialize PageResponse"),
-                &|row| row_token(row, "id", BLOCK_ATTRS),
-            )
-        }
-        "query_by_tag_expr" => {
-            let expr: TagExpr = arg_req(args, "expr");
-            let scope: SpaceScope = arg_req(args, "scope");
-            let resp = query_by_tag_expr_inner(
-                pool,
-                expr,
                 opt_arg_as(args, "includeInherited"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
@@ -3137,7 +3117,7 @@ mod reader_delegation_tests {
     /// that makes the sweep's conclusion a claim about the CURRENT code.
     // #3264 retired `get_blocks`, a plain SELECT, from the 20 arms swept.
     // #3827 wired `query_by_property`, `query_by_tags` and
-    // `query_by_tag_expr`: each is a plain SELECT behind its `*_inner`
+    // `query_by_tag_expr` (since retired): each is a plain SELECT behind its `*_inner`
     // (`pagination::query_by_property`, `tag_query::eval_tag_query`), so
     // the writer set below is unchanged.
     // #3829 wired `list_trash`, `list_all_pages_in_space` and
@@ -3296,7 +3276,7 @@ mod reader_delegation_tests {
     // (`commands/tag_properties.rs`), the preview after a `blocks` and a
     // `property_definitions` lookup. The write it previews is
     // `set_property_on_tagged_blocks`, not a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 74;
+    const SWEPT_ARM_COUNT: usize = 73;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

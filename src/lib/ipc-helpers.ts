@@ -425,6 +425,8 @@ export async function searchBlocks(
     tagsMatchInlineAndInherited?: boolean | undefined
     /** Tag-id groups, one tag of each required. See `SearchFilter`. */
     tagAnyOf?: string[][] | undefined
+    /** `not-tag:` projection: drop blocks carrying one of these tags. See `SearchFilter`. */
+    excludedTagIds?: string[] | undefined
     cursor?: string | undefined
     limit?: SafeLimit | undefined
     spaceId: string
@@ -508,6 +510,7 @@ export async function searchBlocks(
         excludedPriorityFilter: params.excludedPriorityFilter ?? [],
         tagsMatchInlineAndInherited: params.tagsMatchInlineAndInherited ?? false,
         ...(params.tagAnyOf ? { tagAnyOf: params.tagAnyOf } : {}),
+        ...(params.excludedTagIds ? { excludedTagIds: params.excludedTagIds } : {}),
         ...(params.filterExpr ? { filterExpr: params.filterExpr } : {}),
       }),
       signal,

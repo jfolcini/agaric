@@ -94,8 +94,8 @@ export interface QueryTextProblem {
  * What to run, or why not: the tokens the block cannot run, none when it holds
  * nothing to run at all. `fulltext` is the text outside every filter, empty for
  * none. `textOnly` marks what the builder's form has no control for (free text,
- * `under:`, a page-name glob, and a relative date, which the form would save as
- * today's dates).
+ * `under:`, `not-tag:`, a page-name glob, and a relative date, which the form
+ * would save as today's dates).
  */
 export type CompiledQueryText =
   | { ok: true; filter: FilterExpr; fulltext: string; textOnly: boolean }
@@ -126,7 +126,7 @@ function tokenProblem(token: FilterToken): string | null {
 /** Whether the builder's form has no control for `token`. */
 function isTextOnly(token: FilterToken): boolean {
   if (token.kind === 'pathInclude' || token.kind === 'pathExclude') return true
-  if (token.kind === 'under') return true
+  if (token.kind === 'under' || token.kind === 'notTag') return true
   return (
     (token.kind === 'due' || token.kind === 'scheduled') &&
     token.value.kind === 'named' &&
@@ -141,7 +141,7 @@ function isTextOnly(token: FilterToken): boolean {
  */
 function tagConditionIn(
   tags: ReadonlyArray<{ tag_id: string; name: string }>,
-  token: Extract<FilterToken, { kind: 'tag' | 'under' }>,
+  token: Extract<FilterToken, { kind: 'tag' | 'under' | 'notTag' }>,
 ): FilterExpr | null {
   const type = token.kind === 'under' ? 'TagUnder' : 'Tag'
   const name = token.value.normalize('NFC').toLowerCase()
@@ -231,10 +231,21 @@ export function compileQueryTextWithTags(
     }
   }
 
+  // `not-tag:` drops what `tag:` keeps, whatever `under:` widens.
+  const excluded: FilterExpr[] = []
+  for (const token of ast.filters.filter((f) => f.kind === 'notTag')) {
+    const condition = tagConditionIn(tags, token)
+    if (condition === null) {
+      problems.push({ ...at(token), message: t('query.text.unknownTag', { name: token.value }) })
+    } else {
+      excluded.push({ type: 'Not', child: condition })
+    }
+  }
+
   if (problems.length > 0) {
     return { ok: false, problems: problems.toSorted((a, b) => a.column - b.column) }
   }
-  const children = [...conditions(ast.filters, tagIds, tagLeaf, today), ...nestedOnly]
+  const children = [...conditions(ast.filters, tagIds, tagLeaf, today), ...nestedOnly, ...excluded]
   // An empty `And` alone is every block in the space, never what an empty block asked for.
   if (children.length === 0 && ast.freeText === '') return { ok: false, problems: [] }
   return {
@@ -252,7 +263,9 @@ export async function compileQueryText(
   deps: QueryTextDeps,
 ): Promise<CompiledQueryText> {
   const namesATag = readQueryText(expression).ast.filters.some(
-    (f) => (f.kind === 'tag' || f.kind === 'under') && chipTagId(f.value) === null,
+    (f) =>
+      (f.kind === 'tag' || f.kind === 'under' || f.kind === 'notTag') &&
+      chipTagId(f.value) === null,
   )
   return compileQueryTextWithTags(expression, namesATag ? await deps.listTags() : [])
 }

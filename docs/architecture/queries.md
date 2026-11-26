@@ -27,7 +27,7 @@ pub enum TagExpr {
 }
 ```
 
-It is serde-tagged (`{ "type": ..., "value": ... }`) and specta-exported. A tree deserialised at the IPC boundary must pass `TagExpr::validate_depth` before resolution.
+It is serde-tagged (`{ "type": ..., "value": ... }`). `query_by_tags` builds it from flat tag ids, prefixes and a mode (a query block in the older query text); no command takes a tree from the frontend. Search filters by tag through `SearchFilter` instead ([search.md](search.md)).
 
 **Evaluation strategy:** the whole boolean tree compiles to a **single id-set subquery** — `And → INTERSECT`, `Or → UNION`, `Not → b.id NOT IN (<inner>)` against the non-deleted universe — pushed down as `b.id IN (<subquery>)`, so SQLite applies the cursor / `LIMIT` keyset directly instead of materialising the full matching id-set into Rust (#1622). `include_inherited` is resolved by joining against `block_tag_inherited` (the materialised cache); soft-deleted blocks are excluded. Pathologically deep trees (depth > `MAX_PUSHDOWN_DEPTH`, never produced by the real `commands::tags` caller) fall back to the legacy materialise-then-`json_each(?)` set path, which stays byte-identical. `eval_tag_query_pushdown_matches_oracle_for_complex_expressions` pins the pushdown against that set-based oracle.
 

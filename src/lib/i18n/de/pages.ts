@@ -77,7 +77,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeTag': 'Tag {{name}} entfernen',
   'pageHeader.inheritedTag': 'Geerbter Tag {{name}}',
   'pageHeader.inheritedTagHint':
-    'Von einem übergeordneten Block geerbt. Die Tags-Ansicht findet ihn nur, wenn "Verschachtelte Blöcke einbeziehen" aktiviert ist.',
+    'Von einem übergeordneten Block geerbt. Eine Suche findet ihn nur mit under:#tag.',
   'pageHeader.inheritedTagInfo': 'Über geerbte Tags',
   'pageHeader.searchTags': 'Tag suchen oder erstellen...',
   'pageHeader.searchTagsLabel': 'Tags durchsuchen',

@@ -64,6 +64,8 @@ export type FilterToken =
   | { kind: 'tag'; value: string; span: [number, number] }
   // `under:#tag` — the tag attached, written inline, or inherited (#5679)
   | { kind: 'under'; value: string; span: [number, number] }
+  // `not-tag:#tag` — the block carries neither the tag nor one nested under it, attached
+  | { kind: 'notTag'; value: string; span: [number, number] }
   | { kind: 'pathInclude'; value: string; span: [number, number] }
   | { kind: 'pathExclude'; value: string; span: [number, number] }
   // `state:` / `not-state:`

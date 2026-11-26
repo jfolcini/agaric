@@ -76,7 +76,7 @@ export const pages: Record<string, string> = {
   'pageHeader.removeTag': 'Retirer l’étiquette {{name}}',
   'pageHeader.inheritedTag': 'Étiquette héritée {{name}}',
   'pageHeader.inheritedTagHint':
-    'Héritée d’un bloc parent. La vue Étiquettes ne la trouve que si "Inclure les blocs imbriqués" est activé.',
+    'Héritée d’un bloc parent. Une recherche ne la trouve qu’avec under:#tag.',
   'pageHeader.inheritedTagInfo': 'À propos des étiquettes héritées',
   'pageHeader.searchTags': 'Rechercher ou créer une étiquette...',
   'pageHeader.searchTagsLabel': 'Rechercher des étiquettes',

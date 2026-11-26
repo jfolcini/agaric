@@ -36,7 +36,7 @@ When you switch spaces, you re-scope:
 | Sidebar nav (each tab persists per space) | yes |
 | Search results | yes |
 | Pages browser | yes |
-| Tags view + tag filter panel | yes |
+| Tags view | yes |
 | Agenda (all panels: filter, sort, group, projection, Due, Done) | yes |
 | Backlinks (linked + unlinked) + filter dimensions | yes |
 | History view | yes |

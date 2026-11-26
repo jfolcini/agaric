@@ -48,7 +48,7 @@ Browse every tag and the blocks that carry them.
 
 - **Tag list**: all tags in the active space, with usage counts and colour swatches.
 - **Per-tag page**: clicking a tag opens its dedicated page — the title is the tag, and every block referencing it is listed.
-- **Boolean tag queries** in the filter panel — see [tags-and-links.md](tags-and-links.md).
+- **Boolean tag queries** live in Search: `tag:`, `under:`, `not-tag:` and `OR` — see [tags-and-links.md](tags-and-links.md#boolean-tag-queries).
 - **Rename / recolour** a tag from its tag page header.
 
 ## Query (advanced query)

@@ -563,6 +563,8 @@ export const references: Record<string, string> = {
   'search.help.filter.cell.bareTag': 'Forma abreviada de tag:#name.',
   'search.help.filter.cell.underTag':
     'El bloque lleva la etiqueta, o una etiqueta anidada bajo ella, ya sea adjunta, escrita en línea o heredada de su página o de un bloque padre.',
+  'search.help.filter.cell.notTag':
+    'El bloque no lleva adjunta la etiqueta ni ninguna anidada bajo ella; las etiquetas en línea y las heredadas no cuentan. Repetirlo excluye más.',
   'search.help.filter.cell.path':
     'Incluye por glob del nombre de página. Los valores separados por comas se combinan con OR.',
   'search.help.filter.cell.notPath': 'Excluye por glob del nombre de página.',

@@ -58,6 +58,9 @@ export function tokenSource(t: FilterToken): string {
     case 'under': {
       return `${t.kind}:#${quoteValueIfNeeded(t.value)}`
     }
+    case 'notTag': {
+      return `not-tag:#${quoteValueIfNeeded(t.value)}`
+    }
     case 'pathInclude': {
       return `path:${quoteValueIfNeeded(t.value)}`
     }

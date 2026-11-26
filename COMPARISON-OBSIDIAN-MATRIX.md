@@ -93,8 +93,8 @@
 | Inline tags | `#tag` in text or the `tags` property | `#[ULID]` chips; typed `#name` converts; `#[[multi word]]` reads as the existing tag of that name, else `multi-word`, and a new tag name holds no whitespace (#6334); same boundary rule as Obsidian on import | Done |
 | Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | `/` nests by name: `tag:#a` matches `#a/b` in search, query blocks and the query builder, and the Tags view nests them (`docs/features/tags-and-links.md`); no filter for the one tag without its nested tags | Done |
 | Tag rename | Not in the *Tags* or *Tags view* help pages; the community Tag Wrangler plugin | Built in; chips hold the id, so one rename updates everything | Better vs core |
-| Boolean tag queries | Search operators | `TagExpr` with And / Or / Not / Prefix | Done |
-| Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in in the Tags view and `under:` in search and in a typed query block (#6742); not in the query builder's form | Partial |
+| Boolean tag queries | Search operators | Search's `tag:` (AND), `OR` with parentheses and `not-tag:` | Done |
+| Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in with `under:` in search and in a typed query block (#6742); not in the query builder's form | Partial |
 
 ## 6. Search
 

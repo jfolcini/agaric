@@ -34,6 +34,7 @@ export interface SearchFilterParams {
   tagIds?: string[] | undefined
   tagsMatchInlineAndInherited?: boolean | undefined
   tagAnyOf?: string[][] | undefined
+  excludedTagIds?: string[] | undefined
   includePageGlobs?: string[] | undefined
   excludePageGlobs?: string[] | undefined
   stateFilter?: string[] | undefined
@@ -67,6 +68,7 @@ export function treeFilterParams(
   try {
     return {
       filterExpr: compileFilterTree(ast, (token) => {
+        // `not-tag:` excludes what `tag:` keeps: attached tags only.
         const type = token.kind === 'under' ? 'TagUnder' : 'Tag'
         const resolved = byName.get(token.value.normalize('NFC').toLowerCase()) ?? []
         const ids = typeof resolved === 'string' ? [resolved] : resolved
@@ -85,6 +87,8 @@ export function astFilterParams(
   projection: AstFilterProjection,
   tagIds: string[],
   tagAnyOf: string[][] = [],
+  /** The ids `not-tag:` names resolved to; a name no tag holds excludes nothing. */
+  excludedTagIds: string[] = [],
 ): SearchFilterParams {
   // Issue #2258 — the search surface emits its IPC bundle directly from the
   // parsed `AstFilterProjection`. It previously round-tripped the projection
@@ -103,6 +107,7 @@ export function astFilterParams(
   return {
     tagIds: hasUnresolvedTag ? [UNRESOLVED_TAG_SENTINEL] : tagIds.length === 0 ? undefined : tagIds,
     tagAnyOf: tagAnyOf.length === 0 ? undefined : tagAnyOf,
+    excludedTagIds: excludedTagIds.length === 0 ? undefined : excludedTagIds,
     tagsMatchInlineAndInherited: projection.tagsMatchInlineAndInherited || undefined,
     includePageGlobs:
       projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,

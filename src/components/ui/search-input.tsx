@@ -1,8 +1,8 @@
 /**
  * SearchInput — Input wrapper that renders a clear (✕) button when the
  * Field has content. Replaces the bare `Input` primitive for
- * filter / search use cases across the app (SearchPanel, TagFilterPanel,
- * TrashView, BacklinkFilterBuilder, PageBrowser).
+ * filter / search use cases across the app (SearchPanel, TrashView,
+ * BacklinkFilterBuilder, PageBrowser).
  *
  * Design decisions:
  *  - Composes the existing `Input` primitive rather than duplicating
