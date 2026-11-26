@@ -1291,6 +1291,12 @@
   font-size: var(--heading-6-size);
   line-height: var(--heading-6-leading);
 }
+/* A table's cells and a code block: note text a step under the body, so they
+   follow the font-size setting like it; `text-sm` at Medium. */
+@utility text-block-sm {
+  font-size: calc(var(--agaric-font-size, 1rem) * 0.875);
+  line-height: var(--text-sm--line-height);
+}
 
 /* The first line box of a block's text, on which its grip, chevron and
    checkbox centre in both editing modes (`min-h-block-line`): the text's line
@@ -1714,11 +1720,11 @@
 
 /* Code block styles inside the editor */
 .ProseMirror pre {
-  @apply bg-muted rounded-md px-3 py-2 text-sm font-mono;
+  @apply bg-muted rounded-md px-3 py-2 text-block-sm font-mono;
   margin: 0;
 }
 .ProseMirror pre code {
-  @apply bg-transparent p-0 text-sm font-mono;
+  @apply bg-transparent p-0 text-block-sm font-mono;
 }
 
 /* Lists and the thematic break inside the editor. Without these, edit-mode
@@ -1822,7 +1828,7 @@
 }
 .ProseMirror th,
 .ProseMirror td {
-  @apply border border-border px-3 py-1.5 text-sm align-top;
+  @apply border border-border px-3 py-1.5 text-block-sm align-top;
   min-width: 5rem;
 }
 .ProseMirror th {

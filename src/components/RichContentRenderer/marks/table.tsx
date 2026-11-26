@@ -76,7 +76,7 @@ export function renderTableBlock(
               key={cellKey}
               scope="col"
               className={cn(
-                'border border-border bg-muted/60 px-3 py-1.5 text-sm font-medium align-top',
+                'border border-border bg-muted/60 px-3 py-1.5 text-block-sm font-medium align-top',
                 ALIGN_CLASS[align ?? 'left'],
               )}
             >
@@ -86,7 +86,7 @@ export function renderTableBlock(
             <td
               key={cellKey}
               className={cn(
-                'border border-border px-3 py-1.5 text-sm align-top',
+                'border border-border px-3 py-1.5 text-block-sm align-top',
                 align && ALIGN_CLASS[align],
               )}
             >

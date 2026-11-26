@@ -2,12 +2,14 @@
  * #5369 — Settings › Appearance › Font size scales a block's text together
  * with its row controls (the task checkbox, the due-date chip's icon), keeps
  * Medium at today's pixels, and leaves the app chrome (a sidebar icon) fixed.
+ * A table's cells and a code block are note text too, a step smaller (#7040).
  * This is geometry, which happy-dom cannot measure.
  */
 
 import type { Locator } from '@playwright/test'
 
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import { expect, focusBlockById, ipc, openPage, test, waitForBoot } from './helpers'
 
 const PAGE = 'Projects'
 const TASK = 'Fix login bug'
@@ -15,8 +17,14 @@ const TASK = 'Fix login bug'
 const TEXT_PX = { small: 14, medium: 16, large: 18 } as const
 /** Today's sizes at Medium: the 16px checkbox and the 14px chip icon. */
 const MEDIUM = { text: 16, checkbox: 16, chipIcon: 14 } as const
+/** A table cell and a code block at Medium: `text-sm`. */
+const MEDIUM_SMALL_TEXT = 14
 /** The sidebar nav icon: the nav row's `size-4`, chrome, the same at every setting. */
 const SIDEBAR_ICON_PX = 16
+
+function fontSize(locator: Locator): Promise<string> {
+  return locator.evaluate((el) => getComputedStyle(el).fontSize)
+}
 
 async function width(locator: Locator): Promise<number> {
   const box = await locator.boundingBox()
@@ -25,7 +33,7 @@ async function width(locator: Locator): Promise<number> {
 }
 
 for (const [size, textPx] of Object.entries(TEXT_PX)) {
-  test.describe(`font size ${size} @settings`, () => {
+  test.describe(`font size ${size} @settings @editor`, () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
     test.beforeEach(async ({ page }) => {
@@ -60,6 +68,48 @@ for (const [size, textPx] of Object.entries(TEXT_PX)) {
           contentType: 'image/png',
         })
       }
+    })
+
+    test('a table and a code block keep their ratio to the block text, read and edited', async ({
+      page,
+    }) => {
+      const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+      const title = `Small text ${size}`
+      const pageId = await ipc<string>(page, 'create_page_in_space', {
+        parentId: null,
+        content: title,
+        spaceId: SEED_IDS.SPACE_PERSONAL,
+      })
+      const create = async (content: string): Promise<string> =>
+        (
+          await ipc<{ id: string }>(page, 'create_block', {
+            blockType: 'content',
+            content,
+            parentId: pageId,
+            index: null,
+            scope,
+          })
+        ).id
+      const table = await create('| Screen | Owner |\n| --- | --- |\n| Journal | Ana |')
+      const code = await create('```ts\nconst step = 4\n```')
+      await openPage(page, title)
+
+      const small = `${(MEDIUM_SMALL_TEXT * textPx) / MEDIUM.text}px`
+      const row = (id: string) =>
+        page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+      await expect(row(table).getByRole('cell', { name: 'Ana' })).toBeVisible()
+      expect(await fontSize(row(table).getByRole('cell', { name: 'Ana' })), 'table cell').toBe(
+        small,
+      )
+      expect(await fontSize(row(code).locator('pre')), 'code block').toBe(small)
+
+      await focusBlockById(page, table)
+      const editor = page.locator('[data-testid="block-editor"] .ProseMirror')
+      expect(await fontSize(editor.getByRole('cell', { name: 'Ana' })), 'edited table cell').toBe(
+        small,
+      )
+      await focusBlockById(page, code)
+      expect(await fontSize(editor.locator('pre')), 'edited code block').toBe(small)
     })
   })
 }
