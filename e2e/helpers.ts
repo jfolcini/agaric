@@ -132,7 +132,7 @@ export const test = baseTest.extend<
   realBackend: [
     async ({ context, bridge }, use) => {
       if (bridge !== null) {
-        await bridge.request('reset')
+        await bridge.reset()
         await context.addInitScript((url) => {
           ;(window as unknown as Record<string, unknown>)['__AGARIC_BRIDGE__'] = url
         }, bridge.url)
