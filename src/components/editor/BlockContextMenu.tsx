@@ -43,7 +43,6 @@ import {
   getPriorityLabel,
   getTodoLabel,
   priorityHint,
-  shortcutHint,
 } from '@/components/editor/block-context-menu/hints'
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import { useReadAloudRow } from '@/components/editor/block-context-menu/read-aloud-row'
@@ -58,6 +57,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
@@ -158,7 +158,7 @@ function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
       // #1728 — the key is sourced from the `deleteBlock` catalog entry
       // (positional, documentation-only); the "(when empty)" condition follows
       // it as the row's `shortcutNote`.
-      ...(isBulk ? {} : { shortcut: shortcutHint('deleteBlock'), shortcutNote: '(when empty)' }),
+      ...(isBulk ? {} : { shortcut: getShortcutKeys('deleteBlock'), shortcutNote: '(when empty)' }),
     },
   ]
 }
@@ -179,7 +179,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
       action: onIndent ? () => dispatch(onIndent) : undefined,
-      shortcut: shortcutHint('indentBlock'),
+      shortcut: getShortcutKeys('indentBlock'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel,
@@ -189,7 +189,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
       action: onDedent ? () => dispatch(onDedent) : undefined,
-      shortcut: shortcutHint('dedentBlock'),
+      shortcut: getShortcutKeys('dedentBlock'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel,
@@ -199,7 +199,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
       action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
-      shortcut: shortcutHint('moveBlockUp'),
+      shortcut: getShortcutKeys('moveBlockUp'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel,
@@ -209,7 +209,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       label: t('contextMenu.moveDown'),
       icon: <MoveDown className="h-3.5 w-3.5" />,
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
-      shortcut: shortcutHint('moveBlockDown'),
+      shortcut: getShortcutKeys('moveBlockDown'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel,
@@ -223,7 +223,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.duplicate'),
             icon: <CopyPlus className="h-3.5 w-3.5" />,
             action: () => handleAction(onDuplicate),
-            shortcut: shortcutHint('duplicateBlock'),
+            shortcut: getShortcutKeys('duplicateBlock'),
             indented: true,
             disclosureId: moveArrangeGroupId,
             disclosureLabel,
@@ -237,7 +237,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.merge'),
             icon: <Merge className="h-3.5 w-3.5" />,
             action: () => handleAction(onMerge),
-            shortcut: shortcutHint('mergeWithPrevious'),
+            shortcut: getShortcutKeys('mergeWithPrevious'),
             shortcutNote: '(at start)',
             indented: true,
             disclosureId: moveArrangeGroupId,
@@ -295,7 +295,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
               <ChevronDown className="h-3.5 w-3.5" />
             ),
             action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
-            shortcut: shortcutHint('collapseExpand'),
+            shortcut: getShortcutKeys('collapseExpand'),
           },
         ]
       : []),
@@ -306,7 +306,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.zoomIn'),
             icon: <ZoomIn className="h-3.5 w-3.5" />,
             action: () => handleAction(onZoomIn),
-            shortcut: shortcutHint('zoomIn'),
+            shortcut: getShortcutKeys('zoomIn'),
           },
         ]
       : []),
@@ -331,7 +331,7 @@ function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
       label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
       icon: <CheckSquare className="h-3.5 w-3.5" />,
       action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
-      shortcut: shortcutHint('cycleTaskState'),
+      shortcut: getShortcutKeys('cycleTaskState'),
     },
     ...(isBulk && onBatchSetTodo
       ? BATCH_TODO_STATES.map(([state, labelKey]) => ({
@@ -366,7 +366,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.history'),
             icon: <Clock className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowHistory),
-            shortcut: shortcutHint('openBlockHistory'),
+            shortcut: getShortcutKeys('openBlockHistory'),
           },
         ]
       : []),
@@ -377,7 +377,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
             label: t('contextMenu.properties'),
             icon: <Settings2 className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowProperties),
-            shortcut: shortcutHint('openPropertiesDrawer'),
+            shortcut: getShortcutKeys('openPropertiesDrawer'),
           },
         ]
       : []),
@@ -657,7 +657,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
       },
       expanded: turnIntoOpen,
       disclosureId: turnIntoGroupId,
-      shortcut: shortcutHint('turnIntoBlock'),
+      shortcut: getShortcutKeys('turnIntoBlock'),
     },
     ...(turnIntoOpen
       ? TURN_INTO_OPTIONS.flatMap((opt): MenuItem[] => {
@@ -666,7 +666,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
           const isActive = activeBlockType === blockType
           if (blockType === 'callout') return buildCalloutRows(ctx, isActive, Icon)
           const headingChord = /^h[1-6]$/.test(blockType)
-            ? shortcutHint(`heading${blockType.slice(1)}`)
+            ? getShortcutKeys(`heading${blockType.slice(1)}`)
             : ''
           const row: MenuItem = {
             id: 'turnInto',
