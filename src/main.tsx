@@ -23,6 +23,7 @@ import { setLogBackendSink } from '@/lib/logger-transport'
 import { initFrontendObservability } from '@/lib/observability'
 import { PREFERENCES, pruneImageCollapse, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
+import { syncTouchAttribute } from '@/lib/touch'
 
 /**
  * App-level tooltip baseline (#1094, made user-tunable in #2851). One
@@ -107,6 +108,9 @@ async function main() {
   // wrapper layer #2927 deleted, so nothing but this call keeps frontend
   // warn/error entries reaching the Rust log file.
   setLogBackendSink(logFrontend)
+
+  // Before the first paint, so the `coarse` CSS variant agrees with `useIsTouch`.
+  syncTouchAttribute()
 
   // When running in a regular browser (not Tauri webview), activate IPC mocks
   // so the UI renders for visual development/debugging.

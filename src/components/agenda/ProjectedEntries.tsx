@@ -158,7 +158,7 @@ function ProjectedEntryRowInner({
     >
       {/* `truncate` would clip the chips' touch area (`tag-chip-row`) to the
           line; clipped sideways only, the text still ends in an ellipsis. */}
-      <span className="tag-chip-row min-w-0 flex-1 overflow-x-clip text-ellipsis whitespace-nowrap">
+      <span className="tag-chip-row min-w-0 flex-1 overflow-x-clip text-ellipsis whitespace-nowrap bidi-plaintext">
         {entry.block.content ? (
           <ProjectedEntryContent
             content={entry.block.content}

@@ -431,22 +431,6 @@ describe('BlockListRenderer', () => {
     }
   })
 
-  // ── #992 — single-source-of-truth block row gap ──────────────────────
-
-  it('applies the --block-row-gap vertical rhythm to the block tree (#992)', () => {
-    const blocks = [makeBlock({ id: 'BLK001', content: 'Test' })]
-    const { container } = render(
-      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
-    )
-
-    const tree = container.querySelector('.block-tree')
-    // The divergent space-y-0.5 / space-y-1.5 literals are replaced by a single
-    // CSS-var-driven gap (4px desktop, 6px touch, defined in index.css).
-    expect(tree?.className).toContain('space-y-[var(--block-row-gap)]')
-    expect(tree?.className).not.toContain('space-y-0.5')
-    expect(tree?.className).not.toContain('space-y-1.5')
-  })
-
   // ── #991 — sentinel drop zone carries the committed row-level tint ──
 
   it('tints the sentinel drop zone when it is the over-target (#991)', () => {

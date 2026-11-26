@@ -435,6 +435,38 @@ test.describe('Repeating tasks (#5366, #5734, #5735, #5736) @journal', () => {
       }).toEqual({ counted: after.slice(0, 3), until: after.slice(0, 2), labelled: true })
     },
   )
+
+  test(
+    'a projected row of Arabic mixed with English reads right to left (#7040)',
+    { tag: '@real-only' },
+    async ({ page }) => {
+      await seedTasks(page, 'RTL agenda page', [
+        { task: 'مرحبا Agaric عالم', due: localDay(0), repeat: 'daily' },
+      ])
+      await navigateToView(page, 'Journal')
+      await page.getByRole('tab', { name: 'Agenda view' }).click()
+      const row = page
+        .getByTestId('agenda-view')
+        .getByTestId('projected-entry')
+        .filter({ hasText: 'Agaric' })
+        .first()
+      await expect(row).toBeVisible()
+      // The x of each word's left edge: its first word sits right of the English one.
+      const x = (word: string) =>
+        row.evaluate((root, needle) => {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+          let node = walker.nextNode()
+          while (node !== null && !node.textContent?.includes(needle)) node = walker.nextNode()
+          if (node === null) throw new Error(`no text node with ${needle}`)
+          const start = (node.textContent as string).indexOf(needle)
+          const range = document.createRange()
+          range.setStart(node, start)
+          range.setEnd(node, start + needle.length)
+          return range.getBoundingClientRect().left
+        }, word)
+      expect(await x('مرحبا')).toBeGreaterThan(await x('Agaric'))
+    },
+  )
 })
 
 // #6532: the row's text is one truncated line, and what clips it must not clip the chips' touch area.

@@ -2,8 +2,10 @@
  * useBlockKeyboard — keyboard boundary handling for the roving editor.
  *
  * ArrowUp on the first visual line → prev block, ArrowDown on the last → next
- * block, at the same x (#6537). ArrowLeft at pos 0 → prev block, ArrowRight at
- * end → next block. Shift+ArrowUp/Down at the block's edge → block selection.
+ * block, at the same x (#6537). ArrowLeft / ArrowRight past the edge they point
+ * at → prev block from the start, next block from the end; in a right-to-left
+ * paragraph ArrowRight leaves from the start and ArrowLeft from the end.
+ * Shift+ArrowUp/Down at the block's edge → block selection.
  * Backspace on empty → delete block + focus prev. Enter → create new sibling.
  * Ctrl/Cmd+Shift+ArrowRight → indent. Ctrl/Cmd+Shift+ArrowLeft → dedent.
  */
@@ -247,9 +249,9 @@ function isAtDocEnd(state: EditorState): boolean {
   return to >= state.doc.content.size - 1
 }
 
-/** The ProseMirror view calls the line-wise arrows need; absent on test doubles. */
+/** The ProseMirror view calls the boundary arrows need; absent on test doubles. */
 interface ViewLike {
-  endOfTextblock: (dir: 'up' | 'down') => boolean
+  endOfTextblock: (dir: 'up' | 'down' | 'left' | 'right') => boolean
   coordsAtPos: (pos: number) => { left: number }
 }
 
@@ -285,6 +287,13 @@ export function handleBlockKeyDown(
     onLastLine: isOnEdgeLine(editor, 'down'),
     headAtStart: isHeadAtEdge(editor.state, 'up'),
     headAtEnd: isHeadAtEdge(editor.state, 'down'),
+    // ProseMirror reads the paragraph's direction from the DOM; a test double runs left to right.
+    leaves: (side) =>
+      view
+        ? view.endOfTextblock(side)
+        : side === 'left'
+          ? isAtDocStart(editor.state)
+          : isAtDocEnd(editor.state),
     caretX: () =>
       view && isProseMirrorState(editor.state)
         ? view.coordsAtPos(editor.state.selection.head).left
@@ -335,6 +344,8 @@ interface KeyContext {
   /** The selection's head is at the block's start / end, collapsed or not. */
   headAtStart: boolean
   headAtEnd: boolean
+  /** An arrow toward `side` would leave the caret's textblock; a call, as only ArrowLeft / ArrowRight ask. */
+  leaves: (side: 'left' | 'right') => boolean
   /** The caret's viewport x; a call, as only a boundary arrow asks. Null on a test double. */
   caretX: () => number | null
   isEmpty: boolean
@@ -351,6 +362,19 @@ interface KeyContext {
   link: string | null
   /** Whether the editor's own history can undo / redo; a call, as only Ctrl+Z / Ctrl+Y ask. */
   canHistory: (direction: 'undo' | 'redo') => boolean
+}
+
+/**
+ * Which way ArrowLeft / ArrowRight leaves the block, if it does: past the edge
+ * it points at, which is the start (`'prev'`) or the end (`'next'`) by the
+ * paragraph's direction. An empty block, at both, runs left to right. A
+ * revealed marker on that side takes the arrow (#5689).
+ */
+function horizontalExit(e: KeyEvent, ctx: KeyContext): 'prev' | 'next' | null {
+  const side = e.key === 'ArrowLeft' ? 'left' : e.key === 'ArrowRight' ? 'right' : null
+  if (side === null || !(ctx.atStart || ctx.atEnd) || !ctx.leaves(side)) return null
+  if (ctx.atStart && !(ctx.atEnd && side === 'right')) return ctx.markerBeforeCaret ? null : 'prev'
+  return ctx.markerAfterCaret ? null : 'next'
 }
 
 interface KeyRule {
@@ -557,8 +581,9 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onSelectWithNeighbour?.(e.key === 'ArrowUp' ? 'up' : 'down')
     },
   },
-  // ArrowUp on the first visual line, ArrowLeft at position 0 → previous block
-  // (suppressed when popup open); ArrowUp keeps the caret's x (#6537).
+  // ArrowUp on the first visual line, ArrowLeft / ArrowRight out of the start
+  // (`horizontalExit`) → previous block (suppressed when popup open); ArrowUp
+  // keeps the caret's x (#6537).
   // #910 — `!e.shiftKey`: Shift+Arrow before the edge extends the text selection
   // (the rule above takes it at the edge). Plain Arrow still moves block focus.
   // #921 — `!ctrlKey && !metaKey && !altKey`: word/line-wise motion
@@ -566,9 +591,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // jumping to the adjacent block.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowUp'
-        ? ctx.onFirstLine
-        : e.key === 'ArrowLeft' && !ctx.markerBeforeCaret && ctx.atStart) &&
+      (e.key === 'ArrowUp' ? ctx.onFirstLine : horizontalExit(e, ctx) === 'prev') &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
@@ -581,15 +604,13 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onFocusPrev(x ?? undefined)
     },
   },
-  // ArrowDown on the last visual line, ArrowRight at end → next block
+  // ArrowDown on the last visual line, ArrowLeft / ArrowRight out of the end → next block
   // (suppressed when popup open); ArrowDown keeps the caret's x (#6537).
   // #910 — `!e.shiftKey`; #921 — `!ctrlKey && !metaKey && !altKey`: see the
   // ArrowUp/ArrowLeft rule above.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowDown'
-        ? ctx.onLastLine
-        : e.key === 'ArrowRight' && !ctx.markerAfterCaret && ctx.atEnd) &&
+      (e.key === 'ArrowDown' ? ctx.onLastLine : horizontalExit(e, ctx) === 'next') &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
