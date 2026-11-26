@@ -20,7 +20,7 @@
 | --- | --- | --- | --- |
 | Storage | Plain Markdown files in a folder you choose; `.obsidian/` holds settings | One SQLite database plus Loro state under the app data directory; no at-rest encryption (`README.md`) | Design choice |
 | Edit with other tools | Any editor; external changes are picked up automatically | Only through the Markdown mirror (below) or an export | Partial |
-| Plain-file projection | The vault is the files | **Markdown mirror** (Settings → Data, #5363): one `.md` per page, one folder per space. An outside edit, a new file, a rename or a move is read back as one undoable save, and a deleted file sends its page to the Trash (`src-tauri/src/mirror/`, `docs/features/import-export.md`). *Read changes back*, the per-space switches and *Copy attachments into the folder* are options. **Desktop only, off by default, per device**; the folder must be empty or the mirror's own, so it cannot adopt an existing vault in place (#6540) | Partial |
+| Plain-file projection | The vault is the files | **Markdown mirror** (Settings → Data, #5363): one `.md` per page, one folder per space. An outside edit, a new file, a rename or a move is read back as one undoable save, a deleted file sends its page to the Trash, and many files changed at once wait for a confirmation (`src-tauri/src/mirror/`, `docs/features/import-export.md`). *Read changes back*, the per-space switches and *Copy attachments into the folder* are options. *Open a folder of notes…* keeps an existing vault in place (#6540): its notes are imported into a new space, the folder becomes that space's mirror folder with no file rewritten, and a block changed in Agaric rewrites only its own lines (`src-tauri/src/mirror/adopt.rs`). **Desktop only, off by default, per device**; one device mirrors a folder, and a device keeping a vault in place mirrors no other space | Partial |
 | Folders | Real folders, a file explorer, drag between folders | No folders. Namespaced titles (`a/b/c`) shown as a tree; spaces partition the vault | Design choice |
 | Unit of addressing | The file; a block only once it carries `^id` | Every block has a ULID; nesting is capped (`MAX_BLOCK_DEPTH` in `src-tauri/agaric-store/src/block_descendants.rs`) | Better |
 | Rename safety | Links are names; Obsidian rewrites them on a rename made inside the app (a setting, on by default) | Links are ids; a rename touches no other block | Better |
@@ -46,7 +46,7 @@
 | Footnotes | `[^id]`, plus a Footnotes view core plugin | `[^label]` references numbered by first use and `[^label]:` definition blocks (`src/editor/extensions/footnote.ts`). No footnotes panel | Done |
 | Comments | `%%hidden%%` | A block that is one comment imports, pastes and saves from *Edit as Markdown* as a `comment` callout of its text, shown in the quietest callout style; it is kept and marked, not hidden. A comment inside a sentence stays text with its `%%` markers, counted in one import warning (`comment_as_callout` in `src-tauri/agaric-engine/src/import.rs`, `docs/features/import-export.md`, #6751) | Partial |
 | Highlight colours | Six colours (help, *Basic formatting syntax*; roadmap: October 2026) | The same six, stored in Obsidian's form (`==🔴text==`), picked from the selection bubble or the Format popover, each drawn from a theme token (`src/lib/highlight-colors.ts`, #6759) | Done |
-| Folding | Headings and lists fold | Blocks collapse; the state is per device, not synced | Partial |
+| Folding | Headings and lists fold | Blocks collapse, and a heading folds its section up to the next heading of its level or higher, in blocks and page mode (`src/lib/section-fold.ts`); a fold is per page and device, not synced | Done |
 | Find in note | Find and replace | `Ctrl+F` with case, whole-word and regex; `Ctrl+H` replaces one or all matches in the open page, `$1` groups in regex mode; the Search view replaces literal text across pages, with a preview and an Undo (`docs/SEARCH.md`) | Done |
 | Multiple cursors | Yes (help, *Multiple cursors*) | None | Gap |
 | Slides | Core plugin | None | Gap |
@@ -62,7 +62,7 @@
 | Aliases | `aliases` property; `[[Note\|label]]` | Page aliases as synced ops; `[[Page\|label]]` (`docs/features/tags-and-links.md`). A title and an alias share one name per space, ignoring case and Unicode form: a clash is refused, and a twin made on two devices is renamed `Title (2)` once they sync (#6318, #6345, #6356) | Done |
 | Heading links | `[[Note#Heading]]`, `[[#Heading]]`, nested headings | `[[Page#Heading]]` and `[[#Heading]]` store a reference to the heading's block | Done |
 | Block references | `[[Note#^id]]`; the id is added to the target line; `[[^^` searches blocks vault-wide | `((ULID))` for any block, no id line to add; shown as a chip with a peek (`src/components/BlockRefPeek.tsx`), and a referenced block shows how many blocks reference it. The chip does not render the block's content inline | Partial |
-| Embeds | `![[Note]]`, `![[Note#Heading]]`, `![[Note#^id]]`, images with `\|WxH`, audio, video, PDF, and embedded search queries | `{{embed}}` blocks (typed as `![[`) for pages, headings and blocks, live, editable behind an unlock; rows show their task checkbox, which ticks in place, and read-only chips, but no attachments (#6747), with depth and row caps (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`). Images keep Obsidian's `\|300` width (#4712) | Partial |
+| Embeds | `![[Note]]`, `![[Note#Heading]]`, `![[Note#^id]]`, images with `\|WxH`, audio, video, PDF, and embedded search queries | `{{embed}}` blocks (typed as `![[`) for pages, headings and blocks, live, editable behind an unlock; rows show their task checkbox, which ticks in place, and read-only chips (#6747), but no attachments, with depth and row caps (`MAX_EMBED_DEPTH`, `EMBED_MOUNT_LIMIT` in `src/lib/embed-token.ts`). Images keep Obsidian's `\|300` width (#4712) | Partial |
 | Backlinks | Linked mentions per note, in a pane or in the document, with a search filter, sort order and context toggle (help, *Backlinks*) | Linked references grouped by page, paginated, with a filter tree and a link-kind toggle (`src/components/backlinks/LinkedReferences.tsx`) | Done |
 | Unlinked mentions | Incoming, in Backlinks; outgoing, in Outgoing links | Incoming only, on pages, with "Link it" (`docs/features/tags-and-links.md`) | Partial |
 | Outgoing links pane | Core plugin | An *Outgoing links* section with a page's references, grouped by target page, unresolved targets apart (`src/components/backlinks/OutgoingLinks.tsx`). No outgoing unlinked mentions, and no sidebar pane | Partial |
@@ -75,7 +75,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Where properties live | YAML front matter: **per file only** | On any block or page (`block_properties`), with `key:: value` typing and a drawer | Better |
-| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Boolean, Select, Ref, URL, each but Boolean also as a list (`docs/features/properties.md`, #6741). **No date-time (#6758)** | Partial |
+| Types | Text, List, Number, Checkbox, Date, Date & time, and Tags for the `tags` property (help, *Properties*) | Text, Number, Date, Date & time, Boolean, Select, Ref, URL, each but Boolean also as a list (`docs/features/properties.md`, #6741). A date and time is stored as its moment and shown in the device's time zone (#6758) | Done |
 | Multi-value | List is a first-class type | A definition of any type but boolean can **hold several values**, so a list of text, of dates, a multi-select or a list of pages (#6741). A YAML list imports item for item under any key but `tags` / `aliases` / `attachments`, and exports as the same list (`docs/features/import-export.md`) | Done |
 | Typed references | No reference type; a link is text in a Text or List property | `ref` type, rename-safe, with a chip that opens the target | Better |
 | Enumerations | No select type among the types the help lists; that values autocomplete from use is **unverified** | `select` with options on the definition, option rename across the space | Better |
@@ -93,6 +93,7 @@
 | Inline tags | `#tag` in text or the `tags` property | `#[ULID]` chips; typed `#name` converts; `#[[multi word]]` reads as the existing tag of that name, else `multi-word`, and a new tag name holds no whitespace (#6334); same boundary rule as Obsidian on import | Done |
 | Nested tags | `#a/b` is a real hierarchy: `tag:a` matches `#a/b`, the Tags view nests them (help, *Tags*) | `/` nests by name: `tag:#a` matches `#a/b` in search, query blocks and the query builder, and the Tags view nests them (`docs/features/tags-and-links.md`); no filter for the one tag without its nested tags | Done |
 | Tag rename | Not in the *Tags* or *Tags view* help pages; the community Tag Wrangler plugin | Built in; chips hold the id, so one rename updates everything | Better vs core |
+| A tag's page | Not in the *Tags* help page: clicking a tag searches for it | A tag's page lists what carries the tag and holds notes on it, kept as a page titled `Tag/name`; it also names the properties its blocks are offered and sets one on them all, with Undo (`docs/features/tags-and-links.md`, #6755) | Better vs core |
 | Boolean tag queries | Search operators | Search's `tag:` (AND), `OR` with parentheses and `not-tag:` | Done |
 | Inherited tags | A file's tags apply to the file | A tag on a block can apply to its descendants, opt-in with `under:` in search and in a typed query block (#6742); not in the query builder's form | Partial |
 
@@ -101,7 +102,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Engine | In-app search over notes and canvases; relevance sort and accent-insensitive matching since 1.15.1 | SQLite FTS5 trigram with bm25 relevance and keyset pagination, over text as the editor shows it (escapes decoded, code raw, a `((ref))` as its target's first line, #6330); a term shorter than `TRIGRAM_MIN_LEN` (`src-tauri/agaric-store/src/fts/search/sanitizer.rs`) is found by a scan of the same text (`docs/SEARCH.md`, #6752); **matching is not accent-insensitive** | Partial |
-| Operators | `file:`, `path:`, `content:`, `match-case:`, `ignore-case:`, `tag:`, `line:`, `block:`, `section:`, `task:`, `task-todo:`, `task-done:`, `[property:value]`, `OR`, `-`, parentheses | `tag:`, `under:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:` (`src/lib/search-query/register.ts`); FTS5 `AND` / `OR` / `NOT` on text terms; `OR` and parentheses also join filters (`state:TODO (tag:#work OR tag:#home)`, #6742), but `NOT` takes no filter or group (`docs/SEARCH.md`) | Partial |
+| Operators | `file:`, `path:`, `content:`, `match-case:`, `ignore-case:`, `tag:`, `line:`, `block:`, `section:`, `task:`, `task-todo:`, `task-done:`, `[property:value]`, `OR`, `-`, parentheses | `tag:`, `not-tag:`, `under:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:` (`src/lib/search-query/register.ts`); FTS5 `AND` / `OR` / `NOT` on text terms; `OR` and parentheses also join filters (`state:TODO (tag:#work OR tag:#home)`, #6742), but `NOT` takes no filter or group (`docs/SEARCH.md`) | Partial |
 | Scope of a match | File, or `line:` / `block:` / `section:` when asked | Always the block | Design choice |
 | Regex | `/pattern/`, JavaScript flavour, combinable with operators | A regex toggle in find-across-pages and in `Ctrl+F` | Done |
 | Property comparison | `[duration:<5]` | `prop:key=value` equality in search; comparison, range and existence operators in the query builder (`ALL_PROPERTY_OPS` in `src/components/PageBrowser/add-filter/vocab.ts`) | Partial |
@@ -173,7 +174,7 @@
 | Back / forward | Not checked in the help (**unverified**) | Yes, per space, with mouse buttons and Android back (`src/stores/navigation-history.ts`) | Done |
 | Outline | Core plugin | Page outline (`src/components/pages/PageOutline.tsx`) | Done |
 | Bookmarks | Notes, headings, blocks, searches, graphs | Pages only. A bookmark is a property of its page, so bookmarks and their sidebar order sync between devices; reorder by drag (#6640) | Partial |
-| Web viewer | Core plugin (desktop) | None | Gap |
+| Web viewer | Core plugin, on desktop and, since 1.15.1, mobile | None | Gap |
 | Contexts | One vault per window, each with its own settings and plugins | Spaces with `Alt+1..9`, accent colour, separate journals; one settings set for all (the same trade as *Multiple vaults*, §1) | Design choice |
 
 ## 13. Commands, Hotkeys and Vim
@@ -211,7 +212,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | iOS | App Store; widgets, Siri and Shortcuts, a Share Sheet, Quick Capture and voice capture (help, roadmap) | **None**, and none planned (#6739) | Gap |
-| Android | Google Play or direct APK; widgets (open note, new note, search, daily note) and a Quick Settings tile; Android Quick Capture is active on the roadmap | Signed APK, arm64 only, API 30+, **sideload only**; kept out of Android backup and device transfer, so a new phone is set up by pairing and an uninstall deletes the phone's notes (`README.md`); in the share sheet for text (#6555); no widget or Quick Settings tile | Partial |
+| Android | Google Play or direct APK; widgets (view note, new note, search, daily note) and a Quick Settings tile; Android Quick Capture is active on the roadmap | Signed APK, arm64 only, API 30+, **sideload only**; kept out of Android backup and device transfer, so a new phone is set up by pairing and an uninstall deletes the phone's notes (`README.md`); in the share sheet for text (#6555); no widget or Quick Settings tile | Partial |
 | Plugins on mobile | Yes (mobile page) | Not applicable | Gap |
 | Phone UI | Tabs, palette, a customisable toolbar | Bottom sheets and 44 px targets (`docs/FEATURE-MAP.md`), a toolbar above the keyboard on touch (`docs/features/editor.md`). An emulator launches a release APK at each release and nightly, not per PR (`.github/workflows/android-launch-smoke.yml`); no physical device in CI | Done |
 | Background sync | Not yet: "Background Sync on mobile" is active on the roadmap | Not yet: foreground only (`docs/architecture/sync-and-network.md`, #6740) | Tie |
@@ -255,7 +256,7 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Importers | **Importer** (official plugin): Notion, Airtable, OneNote, Evernote, Apple Notes, Apple Journal, Google Keep, Bear, Craft, Roam, Logseq, Samsung Notes, Tomboy, and HTML, CSV, Markdown and Textbundle files | Markdown files and folders, **Obsidian vault**, Logseq graph, Org, Notion export, Evernote `.enex`, Joplin `.jex`, BibTeX / CSL-JSON (`docs/features/import-export.md`) | Partial |
-| Obsidian vault fidelity | N/A | Wikilinks, aliases, heading and block anchors, `![[…]]` embeds, image sizes, Tasks-plugin fields, callout types and attachments are mapped. **Lost or flattened:** a YAML list under a key defined to hold one value (its items joined by a comma; elsewhere a list imports item for item, #6741), `.canvas` and `.base` files, Dataview and Templater code, `%%comments%%` inside a sentence (a comment block becomes a comment callout), plugin data, folder structure (it becomes title namespaces) | Partial |
+| Obsidian vault fidelity | N/A | Wikilinks, aliases, heading and block anchors, `![[…]]` embeds, image sizes, Tasks-plugin fields, callout types and attachments are mapped. **Lost or flattened:** a YAML list under a key defined to hold one value (its items joined by a comma; elsewhere a list imports item for item, #6741), a date and time under a key the space has not declared Date & time (it stays text, #6758), `.canvas` and `.base` files, Dataview and Templater code, `%%comments%%` inside a sentence (a comment block becomes a comment callout), plugin data, folder structure (it becomes title namespaces) | Partial |
 | Re-import | N/A | A file, a folder's note, an Evernote or Joplin note, or a Logseq or Org file whose title names a page with content updates that page in place after a listed confirmation; Undo on the page reverts it (#6277, `docs/features/import-export.md`) | Done |
 | Export | The vault is the export; PDF per note | Per page: copy, or save `<title>.md`. A Markdown ZIP per space or for all spaces (to Downloads on Android, #6546), restoring templates, done dates, attachments and property definitions on a folder import (#6277), and every space from an unzipped all-spaces ZIP (#6554); on desktop the Markdown mirror (§1) keeps a live `.md` file per page; *Print…* for paper; no HTML or structured JSON | Partial |
 
@@ -285,8 +286,8 @@
 | Capability | Obsidian | Agaric | Status |
 | --- | --- | --- | --- |
 | Agent access without any API | **Yes, by construction.** An agent that can read a folder can read and edit the vault | No. The database is opaque. The desktop mirror (off by default) gives an agent a folder of `.md` files, and with *Read changes back* on, an outside edit, new file, rename or delete is read into the vault as one undoable save (§1) | Partial |
-| First-party MCP | None found in the roadmap, the changelog or the help (**unverified** absence) | A bundled MCP bridge with a read-only tool set and a read-write one (`src-tauri/src/mcp/tools_ro.rs`, `src-tauri/src/mcp/tools_rw.rs`), each client an agent with a token, a mode and a space allow-list (`docs/features/agent-access.md`); desktop only | Better |
-| First-party automation | CLI (1.12), URI scheme, headless Sync | MCP, `agaric-mcp call <tool> <json>` for scripts, and `agaric://` links (page, block, settings, capture) (`docs/features/agent-access.md`) | Partial |
+| First-party MCP | Not shipped: "MCP" is active on the roadmap, "for agents that don't support Obsidian CLI or Obsidian Headless" | A bundled MCP bridge with a read-only tool set and a read-write one (`src-tauri/src/mcp/tools_ro.rs`, `src-tauri/src/mcp/tools_rw.rs`), each client an agent with a token, a mode and a space allow-list (`docs/features/agent-access.md`); desktop only | Better |
+| First-party automation | CLI (1.12), URI scheme, headless Sync, and official agent skills (roadmap: November 2026) | MCP, `agaric-mcp call <tool> <json>` for scripts, and `agaric://` links (page, block, settings, capture) (`docs/features/agent-access.md`) | Partial |
 | In-app AI | Not in the app; the Web Clipper has a language-model "Interpreter"; community plugins | None | Gap |
 | Audit of agent edits | Whatever the file history or git shows | Ops stamped `agent:<name>` and badged with the name in the History view; an in-memory activity feed (`ACTIVITY_RING_CAPACITY`) with one-click session revert (`docs/features/agent-access.md`) | Partial |
 | Semantic search | Plugins | None | Gap |
@@ -298,7 +299,7 @@
 | Vault scale | No published benchmark found. The 1.15.1 notes say search results "appear much faster when a search matches thousands of notes". Community reports of vaults with tens of thousands of notes are **unverified** | A weekly latency gate on backend commands at `FIXTURE_SIZE` blocks (`src-tauri/benches/interactive_slo.rs`); page mode stops at `PAGE_MODE_BLOCK_CAP`; no Android number, no memory number | Unverified |
 | Accessibility | No accessibility statement found in the help source (**unverified**) | Keyboard reach for every action; `axe` assertions in the component tests under `src/` and a rendered axe sweep of every top-level view in the light and dark themes (`e2e/views-axe.spec.ts`); text and surface colour pairs held to WCAG AA across the themes (`src/lib/__tests__/theme-contrast.test.ts`); reduced-motion handling (`docs/FEATURE-MAP.md`) and an *Animations* setting that follows the system, speeds motion up or turns it off. No screen-reader audit on record | Unverified |
 | Interface languages | Many, by volunteer translators (help) | English, German, Spanish, French and Portuguese, each complete and held there by `locale-catalogs.test.ts`; a contributor path in `docs/TRANSLATING.md` (#6750) | Partial |
-| Right-to-left | A right-to-left setting; 1.14 added a layout flip | Automatic per paragraph, by its first strong letter (`docs/features/appearance.md`); the interface stays left to right, and there is no direction setting | Partial |
+| Right-to-left | A right-to-left setting; 1.14 added a layout flip | Automatic per block, by its first strong letter: its lists, quotes, callouts and tables mirror, and the arrows move the way they point (`docs/features/appearance.md`); the interface stays left to right, and there is no direction setting | Partial |
 
 ## 25. Platforms, Packaging and Updates
 
@@ -327,10 +328,10 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | Section | Ahead | Level | Behind | Not ranked |
 | --- | :---: | :---: | :---: | :---: |
 | 1. Notes, Files and Data Ownership | 2 | 0 | 4 | 3 |
-| 2. Editor | 1 | 10 | 8 | 2 |
+| 2. Editor | 1 | 11 | 7 | 2 |
 | 3. Linking and Transclusion | 0 | 5 | 6 | 0 |
-| 4. Properties and Bases | 3 | 4 | 4 | 0 |
-| 5. Tags | 1 | 3 | 1 | 0 |
+| 4. Properties and Bases | 3 | 5 | 3 | 0 |
+| 5. Tags | 2 | 3 | 1 | 0 |
 | 6. Search | 0 | 4 | 3 | 1 |
 | 7. Queries | 1 | 1 | 4 | 0 |
 | 8. Tasks and Agenda | 3 | 1 | 3 | 0 |
@@ -352,7 +353,7 @@ No points are awarded. Each line counts the rows of one section by the status Ag
 | 24. Performance, Accessibility and Localisation | 0 | 0 | 2 | 2 |
 | 25. Platforms, Packaging and Updates | 0 | 1 | 3 | 1 |
 | 26. Licence, Governance and Longevity | 1 | 2 | 1 | 0 |
-| **Total (175 rows)** | **18** | **49** | **86** | **22** |
+| **Total (176 rows)** | **19** | **51** | **84** | **22** |
 <!-- scorecard:end -->
 
 How to read it:

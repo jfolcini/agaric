@@ -15,7 +15,7 @@ Obsidian is ahead wherever files being the truth matters: other editors, any syn
 
 | | Obsidian | Agaric |
 | --- | --- | --- |
-| Where notes live | Markdown files in a folder you choose | A SQLite database. A Markdown mirror folder is optional and desktop only |
+| Where notes live | Markdown files in a folder you choose | A SQLite database. A Markdown mirror folder is optional and desktop only; it can be the vault folder you already have |
 | Licence and price | Closed source, free for personal and commercial use. Sync and Publish are paid subscriptions | Free software (GPL-3.0-or-later). Nothing to buy |
 | Sync | Obsidian Sync: any network, through Obsidian's servers, end-to-end encrypted, with version history, selective sync and shared vaults. Or a third-party tool such as iCloud, Syncthing or git | Directly between your own paired devices on one local network. No account, no server, no subscription. Android syncs only in the foreground |
 | Phones | iOS and Android, from the stores, with widgets and, on iOS, a share sheet and quick capture | Android as a sideloaded APK. No iOS |
@@ -35,9 +35,9 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Links | `[[Note]]`, `[[Note#Heading]]`, `[[Note#^id]]`; names in the file | The same forms can be typed; stored as ids and shown as chips. A rename changes no other block |
 | Embeds | `![[Note]]`, headings, blocks, images, audio, video, PDF | Pages, headings and blocks, live, a row with its checkbox, which ticks in place, and read-only property chips; no attachments |
 | Backlinks | Linked and unlinked mentions, and an outgoing links pane | Linked and unlinked references with filters |
-| Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, select, reference, boolean, URL, and a list of any of them but boolean. No date-time |
+| Properties | In a note's YAML front matter, so per file: text, list, number, checkbox, date, date and time | On any block or page: text, number, date, date and time, select, reference, boolean, URL, and a list of any of them but boolean |
 | Tables of notes | Bases: table, list, cards and kanban layouts over files, with computed columns ("formulas"), summaries and grouping; dragging a kanban card changes its property | Query blocks as a list or a table whose cells edit their block's properties and task state; Advanced Query with grouping, summaries and a board whose cards move by dragging or from a menu. Rows are blocks. No computed columns (Bases calls them formulas), no cards layout |
-| Tags | `#tag` and nested `#a/b` | `#tag` and nested `#a/b`, renamed everywhere from one place; boolean tag queries |
+| Tags | `#tag` and nested `#a/b`; clicking a tag searches for it | `#tag` and nested `#a/b`, renamed everywhere from one place; boolean tag queries; each tag has a page for notes on it and the properties its blocks are offered |
 | Tasks | Checkboxes and `task:` search in core. The help documents no due dates, priorities or recurrence for tasks; community plugins such as Tasks add them | States, priorities, due and scheduled dates and repeat rules on any block; an Agenda; due-date notifications on desktop. Reads and writes the Tasks plugin's emoji fields on import and export |
 | Daily notes | A core plugin: one note per day from a template | A journal with day, week, month, stream and agenda views |
 | Search | Operators (`file:`, `path:`, `tag:`, `task:`, `[property:value]`), regex, `OR`, negation, embedded queries | Full-text search with typed filters (`tag:`, `state:`, `due:`, `prop:`), regex, find and replace in a page and across pages, query blocks |
@@ -49,10 +49,10 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 | Voice | An audio recorder; voice capture on iOS | `/voice` records a voice note; the system voice reads a block or page aloud on macOS, Windows and Android. No transcription |
 | Web capture | An official Web Clipper for the major browsers | None. Pasted HTML becomes blocks, an `agaric://capture` link opens Quick Capture on desktop, and on Android text shared from another app opens it |
 | Publishing and sharing | Obsidian Publish; shared vaults through Sync; real-time collaboration is on the roadmap | None; single user by design |
-| History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it |
-| Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client. An agent can also edit the files directly. No first-party MCP server was found | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
+| History and recovery | File recovery snapshots on the device; version history in Sync | Every change is an operation: history per block and page, restore to a point, an in-app Trash. Old operations are compacted after a retention period. A daily copy of the database is kept beside it, and Settings restores one |
+| Agents and automation | A CLI that drives the running app, `obsidian://` links, a headless Sync client and official agent skills. An agent can also edit the files directly. An MCP server is on the roadmap, not shipped | An MCP server with an agent per client: its own token, read-only or read-write mode and spaces, edits named in History and undoable. `agaric-mcp call` for scripts |
 | Importers | An official importer for Notion, Evernote, OneNote, Apple Notes, Google Keep, Bear, Roam, Logseq and more | Markdown, Obsidian vaults, Logseq graphs, Org, Notion, Evernote, Joplin, bibliographies |
-| Languages | Many interface translations; right-to-left layout | English, German, Spanish, French and Portuguese, each complete, and a documented path to add more ([docs/TRANSLATING.md](docs/TRANSLATING.md)). Right-to-left paragraphs in notes, not a right-to-left interface |
+| Languages | Many interface translations; right-to-left layout | English, German, Spanish, French and Portuguese, each complete, and a documented path to add more ([docs/TRANSLATING.md](docs/TRANSLATING.md)). Right-to-left blocks in notes, mirrored; not a right-to-left interface |
 | Encryption at rest | None for the local vault | None for the local database |
 | Telemetry | None | None |
 
@@ -81,13 +81,13 @@ The table is the summary. [The feature matrix](COMPARISON-OBSIDIAN-MATRIX.md) ha
 
 ## Moving from Obsidian
 
-Settings › Data has an *Obsidian vault* button. [docs/features/import-export.md](docs/features/import-export.md) has the full rules.
+Settings › Data has two ways in. The *Obsidian vault* button imports a copy of the vault. On desktop, the Markdown mirror's *Open a folder of notes…* imports it into a new space, then keeps the folder where it is as that space's mirror folder (#6540). [docs/features/import-export.md](docs/features/import-export.md) has the full rules.
 
 **Kept:** each note as a page, with folders as title namespaces (`Projects/Plan`); `[[wikilinks]]`, labels and aliases; `#Heading` and `#^id` anchors as references to those blocks; `![[Note]]` embeds; front-matter properties, tags and aliases; `- [ ]` tasks with the Tasks plugin's date, priority and recurrence fields; callouts; attached images and files, with image widths.
 
 **Changed or lost:**
 
-- The vault stops being files. On desktop the Markdown mirror writes every page back out as a `.md` file and reads edits in, but it starts from an empty folder: it does not adopt an existing vault in place.
+- A vault kept in place is not rewritten: a file changes only when its page changes in Agaric, and then only in the lines of the blocks that changed; an edit made in the folder is read back in, and many files changed at once ask first. `.obsidian/`, attachments and the files the import does not take stay as they are.
 - A YAML list is kept item for item, except under a key defined to hold one value, where its items are joined by a comma.
 - `.canvas` and `.base` files are not imported.
 - Dataview, Templater and other plugin code blocks stay as text.
@@ -98,17 +98,17 @@ An export from Agaric is Markdown that Obsidian reads: wikilinks, `^id` block li
 
 ### What you will miss, or trip over, at first
 
-- **The vault is no longer a folder.** Git, iCloud, Syncthing, a second editor and every script that walks your files stop applying. The desktop mirror writes files back out, but cannot take over the vault you already have (#6540).
+- **Your notes live in a database.** On desktop the vault folder can stay in step with it (#6540), for a second editor, git or a script, but only one Agaric device can mirror a folder, phones mirror nothing, and a device that keeps a vault in place mirrors no other space.
 - **Every paragraph is a block.** A page is an outline, with a handle per paragraph, until you turn on page mode (off by default, #6536). There is no reading view, and long pages past the page-mode cap stay in blocks (#6224).
 - **Your plugins do not come with you.** Dataview and Templater blocks arrive as code, and there is no Canvas, Excalidraw, or community theme. Tasks-plugin dates, priorities and recurrence are the exception: Agaric reads them as its own.
 - **No folders.** A note in `Projects/Plan.md` becomes the page `Projects/Plan`; spaces, not folders, separate work from personal.
-- **No date-and-time property type** (#6758). Lists are kept: `authors: [a, b]` stays two values.
+- **A date and time arrives as text** under a key the space has not declared Date & time (#6758). Lists are kept: `authors: [a, b]` stays two values.
 - **One page at a time.** Tabs, but no split, no pop-out window, no saved workspace (#6550).
 - **Editor habits.** No Vim keys, no multiple cursors, and a `%%comment%%` shows as a comment callout, or as text inside a sentence (#6751).
 - **A tag name holds no spaces.**
 - **Sync means the same Wi-Fi, with the phone's app open** (#6519, #6740), on Android only, installed from a file (#79). No iPhone or iPad (#6739).
 - **Capture is thinner.** No web clipper (#6753), and Android's share sheet takes text only, into Quick Capture (#6555).
-- **English**, mostly (#6750).
+- **Five interface languages, and no right-to-left interface** (#6750).
 
 ## Sources
 
@@ -116,7 +116,7 @@ Obsidian, read in November 2026:
 
 - <https://obsidian.md/pricing>, <https://obsidian.md/sync>, <https://obsidian.md/license>, <https://obsidian.md/privacy>, <https://obsidian.md/security>, <https://obsidian.md/download>
 - <https://obsidian.md/changelog> and <https://obsidian.md/roadmap>
-- The help, from its source at <https://github.com/obsidianmd/obsidian-help>: storage, properties, internal links and embeds, Bases and its layouts, search, core plugins, file recovery, PDFs, Sync (security, plans, conflicts, selective sync, shared vaults, headless), plugin security, the CLI, the URI scheme, mobile, import, Web Clipper
+- The help, from its source at <https://github.com/obsidianmd/obsidian-help>: storage, properties, tags, internal links and embeds, Bases and its layouts, search, core plugins, file recovery, PDFs, Sync (security, plans, conflicts, selective sync, shared vaults, headless), plugin security, the CLI, the URI scheme, mobile, import, Web Clipper
 - <https://github.com/obsidianmd/obsidian-releases>, for the statement that Obsidian is not open source
 
 Not confirmed from those sources, and so not claimed above: whether community plugins run on mobile, whether search indexes attachment text, read aloud in Obsidian, and what the Tasks and Dataview plugins do beyond the fields Agaric's importer reads.
