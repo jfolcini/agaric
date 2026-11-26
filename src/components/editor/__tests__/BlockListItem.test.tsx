@@ -118,8 +118,8 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
 
 vi.mock('@/components/pages/PageLink', () => ({
   PageLink: ({ pageId, title }: { pageId: string; title: string; className?: string }) => (
-    /* oxlint-disable jsx-a11y/prefer-tag-over-role -- test mock mirrors PageLink's ARIA link role (a span, not an anchor) */
     <span
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock mirrors PageLink's ARIA link role (a span, not an anchor)
       role="link"
       tabIndex={0}
       data-testid={`page-link-${pageId}`}
@@ -133,7 +133,6 @@ vi.mock('@/components/pages/PageLink', () => ({
     >
       {title}
     </span>
-    /* oxlint-enable jsx-a11y/prefer-tag-over-role */
   ),
 }))
 

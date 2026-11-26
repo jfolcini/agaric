@@ -13,9 +13,9 @@
  * This counter is the correct axis: the change feed's `blocks:changed` bumps it
  * for every local commit in the `structure` domain (`src/hooks/derived-caches.ts`),
  * and so does an applied remote batch (`sync:complete` in
- * `src/hooks/useSyncEvents.ts`). A page-store write and a restore also bump it
- * at once, ahead of the feed, for the prefetch expiry in
- * `src/lib/prefetch-page-subtree.ts`.
+ * `src/hooks/useSyncEvents.ts`). A page-store write, a restore and a page
+ * removal (`notifyPagesRemoved`) also bump it at once, ahead of the feed, for
+ * the prefetch expiry in `src/lib/prefetch-page-subtree.ts`.
  *
  * Mirrors the lazy-subscriber-set / `useSyncExternalStore` shape of
  * `src/lib/block-property-events.ts`. The React adapter lives in

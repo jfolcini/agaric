@@ -2,6 +2,10 @@
 // caught in review" item 6); production functions over it carry `#[expect]`
 // so the marker expires when the function is split (#4639).
 #![cfg_attr(test, allow(clippy::too_many_lines))]
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), a future hard
+// error the pinned nightly already reports: proving these async futures `Send`
+// nests deeper than the default limit of 128.
+#![recursion_limit = "256"]
 //! `agaric-engine` — the CRDT / document-domain layer for the layered-workspace
 //! split (#2621).
 //!

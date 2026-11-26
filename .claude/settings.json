@@ -13,6 +13,7 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup,resume,fork",
         "hooks": [
           {
             "type": "command",

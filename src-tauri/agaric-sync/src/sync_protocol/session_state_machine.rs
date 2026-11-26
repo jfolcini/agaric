@@ -1800,6 +1800,12 @@ impl SyncOrchestrator {
             return self.reply_sync_complete().await;
         }
 
+        // #6524: once the peer holds these ops, a power cut that rolled their
+        // commits back would leave this device behind its own history. Every
+        // op the stream carries is read by now, and none is queued yet, so a
+        // failed barrier sends nothing.
+        agaric_store::db::make_commits_durable(&self.pool).await?;
+
         // #705: this counts outbound LoroSync *messages* (one per registered
         // space, each a full CRDT snapshot/update), not individual CRDT
         // operations. #2481 audit op batches are metadata, not state deltas,

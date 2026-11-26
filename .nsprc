@@ -1,7 +1,7 @@
 {
   "GHSA-g3hv-75wg-m249": {
     "active": true,
-    "notes": "GHSA-g3hv-75wg-m249 - minimatch globparts DoS (moderate), affected range >=7.0.0 <11.0.1. Keyed by GHSA because npm serves it under more than one numeric ID. The fix, 11.0.1, cleared the 7-day release-age gate on 2026-11-04, but the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob) declare ^10 or ~10 even in their latest releases. Dev-only (`npm ls minimatch --omit=dev` is empty), expanding only the repo's own globs. Take 11.0.1 for any consumer that declares it, and drop this entry once nothing below it remains.",
+    "notes": "GHSA-g3hv-75wg-m249 - minimatch globparts DoS (moderate), affected range >=7.0.0 <11.0.1. Keyed by GHSA because npm serves it under more than one numeric ID. The fix, 11.0.1, cleared the 7-day release-age gate on 2026-11-04, but the 10.x consumers (@stryker-mutator/core, mocha, readdir-glob) declare ^10 or ~10 even in their latest releases, and license-checker-rseidelsohn pins @npmcli/arborist 9.6.0, whose @npmcli/map-workspaces, ignore-walk and @tufjs/models chains declare ^10. Dev-only (`npm ls minimatch --omit=dev` is empty), expanding only the repo's own globs. Take 11.0.1 for any consumer that declares it, and drop this entry once nothing below it remains.",
     "expiry": "2026-12-10"
   }
 }

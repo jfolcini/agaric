@@ -89,9 +89,7 @@ export function FilterSortControls({
   }
 
   return (
-    <div
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a field picker and its direction toggle form one control; <fieldset> would nest inside the builder's own fieldset and add a legend
-      role="group"
+    <fieldset
       aria-label={t('backlink.sortGroupLabel')}
       className="ml-auto flex min-w-0 items-center"
     >
@@ -139,6 +137,6 @@ export function FilterSortControls({
       >
         <DirectionIcon aria-hidden="true" />
       </IconButton>
-    </div>
+    </fieldset>
   )
 }

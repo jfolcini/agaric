@@ -243,14 +243,10 @@ export function TurnIntoMenu({
           not valid menu children (aria-required-children). Each is a labelled
           `role="dialog"` so the disclosure's `aria-haspopup="dialog"` is honest and
           the panel carries an accessible name (aria-dialog-name). */}
-      {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- a native <dialog> is
-          display:none unless opened via showModal()/open and carries UA chrome
-          (centering, border) that would break these inline, in-flow disclosure
-          panels; the divs keep role="dialog" while staying laid out inside the
-          popover (mirrors AddFilterPopover). */}
       {expanded === 'code' && (
         <div
           id="turn-into-subpicker-code"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a native <dialog> is display:none until opened, and its UA styles (absolute position, border, padding) would pull this in-flow panel out of the popover's layout
           role="dialog"
           aria-label={t('toolbar.codeBlockLanguage')}
         >
@@ -266,12 +262,16 @@ export function TurnIntoMenu({
         </div>
       )}
       {expanded === 'callout' && (
-        <div id="turn-into-subpicker-callout" role="dialog" aria-label={t('toolbar.callout')}>
+        <div
+          id="turn-into-subpicker-callout"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- in-flow panel, as the code picker above
+          role="dialog"
+          aria-label={t('toolbar.callout')}
+        >
           <Separator className="my-1" />
           <CalloutTypeSelector onClose={onClose} />
         </div>
       )}
-      {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
     </div>
   )
 }

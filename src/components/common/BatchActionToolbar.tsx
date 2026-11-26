@@ -62,7 +62,7 @@ export function BatchActionToolbar({
     return () => {
       // Read at unmount, not at mount: the list renders after the toolbar, so
       // its ref is still empty when this effect runs.
-      // oxlint-disable-next-line react-hooks/exhaustive-deps -- the list's node, not one this component renders
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- read at cleanup on purpose: the list mounts after this effect runs, so its ref is empty then
       const list = listRef.current
       if (toolbar == null || list == null || !toolbar.contains(document.activeElement)) return
       const tabStop = list.tabIndex === 0 ? list : list.querySelector<HTMLElement>('[tabindex="0"]')

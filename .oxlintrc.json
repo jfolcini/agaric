@@ -20,7 +20,7 @@
     "import/no-default-export": "error",
     "typescript/only-throw-error": ["error", { "allow": [{ "from": "file", "name": "AppError" }] }],
     "typescript/require-await": "error",
-    "eslint/no-console": ["warn", { "allow": ["warn", "error"] }],
+    "eslint/no-console": ["error", { "allow": ["warn", "error"] }],
     "eslint/complexity": ["error", { "max": 25 }],
 
     "jsx-a11y/prefer-tag-over-role": "error",
@@ -214,20 +214,16 @@
     // directive naming `react-hooks/exhaustive-deps`,
     // `react-hooks/rules-of-hooks`, `react/exhaustive-deps` or
     // `react/rules-of-hooks` — in either the `oxlint-` or the `eslint-`
-    // spelling — makes the compiler SKIP the enclosing component or hook
-    // entirely, so every OTHER `react/*` rule listed above goes silent for
-    // that whole function, above the directive as well as below it. It is
+    // spelling — makes oxlint's port SKIP the enclosing component or hook
+    // entirely (the babel compiler `vite.config.ts` runs skips it for the
+    // `eslint-` spelling only), so every OTHER `react/*` rule listed above
+    // goes silent for that whole function, above the directive as well as
+    // below it. It is
     // deliberate upstream (an author-declared incomplete dependency array
     // means the compiler must not trust its own inference for that function),
-    // it is NOT a directive-scope defect, it is present and unchanged in
-    // oxlint 1.79.0 (checked #4493 against the installed
-    // node_modules/.bin/oxlint binary; a newer 1.80.0 also exists upstream
-    // but is not what this repo runs), and no key in this file switches it
+    // it is NOT a directive-scope defect, and no key in this file switches it
     // off. So it is not something a fix here removes; the only thing that can
-    // change is whether it is visible. NOTE: 1.79.0 is what package-lock.json
-    // resolves and what npm ci installs, not what package.json pins --
-    // package.json declares "oxlint": "^1.79.0", a caret range npm install
-    // can move within (to 1.80.x, say) without touching package.json at all.
+    // change is whether it is visible.
     //
     // Measured on this tree (#4493), point-in-time as of 2026-08-29 at commit
     // 01b5724f2 -- re-run the commands in the session log below rather than
@@ -322,7 +318,7 @@
       }
     },
     {
-      "files": ["src/main.tsx", "*.config.ts", "stryker.config.mjs", "stryker.vitest.config.mjs"],
+      "files": ["*.config.ts", "stryker.config.mjs", "stryker.vitest.config.mjs"],
       "rules": {
         "import/no-default-export": "off"
       }

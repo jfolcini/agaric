@@ -338,7 +338,8 @@ by cause:
 **Do not keep using a restored backup on a device that has synced since the
 backup was taken.** Its other devices hold later history for it than the backup
 has, and once the restored copy records a change, sync with them fails for good,
-or completes with no error while the edits made since the backup are lost (the
+or completes with no error while the edits made since the backup are lost and
+what it writes next can overwrite the other devices' copy of them (the
 restored-copy pitfall in [Sync](features/sync.md#pitfalls-to-know)).
 Use it only to export what the other devices lack (Settings › Data › *Export all
 spaces*), then set the device up fresh as above and import that export. Import

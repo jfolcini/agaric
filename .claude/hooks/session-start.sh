@@ -3,7 +3,10 @@
 #
 # Runs only when CLAUDE_CODE_REMOTE=true (i.e., Claude is provisioning a
 # fresh sandbox/container). Local Claude sessions hit the existing local
-# toolchain and skip this entirely.
+# toolchain and skip this entirely. `.claude/settings.json` registers it for
+# every session source except `compact` and `clear`: those keep the container,
+# and setup.sh's `npm ci` would wipe node_modules under every worktree that
+# links to it.
 #
 # Delegates to scripts/setup.sh — the single canonical post-clone bootstrap —
 # with its remote-only system-dependency opt-in. That installs the Linux native

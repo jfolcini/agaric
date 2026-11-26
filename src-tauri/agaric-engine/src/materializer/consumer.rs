@@ -784,7 +784,7 @@ async fn record_foreground_failure(
     }
 }
 
-/// The real-backend lane's seam (#6567): with `AGARIC_E2E_BACKGROUND_DELAY_MS`
+/// The bridge's seam (#6567): with `AGARIC_E2E_BACKGROUND_DELAY_MS`
 /// set, every background batch starts that much later, which stands in for a
 /// vault whose cache rebuilds outlast a view's re-read. Seeding such a vault
 /// through commands takes a spec minutes. Debug builds only.

@@ -63,7 +63,7 @@ export function AgentList({ bridge }: AgentListProps): React.ReactElement {
   }, [])
 
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- loads the agent list from IPC on mount; see #4407
+    // oxlint-disable-next-line react/set-state-in-effect -- `load` sets state only after its IPC await, never synchronously in this effect; see #4407
     void load()
   }, [load])
 

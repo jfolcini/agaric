@@ -23,7 +23,8 @@ pub mod op;
 // identity). Depends only on the sibling `op` module.
 pub mod task_locals;
 // `db` — pure, sqlx-free SQLite pool primitives (pool value types, slow-acquire
-// logging helpers, connect-options builder + pragma consts, epoch-ms clocks).
+// logging helpers, connect-options builder + pragma consts, epoch-ms clocks),
+// plus `db::durability`, the barrier sync runs before it sends (#6524).
 // The app re-exports it (`pub use agaric_store::db::*;`) so every existing
 // `crate::db::…` path resolves unchanged.
 pub mod db;

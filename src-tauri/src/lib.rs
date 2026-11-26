@@ -2,6 +2,20 @@
 // caught in review" item 6); production functions over it carry `#[expect]`
 // so the marker expires when the function is split (#4639).
 #![cfg_attr(test, allow(clippy::too_many_lines))]
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), a future hard
+// error the pinned nightly already reports: proving these async futures `Send`
+// nests deeper than the default limit of 128.
+#![recursion_limit = "256"]
+// The fuzz crate builds this lib without `run()` (`#[cfg(not(fuzzing))]`), so
+// the app wiring only `run()` reaches is dead there by design.
+#![cfg_attr(
+    fuzzing,
+    expect(
+        dead_code,
+        unused_macros,
+        reason = "the fuzz build leaves out run() and the wiring only it reaches"
+    )
+)]
 // #3847 — `JNI_OnLoad`, exported from this crate's `cdylib` (`libagaric_lib.so`)
 // so the Android JavaVM + Application context are installed before any Rust
 // code runs. Must live in the cdylib root crate; see the module docs.
@@ -2721,6 +2735,7 @@ const BOOT_FAILURE_TITLE: &str = "Agaric failed to start";
 
 /// #6554 — where a failed [`boot`] sends the user: where the backups are, how
 /// to open one, and what not to do with one on a paired device.
+#[cfg(desktop)]
 const BOOT_RECOVERY_DOCS_URL: &str = "https://github.com/jfolcini/agaric/blob/main/docs/TROUBLESHOOTING.md#8-agaric-failed-to-start-the-vault-will-not-open";
 
 /// [`setup_app`]'s dialog for a failed [`boot`]: [`boot_failure_dialog_body`],
@@ -3283,6 +3298,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The body of the dialog a failed [`boot`] shows.
+#[cfg(desktop)]
 fn boot_failure_dialog_body(error: &dyn std::fmt::Display) -> String {
     format!(
         "Agaric could not open your vault and had to close.\n\n{error}\n\n\

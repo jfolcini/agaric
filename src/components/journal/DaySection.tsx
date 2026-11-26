@@ -153,7 +153,7 @@ function useControlledViewportEntry(
   )
 }
 
-// oxlint-disable-next-line eslint/complexity -- cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.
+// oxlint-disable-next-line eslint/complexity -- orchestrates lazy mount, navigation, focus restoration and agenda counts through effects that share state
 function DaySectionInner({
   entry,
   headingLevel = 'h3',
