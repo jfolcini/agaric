@@ -78,7 +78,7 @@ export function SearchHeader({
   return (
     <ViewHeader>
       <div className="mx-auto max-w-list space-y-2">
-        <FeaturePageHeader title={t('sidebar.search')} />
+        <FeaturePageHeader title={t('sidebar.search')} className="md:mt-3" />
         <form
           onSubmit={onSubmit}
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a <search> wrapper is a landmark only from WebKit 17 (Safari 17, WebKitGTK 2.42); older macOS and Linux webviews would drop it

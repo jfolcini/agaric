@@ -169,9 +169,8 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  // ── breadcrumb naming the active tab ──────────────────────
-  // The app header already names the view and the rail marks the active tab,
-  // so the view repeats neither.
+  // ── title, and no breadcrumb naming the active tab ────────
+  // The rail marks the active tab, so the view does not repeat it.
   it('titles its column with its own h1 and no breadcrumb (S3, #7040)', () => {
     render(<SettingsView />)
 

@@ -8,7 +8,9 @@
  * on it via heading navigation (S3, #7040). The desktop top bar shows no
  * label; the page editor's title is its own (`PageTitleEditor`).
  * `ViewHeader`-portaled views (PageBrowser, HistoryView, SearchPanel) render
- * it inside the portal; agenda mode renders it inside its `ViewHeader`.
+ * it inside the portal with `md:mt-3`, which tops the outlet's padding up to
+ * the scroller's so their title sits where an in-content one does; agenda mode
+ * renders it inside its `ViewHeader`.
  *
  * Layout:
  *   ┌─────────────────────────────────────────────────────────────┐

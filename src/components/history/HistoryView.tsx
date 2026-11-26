@@ -273,7 +273,7 @@ export function HistoryView(): React.ReactElement {
 
       <ViewHeader>
         <div className="history-view-header mx-auto max-w-list space-y-2">
-          <FeaturePageHeader title={t('sidebar.history')} />
+          <FeaturePageHeader title={t('sidebar.history')} className="md:mt-3" />
           {scopedPage != null && (
             <div className="flex items-center justify-between gap-2">
               <p className="min-w-0 truncate text-sm font-medium">

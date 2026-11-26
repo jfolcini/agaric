@@ -203,6 +203,7 @@ export function PageBrowserHeader({
           New page stays on the search row. */}
       <FeaturePageHeader
         title={t('sidebar.pages')}
+        className="md:mt-3"
         {...(!isMobile && { actions: newPageButton })}
       />
       {/* On desktop `flex-wrap` lets the controls stack onto a second line

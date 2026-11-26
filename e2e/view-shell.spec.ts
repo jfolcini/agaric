@@ -86,14 +86,20 @@ test.describe('the view shell at 1440 px @pages @journal @settings @graph @searc
   test('the list views share one 960 px column and one title edge', async ({ page }) => {
     await waitForBoot(page)
     const edges = new Set<number>()
+    const tops: Partial<Record<TopLevelView, number>> = {}
     for (const view of LIST_VIEWS) {
       await openView(page, view)
       const header = await titleGeometry(page, view)
       expect(header.width, `${view} column`).toBe(LIST_WIDTH)
       edges.add(Math.round(header.x))
+      // A portalled title (Pages, Search, History) sits where an in-content one does.
+      tops[view] = Math.round(header.y)
       await expect(page.getByTestId('header-label'), `${view} top bar`).toBeHidden()
     }
     expect([...edges]).toHaveLength(1)
+    expect(tops, 'one title row').toEqual(
+      Object.fromEntries(LIST_VIEWS.map((view) => [view, tops.Tags])),
+    )
   })
 
   test('the journal, a page and Settings share one centred 736 px column', async ({ page }) => {
