@@ -479,7 +479,10 @@ export function SearchPanel(): React.ReactElement {
     setTyping(false)
     const trimmed = query.trim()
     if (trimmed) {
-      setDebouncedQuery(trimmed)
+      // The same query mints the same key, which refetches nothing: Enter
+      // searches again, for a block the index had not caught up with.
+      if (trimmed === debouncedQuery) reload()
+      else setDebouncedQuery(trimmed)
       setSearched(true)
       // Push on submit, not on every keystroke. Per-space
       // partitioning is owned by the store.
