@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 
+import { MOCK_APP_VERSION } from '../src/lib/tauri-mock/seed'
 import {
   activeDialog,
   clearConsoleErrors,
@@ -135,7 +136,7 @@ test.describe('Settings › Help @settings', () => {
     await answerUpdateCheck(page, null)
     await button.click()
     await expect(toast("You're on the latest version")).toBeVisible()
-    await expect(status).toHaveText('Up to date')
+    await expect(status).toHaveText(`Up to date (v${MOCK_APP_VERSION})`)
 
     await answerUpdateCheck(page, {
       rid: 1,

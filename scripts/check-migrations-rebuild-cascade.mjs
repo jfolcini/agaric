@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync, readdirSync } from 'node:fs'
+import { basename } from 'node:path'
+
 // ─────────────────────────────────────────────────────────────────────
 // Blocks-rebuild cascade guard (#606).
 //
@@ -53,8 +56,7 @@
 //        node scripts/check-migrations-rebuild-cascade.mjs --self-test
 // Exit:  0 = clean, 1 = a guarded rebuild misses the preservation step.
 // ─────────────────────────────────────────────────────────────────────
-import { readFileSync, readdirSync } from 'node:fs'
-import { basename } from 'node:path'
+import { errorMessage } from './lib/error-message.mjs'
 
 const FIRST_GUARDED_MIGRATION = 89
 const SPACES_INTRODUCTION_MIGRATION = 89
@@ -787,7 +789,7 @@ function runSelfTest() {
       assertion()
       console.log(`  ✓ ${label}`)
     } catch (error) {
-      console.error(`  ✗ ${label}: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`  ✗ ${label}: ${errorMessage(error)}`)
       failed = true
     }
   }

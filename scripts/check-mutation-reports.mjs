@@ -48,6 +48,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 
 import { MODULE_NAMES } from '../stryker.modules.mjs'
+import { errorMessage } from './lib/error-message.mjs'
 
 export const DEFAULT_REPORTS_DIR = 'reports/mutation'
 
@@ -87,7 +88,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       report = JSON.parse(readFileSync(jsonPath, 'utf8'))
     } catch (err) {
       problems.push(
-        `module \`${mod}\`'s \`${jsonPath}\` is not valid JSON (${err instanceof Error ? err.message : String(err)}) — a partial/truncated report is a crashed run, not zero survivors (#3330).`,
+        `module \`${mod}\`'s \`${jsonPath}\` is not valid JSON (${errorMessage(err)}) — a partial/truncated report is a crashed run, not zero survivors (#3330).`,
       )
       perModule.push({ module: mod, mutants: 0 })
       continue

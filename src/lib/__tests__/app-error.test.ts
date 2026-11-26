@@ -16,6 +16,7 @@ import {
   isDatabaseError,
   isNonReversible,
   isNotFound,
+  isPluginUnavailable,
   isPoolBusy,
   isValidation,
   retryOnPoolBusy,
@@ -65,6 +66,20 @@ describe('isCancellation', () => {
     expect(isCancellation(null)).toBe(false)
     expect(isCancellation(new Error('plain JS error'))).toBe(false)
     expect(isCancellation('cancelled')).toBe(false)
+  })
+})
+
+describe('isPluginUnavailable', () => {
+  it("matches the runtime's rejection for an unregistered plugin, as a string or an Error", () => {
+    expect(isPluginUnavailable('plugin autostart not found')).toBe(true)
+    expect(isPluginUnavailable(new Error('plugin updater not found'))).toBe(true)
+  })
+
+  it('does not match any other failure', () => {
+    expect(isPluginUnavailable(new Error('network unreachable'))).toBe(false)
+    expect(isPluginUnavailable('plugin autostart not found: denied')).toBe(false)
+    expect(isPluginUnavailable({ kind: 'not_found', message: 'page X' })).toBe(false)
+    expect(isPluginUnavailable(null)).toBe(false)
   })
 })
 

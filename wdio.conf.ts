@@ -789,7 +789,13 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     AGARIC_E2E_SANDBOX: '1',
     // The console carries only warnings and errors; the full `info` log is in
     // `agaric.log*`, which `rescueAppLogs` copies into the diagnostics artifact.
-    AGARIC_STDERR_LOG: process.env['AGARIC_STDERR_LOG'] ?? 'warn',
+    // Write contention and queue pressure stay in the file: the MCP channel
+    // spec's write burst raises them on purpose, a few hundred lines a run.
+    AGARIC_STDERR_LOG:
+      process.env['AGARIC_STDERR_LOG'] ??
+      'warn,agaric_store::db=error,agaric_engine::materializer::coordinator=error',
+    // No accessibility bus under the driver; without this GTK warns of it at every boot.
+    NO_AT_BRIDGE: '1',
     // Layer 2. `HOME` itself is left alone on purpose: `tauri-driver` and
     // WebKitWebDriver are resolved out of the real home (`~/.cargo/bin`) and
     // load user-level GTK/webkit state from it, so rewriting it would break the
@@ -1189,7 +1195,6 @@ export const config: WebdriverIO.Config = {
         'than asserting against unknown storage (#3334). Check that the binary under test is ' +
         'built from a tree containing src-tauri/src/app_paths.rs.',
     })
-    console.warn(`[sandbox] verified: the app is using the throwaway vault ${vault}`)
   },
 
   // -------------------------------------------------------------------------

@@ -96,6 +96,8 @@
 import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 export const COMMENT_MARKER = '<!-- pr-file-overlap -->'
 
 /**
@@ -445,7 +447,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`pr-file-overlap: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`pr-file-overlap: ${errorMessage(err)}`)
     process.exit(2)
   }
 

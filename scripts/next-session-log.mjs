@@ -20,6 +20,7 @@ import { join, relative, resolve } from 'node:path'
 import process from 'node:process'
 
 import { LOG_DIR, sessionNumberOf } from './check-session-log-pr-collision.mjs'
+import { errorMessage } from './lib/error-message.mjs'
 
 /** One past the highest session number among `paths`; others are ignored. */
 export function nextFree(paths) {
@@ -61,9 +62,7 @@ function openPrLogs() {
       gh(`repos/{owner}/{repo}/pulls/${n}/files?per_page=100`),
     )
   } catch (err) {
-    console.error(
-      `next-session-log: open PRs not counted (gh api failed: ${err instanceof Error ? err.message : String(err)})`,
-    )
+    console.error(`next-session-log: open PRs not counted (gh api failed: ${errorMessage(err)})`)
     return []
   }
 }
@@ -118,7 +117,7 @@ if (isMainModule) {
   try {
     process.exitCode = main(process.argv.slice(2))
   } catch (err) {
-    console.error(`next-session-log: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`next-session-log: ${errorMessage(err)}`)
     process.exitCode = 1
   }
 }
