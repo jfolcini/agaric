@@ -299,7 +299,7 @@ pub struct ImportMerge {
 /// # Errors
 ///
 /// [`AppError::Database`] when the read fails.
-#[instrument(skip(pool, filenames), err)]
+#[instrument(skip(pool, filenames), err(level = "info"))]
 pub async fn list_import_merges_inner(
     pool: &SqlitePool,
     space_id: &str,

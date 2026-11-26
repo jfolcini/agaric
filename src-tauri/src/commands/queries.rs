@@ -98,7 +98,7 @@ pub struct TagFilterExpr {
 ///
 /// `scope` restricts the result set to source blocks whose owning page
 /// carries `space = ?space_id`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -229,7 +229,7 @@ async fn prepare_search_filter(
 /// behaviour every FE/IPC caller relies on. The MCP `search` tool passes
 /// `Some(SEARCH_SNIPPET_CAP)` so it no longer fetches up to 50 full block
 /// bodies just to `.chars().take(512)` them in Rust.
-#[instrument(skip(pool, filter), err)]
+#[instrument(skip(pool, filter), err(level = "info"))]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
     query: String,
@@ -313,7 +313,7 @@ pub async fn search_blocks_inner(
 /// - [`AppError::Validation`] — `key` is empty
 /// - [`AppError::Validation`] — both `value_text` and `value_text_in` supplied
 /// - [`AppError::Validation`] — both `value_text` and `value_date` supplied
-#[instrument(skip(pool, value_text_in), err)]
+#[instrument(skip(pool, value_text_in), err(level = "info"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_property_inner(
     pool: &SqlitePool,
@@ -366,7 +366,7 @@ pub async fn query_by_property_inner(
 /// Returns blocks where `todo_state IN ('TODO', 'DOING')` and
 /// `(due_date < before_date OR scheduled_date < before_date)`.
 /// Ordered by `COALESCE(due_date, scheduled_date) DESC, id DESC`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_unfinished_tasks_inner(
     pool: &SqlitePool,
     before_date: String,
@@ -399,7 +399,7 @@ pub async fn list_unfinished_tasks_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
-#[instrument(skip(pool, filters, sort), err)]
+#[instrument(skip(pool, filters, sort), err(level = "info"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn list_backlinks_grouped_inner(
     pool: &SqlitePool,
@@ -444,7 +444,7 @@ pub async fn list_backlinks_grouped_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
-#[instrument(skip(pool, filters, sort), err)]
+#[instrument(skip(pool, filters, sort), err(level = "info"))]
 pub async fn list_unlinked_references_inner(
     pool: &SqlitePool,
     page_id: &PageId,
@@ -475,7 +475,7 @@ pub async fn list_unlinked_references_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn count_unlinked_references_inner(
     pool: &SqlitePool,
     page_id: &PageId,
@@ -505,7 +505,7 @@ pub async fn count_unlinked_references_inner(
 /// - [`AppError::Validation`] — `page_ids.len()` >
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - Database errors propagated from sqlx.
-#[instrument(skip(pool, page_ids), err)]
+#[instrument(skip(pool, page_ids), err(level = "info"))]
 pub async fn count_backlinks_batch_inner(
     pool: &SqlitePool,
     page_ids: Vec<PageId>,
@@ -558,7 +558,7 @@ pub async fn count_backlinks_batch_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn count_backlinks_in_page_inner(
     pool: &SqlitePool,
     page_id: &PageId,
@@ -600,7 +600,7 @@ pub async fn count_backlinks_in_page_inner(
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty, or `limit` is out of range
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_outgoing_links_inner(
     pool: &SqlitePool,
     page_id: &PageId,
@@ -772,10 +772,6 @@ pub struct PartitionedSearchResponse {
 /// fires it externally), the guard's `Drop` signals the spawned task,
 /// which surfaces [`AppError::Cancelled`] at the next row-batch
 /// boundary (≤ 50 ms typical, ≤ 200 ms worst case).
-//
-// `err(level = "info")` keeps `AppError::Cancelled` (the expected
-// case under burst-typing) out of ERROR-level logs. Real failures
-// still surface via the wrapper's `sanitize_internal_error` warn.
 #[instrument(skip(pool, filter, cancel), err(level = "info"))]
 pub async fn search_blocks_partitioned_inner(
     pool: &SqlitePool,
@@ -1419,7 +1415,7 @@ fn local_day_predicate_sql(
 ///
 /// `cursor` / `limit` — keyset pagination on `b.id ASC` (
 /// invariant #3 / AGENTS.md cursor pagination).
-#[instrument(skip(pool, property_filters, tag_filters), err)]
+#[instrument(skip(pool, property_filters, tag_filters), err(level = "info"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn filtered_blocks_query_inner(
     pool: &SqlitePool,

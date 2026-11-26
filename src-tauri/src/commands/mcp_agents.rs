@@ -13,7 +13,7 @@ use agaric_store::space::SpaceId;
 
 /// Every agent on this device, by name. Not paginated: the user creates
 /// agents one at a time, by hand.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_mcp_agents_inner(pool: &SqlitePool) -> Result<Vec<McpAgent>, AppError> {
     agents::list_agents(pool).await
 }
@@ -28,7 +28,7 @@ pub async fn list_mcp_agents_inner(pool: &SqlitePool) -> Result<Vec<McpAgent>, A
 /// [`MAX_AGENT_NAME_LEN`]; [`ValidationCode::DuplicateAgentName`] for a name
 /// another agent holds in any letter case; uncoded `Validation` for an empty
 /// space list or one naming a space that is not live.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn create_mcp_agent_inner(
     pool: &SqlitePool,
     name: String,
@@ -80,7 +80,7 @@ fn valid_agent_name(raw: &str) -> Result<&str, AppError> {
 }
 
 /// Revoke the agent `id` by deleting it. `NotFound` when there is none.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn revoke_mcp_agent_inner(pool: &SqlitePool, id: String) -> Result<(), AppError> {
     if agents::delete_agent(pool, &id).await? {
         Ok(())

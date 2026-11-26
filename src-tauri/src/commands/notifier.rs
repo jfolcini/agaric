@@ -105,7 +105,7 @@ pub async fn notify_task<R: tauri::Runtime>(
 /// Split from the `#[tauri::command]` wrapper so the dispatch path is one
 /// unit and the wrapper can funnel errors through
 /// [`sanitize_internal_error`] (per the IPC error-sanitization convention).
-#[tracing::instrument(skip(app, notification), err)]
+#[tracing::instrument(skip(app, notification), err(level = "info"))]
 pub(crate) async fn notify_task_inner<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     notification: &TaskNotification,
@@ -152,7 +152,7 @@ pub(crate) async fn notify_task_inner<R: tauri::Runtime>(
 /// Tauri command: read the device-local reminder preferences (#4554).
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip(pool), err)]
+#[tracing::instrument(skip(pool), err(level = "info"))]
 pub async fn get_reminder_settings(
     pool: tauri::State<'_, ReadPool>,
 ) -> Result<ReminderSettings, AppError> {
@@ -165,7 +165,7 @@ pub async fn get_reminder_settings(
 /// A `time` that is not `HH:MM` surfaces as [`AppError::Validation`].
 #[tauri::command]
 #[specta::specta]
-#[tracing::instrument(skip(pool), err)]
+#[tracing::instrument(skip(pool), err(level = "info"))]
 pub async fn set_reminder_settings(
     pool: tauri::State<'_, WritePool>,
     settings: ReminderSettings,

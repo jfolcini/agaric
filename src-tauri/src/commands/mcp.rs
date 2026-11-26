@@ -154,7 +154,7 @@ pub fn get_mcp_recent_activity_inner(ring: &McpActivityRing) -> Vec<ActivityEntr
 /// Returns `Ok(true)` when the marker file state actually changed and
 /// `Ok(false)` when the requested state was already in effect (so the
 /// frontend can surface "already on / already off" without an error).
-#[tracing::instrument(skip(app_data_dir, lifecycle), err)]
+#[tracing::instrument(skip(app_data_dir, lifecycle), err(level = "info"))]
 pub fn mcp_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
