@@ -207,7 +207,9 @@ function CustomColor({
           setText(hex)
           setInvalid(false)
         }}
-        onChangeEnd={onCommit}
+        onChangeEnd={(hex) => {
+          if (hex !== value) onCommit(hex)
+        }}
       />
       <div className="flex items-center gap-2">
         <span

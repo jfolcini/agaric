@@ -674,7 +674,7 @@ mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
 /// `pub` (not `pub(crate)`) so the app-crate sync/materializer callers reach it
 /// as `crate::loro::engine::TagScope` across the crate boundary (#2621, E1).
-pub use snapshot::{ImportDelta, ImportPayload, SavedRowsImport, TagScope};
+pub use snapshot::{ImportDelta, ImportPayload, SavedRowsImport, TagScope, is_used_op_id};
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;
@@ -1176,6 +1176,37 @@ mod tests {
             b.read_block("PRE-1").expect("read").map(|s| s.content),
             Some("one".to_owned()),
             "the refused import leaves B as it was"
+        );
+    }
+
+    /// #7065 — the sync-pull import tells that refusal apart from an import
+    /// that fails for another reason, so a catch-up can report the fork.
+    #[test]
+    fn a_sync_pull_import_refused_for_reused_op_ids_is_told_apart_7065() {
+        use super::{LoroEngine, is_used_op_id};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("PRE-1", "content", "one", None, 0)
+            .expect("pre-1");
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&a.export_snapshot().expect("snap"))
+            .expect("seed B");
+        let mut a_reset = LoroEngine::with_peer_id("DEV-A").expect("A reset");
+        a_reset
+            .apply_create_block("POST-1", "content", "after reset", None, 0)
+            .expect("post-1");
+
+        let refused = b
+            .import_with_changed_purged_tagscope(&a_reset.export_snapshot().expect("snap2"))
+            .expect_err("the forked doc reuses op ids B holds with other content");
+        assert!(is_used_op_id(&refused), "loro's UsedOpID, got {refused}");
+
+        let undecodable = b
+            .import_with_changed_purged_tagscope(b"not a loro blob")
+            .expect_err("bytes that are no loro blob");
+        assert!(
+            !is_used_op_id(&undecodable),
+            "another import failure, got {undecodable}"
         );
     }
 

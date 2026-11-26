@@ -33,7 +33,7 @@
 ## Pins
 
 - **Every third-party `uses:` is pinned to a full commit SHA with its `# vX.Y.Z` comment.** zizmor checks that the comment matches the SHA, and Dependabot (`dependabot.yml`) bumps both. `actions/rust-toolchain` exists because a tag that moves under a pinned SHA failed that check after every move.
-- The Rust toolchain is an exact version in every workflow except the nightly `fuzz` lane, in lockstep with `rust-toolchain.toml` and `src-tauri/Cargo.toml` `rust-version` (#640); the header of `rust-toolchain.toml` lists the places.
+- The Rust toolchain is `rust-toolchain.toml`'s exact channel (#640), which every workflow except the nightly `fuzz` lane reads as `steps.pins.outputs.rust`; the `engines.node` floor lane reads package.json's floor as `steps.pins.outputs.node_floor`. Never type either version into a workflow; `rust-version` in each crate manifest is the one hand copy of the toolchain.
 - Tool versions and download digests live in `pins.txt`, which Dependabot cannot track: workflows read it through a `Read pins.txt` step (`steps.pins.outputs.<name>`), scripts and composite actions through `scripts/pins.sh`. Never write a version or sha256 into a workflow; bump with `just pin-bump`. actionlint is pinned by SHA in `prek.toml`.
 - Every checkout sets `persist-credentials: false`. Each workflow's top-level `permissions` are read-only, and a job widens only what it needs.
 - A job that runs `npm ci` uses the `./.github/actions/setup-node` composite, which installs the npm `package.json` pins (`engine-strict` refuses an older one); a job that only runs `node scripts/…` keeps the upstream `actions/setup-node` with `package-manager-cache: false`.

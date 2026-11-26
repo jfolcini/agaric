@@ -393,8 +393,8 @@ export function AddFilterPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        // Radix Popover.Content does not auto-apply a role; the trigger
-        // advertises `aria-haspopup="dialog"`, so name the role here to match.
+        // Radix Popover.Content renders `role="dialog"`, which matches the
+        // trigger's `aria-haspopup="dialog"`.
         //
         // D25 — interaction model: we KEEP `role="dialog"` (the lighter fix)
         // rather than converting the category list to a roving-tabindex
@@ -404,8 +404,6 @@ export function AddFilterPopover({
         // FilterMenuItem; the Button base ring on the bucket/priority/Apply
         // controls). This keeps the markup honest — a non-menu container of
         // buttons should not advertise menu semantics it doesn't implement.
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- this is a Radix PopoverContent component, not an HTML element; a native <dialog> would lose Radix's focus-scope/positioning
-        role="dialog"
         align="start"
         // The facet list can exceed the viewport on short windows (each menu
         // item carries a two-line description). The base PopoverContent caps

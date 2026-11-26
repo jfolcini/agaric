@@ -50,7 +50,7 @@ export interface UsePropertySaveReturn {
 export function usePropertySave({
   blockId,
   setProperties,
-  toasts,
+  toasts: { invalidNumber, saveFailed, deleteFailed } = {},
   announceOnSave,
   announceOnDelete,
   logTag,
@@ -64,7 +64,7 @@ export function usePropertySave({
       try {
         const ok = await handleSaveProperty(blockId, key, value, type, setProperties, onWritten)
         if (!ok) {
-          notify.error(t(toasts?.invalidNumber ?? 'property.invalidNumber'))
+          notify.error(t(invalidNumber ?? 'property.invalidNumber'))
           return
         }
         if (announceOnSave) {
@@ -88,20 +88,10 @@ export function usePropertySave({
         // "Failed to save property" toast would put the user back where they
         // started, which is the whole failure mode the validation removed.
         const repeatReason = invalidRepeatRuleMessage(err)
-        notify.error(repeatReason ?? t(toasts?.saveFailed ?? 'property.saveFailed'))
+        notify.error(repeatReason ?? t(saveFailed ?? 'property.saveFailed'))
       }
     },
-    // oxlint-disable-next-line react/preserve-manual-memoization -- deliberately depends on individual `toasts` string fields, not the `toasts` object itself: src/components/pages/PagePropertyTable.tsx:113 passes a fresh `toasts` object literal on every render, so keying on the object identity (the dependency this rule reports as inferred) would rebuild handleSave/handleDelete on every render and defeat the memoization the property-level deps exist to preserve. Lint hygiene only, NOT Compiler reasoning: this file is `.ts`, outside the babel include in vite.config.ts (`/\.[jt]sx(?:$|\?)/`), so the React Compiler never processes it and this manual `useCallback` is the only memoization in play (#4409)
-    [
-      blockId,
-      t,
-      setProperties,
-      toasts?.invalidNumber,
-      toasts?.saveFailed,
-      announceOnSave,
-      logTag,
-      onWritten,
-    ],
+    [blockId, t, setProperties, invalidNumber, saveFailed, announceOnSave, logTag, onWritten],
   )
 
   const handleDelete = useCallback(
@@ -136,21 +126,10 @@ export function usePropertySave({
             err,
           )
         }
-        notify.error(t(toasts?.deleteFailed ?? 'property.deleteFailed'))
+        notify.error(t(deleteFailed ?? 'property.deleteFailed'))
       }
     },
-    // No react/preserve-manual-memoization disable needed here (asymmetric
-    // with handleSave, verified empirically): this callback reads exactly
-    // ONE `toasts` field (`deleteFailed`), so the inferred dependency stays
-    // that single property and matches the manual list below. handleSave
-    // reads TWO distinct `toasts` fields (`invalidNumber` in an early-return
-    // branch, `saveFailed` in the catch branch) — touching more than one
-    // property of the same optional object across separate branches is what
-    // widens the compiler's inference to the whole `toasts` object, which is
-    // what triggers the mismatch there. Confirmed by mirroring handleSave's
-    // two-field, two-branch shape onto this callback: the same error then
-    // reproduces here too.
-    [blockId, t, setProperties, toasts?.deleteFailed, announceOnDelete, logTag, onWritten],
+    [blockId, t, setProperties, deleteFailed, announceOnDelete, logTag, onWritten],
   )
 
   return { handleSave, handleDelete }

@@ -13,7 +13,7 @@
 
 import { useCommandState } from 'cmdk'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -95,9 +95,10 @@ interface Measurable {
 function SelectedItemBridge({ onSync }: { onSync: () => void }): null {
   const selectedItemId = useCommandState((s) => s.selectedItemId as string | undefined)
   const value = useCommandState((s) => s.value as string | undefined)
+  // `onSync` is recreated each render; only a highlight or value move re-syncs.
+  const sync = useEffectEvent(onSync)
   useEffect(() => {
-    onSync()
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `selectedItemId` / `value` are the triggers; `onSync` is recreated each render and would re-fire every render if listed — we re-sync ids only when cmdk moves the highlight or the controlled value changes.
+    sync()
   }, [selectedItemId, value])
   return null
 }

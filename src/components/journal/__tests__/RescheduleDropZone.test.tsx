@@ -350,8 +350,7 @@ describe('RescheduleDropZone', () => {
 
   // Keyboard-equivalent path is documented in the source JSDoc.
   // Drag-only is OK because users can reschedule via DateChip → DateChipEditor.
-  // This guards against an accidental removal of the JSDoc that explains why
-  // the no-static-element-interactions oxlint-disable is justified.
+  // This guards against an accidental removal of the JSDoc that names it.
   it('source documents keyboard-equivalent reschedule path', async () => {
     expect(typeof RescheduleDropZone).toBe('function')
     const fs = await import('node:fs')

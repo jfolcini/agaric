@@ -87,14 +87,13 @@ export function FilterChipRow({
   if (!hasFilters && !trailing) return null
 
   return (
-    <div
+    <fieldset
       className={cn(
-        'flex flex-wrap items-center gap-2',
+        // `min-w-0` resets the fieldset's UA `min-inline-size: min-content`.
+        'flex min-w-0 flex-wrap items-center gap-2',
         hasFilters && 'rounded-lg border bg-muted/40 p-2',
       )}
       data-testid="filter-chip-bar"
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="group" + aria-label on a flex-wrap chip container; <fieldset>/<details>/<hgroup> carry unwanted default rendering/semantics and would break the inline chip-bar layout
-      role="group"
       aria-label={t('search.filtersActive')}
     >
       {filters.map((token, index) => {
@@ -154,6 +153,6 @@ export function FilterChipRow({
           {t('search.clearAll')}
         </button>
       )}
-    </div>
+    </fieldset>
   )
 }

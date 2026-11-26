@@ -208,6 +208,20 @@ describe('ColorSwatchPicker', () => {
       expect(onCustomColor).toHaveBeenCalledWith('#ff4d00')
     })
 
+    // A move that returns to the current colour before release, as a drag back to its start does.
+    it('does not commit a move that ends on the current colour', () => {
+      const { onCustomColor } = renderPicker('#ff0000')
+      const hue = screen.getByRole('slider', { name: 'Hue' })
+
+      fireEvent.keyDown(hue, { key: 'ArrowRight', keyCode: 39 })
+      expect(hue).toHaveAttribute('aria-valuenow', '18')
+      fireEvent.keyDown(hue, { key: 'ArrowLeft', keyCode: 37 })
+      expect(hue).toHaveAttribute('aria-valuenow', '0')
+      fireEvent.keyUp(hue, { key: 'ArrowLeft', keyCode: 37 })
+
+      expect(onCustomColor).not.toHaveBeenCalled()
+    })
+
     it('has no a11y violations while open, with an error showing', async () => {
       const user = userEvent.setup()
       const { container } = renderPicker('#1e8a7a')
