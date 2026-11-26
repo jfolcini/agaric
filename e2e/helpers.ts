@@ -1136,9 +1136,13 @@ export interface SearchSeed {
   tagIds?: string[]
 }
 
-/** Create each block through the mock IPC; returns their ids in order. */
-export function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<string[]> {
-  return page.evaluate(
+/**
+ * Create each block through the mock IPC; returns their ids in order. Then settles the
+ * backend, so the real one has indexed them before a search: resubmitting an unchanged query
+ * does not re-run it.
+ */
+export async function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<string[]> {
+  const created = await page.evaluate(
     async ({ list, spaceId }) => {
       const { invoke } = (
         window as unknown as {
@@ -1177,6 +1181,8 @@ export function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<strin
     },
     { list: seeds, spaceId: SEED_IDS.SPACE_PERSONAL },
   )
+  await settleBackend(page)
+  return created
 }
 
 /** Type `query` into the Search view and submit it. */
@@ -1198,8 +1204,9 @@ export async function searchResultIds(page: Page): Promise<string[]> {
 }
 
 /**
- * Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. The
- * backend writes its FTS index after a block's commit, so each try submits again.
+ * Submit `query` until the listed result ids are exactly `ids`, in that order when `ordered`. A
+ * resubmit of an unchanged query does not re-run the search, so this cannot wait out the backend's
+ * FTS write: seed through a helper that settles the backend first, as `seedSearchBlocks` does.
  */
 export async function expectSearchListed(
   page: Page,
