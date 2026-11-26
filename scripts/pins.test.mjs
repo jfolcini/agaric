@@ -294,11 +294,14 @@ void describe('staleRows', () => {
     assert.doesNotMatch(md, /pin-bump (fresh|same|ld-same|broken) /)
   })
 
-  void it('names the file to edit for a stale pin pin-bump cannot write', () => {
+  void it('names what pin-bump leaves to edit by hand', () => {
     const md = staleMarkdown([
       { name: 'rust', pinned: '1.0.0', latest: '1.1.0', upstream: 'rust-stable', status: 'stale' },
     ])
-    assert.match(md, /^# rust: edit rust-toolchain\.toml and its lockstep copies to 1\.1\.0$/m)
+    assert.match(
+      md,
+      /^just pin-bump rust 1\.1\.0 {2}# then set `rust-version` in each crate manifest/m,
+    )
   })
 })
 
@@ -336,7 +339,10 @@ void describe('file pins', () => {
     try {
       writeFileSync(join(dir, '.nvmrc'), '24.1.0\n')
       writeFileSync(join(dir, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.90.0"\n')
-      writeFileSync(join(dir, 'package.json'), '{"name":"x","packageManager":"npm@12.2.0"}')
+      writeFileSync(
+        join(dir, 'package.json'),
+        '{\n  "name": "x",\n  "packageManager": "npm@12.2.0"\n}\n',
+      )
       writeFileSync(
         join(dir, '.mcp.json'),
         '{"mcpServers":{"g":{"command":"uvx","args":["code-review-graph@2.3.8","serve"]}}}',
@@ -350,6 +356,10 @@ void describe('file pins', () => {
           ['code-review-graph', '2.3.8'],
         ],
       )
+      for (const p of FILE_PINS) {
+        const text = readFileSync(join(dir, p.file), 'utf8')
+        assert.equal(p.read(p.write(text, '9.9.9')), '9.9.9', p.name)
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -412,9 +422,75 @@ void describe('pins.sh fetch', () => {
   })
 })
 
+/** Run `pins.sh github-output` on `pinsFile` into a fresh `out`; the lines it wrote. */
+const githubOutput = (pinsFile, out) => {
+  writeFileSync(out, '')
+  execFileSync('bash', [join(ROOT, 'scripts/pins.sh'), 'github-output'], {
+    env: { ...process.env, GITHUB_OUTPUT: out, PINS_FILE: pinsFile },
+    stdio: 'pipe',
+  })
+  return readFileSync(out, 'utf8').split('\n').filter(Boolean)
+}
+
+/** Call `fn(pinsFile, out)` in a temp dir holding a one-pin pins.txt and `files`. */
+const inPinsDir = (files, fn) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pins-gh-'))
+  try {
+    writeFileSync(join(dir, 'pins.txt'), 'version tool-x 1.0.0 -\n')
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text)
+    return fn(join(dir, 'pins.txt'), join(dir, 'out'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+void describe('pins.sh github-output', () => {
+  const RUST_TOOLCHAIN = '[toolchain]\n# channel = "0.0.0"\nchannel = "1.90.0"\n'
+  const PACKAGE =
+    '{\n  "engines": {\n    "npm": "11.0.0",\n    "node": "^24.2.1 || >=26.1.0"\n  }\n}\n'
+  const NO_CHANNEL = /no `channel = "<version>"` line in .*rust-toolchain\.toml/
+  const NO_FLOOR = /no x\.y\.z in engines\.node of .*package\.json/
+
+  void it("adds rust-toolchain.toml's channel and the engines.node floor to the pins", () => {
+    const lines = inPinsDir(
+      { 'rust-toolchain.toml': RUST_TOOLCHAIN, 'package.json': PACKAGE },
+      githubOutput,
+    )
+    assert.deepEqual(lines, ['tool_x=1.0.0', 'rust=1.90.0', 'node_floor=24.2.1'])
+  })
+
+  void it('fails, writing nothing, when either file has no version', () => {
+    for (const [files, message] of [
+      [{ 'package.json': PACKAGE }, NO_CHANNEL],
+      [{ 'rust-toolchain.toml': '[toolchain]\n', 'package.json': PACKAGE }, NO_CHANNEL],
+      [{ 'rust-toolchain.toml': RUST_TOOLCHAIN }, NO_FLOOR],
+      [
+        {
+          'rust-toolchain.toml': RUST_TOOLCHAIN,
+          'package.json':
+            '{\n  "engines": {\n    "npm": "11.0.0"\n  },\n  "x": {\n    "node": "24.0.0"\n  }\n}\n',
+        },
+        NO_FLOOR,
+      ],
+    ]) {
+      inPinsDir(files, (pinsFile, out) => {
+        assert.throws(
+          () => githubOutput(pinsFile, out),
+          (e) => message.test(e.stderr.toString()),
+        )
+        assert.equal(readFileSync(out, 'utf8'), '')
+      })
+    }
+  })
+})
+
 void describe('workflows read versions from pins.txt', () => {
   const { versions } = parsePins(PINS)
-  const outputs = new Set([...versions.keys()].map((n) => n.replaceAll('-', '_')))
+  const outputs = new Set(
+    inPinsDir({}, (_, out) => githubOutput(join(ROOT, 'pins.txt'), out)).map(
+      (l) => l.split('=')[0],
+    ),
+  )
   const dirs = [
     '.github/workflows',
     ...readdirSync(join(ROOT, '.github/actions')).map((d) => `.github/actions/${d}`),
@@ -433,7 +509,7 @@ void describe('workflows read versions from pins.txt', () => {
       }
     }
   })
-  void it('hard-codes no version of a pinned tool in a `tool:` list, java-version, emulator-build or Android SDK package', () => {
+  void it('hard-codes no version of a pinned tool in a `tool:` list, java-version, emulator-build, toolchain, node-version or Android SDK package', () => {
     for (const f of files) {
       for (const line of readFileSync(join(ROOT, f), 'utf8').split('\n')) {
         const tool = line.match(/^\s*tool:\s*(.*)$/)?.[1]
@@ -442,7 +518,11 @@ void describe('workflows read versions from pins.txt', () => {
           if (versions.has(name))
             assert.match(version ?? '', /steps\.pins\.outputs/, `${f}: ${entry.trim()}`)
         }
-        if (/^\s*(java-version|emulator-build):|\b(ndk|build-tools)[;/]\d/.test(line))
+        if (
+          /^\s*(java-version|emulator-build):|^\s*(toolchain|node-version):\s*\d|\b(ndk|build-tools)[;/]\d/.test(
+            line,
+          )
+        )
           assert.match(line, /steps\.pins\.outputs/, `${f}: ${line.trim()}`)
       }
     }

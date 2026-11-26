@@ -181,19 +181,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: ./.github/actions/rust-toolchain
-        with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # The cross `targets` below install onto this exact toolchain.
-          toolchain: 1.100.0
-          targets: ${{ matrix.target }}
-
       - name: Read pins.txt
         id: pins
         shell: bash
         run: bash scripts/pins.sh github-output
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/rust-toolchain
+        with:
+          # #640: rust-toolchain.toml's exact channel.
+          # The cross `targets` below install onto this exact toolchain.
+          toolchain: ${{ steps.pins.outputs.rust }}
+          targets: ${{ matrix.target }}
 
       - name: Install cargo-auditable
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
@@ -1854,13 +1853,16 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # #640: rust-toolchain.toml's exact channel.
           # The cross `targets` below install onto this exact toolchain.
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
           targets: aarch64-linux-android
 
       # NO Rust cache here — deliberately (#3542). A `Swatinem/rust-cache`
@@ -1898,10 +1900,6 @@ jobs:
       # nothing at all, so keeping it would leave a no-op in the lane that
       # reads as if this release were still cached. Deleting it says what
       # is actually true.
-      - name: Read pins.txt
-        id: pins
-        run: bash scripts/pins.sh github-output
-
       - name: Install cargo-auditable
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
