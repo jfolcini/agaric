@@ -1015,7 +1015,7 @@ export const references: Record<string, string> = {
   // had no palette entry.
   // Translators: Command palette: action commands. "Toggle theme" cycles light/dark/system; "page
   // mode" = one editor for the whole page instead of block by block; "New meeting" opens the dialog
-  // that creates a meeting page; "Export page as Markdown" copies it to the clipboard.
+  // that creates a meeting page; "Copy page as Markdown" copies it to the clipboard.
   'palette.cmdCreateNewPage': 'Create new page',
   'palette.cmdNewMeeting': 'New meeting',
   'palette.cmdGoToToday': 'Go to today',
@@ -1025,11 +1025,11 @@ export const references: Record<string, string> = {
   'palette.cmdReopenClosedTab': 'Reopen closed tab',
   'palette.cmdNavigateBack': 'Go back',
   'palette.cmdNavigateForward': 'Go forward',
-  'palette.cmdExportPageMarkdown': 'Export page as Markdown',
+  'palette.cmdExportPageMarkdown': 'Copy page as Markdown',
   'palette.cmdReadPageAloud': 'Read page aloud',
   'palette.cmdStopReading': 'Stop reading aloud',
-  // Translators: Error toast when "Export page as Markdown" runs with no page open.
-  'palette.noActivePage': 'No page is open to export',
+  // Translators: Error toast when "Copy page as Markdown" runs with no page open.
+  'palette.noActivePage': 'No page is open to copy',
   // Translators: Command that opens the keyboard shortcuts list.
   'palette.cmdKeyboardShortcuts': 'Keyboard shortcuts',
   // Translators: Empty state of commands mode.
