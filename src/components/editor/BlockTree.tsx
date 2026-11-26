@@ -102,6 +102,7 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { foldEnd, headingLevel, outlineOf } from '@/lib/section-fold'
 import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
@@ -329,6 +330,8 @@ export function BlockTree({
     expandAncestors,
     visibleBlocks: collapseFilteredVisible,
     hasChildrenSet,
+    foldableSet,
+    foldedSiblings,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
@@ -384,7 +387,7 @@ export function BlockTree({
     revealIndex,
   } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
   useFindReveal({
-    blocksById,
+    blocks,
     collapsedIds,
     visible: uncappedZoomedVisible,
     expandBlock,
@@ -960,6 +963,7 @@ export function BlockTree({
     reorder,
     moveToParent,
     moveBlocks,
+    foldedSiblings,
     scrollContainerRef,
   })
 
@@ -1026,15 +1030,15 @@ export function BlockTree({
   // save-time parser in `useBlockFlush` commits the `key:: value` line to the
   // property system (stripping it from the content) when the block flushes.
   // The default no-op `propertySelect` thunk stays wired via `onPropertySelect`.
-  // beforeCollapse — rescue focus (flush + clear) when the collapsing subtree
-  // contains the focused block.
+  // beforeCollapse — rescue focus (flush + clear) when what the block folds
+  // (its subtree, a heading's section) holds the focused block.
   dispatch.on('beforeCollapse', (blockId: string) => {
-    if (focusedBlockId) {
-      const descendants = getDragDescendants(blocks, blockId)
-      if (descendants.has(focusedBlockId)) {
-        handleFlush()
-        setFocused(null)
-      }
+    if (!focusedBlockId) return
+    const index = blocks.findIndex((b) => b.id === blockId)
+    const focused = blocks.findIndex((b) => b.id === focusedBlockId)
+    if (index !== -1 && focused > index && focused < foldEnd(outlineOf(blocks), index)) {
+      handleFlush()
+      setFocused(null)
     }
   })
 
@@ -1155,6 +1159,19 @@ export function BlockTree({
     t,
   })
 
+  // #7040 — Enter on a folded heading unfolds its section, so the block Enter
+  // makes is the section's first line, not hidden in it.
+  const handleEnter = useCallback(() => {
+    if (
+      focusedBlockId !== null &&
+      collapsedIds.has(focusedBlockId) &&
+      headingLevel(blocksById.get(focusedBlockId)?.content) !== null
+    ) {
+      expandBlock(focusedBlockId)
+    }
+    return handleEnterSave()
+  }, [focusedBlockId, collapsedIds, blocksById, expandBlock, handleEnterSave])
+
   // ── Multi-selection handler (Ctrl+Click / Shift+Click) ──────────────
   const handleSelect = useCallback(
     (blockId: string, mode: 'toggle' | 'range') => {
@@ -1244,7 +1261,7 @@ export function BlockTree({
           onMoveDown: handleMoveDown,
           onFlush: handleFlush,
           onMergeWithPrev: handleMergeWithPrev,
-          onEnterSave: handleEnterSave,
+          onEnterSave: handleEnter,
           onEscapeSave: handleEscapeSave,
           onToggleTodo: handleToggleFocusedTodo,
           onToggleCollapse: handleToggleFocusedCollapse,
@@ -1333,7 +1350,7 @@ export function BlockTree({
   useBlockTreeKeyboardShortcuts({
     focusedBlockId,
     pageStore,
-    hasChildrenSet,
+    foldableSet,
     selectAllIds,
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
     // (`zoomedVisible` == `collapsedVisible` at root view), so it matches what
@@ -1664,7 +1681,7 @@ export function BlockTree({
                       viewport={viewport}
                       rovingEditor={rovingEditor}
                       onContainerPointerDown={handleContainerPointerDown}
-                      hasChildrenSet={hasChildrenSet}
+                      foldableSet={foldableSet}
                       collapsedIds={collapsedIds}
                       hiddenMountCount={hiddenMountCount}
                       onExpandMount={expandMountLimit}

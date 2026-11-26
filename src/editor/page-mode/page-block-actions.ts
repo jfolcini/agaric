@@ -11,7 +11,9 @@ import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
+import { carriedEnd } from '@/editor/page-mode/page-collapse'
 import {
+  blockIndex,
   firstTokenPos,
   restoreSelection,
   selectionEnds,
@@ -110,20 +112,19 @@ export const moveBlocks =
   }
 
 /**
- * The page with block `id` and the blocks under it moved to `slot`, the index
- * of the block they then go before (the page's length for its end), `id` at
- * `depth` and the others as deep under it as they were. A slot among them, or
- * just past them, is where they are. Null where nothing changes.
+ * The page with the blocks from `from` to `end` (a block and what it carries,
+ * `carriedEnd`) moved to `slot`, the index of the block they then go before
+ * (the page's length for its end), the first at `depth` and the others as deep
+ * against it as they were. A slot among them, or just past them, is where they
+ * are. Null where nothing changes.
  */
 function droppedRows(
   rows: readonly TreeItem[],
-  id: string,
+  from: number,
+  end: number,
   slot: number,
   depth: number,
 ): TreeItem[] | null {
-  const from = rows.findIndex((row) => row.id === id)
-  if (from === -1) return null
-  const end = subtreeEnd(rows, from)
   const at = slot > from && slot <= end ? from : slot
   const shift = depth - (rows[from] as TreeItem).depth
   if (at === from && shift === 0) return null
@@ -136,13 +137,16 @@ function droppedRows(
 }
 
 /**
- * Move block `id` with the blocks under it to `slot` at `depth` (`droppedRows`),
- * and the caret to its start, as block mode's drop focuses the block dragged.
+ * Move block `id` with what it carries (`carriedEnd`: the blocks under it, a
+ * collapsed heading's section) to `slot` at `depth` (`droppedRows`), and the
+ * caret to its start, as block mode's drop focuses the block dragged.
  */
 export const dropBlock =
   (id: string, slot: number, depth: number): Command =>
   (state, dispatch) => {
-    const rows = droppedRows(treeRows(state.doc), id, slot, depth)
+    const from = blockIndex(state.doc, id)
+    if (from === null) return false
+    const rows = droppedRows(treeRows(state.doc), from, carriedEnd(state, from), slot, depth)
     if (rows === null) return false
     if (dispatch) {
       const tr = state.tr

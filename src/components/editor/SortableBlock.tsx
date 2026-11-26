@@ -537,7 +537,7 @@ interface SortableBlockProps {
    */
   guides?: string | undefined
   rovingEditor: RovingEditorHandle
-  /** Whether this block has children in the tree. */
+  /** Whether this block has something to fold: children, or a heading's section (#7040). */
   hasChildren?: boolean | undefined
   /** Whether this block is currently collapsed. */
   isCollapsed?: boolean | undefined

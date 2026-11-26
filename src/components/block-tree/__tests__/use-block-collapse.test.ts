@@ -582,3 +582,42 @@ describe('useBlockCollapse', () => {
     })
   })
 })
+
+describe('useBlockCollapse — heading sections (#7040)', () => {
+  const page: FlatBlock[] = [
+    makeBlock({ id: 'H2', depth: 0, content: '## Two' }),
+    makeBlock({ id: 'S1', depth: 0, content: 'in two' }),
+    makeBlock({ id: 'S1C', depth: 1, parent_id: 'S1', content: 'under it' }),
+    makeBlock({ id: 'S2', depth: 0, content: 'also in two' }),
+    makeBlock({ id: 'NEXT', depth: 0, content: '## Next' }),
+    makeBlock({ id: 'LAST', depth: 0, content: 'in next' }),
+  ]
+
+  it('can fold a heading with only siblings in its section, and no plain leaf', () => {
+    const { result } = renderHook(() => useBlockCollapse(page))
+    expect([...result.current.foldableSet]).toEqual(['H2', 'S1', 'NEXT'])
+    expect(result.current.hasChildrenSet.has('H2')).toBe(false)
+  })
+
+  it('a collapsed heading hides its section up to the next heading of its level', () => {
+    const { result } = renderHook(() => useBlockCollapse(page))
+    act(() => result.current.toggleCollapse('H2'))
+    expect(result.current.visibleBlocks.map((b) => b.id)).toEqual(['H2', 'NEXT', 'LAST'])
+  })
+
+  it("names the siblings a collapsed heading's drag carries, and none once it is expanded", () => {
+    const { result } = renderHook(() => useBlockCollapse(page))
+    expect(result.current.foldedSiblings('H2')).toEqual([])
+    act(() => result.current.toggleCollapse('H2'))
+    expect(result.current.foldedSiblings('H2')).toEqual(['S1', 'S2'])
+    expect(result.current.foldedSiblings('S1')).toEqual([])
+  })
+
+  it('reveals a target in a collapsed heading section without saving it', () => {
+    const { result } = renderHook(() => useBlockCollapse(page, { pageKey: 'PAGE' }))
+    act(() => result.current.toggleCollapse('H2'))
+    act(() => result.current.expandAncestors('S2'))
+    expect(result.current.visibleBlocks.map((b) => b.id)).toContain('S2')
+    expect(JSON.parse(localStorage.getItem('collapsed_ids:PAGE') ?? '[]')).toEqual(['H2'])
+  })
+})

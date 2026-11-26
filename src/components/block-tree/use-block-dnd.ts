@@ -78,6 +78,11 @@ interface UseBlockDnDParams {
    * sites that never multi-select can omit it.
    */
   moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
+  /**
+   * #7040 — the siblings a collapsed heading hides (`useBlockCollapse`): its
+   * drag carries them, through `moveBlocks`, so one undo puts them back.
+   */
+  foldedSiblings?: (blockId: string) => string[]
   scrollContainerRef?: RefObject<HTMLElement | null>
 }
 
@@ -104,6 +109,36 @@ function isStillTouchDrop({ activatorEvent, delta }: DragEndEvent): boolean {
   return activatorEvent.type === 'touchstart' && !exceedsThreshold(delta.x, delta.y)
 }
 
+/**
+ * #7040 — `slot`, counted among the shown children of `parentId` that are not
+ * `moving` (`computeDropIndex` over the drag's rows), as a slot among all of
+ * them. A folded heading's section hides siblings: a drop before a shown
+ * sibling lands before it, and one after the last lands past what it folds.
+ */
+export function slotAmongAll(
+  blocks: readonly FlatBlock[],
+  shown: readonly FlatBlock[],
+  parentId: string | null,
+  slot: number,
+  moving: ReadonlySet<string>,
+  foldedSiblings: ((blockId: string) => string[]) | undefined,
+): number {
+  const isSibling = (b: FlatBlock) => (b.parent_id ?? null) === parentId && !moving.has(b.id)
+  const visible = shown.filter(isSibling)
+  const last = visible.at(-1)
+  if (last === undefined) return slot
+  const all = blocks.filter(isSibling).map((b) => b.id)
+  const before = visible[slot]
+  if (before !== undefined) {
+    const at = all.indexOf(before.id)
+    return at === -1 ? slot : at
+  }
+  // After the last shown sibling: past the siblings hidden before it and in its fold.
+  const hidden = (foldedSiblings?.(last.id) ?? []).filter((id) => !moving.has(id))
+  const at = all.indexOf(last.id)
+  return at === -1 ? slot : slot + at - (visible.length - 1) + hidden.length
+}
+
 export interface UseBlockDnDReturn {
   activeId: string | null
   overId: string | null
@@ -117,13 +152,14 @@ export interface UseBlockDnDReturn {
   dropAfter: boolean
   visibleItems: readonly FlatBlock[]
   /**
-   * #914 — whether the active drag is moving the whole multi-selection (the
-   * dragged block is one of >1 selection roots) rather than a single block.
+   * #914 — whether the active drag moves several roots (the dragged block is
+   * one of >1 selection roots, or a folded heading carrying its section)
+   * rather than a single block.
    */
   isMultiDrag: boolean
   /**
-   * #914 — selection roots being moved by the active multi-select drag, in
-   * document order. Empty unless `isMultiDrag` is true.
+   * #914 — the roots the active drag moves: the selection roots, each folded
+   * heading's hidden siblings after it (#7040). Empty unless `isMultiDrag`.
    */
   dragRoots: string[]
   sensors: ReturnType<typeof useSensors>
@@ -145,6 +181,7 @@ export function useBlockDnD({
   reorder,
   moveToParent,
   moveBlocks,
+  foldedSiblings,
   scrollContainerRef,
 }: UseBlockDnDParams): UseBlockDnDReturn {
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -178,13 +215,21 @@ export function useBlockDnD({
   // the full `blocks` (true tree) so collapsed/zoomed views don't drop roots.
   // A drag is a multi-drag only when the dragged block is itself a root AND
   // there is more than one root — otherwise it stays single-block behaviour.
+  //
+  // #7040 — a folded heading carries the siblings its section hides, so its
+  // drag is a multi-drag of the heading and those siblings.
   const dragRoots = useMemo(() => {
-    if (!activeId || !selectedBlockIds || selectedBlockIds.length <= 1) return []
-    if (!selectedBlockIds.includes(activeId)) return []
-    const roots = computeSelectionRoots(blocks, selectedBlockIds)
-    if (roots.length <= 1 || !roots.includes(activeId)) return []
-    return roots
-  }, [activeId, selectedBlockIds, blocks])
+    if (!activeId) return []
+    let roots = [activeId]
+    if (selectedBlockIds && selectedBlockIds.length > 1 && selectedBlockIds.includes(activeId)) {
+      const selectionRoots = computeSelectionRoots(blocks, selectedBlockIds)
+      if (selectionRoots.length > 1 && selectionRoots.includes(activeId)) roots = selectionRoots
+    }
+    if (foldedSiblings) {
+      roots = [...new Set(roots.flatMap((id) => [id, ...foldedSiblings(id)]))]
+    }
+    return roots.length > 1 ? roots : []
+  }, [activeId, selectedBlockIds, blocks, foldedSiblings])
 
   const isMultiDrag = dragRoots.length > 1
 
@@ -412,7 +457,14 @@ export function useBlockDnD({
         // #400: 0-based sibling slot under projected parent. R12 — counted over
         // `slotItems` (== `visibleItems`; every other moving root and its
         // subtree are excluded — see the memo above).
-        const newIndex = computeDropIndex(slotItems, projected.parentId, over.id as string, blockId)
+        const newIndex = slotAmongAll(
+          blocks,
+          slotItems,
+          projected.parentId,
+          computeDropIndex(slotItems, projected.parentId, over.id as string, blockId),
+          new Set(dragRoots),
+          foldedSiblings,
+        )
         restoreFocusOnSuccess('moveBlocks', moveBlocks(dragRoots, projected.parentId, newIndex))
         return
       }
@@ -422,11 +474,13 @@ export function useBlockDnD({
         const parentChanged = projected.parentId !== currentParentId
         // #400: send the 0-based sibling slot; the backend derives the
         // convergent fractional key (no colliding / `<= 0` positions).
-        const newIndex = computeDropIndex(
+        const newIndex = slotAmongAll(
+          blocks,
           visibleItems,
           projected.parentId,
-          over.id as string,
-          blockId,
+          computeDropIndex(visibleItems, projected.parentId, over.id as string, blockId),
+          new Set([blockId]),
+          foldedSiblings,
         )
 
         if (parentChanged) {
@@ -474,6 +528,7 @@ export function useBlockDnD({
       isMultiDrag,
       dragRoots,
       moveBlocks,
+      foldedSiblings,
     ],
   )
 
