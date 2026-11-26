@@ -4,7 +4,7 @@
  * Covers:
  *  - Toolbar visibility flips with the store's `open` flag.
  *  - Typing into the input drives the counter via the matcher.
- *  - Toggles (Aa / Ab| / .*) flip aria-pressed and affect counts.
+ *  - Toggles (Search's `SearchToggleRow`) flip aria-pressed and affect counts.
  *  - Enter / Shift+Enter / F3 / Shift+F3 cycle matches.
  *  - Esc closes and restores focus.
  *  - Invalid regex surfaces inline error UX.
@@ -12,7 +12,7 @@
  *  - vitest-axe finds zero violations on the rendered toolbar.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -114,7 +114,7 @@ describe('InPageFind — toggles', () => {
       expect(screen.getByTestId('in-page-find-counter').textContent).toMatch(/of 3$/)
     })
 
-    const caseBtn = screen.getByTestId('in-page-find-toggle-case')
+    const caseBtn = screen.getByTestId('search-toggle-case-sensitive')
     expect(caseBtn).toHaveAttribute('aria-pressed', 'false')
     await userEvent.click(caseBtn)
     expect(caseBtn).toHaveAttribute('aria-pressed', 'true')
@@ -123,11 +123,24 @@ describe('InPageFind — toggles', () => {
     })
   })
 
+  // #7040 S12 — Search's mode toggles, grouped apart from Replace.
+  it('groups the mode toggles apart from Replace, as Search does', async () => {
+    render(<InPageFind />)
+    openToolbar('alpha')
+    const group = await screen.findByRole('group', { name: 'Search modes' })
+    expect(
+      within(group)
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('aria-label')),
+    ).toEqual(['Case-sensitive', 'Whole word', 'Regex'])
+    expect(within(group).queryByTestId('in-page-find-toggle-replace')).toBeNull()
+  })
+
   it('regex toggle activates regex mode + invalid pattern surfaces an inline error', async () => {
     render(<InPageFind />)
     openToolbar('[abc')
 
-    const regexBtn = await screen.findByTestId('in-page-find-toggle-regex')
+    const regexBtn = await screen.findByTestId('search-toggle-regex')
     await userEvent.click(regexBtn)
     expect(regexBtn).toHaveAttribute('aria-pressed', 'true')
 
@@ -317,9 +330,9 @@ describe('InPageFind — close + a11y', () => {
 describe('InPageFind — icon button tooltips', () => {
   it.each([
     ['in-page-find-toggle-replace', 'Replace', 'Ctrl+H'],
-    ['in-page-find-toggle-case', 'Match case (Aa)', null],
-    ['in-page-find-toggle-word', 'Match whole word (Ab|)', null],
-    ['in-page-find-toggle-regex', 'Regular expression (.*)', null],
+    ['search-toggle-case-sensitive', 'Case-sensitive', null],
+    ['search-toggle-whole-word', 'Whole word', null],
+    ['search-toggle-regex', 'Regex', null],
     ['in-page-find-previous', 'Previous match', 'Shift+F3'],
     ['in-page-find-next', 'Next match', 'F3'],
     ['in-page-find-close', 'Close', 'Esc'],

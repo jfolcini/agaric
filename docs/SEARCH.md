@@ -30,7 +30,7 @@ The palette does not surface tags, parentless blocks, or recent blocks (only rec
 
 ## In-page find
 
-`Ctrl+F` (or `Cmd+F` on macOS) opens a thin toolbar anchored at the top of the page. It highlights every match in the currently-rendered page (Journal, PageEditor, …) in real time as you type. The current match gets a stronger accent and the page auto-scrolls to keep it in view.
+`Ctrl+F` (or `Cmd+F` on macOS) opens a thin toolbar. On desktop it sits in the header, so it covers nothing: in its row left of Today and Search, or, in the Journal, whose row is full, on a line of its own under them. On a phone it floats below the header. It highlights every match in the currently-rendered page (Journal, PageEditor, …) in real time as you type. The current match gets a stronger accent and the page auto-scrolls to keep it in view.
 
 Where the view shows block trees, find searches the blocks' text in the page store (`src/lib/in-page-find/block-text.ts`), not the DOM (#6557): rows scrolled out of view, rows past the mount cap and children of a collapsed block all count, and the chrome around the blocks (buttons, Linked References) does not. Moving to a match mounts its row, expanding its collapsed ancestors, then scrolls to it. A view with no block tree (page mode, the journal month grid) is still searched as rendered DOM text.
 
@@ -47,11 +47,11 @@ Where the view shows block trees, find searches the blocks' text in the page sto
 
 ### Toggles
 
-The toolbar exposes the same toggle row as the across-pages search view so the two surfaces feel coherent:
+The toolbar shows the across-pages search view's own toggle row, so the two surfaces work alike:
 
-- **`Aa` — Match case.** Disabled by default. ASCII letters fold via `String.prototype.toLocaleLowerCase` (Unicode-safe in modern engines).
+- **`Aa` — Case-sensitive.** Disabled by default. ASCII letters fold via `String.prototype.toLocaleLowerCase` (Unicode-safe in modern engines).
 - **`Ab|` — Whole word.** Restricts matches whose boundary letters are word chars (`[A-Za-z0-9_]`). Wraps around literal queries and post-filters regex matches.
-- **`.*` — Regular expression.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
+- **`.*` — Regex.** Uses the JavaScript native `RegExp` engine. Compiles with the `gu` flags by default (`giu` when case-insensitive). Inline `(?s)` / `(?m)` flags are supported per pattern.
 
 Matches do NOT span block boundaries — each block is searched on its own, so a query will not match from the end of one block into the next. Within a block, a match may cross formatting (`**bold**tail` matches `boldtail`). On the DOM path each text node is searched independently.
 
@@ -376,7 +376,7 @@ Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-p
 
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 
-- **In this page** — embeds the find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
+- **In this page** — embeds the find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the header toolbar.
 - **Across all pages** — embeds the palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/common/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
 
 The default segment is context-aware: `defaultModeForView()` returns `'in-page'` for the Journal and page-editor views (the user is reading a page), `'all-pages'` everywhere else.
@@ -392,7 +392,7 @@ The Sheet owns a `useSearchSheetStore` (`open`, `mode`, `query`). A single `useE
 Two safety nets:
 
 - The `if (!open) return` guard prevents the mount-time effect from clobbering a pre-existing desktop session (Ctrl+F or Cmd+K opened *before* the Sheet was first activated).
-- The in-page-find toolbar has a `variant` prop (`'overlay'` vs `'embedded'`); the palette uses the inner `<PaletteBody>` directly in the Sheet (no `variant` prop). The overlay `<InPageFind>` and the desktop `<CommandPalette>` shell each return `null` (or close) when the Sheet is open in their respective modes, so matcher / IPC effects never run twice for the same surface.
+- The in-page-find toolbar has a `variant` prop (`'header'`, `'overlay'` or `'embedded'`); the palette uses the inner `<PaletteBody>` directly in the Sheet (no `variant` prop). The App-level `<InPageFind>` and the desktop `<CommandPalette>` shell each return `null` (or close) when the Sheet is open in their respective modes, so matcher / IPC effects never run twice for the same surface.
 
 ### Known limitations
 
