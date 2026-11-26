@@ -91,6 +91,12 @@ export const pages: Record<string, string> = {
   'pageHeader.menuAddAlias': 'Ajouter un alias',
   'pageHeader.menuAddTag': 'Ajouter une étiquette',
   'pageHeader.menuAddProperty': 'Ajouter une propriété',
+  'pageHeader.sectionAdd': 'Ajouter',
+  'pageHeader.sectionView': 'Affichage',
+  'pageHeader.sectionTemplate': 'Modèle',
+  'pageHeader.sectionEdit': 'Modifier',
+  'pageHeader.exportMenu': 'Exporter',
+  'pageHeader.exportBack': 'Retour',
   'templates.description':
     'Un modèle est une page que vous pouvez copier dans n’importe quelle autre page avec /template. Les espaces réservés ci-dessous sont remplis lors de son insertion.',
   'templates.empty': 'Aucun modèle pour l’instant. Marquez une page comme modèle pour la voir ici.',

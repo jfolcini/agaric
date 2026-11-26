@@ -55,24 +55,20 @@ describe('PageHeaderMenu — Page history', () => {
     expect(onOpenHistory).toHaveBeenCalledOnce()
   })
 
-  it('is reached by ArrowDown straight after Undo', async () => {
+  it('is reached by ArrowDown straight after Open outline, in the View section', async () => {
     const user = userEvent.setup()
     const { menu } = openMenu({ onOpenHistory: vi.fn() })
-    // The name carries the shortcut hint after the label.
-    const undo = within(menu).getByRole('menuitem', {
-      name: new RegExp(`^${t('pageHeader.undoAction')}`),
-    })
+    const view = within(menu).getByRole('group', { name: t('pageHeader.sectionView') })
+    const outline = within(view).getByRole('menuitem', { name: t('pageHeader.openOutline') })
     await waitFor(() => {
-      expect(
-        within(menu).getByRole('menuitem', { name: t('pageHeader.copyAppLink') }),
-      ).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: 'Add alias' })).toHaveFocus()
     })
-    await user.keyboard('{ArrowDown}')
-    expect(undo).toHaveFocus()
+    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}')
+    expect(outline).toHaveFocus()
 
     await user.keyboard('{ArrowDown}')
 
-    expect(within(menu).getByRole('menuitem', { name: t('pageHeader.pageHistory') })).toHaveFocus()
+    expect(within(view).getByRole('menuitem', { name: t('pageHeader.pageHistory') })).toHaveFocus()
   })
 
   it('is not offered without a handler', () => {

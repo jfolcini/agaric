@@ -257,15 +257,15 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
 
   test('menu rows and list rows fill while pressed', async ({ page }) => {
     const accent = await accentColor(page)
-    // The journal mode menu (`PopoverMenuItem`).
+    // Every menu row is `menuRowVariants`: the journal mode menu (`PopoverMenuItem`).
     await page.getByRole('button', { name: /^Journal view mode/ }).tap()
     await expectPressedFill(page, page.getByRole('button', { name: 'Week', exact: true }), accent)
-    // The block menu (`menu-row`).
+    // The block menu.
     const menu = await openBlockMenu(page)
     await expectPressedFill(page, menu.getByRole('menuitem', { name: 'Turn into' }), accent)
     await page.keyboard.press('Escape')
     await expect(menu).toHaveCount(0)
-    // The page menu (`MENU_ITEM_CLASS`).
+    // The page menu.
     await page.getByRole('button', { name: 'Page actions' }).tap()
     const pageMenu = page.getByRole('menu', { name: 'Page actions' })
     await expectPressedFill(page, pageMenu.getByRole('menuitem', { name: 'Open outline' }), accent)
@@ -446,7 +446,7 @@ test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @ed
     await page.getByRole('button', { name: 'Page actions' }).tap()
     const menu = page.getByRole('menu', { name: 'Page actions' })
     // No tab bar on a phone, so nowhere for a new tab to show.
-    await expect(menu.getByRole('menuitem', { name: 'Copy app link' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Add alias' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Open in new tab' })).toHaveCount(0)
     await menu.getByRole('menuitem', { name: 'Insert emoji' }).tap()
     await expectBottomSheet(page, page.getByRole('dialog', { name: 'Insert emoji' }))

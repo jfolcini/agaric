@@ -18,14 +18,15 @@
  *    the moment Tab fired. Scrolling the list while the menu is open
  *    would desync this, but the menu closes on Escape / click /
  *    action — so the desync window is bounded.
- *  - 44 px touch floor: each `<button>` gets `[@media(pointer:coarse)]:
- *    min-h-[44px]` via the row class, matching `docs/UX.md`.
+ *  - Each `<button>` is the shared menu row (`menuRowVariants`), which
+ *    owns the 44 px touch floor and the pressed fill.
  */
 
 import type React from 'react'
 import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 
 import { Kbd } from '@/components/ui/kbd'
+import { menuRowVariants } from '@/components/ui/menu-row'
 import { cn } from '@/lib/utils'
 
 /** Gap between the anchor row and the menu edge, in px. */
@@ -179,11 +180,7 @@ export function PaletteActionMenu({
           role="menuitem"
           onClick={() => onAction(a.id)}
           data-testid={`palette-action-${a.id}`}
-          className={cn(
-            'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground',
-            'focus:bg-accent focus:text-accent-foreground focus-ring-visible',
-            '[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5',
-          )}
+          className={cn(menuRowVariants(), 'focus:bg-accent focus:text-accent-foreground')}
         >
           <span className="flex-1 text-left">{a.label}</span>
           {a.hint != null && (
