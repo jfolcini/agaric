@@ -176,7 +176,7 @@ function HistoryListItemInner({
         {/* Restore to here button — only for reversible ops.
              sub-fix 6: tooltips don't fire on touch (no hover), so an
             icon-only affordance is unlabelled there. The trailing span is
-            sr-only, and not-sr-only under `coarse:` — the
+            hidden, and inline under `coarse:` — the
             text appears beside the icon on touch devices only, preserving
             the compact desktop layout. */}
         {!isNonReversible && (

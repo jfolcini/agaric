@@ -6,8 +6,8 @@
  *  - Calls `onRemove` when the remove button is clicked
  *  - Keyboard: Delete and Backspace on the remove button trigger `onRemove`
  *  - Remove button has an accessible `aria-label` (icon-only button)
- *  - Touch sizing: `coarse:min-h-(--touch-target)` and `min-w-[44px]`
- *    on the remove button (44 px coarse-pointer minimum)
+ *  - Touch sizing: the remove button keeps the pill's size, its 44 px target
+ *    an invisible hit area (`touch-hit-area`)
  *  - a11y: `axe(container)` clean
  */
 
