@@ -488,8 +488,8 @@ export function UnlinkedReferences({
         </CollapsiblePanelHeader>
         {!collapsed && filters.length > 0 && (
           <Badge
-            tone="secondary"
-            className="unlinked-references-filter-count shrink-0 h-5 min-w-5 px-1.5 text-xs"
+            tone="metadata"
+            className="unlinked-references-filter-count"
             aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
           >
             {t('references.filtersAppliedBadge', { count: filters.length })}
@@ -548,7 +548,7 @@ export function UnlinkedReferences({
                 {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
                 <div
                   ref={listRef}
-                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable container implementing roving keyboard navigation over reference rows; <fieldset>/<optgroup> etc. add form/list semantics and break the layout
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the focusable roving-focus container of the reference rows, a composite widget rather than a group of form controls, so <fieldset> does not fit
                   role="group"
                   // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container
                   tabIndex={0}

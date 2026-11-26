@@ -373,10 +373,14 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
           components: clippy,rustfmt
 
       - name: Check formatting over the whole workspace
@@ -476,10 +480,14 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       # No rust-cache: a saved entry was evicted before the next week's run
       # could restore it (the repo is over its cache limit), and each save
@@ -774,10 +782,14 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -968,10 +980,14 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       # No rust-cache, for the reason on `bench-smoke`.
 
@@ -987,10 +1003,6 @@ jobs:
         # Tauri's build.rs validates externalBin paths on every cargo
         # invocation, including nextest below.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Read pins.txt
-        id: pins
-        run: bash scripts/pins.sh github-output
 
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
@@ -1196,10 +1208,14 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: 1.100.0
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -1236,10 +1252,6 @@ jobs:
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Read pins.txt
-        id: pins
-        run: bash scripts/pins.sh github-output
 
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
         # PINNED (#3393): the shard counts above are derived from per-mutant
@@ -3219,9 +3231,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # Typecheck + vitest on the Node 22 floor only: the PR gate's `vitest` job
-    # already runs the suite on Node 24. No Rust: vitest runs against the
-    # tauri mock. One suite run plus setup, with headroom for suite growth.
+    # Typecheck + vitest on the `engines.node` floor only: the PR gate's
+    # `vitest` job already runs the suite on `.nvmrc`'s Node. No Rust: vitest
+    # runs against the tauri mock. One suite run plus setup, with headroom for
+    # suite growth.
     timeout-minutes: 30
     permissions:
       contents: read
@@ -3230,22 +3243,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Node 22 (the `engines.node` floor)
-        # The Node floor is checked nightly here, not per PR. Pinned to the
-        # exact floor of `engines.node` (^22.23.4), not a floating 22, so the
-        # lane tests the lowest version we claim to support — keep in lockstep
-        # with package.json.
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
+      - name: Install Node at the `engines.node` floor
+        # The Node floor is checked nightly here, not per PR. The exact floor
+        # of `engines.node` (pins.sh reads its first x.y.z), not a floating 24,
+        # so the lane tests the lowest version we claim to support.
         uses: ./.github/actions/setup-node
         with:
-          node-version: 22.23.4
+          node-version: ${{ steps.pins.outputs.node_floor }}
           cache: npm
 
-      - name: Install npm dependencies (Node 22)
+      - name: Install npm dependencies (Node floor)
         # `.npmrc` sets engine-strict=true, so this step is itself part of the
-        # test: npm refuses to install if `engines.node` excludes 22.23.4.
+        # test: npm refuses to install if `engines.node` excludes the floor.
         run: npm ci
 
-      - name: Typecheck + vitest on Node 22 (no coverage)
+      - name: Typecheck + vitest on the Node floor (no coverage)
         run: |
           npm run typecheck
           npx vitest run

@@ -55,6 +55,8 @@ export interface PickerItem {
   emoji?: string
   /** Secondary breadcrumb text shown below the label (e.g. parent namespace). */
   breadcrumb?: string | undefined
+  /** What the item does, shown muted after the label (the slash menu's commands). */
+  description?: string
   /**
    * Keyboard catalog id whose *live* binding is rendered as a right-aligned
    * chord chip (picks up user rebinds via `getShortcutKeys`). Use for items
@@ -269,6 +271,18 @@ export const SuggestionList = ({
           data-testid="suggestion-breadcrumb"
         >
           {item.breadcrumb}
+        </TruncatedText>
+      </span>
+    ) : item.description !== undefined ? (
+      // The hidden dash keeps the row one sentence to a screen reader.
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span className="shrink-0">{item.label}</span>
+        <span className="sr-only"> — </span>
+        <TruncatedText
+          className="text-xs text-muted-foreground"
+          data-testid="suggestion-description"
+        >
+          {item.description}
         </TruncatedText>
       </span>
     ) : (

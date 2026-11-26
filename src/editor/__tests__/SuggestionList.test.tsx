@@ -676,6 +676,32 @@ describe('SuggestionList', () => {
     expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
   })
 
+  // -- Descriptions (the slash menu) -------------------------------------
+
+  // #7040 — a slash command is its name, then what it does, muted; a screen
+  // reader still hears the one sentence the row used to be.
+  it('renders a description muted after the name, read as "name — description"', async () => {
+    const command = vi.fn()
+    const items: PickerItem[] = [{ id: 'todo', label: 'TODO', description: 'Mark as to-do' }]
+
+    const { container } = render(<SuggestionList items={items} command={command} />)
+
+    const option = screen.getByRole('option')
+    expect(option).toHaveAccessibleName('TODO — Mark as to-do')
+    const description = screen.getByTestId('suggestion-description')
+    expect(description).toHaveTextContent(/^Mark as to-do$/)
+    expect(description.className).toContain('text-muted-foreground')
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('renders no description node for an item without one', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[{ id: '1', label: 'Heading 4' }]} command={command} />)
+
+    expect(screen.getByRole('option')).toHaveAccessibleName('Heading 4')
+    expect(screen.queryByTestId('suggestion-description')).not.toBeInTheDocument()
+  })
+
   // -- Truncated labels and breadcrumbs reveal their full text ---------
 
   it('truncates the label of an item with a breadcrumb with its full text', () => {

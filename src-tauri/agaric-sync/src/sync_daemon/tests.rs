@@ -2254,16 +2254,49 @@ async fn dial_scripted_responder_from(
     materializer: Materializer,
 ) -> (Vec<SyncEvent>, u32) {
     let responder = spawn_scripted_responder(harness, answers);
+    dial_responder_from(harness, responder, peer_ref, pool, materializer).await
+}
+
+/// One `try_sync_with_peer` from the device `materializer` holds against
+/// `responder`, the task answering the next inbound session on `harness`; the
+/// initiator's events and the failures it booked against `peer_ref`'s peer.
+async fn dial_responder_from<T>(
+    harness: &ServiceHarness,
+    responder: tokio::task::JoinHandle<T>,
+    peer_ref: PeerRef,
+    pool: SqlitePool,
+    materializer: Materializer,
+) -> (Vec<SyncEvent>, u32) {
+    let scheduler = SyncScheduler::new();
+    let peer_id = peer_ref.peer_id.clone();
+    let events = dial_under(&scheduler, harness, peer_ref, &pool, &materializer).await;
+    tokio::time::timeout(std::time::Duration::from_secs(20), responder)
+        .await
+        .expect("the responder finishes")
+        .expect("the responder does not panic");
+    let failures = scheduler.failure_count(&peer_id);
+    materializer.shutdown();
+    (events, failures)
+}
+
+/// One `try_sync_with_peer` from the device `materializer` holds, paced by
+/// `scheduler`, towards `peer_ref`'s peer on `harness`; the events it emitted.
+async fn dial_under(
+    scheduler: &SyncScheduler,
+    harness: &ServiceHarness,
+    peer_ref: PeerRef,
+    pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Vec<SyncEvent> {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let scheduler = SyncScheduler::new();
     let cancel = AtomicBool::new(false);
     let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
-        pool: &pool,
+        pool,
         device_id: "LOCAL_DEV",
         materializer: &apply_host,
-        scheduler: &scheduler,
+        scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
@@ -2271,20 +2304,13 @@ async fn dial_scripted_responder_from(
         relay_url: None,
     };
     let peer = discovered_service_peer(&peer_ref.peer_id, harness);
-    let peer_id = peer_ref.peer_id.clone();
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
         try_sync_with_peer(&ctx, &peer, &[peer_ref], None),
     )
     .await
     .expect("try_sync_with_peer finishes");
-    tokio::time::timeout(std::time::Duration::from_secs(20), responder)
-        .await
-        .expect("the scripted responder finishes")
-        .expect("the scripted responder does not panic");
-    let failures = scheduler.failure_count(&peer_id);
-    materializer.shutdown();
-    (sink.events(), failures)
+    sink.events()
 }
 
 /// Every `SyncEvent::Error` in `events`, as `(code, peer_is_older)`.
@@ -2389,19 +2415,17 @@ async fn a_silent_end_after_head_exchange_from_a_synced_peer_is_coded_6523() {
     );
 }
 
-/// #6523 — the peer holds more of this device's own operations than this
-/// device does (#792): the snapshot catch-up cannot merge its snapshot. The
-/// failure is coded, so the frontend says why and what to do instead of
-/// showing the raw text, and it is booked like any failure.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
+/// `LOCAL_DEV` after a restore from an older database, with one block minted
+/// under its old peer id, and the frame of a peer's snapshot holding three
+/// blocks `LOCAL_DEV` made before the restore: more of its own operations than
+/// it holds itself (#792).
+async fn restored_device_and_its_peers_snapshot() -> (SqlitePool, TempDir, Materializer, SyncMessage)
+{
     use crate::sync_protocol::loro_sync;
     use agaric_engine::loro::registry::LoroEngineRegistry;
     use agaric_store::space::SpaceId;
 
     let space = SpaceId::from_trusted("01HZ6523FORKEDSPACEAAAAAAA");
-    // What the peer holds of this device: three blocks it made before it was
-    // restored from an older database.
     let (peer_pool, _peer_dir) = test_pool().await;
     let peer_registry = LoroEngineRegistry::new();
     for id in ["01HZ6523FORKA", "01HZ6523FORKB", "01HZ6523FORKC"] {
@@ -2417,13 +2441,8 @@ async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
             .await
             .expect("prepare")
             .expect("a consistent space exports");
-    let snapshot = || SyncMessage::LoroSync {
-        msg: held_by_peer.clone(),
-        is_last: true,
-    };
 
-    // This device after the restore: one block, minted under the same peer id.
-    let (pool, _dir) = test_pool().await;
+    let (pool, dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     materializer
         .loro_state()
@@ -2433,12 +2452,26 @@ async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
         .engine_mut()
         .apply_create_block("01HZ6523FORKD", "content", "made after it", None, 0)
         .expect("create");
+    let snapshot = SyncMessage::LoroSync {
+        msg: held_by_peer,
+        is_last: true,
+    };
+    (pool, dir, materializer, snapshot)
+}
+
+/// #6523 — the peer holds more of this device's own operations than this
+/// device does (#792): the snapshot catch-up cannot merge its snapshot. The
+/// failure is coded, so the frontend says why and what to do instead of
+/// showing the raw text, and it is booked like any failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
+    let (pool, _dir, materializer, snapshot) = restored_device_and_its_peers_snapshot().await;
 
     // The session's stream, then the catch-up it asks for: both carry the fork.
     let harness = ServiceHarness::new().await;
     let (events, failures) = dial_scripted_responder_from(
         &harness,
-        vec![snapshot(), snapshot()],
+        vec![snapshot.clone(), snapshot],
         make_peer_ref("RESP_FORK_6523"),
         pool,
         materializer,
@@ -2466,6 +2499,198 @@ async fn a_snapshot_that_forks_this_devices_own_history_is_coded_6523() {
         "the text, which keys the once-per-streak report, carries no counter"
     );
     assert_eq!(failures, 1, "and booked like any failure");
+}
+
+/// #7065 — the fork above fails the same way at every retry, and the whole
+/// snapshot crosses again for each. Once a session has failed so, the daemon's
+/// own dials (the backoff retry, the resync tick, an mDNS announcement, a
+/// local edit) all stop at the scheduler's gate, and a press on Sync, which
+/// clears the peer's backoff, dials at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_whose_session_forked_is_dialled_again_only_on_a_press_7065() {
+    const PEER: &str = "RESP_HELD_7065";
+    let fork = (
+        Some(crate::sync_events::SyncErrorCode::OwnHistoryFork),
+        None,
+    );
+    let (pool, _dir, materializer, snapshot) = restored_device_and_its_peers_snapshot().await;
+    let harness = ServiceHarness::new().await;
+    let scheduler = SyncScheduler::new();
+    let forked_session =
+        || spawn_scripted_responder(&harness, vec![snapshot.clone(), snapshot.clone()]);
+    let answered = |responder: tokio::task::JoinHandle<()>| async {
+        tokio::time::timeout(std::time::Duration::from_secs(20), responder)
+            .await
+            .expect("the responder was dialled")
+            .expect("the responder does not panic");
+    };
+
+    let responder = forked_session();
+    let first = dial_under(
+        &scheduler,
+        &harness,
+        make_peer_ref(PEER),
+        &pool,
+        &materializer,
+    )
+    .await;
+    answered(responder).await;
+    assert_eq!(
+        reported_errors(&first),
+        vec![fork],
+        "precondition: the session failed as a history fork, got {first:?}"
+    );
+
+    scheduler.expire_backoff(PEER);
+    assert!(
+        !scheduler.may_retry(PEER),
+        "the backoff running out does not make the peer dialable"
+    );
+    assert_eq!(
+        scheduler.peers_due_for_resync(&[make_peer_ref(PEER)]),
+        Vec::<String>::new(),
+        "nor is it due at the resync tick"
+    );
+    // Nobody answers here, so a dial would time out and be booked.
+    let undialled = dial_under(
+        &scheduler,
+        &harness,
+        make_peer_ref(PEER),
+        &pool,
+        &materializer,
+    )
+    .await;
+    assert!(undialled.is_empty(), "no dial, got {undialled:?}");
+    assert_eq!(scheduler.failure_count(PEER), 1, "and nothing booked");
+
+    // What `start_sync` does for a press, and for no timer.
+    scheduler.clear_peer_backoff(PEER);
+    let responder = forked_session();
+    let pressed = dial_under(
+        &scheduler,
+        &harness,
+        make_peer_ref(PEER),
+        &pool,
+        &materializer,
+    )
+    .await;
+    answered(responder).await;
+    assert_eq!(
+        reported_errors(&pressed),
+        vec![fork],
+        "the press dials and reports that dial's result, got {pressed:?}"
+    );
+    materializer.shutdown();
+}
+
+/// #7065 — the other side of the fork above: the peer was restored from an
+/// older database and wrote again, so its snapshot reuses operation ids this
+/// device holds with other content and Loro refuses the merge. The peer's own
+/// responder asks for the reset and offers the snapshot. The failure is coded
+/// for the frontend, under a text that carries no operation id, and booked
+/// like any failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_snapshot_from_a_peer_that_forked_its_own_history_is_coded_7065() {
+    use crate::sync_protocol::loro_sync;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    const PEER: &str = "RESP_FORK_7065";
+    let space = SpaceId::from_trusted("01HZ7065FORKEDSPACEAAAAAAA");
+    // What this device holds of the peer: three blocks the peer made before
+    // it was restored.
+    let (scratch_pool, _scratch_dir) = test_pool().await;
+    let before_restore = LoroEngineRegistry::new();
+    for id in ["01HZ7065FORKA", "01HZ7065FORKB", "01HZ7065FORKC"] {
+        before_restore
+            .for_space(&space, PEER)
+            .expect("for_space")
+            .engine_mut()
+            .apply_create_block(id, "content", "made before the restore", None, 0)
+            .expect("create");
+    }
+    let made_before_restore =
+        loro_sync::prepare_outgoing_for_pool(&scratch_pool, &before_restore, &space, PEER, None)
+            .await
+            .expect("prepare")
+            .expect("a consistent space exports");
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let pulled = loro_sync::apply_remote(
+        &pool,
+        &materializer.loro_state().registry,
+        "LOCAL_DEV",
+        made_before_restore,
+    )
+    .await
+    .expect("this device pulls what the peer made before the restore");
+    assert!(
+        matches!(pulled, loro_sync::ApplyOutcome::Imported { .. }),
+        "precondition: this device holds the peer's three blocks, got {pulled:?}"
+    );
+
+    // The peer after the restore: one block, minted under the same peer id.
+    let (peer_pool, _peer_dir) = test_pool().await;
+    let peer_materializer = Materializer::new(peer_pool.clone());
+    peer_materializer
+        .loro_state()
+        .registry
+        .for_space(&space, PEER)
+        .expect("for_space")
+        .engine_mut()
+        .apply_create_block("01HZ7065FORKD", "content", "made after it", None, 0)
+        .expect("create");
+
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&peer_pool, "LOCAL_DEV", &harness).await;
+    let responder = spawn_responder(
+        &harness,
+        peer_pool,
+        PEER,
+        peer_materializer.clone(),
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (events, failures) = dial_responder_from(
+        &harness,
+        responder,
+        make_peer_ref(PEER),
+        pool.clone(),
+        materializer,
+    )
+    .await;
+    peer_materializer.shutdown();
+
+    assert_eq!(
+        reported_errors(&events),
+        vec![(
+            Some(crate::sync_events::SyncErrorCode::PeerHistoryFork),
+            None
+        )],
+        "one coded error, got {events:?}"
+    );
+    let texts: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Error { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![super::session_supervisor::PEER_HISTORY_FORK_MESSAGE],
+        "the text, which keys the once-per-streak report, carries no operation id"
+    );
+    assert_eq!(failures, 1, "and booked like any failure");
+    let kept_for_replay: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .expect("count inbox");
+    assert_eq!(
+        kept_for_replay, 0,
+        "no replay can import the refused snapshot, and each retry would keep another"
+    );
 }
 
 /// #6523 — a dial that times out against a paired peer mDNS is not announcing,

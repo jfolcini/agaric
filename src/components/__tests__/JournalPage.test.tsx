@@ -113,8 +113,9 @@ vi.mock('@/components/journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
-      /* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell */
+      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- test mock: the tests click the cell; MonthlyView's grid owns the keys
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell
         role="gridcell"
         tabIndex={-1}
         data-testid={`monthly-cell-${entry.dateStr}`}
@@ -127,7 +128,6 @@ vi.mock('@/components/journal/MonthlyDayCell', () => ({
       >
         {new Date(`${entry.dateStr}T12:00:00`).getDate()}
       </div>
-      /* oxlint-enable jsx-a11y/click-events-have-key-events, jsx-a11y/prefer-tag-over-role */
     )
   },
 }))

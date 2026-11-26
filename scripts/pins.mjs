@@ -5,8 +5,8 @@
 //
 //   node scripts/pins.mjs bump <name> <version>   rewrite the version and
 //       recompute every asset's sha256 from the new download (fetched, never
-//       run). `node` bumps .nvmrc, `npm` package.json's packageManager,
-//       `code-review-graph` .mcp.json.
+//       run). `node` bumps .nvmrc, `rust` rust-toolchain.toml, `npm`
+//       package.json's packageManager, `code-review-graph` .mcp.json.
 //   node scripts/pins.mjs stale                   list pins behind upstream;
 //       exit 1 if any is, or if an upstream could not be read (fail closed).
 //       A release younger than COOLDOWN_DAYS is reported, not flagged, the
@@ -24,8 +24,8 @@ export const NIGHTLY_MAX_AGE_DAYS = 28
 const DAY_MS = 86_400_000
 
 // Pins whose source of truth is a file a tool reads natively. `read` returns
-// the version; `write`, where present, returns the file at a new version
-// (rust also has lockstep copies, so it is bumped by hand).
+// the version, `write` the file at a new version, and `byHand` names a copy
+// the bump leaves to the person running it.
 export const FILE_PINS = [
   {
     name: 'node',
@@ -39,6 +39,8 @@ export const FILE_PINS = [
     file: 'rust-toolchain.toml',
     upstream: 'rust-stable',
     read: (text) => text.match(/^channel = "([^"]+)"/m)?.[1],
+    write: (text, version) => text.replace(/^channel = "[^"]+"/m, `channel = "${version}"`),
+    byHand: "`rust-version` in each crate manifest (git grep -n '^rust-version' -- '*Cargo.toml')",
   },
   {
     name: 'npm',
@@ -294,12 +296,10 @@ export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {})
   return rows
 }
 
-/** The command that bumps a stale row, or what to edit by hand. */
+/** The command that bumps a stale row, and what it leaves to edit by hand. */
 function bumpLine(r) {
-  const file = FILE_PINS.find((p) => p.name === r.name)
-  if (file && !file.write)
-    return `# ${r.name}: edit ${file.file} and its lockstep copies to ${r.latest}`
-  return `just pin-bump ${r.name} ${r.latest}`
+  const byHand = FILE_PINS.find((p) => p.name === r.name)?.byHand
+  return `just pin-bump ${r.name} ${r.latest}${byHand ? `  # then set ${byHand}` : ''}`
 }
 
 export function staleMarkdown(rows) {
@@ -357,13 +357,9 @@ async function main(argv) {
     if (!name || !version) throw new Error('usage: pins.mjs bump <name> <version>')
     const file = FILE_PINS.find((p) => p.name === name)
     if (file) {
-      if (!file.write)
-        throw new Error(
-          `${name} is pinned in ${file.file} and its lockstep copies; bump it by hand`,
-        )
       const path = join(ROOT, file.file)
       writeFileSync(path, file.write(readFileSync(path, 'utf8'), version))
-      console.log(`${file.file}: ${version}`)
+      console.log(`${file.file}: ${version}${file.byHand ? `; now set ${file.byHand}` : ''}`)
       return 0
     }
     const before = readFileSync(pinsPath, 'utf8')

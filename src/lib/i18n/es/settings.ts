@@ -103,6 +103,8 @@ export const settings: Record<string, string> = {
   'settings.quickCapture.saveFailed':
     'No se ha podido registrar el atajo. Puede que entre en conflicto con otra aplicación.',
   'quickCapture.dialogTitle': 'Captura rápida',
+  'quickCapture.descriptionShortcut':
+    'Pulsa <keys/> desde cualquier lugar para añadir una línea al diario de hoy.',
   'quickCapture.descriptionTouch': 'Apunta una línea; irá al diario de hoy.',
   'quickCapture.captureInputLabel': 'Contenido de la captura rápida',
   'quickCapture.placeholder': '¿Qué tienes en mente?',

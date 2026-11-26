@@ -49,7 +49,7 @@ function blockRow(id: string, content: string, pageId: string): SearchBlockRow {
 
 describe('mergeAndRankGroups', () => {
   it('seeds a page-name-match group from each pages-partition row', () => {
-    const out = mergeAndRankGroups([pageRow('P1', 'Home')], [], 'home')
+    const out = mergeAndRankGroups([pageRow('P1', 'Home')], [], 'home', {})
     expect(out).toHaveLength(1)
     expect(out[0]?.pageId).toBe('P1')
     expect(out[0]?.hasPageNameMatch).toBe(true)
@@ -57,17 +57,31 @@ describe('mergeAndRankGroups', () => {
   })
 
   it('attaches block hits to the group keyed by page_id', () => {
-    const out = mergeAndRankGroups([pageRow('P1', 'Home')], [blockRow('B1', 'a hit', 'P1')], 'hit')
+    const out = mergeAndRankGroups(
+      [pageRow('P1', 'Home')],
+      [blockRow('B1', 'a hit', 'P1')],
+      'hit',
+      {},
+    )
     expect(out).toHaveLength(1)
     expect(out[0]?.matches.map((m) => m.id)).toEqual(['B1'])
   })
 
   it('seeds a content-only group when no page row exists for a block', () => {
-    const out = mergeAndRankGroups([], [blockRow('B1', 'orphan', 'P9')], 'orphan')
+    const out = mergeAndRankGroups([], [blockRow('B1', 'orphan', 'P9')], 'orphan', {})
     expect(out).toHaveLength(1)
     expect(out[0]?.pageId).toBe('P9')
     expect(out[0]?.hasPageNameMatch).toBe(false)
     expect(out[0]?.pageTitle).toBe('Untitled')
+  })
+
+  // #7040 — a block row names only its page; the caller knows the page's title.
+  it("titles a content-only group from the caller's page titles", () => {
+    const out = mergeAndRankGroups([], [blockRow('B1', 'orphan', 'P9')], 'orphan', {
+      P9: '2026-11-25',
+    })
+    expect(out[0]?.pageTitle).toBe('2026-11-25')
+    expect(out[0]?.hasPageNameMatch).toBe(false)
   })
 
   it('caps matches per group at 2 and reports surplus', () => {
@@ -77,14 +91,14 @@ describe('mergeAndRankGroups', () => {
       blockRow('B3', 'three', 'P1'),
       blockRow('B4', 'four', 'P1'),
     ]
-    const out = mergeAndRankGroups([pageRow('P1', 'Home')], blocks, 'home')
+    const out = mergeAndRankGroups([pageRow('P1', 'Home')], blocks, 'home', {})
     expect(out[0]?.matches).toHaveLength(2)
     expect(out[0]?.surplus).toBe(2)
   })
 
   it('caps the number of page-groups at 8', () => {
     const pages = Array.from({ length: 12 }, (_, i) => pageRow(`P${i}`, `Page ${i}`))
-    const out = mergeAndRankGroups(pages, [], 'page')
+    const out = mergeAndRankGroups(pages, [], 'page', {})
     expect(out).toHaveLength(8)
   })
 
@@ -94,14 +108,19 @@ describe('mergeAndRankGroups', () => {
       pageRow('EXACT', 'report'),
       pageRow('PREFIX', 'report card'),
     ]
-    const out = mergeAndRankGroups(pages, [], 'report')
+    const out = mergeAndRankGroups(pages, [], 'report', {})
     expect(out.map((g) => g.pageId)).toEqual(['EXACT', 'PREFIX', 'CONTAINS'])
   })
 
   it('promotes a page row to title-match when a block row preceded it', () => {
     // Block hits for P1 arrive first (content-only group), then the
     // page-title row promotes the same group to hasPageNameMatch.
-    const out = mergeAndRankGroups([pageRow('P1', 'Home')], [blockRow('B1', 'body', 'P1')], 'home')
+    const out = mergeAndRankGroups(
+      [pageRow('P1', 'Home')],
+      [blockRow('B1', 'body', 'P1')],
+      'home',
+      {},
+    )
     expect(out[0]?.hasPageNameMatch).toBe(true)
     expect(out[0]?.pageTitle).toBe('Home')
   })

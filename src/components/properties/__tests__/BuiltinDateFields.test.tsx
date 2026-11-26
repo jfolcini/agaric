@@ -18,9 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 vi.mock('lucide-react', () => ({
-  CalendarCheck2: ({ size }: { size: number }) => (
-    <svg data-testid="calendar-check2-icon" width={size} height={size} />
-  ),
+  Flag: ({ size }: { size: number }) => <svg data-testid="flag-icon" width={size} height={size} />,
   CalendarClock: ({ size }: { size: number }) => (
     <svg data-testid="calendar-clock-icon" width={size} height={size} />
   ),

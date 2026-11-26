@@ -115,11 +115,24 @@ export function isSlashCommandOffered(command: PickerItem): boolean {
   return command.id !== 'voice' || canRecordVoiceNote()
 }
 
+const NAME_DASH = ' — '
+
+/** A command as the menu shows it: the name before its label's dash, and what it does after it, apart (#7040). */
+function asMenuRow(command: PickerItem): PickerItem {
+  const dash = command.label.indexOf(NAME_DASH)
+  if (dash < 0) return command
+  return {
+    ...command,
+    label: command.label.slice(0, dash),
+    description: command.label.slice(dash + NAME_DASH.length),
+  }
+}
+
 /** The slash menu for `query`: the catalog, with recent commands on an empty query, less what this device does not offer. */
 export function searchSlashMenu(query: string): PickerItem[] {
-  return searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
-    isSlashCommandOffered,
-  )
+  return searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX))
+    .filter(isSlashCommandOffered)
+    .map(asMenuRow)
 }
 
 /** Every command's handler but `/template`'s, whose picker state is its caller's. */

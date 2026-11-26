@@ -12,14 +12,13 @@ pub use query::{
 // union semantics. See `resolve.rs` for the canonical SQL.
 pub use resolve::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Boolean expression tree for tag queries. `query_by_tags` builds it from
 /// flat tag ids, prefixes and a mode; no command takes a tree over IPC.
 /// `eval_tag_query` passes its And/Or/Not arms through
 /// [`TagExpr::validate_depth`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
-#[serde(tag = "type", content = "value")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TagExpr {
     Tag(String),
     Prefix(String),

@@ -23,10 +23,6 @@
  *   3. Pressing Enter on the input or activating any quick action calls
  *      `setDueDate` / `setScheduledDate` — the same backend command this
  *      drop zone calls — and triggers a screen-reader announcement.
- *
- * The `oxlint-disable` for `no-static-element-interactions` below is therefore
- * justified: the static `<div>` is a passive HTML5 drop surface, and the
- * accessible reschedule path is fully covered by `DateChipEditor`.
  */
 
 import type React from 'react'

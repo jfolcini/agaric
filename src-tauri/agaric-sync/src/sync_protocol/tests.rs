@@ -6079,3 +6079,119 @@ async fn orchestrator_rejects_file_transfer_messages_as_unreachable_protocol_sta
     );
     materializer.shutdown();
 }
+
+// ── #6524: commits are made durable before a stream leaves ───────────
+
+/// A responder with a stream of both kinds to send: one space's `LoroSync`,
+/// then an `OpLogBatch` of its own three ops.
+async fn responder_with_a_stream_6524(pool: &SqlitePool) -> (SyncOrchestrator, Materializer) {
+    for i in 1..=3 {
+        append_local_op_at(
+            pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let materializer = Materializer::new(pool.clone());
+    let orch = SyncOrchestrator::new(
+        pool.clone(),
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ6524STREAMSPACEXXXXXXX");
+    drop(
+        orch.loro_state()
+            .registry
+            .for_space(&space, "device-A")
+            .expect("engine for space"),
+    );
+    (orch, materializer)
+}
+
+/// The opening frame of a peer that holds nothing and takes audit records.
+fn opening_frame_of_an_empty_peer_6524() -> SyncMessage {
+    SyncMessage::HeadExchange {
+        heads: vec![],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: true,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    }
+}
+
+/// The barrier has committed by the time the stream's first message is handed
+/// to the transport, and runs once for the stream, not once per message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_stream_is_made_durable_once_before_its_first_message_6524() {
+    use agaric_store::test_support::durable_barriers;
+
+    let (pool, _dir) = test_pool().await;
+    let (mut orch, materializer) = responder_with_a_stream_6524(&pool).await;
+    assert_eq!(
+        durable_barriers(&pool).await,
+        0,
+        "nothing has been served yet"
+    );
+
+    let first = orch
+        .handle_message(opening_frame_of_an_empty_peer_6524())
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(first, Some(SyncMessage::LoroSync { is_last: false, .. })),
+        "the stream opens with the space's LoroSync: {first:?}"
+    );
+    assert_eq!(
+        durable_barriers(&pool).await,
+        1,
+        "the barrier committed before the first message was handed over"
+    );
+    let rest: Vec<SyncMessage> = std::iter::from_fn(|| orch.next_message()).collect();
+    assert!(
+        matches!(
+            rest.as_slice(),
+            [SyncMessage::OpLogBatch { is_last: true, .. }]
+        ),
+        "the op records follow, and end the stream: {rest:?}"
+    );
+    assert_eq!(
+        durable_barriers(&pool).await,
+        1,
+        "one barrier for the stream, not one per message"
+    );
+    materializer.shutdown();
+}
+
+/// A barrier that fails ends the dispatch with its error, and leaves the
+/// transport nothing to send: no first message, and none queued.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_whose_barrier_fails_is_not_sent_6524() {
+    let (pool, _dir) = test_pool().await;
+    let (mut orch, materializer) = responder_with_a_stream_6524(&pool).await;
+    agaric_store::test_support::break_durability_barrier(&pool).await;
+
+    let outcome = orch
+        .handle_message(opening_frame_of_an_empty_peer_6524())
+        .await;
+
+    let error = match outcome {
+        Err(error) => error.to_string(),
+        Ok(sent) => panic!("a failed barrier must fail the dispatch, but it sent {sent:?}"),
+    };
+    assert!(
+        error.contains("the durability barrier is broken"),
+        "the dispatch fails with the barrier's own error: {error}"
+    );
+    assert!(
+        orch.next_message().is_none(),
+        "nothing is queued for the transport after a failed barrier"
+    );
+    materializer.shutdown();
+}

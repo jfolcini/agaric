@@ -490,8 +490,6 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Treffer in {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} weiterer auf dieser Seite',
   'palette.moreInThisPage_other': '+{{count}} weitere auf dieser Seite',
-  'palette.welcomeEmpty':
-    'Tippe, um Seiten und Blöcke zu suchen, oder [[, um zu verlinken. Drücke > für Befehle.',
   'palette.noResults': 'Keine Treffer für “{{query}}”. Probiere die erweiterte Suche unten.',
   'palette.footerHintOpen': 'öffnen',
   'palette.footerHintNewTab': 'neuer Tab',
@@ -533,7 +531,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Zuletzt verwendet',
   'palette.modeTags': 'Tags',
   'palette.modeHelp': 'Hilfe',
-  'palette.modeHint': '> Befehle · # Tags · ? Hilfe',
+  'palette.modeHint': '> Befehle · # Tags · ? Hilfe · [[ Link',
   'palette.modeBackHint': 'Klicke auf den Chip, um zur Suche zurückzukehren',
   'palette.tagsTitle': 'Tags',
   'palette.tagsWelcomeEmpty': 'Tippe, um Tags zu filtern. Enter öffnet den Tag in der Suche.',

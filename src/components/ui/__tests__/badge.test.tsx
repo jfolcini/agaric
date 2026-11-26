@@ -213,4 +213,51 @@ describe('Badge', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // #7040 (S7): a chip says what it is by its shape.
+  describe('chip vocabulary', () => {
+    it('a tag is a tint with no outline', () => {
+      render(<Badge tone="tag">work</Badge>)
+      const badge = screen.getByText('work')
+      expect(badge).toHaveAttribute('data-variant', 'tag')
+      expect(badge).toHaveClass('bg-muted', 'text-muted-foreground', 'border-transparent')
+    })
+
+    it("a tag takes its own colour from the caller's style", () => {
+      render(
+        <Badge tone="tag" style={{ backgroundColor: 'rgb(1, 2, 3)' }}>
+          work
+        </Badge>,
+      )
+      expect(screen.getByText('work').style.backgroundColor).toBe('rgb(1, 2, 3)')
+    })
+
+    it('a property is outlined with no fill', () => {
+      render(<Badge tone="property">Effort: 1d</Badge>)
+      const badge = screen.getByText('Effort: 1d')
+      expect(badge).toHaveClass('border-border', 'text-muted-foreground')
+      expect(badge.className).not.toMatch(/\bbg-/)
+    })
+
+    it('metadata is plain muted text: no fill, no outline, no padding', () => {
+      render(<Badge tone="metadata">page</Badge>)
+      const badge = screen.getByText('page')
+      expect(badge).toHaveClass('border-transparent', 'px-0', 'py-0', 'text-muted-foreground')
+      expect(badge).toHaveClass('font-normal')
+      expect(badge.className).not.toMatch(/\bbg-/)
+      // The size's padding gives way, whatever the size.
+      expect(badge.className).not.toMatch(/\bpx-2\b/)
+    })
+
+    it('has no a11y violations in any of the three', async () => {
+      const { container } = render(
+        <p>
+          <Badge tone="tag">work</Badge>
+          <Badge tone="property">Effort: 1d</Badge>
+          <Badge tone="metadata">page</Badge>
+        </p>,
+      )
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
 })

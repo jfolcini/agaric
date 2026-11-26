@@ -13,13 +13,9 @@ import { describe, expect, it } from 'vitest'
  * This is not a directive-scope defect and it is not fixable here: oxlint
  * ports `babel-plugin-react-compiler`'s suppression bailout verbatim (oxc
  * #24747), where an author-declared incomplete dependency array means the
- * compiler must not trust its own inference for that function. It is present
- * in oxlint 1.79.0 — the version actually resolved in package-lock.json and
- * installed at node_modules/.bin/oxlint, the binary this suite drives.
- * package.json itself declares `"oxlint": "^1.79.0"`, a caret range that
- * `npm install` can move forward within (to 1.80.x, say) without touching
- * package.json at all; only the lockfile, and `npm ci` honouring it, actually
- * pin the version this note is about.
+ * compiler must not trust its own inference for that function. This suite
+ * drives the installed node_modules/.bin/oxlint, so it re-checks the
+ * behaviour on every version the lockfile resolves.
  *
  * What CAN be held is the reading of it. `.oxlintrc.json` enables
  * `react/rule-suppression` at `warn` so every bailed-out function is named on

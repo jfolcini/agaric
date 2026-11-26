@@ -2549,6 +2549,33 @@ async fn apply_remote_leaves_inbox_empty_on_success() {
     );
 }
 
+/// An import that fails for another reason than reused op ids (#7065) keeps
+/// its slot: boot replay retries it, and quarantines it once it stays stuck.
+#[tokio::test]
+async fn apply_remote_keeps_the_slot_of_an_import_that_fails_7065() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry = LoroEngineRegistry::new();
+    let undecodable = LoroSyncMessage::Snapshot {
+        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+        space_id: SpaceId::from_trusted(SPACE_A),
+        bytes: b"not a loro blob".to_vec(),
+    };
+
+    let failed = apply_remote(&pool, &registry, "device-B", undecodable)
+        .await
+        .expect_err("bytes that are no loro blob do not import");
+    assert!(
+        !agaric_engine::loro::engine::is_used_op_id(&failed),
+        "precondition: not the refusal whose slot is dropped, got {failed}"
+    );
+
+    let inbox_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .expect("count inbox");
+    assert_eq!(inbox_rows, 1, "the slot stays for boot replay");
+}
+
 /// Crash recovery: simulate the data-loss window — an inbox row whose
 /// projection never committed — then replay it and assert (a) the block
 /// is now projected into SQL and (b) the inbox row is gone.

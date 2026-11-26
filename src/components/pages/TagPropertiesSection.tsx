@@ -107,7 +107,7 @@ export function TagPropertiesSection({ tagId }: TagPropertiesSectionProps): Reac
       <p className="text-xs text-muted-foreground">{t('tagProperties.description')}</p>
       <div className="flex flex-wrap items-center gap-2">
         {keys.map((key) => (
-          <Badge key={key} tone="outline" className="gap-1 font-mono text-xs">
+          <Badge key={key} tone="property" className="gap-1 font-mono">
             {formatPropertyName(key)}
             <Button
               variant="ghost"

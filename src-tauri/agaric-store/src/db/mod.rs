@@ -5,7 +5,8 @@
 //! the slow-acquire/begin logging helpers, the shared connect-options builder +
 //! its platform-gated pragma constants, and the two epoch-ms clocks (`now_ms`,
 //! `next_delete_ms`). These have **zero** `sqlx::query!` macros, so they carry
-//! no `.sqlx` offline-cache dependency. The app-only wiring that couples to
+//! no `.sqlx` offline-cache dependency; [`make_commits_durable`], the barrier
+//! sync runs before it sends (#6524), has the one. The app-only wiring that couples to
 //! `recovery` / `device` / `materializer` (`WriteCtx`, `init_pools`,
 //! `init_pool`, `clear_leaked_bypass_sentinel`) stays in the `agaric` crate,
 //! which re-exports this module (`pub use agaric_store::db::*;`) so every
@@ -17,6 +18,9 @@ use sqlx::{Sqlite, SqlitePool};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+
+pub(crate) mod durability;
+pub use durability::make_commits_durable;
 
 /// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
 ///

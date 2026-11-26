@@ -46,7 +46,7 @@ export function PageAliasSection({
         <span className="text-sm font-medium text-muted-foreground">{t('pageHeader.aliases')}</span>
       )}
       {aliases.map((alias) => (
-        <Badge key={alias} tone="secondary" className="gap-1">
+        <Badge key={alias} tone="property" className="gap-1">
           {alias}
           {editingAliases && (
             <button
