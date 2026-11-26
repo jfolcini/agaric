@@ -13,8 +13,8 @@ import {
 
 /**
  * E2E tests for journal daily-view panels that agenda-advanced.spec.ts never
- * exercised (#2708): the Done panel, the Due panel's open tasks from before
- * today, the RescheduleDropZone (native HTML5 drag target in weekly view), and
+ * exercised (#2708): the Done panel, the Due panel's tabs on today's page
+ * (#7155), the RescheduleDropZone (native HTML5 drag target in weekly view), and
  * projected repeat occurrences.
  *
  * Seed data (`src/lib/tauri-mock/seed.ts`) relevant here:
@@ -74,42 +74,60 @@ test.describe('Done panel @journal', () => {
 })
 
 // ===========================================================================
-// 2. Open tasks from before today
+// 2. Today's tabs
 // ===========================================================================
 
-test.describe('Open tasks from before today @journal', () => {
+test.describe('Today’s tabs @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  // The Due panel lists them once each (#7040): past due under Overdue, past
-  // scheduled and not yet due under Scheduled earlier.
-  test('a task scheduled yesterday is under Scheduled earlier, an overdue one only under Overdue', async ({
+  // #7155 R7 — today's tabs put each open task under the tab its earlier date
+  // names, each tab counting what it lists. The rows come from the agenda and
+  // the open tasks the backend reads.
+  test('today’s tabs place each open task by its date, and count what they list', async ({
     page,
   }) => {
     const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
-    const yesterday = new Date()
-    yesterday.setDate(yesterday.getDate() - 1)
-    const row = await ipc<{ id: string }>(page, 'create_block', {
-      blockType: 'content',
-      content: 'Plan the offsite',
-      parentId: SEED_IDS.PAGE_PROJECTS,
-      index: null,
-      scope,
-    })
-    await ipc(page, 'set_todo_state', { blockId: row.id, state: 'TODO' })
-    await ipc(page, 'set_scheduled_date', { blockId: row.id, date: localDateStr(yesterday) })
+    const day = (offset: number): string => {
+      const d = new Date()
+      d.setDate(d.getDate() + offset)
+      return localDateStr(d)
+    }
+    const task = async (content: string): Promise<string> => {
+      const row = await ipc<{ id: string }>(page, 'create_block', {
+        blockType: 'content',
+        content,
+        parentId: SEED_IDS.PAGE_PROJECTS,
+        index: null,
+        scope,
+      })
+      await ipc(page, 'set_todo_state', { blockId: row.id, state: 'TODO' })
+      return row.id
+    }
+    const scheduled = await task('Plan the offsite')
+    await ipc(page, 'set_scheduled_date', { blockId: scheduled, date: day(-1) })
+    const later = await task('Book the venue')
+    await ipc(page, 'set_due_date', { blockId: later, date: day(10) })
+    await task('Someday read the manual')
     await navigateToView(page, 'Pages')
     await navigateToView(page, 'Journal')
 
     const panel = page.getByTestId('due-panel')
-    const scheduledEarlier = panel.locator('.scheduled-earlier-section')
-    const overdue = panel.locator('.overdue-section')
-    await expect(scheduledEarlier.getByText('Plan the offsite')).toBeVisible()
-    await expect(scheduledEarlier.getByText('Scheduled earlier')).toBeVisible()
-    await expect(overdue.getByText('Submit report')).toBeVisible()
-    await expect(scheduledEarlier.getByText('Submit report')).toHaveCount(0)
-    await expect(page.getByText('Unfinished tasks')).toHaveCount(0)
+    const tab = (name: string) => panel.getByRole('tab', { name: new RegExp(`^${name} \\d+$`) })
+    const rows = panel.getByTestId('due-panel-item')
+    const listed = async (name: string, texts: string[]): Promise<void> => {
+      await tab(name).click()
+      for (const text of texts) await expect(rows.filter({ hasText: text })).toHaveCount(1)
+      const count = Number((await tab(name).textContent())?.replace(/\D+/g, ''))
+      await expect(rows).toHaveCount(count)
+    }
+
+    await listed('Overdue', ['Plan the offsite', 'Submit report'])
+    await expect(rows.filter({ hasText: 'Book the venue' })).toHaveCount(0)
+    await listed('Later', ['Book the venue'])
+    await listed('No date', ['Someday read the manual'])
+    await expect(page.getByText('Hide future scheduled')).toHaveCount(0)
   })
 })
 
@@ -186,7 +204,9 @@ test.describe('Reschedule drop zone @journal', () => {
     // of Overdue (the only seeded overdue item, so the section unmounts) and
     // shows up in the Due panel as due today instead.
     await page.getByRole('tab', { name: 'Daily view' }).click()
-    await expect(page.getByTestId('due-panel').locator('.overdue-section')).toHaveCount(0)
+    await expect(
+      page.getByTestId('due-panel').getByRole('heading', { name: 'Overdue', exact: true }),
+    ).toHaveCount(0)
     await expect(page.getByTestId('due-panel').getByText('Submit report')).toBeVisible({
       timeout: 5000,
     })

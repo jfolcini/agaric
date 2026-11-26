@@ -3,11 +3,11 @@ import type { Page } from '@playwright/test'
 import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 /**
- * #5735: the Due panel's hide-before-scheduled toggle and its overdue rows
- * (the "(Xd overdue)" label and the click that opens the task on its page).
- * Both are frontend behaviour over rows the mock serves as the backend does
- * (`list_blocks` agenda date, `query_by_property` on `due_date`), so the mock
- * lane can show either one failing.
+ * #5735: the Due panel's tabs on today's page and another day's list (#7155),
+ * and its overdue rows (the "(Xd overdue)" label and the click that opens the
+ * task on its page). Both are frontend behaviour over rows the mock serves as
+ * the backend does (`list_blocks` agenda date, `query_by_property` on
+ * `todo_state`), so the mock lane can show either one failing.
  *
  * The clock is pinned so "today", "3 days ago" and "next week" are fixed dates
  * and the day count never straddles a DST change or a month boundary by luck.
@@ -26,36 +26,32 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('hide-before-scheduled hides a task scheduled next week and shows it again @journal', async ({
+test('today’s tabs list a task under its date’s tab, and a past day lists its own tasks @journal', async ({
   page,
 }) => {
-  // Dates are days from the pinned today; the blocks land under the seeded Projects page.
+  // Dates are days from the pinned today (a Wednesday); the blocks land under
+  // the seeded Projects page.
   await seedSearchBlocks(page, [
-    { content: 'Plan the offsite', todo: 'TODO', due: 0, scheduled: 7 },
+    { content: 'Plan the offsite', todo: 'TODO', scheduled: 2 },
+    { content: 'Book the venue', todo: 'TODO', due: 9 },
+    { content: 'Renew passport', todo: 'TODO', due: -3 },
   ])
   await refetchDuePanel(page)
 
   const panel = page.getByTestId('due-panel')
-  const future = panel.getByTestId('due-panel-item').filter({ hasText: 'Plan the offsite' })
-  // Seeded: due today, no scheduled date, so the toggle never hides it.
-  const unscheduled = panel.getByTestId('due-panel-item').filter({ hasText: 'Fix login bug' })
-  await expect(future).toHaveCount(1)
-  await expect(unscheduled).toHaveCount(1)
+  const rows = panel.getByTestId('due-panel-item')
+  await expect(panel.getByRole('switch')).toHaveCount(0)
+  await panel.getByRole('tab', { name: /^This week \d+$/ }).click()
+  await expect(rows.filter({ hasText: 'Plan the offsite' })).toHaveCount(1)
+  await expect(rows.filter({ hasText: 'Book the venue' })).toHaveCount(0)
+  await panel.getByRole('tab', { name: /^Later \d+$/ }).click()
+  await expect(rows.filter({ hasText: 'Book the venue' })).toHaveCount(1)
+  await expect(rows.filter({ hasText: 'Plan the offsite' })).toHaveCount(0)
 
-  const hideToggle = panel.getByRole('switch', { name: 'Hide future scheduled' })
-  await hideToggle.click()
-  await expect(hideToggle).toHaveAttribute('aria-checked', 'true')
-  await expect(future).toHaveCount(0)
-  await expect(unscheduled).toHaveCount(1)
-
-  // The choice is a per-device preference: it survives leaving the journal.
-  await refetchDuePanel(page)
-  await expect(unscheduled).toHaveCount(1)
-  await expect(future).toHaveCount(0)
-
-  await hideToggle.click()
-  await expect(hideToggle).toHaveAttribute('aria-checked', 'false')
-  await expect(future).toHaveCount(1)
+  // Three days back: no tabs, just that day's own task.
+  for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Previous day' }).click()
+  await expect(panel.getByRole('tab')).toHaveCount(0)
+  await expect(rows).toHaveText([/Renew passport/])
 })
 
 test('an overdue task reads "(3d overdue)" and a click opens it focused on its page @journal', async ({
@@ -66,7 +62,7 @@ test('an overdue task reads "(3d overdue)" and a click opens it focused on its p
 
   const row = page
     .getByTestId('due-panel')
-    .getByTestId('due-panel-alert-item')
+    .getByTestId('due-panel-item')
     .filter({ hasText: 'Renew passport' })
   await expect(row).toContainText('(3d overdue)')
 
