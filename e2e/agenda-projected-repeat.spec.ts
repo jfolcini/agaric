@@ -47,6 +47,21 @@ function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * The local calendar day `offset` days from today as the drawer's date field shows it at rest:
+ * as the date chips do, "Dec 3", with the year when it is not this year's (#7040 O7).
+ */
+function chipDay(offset: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  const thisYear = d.getFullYear() === new Date().getFullYear()
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(thisYear ? {} : { year: 'numeric' }),
+  })
+}
+
 /** Local calendar days `from` to `from + count - 1` from today. */
 function localDays(from: number, count: number): string[] {
   return Array.from({ length: count }, (_, i) => localDay(from + i))
@@ -366,7 +381,7 @@ test.describe('Repeating tasks (#5366, #5734, #5735, #5736) @journal', () => {
       ruledAfterReopen: { repeat: 'weekly', 'repeat-count': '1' },
       boundedAfterReopen: { 'repeat-until': today },
       nextOccurrence: {
-        due: localDay(7),
+        due: chipDay(7),
         repeat: 'weekly',
         'repeat-count': '1',
         'repeat-seq': '1',

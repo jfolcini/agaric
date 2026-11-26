@@ -121,12 +121,12 @@ describe('AppSidebar', () => {
   // list, in order, so a row that creeps back (or goes missing) reddens this.
   // #6532 — Agenda, the journal's agenda mode, follows Journal. #7040 D2 —
   // Graph, Templates and Trash follow in the lower group.
-  it('renders exactly New Page, the four daily views, Agenda and the lower group as rows, Sync and Settings as one footer row of icons (#5269)', () => {
+  it('renders exactly New Page, the four daily views, Agenda and the lower group as rows, Sync and Settings as labelled footer rows (#5269, #7040 P11)', () => {
     renderSidebar()
 
-    const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
-      (row) => row.textContent,
-    )
+    const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')]
+      .filter((row) => !row.closest('[data-sidebar="footer"]'))
+      .map((row) => row.textContent)
     expect(rows).toEqual([
       t('sidebar.newPage'),
       t('sidebar.journal'),
@@ -140,13 +140,17 @@ describe('AppSidebar', () => {
     ])
     expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
 
+    // The footer's rows are the nav rows' own kind, labelled; the sync row adds its state.
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
-    const icons = within(footer).getAllByRole('button')
-    expect(icons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      t('sidebar.sync'),
+    const footerRows = within(footer).getAllByRole('button')
+    expect(footerRows.map((row) => row.getAttribute('data-sidebar'))).toEqual([
+      'menu-button',
+      'menu-button',
+    ])
+    expect(footerRows.map((row) => row.textContent)).toEqual([
+      `${t('sidebar.sync')}${t('sync.noPeersTitle')}`,
       t(SETTINGS_NAV_ITEM.labelKey),
     ])
-    expect(icons.map((button) => button.textContent)).toEqual(['', ''])
   })
 
   it('reaches Sync and Settings in the footer by keyboard, after the nav', async () => {
@@ -158,7 +162,7 @@ describe('AppSidebar', () => {
       await user.tab()
       const focused = document.activeElement
       if (focused?.closest('[data-sidebar="footer"]')) {
-        reached.push(focused.getAttribute('aria-label') ?? '')
+        reached.push(focused.getAttribute('aria-label') ?? focused.textContent ?? '')
       }
     }
 
@@ -398,59 +402,44 @@ describe('AppSidebar', () => {
     expect(onSyncClick).toHaveBeenCalledTimes(1)
   })
 
-  // "offline" (network problem) and "no peers" (pairing
-  // problem) used to share `bg-muted-foreground`, so users couldn't
-  // tell whether to fix the network or pair a device. Pin the
-  // distinction here so the two states keep diverging tokens.
-  it('uses distinct sync dot colors for offline vs no-peers states', () => {
-    // Sync state lives in the store now; seed instead of
-    // passing as props.
-    seedSyncStore({ state: 'offline', peers: [] })
-    const { rerender, props } = renderSidebar()
-    const offlineClass = screen.getByTestId('sync-button-status-dot').className
-    expect(offlineClass).toContain('bg-muted-foreground')
+  // "offline" (network problem) and "no peers" (pairing problem) must read
+  // apart, so users can tell whether to fix the network or pair a device. The
+  // sync row says which in words (#7040 P11).
+  it('names offline and no-peers apart in the sync row', () => {
+    const { rerender, props } = renderSidebar({ isOnline: false })
+    expect(screen.getByTestId('sync-state')).toHaveTextContent(t('sidebar.offline'))
 
-    seedSyncStore({ state: 'idle', peers: [] })
     rerender(
       <SidebarProvider>
-        <AppSidebar {...props} />
+        <AppSidebar {...props} isOnline />
       </SidebarProvider>,
     )
-    const noPeersClass = screen.getByTestId('sync-button-status-dot').className
-    expect(noPeersClass).toContain('bg-status-pending-foreground')
-    expect(noPeersClass).not.toBe(offlineClass)
+    expect(screen.getByTestId('sync-state')).toHaveTextContent(t('sync.noPeersTitle'))
   })
 
-  // #1076 — the sidebar status dot is computed via
-  // `syncDotClass(syncState, syncPeers.length > 0)`. Before the store
-  // was wired to the backend, `syncPeers` was permanently `[]`, so the
-  // dot was stuck on the no-peers token even when devices were paired.
-  // Pin that paired (peers present) vs. unpaired now diverge.
-  it('reflects hasPeers in the sync dot when paired vs unpaired (#1076)', () => {
+  // #1076 — the sync state follows `syncPeers.length > 0`. Before the store was
+  // wired to the backend, `syncPeers` was permanently `[]`, so the state was
+  // stuck on no-peers even when devices were paired.
+  it('reflects hasPeers in the sync row when paired vs unpaired (#1076)', () => {
     const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0, name: null }
 
-    // Paired + idle → the "idle, has peers" token (NOT the no-peers one).
+    // Paired + idle → the last-synced line, not the no-peers word.
     seedSyncStore({ state: 'idle', peers: [peer] })
     const { rerender, props } = renderSidebar()
-    const pairedClass = screen.getByTestId('sync-button-status-dot').className
-    expect(pairedClass).toContain('bg-sync-idle')
-    expect(pairedClass).not.toContain('bg-status-pending')
+    expect(screen.getByTestId('sync-state')).toHaveTextContent(t('sidebar.lastSyncedNever'))
 
-    // No peers + idle → the no-peers token.
     seedSyncStore({ state: 'idle', peers: [] })
     rerender(
       <SidebarProvider>
         <AppSidebar {...props} />
       </SidebarProvider>,
     )
-    const unpairedClass = screen.getByTestId('sync-button-status-dot').className
-    expect(unpairedClass).toContain('bg-status-pending-foreground')
-    expect(unpairedClass).not.toContain('bg-sync-idle')
+    expect(screen.getByTestId('sync-state')).toHaveTextContent(t('sync.noPeersTitle'))
   })
 
-  // The footer is icons only, so the "last synced" line lives in the sync
+  // The "last synced" line lives in the sync
   // button's tooltip and, for screen readers, its description. A fresh install
-  // has no paired device, and says so in both, not only in the dot (#6528).
+  // has no paired device, and says so in both (#6528).
   it('includes the pairing and last synced status in the sync button tooltip and description', async () => {
     const user = userEvent.setup()
     // `lastSyncedAt` lives in the store now; the default
@@ -705,14 +694,19 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
 })
 
 // A sync error is toasted when it happens; afterwards the button itself must
-// say so, in its glyph, its tooltip and its description, not only in the
-// dot's hue (#6528).
+// say so, in its glyph, its row, its tooltip and its description (#6528).
 describe('a standing sync error is not colour-only (#6528)', () => {
   const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0, name: null }
   const failed = t('sync.failed', { message: 'Connection refused' })
 
   beforeEach(() => {
     useSyncStore.setState({ state: 'error', error: 'Connection refused', peers: [peer] })
+  })
+
+  it('names the failure in the sync row', () => {
+    renderSidebar()
+
+    expect(screen.getByTestId('sync-state')).toHaveTextContent(t('sidebar.syncStateFailed'))
   })
 
   it('names the stored error in the Sync button description and tooltip', async () => {
@@ -749,7 +743,7 @@ describe('a standing sync error is not colour-only (#6528)', () => {
 })
 
 // #6523 — a paired device that is away reads as waiting: the button names the
-// device and its own last sync, in a neutral dot and glyph, never as an error.
+// device and its own last sync, in a neutral tone and glyph, never as an error.
 describe('an away device reads as waiting, not as a failure (#6523)', () => {
   const lastSyncedAt = new Date(Date.now() - 5 * 60_000).toISOString()
   const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt, resetCount: 0, name: 'Pixel 8' }
@@ -778,15 +772,15 @@ describe('an away device reads as waiting, not as a failure (#6523)', () => {
     })
   })
 
-  it('keeps the sync glyph and a neutral dot', () => {
+  it('keeps the sync glyph and names the wait in the row, not as an error', () => {
     renderSidebar()
 
     const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
     expect(syncButton.querySelector('.lucide-refresh-cw')).toBeInTheDocument()
     expect(syncButton.querySelector('.lucide-circle-alert')).toBeNull()
-    const dot = screen.getByTestId('sync-button-status-dot')
-    expect(dot).toHaveClass('bg-muted-foreground')
-    expect(dot).not.toHaveClass('bg-destructive')
+    const state = screen.getByTestId('sync-state')
+    expect(state).toHaveTextContent(waiting)
+    expect(state).not.toHaveClass('text-destructive')
   })
 
   it('has no a11y violations', async () => {

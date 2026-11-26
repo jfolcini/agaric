@@ -649,7 +649,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       )}
 
       {(!spaceIsReady || (loading && pages.length === 0)) && (
-        <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
+        <LoadingSkeleton
+          count={3}
+          variant="list-row"
+          className="page-browser-loading"
+          data-testid="page-browser-loading"
+        />
       )}
 
       {/* A failure shows its card above any rows still cached: it is the one report (#7040). */}

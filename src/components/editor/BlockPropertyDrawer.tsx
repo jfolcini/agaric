@@ -343,7 +343,12 @@ export function BlockPropertyDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side={phoneLayout ? 'bottom' : 'right'}>
+      {/* As wide as Block history (`HistorySheet`): the two block sheets open from the same
+          gutter and share one width (#7040 O7). */}
+      <SheetContent
+        side={phoneLayout ? 'bottom' : 'right'}
+        className={phoneLayout ? undefined : 'sm:max-w-lg'}
+      >
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
           <SheetDescription>{t('property.drawerDescription')}</SheetDescription>

@@ -49,7 +49,7 @@ describe('LoadingSkeleton', () => {
     ['text', 'h-4'],
     ['heading', 'h-6'],
     ['button', 'h-9'],
-    ['list-row', 'h-11'],
+    ['list-row', 'h-4'],
   ] as const)('variant=%s applies %s', (variant, expectedHeight) => {
     const { container } = render(<LoadingSkeleton variant={variant} />)
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
@@ -64,7 +64,20 @@ describe('LoadingSkeleton', () => {
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     for (const s of skeletons) {
       expect(s.className).toContain('h-2')
-      expect(s.className).not.toContain('h-11')
+      expect(s.className).not.toContain('h-4')
+    }
+  })
+
+  it('variant=list-row draws one list card of divided rows, a bar in each', () => {
+    const { container } = render(<LoadingSkeleton variant="list-row" count={3} />)
+    const card = container.firstElementChild as HTMLElement
+    expect(card).toHaveClass('rounded-lg', 'border')
+    expect(card).not.toHaveClass('space-y-2')
+    const rows = [...card.children]
+    expect(rows).toHaveLength(3)
+    for (const row of rows) {
+      expect(row).toHaveClass('list-row')
+      expect(row.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(1)
     }
   })
 

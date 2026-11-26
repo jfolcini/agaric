@@ -60,21 +60,21 @@ function releaseStartSync(page: Page): Promise<void> {
   return page.evaluate(() => (window as unknown as MockWindow).__releaseStartSync?.())
 }
 
-test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and offline, and when it last synced @sync', async ({
+test('the sidebar Sync row shows no devices paired, idle, syncing, failed and offline, and when it last synced @sync', async ({
   page,
 }) => {
   await page.clock.install()
   await waitForBoot(page)
   const button = syncButton(page)
-  const dot = page.getByTestId('sync-button-status-dot')
-  // A fresh install has no paired device, and the button says so, not only the dot (#6528).
-  await expect(dot).toContainClass('bg-status-pending-foreground')
+  const state = page.getByTestId('sync-state')
+  // A fresh install has no paired device, and the row says so in words (#6528, #7040 P11).
+  await expect(state).toHaveText('No devices paired')
   await expect(button).toHaveAccessibleDescription('No devices paired Never synced')
   await expect(await syncTooltipLines(page)).toHaveText(['No devices paired', 'Never synced'])
   await button.blur()
 
   await pairOnePeer(page)
-  // The device list loads the peer into the store the icon's dot reads.
+  // The device list loads the peer into the store the row's state reads.
   await navigateToView(page, 'Settings')
   await openSettingsTab(page, 'Sync & devices')
   await expect(page.getByTestId('settings-panel-sync').locator('.device-peer-name')).toHaveText(
@@ -83,15 +83,15 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
 
   await expect(button).toHaveAccessibleName('Sync')
-  await expect(dot).toHaveAttribute('data-sync-state', 'idle')
-  await expect(dot).toContainClass('bg-sync-idle')
+  await expect(state).toHaveAttribute('data-sync-state', 'idle')
+  await expect(state).toHaveText('Never synced')
   await expect(await syncTooltipLines(page)).toHaveText(['Sync all devices', 'Never synced'])
 
   await keepSyncChannels(page)
   await holdNextStartSync(page)
   await button.click()
-  await expect(dot).toHaveAttribute('data-sync-state', 'syncing')
-  await expect(dot).toContainClass('bg-sync-active')
+  await expect(state).toHaveAttribute('data-sync-state', 'syncing')
+  await expect(state).toHaveText('Syncing...')
   await expect(button.locator('svg')).toContainClass('animate-spin')
   await expect(button).toHaveAttribute('aria-disabled', 'true')
   await expect(await syncTooltipLines(page)).toHaveText(['Syncing...', 'Never synced'])
@@ -100,7 +100,8 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   await releaseStartSync(page)
   await expect.poll(() => syncChannelCount(page)).toBeGreaterThan(0)
   await finishSyncSession(page)
-  await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+  await expect(state).toHaveAttribute('data-sync-state', 'idle')
+  await expect(state).toHaveText('Last synced just now')
   await expect(button).toHaveAttribute('aria-disabled', 'false')
   await expect(await syncTooltipLines(page)).toHaveText([
     'Sync all devices',
@@ -112,10 +113,10 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
     remote_device_id: 'device-b',
     message: 'Connection refused',
   })
-  await expect(dot).toHaveAttribute('data-sync-state', 'error')
-  await expect(dot).toContainClass('bg-destructive')
-  // A background session's failure is on the button, not only in the dot's hue
-  // (#6528), and in no toast (#6870).
+  await expect(state).toHaveAttribute('data-sync-state', 'error')
+  await expect(state).toHaveText('Failed')
+  // A background session's failure is on the button in words (#6528), and in no
+  // toast (#6870).
   // Blurred, so the open tooltip does not join the description.
   await button.blur()
   await expect(button).toHaveAccessibleDescription(
@@ -129,10 +130,10 @@ test('the sidebar Sync icon shows no devices paired, idle, syncing, failed and o
   await page.context().setOffline(true)
   await expect(button).toHaveAccessibleName('Offline')
   await expect(await syncTooltipLines(page)).toHaveText(['Offline', 'Last synced just now'])
-  // The next scheduled run finds no network and puts the dot in step.
+  await expect(state).toHaveText('Offline')
+  // The next scheduled run finds no network and puts the store in step.
   await page.clock.fastForward('01:00')
-  await expect(dot).toHaveAttribute('data-sync-state', 'offline')
-  await expect(dot).toContainClass('bg-muted-foreground')
+  await expect(state).toHaveAttribute('data-sync-state', 'offline')
 })
 
 test('a pressed Sync says "Sync complete" only once its session finished @sync', async ({

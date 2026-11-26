@@ -1,5 +1,5 @@
 /**
- * PropertyField — a single editable property row (badge + value input + optional
+ * PropertyField — a single editable property row (name label + value input + optional
  * remove button).
  *
  * Named for its role (an editable field for one property) to disambiguate from
@@ -20,7 +20,6 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InfoPopover } from '@/components/ui/info-popover'
 import { Input } from '@/components/ui/input'
@@ -35,9 +34,9 @@ export interface PropertyFieldProps {
    *. When omitted, no key-specific UI is rendered.
    */
   propKey?: string
-  /** Optional icon to display in the badge. When provided, the badge uses icon+text styling; otherwise font-mono. */
+  /** Optional icon before the label. Without one the label is a raw key, set in mono. */
   icon?: LucideIcon | undefined
-  /** Text displayed inside the badge and as its title attribute. */
+  /** The property's name, shown as the row's label. */
   label: string
   /** Current value for the input field (used as defaultValue). */
   value: string
@@ -76,12 +75,13 @@ export function PropertyField({
 
   // Date input hook — always called, values used only when isDate
   const {
-    dateInput,
+    inputValue: dateValue,
     datePreview,
     dateError,
     isParsing,
     handleChange: handleDateChange,
     handleBlur: handleDateBlur,
+    handleFocus: handleDateFocus,
   } = useDateInput({ initialValue: value, onSave: isDate ? onSave : undefined })
 
   const input = (
@@ -90,7 +90,7 @@ export function PropertyField({
       type={isDate ? 'text' : inputType}
       aria-label={ariaLabel}
       {...(testId !== undefined ? { 'data-testid': testId } : {})}
-      {...(isDate ? { value: dateInput } : { defaultValue: value })}
+      {...(isDate ? { value: dateValue, onFocus: handleDateFocus } : { defaultValue: value })}
       placeholder={isDate ? t('property.datePlaceholder') : undefined}
       onBlur={isDate ? handleDateBlur : (e) => onSave(e.target.value)}
       onChange={isDate ? handleDateChange : undefined}
@@ -103,17 +103,8 @@ export function PropertyField({
 
   return (
     <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-      <Badge
-        tone="outline"
-        className={
-          Icon
-            ? 'shrink-0 text-xs max-w-[120px] flex items-center gap-1'
-            : 'shrink-0 font-mono text-xs max-w-[120px]'
-        }
-      >
-        {Icon && <Icon className="h-3 w-3" />}
-        <TruncatedText>{label}</TruncatedText>
-      </Badge>
+      {/* A plain label, not a chip: a bordered name read as a button (#7040 O7). */}
+      <PropertyFieldLabel icon={Icon} label={label} />
       <div className="flex-1">
         {/* when the row is the `repeat` property, wrap the Input
             and its ⓘ help trigger in a flex container, as a value
@@ -181,5 +172,27 @@ export function PropertyField({
         </Button>
       )}
     </div>
+  )
+}
+
+/** A property row's name: muted text, with the built-in's icon or, for a raw key, in mono. */
+export function PropertyFieldLabel({
+  icon: Icon,
+  label,
+}: {
+  icon?: LucideIcon | undefined
+  label: string
+}): React.ReactElement {
+  return (
+    <span
+      data-slot="property-label"
+      className={cn(
+        'flex min-w-0 max-w-[120px] shrink-0 items-center gap-1 text-xs text-muted-foreground',
+        !Icon && 'font-mono',
+      )}
+    >
+      {Icon && <Icon className="h-3 w-3 shrink-0" />}
+      <TruncatedText>{label}</TruncatedText>
+    </span>
   )
 }

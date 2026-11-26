@@ -17,6 +17,8 @@ import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { TruncatedText } from '@/components/ui/truncated-text'
+import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import type { PageTreeNode } from '@/lib/page-tree'
 
 export interface PageTreeItemProps {
@@ -40,6 +42,11 @@ export function PageTreeItem({
 }: PageTreeItemProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true) // namespaces start expanded
+  // On a touch phone a page row carries no bin, as a top-level `PageRow` carries none there:
+  // a page is deleted from its own ⋮ menu (#7040 P5).
+  const isTouch = useIsTouch()
+  const phoneLayout = usePhoneLayout()
+  const touchPhone = isTouch && phoneLayout
 
   if (node.pageId && node.children.length === 0) {
     // Pure leaf page — clickable
@@ -62,11 +69,11 @@ export function PageTreeItem({
           </button>
         </NewTabTarget>
         {node.duplicateTitle && <DuplicateTitleCue pageId={leafId} />}
-        {onDelete && (
+        {onDelete && !touchPhone && (
           <Button
             variant="ghost"
             size="icon-xs"
-            className="shrink-0 hover-reveal text-muted-foreground hover:text-destructive [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px]"
+            className="shrink-0 touch-target hover-reveal text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
             aria-label={t('pageTree.delete', { path: node.fullPath })}
             onClick={(e) => {
               e.stopPropagation()

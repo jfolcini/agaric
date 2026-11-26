@@ -44,6 +44,7 @@ export const common: Record<string, string> = {
   'sidebar.offline': 'Sin conexión',
   'sidebar.syncTooltip': 'Sincronizar todos los dispositivos',
   'sidebar.syncing': 'Sincronizando...',
+  'sidebar.syncStateFailed': 'Error',
   'bookmarks.title': 'Marcadores',
   'bookmarks.emptyHint': 'Añade una página a marcadores para tenerla aquí.',
   'bookmarks.remove': 'Quitar {{title}} de marcadores',

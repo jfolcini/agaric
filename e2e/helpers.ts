@@ -2113,15 +2113,15 @@ export async function pairOnePeer(page: Page): Promise<void> {
   await expect.poll(peerCount).toBe(1)
 }
 
-/** The sidebar Sync button. Its name changes with the network, so find it by the status dot it carries. */
+/** The sidebar Sync row. Its name changes with the network, so find it by the state it names. */
 export function syncButton(page: Page): Locator {
   return page
     .locator('[data-sidebar="footer"]')
     .getByRole('button')
-    .filter({ has: page.getByTestId('sync-button-status-dot') })
+    .filter({ has: page.getByTestId('sync-state') })
 }
 
-/** The Sync icon's tooltip lines (state, then last synced), opened from the keyboard. */
+/** The Sync row's tooltip lines (state, then last synced), opened from the keyboard. */
 export async function syncTooltipLines(page: Page): Promise<Locator> {
   const button = syncButton(page)
   await button.blur()

@@ -100,6 +100,9 @@ export const common: Record<string, string> = {
   'sidebar.offline': 'Offline',
   'sidebar.syncTooltip': 'Sync all devices',
   'sidebar.syncing': 'Syncing...',
+  // Translators: The sidebar's Sync row names the sync state beside its "Sync" label; this word
+  // is the state after a sync failed ("Failed", past participle). Keep it to a word or two.
+  'sidebar.syncStateFailed': 'Failed',
 
   // Translators: Sidebar "Bookmarks" section, listing the pages the user bookmarked: its heading
   // and the hint shown while it is empty.
