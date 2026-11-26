@@ -60,7 +60,7 @@ import { splitMergeHandlers } from '@/lib/tauri-mock/handlers/split-merge'
 import { syncHandlers } from '@/lib/tauri-mock/handlers/sync'
 import { systemHandlers } from '@/lib/tauri-mock/handlers/system'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
-import { attachmentBytes } from '@/lib/tauri-mock/seed'
+import { attachmentBytes, MOCK_APP_VERSION } from '@/lib/tauri-mock/seed'
 
 // Re-exported for the small set of external consumers that import these
 // directly off `handlers.ts` (test-only page-metadata conformance suites) —
@@ -140,6 +140,9 @@ export const HANDLERS: Record<string, Handler> = { ...HANDLERS_TYPED, ...RAW_RES
 //   - `plugin:process|*` — `relaunchApp` degrades to
 //     `window.location.reload()`, the correct browser-mode analog.
 
+/** The plugins listed above: a call to one is their designed rejection, not mock drift. */
+const REJECTED_PLUGINS = new Set(['autostart', 'notification', 'updater', 'process'])
+
 /** The title `plugin:window|set_title` last gave the window. */
 let windowTitle = ''
 
@@ -170,6 +173,8 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   // `useAndroidBackButton` (allowed by `core:app:default` everywhere).
   'plugin:app|register_listener': returnNull,
   'plugin:app|remove_listener': returnNull,
+  // `getVersion()` — the Help card's "Up to date (v…)". Core, so always registered.
+  'plugin:app|version': () => MOCK_APP_VERSION,
   // Core window plugin — `setWindowTitle` re-stamps the OS title on every
   // space switch; a spec reads it back with `title`.
   'plugin:window|set_title': (args) => {
@@ -209,7 +214,8 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
  *     `src/lib/bindings.ts` by `scripts/check-tauri-mock-parity.mjs`).
  *  2. `PLUGIN_HANDLERS` — explicitly modeled `plugin:*` commands.
  *  3. Any other `plugin:*` command THROWS, mirroring the real runtime's
- *     "plugin <name> not found" rejection for unregistered plugins (#760).
+ *     "plugin <name> not found" rejection for unregistered plugins (#760),
+ *     and warns of drift unless the plugin is one rejected by design.
  *  4. Any other unknown command logs a warning via the structured logger
  *     and returns `null` (mock-drift signal, FE-H-13).
  */
@@ -218,9 +224,11 @@ export function dispatch(cmd: string, args: unknown): unknown {
   if (!handler) {
     if (cmd.startsWith('plugin:')) {
       const pluginName = cmd.slice('plugin:'.length).split('|')[0] ?? cmd
-      logger.warn('TauriMock', 'unmodeled plugin command — rejecting like the real runtime', {
-        command: cmd,
-      })
+      if (!REJECTED_PLUGINS.has(pluginName)) {
+        logger.warn('TauriMock', 'unmodeled plugin command — rejecting like the real runtime', {
+          command: cmd,
+        })
+      }
       throw new Error(`plugin ${pluginName} not found`)
     }
     logger.warn('TauriMock', 'unhandled command', { command: cmd })

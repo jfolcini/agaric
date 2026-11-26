@@ -26,7 +26,7 @@ const VM_INCOMPATIBLE = [
   'src/editor/__tests__/emoji-data.test.ts',
   'src/editor/__tests__/emoji-picker.test.ts',
   // App boot effects log after the last test; a vm worker has closed that file's rpc by
-  // then, so under CI's `--silent=passed-only` the run fails with "Closing rpc while
+  // then, so under `silent: 'passed-only'` the run fails with "Closing rpc while
   // "onUserConsoleLog" was pending".
   'src/__tests__/viewTransition.test.tsx',
 ]
@@ -34,6 +34,9 @@ const VM_INCOMPATIBLE = [
 export default defineConfig({
   test: {
     environment: 'happy-dom',
+    // A passing test's console output is dropped, a failing one's kept: the tests
+    // drive failures on purpose, and their expected warnings buried real output.
+    silent: 'passed-only',
     // `vmForks` gives each test file its own module graph and happy-dom window in a
     // fresh `vm` context inside a reused worker, where `forks` spawned a process
     // per file and re-imported node_modules every time.
