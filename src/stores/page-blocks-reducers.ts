@@ -226,30 +226,38 @@ export function createReducers({
   }
 
   return {
-    createBelow: async (afterBlockId: string, content = '', newId = newBlockId()) => {
+    createBelow: async (afterBlockId: string, content = '', newId = newBlockId(), firstChild) => {
       const { blocks, rootParentId } = get()
       const idx = blocks.findIndex((b) => b.id === afterBlockId)
       const afterBlock = blocks[idx]
       if (!afterBlock) return null
 
-      const afterSlot = siblingSlot(blocks, afterBlock)
+      const slot = firstChild === true ? 0 : siblingSlot(blocks, afterBlock) + 1
 
       // The id is minted client-side and the backend uses it verbatim, so the
       // row is spliced in before the IPC and focus never moves to a server id.
       // `position: null` heals to the backend's dense rank on success.
-      const parentId = afterBlock.parent_id
+      const parentId = firstChild === true ? afterBlockId : afterBlock.parent_id
 
       const handle = applyProvisionalMove(set, newId, (state) => {
         const cur = state.blocks
         const curIdx = cur.findIndex((b) => b.id === afterBlockId)
         const curAfter = cur[curIdx] as FlatBlock
-        // After the anchor and all its descendants.
+        // After the anchor and all its descendants, or right under it.
         const descendants = getDragDescendants(cur, afterBlockId)
         let insertIdx = curIdx + 1
-        while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
+        while (
+          firstChild !== true &&
+          insertIdx < cur.length &&
+          descendants.has((cur[insertIdx] as FlatBlock).id)
+        ) {
           insertIdx++
         }
-        const newBlock = siblingOf(curAfter, newId, content)
+        const sibling = siblingOf(curAfter, newId, content)
+        const newBlock =
+          firstChild === true
+            ? { ...sibling, parent_id: afterBlockId, depth: curAfter.depth + 1 }
+            : sibling
         const newBlocks = [...cur]
         newBlocks.splice(insertIdx, 0, newBlock)
         return { blocks: newBlocks, touchedIds: [newBlock.id] }
@@ -258,7 +266,7 @@ export function createReducers({
       const anchorCreate = heldBlocks.get(afterBlockId)
       const settle = hold([newId])
       try {
-        // The slot is the anchor's + 1, so the anchor's own create must land first.
+        // The slot is the anchor's + 1 or under it, so the anchor's own create must land first.
         if (anchorCreate) await anchorCreate
         // No active space: refuse through the rollback below (#5415).
         const spaceId = useSpaceStore.getState().currentSpaceId
@@ -270,7 +278,7 @@ export function createReducers({
               'content',
               content,
               parentId ?? null,
-              afterSlot + 1,
+              slot,
               requireActiveScope(spaceId),
               newId,
             )

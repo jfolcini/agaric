@@ -282,7 +282,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
           placeholder={t('propertiesView.createKey')}
-          className="sm:flex-1"
+          // A floor, so a narrow column wraps the row instead of squeezing
+          // the name to nothing.
+          className="sm:min-w-48 sm:flex-1"
           aria-label={t('propertiesView.createKey')}
           aria-describedby={
             newKey.trim() && definitions.some((d) => d.key === newKey.trim())
@@ -307,7 +309,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
             value={newOptions}
             onChange={(e) => setNewOptions(e.target.value)}
             placeholder={t('properties.newSelectOptions')}
-            className="sm:flex-1"
+            className="sm:min-w-48 sm:flex-1"
             aria-label={t('properties.newSelectOptions')}
           />
         )}

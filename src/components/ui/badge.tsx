@@ -34,15 +34,14 @@ import { cn } from '@/lib/utils'
  */
 
 const BASE =
-  'inline-flex w-fit rounded-sm shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3'
+  'inline-flex w-fit rounded-sm shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3'
 
 const badgeVariants = cva(BASE, {
   variants: {
     tone: {
       default: 'bg-primary text-primary-foreground [a&]:hover:bg-primary/90',
       secondary: 'bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90',
-      destructive:
-        'bg-destructive text-destructive-foreground focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90',
+      destructive: 'bg-destructive text-destructive-foreground [a&]:hover:bg-destructive/90',
       outline:
         'border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
       ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',

@@ -65,7 +65,7 @@ pub struct CompactionResult {
 }
 
 /// Inner implementation for [`get_compaction_status`], testable without Tauri state.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<CompactionStatus, AppError> {
     let total_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
         .fetch_one(pool)
@@ -113,7 +113,7 @@ pub async fn get_compaction_status(
 /// The purge alone, which [`save_engines_then_compact`] runs after its save.
 ///
 /// `ops_deleted` is the number of rows the purge actually removed.
-#[instrument(skip(pool), fields(retention_days), err)]
+#[instrument(skip(pool), fields(retention_days), err(level = "info"))]
 pub async fn compact_op_log_cmd_inner(
     pool: &SqlitePool,
     retention_days: u64,
@@ -144,7 +144,7 @@ pub async fn compact_op_log_cmd_inner(
 /// restores an engine from, so a snapshot pass puts them in `loro_doc_state`
 /// first. A pass that left a dirty engine unwritten purges nothing: those ops
 /// are then all that boot can restore that engine from.
-#[instrument(skip(pool, materializer), err)]
+#[instrument(skip(pool, materializer), err(level = "info"))]
 pub async fn save_engines_then_compact(
     pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,

@@ -924,7 +924,10 @@ fn read_errors_from_path(path: &Path) -> Vec<RecentError> {
 /// path has no redact toggle. All inputs are "absent → noop" per
 /// `RedactionContext`; pass `None` / `&[]` when unknown and the deny-list
 /// JSON pipeline + generic email scrub still apply.
-#[tracing::instrument(skip(app_data_dir, device_id, home, peer_device_ids), err)]
+#[tracing::instrument(
+    skip(app_data_dir, device_id, home, peer_device_ids),
+    err(level = "info")
+)]
 pub fn collect_bug_report_metadata_inner(
     app_data_dir: &Path,
     device_id: String,
@@ -2114,7 +2117,7 @@ fn otel_signal_entries(
 /// uploaded to a public GitHub issue. It is only consulted when
 /// `redact == true`; pass `&[]` if the value is unknown (e.g. the user
 /// has no paired peers) and the scrub gracefully degrades to a noop.
-#[tracing::instrument(skip(log_dir, home, device_id, peer_device_ids), err)]
+#[tracing::instrument(skip(log_dir, home, device_id, peer_device_ids), err(level = "info"))]
 pub fn read_logs_for_report_inner(
     log_dir: &Path,
     redact: bool,

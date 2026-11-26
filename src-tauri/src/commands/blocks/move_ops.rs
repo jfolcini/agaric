@@ -27,7 +27,7 @@ use super::super::*;
 /// - [`AppError::InvalidOperation`] — block cannot be its own parent
 /// - [`AppError::Validation`] — non-positive position, or cycle detected
 /// - [`AppError::NotFound`] — block or new parent does not exist or is deleted
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn move_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -221,7 +221,7 @@ async fn validate_move_in_tx(
 ///
 /// See [`move_block_inner`]'s original inline body for the full rationale on
 /// each step; the comments are preserved verbatim below.
-#[instrument(skip(tx, state, device_id), err)]
+#[instrument(skip(tx, state, device_id), err(level = "info"))]
 pub(crate) async fn move_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
@@ -639,7 +639,7 @@ fn contiguous_run_slots(
 ///
 /// Returns one [`MoveResponse`] per moved root, in input order (1:1 with
 /// `block_ids`), carrying its new `parent_id` + provisional `position`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn move_blocks_batch_inner(
     pool: &SqlitePool,
     device_id: &str,

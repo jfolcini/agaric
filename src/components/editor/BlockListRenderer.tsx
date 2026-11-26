@@ -97,7 +97,8 @@ export interface BlockListRendererProps {
   onContainerPointerDown: (e: React.PointerEvent) => void
 
   // ── Collapse / tree state ──────────────────────────────────────────
-  hasChildrenSet: Set<string>
+  /** Blocks with something to fold: children, or a heading's section (#7040). */
+  foldableSet: Set<string>
   collapsedIds: Set<string>
 
   // ── Mount envelope (#2467) ──────────────────────────────────────────
@@ -128,7 +129,7 @@ export function BlockListRenderer({
   viewport,
   rovingEditor,
   onContainerPointerDown,
-  hasChildrenSet,
+  foldableSet,
   collapsedIds,
   hiddenMountCount,
   onExpandMount,
@@ -277,7 +278,7 @@ export function BlockListRenderer({
   // #1069 — derive a Set once per render so per-row membership is O(1).
   // `selectedBlockIds` stays a string[] in the store; the lookup below ran
   // before the React.memo gate, making selection-changing renders N×O(N).
-  // Mirrors the collapsedIds / hasChildrenSet Set pattern used in this file.
+  // Mirrors the collapsedIds / foldableSet Set pattern used in this file.
   const selectedSet = useMemo(() => new Set(selectedBlockIds), [selectedBlockIds])
 
   // ── Expand animation ──────────────────────────────────────
@@ -378,12 +379,7 @@ export function BlockListRenderer({
                 <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
               )}
               <ul
-                // #992 — vertical rhythm comes from the single-source-of-truth
-                // `--block-row-gap` CSS var (defined in index.css alongside
-                // `--indent-width`): 4px desktop, 6px touch (one scale step up).
-                // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
-                // every BlockTree mount (page + journal day/week/month) shares it.
-                className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
+                className="block-tree relative z-10 list-none m-0 p-0"
                 data-testid="block-tree"
                 aria-label={t('blockTree.treeLabel')}
                 onPointerDown={onContainerPointerDown}
@@ -401,7 +397,7 @@ export function BlockListRenderer({
                       pastInitialWindow={index >= INITIAL_WINDOW_ROWS}
                       viewport={viewport}
                       rovingEditor={rovingEditor}
-                      hasChildren={hasChildrenSet.has(block.id)}
+                      hasChildren={foldableSet.has(block.id)}
                       isCollapsed={collapsedIds.has(block.id)}
                       isAnimating={animatingBlockIds.has(block.id)}
                       siblingSetsize={aria?.setsize}

@@ -572,7 +572,10 @@ pub(crate) async fn write_attachment_bytes(
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 /// - [`AppError::Io`] — writing or verifying the bytes on disk failed
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, app_data_dir, bytes), err)]
+#[instrument(
+    skip(pool, device_id, materializer, app_data_dir, bytes),
+    err(level = "info")
+)]
 pub async fn add_attachment_with_bytes_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -624,7 +627,7 @@ pub async fn add_attachment_with_bytes_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — attachment row does not exist
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn read_attachment_meta_inner(
     pool: &SqlitePool,
     attachment_id: AttachmentId,
@@ -652,7 +655,7 @@ pub async fn read_attachment_meta_inner(
 /// - [`AppError::NotFound`] — attachment row does not exist
 /// - [`AppError::Io`] — the file is missing on disk or unreadable
 /// [`AppError::Validation`] — the stored `fs_path` is malformed (guard)
-#[instrument(skip(pool, app_data_dir), err)]
+#[instrument(skip(pool, app_data_dir), err(level = "info"))]
 pub async fn read_attachment_inner(
     pool: &SqlitePool,
     app_data_dir: &Path,
@@ -702,7 +705,10 @@ pub async fn read_attachment_inner(
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
-#[instrument(skip(pool, device_id, materializer, _app_data_dir), err)]
+#[instrument(
+    skip(pool, device_id, materializer, _app_data_dir),
+    err(level = "info")
+)]
 pub async fn delete_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -790,7 +796,7 @@ pub async fn delete_attachment_inner(
 ///
 /// - [`AppError::NotFound`] — attachment does not exist
 /// - [`AppError::Validation`] — new filename is empty
-#[instrument(skip(pool, device_id, materializer, new_filename), err)]
+#[instrument(skip(pool, device_id, materializer, new_filename), err(level = "info"))]
 pub async fn rename_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -859,7 +865,7 @@ pub async fn rename_attachment_inner(
 /// # Errors
 ///
 /// - [`AppError::Database`] — on query failure
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_attachments_inner(
     pool: &SqlitePool,
     block_id: BlockId,
@@ -903,7 +909,7 @@ pub async fn list_attachments_inner(
 /// - [`AppError::Validation`] — `block_ids.len()` >
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Database`] — on query failure
-#[instrument(skip(pool, block_ids), err)]
+#[instrument(skip(pool, block_ids), err(level = "info"))]
 pub async fn list_attachments_batch_inner(
     pool: &SqlitePool,
     block_ids: Vec<BlockId>,
@@ -954,7 +960,7 @@ pub async fn list_attachments_batch_inner(
 /// - [`AppError::Validation`] — `limit` outside `[1, MAX_PAGE_SIZE]`, or a
 ///   malformed cursor
 /// - [`AppError::Database`] — on query failure
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_attachments_paged_inner(
     pool: &SqlitePool,
     block_id: &BlockId,
@@ -993,7 +999,7 @@ pub async fn list_attachments_paged_inner(
 /// - [`AppError::Validation`] — `limit` outside `[1, MAX_PAGE_SIZE]`, or a
 ///   malformed cursor
 /// - [`AppError::Database`] — on query failure
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_page_attachments_inner(
     pool: &SqlitePool,
     page_id: &BlockId,

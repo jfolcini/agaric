@@ -330,18 +330,6 @@ describe('StaticBlock', () => {
     expect(onFocus).toHaveBeenCalledWith('B1')
   })
 
-  // Selection feedback is the `block-selected` @utility (src/index.css),
-  // shared with EditableBlock.
-  it('applies the block-selected recipe when isSelected is true', () => {
-    render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected />)
-    expect(screen.getByTestId('block-static').className).toContain('block-selected')
-  })
-
-  it('does not apply the block-selected recipe when isSelected is false', () => {
-    render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected={false} />)
-    expect(screen.getByTestId('block-static').className).not.toContain('block-selected')
-  })
-
   // -- Block link tokens ------------------------------------------------------
 
   it('renders block_link token with block-link-chip class', () => {

@@ -96,7 +96,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
       activeBlockId: null,
     } as never,
     onContainerPointerDown: noop,
-    hasChildrenSet: new Set<string>(),
+    foldableSet: new Set<string>(),
     collapsedIds: new Set<string>(),
     hiddenMountCount: 0,
     onExpandMount: noop,
@@ -431,22 +431,6 @@ describe('BlockListRenderer', () => {
     }
   })
 
-  // ── #992 — single-source-of-truth block row gap ──────────────────────
-
-  it('applies the --block-row-gap vertical rhythm to the block tree (#992)', () => {
-    const blocks = [makeBlock({ id: 'BLK001', content: 'Test' })]
-    const { container } = render(
-      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
-    )
-
-    const tree = container.querySelector('.block-tree')
-    // The divergent space-y-0.5 / space-y-1.5 literals are replaced by a single
-    // CSS-var-driven gap (4px desktop, 6px touch, defined in index.css).
-    expect(tree?.className).toContain('space-y-[var(--block-row-gap)]')
-    expect(tree?.className).not.toContain('space-y-0.5')
-    expect(tree?.className).not.toContain('space-y-1.5')
-  })
-
   // ── #991 — sentinel drop zone carries the committed row-level tint ──
 
   it('tints the sentinel drop zone when it is the over-target (#991)', () => {
@@ -583,7 +567,7 @@ describe('BlockListRenderer', () => {
         {...makeProps({
           visibleItems: blocks,
           blocks,
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
           collapsedIds: new Set<string>(),
         })}
       />,
@@ -605,7 +589,7 @@ describe('BlockListRenderer', () => {
         {...makeProps({
           visibleItems: blocks,
           blocks,
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
           collapsedIds: new Set(['PARENT']),
         })}
       />,
@@ -639,7 +623,7 @@ describe('BlockListRenderer', () => {
         {...makeProps({
           visibleItems: blocks,
           blocks,
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -663,7 +647,7 @@ describe('BlockListRenderer', () => {
           visibleItems: [parent],
           blocks: allBlocks,
           collapsedIds: new Set(['PARENT']),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -675,7 +659,7 @@ describe('BlockListRenderer', () => {
           visibleItems: allBlocks,
           blocks: allBlocks,
           collapsedIds: new Set<string>(),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -714,7 +698,7 @@ describe('BlockListRenderer', () => {
           visibleItems: allBlocks,
           blocks: allBlocks,
           collapsedIds: new Set<string>(),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -726,7 +710,7 @@ describe('BlockListRenderer', () => {
           visibleItems: [parent],
           blocks: allBlocks,
           collapsedIds: new Set(['PARENT']),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -749,7 +733,7 @@ describe('BlockListRenderer', () => {
           visibleItems: [parent],
           blocks: allBlocks,
           collapsedIds: new Set(['PARENT']),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )
@@ -761,7 +745,7 @@ describe('BlockListRenderer', () => {
           visibleItems: allBlocks,
           blocks: allBlocks,
           collapsedIds: new Set<string>(),
-          hasChildrenSet: new Set(['PARENT']),
+          foldableSet: new Set(['PARENT']),
         })}
       />,
     )

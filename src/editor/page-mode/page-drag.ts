@@ -15,7 +15,6 @@
  */
 
 import { Extension } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
@@ -24,8 +23,8 @@ import {
   resolveIndentWidth,
 } from '@/components/block-tree/use-block-dnd'
 import { dropBlock } from '@/editor/page-mode/page-block-actions'
-import { hiddenBlocks } from '@/editor/page-mode/page-collapse'
-import { blockIndex, depthOf, startOf, subtreeEnd } from '@/editor/page-mode/page-document'
+import { carriedEnd, hiddenBlocks } from '@/editor/page-mode/page-collapse'
+import { blockIndex, depthOf, startOf } from '@/editor/page-mode/page-document'
 import { PageGrip } from '@/editor/page-mode/page-gutter'
 import { blockIdOf } from '@/editor/token-ids'
 import { MAX_SPEED, SCROLL_ZONE } from '@/hooks/useAutoScrollOnDrag'
@@ -62,7 +61,7 @@ export function dropTarget(
   const { doc } = state
   const hidden = hiddenBlocks(state)
   const shown = (index: number): boolean => !hidden.has(blockIdOf(doc.child(index)) ?? '')
-  const end = subtreeEnd(doc, from)
+  const end = carriedEnd(state, from)
   let slot = over
   if (after) {
     slot = over + 1
@@ -101,11 +100,12 @@ export function dropTarget(
 
 /**
  * The block a drop goes under: the nearest before its slot one level up, past
- * the dragged blocks, from `from` to the end of what is under it; none at the top.
+ * the dragged blocks, from `from` to the end of what it carries; none at the top.
  */
-function dropParent(doc: PMNode, drop: Drop, from: number): number | null {
+function dropParent(state: EditorState, drop: Drop, from: number): number | null {
   if (drop.depth === 0) return null
-  const end = subtreeEnd(doc, from)
+  const { doc } = state
+  const end = carriedEnd(state, from)
   for (let i = drop.slot - 1; i >= 0; i -= 1) {
     if ((i < from || i >= end) && depthOf(doc.child(i)) === drop.depth - 1) return i
   }
@@ -195,7 +195,7 @@ class DragController {
     this.indentWidth = resolveIndentWidth()
     window.addEventListener('click', swallowClick, { capture: true, once: true })
     window.addEventListener('keydown', this.escape, true)
-    const end = subtreeEnd(doc, from)
+    const end = carriedEnd(this.view.state, from)
     for (let index = from; index < end; index += 1) {
       const dom = blockDom(this.view, index)
       if (dom === null) continue
@@ -241,7 +241,7 @@ class DragController {
     }
     const box = view.dom.getBoundingClientRect()
     // One indent step past the text of the block it goes under, a task's text included.
-    const parent = dropParent(doc, drop, from)
+    const parent = dropParent(view.state, drop, from)
     const parentText =
       parent === null ? null : blockDom(view, parent)?.querySelector(':scope > .page-block-content')
     const left =

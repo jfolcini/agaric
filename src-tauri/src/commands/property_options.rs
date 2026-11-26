@@ -83,7 +83,7 @@ pub(crate) async fn refuse_unrenamable_option(
 /// - [`AppError::Validation`] when `key` is the app's own, `new_option` is
 ///   blank or equals `old_option`, or `refuse_unrenamable_option` refuses.
 /// - [`AppError::NotFound`] when the space does not declare `key`.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn rename_property_option_inner(
     pool: &SqlitePool,
     device_id: &str,

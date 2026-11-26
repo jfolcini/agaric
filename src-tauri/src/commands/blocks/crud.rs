@@ -57,7 +57,7 @@ pub async fn find_prev_edit_in_tx(
     Ok((latest.map(|r| (r.device_id, r.seq)), Some(live)))
 }
 
-#[instrument(skip(pool, device_id, materializer, content), err)]
+#[instrument(skip(pool, device_id, materializer, content), err(level = "info"))]
 pub async fn create_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -91,7 +91,7 @@ pub async fn create_block_inner(
 /// [`create_block_in_tx`]); `None` mints a server id. Only the optimistic
 /// `create_block` IPC path threads a `Some`.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, content), err)]
+#[instrument(skip(pool, device_id, materializer, content), err(level = "info"))]
 pub async fn create_block_inner_with_id(
     pool: &SqlitePool,
     device_id: &str,
@@ -168,7 +168,7 @@ pub async fn create_block_inner_with_id(
         parent_id = ?parent_id,
         index = ?index,
     ),
-    err
+    err(level = "info")
 )]
 pub async fn create_block_inner_with_space(
     pool: &SqlitePool,
@@ -443,7 +443,10 @@ pub async fn edit_block_inner(
 /// from. When the block no longer holds it, the editor's change is replayed
 /// on the current text (`rebase_edit`), so a peer's edit the editor has not
 /// seen survives unless the two changed the same text.
-#[instrument(skip(pool, device_id, materializer, to_text, base_text), err)]
+#[instrument(
+    skip(pool, device_id, materializer, to_text, base_text),
+    err(level = "info")
+)]
 pub async fn edit_block_inner_with_base(
     pool: &SqlitePool,
     device_id: &str,
@@ -494,7 +497,7 @@ pub async fn edit_block_inner_with_base(
 /// A tag and its page are renamed together, a second `EditBlock` in the same
 /// transaction, and a page is not renamed into or out of a tag's path
 /// (#6755, [`crate::commands::tag_pages`]).
-#[instrument(skip(tx, state, device_id, to_text, base_text), err)]
+#[instrument(skip(tx, state, device_id, to_text, base_text), err(level = "info"))]
 pub(crate) async fn edit_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
@@ -974,7 +977,7 @@ async fn saved_views_of_space_in_tx(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is already soft-deleted
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1045,7 +1048,7 @@ pub(crate) struct DeleteInTx {
 /// caller owns the transaction lifecycle (BEGIN / arm / COMMIT) and, after
 /// its commit, runs the FTS removal on the returned [`DeleteInTx`]; this
 /// helper only enqueues the op via `enqueue_lifecycle_background`.
-#[instrument(skip(tx, state, device_id), err)]
+#[instrument(skip(tx, state, device_id), err(level = "info"))]
 pub(crate) async fn delete_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
@@ -1364,7 +1367,7 @@ async fn append_delete_ops_in_tx(
 /// `apply_op_projected` calls would lose the single-pass combined-cascade
 /// UPDATE. This is a documented, permanent exception (Stage 3) — leave the
 /// combined cascade as-is.
-#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[instrument(skip(pool, device_id, materializer, block_ids), err(level = "info"))]
 pub async fn delete_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1589,7 +1592,10 @@ pub async fn delete_blocks_by_ids(
 /// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, `space_id` is not a live space block, or the drops and moves would exceed one undo
 /// - [`ValidationCode::UnacknowledgedPropertyLoss`] — the losses differ from `acknowledged`
 /// - [`ValidationCode::DuplicatePageTitle`] — a moved page's title or tag's name is taken in `space_id`, by a live page or tag there or by another one this move brings
-#[instrument(skip(pool, device_id, materializer, block_ids, acknowledged), err)]
+#[instrument(
+    skip(pool, device_id, materializer, block_ids, acknowledged),
+    err(level = "info")
+)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1820,7 +1826,7 @@ async fn repair_restored_links_and_fts(
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
 /// - [`AppError::Validation`] — a restored page's title or tag's name is held by another live page or tag of its space (#5281, #6051)
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn restore_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2115,7 +2121,7 @@ fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngi
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not soft-deleted
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn purge_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2340,7 +2346,7 @@ async fn select_trash_cascade_roots_in_tx(
 /// replay with one subtree unrestored. `now_ms()` is not strictly monotonic
 /// across pool connections, so a pure structural heuristic could not be made
 /// collision-safe; for op-backed deletes the op id is authoritative.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn restore_all_deleted_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2502,7 +2508,7 @@ pub async fn restore_all_deleted_inner(
 /// tombstones. This closes the prior same-millisecond collision window where
 /// two delete events sharing a timestamp emitted a single `PurgeBlock` op
 /// instead of two, leaving a peer with one subtree intact after replay.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn purge_all_deleted_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2855,7 +2861,7 @@ async fn repair_restored_batch_links_and_fts(
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
 /// - [`AppError::Validation`] — a restored page's title or tag's name is held by another live page or tag of its space (#5281, #6051)
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3107,7 +3113,7 @@ async fn append_purge_ops_in_tx(
 ///
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3561,7 +3567,7 @@ pub struct CreateBlockSpec {
 ///
 /// **Nesting:** a spec's `parent_index` names an EARLIER spec whose block
 /// is its parent, so a whole tree lands in one batch (`/template`, #6530).
-#[instrument(skip(pool, device_id, materializer, specs), err)]
+#[instrument(skip(pool, device_id, materializer, specs), err(level = "info"))]
 pub async fn create_blocks_batch_inner(
     pool: &SqlitePool,
     device_id: &str,

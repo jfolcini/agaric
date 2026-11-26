@@ -330,13 +330,14 @@ impl DaemonActivation {
 /// before exiting.
 pub struct SyncDaemon {
     pub shutdown_notify: Arc<Notify>,
-    /// Read only by `#[cfg(test)] mod tests` — assertions that the
+    /// Read by `#[cfg(test)] mod tests` — assertions that the
     /// daemon holds a handle (e.g. in dormant mode) and to await
-    /// graceful shutdown after `shutdown()`. The production drop path
-    /// doesn't read it, but the field is *held* (rather than
-    /// `.detach()`-ed or dropped at construction) so the spawned task
-    /// is anchored to the daemon's lifetime; `pub` is what keeps the
-    /// `dead_code` lint quiet on non-test builds.
+    /// graceful shutdown after `shutdown()` — and by `e2e_sync_peer`,
+    /// which awaits it before exiting so the task gets to close its
+    /// endpoint. The app's drop path doesn't read it, but the field is
+    /// *held* (rather than `.detach()`-ed or dropped at construction) so
+    /// the spawned task is anchored to the daemon's lifetime; `pub` is
+    /// what keeps the `dead_code` lint quiet on non-test builds.
     pub handle: Option<JoinHandle<()>>,
     /// Whether the daemon has committed to the active path — see
     /// [`DaemonActivation`] for why the dormant→active transition needs an

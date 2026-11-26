@@ -1483,34 +1483,22 @@ pub async fn project_block_full_to_sql(
 
 /// [`reproject_property_row_from_engine`]'s `value_type` lookup: the
 /// built-in definition's (#5841), else the block's space's definition in
-/// `value_types`, defaulting to `text` for a key the space does not declare.
+/// `value_types`, defaulting to `text` for a key the space does not declare:
+/// an undeclared custom key is the ordinary case, not a missing definition.
 fn declared_value_type_or_text<'a>(
     value_types: &'a std::collections::HashMap<String, String>,
     key: &str,
-    block_id: &agaric_core::ulid::BlockId,
 ) -> &'a str {
     if let Some(def) = agaric_store::op::builtin_property_def(key) {
         return def.value_type;
     }
-    value_types.get(key).map_or_else(
-        || {
-            tracing::warn!(
-                key = %key,
-                block_id = %block_id.as_str(),
-                "reproject_block_properties_from_engine: no property_definitions row; \
-                 defaulting to 'text'"
-            );
-            "text"
-        },
-        String::as_str,
-    )
+    value_types.get(key).map_or("text", String::as_str)
 }
 
 /// The column an engine value lands in: a native typed value in its own,
 /// whatever the key's declared type (#5841), and a string where that type
 /// puts it.
 fn engine_value_fields(
-    block_id: &agaric_core::ulid::BlockId,
     key: &str,
     value: &crate::loro::engine::PropertyValue,
     value_types: &std::collections::HashMap<String, String>,
@@ -1537,11 +1525,10 @@ fn engine_value_fields(
         // A String value is text/date/ref/select (or a legacy pre-§2.1
         // Str-encoded number/bool): it lands where the key's declared type
         // puts it, as that type reads it (`coerce`), defaulting to "text" for
-        // an undefined key (warn so a missing definition is observable). One
-        // the type does not take is kept in `value_text`, out of the column
-        // the type's readers read (#6206).
+        // an undeclared key. One the type does not take is kept in
+        // `value_text`, out of the column the type's readers read (#6206).
         PropertyValue::Str(s) => {
-            let value_type = declared_value_type_or_text(value_types, key, block_id);
+            let value_type = declared_value_type_or_text(value_types, key);
             coerce(value, value_type).map_or_else(
                 || PropertyValueFields {
                     value_text: Some(s.clone()),
@@ -1565,7 +1552,7 @@ async fn reproject_property_row_from_engine(
     value_types: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
     let block_id_str = block_id.as_str();
-    let fields = engine_value_fields(block_id, key, value, value_types);
+    let fields = engine_value_fields(key, value, value_types);
     let value_text = fields.value_text.as_deref();
     let value_num = fields.value_num;
     let value_date = fields.value_date.as_deref();
@@ -1871,8 +1858,7 @@ pub async fn reproject_key_values(
     .await?
     .into_iter()
     .collect();
-    // The key's own type, so an undeclared key routes to text without the
-    // missing-definition warning once per value.
+    // The key's own type, so an undeclared key routes to text.
     let value_types = std::collections::HashMap::from([(
         key.to_owned(),
         value_type.unwrap_or("text").to_owned(),
@@ -4654,10 +4640,22 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn reproject_undefined_key_defaults_to_text() {
+    #[test]
+    fn reproject_undefined_key_defaults_to_text() {
         // A key with no property_definitions row must default to the
-        // text column rather than erroring.
+        // text column rather than erroring, and quietly: an undeclared custom
+        // key is the ordinary case, so a warning would fire on every one.
+        let ((), logs) = crate::loro::engine::test_log_capture::capture_logs(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(reproject_undefined_key_defaults_to_text_body());
+        });
+        assert!(!logs.contains("WARN"), "{logs}");
+    }
+
+    async fn reproject_undefined_key_defaults_to_text_body() {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \

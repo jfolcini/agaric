@@ -861,7 +861,7 @@ async fn import_bib_entries(
 /// boundary never splits an entry, so an interrupted import leaves a prefix
 /// of complete reference pages; imports of ≤ one chunk keep whole-file
 /// atomicity.
-#[instrument(skip(pool, device_id, materializer, content), fields(space = %space_id), err)]
+#[instrument(skip(pool, device_id, materializer, content), fields(space = %space_id), err(level = "info"))]
 pub async fn import_bibliography_inner(
     pool: &SqlitePool,
     device_id: &str,

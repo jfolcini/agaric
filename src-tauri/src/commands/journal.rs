@@ -56,7 +56,7 @@ pub async fn today_journal_inner(
 ///
 /// - [`AppError::Validation`] — `date` is not a valid `YYYY-MM-DD` string,
 ///   or `space_id` does not refer to a live space block.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn navigate_journal_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -78,7 +78,7 @@ pub async fn navigate_journal_inner(
 /// frontend and the MCP surface.
 ///
 /// `space_id` is required to scope the journal lookup.
-#[instrument(skip(pool, device_id, materializer), err)]
+#[instrument(skip(pool, device_id, materializer), err(level = "info"))]
 pub async fn journal_for_date_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -558,7 +558,7 @@ fn expand_tokens(
 ///   a live space block.
 /// - Other [`AppError`] variants propagated from
 ///   [`today_journal_inner`] / [`create_block_inner`] (e.g. DB I/O).
-#[instrument(skip(pool, device_id, materializer, content), err)]
+#[instrument(skip(pool, device_id, materializer, content), err(level = "info"))]
 pub async fn quick_capture_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -624,7 +624,7 @@ pub struct JournalCapture {
 /// - [`AppError::Validation`] — `space_id` is not a live space and the day is
 ///   missing, the markdown holds no block, or the append would write more ops
 ///   than one undo reverts; nothing is written, not even the day
-#[instrument(skip(pool, device_id, materializer, markdown), err)]
+#[instrument(skip(pool, device_id, materializer, markdown), err(level = "info"))]
 pub async fn capture_to_journal_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -670,7 +670,7 @@ pub struct JournalDay {
 ///
 /// - [`AppError::Validation`] — a date is not `YYYY-MM-DD`, the range is
 ///   inverted, `limit` is out of range, or the cursor is malformed
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_journal_days_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -753,7 +753,7 @@ pub async fn list_journal_days_inner(
 /// redundant `content LIKE '____-__-__'` term (the `date` arg is already
 /// format-validated, so it never changes the result set) — that makes the
 /// lookup an index seek, O(log N) regardless of total block count (audit #427).
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_journal_page_by_date_inner(
     pool: &SqlitePool,
     date: &str,
@@ -817,7 +817,7 @@ pub async fn get_journal_page_by_date(
 /// Both endpoints are validated against the `YYYY-MM-DD` shape, and
 /// `start_date <= end_date` is enforced — callers passing inverted ranges hit
 /// a Validation error rather than a silent empty result.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_journal_pages_in_range_inner(
     pool: &SqlitePool,
     start_date: &str,

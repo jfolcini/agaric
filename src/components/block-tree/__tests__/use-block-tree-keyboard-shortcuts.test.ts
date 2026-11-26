@@ -107,7 +107,7 @@ function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShort
   return {
     focusedBlockId: 'BLOCK_1',
     pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
-    hasChildrenSet: new Set(['BLOCK_1']),
+    foldableSet: new Set(['BLOCK_1']),
     selectAllIds: selectAllScoped(selectAllIds ?? ['BLOCK_1', 'BLOCK_2']),
     visibleIds: mountScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
     toggleCollapse: vi.fn(),
@@ -160,7 +160,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     })
 
     it('does not call toggleCollapse when block has no children', () => {
-      const opts = makeOptions({ hasChildrenSet: new Set() })
+      const opts = makeOptions({ foldableSet: new Set() })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '.', ctrlKey: true })
@@ -1407,7 +1407,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
   describe('Zoom in (Alt+.) — D1 (#217)', () => {
     it('calls zoomIn for the focused parent block when Alt+. is pressed', () => {
-      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set(['BLOCK_1']) })
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', foldableSet: new Set(['BLOCK_1']) })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '.', altKey: true })
@@ -1421,7 +1421,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     it('#922 — zooms into a LEAF (childless) block too — the gate is gone', () => {
       // Previously childless blocks were rejected; #922 drops that gate so any
       // block can be zoomed (BlockTree seeds a first child under the leaf).
-      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set() })
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', foldableSet: new Set() })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '.', altKey: true })
@@ -1441,7 +1441,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     })
 
     it('does not zoom in on a bare Ctrl+. (collapse) without Alt', () => {
-      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set(['BLOCK_1']) })
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', foldableSet: new Set(['BLOCK_1']) })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '.', ctrlKey: true })
@@ -1460,12 +1460,12 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       const treeA = makeOptions({
         focusedBlockId: 'BLOCK_A',
         pageStore: makePageStore(['BLOCK_A']),
-        hasChildrenSet: new Set(['BLOCK_A']),
+        foldableSet: new Set(['BLOCK_A']),
       })
       const treeB = makeOptions({
         focusedBlockId: 'BLOCK_A', // global focus — foreign to tree B's store
         pageStore: makePageStore(['BLOCK_B']),
-        hasChildrenSet: new Set(['BLOCK_B']),
+        foldableSet: new Set(['BLOCK_B']),
       })
       renderHook(() => useBlockTreeKeyboardShortcuts(treeA))
       renderHook(() => useBlockTreeKeyboardShortcuts(treeB))
@@ -1547,7 +1547,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       const opts = makeOptions({
         focusedBlockId: 'BLOCK_A', // foreign — not in this tree's store
         pageStore: makePageStore(['BLOCK_B']),
-        hasChildrenSet: new Set(['BLOCK_B']),
+        foldableSet: new Set(['BLOCK_B']),
       })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 

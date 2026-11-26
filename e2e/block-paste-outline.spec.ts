@@ -183,7 +183,7 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @edi
     await ctrlSelectById(page, gs1)
     // One selected block brings no batch bar (#6547); the row shows the selection.
     await expect(page.locator('.block-selected')).toHaveCount(1)
-    await expect(page.locator(`[data-block-id="${gs1}"] [data-testid="block-static"]`)).toHaveClass(
+    await expect(page.locator(`[data-block-id="${gs1}"] [data-testid="block-frame"]`)).toHaveClass(
       /block-selected/,
     )
     await page.keyboard.press('Control+c')

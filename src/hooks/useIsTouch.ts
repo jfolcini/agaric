@@ -1,18 +1,12 @@
 /**
- * useIsTouch — detect coarse-pointer (touch) input.
+ * useIsTouch — whether the app lays itself out for touch.
  *
- * Returns `true` when the active pointer is coarse (touch screen, stylus on
- * tablet, etc.) AND the device exposes real touch hardware
- * (`navigator.maxTouchPoints > 0`), and `false` for fine pointers
- * (mouse, trackpad). The value is reactive: if the user attaches/detaches a
- * mouse the hook re-renders.
- *
- * #1236: the Linux Tauri WebKitGTK webview mis-reports
- * `matchMedia('(pointer: coarse)').matches === true` for a plain mouse, which
- * would flip the whole app into touch mode (per-block gutter controls on every
- * block). A desktop webview reports `maxTouchPoints === 0`, so requiring BOTH
- * signals short-circuits that false-coarse to a fine pointer while real touch
- * devices (maxTouchPoints > 0) keep behaving as touch.
+ * The platform decides (`detectTouch`, `src/lib/touch.ts`): the desktop Tauri
+ * app never, the Android app always, and a plain browser when its pointer is
+ * coarse and it has touch hardware (`navigator.maxTouchPoints > 0`). In a
+ * browser the value follows the pointer: the hook re-renders when the
+ * `(pointer: coarse)` media query changes. CSS reads the same answer through
+ * the `coarse` variant.
  *
  * SSR-safe: returns `false` when `window` is undefined and only attaches the
  * `matchMedia` listener inside `useEffect`.
@@ -20,16 +14,7 @@
 
 import { useEffect, useState } from 'react'
 
-const TOUCH_QUERY = '(pointer: coarse)'
-
-function detectTouch(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-    return false
-  }
-  const coarse = window.matchMedia(TOUCH_QUERY).matches
-  const hasTouchPoints = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
-  return coarse && hasTouchPoints
-}
+import { COARSE_POINTER_QUERY, detectTouch } from '@/lib/touch'
 
 export function useIsTouch(): boolean {
   const [isTouch, setIsTouch] = useState<boolean>(detectTouch)
@@ -38,7 +23,7 @@ export function useIsTouch(): boolean {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
       return
     }
-    const mql = window.matchMedia(TOUCH_QUERY)
+    const mql = window.matchMedia(COARSE_POINTER_QUERY)
     const handler = () => {
       setIsTouch(detectTouch())
     }

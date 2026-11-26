@@ -28,6 +28,7 @@ import { applySafePosition } from '@/lib/floating-position'
 import { t } from '@/lib/i18n'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { detectTouch } from '@/lib/touch'
 
 /**
  * #1102 — WCAG editable-combobox wiring.
@@ -125,17 +126,13 @@ function usableViewport(): { width: number; height: number } {
   return { width: clientWidth, height }
 }
 
-function isCoarsePointer(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
-}
-
 /**
  * Place `el` beside `anchor` on `side`. Below, its top edge is pinned; above,
  * its bottom edge (CSS `bottom`), so results growing or shrinking never move
  * the edge next to the line.
  */
 function placePopup(el: HTMLElement, anchor: SuggestionAnchor, side: SuggestionSide): void {
-  const coarse = isCoarsePointer()
+  const coarse = detectTouch()
   const viewport = usableViewport()
   const placed = placeSuggestionPopup({
     anchor,
@@ -193,7 +190,7 @@ export function createSuggestionRenderer(
     if (!popup || !latest) return
     const anchor = anchorFor(latest)
     if (!anchor) return
-    const padding = isCoarsePointer() ? COARSE_PADDING : DESKTOP_PADDING
+    const padding = detectTouch() ? COARSE_PADDING : DESKTOP_PADDING
     side ??= chooseSuggestionSide(anchor, usableViewport().height, PREFERRED_HEIGHT, GAP, padding)
     placePopup(popup, anchor, side)
   }

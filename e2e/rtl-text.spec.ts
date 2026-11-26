@@ -588,6 +588,16 @@ test.describe('right-to-left text: arrows and the Markdown source @editor @pages
               .state.selection.from,
         )
 
+    // A block the arrow lands in focuses a frame later and ProseMirror puts its selection back
+    // 20 ms after that, undoing keys sent meanwhile (`editBlock` in helpers.ts).
+    const settle = () =>
+      page
+        .locator('[data-testid="block-editor"] [contenteditable="true"]')
+        .evaluate(
+          () =>
+            new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20))),
+        )
+
     await focusBlockById(page, ids.arabic)
     // Home is the line's start, its right end: ArrowLeft goes into the text.
     await page.keyboard.press('Home')
@@ -598,11 +608,13 @@ test.describe('right-to-left text: arrows and the Markdown source @editor @pages
     await page.keyboard.press('End')
     await page.keyboard.press('ArrowLeft')
     await expect.poll(editing).toBe(ids.after)
+    await settle()
     // ArrowLeft from the English start comes back to the Arabic block, and
     // ArrowRight past the Arabic start goes on to the block before.
     await page.keyboard.press('Home')
     await page.keyboard.press('ArrowLeft')
     await expect.poll(editing).toBe(ids.arabic)
+    await settle()
     await page.keyboard.press('Home')
     await page.keyboard.press('ArrowRight')
     await expect.poll(editing).toBe(ids.before)
