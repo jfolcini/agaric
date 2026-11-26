@@ -247,10 +247,9 @@ function SortableBlockWrapperInner({
       tabIndex={isCursor ? -1 : undefined}
       className={cn(
         'list-none m-0 p-0',
-        // The `focus-ring-visible` ring, on `:focus` rather than `:focus-visible`:
-        // Chromium does not count a Ctrl chord as keyboard use, so after a click
-        // into a block, Ctrl+Space and Ctrl+Arrow would move an unmarked cursor.
-        isCursor && 'rounded-md focus:outline-hidden focus:ring-[3px] focus:ring-ring',
+        // The row takes the focus; `SortableBlock` draws its ring around the
+        // block's content (`group-focus/row`), clear of the gutter.
+        isCursor && 'group/row focus:outline-hidden',
         isAnimating && 'block-children-enter',
         // #991 — committed faint row-level drop-over tint so the whole
         // landing row reads as the target (Notion/Logseq idiom), not just the

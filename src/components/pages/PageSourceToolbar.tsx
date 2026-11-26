@@ -28,7 +28,7 @@ import {
   buildToolbarItems,
   type ToolbarItemGroups,
 } from '@/components/FormattingToolbar/items'
-import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
+import { renderCyclePriority, renderDateMenu } from '@/components/FormattingToolbar/MetadataGroup'
 import {
   renderFormatButton,
   renderTurnIntoButton,
@@ -39,11 +39,13 @@ import {
   toolbarPressHandlers,
 } from '@/components/FormattingToolbar/shared'
 import {
+  createDateButtons,
   createHistoryButtons,
   createMarkToggles,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
+  createTaskButtons,
   toolbarActiveClass,
   toolbarMenuRowClass,
   type ToolbarButtonConfig,
@@ -113,7 +115,7 @@ interface OpenMenu {
  * then the buffer's own: the block menu, and on touch Save.
  */
 function sourceItems(groups: ToolbarItemGroups, isTouch: boolean): ToolbarItem[] {
-  const shown = buildToolbarItems(groups).filter(
+  const shown = buildToolbarItems(groups, { touch: isTouch }).filter(
     (item) =>
       item.kind === 'separator' ||
       item.key in SOURCE_TOOLBAR_ACTIONS ||
@@ -150,6 +152,7 @@ export function PageSourceToolbar({
   const isTouch = useIsTouch()
   const [formatOpen, setFormatOpen] = useState(false)
   const [turnIntoOpen, setTurnIntoOpen] = useState(false)
+  const [dateMenuOpen, setDateMenuOpen] = useState(false)
   const [dialog, setDialog] = useState<{ kind: SourceDialog; block: SourceBlock | null } | null>(
     null,
   )
@@ -198,6 +201,8 @@ export function PageSourceToolbar({
     return {
       refsAndBlocks: swap(createRefsAndBlocks(editor)),
       structureButtons: swap(createStructureButtons(editor)),
+      taskButtons: swap(createTaskButtons()),
+      dateButtons: swap(createDateButtons()),
       metadataButtons: swap(createMetadataButtons()),
       historyButtons: swap([...createHistoryButtons(editor), CANCEL_BUTTON]),
     }
@@ -277,6 +282,16 @@ export function PageSourceToolbar({
           currentPriority: state.priority,
           onAfterOverflowAction: closeOverflow,
           onCycle: () => SOURCE_TOOLBAR_ACTIONS[item.key]?.(context()),
+        })
+      }
+      case 'toolbar.date': {
+        return renderDateMenu({
+          mode,
+          t,
+          open: dateMenuOpen,
+          setOpen: setDateMenuOpen,
+          dates: groups.dateButtons,
+          onOverflowClose: closeOverflow,
         })
       }
       case BLOCK_MENU: {

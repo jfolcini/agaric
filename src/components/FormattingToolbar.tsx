@@ -3,9 +3,11 @@
  * view while a block is edited (`./FormattingToolbar/view-toolbar.tsx`), and page
  * mode's, above its document.
  *
- * Buttons (post Layer A): Format, Internal Link, Tag, Blockquote | Code Block,
- * Heading | Ordered List, Divider, Callout | Cycle Priority, Date, Due Date,
- * Scheduled Date, TODO, Properties | Undo, Redo, Discard. The mark toggles
+ * Buttons: Format, Turn into, Internal link, Tag | TODO, Cycle priority, Date (a
+ * menu of Insert date, Due date and Scheduled date), Properties | Undo, Redo, then
+ * More, which always holds the rarer inserts: Block reference, Insert query, Emoji,
+ * New line and Insert table (`buildToolbarItems`; on touch New line stays on the
+ * bar, with Indent and Outdent beside it). The mark toggles
  * + External Link live in `SelectionBubbleMenu` (Layer A); the leading
  * "Format" popover (#1958) re-exposes those same mark toggles so they can be
  * applied at the caret with no selection (and on touch, where the bubble is
@@ -40,7 +42,7 @@ import {
   BlockMenuButton,
 } from '@/components/FormattingToolbar/BlockMenuButton'
 import { buildConfigByKey, buildToolbarItems } from '@/components/FormattingToolbar/items'
-import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
+import { renderCyclePriority, renderDateMenu } from '@/components/FormattingToolbar/MetadataGroup'
 import {
   renderFormatButton,
   renderTableOpsButton,
@@ -49,11 +51,13 @@ import {
 } from '@/components/FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton } from '@/components/FormattingToolbar/shared'
 import {
+  createDateButtons,
   createHistoryButtons,
   createIndentButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
+  createTaskButtons,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -104,6 +108,7 @@ export function FormattingToolbar({
   const [turnIntoPopoverOpen, setTurnIntoPopoverOpen] = useState(false)
   const [tableOpsPopoverOpen, setTableOpsPopoverOpen] = useState(false)
   const [tablePickerPopoverOpen, setTablePickerPopoverOpen] = useState(false)
+  const [dateMenuOpen, setDateMenuOpen] = useState(false)
 
   const state = useEditorState({
     editor,
@@ -147,6 +152,8 @@ export function FormattingToolbar({
           ? createIndentButtons(indent.onIndent, indent.onOutdent)
           : []),
       ],
+      taskButtons: createTaskButtons(),
+      dateButtons: createDateButtons(),
       metadataButtons: createMetadataButtons(),
       historyButtons: createHistoryButtons(editor, isTouch),
     }),
@@ -155,9 +162,12 @@ export function FormattingToolbar({
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
   const hasBlockMenu = blockMenu !== undefined
   const items: ToolbarItem[] = useMemo(() => {
-    const shown = buildToolbarItems(groups, { includeTableOps: state.isInsideTable })
+    const shown = buildToolbarItems(groups, {
+      includeTableOps: state.isInsideTable,
+      touch: isTouch,
+    })
     return hasBlockMenu ? [...shown, ...BLOCK_MENU_ITEMS] : shown
-  }, [groups, state.isInsideTable, hasBlockMenu])
+  }, [groups, state.isInsideTable, isTouch, hasBlockMenu])
 
   // ── Item renderer dispatch ────────────────────────────────────────────
 
@@ -214,6 +224,16 @@ export function FormattingToolbar({
           t,
           currentPriority,
           onAfterOverflowAction: closeOverflow,
+        })
+      }
+      case 'toolbar.date': {
+        return renderDateMenu({
+          mode,
+          t,
+          open: dateMenuOpen,
+          setOpen: setDateMenuOpen,
+          dates: groups.dateButtons,
+          onOverflowClose: closeOverflow,
         })
       }
       case BLOCK_MENU: {

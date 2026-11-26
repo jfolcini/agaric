@@ -151,6 +151,12 @@ function button(name: string | RegExp): HTMLElement {
   return within(toolbar()).getByRole('button', { name })
 }
 
+/** A row of the toolbar's More, which it opens. */
+async function moreRow(name: string): Promise<HTMLElement> {
+  await userEvent.setup().click(button(t('toolbar.more')))
+  return within(await screen.findByTestId('toolbar-overflow-menu')).getByRole('button', { name })
+}
+
 /** Save, labelled with the count of changes once there are any. */
 const SAVE = /^Save(?: \(\d+ changes?\))?$/
 
@@ -175,20 +181,25 @@ describe('the toolbar', () => {
       t('toolbar.format'),
       t('toolbar.turnInto'),
       t('toolbar.internalLink'),
-      t('toolbar.insertBlockRef'),
       t('toolbar.insertTag'),
-      t('toolbar.insertQuery'),
-      t('toolbar.emoji'),
-      t('toolbar.newLine'),
-      t('toolbar.cyclePriority'),
-      t('toolbar.insertDate'),
-      t('toolbar.setDueDate'),
-      t('toolbar.setScheduledDate'),
       t('toolbar.todoToggle'),
+      t('toolbar.cyclePriority'),
+      t('toolbar.date'),
       t('toolbar.undo'),
       t('toolbar.redo'),
       t('toolbar.discard'),
       t('contextMenu.blockActions'),
+      t('toolbar.more'),
+    ])
+    await userEvent.setup().click(button(t('toolbar.more')))
+    const more = within(await screen.findByTestId('toolbar-overflow-menu'))
+      .getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label'))
+    expect(more).toEqual([
+      t('toolbar.insertBlockRef'),
+      t('toolbar.insertQuery'),
+      t('toolbar.emoji'),
+      t('toolbar.newLine'),
     ])
     expect(screen.queryByRole('button', { name: t('toolbar.insertTable') })).toBeNull()
     expect(screen.queryByRole('button', { name: t('toolbar.properties') })).toBeNull()
@@ -254,7 +265,7 @@ describe('toolbar actions at the cursor', () => {
     expect(picked(ed)).toBe('#wor')
 
     caretAfter(ed, 'Create')
-    await user.click(button(t('toolbar.insertBlockRef')))
+    await user.click(await moreRow(t('toolbar.insertBlockRef')))
     expect(lineOf(ed, 'by pressing')[0]).toBe(
       'Create(( new blocks by pressing Enter at the end of any block.',
     )
@@ -266,7 +277,7 @@ describe('toolbar actions at the cursor', () => {
     const ed = await loadedEditor()
     caretAfter(ed, 'Welcome to Agaric!')
 
-    await userEvent.setup().click(button(t('toolbar.newLine')))
+    await userEvent.setup().click(await moreRow(t('toolbar.newLine')))
 
     const at = lines(ed).findIndex(([, id]) => id === GS1)
     expect(lines(ed).slice(at, at + 3)).toEqual([
@@ -314,7 +325,8 @@ describe('toolbar actions at the cursor', () => {
     const user = userEvent.setup()
     caretAfter(ed, 'Create')
 
-    await user.click(button(t('toolbar.setDueDate')))
+    await user.click(button(t('toolbar.date')))
+    await user.click(await screen.findByRole('button', { name: t('toolbar.setDueDate') }))
     await user.type(await screen.findByLabelText(t('journal.typeDateLabel')), '2026-10-15{Enter}')
 
     const at = lines(ed).findIndex(([, id]) => id === GS3)
@@ -330,7 +342,8 @@ describe('toolbar actions at the cursor', () => {
     const user = userEvent.setup()
     caretAfter(ed, 'knowledge base.')
 
-    await user.click(button(t('toolbar.insertDate')))
+    await user.click(button(t('toolbar.date')))
+    await user.click(await screen.findByRole('button', { name: t('toolbar.insertDate') }))
     await user.type(await screen.findByLabelText(t('journal.typeDateLabel')), '2026-10-15{Enter}')
 
     expect(lineOf(ed, 'Welcome')).toEqual([`${WELCOME}[[2026-10-15]]`, GS1])
@@ -342,7 +355,7 @@ describe('toolbar actions at the cursor', () => {
     const user = userEvent.setup()
     caretAfter(ed, 'Welcome')
 
-    await user.click(button(t('toolbar.emoji')))
+    await user.click(await moreRow(t('toolbar.emoji')))
     await user.click(await screen.findByRole('button', { name: 'party popper' }))
 
     expect(lineOf(ed, 'Agaric')[0]).toBe(`Welcome🎉 to Agaric! ${WELCOME_TEXT.slice(19)}`)
@@ -354,7 +367,7 @@ describe('toolbar actions at the cursor', () => {
     const user = userEvent.setup()
     caretAfter(ed, 'Create')
 
-    await user.click(button(t('toolbar.insertQuery')))
+    await user.click(await moreRow(t('toolbar.insertQuery')))
     await user.type(await screen.findByLabelText(t('queryBuilder.tagPrefix')), 'work')
     await user.click(screen.getByRole('button', { name: t('queryBuilder.insertButton') }))
 
@@ -417,7 +430,7 @@ describe('the block menu', () => {
     const ed = await loadedEditor()
     const user = userEvent.setup()
     caretAfter(ed, 'Create new blocks')
-    await user.click(button(t('toolbar.newLine')))
+    await user.click(await moreRow(t('toolbar.newLine')))
     act(() => {
       ed.commands.insertContent('  ')
     })
@@ -446,7 +459,7 @@ describe('the block menu', () => {
     const ed = await loadedEditor()
     const user = userEvent.setup()
     caretAfter(ed, 'Create new blocks')
-    await user.click(button(t('toolbar.newLine')))
+    await user.click(await moreRow(t('toolbar.newLine')))
     act(() => {
       ed.commands.insertContent('  ')
     })
@@ -474,7 +487,7 @@ describe('the block menu', () => {
     const ed = await loadedEditor()
     const user = userEvent.setup()
     caretAfter(ed, 'Create new blocks')
-    await user.click(button(t('toolbar.newLine')))
+    await user.click(await moreRow(t('toolbar.newLine')))
     act(() => {
       ed.commands.insertContent('  ')
     })
@@ -657,10 +670,11 @@ describe('on a phone', () => {
       .getAllByRole('button')
       .map((b) => b.getAttribute('aria-label') ?? b.textContent)
     expect(names).toContain(t('toolbar.newLine'))
-    expect(names.slice(-3)).toEqual([
+    expect(names.slice(-4)).toEqual([
       t('contextMenu.blockActions'),
       t('action.cancel'),
       t('action.save'),
+      t('toolbar.more'),
     ])
     expect(screen.getAllByRole('button', { name: t('action.save') })).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: t('action.cancel') })).toHaveLength(1)

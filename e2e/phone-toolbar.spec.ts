@@ -12,6 +12,7 @@ import { devices } from '@playwright/test'
 
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
+  activeSheet,
   expect,
   focusBlock,
   focusBlockById,
@@ -66,10 +67,10 @@ async function reopen(page: Page, title: string): Promise<void> {
   await openPageMobile(page, title)
 }
 
-// A 360 px bar keeps Indent beside Toggle TODO and folds Outdent into More.
+// New line stays on a phone's bar: its keyboard has no key for a line break (#5160).
 const PHONES = [
-  { name: 'Pixel 7', width: 412, onBar: ['Toggle TODO state', 'Indent', 'Outdent'] },
-  { name: 'Galaxy S8', width: 360, onBar: ['Toggle TODO state', 'Indent'] },
+  { name: 'Pixel 7', width: 412, onBar: ['Toggle TODO state', 'Indent', 'Outdent', 'New line'] },
+  { name: 'Galaxy S8', width: 360, onBar: ['Toggle TODO state', 'Indent', 'New line'] },
 ] as const
 
 for (const { name, width, onBar } of PHONES) {
@@ -191,5 +192,63 @@ test.describe('the toolbar with a fine pointer @editor', () => {
     for (const label of ['Indent', 'Outdent']) {
       await expect(items.filter({ has: page.locator(`[aria-label="${label}"]`) })).toHaveCount(0)
     }
+  })
+})
+
+test.describe('the toolbar groups with a fine pointer @editor', () => {
+  test('a visible rule stands between each group', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await focusBlock(page, 0)
+    const rules = toolbar(page).locator(':scope > span > [data-slot="separator"]')
+    await expect(rules).toHaveCount(2)
+    for (const rule of await rules.all()) {
+      const box = await rule.boundingBox()
+      expect(box?.width).toBeGreaterThanOrEqual(1)
+      expect(box?.height).toBeGreaterThan(0)
+    }
+  })
+})
+
+test.describe('the Date menu on a phone @editor @mobile', () => {
+  // On its side the bar has room for the Date button; upright it folds into More.
+  // `screen` too: the phone layout reads the screen's height (`usePhoneLayout`).
+  const phone = devices['Pixel 7 landscape']
+  test.use({
+    viewport: phone.viewport,
+    screen: phone.viewport,
+    hasTouch: phone.hasTouch,
+    isMobile: phone.isMobile,
+    deviceScaleFactor: phone.deviceScaleFactor,
+    userAgent: phone.userAgent,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-03-11T12:00:00') })
+    await waitForBoot(page)
+  })
+
+  test('opens as a sheet, and the due date set from it persists', async ({ page }) => {
+    const [id] = await seedPage(page, 'Phone date menu', ['a task'])
+    await openPageMobile(page, 'Phone date menu')
+    await focusBlockById(page, id as string)
+    await toolbar(page).getByRole('button', { name: 'Date', exact: true }).tap()
+    const menu = activeSheet(page)
+    await expect(menu).toBeVisible()
+    for (const label of ['Insert date', 'Set due date', 'Set scheduled date']) {
+      await expect(menu.getByRole('button', { name: label, exact: true })).toBeVisible()
+    }
+    await menu.getByRole('button', { name: 'Set due date', exact: true }).tap()
+
+    const picker = page.getByTestId('date-picker-popup')
+    await expect(picker).toBeVisible()
+    await picker.locator('[role="gridcell"][data-day="2026-03-20"]').getByRole('button').tap()
+    await expect(picker).toBeHidden()
+
+    const chip = row(page, id).getByRole('button', { name: 'Due Mar 20', exact: true })
+    await expect(chip).toBeVisible()
+    await reopen(page, 'Phone date menu')
+    await expect(chip).toBeVisible()
   })
 })

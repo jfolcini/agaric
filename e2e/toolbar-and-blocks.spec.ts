@@ -494,8 +494,8 @@ test.describe('Date button @editor', () => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    // Click the Insert date button in the toolbar
-    await page.getByRole('button', { name: 'Insert date' }).click()
+    await page.getByRole('button', { name: 'Date', exact: true }).click()
+    await page.getByTestId('toolbar-date-menu').getByRole('button', { name: 'Insert date' }).click()
 
     // The floating date picker popup should appear
     await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
