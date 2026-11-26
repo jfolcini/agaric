@@ -97,7 +97,7 @@ describe('PageTreeItem', () => {
       expect(screen.queryByRole('button', { name: /^Delete / })).not.toBeInTheDocument()
     })
 
-    it('delete button reveals on hover or keyboard focus, and shows at rest on touch', () => {
+    it('the delete button is a hover-reveal control', () => {
       const onDelete = vi.fn()
       const node = makeLeaf('Deletable', 'Deletable', 'P1')
       render(<PageTreeItem node={node} {...defaultProps} onDelete={onDelete} />)

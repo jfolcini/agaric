@@ -33,7 +33,7 @@
  *     journal day header were too easy to miss when gated behind
  *     group-hover, so a live UX review asked for them to render
  *     unconditionally (same as 'header', just the smaller `icon-xs` size).
- *   - 'row' — `icon-xs`, same hover-reveal as journal. Kept here so a
+ *   - 'row' — `icon-xs`, hidden at rest until hovered (`hover-reveal`). Kept here so a
  * Future `PageRow` refactor (deferred) can switch
  *     without touching this file's surface area.
  */

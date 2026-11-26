@@ -42,7 +42,7 @@ function recentRow(page: Page, pageId: string): Locator {
 
 const pixel7 = devices['Pixel 7']
 
-test.describe('on a phone @mobile', () => {
+test.describe('on a phone @mobile @search @pages @journal @editor', () => {
   test.use({
     viewport: { width: 412, height: 915 },
     hasTouch: pixel7.hasTouch,
@@ -60,7 +60,7 @@ test.describe('on a phone @mobile', () => {
     await expect(page.getByTestId('palette-recents-group')).toBeVisible()
   }
 
-  test('the Recent pages bookmark toggle shows at rest, and a tap bookmarks the page @search @pages', async ({
+  test('the Recent pages bookmark toggle shows at rest, and a tap bookmarks the page', async ({
     page,
   }) => {
     await waitForBoot(page)
@@ -86,7 +86,7 @@ test.describe('on a phone @mobile', () => {
     )
   })
 
-  test('a tap on a blocked task’s indicator says what blocks it @journal', async ({ page }) => {
+  test('a tap on a blocked task’s indicator says what blocks it', async ({ page }) => {
     await waitForBoot(page)
     await ipc(page, 'set_property', {
       blockId: FIX_LOGIN_BUG,
@@ -103,7 +103,7 @@ test.describe('on a phone @mobile', () => {
     await expect(row).toBeVisible()
   })
 
-  test('a tap on a footnote nothing defines says so @editor', async ({ page }) => {
+  test('a tap on a footnote nothing defines says so', async ({ page }) => {
     await waitForBoot(page)
     await ipc(page, 'create_block', {
       blockType: 'content',
@@ -173,7 +173,7 @@ async function pageTitleAfterOpening(page: Page, title: string): Promise<Locator
   return heading
 }
 
-test.describe('in a 700 px window, laid out as a phone @settings', () => {
+test.describe('in a 700 px window, laid out as a phone @settings @pages', () => {
   test.use({ viewport: { width: 700, height: 900 } })
 
   test('a Settings section card drops its box', async ({ page }) => {
@@ -183,17 +183,17 @@ test.describe('in a 700 px window, laid out as a phone @settings', () => {
     await expect(card).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   })
 
-  test('a page title takes the phone’s type scale @pages', async ({ page }) => {
+  test('a page title takes the phone’s type scale', async ({ page }) => {
     await waitForBoot(page)
     const heading = await pageTitleAfterOpening(page, 'Getting Started')
     await expect(heading).toHaveCSS('font-size', '24px')
   })
 })
 
-test.describe('in a 1440 px window @settings', () => {
+test.describe('in a 1440 px window @settings @pages', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
-  test('a Settings section card keeps its box and a page title the desktop scale @pages', async ({
+  test('a Settings section card keeps its box and a page title the desktop scale', async ({
     page,
   }) => {
     await waitForBoot(page)

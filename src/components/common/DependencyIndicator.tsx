@@ -1,8 +1,7 @@
 /**
  * DependencyIndicator — a subtle Link2 button when a block has a `blocked_by`
  * property (value_ref type), named "Blocked by …" and opening that text on a
- * click, tap or Enter (`InfoPopover`): a tooltip never opened on touch. Used in
- * AgendaResults metadata.
+ * click, tap or Enter (`InfoPopover`). Used in AgendaResults metadata.
  *
  * Props:
  *   blockId — the block whose properties to check

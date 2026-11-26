@@ -187,7 +187,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                     }
                     aria-pressed={pendingDeleteId === attachment.id}
                     className={cn(
-                      'shrink-0 rounded-sm p-1 transition-opacity focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
+                      'shrink-0 rounded-sm p-1 focus-ring-visible active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
                       pendingDeleteId === attachment.id
                         ? 'text-destructive bg-destructive/10'
                         : 'text-muted-foreground hover:text-destructive hover-reveal',
