@@ -2648,6 +2648,12 @@ mark[data-highlight-color='purple'] {
   min-height: calc(var(--block-first-line) + 0.5rem);
 }
 
+/* The box around the block being edited: its row's frame (`SortableBlock`), or
+   the row an unlocked embed edits. */
+@utility block-editing {
+  @apply rounded-md ring-1 ring-inset ring-border bg-accent/[0.06] shadow-(--shadow-resting);
+}
+
 /* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 @utility block-selected {
   @apply ring-2 ring-inset ring-ring bg-ring/15;

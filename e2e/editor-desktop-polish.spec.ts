@@ -111,6 +111,21 @@ test.describe('editor on a desktop window (#7040 D3) @editor @journal @markdown 
     await expectBoxHoldsTaskRow(page, SEED_IDS.BLOCK_PROJ_1)
   })
 
+  test('a row edited inside an unlocked embed has the editing box too @editor', async ({
+    page,
+  }) => {
+    await ipc(page, 'edit_block', {
+      blockId: SEED_IDS.BLOCK_QN_1,
+      toText: `{{embed ((${SEED_IDS.BLOCK_GS_1}))}}`,
+    })
+    await openPage(page, 'Quick Notes')
+    const embed = page.getByTestId('embed-container')
+    await embed.getByRole('button', { name: 'Edit this embed in place' }).click()
+    await embed.getByText('Welcome to Agaric!', { exact: false }).click()
+    const editing = await editingBox(page)
+    expect(contains(await box(embed), editing), 'the box is the row’s, inside the embed').toBe(true)
+  })
+
   test('a page link and a URL share the link colour and underline, set apart from plain text @editor @pages', async ({
     page,
   }) => {
