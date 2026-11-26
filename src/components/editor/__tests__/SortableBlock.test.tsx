@@ -40,8 +40,9 @@ vi.mock('@/components/properties/PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    /* oxlint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/prefer-tag-over-role -- test fixture: onClick rides on the role="group" wrapper so `user.click(getByTestId('property-chip-…'))` exercises the value-edit path without a nested button; group role mirrors PropertyChip */
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- test fixture: onClick rides on the group so `user.click(getByTestId('property-chip-…'))` exercises the value-edit path without a nested button
     <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test fixture; group role mirrors PropertyChip
       role="group"
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
@@ -62,23 +63,22 @@ vi.mock('@/components/properties/PropertyChip', () => ({
       </button>
       <span>{props.value}</span>
     </div>
-    /* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/prefer-tag-over-role */
   ),
 }))
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
-  Calendar: (props: { size: number; className?: string }) => (
+  CalendarClock: (props: { size: number; className?: string }) => (
     <svg
-      data-testid="calendar-icon"
+      data-testid="calendar-clock-icon"
       width={props.size}
       height={props.size}
       className={props.className}
     />
   ),
-  CalendarDays: (props: { size: number; className?: string }) => (
+  Flag: (props: { size: number; className?: string }) => (
     <svg
-      data-testid="calendar-days-icon"
+      data-testid="flag-icon"
       width={props.size}
       height={props.size}
       className={props.className}
@@ -2335,7 +2335,7 @@ describe('SortableBlock due date chip', () => {
     expect(container.querySelector('.due-date-chip')).not.toBeInTheDocument()
   })
 
-  it('renders due date chip with CalendarDays icon when dueDate is set', () => {
+  it('renders due date chip with the flag icon when dueDate is set', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2347,7 +2347,7 @@ describe('SortableBlock due date chip', () => {
     )
 
     expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
-    expect(screen.getByTestId('calendar-days-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('flag-icon')).toBeInTheDocument()
   })
 
   it('formats current-year date as "Mon DD" (no year)', () => {
@@ -2591,7 +2591,7 @@ describe('SortableBlock scheduled date chip', () => {
     expect(container.querySelector('.scheduled-chip')).not.toBeInTheDocument()
   })
 
-  it('renders scheduled chip with Calendar icon when scheduledDate is set', () => {
+  it('renders scheduled chip with the calendar-clock icon when scheduledDate is set', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2603,7 +2603,7 @@ describe('SortableBlock scheduled date chip', () => {
     )
 
     expect(container.querySelector('.scheduled-chip')).toBeInTheDocument()
-    expect(screen.getByTestId('calendar-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('calendar-clock-icon')).toBeInTheDocument()
   })
 
   it('shows formatted date text for current year', () => {
@@ -2670,7 +2670,8 @@ describe('SortableBlock scheduled date chip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  it('renders the scheduled date as a neutral chip', () => {
+  // #7040 — a scheduled date is neutral on a block, in a row and in Week.
+  it('renders the scheduled date neutral', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2682,8 +2683,7 @@ describe('SortableBlock scheduled date chip', () => {
     )
 
     const chip = container.querySelector('.scheduled-chip')
-    expect(chip?.className).toContain('bg-secondary')
-    expect(chip?.className).toContain('text-secondary-foreground')
+    expect(chip).toHaveClass('bg-secondary', 'text-secondary-foreground')
   })
 
   it('renders both due date and scheduled date chips when both are set', () => {

@@ -114,7 +114,7 @@ export function SourcePageFilter({
   }
 
   return (
-    <Popover>
+    <Popover sheetTitle={t('sourceFilter.filterLabel')}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"

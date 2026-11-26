@@ -366,7 +366,9 @@ state-reset decisions are made from Loro VVs:
   against the local engine's per-space VVs for **our own current-epoch Loro
   `PeerID`** only. A peer claiming more of *our own* authored ops than our
   engine can produce means we lost our own tail (compaction/history loss,
-  older-backup restore) → `ResetRequired`. The peer being ahead for *other*
+  older-backup restore) → `ResetRequired`. A power cut does not lose a tail
+  the peer holds: the streamer makes its commits durable before it sends
+  (#6524, [`sync-and-network.md` § Durable before send](sync-and-network.md#durable-before-send)). The peer being ahead for *other*
   peer ids is a normal pull, never a reset. Restricting to our own peer id
   also prevents a post-reset device (fresh-epoch `PeerID` at counter 0) from
   looping.
@@ -375,7 +377,11 @@ Both funnel into the single `ResetRequired` → snapshot-catch-up recovery
 path. The catch-up does not heal own-lineage loss on a device whose engine
 still holds ops of its own: the snapshot then forks its `(peer, counter)` space,
 `apply_remote`'s guard turns it away (#792), and the session fails with
-`code: "own_history_fork"` (#6523). #2502 retired the previous op-log-`(device_id, seq)` reset lookup
+`code: "own_history_fork"` (#6523). A peer dialling that device is offered a
+snapshot that reuses op ids it holds with other content; Loro refuses the
+import and its session fails with `code: "peer_history_fork"` (#7065). After
+either failure the daemon dials that peer again only on a press on Sync, a
+pairing act or a restart, not on its backoff or its resync tick. #2502 retired the previous op-log-`(device_id, seq)` reset lookup
 entirely (it conflated the audit cursor with state causality and produced
 the #602 forever-backoff bug); `heads` retains one surviving,
 non-decision job — remote-device identification. The defensive

@@ -1,24 +1,12 @@
 /**
  * SectionGroupHeader — sub-section label used inside agenda-like grouped
- * lists (DuePanel, DonePanel, AgendaResults…).
+ * lists (DuePanel and its Overdue / Scheduled earlier / Upcoming sections,
+ * DonePanel, AgendaResults…).
  *
- * Rationale for adding alongside `SectionTitle` rather than extending it:
- *
- *  - `SectionTitle` is an `<h2>` heading-style component with
- *    `text-xs font-semibold mb-1.5 flex items-center gap-1` and no
- *    background. It carries semantic heading weight (`color` prop maps
- *    to status tokens, label + numeric count layout).
- *  - The sites consolidated here use the app-wide section-label
- *    typography (`text-xs font-medium text-muted-foreground`,
- *    sentence case, no letter-spacing). They are *visual* sub-section
- *    breakers, not document headings — different role, different
- *    spacing. No fill: the rows under a header are rounded and tint on
- *    hover and on the keyboard cursor, and a filled rounded header sitting
- *    directly on a tinted rounded row reads as two notched boxes.
- *  - Folding both into one primitive with a `density`/`variant` flag
- *    would create a CVA matrix where most variant combinations are
- *    illegal. The cleaner path is two siblings with the same naming
- *    convention.
+ * The app-wide section-label typography (`text-xs font-medium
+ * text-muted-foreground`, sentence case, no letter-spacing). No fill: the
+ * rows under a header tint on hover and on the keyboard cursor, and a filled
+ * header sitting directly on a tinted row reads as two notched boxes.
  *
  * Renders as `<div>` by default; pass `asChild` (Radix Slot) to render
  * as a heading-level element where semantically appropriate.

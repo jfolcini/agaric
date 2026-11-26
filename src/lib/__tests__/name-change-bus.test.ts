@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { getRecordedGraphStructureChanges } from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import {
   invalidateNameCaches,
@@ -216,6 +217,17 @@ describe('notifyPagesRemoved (#4524)', () => {
       unsubscribe()
     }
     expect(changes).toEqual([])
+  })
+
+  // A removal with no active space, or above the budget, still expires the
+  // prefetched subtrees: the bump comes before both early returns (#5243).
+  it('bumps the graph structure even when it publishes nothing', () => {
+    const over = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `P${i}`)
+    const before = getRecordedGraphStructureChanges()
+    notifyPagesRemoved(['P1'], null)
+    expect(getRecordedGraphStructureChanges()).toBe(before + 1)
+    notifyPagesRemoved(over, 'SPACE_1')
+    expect(getRecordedGraphStructureChanges()).toBe(before + 2)
   })
 
   // #4524 review note 1 — a bare `string` is itself an `Iterable<string>` (it

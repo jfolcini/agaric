@@ -1,7 +1,7 @@
 // The body of `devdb_migration_gap` in scripts/verify-ci-equivalent.sh (#4266);
 // the contract is that function's comment. Run as
 //
-//     node --no-warnings scripts/lib/devdb-migration-gap.mjs <src_tauri> <migrations_dir>
+//     node scripts/lib/devdb-migration-gap.mjs <src_tauri> <migrations_dir>
 //
 // It prints a diagnosis and the exact remedy on stdout (nothing when dev.db is
 // caught up) and exits 0 when caught up, 1 on a confirmed gap, 2 when it could

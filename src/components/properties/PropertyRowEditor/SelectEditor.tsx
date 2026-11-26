@@ -85,7 +85,11 @@ export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverPro
   const { t } = useTranslation()
   const { open, setOpen, options, handleOpen, handleSave } = state
   return (
-    <Popover open={open} onOpenChange={(next) => (next ? handleOpen() : setOpen(false))}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => (next ? handleOpen() : setOpen(false))}
+      sheetTitle={t('pageProperty.editOptionsLabel', { key: propKey })}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
@@ -107,7 +111,7 @@ export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverPro
           <span className="text-xs font-medium text-muted-foreground">
             {t('pageProperty.editOptionsLabel', { key: propKey })}
           </span>
-          <Badge tone="outline" className="text-xs" data-testid="options-count-badge">
+          <Badge tone="metadata" data-testid="options-count-badge">
             {t('properties.optionsCount', { count: options.length })}
           </Badge>
         </div>

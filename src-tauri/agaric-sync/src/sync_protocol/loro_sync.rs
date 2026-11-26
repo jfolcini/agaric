@@ -697,7 +697,7 @@ pub async fn apply_remote(
     // below is conditional on the op-log actually having reached it.
     let require_covered = [(inbox_id, screen.declared_end_vv)];
 
-    let (changed_blocks, kept) = import_and_project(
+    let projected = import_and_project(
         pool,
         registry,
         device_id,
@@ -724,7 +724,18 @@ pub async fn apply_remote(
         &require_covered,
         InboundDeliveryKind::Live,
     )
-    .await?;
+    .await;
+    // #7065: a replay of these bytes is refused the same way, and the peer
+    // sends them again on every retry, so the slot would only pile up.
+    if projected
+        .as_ref()
+        .is_err_and(agaric_engine::loro::engine::is_used_op_id)
+    {
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+            .execute(pool)
+            .await?;
+    }
+    let (changed_blocks, kept) = projected?;
 
     // #1071: resolve the owning page id of every changed block so the
     // orchestrator can thread a targeted-invalidation set out via
@@ -2605,6 +2616,12 @@ async fn clear_trusted_noop_slots(
 /// other blobs imported). That part is projected here as any import is, its
 /// purges and kept blocks included, because no retry imports it again; no slot
 /// is cleared, and the import's error is returned in place of `Ok`.
+///
+/// No test reaches the trusted no-op exit with a failed import, and none can.
+/// Only a live delivery is trusted, and it is one blob, which loro imports
+/// whole or not at all: its failure lands nothing and is an `Err` from the
+/// import, with no kept block to report. Only a replay batch fails with part
+/// landed, and a replay is never trusted.
 #[allow(clippy::too_many_arguments)]
 async fn import_and_project_saving(
     pool: &SqlitePool,
@@ -2972,6 +2989,57 @@ fn batch_tombstone_union(accepted: &[InboxSlot]) -> Vec<agaric_core::ulid::Block
         .collect()
 }
 
+/// #2292: decode this row's durable purged-id tombstone (a JSON
+/// array written by the crashed apply BEFORE its projection tx).
+/// NULL → no purge delta → empty set. A malformed tombstone must
+/// NOT wedge boot: log + fall back to empty (the pre-#2292 additive
+/// behaviour), never propagate the parse error out of the walk.
+pub(crate) fn decode_purged_tombstone(
+    inbox_id: i64,
+    space_id: &str,
+    purged_ids: Option<&str>,
+) -> Vec<agaric_core::ulid::BlockId> {
+    match purged_ids {
+        None => Vec::new(),
+        Some(json) => match serde_json::from_str(json) {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    inbox_id,
+                    space_id = %space_id,
+                    error = %e,
+                    "#2292: sync-inbox slot has an unparseable purged_ids \
+                     tombstone — re-sweeping nothing from it (additive \
+                     fallback still applies)"
+                );
+                Vec::new()
+            }
+        },
+    }
+}
+
+/// The tombstone on a slot's row now. A batch whose projection failed stamped
+/// what it purged after the walk read the row, and the retry's re-import
+/// resolves no purge.
+async fn stamped_tombstone(
+    pool: &SqlitePool,
+    space_id: &str,
+    inbox_id: i64,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    let purged_ids = sqlx::query_scalar!(
+        "SELECT purged_ids FROM loro_sync_inbox WHERE id = ?",
+        inbox_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(decode_purged_tombstone(
+        inbox_id,
+        space_id,
+        purged_ids.as_deref(),
+    ))
+}
+
 /// Replay each accepted slot on its own after a batch failure, so one poison
 /// blob cannot strand the rest of this space's slots.
 ///
@@ -2990,6 +3058,7 @@ async fn replay_accepted_slots_individually(
     out: &mut BatchReplayOutcome,
 ) -> Result<(), AppError> {
     for (slot, bytes) in accepted.iter().zip(blobs) {
+        let tombstone_purged = stamped_tombstone(pool, space.as_str(), slot.id).await?;
         match replay_inbox_row(
             pool,
             registry,
@@ -2997,7 +3066,7 @@ async fn replay_accepted_slots_individually(
             space.as_str(),
             bytes,
             slot.id,
-            &slot.tombstone_purged,
+            &tombstone_purged,
         )
         .await
         {

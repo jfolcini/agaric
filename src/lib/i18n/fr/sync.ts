@@ -164,6 +164,10 @@ export const sync: Record<string, string> = {
     '{{peer}} contient des modifications que cet appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
   'sync.ownHistoryForkUnnamed':
     'L’autre appareil contient des modifications que cet appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde ici, si bien que les deux ne peuvent pas fusionner. Exportez les notes de cet appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
+  'sync.peerHistoryFork':
+    'Cet appareil contient des modifications que {{peer}} a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde sur {{peer}}, si bien que les deux ne peuvent pas fusionner. Exportez les notes de {{peer}}, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
+  'sync.peerHistoryForkUnnamed':
+    'Cet appareil contient des modifications que l’autre appareil a faites et n’a plus, comme après la restauration d’une ancienne sauvegarde sur celui-ci, si bien que les deux ne peuvent pas fusionner. Exportez les notes de l’autre appareil, configurez Agaric à neuf sur celui-ci, associez-le à nouveau, puis importez-les.',
   'sync.retryAction': 'Relancer la synchronisation',
   'sync.noPeersTitle': 'Aucun appareil associé',
   'sync.noPeersBody':

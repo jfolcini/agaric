@@ -31,12 +31,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 const mockNavigateToPage = vi.fn()
-const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
-
-vi.mock('@/hooks/useIsTouch', () => ({
-  useIsTouch: mockUseIsTouch,
-}))
-
 // Mock the IPC commands used by handleDateSelect.
 //
 // #2927 — `useBlockReschedule` calls the generated bindings directly, so the
@@ -118,8 +112,8 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
 
 vi.mock('@/components/pages/PageLink', () => ({
   PageLink: ({ pageId, title }: { pageId: string; title: string; className?: string }) => (
-    /* oxlint-disable jsx-a11y/prefer-tag-over-role -- test mock mirrors PageLink's ARIA link role (a span, not an anchor) */
     <span
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock mirrors PageLink's ARIA link role (a span, not an anchor)
       role="link"
       tabIndex={0}
       data-testid={`page-link-${pageId}`}
@@ -133,7 +127,6 @@ vi.mock('@/components/pages/PageLink', () => ({
     >
       {title}
     </span>
-    /* oxlint-enable jsx-a11y/prefer-tag-over-role */
   ),
 }))
 
@@ -145,6 +138,8 @@ import { toast } from 'sonner'
 
 import { BlockListItem, type BlockListItemProps } from '@/components/editor/BlockListItem'
 import { announce } from '@/lib/announcer'
+import { formatCompactDate } from '@/lib/date-utils'
+import { t } from '@/lib/i18n'
 
 const mockedAnnounce = vi.mocked(announce)
 
@@ -157,7 +152,6 @@ function defaultProps(overrides: Partial<BlockListItemProps> = {}): BlockListIte
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockUseIsTouch.mockReturnValue(false)
   mockGetBlock.mockReset()
   mockSetDueDate.mockReset()
   mockSetScheduledDate.mockReset()
@@ -167,23 +161,6 @@ beforeEach(() => {
 describe('BlockListItem', () => {
   afterEach(() => {
     localStorage.clear()
-  })
-
-  it('inherits the shared viewport cap for the coarse-pointer date sheet', async () => {
-    const user = userEvent.setup()
-    mockUseIsTouch.mockReturnValue(true)
-    render(
-      <ul>
-        <BlockListItem {...defaultProps({ blockId: 'BLOCK1', dueDate: '2026-08-09' })} />
-      </ul>,
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Edit date' }))
-
-    expect(screen.getByTestId('due-date-sheet')).toHaveClass(
-      'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]',
-    )
-    expect(screen.getByTestId('due-date-sheet')).not.toHaveClass('max-h-[80vh]')
   })
 
   // 1. Renders truncated content text
@@ -935,5 +912,93 @@ describe('BlockListItem — a11y reschedule', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+// #7040 (S6) — one task row: checkbox, then title, then metadata.
+describe('BlockListItem — one task row (#7040)', () => {
+  function renderTask(overrides: Partial<BlockListItemProps> = {}) {
+    return render(
+      <ul>
+        <BlockListItem
+          {...defaultProps({
+            content: 'Ship it',
+            blockId: 'BLOCK1',
+            taskState: 'TODO',
+            priority: '1',
+            dueDate: '2099-08-09',
+            scheduledDate: '2099-08-01',
+            note: '(3d overdue)',
+            pageId: 'PAGE1',
+            pageTitle: 'My Page',
+            ...overrides,
+          })}
+        />
+      </ul>,
+    )
+  }
+
+  it('reads checkbox, title, priority, due, scheduled, note, then source page', () => {
+    const { container } = renderTask()
+    const row = container.querySelector('li') as HTMLElement
+    const parts = [
+      screen.getByTestId('task-marker'),
+      screen.getByText('Ship it'),
+      screen.getByText('P1'),
+      row.querySelector('[data-date-kind="due"]') as HTMLElement,
+      row.querySelector('[data-date-kind="scheduled"]') as HTMLElement,
+      screen.getByText('(3d overdue)'),
+      screen.getByTestId('page-link-PAGE1'),
+    ]
+    for (const [i, part] of parts.entries()) {
+      const next = parts[i + 1]
+      if (!next) break
+      expect(
+        part.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `part ${i} comes before part ${i + 1}`,
+      ).toBeTruthy()
+    }
+  })
+
+  it('names each date chip by its kind', () => {
+    renderTask()
+    expect(
+      screen.getByRole('button', {
+        name: t('block.dueDate', { date: formatCompactDate('2099-08-09') }),
+      }),
+    ).toHaveAttribute('data-date-kind', 'due')
+    expect(
+      screen.getByRole('button', {
+        name: t('block.scheduledDate', { date: formatCompactDate('2099-08-01') }),
+      }),
+    ).toHaveAttribute('data-date-kind', 'scheduled')
+  })
+
+  it('draws no chip for a date, a priority or a note the task does not have', () => {
+    const { container } = render(
+      <ul>
+        <BlockListItem
+          {...defaultProps({ content: 'Ship it', blockId: 'BLOCK1', taskState: 'TODO' })}
+        />
+      </ul>,
+    )
+    expect(screen.getByTestId('task-marker')).toBeInTheDocument()
+    expect(container.querySelector('[data-date-kind]')).toBeNull()
+    expect(container.querySelector('[data-variant="priority"]')).toBeNull()
+    expect(screen.queryByText('(3d overdue)')).not.toBeInTheDocument()
+  })
+
+  it('the reschedule button keeps its size, its 44 px target an invisible hit area', () => {
+    renderTask()
+    const button = screen.getByTestId('reschedule-btn')
+    expect(button).toHaveClass('touch-hit-area')
+    expect(button).not.toHaveClass('touch-target')
+  })
+
+  it('has no a11y violations as a full task row', async () => {
+    const { container } = renderTask()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })

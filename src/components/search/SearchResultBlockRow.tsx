@@ -127,7 +127,7 @@ function SearchResultBlockRowImpl({
   }
 
   const li = (
-    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern
     <li
       id={id}
       ref={measureRef}
@@ -161,7 +161,7 @@ function SearchResultBlockRowImpl({
       </span>
       {loading && <Spinner className="shrink-0 text-muted-foreground" />}
       {(row.block_type === 'tag' || row.block_type === 'page') && (
-        <Badge tone="secondary">{row.block_type}</Badge>
+        <Badge tone="metadata">{row.block_type}</Badge>
       )}
     </li>
   )

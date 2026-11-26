@@ -142,11 +142,15 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          # Keep in lockstep with rust-toolchain.toml / src-tauri/Cargo.toml.
-          toolchain: 1.100.0
+          # #640: rust-toolchain.toml's exact channel.
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       - name: Rust cache (mcp-tests' entry, read-only)
         # `mcp-tests` compiles the same dev profile of the same dependency graph

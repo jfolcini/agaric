@@ -134,8 +134,8 @@ describe('PageLink', () => {
     const parentClick = vi.fn()
     const user = userEvent.setup()
     render(
-      // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- test wrapper to verify stopPropagation
-      <div onClick={parentClick} onKeyDown={() => {}}>
+      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- stands in for a clickable row; the test asserts PageLink stops the click reaching it
+      <div onClick={parentClick}>
         <PageLink pageId="P1" title="My Page" />
       </div>,
     )

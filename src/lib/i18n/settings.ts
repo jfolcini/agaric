@@ -176,8 +176,8 @@ export const settings: Record<string, string> = {
   'settings.tabKeyboard': 'Keyboard',
 
   // Translators: Settings › Keyboard, first row: the system-wide Quick capture key combination
-  // (works from any app). Label, description (also the subtitle of the Quick capture window
-  // on computers), edit button, and the error toast when the system refuses the combination.
+  // (works from any app). Label, description (the combination shows beside it), edit button,
+  // and the error toast when the system refuses the combination.
   'settings.quickCapture.label': 'Quick capture (system-wide)',
   'settings.quickCapture.description':
     "Press this key combination from anywhere to drop a line into today's journal.",
@@ -186,9 +186,12 @@ export const settings: Record<string, string> = {
     "Couldn't register shortcut. It may conflict with another app.",
 
   // Translators: Quick capture window (small dialog that adds one line to today's journal):
-  // title, subtitle on phones, screen-reader label and placeholder of the text box, the submit
-  // button (a verb), and the toasts after saving or failing.
+  // title, subtitle on computers (<keys/> is the system-wide key combination, drawn as a key
+  // chip: keep the tag), subtitle on phones, screen-reader label and placeholder of the text box,
+  // the submit button (a verb), and the toasts after saving or failing.
   'quickCapture.dialogTitle': 'Quick capture',
+  'quickCapture.descriptionShortcut':
+    "Press <keys/> from anywhere to drop a line into today's journal.",
   'quickCapture.descriptionTouch': "Jot a line down; it lands in today's journal.",
   'quickCapture.captureInputLabel': 'Quick capture content',
   'quickCapture.placeholder': "What's on your mind?",

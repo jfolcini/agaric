@@ -28,6 +28,9 @@ import {
 } from '@/components/dialogs/BugReportDialog/DiagnosticsCollector'
 import { t } from '@/lib/i18n'
 
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
+
 function renderCollector(overrides?: Partial<DiagnosticsCollectorProps>) {
   const props: DiagnosticsCollectorProps = {
     includeLogs: true,
@@ -115,6 +118,19 @@ describe('DiagnosticsCollector', () => {
     const previewDialog = screen.getByRole('dialog', { name: t('bugReport.previewTitle') })
     expect(previewDialog).toHaveTextContent('agaric.log')
     expect(screen.getByTestId('bug-report-log-preview-content')).toHaveTextContent('log line one')
+  })
+
+  it('opens the preview as a bottom sheet on a phone', () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    try {
+      renderCollector({ previewOpen: true, previewFilename: 'agaric.log', previewContents: 'x' })
+      expect(screen.getByTestId('bug-report-log-preview')).toHaveAttribute(
+        'data-slot',
+        'sheet-content',
+      )
+    } finally {
+      mockUsePhoneLayout.mockReturnValue(false)
+    }
   })
 
   it('shows the truncation notice when content > 500 chars', () => {

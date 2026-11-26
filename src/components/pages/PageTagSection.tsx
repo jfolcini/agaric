@@ -13,9 +13,28 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { TagEntry } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
+import { useTagColorStyle } from '@/hooks/useTagColorStyle'
 import { insertEmojiIntoInput, spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { keepFocusThatMovedOn } from '@/lib/keep-focus-that-moved-on'
 import { dashedTagName } from '@/lib/name-tokens'
+
+/** A tag set on the page itself: the tag chip, in the tag's colour, with its remove button. */
+function AppliedTag({ tag, onRemoveTag }: { tag: TagEntry; onRemoveTag: (tagId: string) => void }) {
+  const { t } = useTranslation()
+  return (
+    <Badge tone="tag" className="gap-1" style={useTagColorStyle(tag.id)}>
+      {tag.name}
+      <button
+        type="button"
+        className="-mr-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible touch-hit-area"
+        onClick={() => onRemoveTag(tag.id)}
+        aria-label={t('pageHeader.removeTag', { name: tag.name })}
+      >
+        <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
+      </button>
+    </Badge>
+  )
+}
 
 export interface PageTagSectionProps {
   appliedTags: TagEntry[]
@@ -97,22 +116,13 @@ export function PageTagSection({
             )}
           </Fragment>
         ) : (
-          <Badge key={tag.id} tone="secondary" className="gap-1">
-            {tag.name}
-            <button
-              type="button"
-              className="-mr-0.5 inline-flex items-center justify-center rounded-sm p-0.5 hover:bg-muted-foreground/20 focus-ring-visible touch-hit-area"
-              onClick={() => onRemoveTag(tag.id)}
-              aria-label={t('pageHeader.removeTag', { name: tag.name })}
-            >
-              <X className="h-3 w-3 [@media(pointer:coarse)]:size-3.5" />
-            </button>
-          </Badge>
+          <AppliedTag key={tag.id} tag={tag} onRemoveTag={onRemoveTag} />
         ),
       )}
 
       <Popover
         open={showTagPicker}
+        sheetTitle={t('pageHeader.addTag')}
         onOpenChange={(open) => {
           // Keep the tag picker open while the emoji dialog has focus — the
           // dialog is a logical child of this picker even though it portals

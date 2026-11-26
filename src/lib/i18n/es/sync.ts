@@ -167,6 +167,10 @@ export const sync: Record<string, string> = {
     '{{peer}} tiene cambios que hizo este dispositivo y que ya no tiene, como ocurre tras restaurar aquí una copia de seguridad antigua, así que no se pueden fusionar. Exporta las notas de este dispositivo, vuelve a configurar Agaric desde cero en él, emparéjalo de nuevo y luego impórtalas.',
   'sync.ownHistoryForkUnnamed':
     'El otro dispositivo tiene cambios que hizo este dispositivo y que ya no tiene, como ocurre tras restaurar aquí una copia de seguridad antigua, así que no se pueden fusionar. Exporta las notas de este dispositivo, vuelve a configurar Agaric desde cero en él, emparéjalo de nuevo y luego impórtalas.',
+  'sync.peerHistoryFork':
+    'Este dispositivo tiene cambios que {{peer}} hizo y ya no tiene, como ocurre tras restaurar una copia de seguridad antigua en {{peer}}, así que no se pueden fusionar. Exporta las notas de {{peer}}, vuelve a configurar Agaric desde cero en él, emparéjalo de nuevo y luego impórtalas.',
+  'sync.peerHistoryForkUnnamed':
+    'Este dispositivo tiene cambios que el otro dispositivo hizo y ya no tiene, como ocurre tras restaurar en él una copia de seguridad antigua, así que no se pueden fusionar. Exporta las notas del otro dispositivo, vuelve a configurar Agaric desde cero en él, emparéjalo de nuevo y luego impórtalas.',
   'sync.retryAction': 'Reintentar la sincronización',
   'sync.noPeersTitle': 'No hay dispositivos emparejados',
   'sync.noPeersBody':

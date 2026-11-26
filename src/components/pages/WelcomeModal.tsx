@@ -240,7 +240,7 @@ export function WelcomeModal() {
   }, [handleCreateSamplePages])
 
   const parts = useDialogOrSheet('dialog')
-  const { Root, Content, Header, Title, Description, Footer } = parts
+  const { Root, Content, Header, Title, Description } = parts
 
   if (bootState !== 'ready') return null
 
@@ -252,7 +252,7 @@ export function WelcomeModal() {
     /*
       oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit role="list" is
       required because Safari + VoiceOver strip the implicit list role
-      from a <ul> with `list-style: none` (Tailwind `list-none`). .
+      from a <ul> with `list-style: none` (Tailwind `list-none`).
     */
     <ul role="list" className="grid list-none gap-4 py-2 pl-0">
       {FEATURES.map((feature) => (
@@ -284,9 +284,24 @@ export function WelcomeModal() {
       {t(touch ? 'welcome.pairComputer' : 'welcome.pairDevice')}
     </Button>
   )
-  // On a phone, pairing with the computer the notes already live on comes first.
+  // The primaries, then the secondary actions, then the tips (#7040). On a phone, pairing with the
+  // computer the notes already live on comes before import. They are outlined so they read as
+  // actions, not labels.
   const body = (
     <>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button ref={getStartedRef} onClick={handleDismiss}>
+          {t('welcome.getStarted')}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => void handleCreateSamplePages()}
+          disabled={creating}
+        >
+          {creating && <Spinner />}
+          {t('welcome.createSamplePages')}
+        </Button>
+      </div>
       <div className="flex flex-wrap gap-2">
         {touch ? [pairButton, importButton] : [importButton, pairButton]}
       </div>
@@ -303,8 +318,7 @@ export function WelcomeModal() {
     >
       <Content
         data-testid="welcome-modal"
-        // Get started takes focus, not Radix's first tabbable (the secondary
-        // "Create sample pages"), so Enter on open dismisses. No ring: it opens
+        // Get started takes focus, so Enter on open dismisses. No ring: it opens
         // before the user has done anything.
         onOpenAutoFocus={(e) => {
           e.preventDefault()
@@ -312,23 +326,12 @@ export function WelcomeModal() {
         }}
       >
         <Header>
+          {/* The brand, which the title names. */}
+          <img src="/agaric.svg" alt="" className="size-10" />
           <Title>{t('welcome.title')}</Title>
           <Description>{t('welcome.description')}</Description>
         </Header>
         {parts.isMobile ? body : <DialogBody>{body}</DialogBody>}
-        <Footer>
-          <Button
-            variant="outline"
-            onClick={() => void handleCreateSamplePages()}
-            disabled={creating}
-          >
-            {creating && <Spinner />}
-            {t('welcome.createSamplePages')}
-          </Button>
-          <Button ref={getStartedRef} onClick={handleDismiss}>
-            {t('welcome.getStarted')}
-          </Button>
-        </Footer>
       </Content>
     </Root>
   )

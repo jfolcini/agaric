@@ -75,12 +75,18 @@ test.describe('first run on a desktop @boot @settings @sync @markdown', () => {
 test.describe('first run on a phone @boot @mobile @sync', () => {
   test.use({ ...phone, ...firstRun })
 
-  test('the welcome leads with pairing with a computer and names no key', async ({ page }) => {
+  // #7040 — the brand, the primaries, then pairing with a computer before import.
+  test('the welcome leads with its primaries, then pairing with a computer, and names no key', async ({
+    page,
+  }) => {
     await waitForBoot(page)
     const welcome = page.getByRole('dialog', { name: 'Welcome to Agaric' })
-    await expect(welcome.getByRole('button').first()).toHaveAccessibleName(
-      'Pair with your computer',
-    )
+    await expect(welcome.locator('img[src="/agaric.svg"]')).toBeVisible()
+    await expect(
+      welcome.getByRole('button', {
+        name: /^(Get started|Create sample pages|Pair with your computer|Import notes)$/,
+      }),
+    ).toHaveText(['Get started', 'Create sample pages', 'Pair with your computer', 'Import notes'])
     await expect(welcome).not.toContainText('Press')
 
     await welcome.getByRole('button', { name: 'Pair with your computer' }).click()

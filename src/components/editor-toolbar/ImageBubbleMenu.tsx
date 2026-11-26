@@ -161,6 +161,7 @@ export function ImageBubbleMenu({ editor }: { editor: Editor }): React.ReactElem
               onOpenChange={(next) => {
                 if (!next) stopEditing()
               }}
+              sheetTitle={t('editor.image.editAlt')}
             >
               <PopoverAnchor virtualRef={imageAnchor} />
               <IconButton

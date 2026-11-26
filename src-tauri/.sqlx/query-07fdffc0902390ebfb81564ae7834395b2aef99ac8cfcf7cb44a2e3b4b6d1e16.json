@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT purged_ids FROM loro_sync_inbox WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "purged_ids",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "purged_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "07fdffc0902390ebfb81564ae7834395b2aef99ac8cfcf7cb44a2e3b4b6d1e16"
+}

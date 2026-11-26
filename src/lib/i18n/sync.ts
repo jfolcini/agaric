@@ -392,6 +392,16 @@ export const sync: Record<string, string> = {
   'sync.ownHistoryForkUnnamed':
     'The other device holds changes this device made and no longer has, as after restoring an older backup here, so the two cannot merge. Export the notes from this device, set Agaric up fresh on it, pair it again, then import them.',
 
+  // Translators: Sync error (as above): the two devices cannot merge, shown on the device that
+  // was not restored; {{peer}} = the other device's name. "Set Agaric up fresh" = start the app
+  // again with an empty database.
+  // #7065 — the other side of sync.ownHistoryFork: this device holds changes the
+  // peer made and lost, so the recovery is done on the peer.
+  'sync.peerHistoryFork':
+    'This device holds changes {{peer}} made and no longer has, as after restoring an older backup on {{peer}}, so the two cannot merge. Export the notes from {{peer}}, set Agaric up fresh on it, pair it again, then import them.',
+  'sync.peerHistoryForkUnnamed':
+    'This device holds changes the other device made and no longer has, as after restoring an older backup on it, so the two cannot merge. Export the notes from the other device, set Agaric up fresh on it, pair it again, then import them.',
+
   // Translators: Button inside the toast "Sync with … failed": try that sync again.
   'sync.retryAction': 'Retry sync',
 

@@ -48,7 +48,6 @@ import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorStyle } from '@/lib/tag-colors'
-import { cn } from '@/lib/utils'
 import { renamePage, renameTagPagePartner } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -406,21 +405,16 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       // The name sits inside the badge's TruncatedText, past what the lint can see.
                       aria-label={`${label} ${tag.usage_count}`}
                     >
-                      <Badge
-                        tone={color ? undefined : 'secondary'}
-                        className={cn('max-w-[150px]', color && 'border-transparent')}
-                        style={tagColorStyle(color)}
-                      >
+                      <Badge tone="tag" className="max-w-[150px]" style={tagColorStyle(color)}>
                         <TruncatedText>{label}</TruncatedText>
-                        <span className={cn('ml-1.5 shrink-0', !color && 'text-muted-foreground')}>
-                          {tag.usage_count}
-                        </span>
+                        <span className="ml-1.5 shrink-0">{tag.usage_count}</span>
                       </Badge>
                     </button>
                     <div className="flex-1" />
                     <Popover
                       open={colorPickerOpen === tag.tag_id}
                       onOpenChange={(open) => setColorPickerOpen(open ? tag.tag_id : null)}
+                      sheetTitle={t('tagList.colorTagLabel')}
                     >
                       <PopoverTrigger asChild>
                         <Button

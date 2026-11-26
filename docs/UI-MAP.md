@@ -135,7 +135,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 | **TrashPurgeDialog** + batch variants     | Trash view actions                                                     |
 | **LinkEditPopover**                       | FormattingToolbar External Link / SelectionBubbleMenu Link             |
 | **AddPropertyPopover**                    | "+ Add" inside property surfaces                                       |
-| **DateChipEditor**                        | Agenda date chips                                                      |
+| **DateChipEditor**                        | A task row's date chips (Agenda, Due panel)                            |
 | **PageHeaderMenu**                        | Kebab in PageHeader                                                    |
 | **FormattingToolbar overflow**            | `MoreHorizontal` when toolbar narrows                                  |
 | **TagValuePicker** / **InlinePicker**     | Tag- and value-picker popovers inside filter and property surfaces     |
@@ -144,7 +144,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 
 - **44 px touch floor** via `[@media(pointer:coarse)]` classes (`min-h-11`, etc.). Enforced in `Button` variants and overflow menu rows. Inline indicators (collapse chevron, task marker, priority badge) intentionally use the `max-sm:` viewport breakpoint instead — they compete with content for space and are not touch-primary affordances. Don't unify the two — tests assert both.
 - **Sidebar mobile model**: Sheet overlay only — no persistent rail (retired so the 48 px it reserved goes to content). Opened by the header hamburger or `Ctrl+B`, never a left-edge swipe (Android's gesture Back); closed by the collapse toggle in its header. Sheet auto-closes on nav-item tap.
-- **No Sheet ↔ Popover viewport swaps**. Radix Popover works on touch; Sheet is only for off-canvas navigation.
+- **A phone's overlays are bottom sheets** (`usePhoneLayout`): a dialog through `useDialogOrSheet`, a popover holding a field through `Popover`'s `sheetTitle`, a menu through `MenuSheet`; a popover holding a small control (a swatch grid, a short list) stays anchored.
 - **ARIA, focus, announcer, reduced motion** — see `docs/UX.md` § Accessibility for the canonical rules. Notable here: roving tabindex (exactly one `tabindex=0` per group, arrows move it) is used in list-like chrome such as `RecentPagesStrip` and `TabBar`; the block editor's mount/unmount-by-focus is a different pattern, the "roving editor".
 
 ## Pitfalls — things easy to get wrong

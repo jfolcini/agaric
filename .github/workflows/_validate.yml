@@ -302,16 +302,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # It matters more here than elsewhere: the resolver is
-          # version-sensitive (MSRV-aware resolution), so a floating
-          # toolchain could disagree with the committed lock for reasons
-          # that have nothing to do with the diff.
-          toolchain: 1.100.0
+          # #640: rust-toolchain.toml's exact channel. It matters more here
+          # than elsewhere: the resolver is version-sensitive (MSRV-aware
+          # resolution), so a floating toolchain could disagree with the
+          # committed lock for reasons that have nothing to do with the diff.
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       - name: Verify both Cargo.lock files resolve their manifests
         working-directory: src-tauri
@@ -1691,12 +1693,15 @@ jobs:
           mkdir -p .cargo
           cp .cargo/config.toml.example .cargo/config.toml
 
+      - name: Read pins.txt
+        id: pins
+        run: bash scripts/pins.sh github-output
+
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
         with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.100.0
+          # #640: rust-toolchain.toml's exact channel.
+          toolchain: ${{ steps.pins.outputs.rust }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -1732,10 +1737,6 @@ jobs:
         # invocation — including nextest. The full-release agaric-mcp
         # build below replaces this placeholder with the real binary.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Read pins.txt
-        id: pins
-        run: bash scripts/pins.sh github-output
 
       - name: Install cargo-nextest + cargo-llvm-cov via prebuilt binary (PEND-39 C1)
         # `cargo-llvm-cov` wraps LLVM's source-based coverage instrumentation

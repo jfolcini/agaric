@@ -11,6 +11,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activePopover,
+  activeSheet,
   expect,
   expect44,
   hits44,
@@ -52,7 +53,7 @@ test.describe('phone touch targets @mobile', () => {
     ]
     for (const row of rows) await expect44(row, (await row.textContent()) ?? 'drawer row')
 
-    const gutter = await left(sheet.getByRole('combobox', { name: 'Switch space', exact: true }))
+    const gutter = await left(sheet.getByRole('button', { name: 'Switch space', exact: true }))
     expect(await left(newPage), 'New page').toBe(gutter)
     for (const name of ['Journal', 'Tags', 'Sync']) {
       expect(await left(sheet.getByRole('button', { name, exact: true })), name).toBe(gutter)
@@ -76,6 +77,16 @@ test.describe('phone touch targets @mobile', () => {
     expect(await glyph(pageActions)).toBe('20x20')
   })
 
+  // #7040 — the search sheet's palette mode chip, a ghost `Button` now, not a bare chip.
+  test("the palette's mode chip", async ({ page }) => {
+    await waitForBoot(page)
+    await page.getByTestId('search-sheet-trigger').click()
+    const sheet = page.getByTestId('search-sheet')
+    await sheet.evaluate((el) => Promise.all(el.getAnimations().map((slide) => slide.finished)))
+    await page.getByTestId('search-sheet-segment-all-pages').click()
+    await expect44(page.getByTestId('palette-mode-chip'), 'palette mode chip')
+  })
+
   test('the Tags and Templates name inputs', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')
@@ -89,7 +100,7 @@ test.describe('phone touch targets @mobile', () => {
     await navigateToView(page, 'Advanced query')
     const root = page.getByRole('group', { name: 'Filter', exact: true })
     await root.getByRole('button', { name: 'Add filter', exact: true }).click()
-    const pop = activePopover(page)
+    const pop = activeSheet(page)
     await pop.getByRole('button', { name: /^State/ }).click()
     await pop.getByRole('checkbox', { name: 'DONE', exact: true }).click()
     await pop.getByRole('button', { name: 'Apply', exact: true }).click()
@@ -216,7 +227,10 @@ test.describe('journal headings and chips on a 360 px touch phone @mobile @journ
     await expectSmallBox(streamHeading, 'stream heading')
 
     await chooseMode(page, /^Agenda/)
-    const dateChip = page.getByRole('button', { name: 'Edit date', exact: true }).first()
+    const dateChip = page
+      .getByTestId('agenda-results-item')
+      .getByRole('button', { name: /^Due / })
+      .first()
     await expect44(dateChip, 'agenda date chip')
     await expectSmallBox(dateChip, 'agenda date chip')
   })

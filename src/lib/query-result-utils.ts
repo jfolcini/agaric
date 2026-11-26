@@ -183,8 +183,7 @@ function resolveInlineRefs(
  *
  * The 80-char budget documented above is therefore the NAME's, not the
  * rendered row's: the rich body renders the whole content string and the
- * row's own `truncate` clamps it, exactly as the agenda alert rows do
- * (`AlertSection`, #4705).
+ * row's own `truncate` clamps it.
  *
  * # `resolveRefTitle` is a SEPARATE resolver from `resolveBlockTitle`
  *

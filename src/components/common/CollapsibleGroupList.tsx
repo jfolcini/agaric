@@ -283,7 +283,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                   renderBlock={(block, ctx) => renderBlock(block, group, ctx)}
                 />
               ) : (
-                // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-event delegation gated on the same runtime listRole: when `listRole="listbox"` the <ul> is interactive and owns listbox arrow-key navigation; otherwise `listOnKeyDown` is unset and no handler is attached. The handler routes keys to the option children, so the <ul> must not claim a static interactive role here.
+                // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the role is the runtime `listRole` prop the rule cannot see: `listOnKeyDown` is passed only with `listRole="listbox"`, where the <ul> is the interactive listbox
                 <ul
                   className={listClassName ?? 'ml-4 mt-1 space-y-1'}
                   aria-label={listAriaLabel?.(title)}

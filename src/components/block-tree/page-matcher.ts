@@ -589,7 +589,7 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
  * Appends (not prepends) a create-new-page option (`isCreate: true`) when the
  * query doesn't exactly match an existing page. Consumers render the option
  * label via `t('properties.createNewPageAction')` / `t('pageProperty.createButton')`.
- * Pages keep Create at the end — F-26 only moved Create to the top for tags.
+ * Create comes last, as in the tag picker (#7040).
  */
 function appendCreatePageOptionIfNeeded(
   matches: PickerItem[],
