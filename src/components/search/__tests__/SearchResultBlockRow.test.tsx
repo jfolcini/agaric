@@ -157,6 +157,26 @@ describe('SearchResultBlockRow', () => {
     expect(document.querySelector('mark')).toBeNull()
   })
 
+  // A filter-only search sends neither a snippet nor match offsets.
+  it.each([
+    ['**Audit** every *screen*', 'Audit every screen'],
+    [
+      '| Screen | Status |\n| --- | --- |\n| Journal | Reviewed |',
+      'Screen Status Journal Reviewed',
+    ],
+  ])('shows a row without a snippet as its text, not its Markdown: %j', (content, shown) => {
+    render(
+      <ul>
+        <SearchResultBlockRow
+          row={makeRow({ snippet: null, content })}
+          isFocused={false}
+          onClick={() => {}}
+        />
+      </ul>,
+    )
+    expect(screen.getByRole('option')).toHaveTextContent(new RegExp(`^${shown}$`))
+  })
+
   it('invokes onClick when the row is clicked', () => {
     const onClick = vi.fn()
     render(

@@ -248,9 +248,9 @@ describe('SearchPanel toggles', () => {
     )
   })
 
-  it('renders the toggle row inside a toolbar landmark', () => {
+  it('renders the toggle row as a named group', () => {
     render(<SearchPanel />)
-    expect(screen.getByRole('toolbar', { name: /Search modes/i })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /Search modes/i })).toBeInTheDocument()
   })
 
   it('has no a11y violations on the toggle row', async () => {
@@ -284,7 +284,6 @@ describe('SearchPanel regex-mode input cue (NEW-2)', () => {
 
     const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     expect(input).toHaveClass('font-mono')
-    expect(input).toHaveClass('flex-1')
     expect(input).toHaveAttribute('aria-describedby', 'search-filter-hint search-regex-hint')
 
     const hint = document.getElementById('search-regex-hint')

@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { TOGGLE_CUE } from '@/components/search/SearchToggleRow'
 import type { SearchReplace, SearchReplaceMode } from '@/components/SearchPanel/useSearchReplace'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -31,7 +32,8 @@ export function SearchReplaceToggle({
   return (
     <IconButton
       type="button"
-      variant={open ? 'secondary' : 'outline'}
+      variant="ghost"
+      className={TOGGLE_CUE}
       aria-expanded={open}
       ariaLabel={t('search.replace.toggle')}
       tooltip={t('search.replace.toggle')}
