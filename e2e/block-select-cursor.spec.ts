@@ -27,13 +27,23 @@ const selectBox = (page: Page, id: string) =>
 
 /**
  * The cursor row holds focus and rings its frame in 3px; the row it left does
- * not, though it may keep the selection's 2px ring on the same frame.
+ * not: it draws nothing, or the selection's 2px ring when it is selected.
  */
-async function expectCursorOn(page: Page, id: string, previous: string): Promise<void> {
+async function expectCursorOn(
+  page: Page,
+  id: string,
+  previous: string,
+  previousSelected = false,
+): Promise<void> {
   await expect(row(page, id)).toBeFocused()
   const content = (blockId: string) => row(page, blockId).getByTestId('block-frame')
   await expect(content(id)).toHaveCSS('box-shadow', /0px 0px 0px 3px/)
-  await expect(content(previous)).not.toHaveCSS('box-shadow', /0px 0px 0px 3px/)
+  if (previousSelected) {
+    await expect(content(previous)).toHaveCSS('box-shadow', /0px 0px 0px 2px/)
+    await expect(content(previous)).not.toHaveCSS('box-shadow', /0px 0px 0px 3px/)
+  } else {
+    await expect(content(previous)).toHaveCSS('box-shadow', 'none')
+  }
 }
 
 test.describe('Block-select cursor (#5734) @editor', () => {
@@ -57,7 +67,7 @@ test.describe('Block-select cursor (#5734) @editor', () => {
     await expectCursorOn(page, GS1, GS2)
 
     await page.keyboard.press('Control+ArrowDown')
-    await expectCursorOn(page, GS2, GS1)
+    await expectCursorOn(page, GS2, GS1, true)
     await expect(toolbar).toHaveCount(0)
     await expect(selectBox(page, GS2)).not.toBeChecked()
 
@@ -93,7 +103,7 @@ test.describe('Block-select cursor (#5734) @editor', () => {
     await page.keyboard.press('Control+a')
 
     await expect(page.getByTestId('batch-toolbar')).toContainText('5 selected')
-    await expectCursorOn(page, GS2, GS5)
+    await expectCursorOn(page, GS2, GS5, true)
   })
 
   test('the cursor chords act only while focus is in the list', async ({ page }) => {
