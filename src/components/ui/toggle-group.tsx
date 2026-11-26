@@ -14,6 +14,11 @@
  * roving focus only moves focus, so the group checks the segment it focused.
  *
  * Radix reports pressing the checked segment again as `''`; callers ignore it.
+ *
+ * On a phone (`useIsTouch() && usePhoneLayout()`) a group of up to four
+ * segments spans its column in equal segments, as Material's fixed tabs and
+ * iOS's segmented control do; elsewhere, and with more segments, they hug
+ * their labels.
  */
 
 'use client'
@@ -21,9 +26,14 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { ToggleGroup as ToggleGroupPrimitive } from 'radix-ui'
 import type * as React from 'react'
-import { useRef } from 'react'
+import { Children, useRef } from 'react'
 
+import { useIsTouch } from '@/hooks/useIsTouch'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { cn } from '@/lib/utils'
+
+/** The most segments that still fit a phone's column in equal widths. */
+const MAX_SPANNING_SEGMENTS = 4
 
 /** The keys Radix's roving focus moves focus with. */
 const ROVING_KEYS = new Set([
@@ -66,10 +76,18 @@ function ToggleGroup({
   // Roving focus moves focus in a timeout after the keydown, so the focus
   // handler learns from this flag that a roving key, not Tab or a click, moved it.
   const rovingKeyRef = useRef(false)
+  const isTouch = useIsTouch()
+  const phoneLayout = usePhoneLayout()
+  const spans =
+    isTouch && phoneLayout && Children.toArray(props.children).length <= MAX_SPANNING_SEGMENTS
   return (
     <ToggleGroupPrimitive.Root
       data-slot="toggle-group"
-      className={cn(toggleGroupVariants({ size }), className)}
+      className={cn(
+        toggleGroupVariants({ size }),
+        spans && 'flex w-full [&>[data-slot=toggle-group-item]]:flex-1',
+        className,
+      )}
       onKeyDown={(event) => {
         // Radix ignores a roving key with a modifier, so no focus move follows it.
         rovingKeyRef.current =

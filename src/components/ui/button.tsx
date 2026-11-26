@@ -1,19 +1,20 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 import type * as React from 'react'
+import { Children } from 'react'
 
 import { cn } from '@/lib/utils'
 
 // Icon sizes sit at zero specificity, so a `size-*`, `h-*` or `w-*` on the icon wins.
+// A leading icon's box carries whitespace beside its glyph, so it is pulled into
+// the start padding (`data-leading-icon`); a margin, not padding, so a caller's
+// own `px-*` still holds.
 const buttonVariants = cva(
-  'inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,opacity,transform,scale] active:scale-[0.97] focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4',
+  'inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,opacity,transform,scale] active:scale-[0.97] focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4 data-leading-icon:[&>svg:first-child]:-ms-0.5',
   {
     variants: {
       variant: {
-        // A light primary at half opacity on a dark ground is a muddy grey slab;
-        // dark themes recede to the muted surface instead.
-        default:
-          'bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80 dark:disabled:bg-muted dark:disabled:text-muted-foreground dark:disabled:opacity-100',
+        default: 'bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90 active:bg-destructive/80',
         outline:
@@ -59,6 +60,7 @@ const Button = ({
   variant = 'default',
   size = 'default',
   asChild = false,
+  children,
   ...props
 }: React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
@@ -79,15 +81,23 @@ const Button = ({
     (variant === 'ghost' || variant === 'outline') &&
     cn('text-icon', className).split(' ').includes('text-icon')
 
+  // CSS cannot see text nodes, so only here does an icon before a bare label
+  // differ from an icon alone or a chevron after one.
+  const [first, ...rest] = Children.toArray(children)
+  const leadingIcon = typeof first === 'object' && rest.length > 0
+
   return (
     <Comp
       ref={ref}
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      data-leading-icon={leadingIcon || undefined}
       className={cn(buttonVariants({ variant, size }), tintsIcons && paletteIcons, className)}
       {...props}
-    />
+    >
+      {children}
+    </Comp>
   )
 }
 Button.displayName = 'Button'

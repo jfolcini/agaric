@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 import type * as React from 'react'
+import { Children } from 'react'
 
 import { priorityColor } from '@/lib/priority-color'
 import { cn } from '@/lib/utils'
@@ -33,8 +34,10 @@ import { cn } from '@/lib/utils'
  * components.
  */
 
+// A leading icon's box carries whitespace beside its glyph, so it is pulled into
+// the start padding (`data-leading-icon`, set as `Button` sets it).
 const BASE =
-  'inline-flex w-fit rounded-sm shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3'
+  'inline-flex w-fit rounded-sm shrink-0 items-center justify-center gap-1 overflow-visible border border-transparent font-medium tabular-nums whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3 data-leading-icon:[&>svg:first-child]:-ms-0.5'
 
 const badgeVariants = cva(BASE, {
   variants: {
@@ -124,6 +127,8 @@ const Badge = ({
       : resolvedTone === 'status'
         ? STATUS_STATE_CLASSES[statusState ?? 'default']
         : ''
+  const [first, ...rest] = Children.toArray(children)
+  const leadingIcon = typeof first === 'object' && rest.length > 0
 
   return (
     <Comp
@@ -132,6 +137,7 @@ const Badge = ({
       // Retains the legacy `data-variant` attribute name (the prop is `tone`)
       // for test/CSS-selector stability; see badge.test.tsx and PageHeader.test.tsx.
       data-variant={resolvedTone}
+      data-leading-icon={leadingIcon || undefined}
       className={cn(badgeVariants({ tone: resolvedTone, size }), toneColor, className)}
       {...props}
     >

@@ -314,6 +314,16 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     }
   })
 
+  test('a toast takes the full width while a dialog covers the floating button', async ({
+    page,
+  }) => {
+    const toast = await toastOnSearch(page)
+    await emitMockEvent(page, 'deeplink:capture', { kind: 'prefill', text: 'Covering line' })
+    await expect(page.getByTestId('quick-capture-dialog')).toBeVisible()
+    const GUTTER = 16
+    await expect.poll(async () => Math.round((await box(toast)).width)).toBe(390 - 2 * GUTTER)
+  })
+
   test("a toast's close button sits inside it, on its text's line", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expectToastCloseInside(await toastOnSearch(page))
