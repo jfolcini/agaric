@@ -947,13 +947,6 @@ export function BlockTree({
     scrollContainerRef.current = document.getElementById('main-content')
   }, [])
 
-  // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
-  // #712: when zoomed, the DnD projection's "root" is the zoomed block, not
-  // the page root. `zoomedVisible` rebases `depth` to 0 at the zoomed block's
-  // children but keeps real `parent_id`s, so a depth-0 drop must resolve to
-  // the zoomed block — passing the page `rootParentId` here made every
-  // in-place reorder look like a reparent and ejected the block out of the
-  // zoomed subtree.
   // #7040 decision 30 — a move or a drop that lands shown blocks in a folded
   // section unfolds it, as Enter does.
   const landing = useCallback(
@@ -967,6 +960,13 @@ export function BlockTree({
     [pageStore, unfoldLanded],
   )
 
+  // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
+  // #712: when zoomed, the DnD projection's "root" is the zoomed block, not
+  // the page root. `zoomedVisible` rebases `depth` to 0 at the zoomed block's
+  // children but keeps real `parent_id`s, so a depth-0 drop must resolve to
+  // the zoomed block — passing the page `rootParentId` here made every
+  // in-place reorder look like a reparent and ejected the block out of the
+  // zoomed subtree.
   const dnd = useBlockDnD({
     blocks,
     collapsedVisible: zoomedVisible,

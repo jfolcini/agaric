@@ -4261,10 +4261,6 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
   })
 })
 
-// =========================================================================
-// handleIndent / handleDedent (Ctrl+Shift+ArrowRight / ArrowLeft in block tree context)
-// =========================================================================
-
 describe('BlockTree moves over a folded heading (#7040)', () => {
   it('announces a failed move when the batch move past a folded section fails', async () => {
     const tree = [
@@ -4296,6 +4292,10 @@ describe('BlockTree moves over a folded heading (#7040)', () => {
     )
   })
 })
+
+// =========================================================================
+// handleIndent / handleDedent (Ctrl+Shift+ArrowRight / ArrowLeft in block tree context)
+// =========================================================================
 
 describe('BlockTree handleIndent / handleDedent', () => {
   beforeEach(() => {
