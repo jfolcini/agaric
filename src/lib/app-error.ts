@@ -55,6 +55,16 @@ export function isCancellation(err: unknown): err is TypedAppError & { kind: 'ca
 }
 
 /**
+ * Did the runtime reject the call because its plugin is not registered here?
+ * Tauri rejects with the string "plugin <name> not found", and the browser
+ * mock throws the same text: a plugin missing on this platform, not failing.
+ */
+export function isPluginUnavailable(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /^plugin \S+ not found$/.test(message)
+}
+
+/**
  * Was the resource not found? Issue #106 — this is an EXPECTED empty
  * state for pickers / resolvers (the page just doesn't exist yet, the
  * alias points nowhere). Callers should suppress the error toast and

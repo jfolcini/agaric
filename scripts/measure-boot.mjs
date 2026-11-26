@@ -33,14 +33,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-const [baseline, rewindArg, roundsArg, ...binArgs] = process.argv.slice(2)
+const [baseline = '', rewindArg, roundsArg, ...binArgs] = process.argv.slice(2)
 const rewind = Number(rewindArg)
 const rounds = Number(roundsArg)
 if (!baseline || !(rewind >= 0) || !(rounds > 0) || binArgs.length === 0) {
   console.error('usage: measure-boot.mjs <baseline-dir> <rewind-ops> <rounds> NAME=binary ...')
   process.exit(2)
 }
-const baselineDir = baseline // the usage check above exits when it is missing
 const bins = binArgs.map((a) => a.split('=', 2))
 const device = fs.readFileSync(path.join(baseline, 'device-id'), 'utf8').trim()
 
@@ -131,9 +130,9 @@ async function boot(name, binary, round) {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `measure-boot-${name}-`))
   const vault = path.join(run, 'vault')
   // A baseline that has booted carries its log, whose milestones would be read first.
-  fs.cpSync(baselineDir, vault, {
+  fs.cpSync(baseline, vault, {
     recursive: true,
-    filter: (src) => src !== path.join(baselineDir, 'logs'),
+    filter: (src) => src !== path.join(baseline, 'logs'),
   })
   if (rewind > 0) {
     const db = new DatabaseSync(path.join(vault, 'notes.db'))

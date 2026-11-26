@@ -80,6 +80,7 @@ import { appendFileSync, readFileSync, realpathSync } from 'node:fs'
 import process from 'node:process'
 
 import { MODULE_NAMES, MODULES } from '../stryker.modules.mjs'
+import { errorMessage } from './lib/error-message.mjs'
 
 // A single PR run mutates at most this many modules. Chosen from measured
 // per-module cost: the enrolled modules run between ~5s and ~66s each on a
@@ -352,7 +353,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`select-mutation-modules: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`select-mutation-modules: ${errorMessage(err)}`)
     process.exit(2)
   }
 

@@ -2426,6 +2426,21 @@ describe('BlockContextMenu opening focus', () => {
     expect(screen.getAllByRole('menuitem')[0]).toHaveFocus()
   })
 
+  it('ArrowDown after a click on a disclosure walks on from it, not from the first row', async () => {
+    const user = userEvent.setup()
+    fireEvent.pointerDown(document.body)
+    renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+    const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) })
+    await user.click(toggle)
+    expect(toggle).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(
+      screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.indent')) }),
+    ).toHaveFocus()
+  })
+
   it('a keyboard opening focuses the first row', () => {
     fireEvent.pointerDown(document.body)
     fireEvent.keyDown(document.body, { key: 'F10', shiftKey: true })

@@ -128,6 +128,10 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 const mockedUseIsTouch = vi.mocked(useIsTouch)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+// What a command no test stubs answers: the flat-list commands an empty list, the rest an
+// empty page. An object where a list belongs crashed `PageHeader` behind its error boundary.
+const FLAT_LIST_COMMANDS = new Set(['list_all_tags_in_space', 'get_properties'])
+const unstubbed = (cmd: string) => (FLAT_LIST_COMMANDS.has(cmd) ? [] : emptyPage)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -231,9 +235,7 @@ beforeEach(() => {
         fg_errors: 0,
         bg_errors: 0,
       }
-    // The command answers a flat list, never a page.
-    if (cmd === 'list_all_tags_in_space') return []
-    return emptyPage
+    return unstubbed(cmd)
   })
 })
 
@@ -424,7 +426,7 @@ describe('App', () => {
           total_background_dispatched: 0,
         }
       }
-      return emptyPage
+      return unstubbed(cmd)
     })
 
     render(<App />)
@@ -579,7 +581,7 @@ describe('App', () => {
       if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'resolve_page_title') return { title: 'Untitled', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
-      return emptyPage
+      return unstubbed(cmd)
     })
 
     render(<App />)
@@ -614,7 +616,7 @@ describe('App', () => {
         return [{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }]
       if (cmd === 'resolve_page_title') return { title: 'Untitled 2', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
-      return emptyPage
+      return unstubbed(cmd)
     })
 
     render(<App />)
@@ -649,7 +651,7 @@ describe('App', () => {
       if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'resolve_page_title') return { title: 'Quarterly review', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
-      return emptyPage
+      return unstubbed(cmd)
     })
 
     const changes: NameChange[] = []
@@ -685,7 +687,7 @@ describe('App', () => {
       if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'resolve_page_title') return { title: 'From the palette', page_id: null }
       if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
-      return emptyPage
+      return unstubbed(cmd)
     })
 
     render(<App />)
@@ -1164,7 +1166,7 @@ describe('App', () => {
           if (cmd === 'list_spaces')
             return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
-          return emptyPage
+          return unstubbed(cmd)
         })
 
         render(<App />)
@@ -1209,7 +1211,7 @@ describe('App', () => {
               },
             ]
           }
-          return emptyPage
+          return unstubbed(cmd)
         })
 
         render(<App />)
@@ -1246,7 +1248,7 @@ describe('App', () => {
           if (cmd === 'list_spaces')
             return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') throw new Error('IPC unavailable')
-          return emptyPage
+          return unstubbed(cmd)
         })
 
         render(<App />)
@@ -1278,7 +1280,7 @@ describe('App', () => {
           if (cmd === 'list_spaces')
             return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
-          return emptyPage
+          return unstubbed(cmd)
         })
 
         render(<App />)
@@ -1306,7 +1308,7 @@ describe('App', () => {
           if (cmd === 'list_spaces')
             return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
           if (cmd === 'list_peer_refs') return []
-          return emptyPage
+          return unstubbed(cmd)
         })
 
         render(<App />)
@@ -1752,7 +1754,7 @@ describe('App', () => {
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
-        return emptyPage
+        return unstubbed(cmd)
       })
 
       render(<App />)
@@ -1783,7 +1785,7 @@ describe('App', () => {
         if (cmd === 'create_page_in_space') {
           throw new Error('Disk full')
         }
-        return emptyPage
+        return unstubbed(cmd)
       })
 
       render(<App />)
@@ -1808,7 +1810,7 @@ describe('App', () => {
         if (cmd === 'flush_all_drafts') {
           throw new Error('Draft table locked')
         }
-        return emptyPage
+        return unstubbed(cmd)
       })
 
       render(<App />)
@@ -2220,8 +2222,7 @@ describe('App', () => {
         if (cmd === 'list_all_pages_in_space') {
           return [makePageHeading({ id: 'PAGE_A1', content: 'Page A1' })]
         }
-        if (cmd === 'list_all_tags_in_space') return []
-        return emptyPage
+        return unstubbed(cmd)
       })
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_A',
@@ -2273,8 +2274,7 @@ describe('App', () => {
           ]
         }
         if (cmd === 'list_all_pages_in_space') return []
-        if (cmd === 'list_all_tags_in_space') return []
-        return emptyPage
+        return unstubbed(cmd)
       })
       useSpaceStore.setState({
         currentSpaceId: 'SPACE_A',
@@ -2335,7 +2335,7 @@ describe('App', () => {
           return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
         if (cmd === 'collect_bug_report_metadata') return sampleMetadata
         if (cmd === 'read_logs_for_report') return []
-        return emptyPage
+        return unstubbed(cmd)
       })
     })
 
@@ -2520,7 +2520,7 @@ describe('App', () => {
       // missing the row and `find()` would return undefined.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces') return [PERSONAL, WORK]
-        return emptyPage
+        return unstubbed(cmd)
       })
       // Reset any stray inline style left over from prior tests so the
       // assertion that runs immediately after mount is meaningful.
@@ -2599,7 +2599,7 @@ describe('App', () => {
       // that pushes the store into the unhydrated state.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces') return []
-        return emptyPage
+        return unstubbed(cmd)
       })
       useSpaceStore.setState({
         currentSpaceId: null,

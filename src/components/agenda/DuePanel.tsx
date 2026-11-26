@@ -60,6 +60,13 @@ export interface DuePanelProps {
 // the #738 desync back silently.
 const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
 
+/** Each filter segment's header bucket. */
+const SEGMENT_BUCKETS: Partial<Record<string, 'due' | 'scheduled' | 'property'>> = {
+  'column:due_date': 'due',
+  'column:scheduled_date': 'scheduled',
+  'property:': 'property',
+}
+
 export function DuePanel({
   date,
   onNavigateToPage,
@@ -138,16 +145,19 @@ export function DuePanel({
   // dates equal to `date` counts once, as "due". The buckets are therefore an
   // approximate breakdown of the visible set, not a reconstruction of the
   // backend's selection — treat the three numbers as a date-based summary that
-  // always sums to `visibleBlocks.length`.
+  // always sums to `visibleBlocks.length`. A chosen segment fetched its own
+  // source's rows alone, so under one every row counts as that segment.
   const sourceCounts = useMemo(() => {
     const counts = { due: 0, scheduled: 0, property: 0 }
+    const chosen = sourceFilter === null ? undefined : SEGMENT_BUCKETS[sourceFilter]
+    if (chosen !== undefined) return { ...counts, [chosen]: visibleBlocks.length }
     for (const b of visibleBlocks) {
       if (b.due_date === date) counts.due++
       else if (b.scheduled_date === date) counts.scheduled++
       else counts.property++
     }
     return counts
-  }, [visibleBlocks, date])
+  }, [visibleBlocks, date, sourceFilter])
 
   // ── Keyboard navigation ────────────────────────────────────
 

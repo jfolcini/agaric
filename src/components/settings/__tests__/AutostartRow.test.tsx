@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AutostartRow } from '@/components/settings/AutostartRow'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/platform/autostart'
 
@@ -21,6 +22,10 @@ vi.mock('@/lib/platform/autostart', () => ({
   isAutostartEnabled: vi.fn(),
   enableAutostart: vi.fn(),
   disableAutostart: vi.fn(),
+}))
+
+vi.mock('@/lib/logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
 vi.mock('@/lib/notify', () => ({
@@ -43,13 +48,35 @@ afterEach(() => {
 })
 
 describe('AutostartRow', () => {
-  it('hides the row when isAutostartEnabled rejects (plugin unavailable)', async () => {
-    mockIsEnabled.mockRejectedValueOnce(new Error('plugin missing'))
+  it('hides the row when the autostart plugin is not registered, and logs it as expected', async () => {
+    // The runtime's own rejection for an unregistered plugin (mobile, the browser).
+    mockIsEnabled.mockRejectedValueOnce('plugin autostart not found')
     const { container } = render(<AutostartRow />)
     // The unavailable branch collapses to `null` → nothing renders.
     await waitFor(() => {
-      expect(container.querySelector('#autostart-toggle')).toBeNull()
+      expect(logger.debug).toHaveBeenCalledWith(
+        'SettingsView',
+        'no autostart plugin; hiding launch-on-login row',
+      )
     })
+    expect(container.querySelector('#autostart-toggle')).toBeNull()
+    expect(logger.warn).not.toHaveBeenCalled()
+  })
+
+  it('hides the row on any other rejection, and warns: a desktop IPC failure', async () => {
+    const failure = new Error('IPC denied')
+    mockIsEnabled.mockRejectedValueOnce(failure)
+    const { container } = render(<AutostartRow />)
+    await waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        'SettingsView',
+        'autostart unavailable; hiding launch-on-login row',
+        undefined,
+        failure,
+      )
+    })
+    expect(container.querySelector('#autostart-toggle')).toBeNull()
+    expect(logger.debug).not.toHaveBeenCalled()
   })
 
   it('renders the toggle once isAutostartEnabled resolves', async () => {

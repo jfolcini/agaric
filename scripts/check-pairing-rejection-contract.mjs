@@ -78,6 +78,8 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const SCRIPTS_DIR = import.meta.dirname
 const REPO_ROOT = join(SCRIPTS_DIR, '..')
 const RUST_PATH = join(REPO_ROOT, 'src-tauri', 'agaric-sync', 'src', 'sync_daemon', 'server.rs')
@@ -300,9 +302,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(
-      `check-pairing-rejection-contract: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`check-pairing-rejection-contract: ${errorMessage(err)}`)
     process.exit(1)
   }
 }

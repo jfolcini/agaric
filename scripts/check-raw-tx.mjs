@@ -38,6 +38,7 @@
 import { realpathSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
 import { describeSource } from './lib/guard-file-source.mjs'
 import {
   CRATE_ROOTS,
@@ -245,7 +246,7 @@ function main(argv, { crateRoots = CRATE_ROOTS, err = write(process.stderr) } = 
   } catch (error) {
     // Fail closed: an index that could not be read answers "absent" for
     // every path, which would exit 0 having read nothing.
-    err(`check-raw-tx: invocation error: ${error instanceof Error ? error.message : String(error)}`)
+    err(`check-raw-tx: invocation error: ${errorMessage(error)}`)
     return 2
   }
 

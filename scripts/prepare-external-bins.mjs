@@ -34,6 +34,8 @@ import { execSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 const SRC_TAURI = join(REPO_ROOT, 'src-tauri')
 const BINARIES_DIR = join(SRC_TAURI, 'binaries')
@@ -167,6 +169,6 @@ function main() {
 try {
   main()
 } catch (err) {
-  console.error(err instanceof Error ? err.message : String(err))
+  console.error(errorMessage(err))
   process.exit(1)
 }

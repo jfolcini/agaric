@@ -36,6 +36,8 @@ import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { promisify } from 'node:util'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const run = promisify(execFile)
 
 const LOG_FETCH_CONCURRENCY = 8
@@ -312,7 +314,7 @@ async function main() {
     } catch (err) {
       // Logs expire; a job without one contributes no restores, and says so.
       process.stderr.write(
-        `no log for job ${job.id} (${job.name}): ${(err instanceof Error ? err.message : String(err)).split('\n')[0]}\n`,
+        `no log for job ${job.id} (${job.name}): ${errorMessage(err).split('\n')[0]}\n`,
       )
       return ''
     }

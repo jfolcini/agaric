@@ -110,6 +110,8 @@
 import { readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const SCRIPTS_DIR = join(import.meta.dirname)
 // The shared scrubbers, one per language that has one — see the header. The
 // shell name is also what a `.sh` script must be seen to SOURCE, and the
@@ -546,9 +548,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(
-      `check-git-fixture-isolation: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`check-git-fixture-isolation: ${errorMessage(err)}`)
     process.exit(1)
   }
 }

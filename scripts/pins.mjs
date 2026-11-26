@@ -18,6 +18,8 @@ import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, readdirSync, appendFileSync, realpathSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const ROOT = resolve(import.meta.dirname, '..')
 export const COOLDOWN_DAYS = 7
 export const NIGHTLY_MAX_AGE_DAYS = 28
@@ -290,7 +292,7 @@ export async function staleRows(pins, http, { now = Date.now(), ctx = {} } = {})
       }
     } catch (e) {
       row.status = 'error'
-      row.note = e instanceof Error ? e.message : String(e)
+      row.note = errorMessage(e)
     }
   }
   return rows
