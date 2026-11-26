@@ -298,6 +298,10 @@ struct BackoffState {
     membership: PeerMembership,
     /// When the peer may next be retried.
     next_retry_at: Instant,
+    /// The last failure was a history fork (#7065), which every retry meets
+    /// again once the whole snapshot has crossed: the wait does not run out,
+    /// and ends only with the entry ([`SyncScheduler::hold`]).
+    held: bool,
     /// Current backoff duration (doubles on each failure).
     backoff: Duration,
     /// Number of consecutive failures.
@@ -406,6 +410,7 @@ fn book_failure<'a>(
     let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
         membership,
         next_retry_at: Instant::now(),
+        held: false,
         backoff: MIN_BACKOFF,
         consecutive_failures: 0,
         reported_errors: Vec::new(),
@@ -819,7 +824,23 @@ impl SyncScheduler {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match backoff.get(peer_id) {
             None => true,
-            Some(state) => Instant::now() >= state.next_retry_at,
+            Some(state) => !state.held && Instant::now() >= state.next_retry_at,
+        }
+    }
+
+    /// Keep `peer_id`, whose failure was just booked, out of every dial the
+    /// daemon starts by itself, until its backoff entry goes: a press on Sync
+    /// ([`Self::clear_peer_backoff`]), a pairing act ([`Self::clear_backoff`]),
+    /// or a restart. The device that forked comes back through a pairing, so
+    /// nothing else has to end the wait.
+    pub fn hold(&self, peer_id: &str) {
+        if let Some(state) = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(peer_id)
+        {
+            state.held = true;
         }
     }
 
@@ -1027,14 +1048,22 @@ impl SyncScheduler {
     /// about is whichever unpaired endpoint answers. The blast radius is one
     /// extra dial round for any peer that happened to be in backoff, bounded to
     /// the moment a user pressed a button in the pairing dialog.
-    ///
-    /// The daemon also calls it when it binds its endpoint again (#6526): what
-    /// failed on the old network says nothing about the new one.
     pub fn clear_backoff(&self) {
         self.backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+    }
+
+    /// Forget every backoff a new network can end, which a [held](Self::hold)
+    /// peer's is not: the daemon calls it when it binds its endpoint again
+    /// (#6526), since what failed on the old network says nothing about the
+    /// new one.
+    pub fn clear_backoff_for_new_network(&self) {
+        self.backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, state| state.held);
     }
 
     /// Forget `peer_id`'s backoff and what was reported in its streak. A
@@ -1338,6 +1367,7 @@ mod tests {
         let mut state = BackoffState {
             membership: PeerMembership::Known,
             next_retry_at: Instant::now(),
+            held: false,
             backoff: MIN_BACKOFF,
             consecutive_failures: 0,
             reported_errors: Vec::new(),
@@ -2194,6 +2224,34 @@ mod tests {
         let peers = vec![pr("peer-a", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert!(due.is_empty());
+    }
+
+    /// #7065 — a held peer's wait does not run out, and a new network, which
+    /// ends every other wait, leaves it: the fork is not the network's.
+    #[test]
+    fn a_held_peer_outwaits_its_backoff_and_a_new_network_7065() {
+        let sched = SyncScheduler::new();
+        sched.record_failure("forked");
+        sched.record_failure("unreachable");
+        sched.hold("forked");
+
+        sched.expire_backoff("forked");
+        assert!(
+            !sched.may_retry("forked"),
+            "the backoff running out does not end the hold"
+        );
+
+        sched.clear_backoff_for_new_network();
+        assert!(
+            !sched.may_retry("forked"),
+            "a new network does not end the hold"
+        );
+        assert_eq!(sched.failure_count("forked"), 1, "the entry is kept whole");
+        assert!(
+            sched.may_retry("unreachable"),
+            "what failed on the old network is dialled on the new one"
+        );
+        assert_eq!(sched.failure_count("unreachable"), 0);
     }
 
     // ======================================================================

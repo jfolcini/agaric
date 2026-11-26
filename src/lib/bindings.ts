@@ -5176,6 +5176,13 @@ export type SyncErrorCode =
  */
 "own_history_fork" | 
 /**
+ *  The peer's snapshot reuses operation ids this device holds with other
+ *  content, as after an older database was restored on the peer, and the
+ *  snapshot catch-up cannot merge that (#7065). The frontend gives the
+ *  cause and the recovery, which is done on the peer.
+ */
+"peer_history_fork" | 
+/**
  *  The dial to a paired peer timed out, mDNS is not announcing it, and it
  *  has not pulled from us lately (#6523): the device is away, and the frontend
  *  shows a neutral waiting state rather than a failure.

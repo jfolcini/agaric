@@ -15,6 +15,17 @@ type CapturedImport = (
     Result<Vec<(PeerID, Counter, Counter)>, AppError>,
 );
 
+/// How a sync-pull import's error opens when Loro refused the payload with
+/// [`LoroError::UsedOpID`]: it reuses op ids this doc holds with other content,
+/// so it comes from a history that forked from the one this doc holds.
+const USED_OP_ID: &str = "loro: import refused, op ids reused with other content";
+
+/// Whether `error` is a sync-pull import Loro refused with
+/// [`LoroError::UsedOpID`], which a retry of the same payload meets again.
+pub fn is_used_op_id(error: &AppError) -> bool {
+    matches!(error, AppError::Validation { message, .. } if message.starts_with(USED_OP_ID))
+}
+
 /// What [`LoroEngine::import_saved_rows`] found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SavedRowsImport {
@@ -570,8 +581,11 @@ impl LoroEngine {
         let status = match import_result {
             Ok(status) => status,
             Err(e) => {
-                let error = AppError::validation(format!("loro: import_with_changed_blocks: {e}"));
-                return (cap, Err(error));
+                let context = match e {
+                    LoroError::UsedOpID { .. } => USED_OP_ID,
+                    _ => "loro: import_with_changed_blocks",
+                };
+                return (cap, Err(AppError::validation(format!("{context}: {e}"))));
             }
         };
         // #3194: loro reports changes it could not apply (missing deps) in

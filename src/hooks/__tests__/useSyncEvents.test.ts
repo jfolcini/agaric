@@ -1449,6 +1449,50 @@ describe('useSyncEvents', () => {
       })
     })
 
+    // #7065 — the same fork seen from the other device: this one holds changes
+    // the peer made and lost, so the sentence sends the user to the peer.
+    describe('#7065 the peer of a device that forked its own history is told why and what to do', () => {
+      const peerForked = {
+        payload: {
+          type: 'error',
+          message:
+            "Sync failed: the peer's snapshot reuses operation ids this device holds with other content, and a snapshot cannot merge that",
+          remote_device_id: 'device-42',
+          code: 'peer_history_fork',
+        },
+      }
+
+      it('names a peer the store knows, in the store and the toast', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: 'Pixel 8' })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(peerForked)
+
+        const sentence = t('sync.peerHistoryFork', { peer: 'Pixel 8' })
+        expect(sentence).toContain('Export the notes from Pixel 8')
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', sentence)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('sync.failed', { message: sentence }),
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+        unmount()
+      })
+
+      it('words it without a name for a peer with none', async () => {
+        mockSyncPeers.push({ peerId: 'device-42', name: null })
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(peerForked)
+
+        const sentence = t('sync.peerHistoryForkUnnamed')
+        expect(sentence).toContain('Export the notes from the other device')
+        expect(mockSetState).toHaveBeenCalledExactlyOnceWith('error', sentence)
+        unmount()
+      })
+    })
+
     // #6523 — a paired device that neither answers nor announces itself is
     // away. The status says so; nothing failed, so nothing is toasted.
     describe('#6523 an away peer reads as waiting, not as a failure', () => {

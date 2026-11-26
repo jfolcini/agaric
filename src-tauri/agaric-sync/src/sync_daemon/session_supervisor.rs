@@ -904,8 +904,7 @@ pub(crate) async fn daemon_loop(
             Ok(LoopExit::Shutdown) => break,
             Ok(LoopExit::Rebind) => {
                 tracing::info!("binding the sync endpoint again");
-                // Failures booked on the old network say nothing about this one.
-                ctx.scheduler.clear_backoff();
+                ctx.scheduler.clear_backoff_for_new_network();
                 retry_in = MIN_BACKOFF;
                 MIN_BACKOFF
             }
@@ -1450,6 +1449,15 @@ fn session_failure_message(e: &impl std::fmt::Display) -> String {
 pub(super) const OWN_HISTORY_FORK_MESSAGE: &str = "Sync failed: the peer holds more of this device's own history than this device does, \
      and a snapshot cannot merge that";
 
+/// The log text of a session whose catch-up snapshot comes from a peer that
+/// forked its own history (#7065). The frontend words it from
+/// [`SyncErrorCode::PeerHistoryFork`].
+///
+/// A constant, like [`OWN_HISTORY_FORK_MESSAGE`]: the text is the suppression
+/// key, and the error's own text names the first reused operation id.
+pub(super) const PEER_HISTORY_FORK_MESSAGE: &str = "Sync failed: the peer's snapshot reuses operation ids this device holds with other content, \
+     and a snapshot cannot merge that";
+
 /// The refusal to sync at all because a different key is announcing this peer's
 /// name (#4203). A constant, so it is exactly stable as a suppression key.
 const IDENTITY_MISMATCH_MESSAGE: &str =
@@ -1678,7 +1686,8 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// a toast the user cannot act on again teaches them to dismiss toasts unread.
 /// The retry itself is owed and is not touched: the backoff ladder already caps
 /// at the resync cadence, and [`SyncScheduler::peers_due_for_resync`] reads
-/// `synced_at` only.
+/// `synced_at` only. A history fork is the exception: no retry heals it, so the
+/// peer is held ([`SyncScheduler::hold`]).
 ///
 /// `still_serving` ([`peer_pulled_from_us_recently`]: has this peer streamed to
 /// us inside two resync intervals) is part of the key, not a switch: "our pull
@@ -1690,8 +1699,9 @@ fn dial_timeout_text(peer_id: &str, diagnosis: Option<EgressReport>) -> String {
 /// [`SyncScheduler::record_failure_and_take_report`]), so alternating causes
 /// stay suppressed. It rides on the scheduler's backoff entry, which
 /// [`SyncScheduler::clear_peer_backoff`] drops on the next successful pull and
-/// [`SyncScheduler::clear_backoff`] drops on a pairing act and when the daemon binds
-/// its endpoint again, so the next failure after any of them is reported again.
+/// [`SyncScheduler::clear_backoff`] drops on a pairing act and
+/// [`SyncScheduler::clear_backoff_for_new_network`] when the daemon binds its
+/// endpoint again, so the next failure after any of them is reported again.
 ///
 /// The identity refusal routes here too: its text is the constant
 /// [`IDENTITY_MISMATCH_MESSAGE`], and `streamed_at` is stamped only for the row
@@ -1735,6 +1745,13 @@ fn record_initiator_failure(
         Some(ReportAs::Code(code)) => Some(code),
         Some(ReportAs::Nothing) | None => None,
     };
+    // #7065: a retry meets the same fork, after the whole snapshot crosses again.
+    if matches!(
+        code,
+        Some(SyncErrorCode::OwnHistoryFork | SyncErrorCode::PeerHistoryFork)
+    ) {
+        scheduler.hold(peer_id);
+    }
     // #6523: an away peer is a state the frontend shows without a toast, so
     // every attempt restates it. A withheld repeat would end the attempt's
     // progress channel in a bare error, which the frontend reads as a failure.
@@ -2307,6 +2324,11 @@ async fn record_session_failure(
             (
                 OWN_HISTORY_FORK_MESSAGE.to_owned(),
                 Some(ReportAs::Code(SyncErrorCode::OwnHistoryFork)),
+            )
+        } else if snapshot_transfer::is_peer_history_fork(&e) {
+            (
+                PEER_HISTORY_FORK_MESSAGE.to_owned(),
+                Some(ReportAs::Code(SyncErrorCode::PeerHistoryFork)),
             )
         } else {
             (
@@ -3652,6 +3674,71 @@ mod tests {
             "#4120/#610: the pull is still owed. A quieter report must never become a \
              quieter scheduler — that is the starvation this issue explicitly refused"
         );
+    }
+
+    /// #7065 — a history fork fails the same way at every retry, and the whole
+    /// snapshot crosses again for each, so the peer waits for a press on Sync
+    /// or a pairing act. Any other failure is dialled again once its backoff
+    /// has run out.
+    #[test]
+    fn a_fork_coded_failure_holds_the_peer_and_any_other_is_retried_7065() {
+        let refs = vec![responder_only_ref(None)];
+        let due = vec![RESPONDER_ONLY_PEER.to_string()];
+        let once_the_backoff_has_run_out_after = |code: Option<SyncErrorCode>| {
+            let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+            let scheduler = SyncScheduler::new();
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                "Sync failed: the session ended".into(),
+                code.map(ReportAs::Code),
+            );
+            scheduler.expire_backoff(RESPONDER_ONLY_PEER);
+            scheduler
+        };
+
+        for fork in [
+            SyncErrorCode::OwnHistoryFork,
+            SyncErrorCode::PeerHistoryFork,
+        ] {
+            let scheduler = once_the_backoff_has_run_out_after(Some(fork));
+            assert!(
+                !scheduler.may_retry(RESPONDER_ONLY_PEER),
+                "{fork:?}: no backoff retry"
+            );
+            assert_eq!(
+                scheduler.peers_due_for_resync(&refs),
+                Vec::<String>::new(),
+                "{fork:?}: nor the resync tick"
+            );
+            scheduler.clear_peer_backoff(RESPONDER_ONLY_PEER);
+            assert_eq!(
+                scheduler.peers_due_for_resync(&refs),
+                due,
+                "{fork:?}: a press on Sync dials it"
+            );
+
+            let scheduler = once_the_backoff_has_run_out_after(Some(fork));
+            scheduler.clear_backoff();
+            assert_eq!(
+                scheduler.peers_due_for_resync(&refs),
+                due,
+                "{fork:?}: a pairing act dials it"
+            );
+        }
+        for other in [
+            None,
+            Some(SyncErrorCode::HandshakeUnanswered),
+            Some(SyncErrorCode::PeerAway),
+        ] {
+            assert_eq!(
+                once_the_backoff_has_run_out_after(other).peers_due_for_resync(&refs),
+                due,
+                "{other:?}: dialled again once its backoff has run out"
+            );
+        }
     }
 
     /// The suppression is keyed on the failure *text*, not on the peer's streak

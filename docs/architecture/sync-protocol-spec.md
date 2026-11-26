@@ -375,7 +375,11 @@ Both funnel into the single `ResetRequired` → snapshot-catch-up recovery
 path. The catch-up does not heal own-lineage loss on a device whose engine
 still holds ops of its own: the snapshot then forks its `(peer, counter)` space,
 `apply_remote`'s guard turns it away (#792), and the session fails with
-`code: "own_history_fork"` (#6523). #2502 retired the previous op-log-`(device_id, seq)` reset lookup
+`code: "own_history_fork"` (#6523). A peer dialling that device is offered a
+snapshot that reuses op ids it holds with other content; Loro refuses the
+import and its session fails with `code: "peer_history_fork"` (#7065). After
+either failure the daemon dials that peer again only on a press on Sync, a
+pairing act or a restart, not on its backoff or its resync tick. #2502 retired the previous op-log-`(device_id, seq)` reset lookup
 entirely (it conflated the audit cursor with state causality and produced
 the #602 forever-backoff bug); `heads` retains one surviving,
 non-decision job — remote-device identification. The defensive
