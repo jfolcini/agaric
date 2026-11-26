@@ -79,9 +79,16 @@ interface Drop {
 
 /**
  * Where a row or column dragged to (`x`, `y`) would land: the one whose box is nearest
- * along the drag's axis. Rows stay below the header.
+ * along the drag's axis. Rows stay below the header. `rtl` is the layout's.
  */
-function dropAt(editor: Editor, at: TableCaret, axis: Axis, x: number, y: number): Drop | null {
+function dropAt(
+  editor: Editor,
+  at: TableCaret,
+  axis: Axis,
+  rtl: boolean,
+  x: number,
+  y: number,
+): Drop | null {
   const table = tableElement(editor, at)
   if (table === null) return null
   const tableBox = table.getBoundingClientRect()
@@ -119,7 +126,7 @@ function dropAt(editor: Editor, at: TableCaret, axis: Axis, x: number, y: number
           }
         : {
             // After is further left in a right-to-left table (#7040).
-            left: after !== (getComputedStyle(table).direction === 'rtl') ? box.right : box.left,
+            left: after !== rtl ? box.right : box.left,
             top: tableBox.top,
             width: 0,
             height: tableBox.height,
@@ -192,7 +199,9 @@ export function TableHandles({ editor }: { editor: Editor }): React.ReactElement
       p.dragging = true
       // The header row never moves (`moveTableRowTo`), so it shows nowhere to land.
       setDrop(
-        axis === 'row' && at.row === 0 ? null : dropAt(editor, at, axis, e.clientX, e.clientY),
+        axis === 'row' && at.row === 0
+          ? null
+          : dropAt(editor, at, axis, layout.rtl, e.clientX, e.clientY),
       )
     },
     onPointerUp: (e) => {
@@ -204,7 +213,7 @@ export function TableHandles({ editor }: { editor: Editor }): React.ReactElement
         toggle(axis)
         return
       }
-      const target = dropAt(editor, at, axis, e.clientX, e.clientY)
+      const target = dropAt(editor, at, axis, layout.rtl, e.clientX, e.clientY)
       if (target !== null) move(axis, target.index)
     },
     onPointerCancel: () => {
