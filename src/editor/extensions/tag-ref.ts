@@ -82,6 +82,8 @@ export const TagRef = Node.create<TagRefOptions>({
     const { options } = this
     return ({ node }) => {
       const dom = document.createElement('span')
+      // Its own direction, so its name does not decide the block's (#7040).
+      dom.dir = 'auto'
       let currentId = node.attrs['id'] as string
 
       function render(tagId: string) {

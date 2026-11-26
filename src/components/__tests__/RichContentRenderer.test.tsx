@@ -267,13 +267,16 @@ describe('RichContentRenderer', () => {
     const { container } = render(renderRichContent(md, {}))
     const columns = (selector: string) =>
       Array.from(container.querySelectorAll(selector), (cell) =>
-        ['text-left', 'text-right', 'text-center'].filter((c) => cell.classList.contains(c)),
+        ['text-left', 'text-right', 'text-center', 'text-start'].filter((c) =>
+          cell.classList.contains(c),
+        ),
       )
+    // A header with no alignment starts where its column's text does (#7040).
     expect(columns('thead th')).toEqual([
       ['text-left'],
       ['text-right'],
       ['text-center'],
-      ['text-left'],
+      ['text-start'],
     ])
     expect(columns('tbody td')).toEqual([['text-left'], ['text-right'], ['text-center'], []])
   })
