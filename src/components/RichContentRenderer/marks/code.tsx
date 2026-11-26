@@ -353,7 +353,7 @@ export function renderCodeBlock(block: CodeBlockNode, key: string): React.ReactE
   const language = block.attrs?.language ?? ''
   if (language === 'mermaid') return renderMermaidBlock(code, key)
   return (
-    <ScrollArea key={key} className="bg-muted rounded-md text-sm font-mono">
+    <ScrollArea key={key} className="bg-muted rounded-md text-block-sm font-mono">
       <pre className="px-3 py-2">
         <code className={language ? `language-${language} hljs` : 'hljs'}>
           <HighlightedCode code={code} language={language} keyPrefix={`${key}-code`} />
