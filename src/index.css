@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'highlight.js/styles/github.css';
+/* The docs quote class strings; scanned, they ship as rules nothing uses. */
+@source not '../docs';
 
 @custom-variant dark (&:is(.dark *));
 /* Touch layout as the platform decides it (`detectTouch`, `src/lib/touch.ts`,
@@ -3034,6 +3036,13 @@ mark[data-highlight-color='purple'] {
  * Radix overlays' entry and exit). Without a duration class those take `--duration-normal`, and a
  * bare `transition-*` takes it through `--default-transition-duration`: Tailwind's and
  * tw-animate's fixed 150ms would ignore Settings › Appearance › Animations. */
+/* Tailwind registers this only while one of its own `duration-*` classes is in use, and the app
+ * uses none: unregistered, a token utility's duration inherits into every transition inside it
+ * (the sidebar's `duration-moderate` slowed its buttons' hover). */
+@property --tw-duration {
+  syntax: '*';
+  inherits: false;
+}
 @layer base {
   /* The classes come with a variant too (`data-[state=open]:animate-in`). */
   [class*='animate-in'],
