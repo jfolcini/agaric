@@ -272,13 +272,13 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
   }) => {
     const row = page.locator('.journal-day-page > div').first()
     const day = page.locator(`.journal-day-page ${EDITOR}`)
-    await expect(row.getByRole('button', { name: 'Delete page' })).toBeVisible()
-    // Bookmark, delete and Page actions: every top within a few px.
+    await expect(row.getByRole('button', { name: 'Page actions', exact: true })).toBeVisible()
+    // Bookmark and Page actions (Delete sits in the menu): every top within a few px.
     const tops = await row
       .locator('button')
       .evaluateAll((buttons) => buttons.map((b) => Math.round(b.getBoundingClientRect().top)))
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(4)
-    expect(tops).toHaveLength(3)
+    expect(tops).toHaveLength(2)
     await expect(page.getByRole('radiogroup', { name: 'Editing mode' })).toHaveCount(0)
 
     await pageAction(page, 'Edit as page')
@@ -288,7 +288,7 @@ test.describe('page mode on a touch phone (#5691) @editor @pages @mobile', () =>
 
     await row.getByRole('button', { name: 'Page actions', exact: true }).tap()
     const menu = page.getByRole('menu', { name: 'Page actions' })
-    await expect(menu.getByRole('menuitem')).toHaveText(['Edit as blocks'])
+    await expect(menu.getByRole('menuitem')).toHaveText(['Edit as blocks', 'Delete page'])
     await menu.getByRole('menuitem', { name: 'Edit as blocks' }).tap()
     await expect(day).toHaveCount(0)
     await expect(
