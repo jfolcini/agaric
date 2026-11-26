@@ -30,3 +30,14 @@ test('Settings › Properties keeps the new property name readable @settings', a
   })
   expect(room.inner).toBeGreaterThanOrEqual(room.needed)
 })
+
+test('Settings › Properties keeps the select options box usable @settings', async ({ page }) => {
+  await navigateToView(page, 'Settings')
+  await openSettingsTab(page, 'Properties')
+  await page.getByRole('combobox', { name: 'Type', exact: true }).click()
+  await page.getByRole('option', { name: 'select', exact: true }).click()
+
+  const box = await page.getByRole('textbox', { name: 'Options, comma-separated' }).boundingBox()
+  // 12rem, the floor the row wraps at.
+  expect(box?.width).toBeGreaterThanOrEqual(192)
+})
