@@ -16,9 +16,9 @@
  *     mounted by `AttachmentRenderer` when a block has an image attachment.
  *
  * Toolbar accessible names (from `toolbar.ts`):
- *   Block reference | Cycle priority | Set due date | Set scheduled date |
- *   Toggle TODO state | Properties | Heading level |
- *   Code block language | Insert table | Table.
+ *   Cycle priority | Date, whose menu holds Set due date and Set scheduled date |
+ *   Toggle TODO state | Properties | Heading level | Code block language | Table;
+ *   in More, Block reference and Insert table.
  *
  * Char-0 footgun: any selection-based action marks a MIDDLE word so the
  * char-0 hover-action-column doesn't intercept the pointer (per harness note).
@@ -48,9 +48,18 @@ import {
 
 const BLOCK_GS_1 = '0000000000000000000B10CK01'
 
+/** Press `name` in the toolbar's More, where the rarer inserts are. */
+async function pressInMore(page: Page, name: string): Promise<void> {
+  await page
+    .getByTestId('formatting-toolbar')
+    .getByRole('button', { name: 'More', exact: true })
+    .click()
+  await page.getByTestId('toolbar-overflow-menu').getByRole('button', { name, exact: true }).click()
+}
+
 /** Insert a 3×3 table via the toolbar grid picker and leave the cursor in it. */
 async function insertTableViaPicker(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Insert table' }).click()
+  await pressInMore(page, 'Insert table')
   const picker = page.getByTestId('table-picker')
   await expect(picker).toBeVisible()
   // table-cell-<r>-<c> is 1-based; cell 3-3 selects a 3×3 grid.
@@ -68,11 +77,11 @@ test.describe('Always-visible toolbar buttons (#1170) @editor', () => {
     await openPage(page, 'Getting Started')
   })
 
-  test('Block reference button opens the (( picker', async ({ page }) => {
+  test('Block reference in More opens the (( picker', async ({ page }) => {
     const editor = await focusBlock(page)
     // No selection → the button inserts `((`, opening the BlockRefPicker.
     await page.keyboard.press('End')
-    await page.getByRole('button', { name: 'Block reference' }).click()
+    await pressInMore(page, 'Block reference')
     await expect(page.locator('[data-testid="suggestion-popup"]').last()).toBeVisible({
       timeout: 5000,
     })
@@ -89,9 +98,13 @@ test.describe('Always-visible toolbar buttons (#1170) @editor', () => {
     await expect(badge).toHaveText('P1')
   })
 
-  test('Set due date button opens the date picker', async ({ page }) => {
+  test('Set due date in the Date menu opens the date picker', async ({ page }) => {
     await focusBlock(page)
-    await page.getByRole('button', { name: 'Set due date' }).click()
+    await page.getByRole('button', { name: 'Date', exact: true }).click()
+    await page
+      .getByTestId('toolbar-date-menu')
+      .getByRole('button', { name: 'Set due date' })
+      .click()
     // Due / scheduled / insert all open the same BlockDatePicker dialog.
     await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
   })
@@ -244,6 +257,36 @@ test.describe('Secondary selector popovers (#1170) @editor', () => {
       .locator('[data-testid="block-static"]')
     await expect(reopened.locator('table')).toBeVisible()
     await expect(reopened.locator('table tr').first().locator('th, td')).toHaveCount(3)
+  })
+})
+
+test.describe('the rarer inserts @editor', () => {
+  test('at 1440 px they are in More, whose Insert table inserts a table', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+
+    const more = page
+      .getByTestId('formatting-toolbar')
+      .getByRole('button', { name: 'More', exact: true })
+    await expect(more).toBeVisible()
+    await more.click()
+    const menu = page.getByTestId('toolbar-overflow-menu')
+    await expect(menu).toBeVisible()
+    expect(
+      await menu
+        .getByRole('button')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('aria-label'))),
+    ).toEqual(['Block reference', 'Insert query', 'Emoji', 'New line', 'Insert table'])
+
+    await menu.getByRole('button', { name: 'Insert table', exact: true }).click()
+    await page.getByTestId('table-picker').getByTestId('table-cell-2-2').click()
+    const table = page.locator('[data-testid="block-editor"] table')
+    await expect(table.locator('tr')).toHaveCount(2)
+    await expect(table.locator('tr').first().locator('th, td')).toHaveCount(2)
   })
 })
 

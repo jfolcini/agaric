@@ -184,6 +184,7 @@ describe('PageToolbar', () => {
     act(() => caret(ed, 2, 1))
     press(button(t('toolbar.cyclePriority')))
     press(button(t('toolbar.properties')))
+    press(button(t('toolbar.date')))
     press(button(t('toolbar.setDueDate')))
     expect(actions.cyclePriority).toHaveBeenCalledWith(C)
     expect(actions.openPropertyDrawer).toHaveBeenCalledWith(C)

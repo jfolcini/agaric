@@ -326,14 +326,15 @@ export function createIndentButtons(
   ]
 }
 
-export function createMetadataButtons(): ToolbarButtonConfig[] {
+/**
+ * The Date menu's rows (`renderDateMenu`): one toolbar button for the three. The
+ * menu ranks as its rows do. Each row has a slash twin (`/date`, `/due`,
+ * `/scheduled`), so it is long-tail on the bar (#265): the TODO toggle (80) and
+ * priority cycle (75) outlast it.
+ */
+export function createDateButtons(): ToolbarButtonConfig[] {
   return [
     {
-      // #265 — the three date pickers (insert / due / scheduled) all have
-      // slash twins (`/date`, `/due`, `/scheduled`) and are long-tail on the
-      // standing bar. Demoted (70 → 40) toward the overflow popover so the
-      // high-frequency TODO toggle (80) and priority cycle (75) keep their
-      // place; the dates remain reachable via slash + overflow.
       icon: CalendarDays,
       label: 'toolbar.insertDate',
       tip: 'toolbar.insertDateTip',
@@ -354,6 +355,12 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
       priority: 40,
       action: () => dispatchBlockCommand('OPEN_SCHEDULED_DATE_PICKER'),
     },
+  ]
+}
+
+/** The Task group's state toggle, which leads it. */
+export function createTaskButtons(): ToolbarButtonConfig[] {
+  return [
     {
       icon: CheckSquare,
       label: 'toolbar.todoToggle',
@@ -361,6 +368,12 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
       priority: 80,
       action: () => dispatchBlockCommand('TOGGLE_TODO_STATE'),
     },
+  ]
+}
+
+/** The Task group's last button, after the Date menu. */
+export function createMetadataButtons(): ToolbarButtonConfig[] {
+  return [
     {
       icon: Settings2,
       label: 'toolbar.properties',

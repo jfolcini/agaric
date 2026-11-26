@@ -122,8 +122,14 @@ export const toolbar: Record<string, string> = {
   'toolbar.noLanguageMatch': 'No languages match',
   'toolbar.useCustomLanguage': 'Use "{{language}}"',
 
-  // Translators: FormattingToolbar button that opens the menu of buttons that did not fit
-  // (screen-reader label and tooltip). "More" must be short.
+  // Translators: FormattingToolbar button that opens a menu of Insert date, Set due date and Set
+  // scheduled date (screen-reader label and the menu's title, then its tooltip). "Date" must be
+  // short.
+  'toolbar.date': 'Date',
+  'toolbar.dateTip': 'Insert a date, or set the due or scheduled date',
+
+  // Translators: FormattingToolbar button that opens the menu of the rarer inserts and of the
+  // buttons that did not fit (screen-reader label and tooltip). "More" must be short.
   'toolbar.more': 'More',
   'toolbar.moreTip': 'More toolbar actions',
 

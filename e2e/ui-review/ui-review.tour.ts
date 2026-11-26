@@ -319,16 +319,18 @@ async function editor({ page, profile, shot }: Scene): Promise<void> {
       await page.keyboard.press('Control+Home')
       await page.keyboard.press('Shift+End')
     })
-    await shot('date-picker', async () => {
+    await shot('toolbar-more', async () => {
       await focusBlock(page, 2)
-      const direct = toolbar.getByRole('button', { name: 'Set due date' })
-      if (await direct.isVisible()) {
-        await direct.click()
-        return
-      }
-      await toolbar.getByRole('button', { name: 'More' }).click()
-      await overflow.getByRole('button', { name: 'Set due date' }).click()
+      await toolbar.getByRole('button', { name: 'More', exact: true }).click()
     })
+    await dismiss(page)
+    await shot('toolbar-date-menu', async () => {
+      await focusBlock(page, 2)
+      await toolbar.getByRole('button', { name: 'Date', exact: true }).click()
+    })
+    await shot('date-picker', () =>
+      page.getByTestId('toolbar-date-menu').getByRole('button', { name: 'Set due date' }).click(),
+    )
   }
   await dismiss(page)
   await shot('slash-menu', () => typeInNewBlock(page, '/'))

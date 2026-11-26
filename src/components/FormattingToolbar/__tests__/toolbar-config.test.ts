@@ -16,9 +16,11 @@ import {
   CODE_LANGUAGES,
   createHistoryButtons,
   createMarkToggles,
+  createDateButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
+  createTaskButtons,
   LANG_SHORT,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
@@ -391,56 +393,58 @@ describe('createStructureButtons', () => {
 
   it('New line outranks the long-tail inserts so it stays on a phone-width bar', () => {
     const [newLine] = createStructureButtons(makeEditor())
-    const longTail = Math.max(...createMetadataButtons().map((b) => b.priority ?? 0))
+    const longTail = Math.max(
+      ...[...createDateButtons(), ...createMetadataButtons()].map((b) => b.priority ?? 0),
+    )
     expect(newLine?.priority ?? 0).toBeGreaterThan(longTail)
   })
 })
 
-// ── createMetadataButtons ───────────────────────────────────────────────
+// ── createTaskButtons / createDateButtons / createMetadataButtons ───────
 
-describe('createMetadataButtons', () => {
-  it('returns 5 buttons', () => {
-    const buttons = createMetadataButtons()
-    expect(buttons).toHaveLength(5)
-  })
-
+describe('the Task group configs', () => {
   it('each button has valid config shape', () => {
-    const buttons = createMetadataButtons()
-    for (const btn of buttons) {
+    for (const btn of [
+      ...createTaskButtons(),
+      ...createDateButtons(),
+      ...createMetadataButtons(),
+    ]) {
       assertValidConfig(btn)
     }
   })
 
-  it('includes insertDate, setDueDate, setScheduledDate, todoToggle, properties', () => {
-    const buttons = createMetadataButtons()
-    const labels = buttons.map((b) => b.label)
-    expect(labels).toEqual([
+  it('the state toggle, the Date menu’s rows, then Properties', () => {
+    expect(createTaskButtons().map((b) => b.label)).toEqual(['toolbar.todoToggle'])
+    expect(createDateButtons().map((b) => b.label)).toEqual([
       'toolbar.insertDate',
       'toolbar.setDueDate',
       'toolbar.setScheduledDate',
-      'toolbar.todoToggle',
-      'toolbar.properties',
     ])
+    expect(createMetadataButtons().map((b) => b.label)).toEqual(['toolbar.properties'])
   })
 
   // #265 — the three date pickers have `/date`, `/due`, `/scheduled` slash
   // twins (their canonical home), so they are demoted below the
   // high-frequency TODO toggle and drop into the overflow popover first.
   it('demotes the three date pickers below the TODO toggle so they overflow first (#265)', () => {
-    const byLabel = Object.fromEntries(createMetadataButtons().map((b) => [b.label, b]))
-    const todo = byLabel['toolbar.todoToggle']?.priority ?? 0
-    for (const label of ['toolbar.insertDate', 'toolbar.setDueDate', 'toolbar.setScheduledDate']) {
-      expect(byLabel[label]?.priority ?? 0).toBeLessThan(todo)
+    const todo = createTaskButtons()[0]?.priority ?? 0
+    for (const date of createDateButtons()) {
+      expect(date.priority ?? 0).toBeLessThan(todo)
     }
   })
 
-  it('actions dispatch block events', () => {
+  it.each([
+    ['toolbar.insertDate', 'open-date-picker'],
+    ['toolbar.setDueDate', 'open-due-date-picker'],
+    ['toolbar.setScheduledDate', 'open-scheduled-date-picker'],
+  ])('%s dispatches %s', (label, event) => {
     const spy = vi.fn()
-    document.addEventListener('open-date-picker', spy)
-    const buttons = createMetadataButtons()
-    buttons[0]?.action()
+    document.addEventListener(event, spy)
+    createDateButtons()
+      .find((b) => b.label === label)
+      ?.action()
     expect(spy).toHaveBeenCalledOnce()
-    document.removeEventListener('open-date-picker', spy)
+    document.removeEventListener(event, spy)
   })
 })
 
