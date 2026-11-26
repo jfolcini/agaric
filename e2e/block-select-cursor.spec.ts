@@ -25,11 +25,12 @@ const announcer = (page: Page) => page.locator('#sr-announcer')
 const selectBox = (page: Page, id: string) =>
   row(page, id).getByRole('checkbox', { name: 'Select block' })
 
-/** The cursor row holds focus and paints the 3px focus ring; the row it left does not. */
+/** The cursor row holds focus and rings its content in 3px; the row it left does not. */
 async function expectCursorOn(page: Page, id: string, previous: string): Promise<void> {
   await expect(row(page, id)).toBeFocused()
-  await expect(row(page, id)).toHaveCSS('box-shadow', /0px 0px 0px 3px/)
-  await expect(row(page, previous)).toHaveCSS('box-shadow', 'none')
+  const content = (blockId: string) => row(page, blockId).getByTestId('block-content')
+  await expect(content(id)).toHaveCSS('box-shadow', /0px 0px 0px 3px/)
+  await expect(content(previous)).toHaveCSS('box-shadow', 'none')
 }
 
 test.describe('Block-select cursor (#5734) @editor', () => {
