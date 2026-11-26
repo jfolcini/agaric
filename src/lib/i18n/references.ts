@@ -965,17 +965,8 @@ export const references: Record<string, string> = {
   'palette.moreInThisPage_one': '+{{count}} more in this page',
   'palette.moreInThisPage_other': '+{{count}} more in this page',
 
-  // Multi-mode palette (search + commands).
-  //
-  // `palette.empty` was the catch-all for both the cold-
-  // open welcome state and "no results for typed query". Split into
-  // `palette.welcomeEmpty` (no query, no recents) + `palette.noResults`
-  // (non-empty query, zero matches) so each surface carries the right
-  // copy.
-  // Translators: Command palette: shown when opened with no input, and when nothing matches
-  // ({{query}}; "the escalation below" is the row that searches all pages). [[ and > are typed
-  // characters: keep them.
-  'palette.welcomeEmpty': 'Type to search pages, blocks, or [[ to link. Press > for commands.',
+  // Translators: Command palette: shown when nothing matches ({{query}}; "the escalation below" is
+  // the row that searches all pages).
   'palette.noResults': 'No matches for “{{query}}”. Try the escalation below.',
 
   // Footer hint split into per-chord strings so each
@@ -1056,11 +1047,11 @@ export const references: Record<string, string> = {
   'palette.modeHelp': 'Help',
 
   // Compact hint showing the prefix vocabulary on the search-mode chip
-  // row. With three prefixes the long form ("Type > for commands")
+  // row. With four prefixes the long form ("Type > for commands")
   // doesn't fit; we abbreviate to the glyphs.
-  // Translators: Command palette header hint. >, # and ? are typed prefix characters: keep them;
-  // the words must stay very short.
-  'palette.modeHint': '> commands · # tags · ? help',
+  // Translators: Command palette header hint. >, #, ? and [[ are typed prefix characters: keep
+  // them; the words must stay very short ("link" = link to a page).
+  'palette.modeHint': '> commands · # tags · ? help · [[ link',
 
   // Hint shown when the user is INSIDE a non-search mode — the chip
   // is the way back.

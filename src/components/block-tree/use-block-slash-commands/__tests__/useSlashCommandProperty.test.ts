@@ -555,8 +555,8 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
 describe('useSlashCommandProperty — attach', () => {
   // Helper: intercept the hidden file <input> the attach handler creates so we
   // can drive its `onchange` with a synthetic File. Returns a getter for the
-  // captured input (populated once the handler runs).
-  function interceptFileInput(): { get: () => HTMLInputElement | null; restore: () => void } {
+  // captured input, which throws until the handler has created one.
+  function interceptFileInput(): { get: () => HTMLInputElement; restore: () => void } {
     let captured: HTMLInputElement | null = null
     const origCreateElement = (
       document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
@@ -571,7 +571,13 @@ describe('useSlashCommandProperty — attach', () => {
         }
         return el
       })
-    return { get: () => captured, restore: () => spy.mockRestore() }
+    return {
+      get: () => {
+        if (!captured) throw new Error('the attach handler created no file input')
+        return captured
+      },
+      restore: () => spy.mockRestore(),
+    }
   }
 
   /** Picks `file` in the dialog `/attach` opens. */
@@ -582,11 +588,8 @@ describe('useSlashCommandProperty — attach', () => {
       const { ctx } = makeSyntheticCtx()
       await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
       const el = input.get()
-      expect(el).not.toBeNull()
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(el).not.toBeNull() above
-      Object.defineProperty(el!, 'files', { value: [file] })
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
-      el!.dispatchEvent(new Event('change'))
+      Object.defineProperty(el, 'files', { value: [file] })
+      el.dispatchEvent(new Event('change'))
     } finally {
       input.restore()
     }
@@ -648,10 +651,8 @@ describe('useSlashCommandProperty — attach', () => {
       const file = new File([new Uint8Array([0, 1])], 'evil.exe', {
         type: 'application/x-msdownload',
       })
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- input is created by the handler
-      Object.defineProperty(el!, 'files', { value: [file] })
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
-      el!.dispatchEvent(new Event('change'))
+      Object.defineProperty(el, 'files', { value: [file] })
+      el.dispatchEvent(new Event('change'))
 
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(

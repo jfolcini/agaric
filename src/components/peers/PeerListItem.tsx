@@ -269,6 +269,7 @@ export function PeerListItem({
           </span>
           <Popover
             open={addrOpen}
+            sheetTitle={t('device.editAddressTitle')}
             onOpenChange={(open) => {
               setAddrOpen(open)
               if (open) {

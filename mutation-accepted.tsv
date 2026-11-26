@@ -120,7 +120,6 @@ frontend	src/editor/page-mode/page-rendered.ts	StringLiteral	7	1	name: 'pageRend
 frontend	src/editor/page-mode/page-save.ts	ArrayDeclaration	27	1	const atDepth: string[] = []
 frontend	src/editor/page-mode/page-save.ts	ArrayDeclaration	28	1	const previous: number[] = []
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	18	1	const markdown = id === null ? undefined : content.get(id)
-frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	45	1	const restoreAt = creates.findIndex((op) => op.kind === 'restore')
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (anchor === null) return 0
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (at !== -1) children.splice(at, 1)
 frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (id !== null && markdown !== undefined) saved.set(id, { node, markdown })
@@ -229,13 +228,11 @@ frontend	src/lib/enex-import.ts	MethodExpression	5	1	if (texts.some((t) => t.len
 frontend	src/lib/enex-import.ts	OptionalChaining	12	1	} else if (first.parentElement?.localName !== 'thead') {
 frontend	src/lib/enex-import.ts	OptionalChaining	14	1	const mime = res.querySelector('mime')?.textContent?.trim() ?? 'application/octet-stream'
 frontend	src/lib/enex-import.ts	OptionalChaining	14	1	.map((el) => el.textContent?.trim() ?? '')
-frontend	src/lib/enex-import.ts	OptionalChaining	18	1	const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
 frontend	src/lib/enex-import.ts	Regex	13	1	candidate = /\.[^./\\]+$/.test(fileName) ? fileName : `${fileName}.${ext}`
 frontend	src/lib/enex-import.ts	Regex	21	1	return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
 frontend	src/lib/enex-import.ts	Regex	48	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
 # #4815 enex-import: Turndown's `addRule` never reads its key (`Rules.add` unshifts the rule alone), so the name changes nothing
 frontend	src/lib/enex-import.ts	StringLiteral	12	1	td.addRule('enmlTableCell', {
-frontend	src/lib/enex-import.ts	StringLiteral	15	1	headingStyle: 'atx',
 frontend	src/lib/enex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
 frontend	src/lib/enex-import.ts	StringLiteral	40	1	.map((el) => el.textContent?.trim() ?? '')
 frontend	src/lib/enex-import.ts	StringLiteral	56	1	(_match, index: string) => mediaRefs[Number(index)] ?? '',
@@ -285,8 +282,6 @@ frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (!md.includes(ATTA
 frontend	src/lib/export-graph.ts	LogicalOperator	5	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
 frontend	src/lib/export-graph.ts	Regex	29	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
 frontend	src/lib/export-graph.ts	StringLiteral	39	1	const id = parseAttachmentRef(m[3] ?? '')
-frontend	src/lib/export-graph.ts	StringLiteral	47	1	const safeName = sanitizeSegment(flatName) || 'attachment'
-frontend	src/lib/export-graph.ts	StringLiteral	61	1	const zipPath = disambiguate(titleToZipPath(page.content ?? 'Untitled'), page.id, seen)
 frontend	src/lib/graph-neighborhood.ts	ArrayDeclaration	24	1	const next: string[] = []
 frontend	src/lib/graph-neighborhood.ts	ConditionalExpression	37	1	for (let depth = 0; depth < hops && frontier.length > 0; depth++) {
 frontend	src/lib/graph-neighborhood.ts	ConditionalExpression	5	1	if (a !== b) set.add(b)
@@ -331,7 +326,6 @@ frontend	src/lib/jex-import.ts	StringLiteral	34	1	parentId: (props['parent_id'] 
 frontend	src/lib/jex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
 frontend	src/lib/jex-import.ts	StringLiteral	70	1	folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
 frontend	src/lib/search-query/classify-word.ts	ArrayDeclaration	44	1	const quotedOut: Array<[number, number]> = []
-frontend	src/lib/search-query/classify-word.ts	ConditionalExpression	5	1	if (tag) {
 frontend	src/lib/search-query/classify-word.ts	EqualityOperator	5	1	if (cursor < input.length) append(cursor, input.length)
 frontend	src/lib/search-query/classify-word.ts	EqualityOperator	5	1	if (q[1] <= to) {
 frontend	src/lib/search-query/classify-word.ts	EqualityOperator	8	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {

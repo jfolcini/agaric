@@ -852,10 +852,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
         icon: Tag,
       }))
 
-      // Prepend a create-new-tag option (`isCreate: true`, rendered by
-      // consumers via `t('pageHeader.createTag', { name })`) when the
-      // query doesn't exactly match an existing tag — this makes it the
-      // default selection so pressing Enter auto-creates the tag (F-26).
+      // Append a create-new-tag option (`isCreate: true`) when the query
+      // doesn't exactly match an existing tag. Last, as in the page picker:
+      // Enter on a partial match picks the existing tag rather than creating
+      // a near-duplicate (#7040).
       if (q.length > 0) {
         // Fold both sides so Turkish / German / accented tag
         // names match their ASCII-typed queries the same way as pages do.
@@ -863,7 +863,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         const exactMatch = tags.some((t) => foldForSearch(t.name) === qFolded)
         if (!exactMatch) {
           // #6278 I4 — the name `onCreateTag` creates, so the row shows it.
-          result.unshift({
+          result.push({
             id: '__create__',
             label: dashedTagName(query.replace(/\]+$/, '')),
             isCreate: true,

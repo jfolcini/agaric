@@ -3,12 +3,11 @@
 # every ~6-week Rust release land new lints (clippy runs with -D warnings)
 # and break all open PRs simultaneously, and makes release binaries
 # non-reproducible across time. rustup takes no hash, so an exact version is
-# the pin (AGENTS.md § Supply-chain pinning). Bump deliberately via PR,
-# keeping three places in lockstep:
-#   * this file
-#   * the `toolchain:` input on every `./.github/actions/rust-toolchain` step
-#     (.github/workflows/*.yml and .github/actions/toolchain)
-#   * `rust-version` in src-tauri/Cargo.toml (MSRV documentation)
+# the pin (AGENTS.md § Supply-chain pinning). Bump deliberately via PR with
+# `just pin-bump rust <version>`. The workflows read this channel through
+# `scripts/pins.sh github-output` (`steps.pins.outputs.rust`); the one copy
+# left to edit by hand is `rust-version` in each crate manifest (MSRV
+# documentation).
 channel = "1.100.0"
 # clippy + rustfmt are required by the prek hooks (`cargo clippy -- -D
 # warnings`, `cargo fmt --check`). With a floating `stable` they came along

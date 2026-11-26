@@ -697,9 +697,9 @@ describe('BlockTree picker wiring', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', expect.anything())
     expect(results).toEqual([
-      expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
       expect.objectContaining({ id: 'TAG_01', label: 'important' }),
       expect.objectContaining({ id: 'TAG_02', label: 'improvement' }),
+      expect.objectContaining({ id: '__create__', label: 'imp', isCreate: true }),
     ])
   })
 
@@ -2345,10 +2345,10 @@ describe('BlockTree priority slash commands', () => {
 
     const results = await capturedSearchSlashCommands?.('priority')
 
-    const labels = results?.map((r) => r.label) ?? []
-    expect(labels).toContain('PRIORITY 1 — Set high priority')
-    expect(labels).toContain('PRIORITY 2 — Set medium priority')
-    expect(labels).toContain('PRIORITY 3 — Set low priority')
+    const rows = results?.map((r) => [r.label, r.description]) ?? []
+    expect(rows).toContainEqual(['PRIORITY 1', 'Set high priority'])
+    expect(rows).toContainEqual(['PRIORITY 2', 'Set medium priority'])
+    expect(rows).toContainEqual(['PRIORITY 3', 'Set low priority'])
   })
 
   it('priority commands are not shown for empty query', async () => {
@@ -2545,11 +2545,11 @@ describe('BlockTree repeat slash commands', () => {
 
     const results = await capturedSearchSlashCommands?.('repeat')
 
-    const labels = results?.map((r) => r.label) ?? []
-    expect(labels).toContain('REPEAT DAILY — Every day')
-    expect(labels).toContain('REPEAT WEEKLY — Every week')
-    expect(labels).toContain('REPEAT MONTHLY — Every month')
-    expect(labels).toContain('REPEAT YEARLY — Every year')
+    const rows = results?.map((r) => [r.label, r.description]) ?? []
+    expect(rows).toContainEqual(['REPEAT DAILY', 'Every day'])
+    expect(rows).toContainEqual(['REPEAT WEEKLY', 'Every week'])
+    expect(rows).toContainEqual(['REPEAT MONTHLY', 'Every month'])
+    expect(rows).toContainEqual(['REPEAT YEARLY', 'Every year'])
   })
 
   it('repeat preset commands are not shown for empty query', async () => {
@@ -4793,6 +4793,28 @@ describe('BlockTree link/tag/code slash commands', () => {
 // =========================================================================
 
 describe('BlockTree /attach slash command', () => {
+  /** Captures the hidden file `<input>` `/attach` creates; the getter throws until it exists. */
+  function interceptFileInput(): () => HTMLInputElement {
+    let captured: HTMLInputElement | null = null
+    const origCreateElement = (
+      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
+    ).createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          captured = el as HTMLInputElement
+          vi.spyOn(captured, 'click').mockImplementation(() => {})
+        }
+        return el
+      },
+    )
+    return () => {
+      if (!captured) throw new Error('/attach created no file input')
+      return captured
+    }
+  }
+
   beforeEach(() => {
     mockedInvoke.mockReset()
     stubBlockTree()
@@ -4869,20 +4891,7 @@ describe('BlockTree /attach slash command', () => {
     })
 
     // Capture the file input so we can simulate file selection
-    let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = (
-      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
-    ).createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation(
-      (tag: string, options?: ElementCreationOptions) => {
-        const el = origCreateElement(tag, options)
-        if (tag === 'input') {
-          capturedInput = el as HTMLInputElement
-          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-        }
-        return el
-      },
-    )
+    const capturedInput = interceptFileInput()
 
     renderBlockTree()
 
@@ -4894,19 +4903,15 @@ describe('BlockTree /attach slash command', () => {
       capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
     })
 
-    expect(capturedInput).not.toBeNull()
-
     // The upload path now reads the file to bytes and ships them
     // over IPC; the browser file's absolute path is no longer used.
     const mockFile = new File([new Uint8Array([1, 2, 3, 4])], 'test.pdf', {
       type: 'application/pdf',
     })
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+    Object.defineProperty(capturedInput(), 'files', { value: [mockFile] })
 
     await act(async () => {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.dispatchEvent(new Event('change'))
+      capturedInput().dispatchEvent(new Event('change'))
     })
 
     // The file is encoded on a task `act` does not flush.
@@ -4929,20 +4934,7 @@ describe('BlockTree /attach slash command', () => {
 
     stubBlockTree()
 
-    let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = (
-      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
-    ).createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation(
-      (tag: string, options?: ElementCreationOptions) => {
-        const el = origCreateElement(tag, options)
-        if (tag === 'input') {
-          capturedInput = el as HTMLInputElement
-          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-        }
-        return el
-      },
-    )
+    const capturedInput = interceptFileInput()
 
     renderBlockTree()
 
@@ -4958,13 +4950,11 @@ describe('BlockTree /attach slash command', () => {
     const mockFile = new File([new Uint8Array([0, 1])], 'evil.exe', {
       type: 'application/x-msdownload',
     })
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+    Object.defineProperty(capturedInput(), 'files', { value: [mockFile] })
 
     const fileRead = vi.spyOn(FileReader.prototype, 'readAsDataURL')
     await act(async () => {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.dispatchEvent(new Event('change'))
+      capturedInput().dispatchEvent(new Event('change'))
     })
 
     // The upload itself runs past this point; the refusal shows in the file never being read.
@@ -4990,20 +4980,7 @@ describe('BlockTree /attach slash command', () => {
       }),
     })
 
-    let capturedInput: HTMLInputElement | null = null
-    const origCreateElement = (
-      document as { createElement(tag: string, options?: ElementCreationOptions): HTMLElement }
-    ).createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation(
-      (tag: string, options?: ElementCreationOptions) => {
-        const el = origCreateElement(tag, options)
-        if (tag === 'input') {
-          capturedInput = el as HTMLInputElement
-          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-        }
-        return el
-      },
-    )
+    const capturedInput = interceptFileInput()
 
     renderBlockTree()
 
@@ -5017,12 +4994,10 @@ describe('BlockTree /attach slash command', () => {
 
     // File with no type — guessMimeType should be used
     const mockFile = new File([new Uint8Array([9, 9, 9, 9])], 'photo.png', { type: '' })
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+    Object.defineProperty(capturedInput(), 'files', { value: [mockFile] })
 
     await act(async () => {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.dispatchEvent(new Event('change'))
+      capturedInput().dispatchEvent(new Event('change'))
     })
 
     // The file is encoded on a task `act` does not flush.

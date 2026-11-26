@@ -8,12 +8,19 @@
  * The `t('space.manage')` entry opens Settings › Spaces (#5362). The
  * MANAGE_SENTINEL value is short-circuited inside `handleValueChange`
  * so selecting it does not switch space.
+ *
+ * On a phone (`usePhoneLayout`) the list is a bottom-sheet menu (`MenuSheet`),
+ * as the other menus there are, with the same rows.
  */
 
-import { Plus } from 'lucide-react'
+import { ChevronDown, Plus } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
+import { MenuSheet } from '@/components/ui/menu-sheet'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import {
   Select,
   SelectContent,
@@ -22,8 +29,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useKeyboardHints } from '@/hooks/useKeyboardHints'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
@@ -74,6 +83,8 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace)
   const keyboardHints = useKeyboardHints()
+  const phoneLayout = usePhoneLayout()
+  const [sheetOpen, setSheetOpen] = useState(false)
 
   // Colour identity in the trigger. The dot inherits the
   // active space's accent so the user reads the same colour signal
@@ -89,6 +100,71 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
       return
     }
     setCurrentSpace(next)
+  }
+
+  const accentDot = activeSpace != null && (
+    <span
+      aria-hidden="true"
+      data-testid="space-switcher-accent-dot"
+      className="h-2 w-2 shrink-0 rounded-full"
+      style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
+    />
+  )
+
+  if (phoneLayout) {
+    const pick = (value: string) => {
+      setSheetOpen(false)
+      handleValueChange(value)
+    }
+    return (
+      <MenuSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        title={t('space.switch')}
+        trigger={
+          <SheetTrigger asChild>
+            <Button
+              variant="outline"
+              aria-label={t('space.switch')}
+              className="w-full justify-start px-3 text-sm font-medium"
+            >
+              {accentDot}
+              <span className="min-w-0 flex-1 truncate text-start">
+                {activeSpace?.name ?? t('space.switch')}
+              </span>
+              <ChevronDown className="size-4 shrink-0 opacity-50" aria-hidden="true" />
+            </Button>
+          </SheetTrigger>
+        }
+      >
+        <div className="flex flex-col gap-0.5">
+          {availableSpaces.map((space) => (
+            <PopoverMenuItem
+              key={space.id}
+              active={space.id === currentSpaceId}
+              aria-current={space.id === currentSpaceId ? 'true' : undefined}
+              onClick={() => pick(space.id)}
+            >
+              {space.name}
+            </PopoverMenuItem>
+          ))}
+          <hr className="my-1 h-px border-0 bg-border" />
+          {availableSpaces.length === 1 && (
+            <PopoverMenuItem
+              className="flex items-center gap-2 text-muted-foreground"
+              data-testid="single-space-create-hint"
+              onClick={() => pick(CREATE_SENTINEL)}
+            >
+              <Plus className="h-3 w-3" aria-hidden="true" />
+              {t('spaceSwitcher.createAnotherHint')}
+            </PopoverMenuItem>
+          )}
+          <PopoverMenuItem className="text-muted-foreground" onClick={() => pick(MANAGE_SENTINEL)}>
+            {t('space.manage')}
+          </PopoverMenuItem>
+        </div>
+      </MenuSheet>
+    )
   }
 
   return (
@@ -129,14 +205,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
                * The auto-mirror warning called out in the
                * comment below.
                */}
-              {activeSpace != null && (
-                <span
-                  aria-hidden="true"
-                  data-testid="space-switcher-accent-dot"
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
-                />
-              )}
+              {accentDot}
               {/*
                * Keep the digit-hint chip scoped to the
                * dropdown rows so it does not bleed into the trigger

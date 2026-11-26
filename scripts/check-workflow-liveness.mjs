@@ -53,8 +53,8 @@
 //
 // ─── Why the conclusion comes from the newest COMPLETED run ──────────────────
 //
-// The watchdog can overlap a watched run (`e2e-tauri-weekly` takes ~17 min and
-// can be delayed into any hour). The newest scheduled run may therefore be
+// The watchdog can overlap a watched run, which takes minutes and can be
+// delayed into any hour. The newest scheduled run may therefore be
 // `in_progress`, with `conclusion: null`. Treating that as a failure would red
 // the watchdog on healthy overlap; treating it as success would let a genuine
 // failure be masked by a later queued run. So the two questions read different

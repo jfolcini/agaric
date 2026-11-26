@@ -131,9 +131,7 @@ export function InPageReplaceRow({
         </TooltipContent>
       </Tooltip>
       {busy && <Spinner size="sm" label={t('findInPage.replacing')} />}
-      <span
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the toolbar's inline status spans are <span role="status">, as its counter
-        role="status"
+      <output
         aria-live="polite"
         data-testid="in-page-replace-status"
         className={cn(
@@ -142,7 +140,7 @@ export function InPageReplaceRow({
         )}
       >
         {note}
-      </span>
+      </output>
     </div>
   )
 }

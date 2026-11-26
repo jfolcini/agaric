@@ -292,6 +292,12 @@ export function useFilterAnnouncementSettle({
     const count = t('pageBrowser.filter.announceResults', { count: matchedPageCount })
     const prefix = filterAnnouncePrefixRef.current
     setFilterAnnouncement(prefix === '' ? count : `${prefix} ${count}`)
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- refs + the stable state setter are intentionally read without listing; the settle trigger is the loading/count change
-  }, [loading, matchedPageCount, t])
+  }, [
+    loading,
+    matchedPageCount,
+    t,
+    filterAnnouncePendingRef,
+    filterAnnouncePrefixRef,
+    setFilterAnnouncement,
+  ])
 }

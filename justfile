@@ -232,7 +232,7 @@ pin-sha256 +urls:
       echo "${sum%% *}  $url"
     done
 
-# Move a pin in pins.txt to <version> and recompute its sha256s from the new downloads (`node` bumps .nvmrc). Review the diff.
+# Move a pin in pins.txt to <version> and recompute its sha256s from the new downloads (a file pin rewrites its own file: `node` .nvmrc, `rust` rust-toolchain.toml, `npm` package.json, `code-review-graph` .mcp.json). Review the diff.
 [group('pins')]
 pin-bump name version:
     node scripts/pins.mjs bump {{ name }} {{ version }}

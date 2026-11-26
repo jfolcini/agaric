@@ -26,13 +26,14 @@ import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/i
 import { QuickCaptureDialog } from '@/components/dialogs/QuickCaptureDialog'
 import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+import { useKeyboardHints } from '@/hooks/useKeyboardHints'
 import {
   _resetGraphStructureEventsForTest,
   DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
+import { QUICK_CAPTURE_SHORTCUT_STORAGE_KEY } from '@/lib/quick-capture-shortcut'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
@@ -45,12 +46,12 @@ vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
-vi.mock('@/hooks/useShouldShowMobileChrome', () => ({
-  useShouldShowMobileChrome: vi.fn(() => false),
+vi.mock('@/hooks/useKeyboardHints', () => ({
+  useKeyboardHints: vi.fn(() => true),
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const mockedUseShouldShowMobileChrome = vi.mocked(useShouldShowMobileChrome)
+const mockedUseKeyboardHints = vi.mocked(useKeyboardHints)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
@@ -60,7 +61,7 @@ beforeEach(() => {
   _resetGraphStructureEventsForTest()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
-  mockedUseShouldShowMobileChrome.mockReturnValue(false)
+  mockedUseKeyboardHints.mockReturnValue(true)
   // QuickCaptureDialog reads `currentSpaceId` from
   // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
   // a fixed space so the IPC arg shape is deterministic.
@@ -331,12 +332,45 @@ describe('QuickCaptureDialog', () => {
     // #6520 — opened from the floating button, a phone has no key combination to press.
     it('names no key on a touch phone', () => {
       mockedUseIsMobile.mockReturnValue(true)
-      mockedUseShouldShowMobileChrome.mockReturnValue(true)
+      mockedUseKeyboardHints.mockReturnValue(false)
       render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
       const sheet = screen.getByTestId('quick-capture-dialog')
       expect(sheet).toHaveTextContent("today's journal")
       expect(sheet.textContent).not.toMatch(/Press|Ctrl|key combination/)
+      expect(sheet.querySelector('kbd')).toBeNull()
+    })
+
+    // #7040 — the description named "this key combination" and showed none.
+    it('names the key combination that opens it, as the user set it', () => {
+      localStorage.setItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY, 'CommandOrControl+Shift+Space')
+      try {
+        render(<QuickCaptureDialog open onOpenChange={() => {}} />)
+
+        const kbd = screen.getByTestId('quick-capture-dialog').querySelector('kbd')
+        expect(kbd).toHaveTextContent(/^Ctrl\+Shift\+Space$/)
+        expect(kbd?.closest('[data-slot="dialog-description"]')).toHaveTextContent(
+          t('quickCapture.descriptionShortcut').replace('<keys/>', 'Ctrl+Shift+Space'),
+        )
+      } finally {
+        localStorage.removeItem(QUICK_CAPTURE_SHORTCUT_STORAGE_KEY)
+      }
+    })
+
+    // A phone or tablet registers no system-wide shortcut, whatever keyboard it has.
+    it('names no key on a mobile platform with a hardware keyboard', () => {
+      const userAgent = vi
+        .spyOn(navigator, 'userAgent', 'get')
+        .mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 7) Mobile')
+      try {
+        render(<QuickCaptureDialog open onOpenChange={() => {}} />)
+
+        const dialog = screen.getByTestId('quick-capture-dialog')
+        expect(dialog.querySelector('kbd')).toBeNull()
+        expect(dialog).toHaveTextContent(t('quickCapture.descriptionTouch'))
+      } finally {
+        userAgent.mockRestore()
+      }
     })
   })
 })

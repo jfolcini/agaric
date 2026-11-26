@@ -114,8 +114,7 @@ export function usePageBrowserScrollRestoration({
         scrollSaveTimerRef.current = null
       }
     }
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `listRef` is a stable ref; re-attach only on storage-key (space) change
-  }, [scrollStorageKey])
+  }, [listRef, scrollStorageKey])
 
   // Clear saved offset when filter / sort / space changes — the saved
   // offset is keyed only by space, so a filter / sort change against the
@@ -131,6 +130,6 @@ export function usePageBrowserScrollRestoration({
     // restoration completes, any subsequent change clears.
     if (!restoredRef.current) return
     sessionStorage.removeItem(scrollStorageKey)
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, and the compound-filter set are the explicit triggers
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- filter, sort and compound-filter changes are the triggers; a space switch alone must not clear an offset
   }, [filterText, sortOption, wireFiltersKey])
 }

@@ -114,7 +114,7 @@ export function PageSourceChanges({ diff }: { diff: LineDiff }): React.ReactElem
               {segments.map((segment, j) =>
                 segment.changed ? (
                   <mark
-                    // oxlint-disable-next-line react/no-array-index-key -- a line's segments are rebuilt with it
+                    // oxlint-disable-next-line react/no-array-index-key -- a segment has no id and can repeat its text; segments are recomputed with their line, never reordered
                     key={j}
                     className={cn(
                       'rounded-sm text-inherit',
@@ -126,7 +126,7 @@ export function PageSourceChanges({ diff }: { diff: LineDiff }): React.ReactElem
                     {segment.text}
                   </mark>
                 ) : (
-                  // oxlint-disable-next-line react/no-array-index-key -- a line's segments are rebuilt with it
+                  // oxlint-disable-next-line react/no-array-index-key -- a segment has no id and can repeat its text; segments are recomputed with their line, never reordered
                   <span key={j}>{segment.text}</span>
                 ),
               )}

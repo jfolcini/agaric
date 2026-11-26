@@ -20,6 +20,9 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, blockTags, properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 
+const mockUsePhoneLayout = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: mockUsePhoneLayout }))
+
 const mockedInvoke = vi.mocked(invoke)
 
 /** The dialog the way BlockTree drives it: `onClose` clears the block id. */
@@ -83,6 +86,7 @@ async function dateInput(): Promise<HTMLInputElement> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockUsePhoneLayout.mockReturnValue(false)
   localStorage.clear()
   seedBlocks()
   useSpaceStore.setState({ currentSpaceId: SEED_IDS.SPACE_PERSONAL })
@@ -281,6 +285,16 @@ describe('MeetingDialog', () => {
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
     })
+  })
+
+  it('is a bottom sheet on a phone, its fields scrolling above its buttons', async () => {
+    mockUsePhoneLayout.mockReturnValue(true)
+    render(<Harness blockId={SEED_IDS.BLOCK_GS_1} />)
+    const sheet = await screen.findByTestId('meeting-dialog')
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    const body = sheet.querySelector('[data-slot="sheet-body"]')
+    expect(body).toContainElement(screen.getByLabelText(t('meeting.titleLabel')))
+    expect(body).not.toContainElement(screen.getByRole('button', { name: t('meeting.create') }))
   })
 })
 

@@ -746,7 +746,10 @@ export async function navigateToView(page: Page, view: string) {
     const more = page.getByTestId('page-browser-more')
     if (await more.isVisible()) {
       await more.click()
-      await activePopover(page).getByRole('button', { name: headerButtonName }).click()
+      await page
+        .getByTestId('saved-views-menu')
+        .getByRole('button', { name: headerButtonName })
+        .click()
       return
     }
     await page

@@ -62,17 +62,18 @@ retry() {
 # Everything below needs a Node that satisfies package.json's `engines.node`.
 # `.npmrc` sets engine-strict=true, so a mismatched node makes the very first
 # `npm ci` abort with EBADENGINE. Don't assume the caller's shell is already on
-# the right node: Claude's cloud VMs ship Node 20/21/22 (via nvm) by default,
-# so provision the version pinned in .nvmrc when the active one won't do.
+# the right node: Claude's cloud VMs ship Node 20/21/22 by default, none of
+# which satisfies it, so provision the version pinned in .nvmrc when the active
+# one won't do.
 #
 # The "is the active node good enough?" test reads `engines.node` from
 # package.json rather than comparing majors against .nvmrc. A major-only test
 # is wrong in BOTH directions now that the range is derived from the dependency
-# tree (`^22.23.4 || ^24.22.1 || >=26.12.1`, @wdio being the binding
-# constraint): it would skip provisioning on 24.0–24.22.0 — same major as .nvmrc,
-# but rejected by engine-strict, so `npm ci` fails immediately after the script
-# says the node is fine — and it would provision needlessly over a perfectly
-# supported 22.23.4+. Reading the range keeps this in lockstep with
+# tree (`^24.22.1 || >=26.12.1`, @wdio setting each line's floor): it would
+# skip provisioning on 24.0–24.22.0 — same major as .nvmrc, but rejected by
+# engine-strict, so `npm ci` fails immediately after the script says the node
+# is fine — and it would provision needlessly over a perfectly supported
+# 26.12.1+. Reading the range keeps this in lockstep with
 # package.json automatically when the range is next re-derived.
 #
 # This deliberately uses nvm over plain HTTPS — Node from nodejs.org, and (only
@@ -156,8 +157,8 @@ ensure_node() {
   # leave errexit disabled for the rest of the bootstrap. The script header pins
   # these three options, so re-asserting them literally is correct and clearer.
   set +e +u +o pipefail # relax: nvm trips errexit/nounset/pipefail
-  # nvm ships pre-installed on the cloud VMs; restore just nvm.sh over HTTPS if a
-  # box is missing it (never `git clone` — see note above).
+  # Some cloud VMs ship nvm and some do not; fetch just nvm.sh over HTTPS where
+  # it is missing (never `git clone` — see note above).
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
     echo "nvm not found — fetching nvm.sh over HTTPS…"
     mkdir -p "$NVM_DIR"

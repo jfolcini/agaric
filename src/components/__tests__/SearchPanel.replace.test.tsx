@@ -24,7 +24,9 @@ import { useSearchHistoryStore } from '@/stores/search-history'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
-vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+// A window, as the real virtualizer lays out: the refusals search `MAX_BATCH_BLOCK_IDS + 1`
+// blocks, and laying out a row for each is all their time.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 20 }))
 
 const mockedInvoke = vi.mocked(invoke)
 

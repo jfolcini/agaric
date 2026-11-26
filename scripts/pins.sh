@@ -9,7 +9,10 @@
 #   pins.sh platform                         this machine's platform key
 #   pins.sh github-output                    every version as `<name>=<version>`
 #                                            (dashes as underscores) into
-#                                            $GITHUB_OUTPUT, for `steps.pins.outputs`
+#                                            $GITHUB_OUTPUT, for `steps.pins.outputs`,
+#                                            plus `rust=` (rust-toolchain.toml's
+#                                            channel) and `node_floor=` (the first
+#                                            x.y.z of package.json's engines.node)
 #
 # Every lookup fails loudly for a name or platform pins.txt does not list.
 set -euo pipefail
@@ -36,6 +39,20 @@ pin_asset() {
   line="$(awk -v n="$1" -v p="$2" '$1 == "asset" && $2 == n && ($3 == p || $3 == "any") { print $4, $5; found = 1; exit } END { exit !found }' "$PINS_FILE")" \
     || die "no \`asset $1 $2\` line in $PINS_FILE"
   printf '%s\n' "${line//\{version\}/$version}"
+}
+
+# rust-toolchain.toml and package.json sit beside pins.txt.
+file_versions() {
+  local dir rust node_floor
+  dir="$(dirname "$PINS_FILE")"
+  rust="$(awk -F'"' '/^channel = "[^"]+"/ { print $2; found = 1; exit } END { exit !found }' "$dir/rust-toolchain.toml")" \
+    || die "no \`channel = \"<version>\"\` line in $dir/rust-toolchain.toml"
+  node_floor="$(awk '/"engines"/ { e = 1; next }
+    e && /"node":/ { if (match($0, /[0-9]+\.[0-9]+\.[0-9]+/)) { print substr($0, RSTART, RLENGTH); found = 1 }; exit }
+    e && /}/ { exit }
+    END { exit !found }' "$dir/package.json")" \
+    || die "no x.y.z in engines.node of $dir/package.json"
+  printf 'rust=%s\nnode_floor=%s\n' "$rust" "$node_floor"
 }
 
 pin_platform() {
@@ -83,7 +100,11 @@ case "${1:-}" in
   platform) pin_platform ;;
   github-output)
     : "${GITHUB_OUTPUT:?github-output runs inside a GitHub Actions step}"
-    awk '$1 == "version" { gsub(/-/, "_", $2); print $2 "=" $3 }' "$PINS_FILE" >>"$GITHUB_OUTPUT"
+    files="$(file_versions)"
+    {
+      awk '$1 == "version" { gsub(/-/, "_", $2); print $2 "=" $3 }' "$PINS_FILE"
+      printf '%s\n' "$files"
+    } >>"$GITHUB_OUTPUT"
     ;;
   *) die "usage: pins.sh version|asset|fetch|platform|github-output …" ;;
 esac

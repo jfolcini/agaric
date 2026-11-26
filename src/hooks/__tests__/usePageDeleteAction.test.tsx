@@ -17,6 +17,11 @@ import {
 } from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
+import {
+  _resetPrefetchPageSubtreeForTest,
+  consumePrefetchedPageSubtree,
+  prefetchPageSubtree,
+} from '@/lib/prefetch-page-subtree'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -429,6 +434,32 @@ describe('usePageDeleteAction', () => {
       lastUndoAction()()
     })
     await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+  })
+
+  // #5243 — hovering the Pages row parks the page's subtree; the delete's
+  // change-feed event lands only after the cache rebuild, so a recents click
+  // in between opened the trashed page from that pre-delete snapshot.
+  it('expires a subtree prefetched before the delete', async () => {
+    _resetPrefetchPageSubtreeForTest()
+    stubInvoke({
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 0,
+          affected_page_ids: ['PAGE_1'],
+        }),
+    })
+    prefetchPageSubtree('SPACE_A', 'PAGE_1')
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Doomed')
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    expect(consumePrefetchedPageSubtree('SPACE_A', 'PAGE_1')).toBeNull()
   })
 })
 
