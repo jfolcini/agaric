@@ -1,7 +1,9 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import {
   activeMenu,
+  attachFile,
   expect,
   navigateToView,
   openPage,
@@ -45,7 +47,31 @@ async function touchSizes(
   return { listRow, iconButton, menuRow }
 }
 
-test.describe('the desktop app with a coarse pointer @mobile @pages @editor', () => {
+/** A 1×1 PNG, enough for the browser to decode as an image. */
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+/**
+ * An image's resize hint and corner handle, which touch shows faintly at rest
+ * and a mouse only on hover (#7040, decision 44).
+ */
+async function imageCues(
+  page: Page,
+  open: (page: Page, title: string) => Promise<void>,
+): Promise<{ hint: Locator; handle: Locator }> {
+  await attachFile(page, SEED_IDS.BLOCK_GS_1, 'photo.png', 'image/png', PNG_1X1)
+  await open(page, 'Getting Started')
+  await expect(page.locator('img[alt="photo.png"]')).toBeVisible()
+  await page.mouse.move(0, 0)
+  return {
+    hint: page.getByTestId('image-resize-hint'),
+    handle: page.getByTestId('image-resize-handle'),
+  }
+}
+
+test.describe('the desktop app with a coarse pointer @mobile @pages @editor @attachments', () => {
   test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true })
 
   test.beforeEach(async ({ page }) => {
@@ -93,10 +119,17 @@ test.describe('the desktop app with a coarse pointer @mobile @pages @editor', ()
       menuRow: '0px',
     })
   })
+
+  test('keeps an image’s resize cues hidden at rest', async ({ page }) => {
+    await waitForBoot(page)
+    const { hint, handle } = await imageCues(page, openPage)
+    await expect(hint).toHaveCSS('opacity', '0')
+    await expect(handle).toHaveCSS('opacity', '0')
+  })
 })
 
 // The other arm: a browser on a touch phone still gets 44 px from the same classes.
-test.describe('a touch phone @mobile @pages @editor', () => {
+test.describe('a touch phone @mobile @pages @editor @attachments', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,
@@ -112,5 +145,12 @@ test.describe('a touch phone @mobile @pages @editor', () => {
       iconButton: '44px',
       menuRow: '44px',
     })
+  })
+
+  test('shows an image’s resize cues faintly at rest', async ({ page }) => {
+    await waitForBoot(page)
+    const { hint, handle } = await imageCues(page, openPageMobile)
+    await expect(hint).toHaveCSS('opacity', '0.5')
+    await expect(handle).toHaveCSS('opacity', '0.6')
   })
 })
