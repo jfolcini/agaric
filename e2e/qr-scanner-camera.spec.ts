@@ -21,10 +21,21 @@ import {
  * a real `getUserMedia` stream: Chromium's fake camera device, a 4:3 stream,
  * with the permission pre-granted.
  */
+// Merged into the config's launch options, which carry a cloud session's Chromium path.
 test.use({
-  launchOptions: {
-    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
-  },
+  launchOptions: [
+    async ({ launchOptions }, use) => {
+      await use({
+        ...launchOptions,
+        args: [
+          ...(launchOptions.args ?? []),
+          '--use-fake-device-for-media-stream',
+          '--use-fake-ui-for-media-stream',
+        ],
+      })
+    },
+    { scope: 'worker' },
+  ],
   permissions: ['camera'],
 })
 
