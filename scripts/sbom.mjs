@@ -23,6 +23,8 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const ROOT = resolve(import.meta.dirname, '..')
 export const PRODUCT = 'pkg:github/jfolcini/agaric'
 // Well under every target's real count (each compiles several hundred crates
@@ -248,7 +250,7 @@ if (isMainModule) {
   try {
     process.exit(main(process.argv.slice(2)))
   } catch (e) {
-    console.error(`sbom.mjs: ${e instanceof Error ? e.message : String(e)}`)
+    console.error(`sbom.mjs: ${errorMessage(e)}`)
     process.exit(1)
   }
 }

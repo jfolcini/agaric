@@ -105,7 +105,12 @@ void test('--cached outside a git repository fails closed instead of answering "
 // --- check-raw-tx.mjs end to end --------------------------------------------
 
 const SCRIPTS = join(import.meta.dirname, '..')
-const GUARD_FILES = ['check-raw-tx.mjs', 'lib/rust-scan.mjs', 'lib/guard-file-source.mjs']
+const GUARD_FILES = [
+  'check-raw-tx.mjs',
+  'lib/rust-scan.mjs',
+  'lib/guard-file-source.mjs',
+  'lib/error-message.mjs',
+]
 const RS = 'src-tauri/src/a.rs'
 const VIOLATION = 'fn f(pool: &Pool) { let _ = pool.begin_with("BEGIN IMMEDIATE"); }\n'
 const CLEAN = 'fn f() {}\n'

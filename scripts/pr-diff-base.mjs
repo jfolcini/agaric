@@ -55,6 +55,8 @@ import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 // 40 hex for SHA-1, optionally 24 more for a SHA-256 object-format repo.
 // Hard-coding 40 would throw "unexpected value" on a perfectly correct
 // merge base there, turning a supported repo layout into a hard failure.
@@ -114,7 +116,7 @@ export function resolveDiffBase({
     } catch (err) {
       throw new Error(
         `resolveDiffBase: '${remoteRef}' is not present locally and ` +
-          `\`git fetch --no-tags origin ${baseRef}\` failed: ${err instanceof Error ? err.message : String(err)}`,
+          `\`git fetch --no-tags origin ${baseRef}\` failed: ${errorMessage(err)}`,
         { cause: err },
       )
     }
@@ -140,7 +142,7 @@ export function resolveDiffBase({
       // distinguishes them.
       `resolveDiffBase: \`git merge-base ${remoteRef} ${head}\` failed. Either the two ` +
         `share no common ancestor in this checkout (a shallow fetch, or genuinely unrelated ` +
-        `histories), or one of them is not a valid revision here. git said: ${err instanceof Error ? err.message : String(err)}`,
+        `histories), or one of them is not a valid revision here. git said: ${errorMessage(err)}`,
       { cause: err },
     )
   }
@@ -206,7 +208,7 @@ if (isMainModule) {
     // `%` introduced by the CR/LF escapes below would itself be re-escaped.
     // A git error naming a path containing a literal `%` would otherwise
     // mangle the annotation — the same failure the newline escape prevents.
-    const annotated = (err instanceof Error ? err.message : String(err))
+    const annotated = errorMessage(err)
       .replace(/%/g, '%25')
       .replace(/\r/g, '%0D')
       .replace(/\n/g, '%0A')

@@ -19,6 +19,8 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 /**
  * The paths of two lockfile `packages` maps whose versions differ, as
  * `{ path, want, have }` with `null` for a side that lacks the path. The root
@@ -80,9 +82,7 @@ function main([mainRoot, worktree, ...rest]) {
     installed = readPackages(join(mainRoot, 'node_modules/.package-lock.json'))
     worktreeLock = readPackages(join(worktree, 'package-lock.json'))
   } catch (err) {
-    console.error(
-      `Cannot tell whether ${mainRoot}/node_modules is current: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error(`Cannot tell whether ${mainRoot}/node_modules is current: ${errorMessage(err)}`)
     console.error(npmCi)
     return 1
   }
