@@ -134,9 +134,10 @@ export const BlockGutterControls = React.memo(
 
     // Multi-select checkbox visibility (user feedback 2026-06-20): the checkbox
     // must NEVER reserve gutter space — multi-select is seldom used and the space
-    // is precious. On a fine pointer it hangs left of the lane, out of flow, so
-    // a selection moves no text (#6547: a lane holding it, the grip and the
-    // chevron outgrew its width). It is NOT in the DOM at all unless:
+    // is precious. On a fine pointer it takes the lane and the grip hangs left of
+    // it, out of flow, so a selection moves no text (#6547: a lane holding both
+    // outgrew its width) and the grip stays outermost (#7155 R1). It is NOT in
+    // the DOM at all unless:
     //   - this block is selected → forced visible, doubling as selection feedback;
     //   - a multi-selection is already active → hover-revealed on other rows so
     //     you can extend the selection by clicking their checkboxes.
@@ -149,12 +150,7 @@ export const BlockGutterControls = React.memo(
           <TooltipTrigger asChild>
             {/* The tooltip sits on a wrapper: on the Checkbox it would replace
                 the `data-state` the checked styles key on. */}
-            <span
-              className={cn(
-                'inline-flex flex-shrink-0',
-                !isTouch && 'absolute right-full top-1/2 -translate-y-1/2 mr-0.5',
-              )}
-            >
+            <span className="inline-flex flex-shrink-0">
               <Checkbox
                 checked={isSelected ?? false}
                 onCheckedChange={() => onSelect(blockId, 'toggle')}
@@ -194,7 +190,10 @@ export const BlockGutterControls = React.memo(
         // `group-focus-within` / `.block-active`.
         // #997: the drag handle stays text-only on hover (no `hover:bg-accent`)
         // — the grip reads as ambient chrome better without a hover plate.
-        className="drag-handle cursor-grab hover:text-foreground"
+        className={cn(
+          'drag-handle cursor-grab hover:text-foreground',
+          selectCheckbox && 'absolute right-full top-1/2 -translate-y-1/2 mr-0.5',
+        )}
         // B (#216): expose the keyboard-reorder shortcut to assistive tech.
         aria-keyshortcuts={t('block.reorderKeyshortcuts')}
         // Stable focus-fallback target for `BlockContextMenu`'s
@@ -229,15 +228,15 @@ export const BlockGutterControls = React.memo(
       )
     }
 
-    // ── Desktop render — checkbox (only while selecting) + drag handle ──
+    // ── Desktop render — drag handle + checkbox (only while selecting) ──
     // `selectCheckbox` is null unless a selection is active or this block is
     // selected, so at rest the gutter shows only the hover-revealed drag handle.
     // The handle survives selection mode so a multi-selection can still be
     // dragged to a new place (#914).
     return (
       <>
-        {selectCheckbox}
         {dragHandle}
+        {selectCheckbox}
       </>
     )
   },

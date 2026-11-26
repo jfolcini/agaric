@@ -3,6 +3,7 @@ import { devices, type Locator, type Page } from '@playwright/test'
 import {
   activeSheet,
   expect,
+  focusBlock,
   navigateMobile,
   openPageMobile,
   openSettingsTab,
@@ -147,6 +148,26 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
     expect(await checkboxEdges(page, 'Buy groceries')).toEqual({ left: GUTTER, clear: 4 })
     // Today's tint runs to the screen edge rather than stopping 4 px short of it.
     await expect.poll(async () => (await today.boundingBox())?.x, 'Today band left edge').toBe(0)
+  })
+
+  test("a focused task's editing frame keeps the same inset on both sides", async ({ page }) => {
+    await expect(block(page, 'Buy groceries')).toBeVisible()
+    await focusBlock(page, 2)
+    const row = page.locator('[data-testid="sortable-block"]', { hasText: 'Buy groceries' }).first()
+    const frame = row.getByTestId('block-frame')
+    await expect(frame).toHaveClass(/block-editing/)
+
+    const { left, right } = await frame.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      return { left: Math.round(r.left), right: Math.round(window.innerWidth - r.right) }
+    })
+    expect(left).toBeGreaterThan(0)
+    expect(left).toBe(right)
+    // The checkbox stays on the gutter while its frame moves.
+    const checkboxLeft = await row
+      .locator('.task-checkbox')
+      .evaluate((el) => Math.round(el.getBoundingClientRect().left))
+    expect(checkboxLeft).toBe(GUTTER)
   })
 
   test('a page: the title and block text share the gutter', async ({ page }) => {

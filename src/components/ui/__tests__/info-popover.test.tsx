@@ -66,6 +66,25 @@ describe('InfoPopover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  // A trigger stops its click, which Radix does not count as a press outside (#7155 R4).
+  it('closes the open one when another opens', async () => {
+    const user = userEvent.setup()
+    render(
+      <div>
+        <InfoPopover content="Should stay at zero.">Missed writes</InfoPopover>
+        <InfoPopover content="Since the app started.">Ops processed</InfoPopover>
+      </div>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Missed writes' }))
+    await screen.findByRole('dialog', { name: 'Missed writes' })
+    await user.click(screen.getByRole('button', { name: 'Ops processed' }))
+
+    await screen.findByRole('dialog', { name: 'Ops processed' })
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
+    expect(screen.queryByRole('dialog', { name: 'Missed writes' })).not.toBeInTheDocument()
+  })
+
   it('keeps presses on the trigger and inside the popover out of a clickable row', async () => {
     const user = userEvent.setup()
     const onRowClick = vi.fn()

@@ -268,7 +268,6 @@ export const references: Record<string, string> = {
   // and the popover's buttons and dimension dropdown.
   'graph.filter.addFilter': 'Add filter',
   'graph.filter.addFilterPopoverLabel': 'Add a graph filter',
-  'graph.filter.label': 'Filters',
   'graph.filter.noFilters': 'No filters applied',
   'graph.filter.clearAll': 'Clear all',
   'graph.filter.apply': 'Apply',

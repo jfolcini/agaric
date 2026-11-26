@@ -7,7 +7,7 @@
  * input.  Chips are editable via click (opens an inline popover).
  */
 
-import { Filter, Plus, X } from 'lucide-react'
+import { Filter, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -214,7 +214,7 @@ function AddFilterPopover({
           size="xs"
           aria-label={t('agendaFilter.addFilter')}
         >
-          <Plus className="h-3 w-3" />
+          <Filter className="h-3 w-3" />
           {t('agendaFilter.addFilter')}
         </Button>
       </PopoverTrigger>
@@ -405,8 +405,6 @@ export function AgendaFilterBuilder({
       {/* On touch a wrapped line sits far enough below the chips that its controls'
           44 px hit areas do not take the chips' lower edge. */}
       <div className="flex flex-wrap items-center gap-1.5 coarse:gap-y-4">
-        <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
             {filters.map((rawFilter, idx) => {
