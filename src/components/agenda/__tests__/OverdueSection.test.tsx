@@ -45,7 +45,7 @@ describe('OverdueSection', () => {
     render(<OverdueSection blocks={blocks} pageTitles={defaultTitles} />)
 
     expect(screen.getByText(t('duePanel.overdueTitle'))).toBeInTheDocument()
-    expect(screen.getByText('(2)')).toBeInTheDocument()
+    expect(screen.getByText('2')).toHaveAttribute('data-variant', 'metadata')
   })
 
   it('returns null when blocks array is empty', () => {

@@ -2,7 +2,7 @@
  * Tests for DonePanel component (#609).
  *
  * Validates:
- *  1. Renders with items showing count header ("3 Completed")
+ *  1. Renders with items showing count header ("Completed 3")
  *  2. Returns null / does not render when no items (totalCount 0)
  *  3. Groups by source page with page titles
  *  4. Sort blocks by ID descending within groups
@@ -162,6 +162,9 @@ beforeEach(() => {
   useResolveStore.setState({ cache: new Map(), version: 0 })
 })
 
+/** The panel header's accessible name: its label, then its count. */
+const doneHeader = (count: number) => `${t('donePanel.title')} ${count}`
+
 describe('DonePanel', () => {
   // #5415 — no active space: nothing is listed and nothing is dispatched.
   it('dispatches nothing and renders nothing while there is no active space', async () => {
@@ -174,10 +177,10 @@ describe('DonePanel', () => {
 
     expect(mockedQueryByProperty).not.toHaveBeenCalled()
     expect(mockedBatchResolve).not.toHaveBeenCalled()
-    expect(screen.queryByText(t('donePanel.header', { count: 0 }))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: doneHeader(0) })).not.toBeInTheDocument()
   })
 
-  // 1. Renders with items showing count header ("3 Completed")
+  // 1. Renders with items showing count header ("Completed 3")
   it('renders header with correct count', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' }), makeBlock({ id: 'B3' })],
@@ -188,11 +191,11 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: doneHeader(3) })).toBeInTheDocument()
   })
 
   // 1b. Singular count
-  it('renders singular count header ("1 Completed")', async () => {
+  it('renders singular count header ("Completed 1")', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [makeBlock({ id: 'B1' })],
       next_cursor: null,
@@ -202,7 +205,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('donePanel.header', { count: 1 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: doneHeader(1) })).toBeInTheDocument()
   })
 
   // 2. Empty panels are clutter (live UX review): the panel renders nothing
@@ -244,18 +247,18 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText(t('donePanel.header', { count: 3 }))
+    await screen.findByRole('button', { name: doneHeader(3) })
 
     // Group headers should show page titles with counts, sorted alphabetically.
     // Page titles land via a separate async `batchResolve` state update that
     // the header-count await above does NOT cover, so poll — asserted
-    // synchronously this races to "Untitled (2)" under scheduling jitter.
+    // synchronously this races to "Untitled 2" under scheduling jitter.
     const section = screen.getByLabelText(t('donePanel.completedItems'))
     await waitFor(() => {
       const groupHeaders = section.querySelectorAll('.done-panel-group-header')
       expect(groupHeaders).toHaveLength(2)
-      expect(groupHeaders[0]).toHaveTextContent('Alpha Page (2)')
-      expect(groupHeaders[1]).toHaveTextContent('Beta Page (1)')
+      expect(groupHeaders[0]).toHaveTextContent('Alpha Page 2')
+      expect(groupHeaders[1]).toHaveTextContent('Beta Page 1')
     })
   })
 
@@ -274,7 +277,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText(t('donePanel.header', { count: 1 }))
+    await screen.findByRole('button', { name: doneHeader(1) })
 
     const section = screen.getByLabelText(t('donePanel.completedItems'))
     const header = section.querySelector('.done-panel-group-header')
@@ -300,7 +303,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText(t('donePanel.header', { count: 3 }))
+    await screen.findByRole('button', { name: doneHeader(3) })
 
     // Blocks should be sorted by ID descending: CCC > BBB > AAA
     const items = screen.getAllByText(/first created|second created|third created/)
@@ -399,7 +402,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    await screen.findByText(t('donePanel.header', { count: 2 }))
+    await screen.findByRole('button', { name: doneHeader(2) })
 
     const checkIcons = screen.getAllByTestId('check-circle')
     expect(checkIcons).toHaveLength(2)
@@ -478,7 +481,7 @@ describe('DonePanel', () => {
     expect(section.querySelector('.done-panel-content')).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText(t('donePanel.header', { count: 1 }))
+    const header = screen.getByRole('button', { name: doneHeader(1) })
     await user.click(header)
 
     // Content should be hidden
@@ -504,7 +507,7 @@ describe('DonePanel', () => {
     const { rerender } = render(<DonePanel date="2025-06-15" />)
     expect(await screen.findByText('visible block')).toBeInTheDocument()
     const section = screen.getByLabelText(t('donePanel.completedItems'))
-    await user.click(screen.getByText(t('donePanel.header', { count: 1 })))
+    await user.click(screen.getByRole('button', { name: doneHeader(1) }))
     expect(section.querySelector('.done-panel-content')).not.toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledTimes(1)
 
@@ -694,7 +697,7 @@ describe('DonePanel', () => {
     await waitFor(() => {
       const groupHeaders = document.querySelectorAll('.done-panel-group-header')
       expect(groupHeaders).toHaveLength(1)
-      expect(groupHeaders[0]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
+      expect(groupHeaders[0]).toHaveTextContent(`${t('donePanel.untitled')} 1`)
     })
   })
 
@@ -726,7 +729,7 @@ describe('DonePanel', () => {
     // Existing block should still be visible
     expect(screen.getByText('existing block')).toBeInTheDocument()
     // Header still shows correct count from initial load
-    expect(screen.getByText(t('donePanel.header', { count: 1 }))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: doneHeader(1) })).toBeInTheDocument()
   })
 
   // 17. batchResolve rejects on load more → new blocks added, old titles preserved
@@ -776,8 +779,8 @@ describe('DonePanel', () => {
     const groupHeaders = section.querySelectorAll('.done-panel-group-header')
     expect(groupHeaders).toHaveLength(2)
     // Groups sorted alphabetically: "Resolved Page" < "Untitled"
-    expect(groupHeaders[0]).toHaveTextContent('Resolved Page (1)')
-    expect(groupHeaders[1]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
+    expect(groupHeaders[0]).toHaveTextContent('Resolved Page 1')
+    expect(groupHeaders[1]).toHaveTextContent(`${t('donePanel.untitled')} 1`)
   })
 
   // 18. empty-content rejection lives in the backend
@@ -800,7 +803,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2025-06-15" />)
 
-    expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: doneHeader(2) })).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ contentNonEmpty: true }),
       { kind: 'active', space_id: 'SPACE_1' },
@@ -827,7 +830,7 @@ describe('DonePanel', () => {
 
     render(<DonePanel date="2026-04-13" excludePageId="PAGE_1" />)
 
-    expect(await screen.findByText(t('donePanel.header', { count: 2 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: doneHeader(2) })).toBeInTheDocument()
     expect(mockedQueryByProperty).toHaveBeenCalledWith(
       expect.objectContaining({ excludeParentId: 'PAGE_1', contentNonEmpty: true }),
       { kind: 'active', space_id: 'SPACE_1' },
@@ -854,7 +857,7 @@ describe('DonePanel', () => {
 
     // Header reflects the 3 items the backend returned, even though a
     // Pre- build would have post-filtered some out.
-    expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: doneHeader(3) })).toBeInTheDocument()
   })
 
   // 21. A late-resolving load-more must NOT graft the previous day's cursor

@@ -11,13 +11,10 @@ export const pages: Record<string, string> = {
   // also shown as "(Today)" after today's date heading.
   'journal.today': 'Today',
 
-  // Translators: The task list (the Journal's Agenda mode): Sidebar item, and the Journal header
-  // title shown in place of a date while the Agenda is open. A noun.
-  'journal.tasks': 'Tasks',
-
-  // Translators: Journal header: the view-mode tabs (on narrow screens, items of a mode menu). Must
-  // be short, the tabs sit side by side. Day / Week / Month show one day, week or month; Stream is
-  // a continuous scroll of past days; Agenda is the task list.
+  // Translators: Journal header: the view-mode tabs (on narrow screens, items of a mode menu and the
+  // word on its button). Must be short, the tabs sit side by side. Day / Week / Month show one day,
+  // week or month; Stream is a continuous scroll of past days; Agenda is the task list, and also
+  // names it as a Sidebar item and as its title.
   'journal.dayTab': 'Day',
   'journal.weekTab': 'Week',
   'journal.monthTab': 'Month',

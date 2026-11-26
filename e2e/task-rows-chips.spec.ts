@@ -181,7 +181,7 @@ test.describe('One task row on a phone (#7040 S6) @journal @mobile', () => {
     page,
   }) => {
     await seedSearchBlocks(page, [{ content: 'Plan the offsite', todo: 'TODO', scheduled: -1 }])
-    await navigateToView(page, 'Tasks')
+    await navigateToView(page, 'Agenda')
     await navigateToView(page, 'Journal')
     const panel = page.getByTestId('due-panel')
     await expect(panel.getByRole('heading', { name: /Overdue/ })).toBeVisible()

@@ -1,8 +1,8 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
 import type { AgendaSortGroupControlsProps } from '@/components/agenda/AgendaSortGroupControls'
 import { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
 import { t } from '@/lib/i18n'
@@ -24,169 +24,94 @@ describe('AgendaSortGroupControls', () => {
     return render(<AgendaSortGroupControls {...props} />)
   }
 
-  // -----------------------------------------------------------------------
-  // Rendering
-  // -----------------------------------------------------------------------
-  it('renders sort and group control buttons', () => {
-    renderControls()
-    expect(screen.getByLabelText(t('agenda.groupBy'))).toBeInTheDocument()
-    expect(screen.getByLabelText(t('agenda.sortBy'))).toBeInTheDocument()
-  })
+  const viewButton = () => screen.getByRole('button', { name: t('agenda.view') })
 
-  it('shows current group and sort selections', () => {
-    renderControls({ groupBy: 'priority', sortBy: 'state' })
-    expect(screen.getByLabelText(t('agenda.groupBy'))).toHaveTextContent(t('agenda.groupPriority'))
-    expect(screen.getByLabelText(t('agenda.sortBy'))).toHaveTextContent(t('agenda.sortState'))
-  })
-
-  it('renders with toolbar role', () => {
-    renderControls()
-    expect(screen.getByRole('toolbar')).toBeInTheDocument()
-  })
-
-  it('shows date labels by default', () => {
-    renderControls()
-    expect(screen.getByLabelText(t('agenda.groupBy'))).toHaveTextContent(t('agenda.groupDate'))
-    expect(screen.getByLabelText(t('agenda.sortBy'))).toHaveTextContent(t('agenda.sortDate'))
-  })
-
-  // -----------------------------------------------------------------------
-  // Group by interaction
-  // -----------------------------------------------------------------------
-  it('clicking group-by shows options and selecting calls onGroupByChange', async () => {
-    const user = userEvent.setup()
-    const onGroupByChange = vi.fn()
-    renderControls({ onGroupByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.groupBy')))
-
-    const groupList = screen.getByRole('list', { name: t('agenda.groupBy') })
-    expect(within(groupList).getByText(t('agenda.groupDate'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupPriority'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupState'))).toBeInTheDocument()
-    expect(within(groupList).getByText(t('agenda.groupNone'))).toBeInTheDocument()
-
-    await user.click(within(groupList).getByText(t('agenda.groupPriority')))
-    expect(onGroupByChange).toHaveBeenCalledWith('priority')
-  })
-
-  it('marks the current group option with aria-current', async () => {
-    const user = userEvent.setup()
-    renderControls({ groupBy: 'priority' })
-
-    await user.click(screen.getByLabelText(t('agenda.groupBy')))
-
-    const groupList = screen.getByRole('list', { name: t('agenda.groupBy') })
-    const priorityBtn = within(groupList).getByText(t('agenda.groupPriority'))
-    expect(priorityBtn).toHaveAttribute('aria-current', 'true')
-
-    const dateBtn = within(groupList).getByText(t('agenda.groupDate'))
-    expect(dateBtn).not.toHaveAttribute('aria-current')
-  })
-
-  // -----------------------------------------------------------------------
-  // Sort by interaction
-  // -----------------------------------------------------------------------
-  it('clicking sort-by shows options and selecting calls onSortByChange', async () => {
-    const user = userEvent.setup()
-    const onSortByChange = vi.fn()
-    renderControls({ onSortByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.sortBy')))
-
-    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
-    expect(within(sortList).getByText(t('agenda.sortDate'))).toBeInTheDocument()
-    expect(within(sortList).getByText(t('agenda.sortPriority'))).toBeInTheDocument()
-    expect(within(sortList).getByText(t('agenda.sortState'))).toBeInTheDocument()
-
-    await user.click(within(sortList).getByText(t('agenda.sortState')))
-    expect(onSortByChange).toHaveBeenCalledWith('state')
-  })
-
-  it('marks the current sort option with aria-current', async () => {
-    const user = userEvent.setup()
-    renderControls({ sortBy: 'state' })
-
-    await user.click(screen.getByLabelText(t('agenda.sortBy')))
-
-    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
-    const stateBtn = within(sortList).getByText(t('agenda.sortState'))
-    expect(stateBtn).toHaveAttribute('aria-current', 'true')
-  })
-
-  it('sort options do not include None', async () => {
-    const user = userEvent.setup()
-    renderControls()
-
-    await user.click(screen.getByLabelText(t('agenda.sortBy')))
-
-    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
-    expect(within(sortList).queryByText(t('agenda.groupNone'))).not.toBeInTheDocument()
-  })
-
-  it('renders page group option', async () => {
-    const user = userEvent.setup()
-    const onGroupByChange = vi.fn()
-    renderControls({ onGroupByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.groupBy')))
-
-    const groupList = screen.getByRole('list', { name: t('agenda.groupBy') })
-    expect(within(groupList).getByText(t('agenda.groupPage'))).toBeInTheDocument()
-
-    await user.click(within(groupList).getByText(t('agenda.groupPage')))
-    expect(onGroupByChange).toHaveBeenCalledWith('page')
-  })
-
-  it('renders page sort option', async () => {
-    const user = userEvent.setup()
-    const onSortByChange = vi.fn()
-    renderControls({ onSortByChange })
-
-    await user.click(screen.getByLabelText(t('agenda.sortBy')))
-
-    const sortList = screen.getByRole('list', { name: t('agenda.sortBy') })
-    expect(within(sortList).getByText(t('agenda.sortPage'))).toBeInTheDocument()
-
-    await user.click(within(sortList).getByText(t('agenda.sortPage')))
-    expect(onSortByChange).toHaveBeenCalledWith('page')
-  })
-
-  // -----------------------------------------------------------------------
-  // A11y
-  // -----------------------------------------------------------------------
-  it('has no a11y violations', async () => {
-    const { container } = renderControls()
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  it('has no a11y violations with non-default selections', async () => {
-    const { container } = renderControls({ groupBy: 'none', sortBy: 'priority' })
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  // -----------------------------------------------------------------------
-  // Touch-target sizing
-  // -----------------------------------------------------------------------
-  it('group/sort triggers grow a step on a coarse pointer, with a 44 px hit area', () => {
-    renderControls()
-
-    for (const label of [t('agenda.groupBy'), t('agenda.sortBy')]) {
-      const trigger = screen.getByLabelText(label)
-      expect(trigger).toHaveClass('[@media(pointer:coarse)]:h-9', 'touch-hit-area')
-      expect(trigger.className).not.toContain('min-h-[44px]')
+  async function openView(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(viewButton())
+    return {
+      group: screen.getByRole('list', { name: t('agenda.groupBy') }),
+      sort: screen.getByRole('list', { name: t('agenda.sortBy') }),
     }
+  }
+
+  it('is one View button, its choices closed', () => {
+    renderControls()
+    expect(viewButton()).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('list', { name: t('agenda.groupBy') })).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: t('agenda.sortBy') })).not.toBeInTheDocument()
   })
 
-  it('group/sort triggers scale text up on coarse pointer', () => {
+  it('opens Group by and Sort by together, each marking its current choice', async () => {
+    const user = userEvent.setup()
+    renderControls({ groupBy: 'priority', sortBy: 'state' })
+
+    const { group, sort } = await openView(user)
+
+    expect(
+      within(group)
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual([
+      t('agenda.groupDate'),
+      t('agenda.groupPriority'),
+      t('agenda.groupState'),
+      t('agenda.groupPage'),
+      t('agenda.groupNone'),
+    ])
+    expect(
+      within(sort)
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual([
+      t('agenda.sortDate'),
+      t('agenda.sortPriority'),
+      t('agenda.sortState'),
+      t('agenda.sortPage'),
+    ])
+    expect(within(group).getByRole('button', { name: t('agenda.groupPriority') })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(within(group).getByRole('button', { name: t('agenda.groupDate') })).not.toHaveAttribute(
+      'aria-current',
+    )
+    expect(within(sort).getByRole('button', { name: t('agenda.sortState') })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+  })
+
+  it('a choice in each list reports it and keeps the choices open', async () => {
+    const user = userEvent.setup()
+    const onGroupByChange = vi.fn()
+    const onSortByChange = vi.fn()
+    renderControls({ onGroupByChange, onSortByChange })
+
+    const { group, sort } = await openView(user)
+    await user.click(within(group).getByRole('button', { name: t('agenda.groupPage') }))
+    await user.click(within(sort).getByRole('button', { name: t('agenda.sortPriority') }))
+
+    expect(onGroupByChange).toHaveBeenCalledWith('page')
+    expect(onSortByChange).toHaveBeenCalledWith('priority')
+    expect(screen.getByRole('list', { name: t('agenda.sortBy') })).toBeInTheDocument()
+  })
+
+  it('Escape closes the choices', async () => {
+    const user = userEvent.setup()
     renderControls()
 
-    const groupTrigger = screen.getByLabelText(t('agenda.groupBy'))
-    expect(groupTrigger.className).toContain('[@media(pointer:coarse)]:text-sm')
+    await openView(user)
+    await user.keyboard('{Escape}')
 
-    const sortTrigger = screen.getByLabelText(t('agenda.sortBy'))
-    expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:text-sm')
+    expect(screen.queryByRole('list', { name: t('agenda.groupBy') })).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations, closed and open', async () => {
+    const user = userEvent.setup()
+    const { container, baseElement } = renderControls({ groupBy: 'none', sortBy: 'priority' })
+    expect(await axe(container)).toHaveNoViolations()
+
+    await openView(user)
+    expect(await axe(baseElement)).toHaveNoViolations()
   })
 })

@@ -452,7 +452,7 @@ test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @ed
     await expectBottomSheet(page, page.getByRole('dialog', { name: 'Insert emoji' }))
   })
 
-  test('Pages rows show no checkbox, the header no Today, and Tasks no scroll box of its own', async ({
+  test('Pages rows show no checkbox, the header no Today, and Agenda no scroll box of its own', async ({
     page,
   }) => {
     await navigateMobile(page, 'Pages')
@@ -461,7 +461,7 @@ test.describe('A phone in landscape keeps the phone surfaces (#7040) @mobile @ed
     await expect(
       page.locator('header').first().getByRole('button', { name: 'Go to today' }),
     ).toHaveCount(0)
-    await navigateMobile(page, 'Tasks')
+    await navigateMobile(page, 'Agenda')
     await expect(page.getByTestId('agenda-results-item').first()).toBeVisible()
     await expect(page.locator('.agenda-results-scroll')).toHaveCount(0)
   })

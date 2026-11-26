@@ -162,7 +162,8 @@ describe('key existence', () => {
     'unlinkedRefs.header',
     'unlinkedRefs.linkIt',
 
-    // Done Panel (`donePanel.header` is plural-only: the {{count}} test below)
+    // Done Panel
+    'donePanel.title',
     'donePanel.completedItems',
 
     // Agenda
@@ -192,9 +193,6 @@ describe('key existence', () => {
     'pageBrowser.newPage',
     'pageBrowser.noPages',
     'pageBrowser.searchPlaceholder',
-
-    // Due Panel
-    'duePanel.header',
 
     // Editor
     'editor.templatePlaceholder',
@@ -302,16 +300,6 @@ describe('interpolation', () => {
   it('interpolates {{count}} in unlinkedRefs.header', () => {
     const result = i18n.t('unlinkedRefs.header', { count: 7 })
     expect(result).toBe('7 unlinked references')
-  })
-
-  it('interpolates {{count}} in donePanel.header', () => {
-    expect(i18n.t('donePanel.header', { count: 1 })).toBe('1 Completed')
-    expect(i18n.t('donePanel.header', { count: 3 })).toBe('3 Completed')
-  })
-
-  it('interpolates {{count}} in duePanel.header', () => {
-    const result = i18n.t('duePanel.header', { count: 5 })
-    expect(result).toBe('5 Agenda')
   })
 
   it('interpolates {{count}} in agenda.resultCount', () => {

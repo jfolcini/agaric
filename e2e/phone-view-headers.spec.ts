@@ -156,7 +156,7 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     await expect(items.first()).toBeVisible()
     expect((await rect(items.first())).top).toBeLessThan(FIRST_ROW_LIMIT)
     await expect(page.locator('.agenda-results-scroll')).toHaveCount(0)
-    await expectOneHiddenHeading(page, 'Journal')
+    await expectOneHiddenHeading(page, 'Agenda')
     expect(await items.count()).toBeLessThan(60)
 
     // Halfway down the list, clear of both ends of the window.

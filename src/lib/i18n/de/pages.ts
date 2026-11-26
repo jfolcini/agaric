@@ -6,7 +6,6 @@
 
 export const pages: Record<string, string> = {
   'journal.today': 'Heute',
-  'journal.tasks': 'Aufgaben',
   'journal.dayTab': 'Tag',
   'journal.weekTab': 'Woche',
   'journal.monthTab': 'Monat',

@@ -422,9 +422,8 @@ test.describe('View mode interactions @journal', () => {
     // Verify sort/group toolbar is present
     await expect(page.locator('[data-testid="agenda-sort-group-controls"]')).toBeVisible()
 
-    // Verify Group by and Sort by controls are visible
-    await expect(page.getByRole('button', { name: 'Group by' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Sort by' })).toBeVisible()
+    // Verify the View button that holds Group by and Sort by is visible
+    await expect(page.getByRole('button', { name: 'View', exact: true })).toBeVisible()
   })
 
   test('agenda view date navigation is hidden', async ({ page }) => {
@@ -436,9 +435,8 @@ test.describe('View mode interactions @journal', () => {
     await expect(page.getByRole('button', { name: 'Previous day' })).not.toBeVisible()
     await expect(page.getByRole('button', { name: 'Next day' })).not.toBeVisible()
 
-    // The date display should show "Tasks" instead of a date
-    const dateDisplay = page.locator('[data-testid="date-display"]')
-    await expect(dateDisplay).toHaveText('Tasks')
+    // No date display stands in: the mode switch names the Agenda
+    await expect(page.locator('[data-testid="date-display"]')).toHaveCount(0)
   })
 
   test('switching back to daily from agenda restores date navigation', async ({ page }) => {
@@ -463,18 +461,19 @@ test.describe('View mode interactions @journal', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
-    // Click "Group by" to open the popover
-    await page.getByRole('button', { name: 'Group by' }).click()
+    // Open View, which holds Group by
+    await page.getByRole('button', { name: 'View', exact: true }).click()
 
     // Verify group options are visible
-    const groupList = page.locator('ul[aria-label="Group by"]')
+    const groupList = page.getByRole('list', { name: 'Group by' })
     await expect(groupList).toBeVisible()
 
-    // Select "Priority" grouping
+    // Select "Priority" grouping: it becomes the current one
     await groupList.getByText('Priority').click()
-
-    // The popover should close and the Group by button text should update
-    await expect(groupList).not.toBeVisible()
+    await expect(groupList.getByRole('button', { name: 'Priority' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
   })
 
   test('agenda view sort by control changes sorting', async ({ page }) => {
@@ -482,18 +481,19 @@ test.describe('View mode interactions @journal', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
-    // Click "Sort by" to open the popover
-    await page.getByRole('button', { name: 'Sort by' }).click()
+    // Open View, which holds Sort by
+    await page.getByRole('button', { name: 'View', exact: true }).click()
 
     // Verify sort options are visible
-    const sortList = page.locator('ul[aria-label="Sort by"]')
+    const sortList = page.getByRole('list', { name: 'Sort by' })
     await expect(sortList).toBeVisible()
 
-    // Select "Priority" sorting
+    // Select "Priority" sorting: it becomes the current one
     await sortList.getByText('Priority').click()
-
-    // The popover should close
-    await expect(sortList).not.toBeVisible()
+    await expect(sortList.getByRole('button', { name: 'Priority' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
   })
 
   test('weekly view previous/next week navigation works', async ({ page }) => {
@@ -562,13 +562,12 @@ test.describe('Page-centric agenda defaults @journal', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
-    // Click "Group by" to open popover
-    await page.getByRole('button', { name: 'Group by' }).click()
-    const groupList = page.locator('ul[aria-label="Group by"]')
+    // Open View, then select "Page" grouping
+    await page.getByRole('button', { name: 'View', exact: true }).click()
+    const groupList = page.getByRole('list', { name: 'Group by' })
     await expect(groupList).toBeVisible()
-
-    // Select "Page" grouping
     await groupList.getByText('Page').click()
+    await page.keyboard.press('Escape')
     await expect(groupList).not.toBeVisible()
 
     // Wait for regrouped results
@@ -593,13 +592,12 @@ test.describe('Page-centric agenda defaults @journal', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
-    // Click "Sort by" to open popover
-    await page.getByRole('button', { name: 'Sort by' }).click()
-    const sortList = page.locator('ul[aria-label="Sort by"]')
+    // Open View, then select "Page" sorting
+    await page.getByRole('button', { name: 'View', exact: true }).click()
+    const sortList = page.getByRole('list', { name: 'Sort by' })
     await expect(sortList).toBeVisible()
-
-    // Select "Page" sorting
     await sortList.getByText('Page').click()
+    await page.keyboard.press('Escape')
     await expect(sortList).not.toBeVisible()
 
     // Verify items are still rendered after re-sort

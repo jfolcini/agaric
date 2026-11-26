@@ -21,6 +21,7 @@ import { PageLink } from '@/components/pages/PageLink'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SectionCount } from '@/components/ui/section-count'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -246,8 +247,6 @@ export function DonePanel({
     scrollParentRef,
   })
 
-  const headerLabel = t('donePanel.header', { count: totalCount })
-
   // A *failed* load gets an explicit error + retry affordance, distinct from
   // the empty `null` below — otherwise a thrown load is indistinguishable from
   // "no completed items today". Only surfaced when there's nothing to show
@@ -310,7 +309,9 @@ export function DonePanel({
                 onToggle={toggleCollapsed}
                 className="done-panel-header"
               >
-                {headerLabel}
+                <span>
+                  <SectionCount label={t('donePanel.title')} count={totalCount} />
+                </span>
               </CollapsiblePanelHeader>
 
               {!collapsed && (
@@ -366,12 +367,16 @@ export function DonePanel({
                               className="done-panel-group-header-row"
                             >
                               <SectionGroupHeader className="done-panel-group-header">
-                                <PageLink
-                                  pageId={row.group.pageId}
-                                  title={row.group.title}
-                                  className="hover:underline"
-                                />{' '}
-                                ({row.group.items.length})
+                                <SectionCount
+                                  label={
+                                    <PageLink
+                                      pageId={row.group.pageId}
+                                      title={row.group.title}
+                                      className="hover:underline"
+                                    />
+                                  }
+                                  count={row.group.items.length}
+                                />
                               </SectionGroupHeader>
                             </li>
                           )

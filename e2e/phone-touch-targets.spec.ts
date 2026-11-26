@@ -46,7 +46,7 @@ test.describe('phone touch targets @mobile', () => {
     const newPage = sheet.getByRole('button', { name: 'New page', exact: true })
     const rows = [
       newPage,
-      ...['Journal', 'Tasks', 'Pages', 'Search', 'Tags'].map((name) =>
+      ...['Journal', 'Agenda', 'Pages', 'Search', 'Tags'].map((name) =>
         sheet.getByRole('button', { name, exact: true }),
       ),
       sheet.getByTestId('sidebar-bookmarks-toggle'),
@@ -293,7 +293,7 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
       toText: `Buy groceries #[${idOf('a')}] #[${idOf('b')}]`,
     })
 
-    await navigateToView(page, 'Tasks')
+    await navigateToView(page, 'Agenda')
     const row = page.getByTestId('agenda-results-item').filter({ hasText: 'Buy groceries' })
     const chipA = row.getByTestId('tag-ref-chip').filter({ hasText: /^a$/ })
     const chipB = row.getByTestId('tag-ref-chip').filter({ hasText: /^b$/ })
@@ -347,7 +347,7 @@ test.describe('tag chips on the rows of a 360 px touch phone @mobile @journal @p
       toText: `Buy ${Array.from({ length: 12 }, () => `#[${work}]`).join(' ')}`,
     })
 
-    await navigateToView(page, 'Tasks')
+    await navigateToView(page, 'Agenda')
     const row = page.getByTestId('agenda-results-item').filter({ hasText: 'Buy' })
     await expect(row.getByTestId('tag-ref-chip')).toHaveCount(12)
     // Which chip a tap 2 px inside each chip's top and bottom edge reaches.

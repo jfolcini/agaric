@@ -15,7 +15,7 @@ stepper and date display while keeping the calendar picker available:
 | **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
-The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (on a touch phone, the *Edit as page* / *Edit as blocks* row of the *Page actions* menu there), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
+The Daily view opens its day as a page opens: in page mode with Settings › Editor › *Edit pages as* set to Page, and the *Blocks | Page* switch at the end of the row above the day (on a touch phone, the *Edit as page* / *Edit as blocks* row of the *Page actions* menu there, which also holds the day's *Delete page*, asking first), or `Ctrl+E`, changes it for the day on screen (see [editor.md](editor.md#page-mode)). In page mode the day is one document, so it has no *Add block* button: Enter adds a block, and an empty day takes typing at once, as a new day made from the journal template does on its first block. The Weekly and Stream views edit in blocks whatever the setting says.
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 
@@ -29,7 +29,7 @@ A new day is born with the space's journal template (picked, created or opened i
 | Next day / week / month | `Alt+→` |
 | Jump to today | `Alt+T` (or *Today* button in the Journal header) |
 | Pick a date | Calendar icon → date picker |
-| Open Agenda mode | *Agenda* tab in the Journal header (its view menu on narrow screens) |
+| Open Agenda mode | *Agenda* tab in the Journal header (its view menu on narrow screens, whose button names the mode: *Day ▾*), or the sidebar's *Agenda* row |
 
 The date picker shows **coloured dots** on days that already have content: one dot per source type (page / due / scheduled / property). Hovering reveals the count. Empty days are unmarked.
 
@@ -37,7 +37,7 @@ The date picker shows **coloured dots** on days that already have content: one d
 
 The Due Panel surfaces today's tasks that have a due / scheduled / property-derived date.
 
-- **Header counts** like *"2 Due · 1 Scheduled · 1 Properties"* — a source breakdown so you can see at a glance where today's load comes from.
+- **Header counts** like *"Due 2 · Scheduled 1 · Properties 1"* — a source breakdown so you can see at a glance where today's load comes from. Every journal section header writes its count this way, the label then the number in the muted count tone: *Overdue 2*, *Completed 3*, an Agenda group's *Projects 4*.
 - **Source filter pills**: *All / Due / Scheduled / Properties*. Click one to narrow the list to that source only.
 - **Hide-before-scheduled toggle**: hides scheduled tasks whose scheduled date hasn't arrived yet (useful if you only want what's actionable now).
 - **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
@@ -51,7 +51,7 @@ The Done Panel lists what you completed today, grouped by source page. Useful fo
 
 ## Agenda mode
 
-Flat task list across a date range with filtering, sorting, and grouping. Its header title is *Tasks*, and the sidebar's Tasks row opens it.
+Flat task list across a date range with filtering, sorting, and grouping. It is called *Agenda* in its tab, its title and the sidebar row that opens it. The filters are chips; one *View ▾* button beside them opens *Group by* and *Sort by* (a bottom sheet on a phone).
 
 - **Default state filter** opens with TODO and DOING only — DONE / CANCELLED are hidden until you clear the filter. This keeps "what's in flight" the first thing you see.
 - **Default grouping**: by page. Tasks without a page collect into a muted "No page" group at the end.

@@ -1526,26 +1526,6 @@ describe('JournalPage', () => {
       })
     })
 
-    it('renders a visual separator between controls and results', async () => {
-      const user = userEvent.setup()
-      mockEmptyResponses()
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      await waitFor(() => {
-        const agendaView = screen.getByTestId('agenda-view')
-        const separator = agendaView.querySelector('.border-t')
-        expect(separator).toBeInTheDocument()
-      })
-    })
-
     it('default agenda loads TODO+DOING tasks via filteredBlocksQuery with todo_state', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
@@ -1658,7 +1638,7 @@ describe('JournalPage', () => {
       expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
     })
 
-    it('displays "Tasks" in the date-display area', async () => {
+    it('shows no date display in agenda mode', async () => {
       const user = userEvent.setup()
       mockEmptyResponses()
 
@@ -1671,7 +1651,8 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      expect(screen.getByTestId('date-display')).toHaveTextContent('Tasks')
+      await screen.findByTestId('agenda-view')
+      expect(screen.queryByTestId('date-display')).not.toBeInTheDocument()
     })
 
     it('agenda view passes axe a11y check', async () => {
@@ -1694,7 +1675,7 @@ describe('JournalPage', () => {
       })
     })
 
-    // The Journal title heading belongs ABOVE the sticky filter/sort bar. In
+    // The Agenda's title heading belongs ABOVE the sticky filter/sort bar. In
     // agenda mode AgendaView owns it (inside its ViewHeader) and JournalPage
     // renders none, so there is exactly one h1 and it precedes the filter bar.
     it('renders exactly one h1 in agenda mode, before the filter bar', async () => {
@@ -1706,7 +1687,7 @@ describe('JournalPage', () => {
       const filterBuilder = await screen.findByTestId('agenda-filter-builder')
       // getByRole throws on a second h1.
       const heading = screen.getByRole('heading', { level: 1 })
-      expect(heading).toHaveTextContent('Journal')
+      expect(heading).toHaveTextContent('Agenda')
       expect(
         heading.compareDocumentPosition(filterBuilder) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy()
@@ -1727,7 +1708,7 @@ describe('JournalPage', () => {
       const filterBuilder = await screen.findByTestId('agenda-filter-builder')
       const outlet = screen.getByTestId('view-header-outlet')
       const heading = within(outlet).getByRole('heading', { level: 1 })
-      expect(heading).toHaveTextContent('Journal')
+      expect(heading).toHaveTextContent('Agenda')
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
       expect(outlet.contains(filterBuilder)).toBe(true)
       expect(
@@ -3119,18 +3100,7 @@ describe('JournalPage', () => {
       expect(screen.queryByRole('button', { name: /previous week/i })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /previous month/i })).not.toBeInTheDocument()
 
-      // The only element with data-testid="date-display" in agenda mode is the
-      // "Tasks" label — the formatted date display span is gated by
-      // `mode !== 'agenda'`.
-      const dateDisplay = screen.getByTestId('date-display')
-      expect(dateDisplay).toHaveTextContent('Tasks')
-      expect(dateDisplay).not.toHaveTextContent(/2026|March|Mar/)
-    })
-
-    it('keeps the "Tasks" label in agenda mode', () => {
-      mockEmptyResponses()
-      renderJournal()
-      expect(screen.getByTestId('date-display')).toHaveTextContent('Tasks')
+      expect(screen.queryByTestId('date-display')).not.toBeInTheDocument()
     })
 
     it('clicking Today in agenda mode switches to daily on today', async () => {

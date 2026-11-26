@@ -8,9 +8,8 @@
 
 export const agenda: Record<string, string> = {
   // Translators: Heading of the DonePanel, the collapsible panel under a Journal day (or a date
-  // page) that lists the tasks completed that day; {{count}} = number of completed tasks.
-  'donePanel.header_one': '{{count}} Completed',
-  'donePanel.header_other': '{{count}} Completed',
+  // page) that lists the tasks completed that day. The number of those tasks follows it.
+  'donePanel.title': 'Completed',
 
   // Translators: DonePanel. "Load more" button under the list, its text while loading, and its
   // screen-reader labels. "→" separates a page title from the task in each row (keep an arrow
@@ -100,9 +99,10 @@ export const agenda: Record<string, string> = {
   'agenda.tomorrow': 'Tomorrow',
   'agenda.noDate': 'No date',
 
-  // Translators: Agenda tab of the Journal: the "Sort by" and "Group by" drop-downs and their
-  // choices. Screen readers hear both labels joined as "Sort by / Group by". "State" = the task
-  // state (TODO, DOING, DONE …); "Page" = the page the task is on; "None" = no grouping.
+  // Translators: Agenda tab of the Journal: the "View" button (a noun: how the list is shown) and
+  // the two lists of choices it opens, "Sort by" and "Group by". "State" = the task state (TODO,
+  // DOING, DONE …); "Page" = the page the task is on; "None" = no grouping.
+  'agenda.view': 'View',
   'agenda.sortBy': 'Sort by',
   'agenda.groupBy': 'Group by',
   'agenda.sortDate': 'Date',
@@ -208,12 +208,6 @@ export const agenda: Record<string, string> = {
   'agendaFilter.valuedSubsumedByIsSet': "No effect — the property is already filtered as 'is set'",
   'agendaFilter.subsumedInfoLabel': 'Why the {{label}} filter has no effect',
 
-  // Translators: Heading of the DuePanel, the collapsible panel under a Journal day (or a date
-  // page) listing the tasks due or scheduled that day; {{count}} = number of tasks, followed by
-  // the panel's name "Agenda".
-  'duePanel.headerOne': '1 Agenda',
-  'duePanel.header': '{{count}} Agenda',
-
   // Translators: DuePanel group headings by task state. DOING, TODO, DONE and CANCELLED are the
   // task keywords written in notes: keep them in English and capitals. "Other" = no task state.
   'duePanel.groupDoing': 'DOING',
@@ -239,7 +233,9 @@ export const agenda: Record<string, string> = {
 
   // Translators: DuePanel filter buttons (short, a count may follow in parentheses), their
   // explanations, and the screen-reader label of the ⓘ beside them that opens those. "Due" = has
-  // a deadline; "Scheduled" = has a planned start day; "Properties" = matches a custom field.
+  // a deadline; "Scheduled" = has a planned start day; "Properties" = matches a custom field. Due,
+  // Scheduled and Properties also make the panel's heading, each followed by its number of tasks
+  // and joined by " · ", as in "Due 3 · Scheduled 2".
   'duePanel.filterAll': 'All',
   'duePanel.filterDue': 'Due',
   'duePanel.filterScheduled': 'Scheduled',
@@ -249,16 +245,6 @@ export const agenda: Record<string, string> = {
   'duePanel.filterScheduledTooltip': 'Soft scheduled start — not overdue if past',
   'duePanel.filterPropertiesTooltip': 'Filter by block properties (effort, assignee, etc.)',
   'duePanel.filterInfoLabel': 'About these filters',
-
-  // Translators: DuePanel heading when the day's tasks come from more than one source, joined by
-  // " · " as in "3 due · 2 scheduled · 1 by property". {{count}} = tasks from that source: a due
-  // date, a scheduled date, or a matching property filter.
-  'duePanel.countDue_one': '{{count}} due',
-  'duePanel.countDue_other': '{{count}} due',
-  'duePanel.countScheduled_one': '{{count}} scheduled',
-  'duePanel.countScheduled_other': '{{count}} scheduled',
-  'duePanel.countProperties_one': '{{count}} by property',
-  'duePanel.countProperties_other': '{{count}} by property',
 
   // Translators: DuePanel: shown in place of the text of a task that has no text.
   'duePanel.emptyContent': '(empty)',
@@ -271,15 +257,16 @@ export const agenda: Record<string, string> = {
 
   // Translators: DuePanel section headings: "Overdue" = past their due date; "Projected" = upcoming
   // dates of repeating tasks, computed in advance (also a small chip on each such row);
-  // "Upcoming" = due soon. "Projected entries" = screen-reader name of the projected list.
+  // "Upcoming" = due soon. "Projected entries" = screen-reader name of the projected list. Overdue
+  // and Upcoming are followed by their number of tasks.
   'duePanel.overdueTitle': 'Overdue',
   'duePanel.projectedListLabel': 'Projected entries',
   'duePanel.projectedBadge': 'Projected',
   'due.projected': 'Projected',
   'duePanel.upcomingTitle': 'Upcoming',
-  // Translators: DuePanel section heading on today's Journal page: open tasks whose scheduled date
-  // (planned start) has passed and whose due date has not; after each, inside parentheses, how many
-  // days ago it was scheduled ("d" = days, very short).
+  // Translators: DuePanel section heading on today's Journal page, followed by its number of tasks:
+  // open tasks whose scheduled date (planned start) has passed and whose due date has not; after
+  // each, inside parentheses, how many days ago it was scheduled ("d" = days, very short).
   'duePanel.scheduledEarlierTitle': 'Scheduled earlier',
   'duePanel.scheduledDaysAgo_one': '{{count}}d ago',
   'duePanel.scheduledDaysAgo_other': '{{count}}d ago',

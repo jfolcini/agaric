@@ -26,7 +26,9 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import { usePhoneLayout } from '@/hooks/usePhoneLayout'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { useToday } from '@/hooks/useToday'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
@@ -290,14 +292,19 @@ function DaySectionInner({
   }, [isWindowControlled, hasEntered])
 
   // In daily mode (heading hidden), the page's star and delete still sit on the
-  // row the day page's Blocks | Page switch (on a phone, its *Page actions*
-  // menu) ends.
+  // row the day page's Blocks | Page switch ends. On a phone that row ends in
+  // the *Page actions* menu, which takes the delete: a one-tap trash above the
+  // day's blocks was too easy to hit (#7040).
+  const isTouch = useIsTouch()
+  const phoneLayout = usePhoneLayout()
+  const onPhone = isTouch && phoneLayout
   const dailyActions =
     hideHeading && entry.pageId ? (
       <PageQuickActions
         pageId={entry.pageId}
         title={entry.displayDate}
         variant="journal"
+        showDelete={!onPhone}
         deleting={isDeletingThisDay}
         onDeleteRequest={handleRequestDayDelete}
       />
@@ -426,7 +433,6 @@ function DaySectionInner({
               <IconButton
                 variant="ghost"
                 size="icon-sm"
-                className="ml-auto"
                 ariaLabel={t('agenda.day.addBlock')}
                 tooltip={t('agenda.day.addBlock')}
                 onClick={handleAddFirstBlock}
@@ -458,6 +464,11 @@ function DaySectionInner({
                 <DayPageEditor
                   pageId={entry.pageId}
                   actions={dailyActions}
+                  onDeleteRequest={
+                    onPhone && dayPageId != null
+                      ? () => handleRequestDayDelete(dayPageId)
+                      : undefined
+                  }
                   onNavigateToPage={onNavigateToPage}
                   onAddBlock={() => void onAddBlock(entry.dateStr)}
                   onZoomChange={setZoomedBlockId}

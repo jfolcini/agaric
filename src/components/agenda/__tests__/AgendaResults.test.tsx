@@ -618,11 +618,11 @@ describe('AgendaResults', () => {
     const { container } = render(<AgendaResults {...defaultProps({ blocks })} groupBy="priority" />)
 
     const headers = container.querySelectorAll('.agenda-group-header')
-    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    const labels = [...headers].map((h) => h.textContent?.replace(/ \d+$/, ''))
     expect(labels).toEqual(['P1', 'P2', 'P3', 'No priority'])
 
     // Count badges
-    const badges = screen.getAllByText('(1)')
+    const badges = screen.getAllByText('1')
     expect(badges.length).toBe(4)
   })
 
@@ -637,11 +637,11 @@ describe('AgendaResults', () => {
     const { container } = render(<AgendaResults {...defaultProps({ blocks })} groupBy="state" />)
 
     const headers = container.querySelectorAll('.agenda-group-header')
-    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    const labels = [...headers].map((h) => h.textContent?.replace(/ \d+$/, ''))
     expect(labels).toEqual(['DOING', 'TODO', 'DONE', 'No state'])
 
     // Count badges
-    const badges = screen.getAllByText('(1)')
+    const badges = screen.getAllByText('1')
     expect(badges.length).toBe(4)
   })
 
@@ -695,12 +695,12 @@ describe('AgendaResults', () => {
     )
 
     const headers = container.querySelectorAll('.agenda-group-header')
-    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    const labels = [...headers].map((h) => h.textContent?.replace(/ \d+$/, ''))
     expect(labels).toEqual(['Project A', 'Project B'])
 
     // Project A has 2 blocks, Project B has 1
-    expect(screen.getByText('(2)')).toBeInTheDocument()
-    expect(screen.getByText('(1)')).toBeInTheDocument()
+    expect(screen.getByText('2')).toHaveAttribute('data-variant', 'metadata')
+    expect(screen.getByText('1')).toHaveAttribute('data-variant', 'metadata')
   })
 
   it('a journal page reads as the journal header does, in its group header and source link (#6544)', async () => {
@@ -714,7 +714,7 @@ describe('AgendaResults', () => {
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />)
 
-    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent(`${journalHeader}(1)`)
+    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent(`${journalHeader} 1`)
     useNavigationStore.setState({ currentView: 'pages' })
     await user.click(screen.getByRole('link', { name: journalHeader }))
     // Only the display changes: the stored ISO title still routes to that journal day.
@@ -729,7 +729,7 @@ describe('AgendaResults', () => {
 
     render(<AgendaResults {...defaultProps({ blocks, pageTitles })} groupBy="page" />)
 
-    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent('11/11/2026(1)')
+    expect(screen.getByTestId('agenda-group-header')).toHaveTextContent('11/11/2026 1')
     expect(screen.getByRole('link', { name: '11/11/2026' })).toBeInTheDocument()
   })
 
@@ -755,7 +755,7 @@ describe('AgendaResults', () => {
     )
 
     const headers = container.querySelectorAll('.agenda-group-header')
-    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    const labels = [...headers].map((h) => h.textContent?.replace(/ \d+$/, ''))
     expect(labels).toEqual(['My Page', 'No page'])
   })
 
