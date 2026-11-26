@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   canFold,
+  carriedEnd,
   foldEnd,
   foldsOver,
   headingLevel,
   hiddenRows,
   outlineOf,
+  stepOver,
 } from '@/lib/section-fold'
 
 /** An outline from `[depth, content]` pairs. */
@@ -154,5 +156,43 @@ describe('foldsOver', () => {
     expect(foldsOver(page, 2, [0, 1, 3])).toEqual([0, 1])
     expect(foldsOver(page, 4, [0, 1, 3])).toEqual([3])
     expect(foldsOver(page, 3, [0, 1])).toEqual([])
+  })
+})
+
+describe('carriedEnd and stepOver', () => {
+  const page = outline([
+    [0, 'p'], // 0
+    [0, '## One'], // 1
+    [1, 'child of one'], // 2
+    [0, 'in one'], // 3
+    [0, '## Two'], // 4
+    [0, 'in two'], // 5
+  ])
+  const carryWith = (folded: ReadonlySet<number>) => (index: number) =>
+    carriedEnd(page, index, folded.has(index))
+
+  it('carries a folded heading’s section, and an unfolded one only the rows under it', () => {
+    expect(carriedEnd(page, 1, true)).toBe(4)
+    expect(carriedEnd(page, 1, false)).toBe(3)
+    expect(carriedEnd(page, 5, true)).toBe(6)
+  })
+
+  it('steps a move over a folded sibling and what it hides, either way', () => {
+    const carry = carryWith(new Set([1]))
+    expect(stepOver(page, carry, 4, -1)).toEqual({ end: 5, to: 1 })
+    expect(stepOver(page, carry, 0, 1)).toEqual({ end: 1, to: 4 })
+  })
+
+  it('steps to the next sibling where nothing is folded', () => {
+    const carry = carryWith(new Set())
+    expect(stepOver(page, carry, 4, -1)).toEqual({ end: 5, to: 3 })
+    expect(stepOver(page, carry, 1, 1)).toEqual({ end: 3, to: 4 })
+  })
+
+  it('has no sibling to step to for a first or last child', () => {
+    const carry = carryWith(new Set([4]))
+    expect(stepOver(page, carry, 2, -1)).toEqual({ end: 3, to: null })
+    expect(stepOver(page, carry, 4, 1)).toEqual({ end: 6, to: null })
+    expect(stepOver(page, carry, 0, -1)).toEqual({ end: 1, to: null })
   })
 })

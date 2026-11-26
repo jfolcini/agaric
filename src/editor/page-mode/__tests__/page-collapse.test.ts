@@ -25,7 +25,7 @@ import {
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { canMerge, dropBlock, mergeBlock } from '@/editor/page-mode/page-block-actions'
+import { canMerge, dropBlock, mergeBlock, moveBlocks } from '@/editor/page-mode/page-block-actions'
 import {
   foldIn,
   foldOf,
@@ -457,6 +457,51 @@ describe('heading sections (#7040)', () => {
     expect(foldOf(ed.state, A)).toBe('expanded')
     caret(ed, 5, 0)
     expect(hidden(ed)).toEqual([])
+  })
+
+  it('Enter at the end of a collapsed heading with blocks under it makes the new block the first of them', () => {
+    const ed = build([
+      [A, 0, '## One'],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+      [D, 0, '## Two'],
+    ])
+    caret(ed, 3, 0)
+    toggle(ed, A)
+    caret(ed, 0, 3)
+
+    press(ed, 'Enter')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, '## One'],
+      [NEW_1, 1, ''],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+      [D, 0, '## Two'],
+    ])
+    expect(caretBlock(ed)).toBe(1)
+    expect(foldOf(ed.state, A)).toBe('expanded')
+  })
+
+  it('a move steps over a collapsed heading and its section; a collapsed one carries its own', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    toggle(ed, A)
+    toggle(ed, D)
+
+    expect(moveBlocks([D], -1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([D, E, A, B, C])
+    expect(moveBlocks([D], 1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, B, C, D, E])
+  })
+
+  it('a selected block a collapsed heading among the selection carries moves only with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, D)
+
+    expect(moveBlocks([D, E], -1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, D, E, B, C])
   })
 
   it('a collapsed heading’s drag carries its section; an expanded one’s moves its own line', () => {

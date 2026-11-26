@@ -332,6 +332,7 @@ export function BlockTree({
     hasChildrenSet,
     foldableSet,
     foldedSiblings,
+    foldedMove,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
@@ -1062,6 +1063,24 @@ export function BlockTree({
       })
   }, [])
 
+  const isFoldedHeading = useCallback(
+    (id: string) => collapsedIds.has(id) && headingLevel(blocksById.get(id)?.content) !== null,
+    [collapsedIds, blocksById],
+  )
+
+  // #7040 — a move steps over a folded heading and its section, and a folded
+  // heading's move carries its section, as their drags do (`foldedMove`).
+  const moveOver = useCallback(
+    async (id: string, direction: -1 | 1): Promise<boolean> => {
+      const move = foldedMove(id, direction)
+      if (move === 'stay') return false
+      if (move === null) return direction < 0 ? moveUp(id) : moveDown(id)
+      await moveBlocks(move.ids, move.parentId, move.index)
+      return true
+    },
+    [foldedMove, moveUp, moveDown, moveBlocks],
+  )
+
   // ── Keyboard handlers hook ─────────────────────────────────────────
   const {
     handleFocusPrev,
@@ -1151,9 +1170,15 @@ export function BlockTree({
     mergeInto,
     indent,
     dedent,
-    moveUp,
-    moveDown,
+    moveUp: useCallback((id: string) => moveOver(id, -1), [moveOver]),
+    moveDown: useCallback((id: string) => moveOver(id, 1), [moveOver]),
     createBelow,
+    // #7040 — Enter at a folded heading's end opens its section: under one with
+    // children the new block is the first of them, so none of them moves under it.
+    firstChildOnEnter: useCallback(
+      (id: string) => isFoldedHeading(id) && hasChildrenSet.has(id),
+      [isFoldedHeading, hasChildrenSet],
+    ),
     preserveEmptyBlockIds,
     discardDraft: handleDiscardDraft,
     t,
@@ -1162,15 +1187,9 @@ export function BlockTree({
   // #7040 — Enter on a folded heading unfolds its section, so the block Enter
   // makes is the section's first line, not hidden in it.
   const handleEnter = useCallback(() => {
-    if (
-      focusedBlockId !== null &&
-      collapsedIds.has(focusedBlockId) &&
-      headingLevel(blocksById.get(focusedBlockId)?.content) !== null
-    ) {
-      expandBlock(focusedBlockId)
-    }
+    if (focusedBlockId !== null && isFoldedHeading(focusedBlockId)) expandBlock(focusedBlockId)
     return handleEnterSave()
-  }, [focusedBlockId, collapsedIds, blocksById, expandBlock, handleEnterSave])
+  }, [focusedBlockId, isFoldedHeading, expandBlock, handleEnterSave])
 
   // ── Multi-selection handler (Ctrl+Click / Shift+Click) ──────────────
   const handleSelect = useCallback(

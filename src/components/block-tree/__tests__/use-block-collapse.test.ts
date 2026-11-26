@@ -613,6 +613,56 @@ describe('useBlockCollapse — heading sections (#7040)', () => {
     expect(result.current.foldedSiblings('S1')).toEqual([])
   })
 
+  it('moves a collapsed heading with its section over a collapsed neighbour, as one batch', () => {
+    const { result } = renderHook(() => useBlockCollapse(page))
+    act(() => result.current.toggleCollapse('H2'))
+    expect(result.current.foldedMove('NEXT', -1)).toEqual({
+      ids: ['NEXT'],
+      parentId: null,
+      index: 0,
+    })
+    act(() => result.current.toggleCollapse('NEXT'))
+    expect(result.current.foldedMove('NEXT', -1)).toEqual({
+      ids: ['NEXT', 'LAST'],
+      parentId: null,
+      index: 0,
+    })
+    expect(result.current.foldedMove('H2', 1)).toEqual({
+      ids: ['H2', 'S1', 'S2'],
+      parentId: null,
+      index: 2,
+    })
+  })
+
+  it('leaves a move with no fold in play to the store, and a root section with nowhere to go', () => {
+    const { result } = renderHook(() => useBlockCollapse(page))
+    expect(result.current.foldedMove('S2', -1)).toBeNull()
+    expect(result.current.foldedMove('GONE', 1)).toBeNull()
+    act(() => result.current.toggleCollapse('NEXT'))
+    expect(result.current.foldedMove('NEXT', 1)).toBe('stay')
+  })
+
+  it("takes a collapsed last child's section out of its parent with it", () => {
+    const nested: FlatBlock[] = [
+      makeBlock({ id: 'P', depth: 0, content: 'parent' }),
+      makeBlock({ id: 'H', depth: 1, parent_id: 'P', content: '## H' }),
+      makeBlock({ id: 'IN', depth: 1, parent_id: 'P', content: 'in h' }),
+      makeBlock({ id: 'Q', depth: 0, content: 'after' }),
+    ]
+    const { result } = renderHook(() => useBlockCollapse(nested))
+    act(() => result.current.toggleCollapse('H'))
+    expect(result.current.foldedMove('H', 1)).toEqual({
+      ids: ['H', 'IN'],
+      parentId: null,
+      index: 1,
+    })
+    expect(result.current.foldedMove('H', -1)).toEqual({
+      ids: ['H', 'IN'],
+      parentId: null,
+      index: 0,
+    })
+  })
+
   it('reveals a target in a collapsed heading section without saving it', () => {
     const { result } = renderHook(() => useBlockCollapse(page, { pageKey: 'PAGE' }))
     act(() => result.current.toggleCollapse('H2'))

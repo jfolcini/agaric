@@ -58,6 +58,44 @@ export function hiddenRows(outline: Outline, folded: (index: number) => boolean)
   return hidden
 }
 
+/**
+ * The index just past what a move of the row at `index` takes: its fold if
+ * `folded`, else the rows under it.
+ */
+export function carriedEnd(outline: Outline, index: number, folded: boolean): number {
+  if (folded) return foldEnd(outline, index)
+  const depth = outline.depth(index)
+  let end = index + 1
+  while (end < outline.length && outline.depth(end) > depth) end += 1
+  return end
+}
+
+/**
+ * A move of the row at `index` one shown row up (-1) or down (1), as a drop
+ * there makes it: the rows from `index` to `end`, what it carries, go before the
+ * row at `to`, past the sibling next to them and what that one carries (`carry`,
+ * `carriedEnd` per row). `to` is null where no sibling is that way.
+ */
+export function stepOver(
+  outline: Outline,
+  carry: (index: number) => number,
+  index: number,
+  direction: -1 | 1,
+): { end: number; to: number | null } {
+  const depth = outline.depth(index)
+  const end = carry(index)
+  if (direction > 0) {
+    const sibling = end < outline.length && outline.depth(end) === depth
+    return { end, to: sibling ? carry(end) : null }
+  }
+  let unit = index
+  while (unit > 0 && outline.depth(unit - 1) >= depth) unit -= 1
+  if (unit === index) return { end, to: null }
+  // Each sibling shown carries the ones it hides; the last before `index` is the neighbour.
+  while (carry(unit) < index) unit = carry(unit)
+  return { end, to: unit }
+}
+
 /** The rows of `folded` whose folds hold the row at `target`, however far up. */
 export function foldsOver(outline: Outline, target: number, folded: Iterable<number>): number[] {
   const over: number[] = []

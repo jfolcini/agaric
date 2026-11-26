@@ -43,11 +43,18 @@ import {
   firstTokenPos,
   PAGE_BLOCK,
   startOf,
-  subtreeEnd,
 } from '@/editor/page-mode/page-document'
 import { blockIdOf } from '@/editor/token-ids'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
-import { canFold, foldEnd, foldsOver, hiddenRows, type Outline } from '@/lib/section-fold'
+import {
+  canFold,
+  carriedEnd as carriedEndOf,
+  foldEnd,
+  foldsOver,
+  hiddenRows,
+  type Outline,
+  stepOver,
+} from '@/lib/section-fold'
 
 /** A block with blocks under it: collapsed, or not. */
 export type Fold = 'collapsed' | 'expanded'
@@ -163,14 +170,21 @@ export function foldAt(state: EditorState, index: number): Fold | null {
 }
 
 /**
- * The index just past what a drag of the block at `index` carries: the blocks
- * under it, and a collapsed heading's section (#7040).
+ * The index just past what a drag of the block at `index` of `doc` carries: the
+ * blocks under it, and a collapsed heading's section (#7040).
  */
-export function carriedEnd(state: EditorState, index: number): number {
-  const { doc } = state
-  return foldAt(state, index) === 'collapsed'
-    ? foldEnd(outlineOf(doc), index)
-    : subtreeEnd(doc, index)
+export function carriedEnd(state: EditorState, index: number, doc: PMNode = state.doc): number {
+  return carriedEndOf(outlineOf(doc), index, isCollapsed(state, idOf(doc.child(index))))
+}
+
+/** `stepOver` for the block at `index` of `doc`, with what each block carries. */
+export function moveStep(
+  state: EditorState,
+  doc: PMNode,
+  index: number,
+  direction: -1 | 1,
+): { end: number; to: number | null } {
+  return stepOver(outlineOf(doc), (i) => carriedEnd(state, i, doc), index, direction)
 }
 
 /** The fold of block `id`, for its block menu. */
@@ -239,7 +253,17 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   let made = head + 1
   while (made < first && depthOf(doc.child(made)) > depth) made += 1
   if (made === first) return null
-  if (headingLevelOf(before.doc.child(index)) !== null) return after.tr.setMeta(EXPAND, id)
+  if (headingLevelOf(before.doc.child(index)) !== null) {
+    const tr = after.tr.setMeta(EXPAND, id)
+    // Under a heading with blocks under it the new blocks go first among them,
+    // taking none of them as theirs.
+    if (depthOf(doc.child(first)) > depth) {
+      for (let i = made; i < first; i += 1) {
+        tr.setNodeAttribute(startOf(doc, i), 'depth', depthOf(doc.child(i)) + 1)
+      }
+    }
+    return tr
+  }
   let past = first
   while (past < doc.childCount && depthOf(doc.child(past)) > depth) past += 1
   const from = startOf(doc, made)

@@ -24,6 +24,7 @@ const PAGE = 'Heading Folds'
 const SCOPE = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
 
 type Ids = Record<
+  | 'pageId'
   | 'alpha'
   | 'intro'
   | 'beta'
@@ -89,6 +90,7 @@ async function seed(page: Page): Promise<Ids> {
   const nestedOne = await add(page, outer, 'nested one')
   const tail = await add(page, pageId, 'tail')
   return {
+    pageId,
     alpha,
     intro,
     beta,
@@ -112,6 +114,15 @@ function shown(page: Page): Promise<string[]> {
   return page
     .locator('[data-testid="sortable-block"]')
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-block-id') ?? ''))
+}
+
+/** The ids the backend holds under `parentId`, in stored order. */
+async function stored(page: Page, parentId: string): Promise<string[]> {
+  const resp = await ipc<{ items: { id: string }[] }>(page, 'list_blocks', {
+    request: { parentId, limit: 100 },
+    scope: SCOPE,
+  })
+  return resp.items.map((item) => item.id)
 }
 
 /** Fold or unfold block `id` by its chevron. */
@@ -254,6 +265,91 @@ test.describe('Heading folds @editor', () => {
       'aria-expanded',
       'true',
     )
+  })
+
+  test('Enter at the end of a folded heading with a child makes the new block its first child', async ({
+    page,
+  }) => {
+    const kid = await add(page, ids.gamma, 'gamma kid')
+    await reopenPage(page, PAGE)
+    await toggle(page, ids.gamma)
+    await expect(row(page, ids.gammaOne)).toHaveCount(0)
+
+    await focusBlockById(page, ids.gamma)
+    await page.keyboard.press('End')
+    await page.keyboard.press('Enter')
+
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(editor).toHaveText('')
+    const created = await editor.evaluate(
+      (el) => el.closest('[data-block-id]')?.getAttribute('data-block-id') ?? '',
+    )
+    await expect.poll(() => stored(page, ids.gamma)).toEqual([created, kid])
+    expect(await stored(page, ids.pageId)).toEqual([
+      ids.alpha,
+      ids.intro,
+      ids.beta,
+      ids.betaOne,
+      ids.gamma,
+      ids.gammaOne,
+      ids.lone,
+      ids.delta,
+      ids.outer,
+      ids.tail,
+    ])
+    await expect(row(page, ids.gammaOne)).toBeVisible()
+  })
+
+  test('Ctrl+Shift+↑/↓ moves a folded heading with its section over a folded neighbour', async ({
+    page,
+  }) => {
+    const order = [
+      ids.alpha,
+      ids.intro,
+      ids.beta,
+      ids.betaOne,
+      ids.gamma,
+      ids.gammaOne,
+      ids.lone,
+      ids.delta,
+      ids.outer,
+      ids.tail,
+    ]
+    await toggle(page, ids.beta)
+    await toggle(page, ids.gamma)
+    await focusBlockById(page, ids.gamma)
+
+    await page.keyboard.press('Control+Shift+ArrowUp')
+    await expect
+      .poll(() => stored(page, ids.pageId))
+      .toEqual([
+        ids.alpha,
+        ids.intro,
+        ids.gamma,
+        ids.gammaOne,
+        ids.lone,
+        ids.beta,
+        ids.betaOne,
+        ids.delta,
+        ids.outer,
+        ids.tail,
+      ])
+    await expect
+      .poll(() => shown(page))
+      .toEqual([
+        ids.alpha,
+        ids.intro,
+        ids.gamma,
+        ids.beta,
+        ids.delta,
+        ids.outer,
+        ids.nested,
+        ids.nestedOne,
+        ids.tail,
+      ])
+
+    await page.keyboard.press('Control+Shift+ArrowDown')
+    await expect.poll(() => stored(page, ids.pageId)).toEqual(order)
   })
 
   test('find reveals a match inside a folded section', async ({ page }) => {

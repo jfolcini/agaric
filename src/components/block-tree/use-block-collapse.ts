@@ -29,7 +29,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { hasPreference, PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
-import { canFold, foldEnd, foldsOver, hiddenRows, outlineOf } from '@/lib/section-fold'
+import {
+  canFold,
+  carriedEnd,
+  foldEnd,
+  foldsOver,
+  hiddenRows,
+  outlineOf,
+  stepOver,
+} from '@/lib/section-fold'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /**
@@ -136,6 +144,21 @@ export interface UseBlockCollapseReturn {
    * none for any other block.
    */
   foldedSiblings: (blockId: string) => string[]
+  /**
+   * Ctrl+Shift+↑/↓ on `blockId` where a fold is in play, as a drop one shown row
+   * away makes it (#7040): it and the siblings it hides go past the shown
+   * sibling next to it and the siblings that one hides (`stepOver`). Null where
+   * no fold is in play and the store's one-block move does the same; 'stay'
+   * where it has nowhere to go.
+   */
+  foldedMove: (blockId: string, direction: -1 | 1) => FoldedMove | 'stay' | null
+}
+
+/** A move of the roots `ids` under `parentId`, from sibling slot `index`, in one batch. */
+export interface FoldedMove {
+  ids: string[]
+  parentId: string | null
+  index: number
 }
 
 export function useBlockCollapse(
@@ -376,6 +399,45 @@ export function useBlockCollapse(
     [blocks, outline, collapsedIds],
   )
 
+  const foldedMove = useCallback(
+    (blockId: string, direction: -1 | 1): FoldedMove | 'stay' | null => {
+      const index = blocks.findIndex((b) => b.id === blockId)
+      if (index === -1) return null
+      const block = blocks[index] as FlatBlock
+      const parentId = block.parent_id ?? null
+      const carry = (i: number) =>
+        carriedEnd(outline, i, collapsedIds.has((blocks[i] as FlatBlock).id))
+      const { end, to } = stepOver(outline, carry, index, direction)
+      const roots = (from: number, until: number) =>
+        blocks
+          .slice(from, until)
+          .filter((b) => b.depth === block.depth)
+          .map((b) => b.id)
+      const ids = roots(index, end)
+      if (to === null) {
+        // A first or last child leaves its parent (#922), with the siblings it hides.
+        if (ids.length === 1) return null
+        const parent = blocks.find((b) => b.id === parentId)
+        if (parent === undefined) return 'stay'
+        const outer = blocks.filter(
+          (b) => b.parent_id === parent.parent_id && b.depth === parent.depth,
+        )
+        const slot = outer.indexOf(parent) + (direction > 0 ? 1 : 0)
+        return { ids, parentId: parent.parent_id ?? null, index: slot }
+      }
+      const neighbour = direction < 0 ? roots(to, index) : roots(end, to)
+      if (ids.length === 1 && neighbour.length === 1) return null
+      const moving = new Set(ids)
+      const slot = blocks
+        .slice(0, to)
+        .filter(
+          (b) => (b.parent_id ?? null) === parentId && b.depth === block.depth && !moving.has(b.id),
+        ).length
+      return { ids, parentId, index: slot }
+    },
+    [blocks, outline, collapsedIds],
+  )
+
   return {
     collapsedIds,
     toggleCollapse,
@@ -385,5 +447,6 @@ export function useBlockCollapse(
     hasChildrenSet,
     foldableSet,
     foldedSiblings,
+    foldedMove,
   }
 }
