@@ -13,7 +13,7 @@ Part of the #7040 UI review, items O1, O2, O8 and O10.
   - Each row shows the name, then a muted description, both split from the label at its dash, so the search text and the strings are unchanged. A visually hidden " — " keeps each row's accessible name.
   - The tag picker puts "Create …" last, as the link picker does, so Enter on `#wor` links `work` instead of making a near-duplicate.
 - **Quick capture (O8).** The description names the shortcut with `Kbd`, including a custom one. It does so only when keyboard hints are on and the platform can register a system shortcut: a phone with a keyboard cannot, as `QuickCaptureRow` already knows.
-- **Welcome (O10).** One column: the logo, the two primaries, the secondary actions as ghost buttons, then the tips. The footer is gone; every action stays.
+- **Welcome (O10).** One column: the logo, the two primaries, the secondary actions as outline buttons, then the tips. The footer is gone; every action stays.
 
 **False premise in the issue:** "journal pages show as Untitled" was every page that matched only by its blocks, on the real backend as well as the mock.
 

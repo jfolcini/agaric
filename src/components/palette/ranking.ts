@@ -33,7 +33,7 @@ export function mergeAndRankGroups(
   pages: ReadonlyArray<SearchBlockRow>,
   blocks: ReadonlyArray<SearchBlockRow>,
   query: string,
-  pageTitles: Readonly<Record<string, string>> = {},
+  pageTitles: Readonly<Record<string, string>>,
 ): PaletteGroup[] {
   const groups = new Map<string, PaletteGroup>()
   const order: string[] = []

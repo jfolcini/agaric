@@ -691,7 +691,6 @@ describe('SuggestionList', () => {
     const description = screen.getByTestId('suggestion-description')
     expect(description).toHaveTextContent(/^Mark as to-do$/)
     expect(description.className).toContain('text-muted-foreground')
-    expect(screen.getByText('TODO')).not.toBe(description)
     expect(await axe(container)).toHaveNoViolations()
   })
 

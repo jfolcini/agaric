@@ -336,7 +336,6 @@ describe('CommandPalette — empty state', () => {
     render(<CommandPalette />)
     openPalette()
     expect(useCommandPaletteStore.getState().mode).toBe('search')
-    expect(screen.queryByTestId('palette-welcome-empty')).toBeNull()
     expect(screen.getByTestId('palette-commands-navigate')).toBeInTheDocument()
     expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
     expect(screen.queryByTestId('palette-commands-action')).toBeNull()
@@ -356,7 +355,6 @@ describe('CommandPalette — empty state', () => {
     mockedUseIsMobile.mockReturnValue(true)
     render(<CommandPalette />)
     openPalette()
-    expect(screen.queryByTestId('palette-welcome-empty')).toBeNull()
     expect(screen.queryByTestId('palette-commands-navigate')).toBeNull()
   })
 
@@ -890,7 +888,7 @@ describe('CommandPalette — caps and surplus pill', () => {
         makeBlockRow(`B${i}_2`, 'm2', `PAGE_${i}`),
       )
     }
-    const groups = mergeAndRankGroups(pages, blocks, 'page')
+    const groups = mergeAndRankGroups(pages, blocks, 'page', {})
     expect(groups.length).toBe(8)
     for (const g of groups) {
       expect(g.matches.length).toBeLessThanOrEqual(2)

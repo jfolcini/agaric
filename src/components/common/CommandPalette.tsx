@@ -478,7 +478,7 @@ export function PaletteBody({
   const liveQuery = linkMode ? linkQuery : trimmedQuery
 
   // A block row names only its page, so the resolve cache, preloaded with every page title in the
-  // space, titles a group no page row seeded; it read "Untitled" before (#7040).
+  // space, titles a group no page row seeded.
   const blockPageTitles = useResolveStore(
     useShallow((s) =>
       Object.fromEntries(
