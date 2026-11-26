@@ -1161,7 +1161,7 @@
 
     /* Touch measurements, each named once (#7040 M6). In a class:
      * `coarse:min-h-(--touch-target)`. */
-    /* The smallest side of a control under the `coarse` variant: 44 px. */
+    /* The smallest side of a control a finger presses: 44 px. */
     --touch-target: 2.75rem;
     /* The phone header's height (`App.tsx`), where a bottom sheet stops. */
     --phone-header-h: 3.5rem;
