@@ -88,7 +88,7 @@ export const GIT_SCRATCH_LEAK_VARS = (() => {
         'refusing to run with a scrub list this file invented for itself',
     )
   }
-  const vars = match[1].split(/\s+/).filter(Boolean)
+  const vars = (match[1] ?? '').split(/\s+/).filter(Boolean)
   // The shell helper's own self-test asserts >= 15; the same floor here
   // catches a parse that silently matched something shorter.
   if (vars.length < 15) {
@@ -114,7 +114,7 @@ export function scrubbedGitEnv(scratchRoot, extra = {}) {
   // Physical, because git walks the physical tree when it looks for a
   // repository above the fixture: a ceiling spelled through a symlink is a
   // ceiling git never compares against.
-  env.GIT_CEILING_DIRECTORIES = dirname(physical(scratchRoot))
+  env['GIT_CEILING_DIRECTORIES'] = dirname(physical(scratchRoot))
   for (const [key, value] of Object.entries(extra)) {
     if (value === undefined) delete env[key]
     else env[key] = value
@@ -265,6 +265,8 @@ function verifyIndexFraming({ dir, env, file, decoys, check }) {
     `expected exactly ${expected.length} fixture paths, got ${entries?.paths?.length}: ` +
       `${entries?.paths?.slice(0, 5).join(', ')}…`,
   )
+  // The failed check above already recorded the violation; nothing below can read a null listing.
+  if (entries === null) return
   const read = (source, chunkSize) =>
     readContents(entries.paths, {
       repoRoot: dir,
@@ -356,11 +358,12 @@ function verifyBatchStreamFraming(check) {
   )
 
   const throws = (name, buf, expect, flag = 'isBatchDesync') => {
+    /** @type {(Error & Record<string, unknown>) | null} */
     let err = null
     try {
       parseBatchStream(buf, chunk)
     } catch (e) {
-      err = e
+      err = /** @type {Error & Record<string, unknown>} */ (e)
     }
     check(
       `batch framing: ${name} is an error, not a silent drop`,
@@ -402,11 +405,12 @@ function verifyBatchStreamFraming(check) {
   // ...and it is NOT re-labelled as a framing desync: the two have different
   // causes (git cannot honour its protocol / the repository is damaged) and a
   // caller distinguishing them must be able to.
+  /** @type {(Error & { isMissingObject?: boolean, isBatchDesync?: boolean }) | null} */
   let missingErr = null
   try {
     parseBatchStream(Buffer.from(`${oid} missing\n${record('b')}${record('c')}`), chunk)
   } catch (e) {
-    missingErr = e
+    missingErr = /** @type {Error & { isMissingObject?: boolean, isBatchDesync?: boolean }} */ (e)
   }
   check(
     'batch framing: a `missing` blob is not mislabelled as a protocol desync',
@@ -472,7 +476,9 @@ function verifyLinkedWorktreeOwnership({
   // relative in the main checkout (`.git/index`) and absolute in a linked
   // worktree, and both spellings have to reach the same comparison.
   const indexOf = (d) => resolve(d, gitIn(d, 'rev-parse', '--git-path', 'index').trim())
-  const [idxMain, idxA, idxB] = [mainDir, wtA, wtB].map(indexOf)
+  const idxMain = indexOf(mainDir)
+  const idxA = indexOf(wtA)
+  const idxB = indexOf(wtB)
 
   // The worktree fixtures are held to the same isolation rule as every
   // other one, widened to the scratch root because their git dir lives
@@ -808,6 +814,7 @@ function verifyLeakedGitContext({
     env,
     encoding: 'utf8',
   }).split(' ')[1]
+  if (stagedOid === undefined) throw new Error('git ls-files -s printed no oid for the staged file')
   rmSync(join(dir, '.git', 'objects', stagedOid.slice(0, 2), stagedOid.slice(2)), { force: true })
   const damaged = run(dir, env, ['--cached'])
   check(
@@ -839,7 +846,7 @@ function verifyLeakedGitContext({
       encoding: 'utf8',
     })
   } catch (err) {
-    gitHonoursForgeryError = err.message
+    gitHonoursForgeryError = err instanceof Error ? err.message : String(err)
   }
   check(
     "leaked alternates: …and git itself DOES serve the forged body under the violation's oid (the leak is real)",
@@ -1254,7 +1261,7 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       // A duplicate of decoy 0: two paths with the SAME blob sha, so the
       // batch input carries a repeated oid and the record-per-INPUT-LINE
       // assumption is tested rather than assumed.
-      writeFileSync(join(repoDir, `dupe-${file}`), decoys[0])
+      writeFileSync(join(repoDir, `dupe-${file}`), decoys[0] ?? '')
       write(`${goodLine}\n`)
       git('add', '-A')
       git('commit', '-qm', 'base')

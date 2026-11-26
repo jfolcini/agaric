@@ -129,7 +129,7 @@ function main() {
       const src = fs.readFileSync(file, 'utf8')
       for (const spec of detectImports(src)) {
         const target = specifierTier(spec, file, SRC_DIR)
-        if (target && TIER_RANK.get(target) > tier.rank) {
+        if (target && (TIER_RANK.get(target) ?? Number.NEGATIVE_INFINITY) > tier.rank) {
           const rel = toPosix(path.relative(ROOT, file))
           violations.push(`${rel}:${lineOf(src, spec)}  ${tier.name} imports ${target}: '${spec}'`)
         }

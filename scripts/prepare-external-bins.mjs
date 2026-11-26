@@ -42,7 +42,7 @@ function detectHostTriple() {
   const out = execSync('rustc -vV', { encoding: 'utf8' })
   const line = out.split('\n').find((l) => l.startsWith('host:'))
   if (!line) throw new Error(`prepare-external-bins: could not parse rustc host from:\n${out}`)
-  return line.split(':')[1].trim()
+  return (line.split(':')[1] ?? '').trim()
 }
 
 function detectTargetTriple(hostTriple) {
@@ -57,9 +57,9 @@ function detectTargetTriple(hostTriple) {
   //      output path under `target/<triple>/release/`.
   //   4. Host triple from `rustc -vV` (local dev, no override).
   return (
-    process.env.TAURI_ENV_TARGET_TRIPLE ||
-    process.env.TAURI_TARGET_TRIPLE ||
-    process.env.CARGO_BUILD_TARGET ||
+    process.env['TAURI_ENV_TARGET_TRIPLE'] ||
+    process.env['TAURI_TARGET_TRIPLE'] ||
+    process.env['CARGO_BUILD_TARGET'] ||
     hostTriple
   )
 }
@@ -123,7 +123,7 @@ function main() {
   // via `CARGO_BUILD_TARGET` in env (which CI sets even for native builds
   // so the path layout is uniform across the matrix).
   const cargoOutputDir =
-    isCrossCompile || process.env.CARGO_BUILD_TARGET
+    isCrossCompile || process.env['CARGO_BUILD_TARGET']
       ? join(SRC_TAURI, 'target', triple, profileDir)
       : join(SRC_TAURI, 'target', profileDir)
 

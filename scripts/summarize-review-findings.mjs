@@ -250,6 +250,12 @@ export function issueRefsFromClaimOnward(text) {
 }
 
 /**
+ * A review or review comment as the GitHub REST API returns it, reduced to the fields read here.
+ * @typedef {{ body?: string | null, commit_id?: string | null, state?: string,
+ *   submitted_at?: string, created_at?: string, user?: { login?: string } | null }} GhEntry
+ */
+
+/**
  * Analyse one review/comment body.
  *
  * @param {string} body
@@ -341,9 +347,9 @@ export function authoredByReviewer(login) {
  * a run with no `headSha` to compare against, matches nothing and therefore
  * reports `neutral`: unattributable evidence is not evidence.
  *
- * @param {object[]} reviews
+ * @param {GhEntry[]} reviews
  * @param {string} headSha
- * @param {(entry: object) => boolean} isAuthor
+ * @param {(entry: GhEntry) => boolean} isAuthor
  */
 export function reviewsForCommit(reviews, headSha, isAuthor = isBotAuthor) {
   if (typeof headSha !== 'string' || headSha.length === 0) return []
@@ -370,10 +376,10 @@ export function reviewsForCommit(reviews, headSha, isAuthor = isBotAuthor) {
  * code-review plugin posts its comment before casting its verdict, so this
  * push's comment predates this push's review by seconds.
  *
- * @param {object[]} comments
- * @param {object[]} reviews every reviewer review, any commit
- * @param {object|null} review the review of the head commit
- * @param {(entry: object) => boolean} isAuthor
+ * @param {GhEntry[]} comments
+ * @param {GhEntry[]} reviews every reviewer review, any commit
+ * @param {GhEntry|null|undefined} review the review of the head commit
+ * @param {(entry: GhEntry) => boolean} isAuthor
  */
 export function commentsForPush(comments, reviews, review, isAuthor = isBotAuthor) {
   const bots = comments.filter((c) => isAuthor(c) && (c.body ?? '').trim().length > 0)
@@ -399,7 +405,7 @@ export function commentsForPush(comments, reviews, review, isAuthor = isBotAutho
 /**
  * The prose body of the check output, below the heading.
  *
- * @param {{state: string, findings: number, parts: object[], perBody: number[], shortfall: number, unbacked: boolean}} v
+ * @param {{state: string, findings: number, parts: ReturnType<typeof analyzeBody>[], perBody: number[], shortfall: number, unbacked: boolean}} v
  */
 function renderVerdict({ state, findings, parts, perBody, shortfall, unbacked }) {
   const lines = []
@@ -451,7 +457,7 @@ function renderVerdict({ state, findings, parts, perBody, shortfall, unbacked })
 /**
  * The whole verdict, from the raw API payloads.
  *
- * @param {{reviews?: object[], comments?: object[], headSha?: string, reviewerLogin?: string}} opts
+ * @param {{reviews?: GhEntry[], comments?: GhEntry[], headSha?: string, reviewerLogin?: string}} opts
  */
 export function summarize({ reviews = [], comments = [], headSha = '', reviewerLogin = '' }) {
   // A PR can carry reviews of several pushes (each `re-review` label runs
@@ -509,7 +515,7 @@ export function summarize({ reviews = [], comments = [], headSha = '', reviewerL
     }
   }
 
-  const bodies = [review?.body ?? '', ...botComments.map((c) => c.body)].filter(
+  const bodies = [review?.body ?? '', ...botComments.map((c) => c.body ?? '')].filter(
     (b) => b.trim().length > 0,
   )
   const parts = bodies.map(analyzeBody)
@@ -672,7 +678,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`summarize-review-findings: ${err.message}`)
+    console.error(`summarize-review-findings: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
 
@@ -698,7 +704,7 @@ function main(argv) {
   }
   if (args.summaryFile) writeFileSync(args.summaryFile, `${result.summary}\n`, 'utf8')
 
-  const out = process.env.GITHUB_OUTPUT
+  const out = process.env['GITHUB_OUTPUT']
   if (out) {
     appendFileSync(
       out,

@@ -18,11 +18,17 @@ const DURATIONS = 'e2e/spec-durations.json'
 // Playwright's default `testMatch`, under the config's `testDir`.
 const SPEC_GLOB = 'e2e/**/*.{spec,test}.{js,jsx,cjs,mjs,ts,tsx,cts,mts}'
 
-/** Deal `files` over `total` shards, longest first into the shard with the least time so far. */
+/**
+ * Deal `files` over `total` shards, longest first into the shard with the least time so far.
+ * @param {string[]} files
+ * @param {number} total
+ * @param {Record<string, number>} seconds
+ */
 export function dealSpecFiles(files, total, seconds) {
   const known = files.flatMap((file) => seconds[file] ?? []).toSorted((a, b) => a - b)
   const fallback = known[Math.floor(known.length / 2)] ?? 1
   const cost = (file) => seconds[file] ?? fallback
+  /** @type {{ files: string[], time: number }[]} */
   const shards = Array.from({ length: total }, () => ({ files: [], time: 0 }))
   for (const file of files.toSorted((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
     const target = shards.reduce((least, shard) => (shard.time < least.time ? shard : least))
@@ -65,14 +71,18 @@ function realBackendSpecs() {
   return specs
 }
 
+/** @param {string[]} argv `<k>/<n>` or `--update <report.json>` */
 function main([arg, reportPath]) {
   if (arg === '--update') {
+    if (reportPath === undefined)
+      throw new Error('usage: playwright-shard.mjs --update <report.json>')
     const seconds = secondsFromReport(JSON.parse(readFileSync(reportPath, 'utf8')))
     if (Object.keys(seconds).length === 0) throw new Error(`${reportPath} times no spec file`)
     writeFileSync(path.join(ROOT, DURATIONS), `${JSON.stringify(seconds, null, 2)}\n`)
     return
   }
   const match = /^(\d+)\/(\d+)$/.exec(arg ?? '')
+  /** @type {[number, number]} */
   const [shard, total] = match ? [Number(match[1]), Number(match[2])] : [0, 0]
   if (shard < 1 || shard > total)
     throw new Error('usage: playwright-shard.mjs <k>/<n> | --update <report.json>')
@@ -80,7 +90,7 @@ function main([arg, reportPath]) {
   const seconds = JSON.parse(readFileSync(path.join(ROOT, DURATIONS), 'utf8'))
   // The mock lane runs a listed spec's `@mock-only` tests alone, a few seconds.
   for (const spec of realBackendSpecs()) seconds[`e2e/${spec}`] = 0
-  const mine = dealSpecFiles(files, total, seconds)[shard - 1]
+  const mine = dealSpecFiles(files, total, seconds)[shard - 1] ?? []
   // An empty list would make `npx playwright test` run every spec.
   if (mine.length === 0) throw new Error(`shard ${arg} has no spec files`)
   console.log(mine.join(' '))

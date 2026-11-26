@@ -309,12 +309,12 @@ void describe('httpClient', () => {
   void it('sends GITHUB_TOKEN to api.github.com only, not to a url that merely contains it', async () => {
     const sent = []
     const { fetch } = globalThis
-    const token = process.env.GITHUB_TOKEN
+    const token = process.env['GITHUB_TOKEN']
     globalThis.fetch = (url, init) => {
       sent.push([url, init.headers.authorization])
       return Promise.resolve(new Response('{}'))
     }
-    process.env.GITHUB_TOKEN = 't0k'
+    process.env['GITHUB_TOKEN'] = 't0k'
     try {
       const http = httpClient()
       await http.json('https://api.github.com/repos/o/r/releases/latest')
@@ -322,8 +322,8 @@ void describe('httpClient', () => {
       await http.json('https://api.github.com.example.com/x')
     } finally {
       globalThis.fetch = fetch
-      if (token === undefined) delete process.env.GITHUB_TOKEN
-      else process.env.GITHUB_TOKEN = token
+      if (token === undefined) delete process.env['GITHUB_TOKEN']
+      else process.env['GITHUB_TOKEN'] = token
     }
     assert.deepEqual(sent, [
       ['https://api.github.com/repos/o/r/releases/latest', 'Bearer t0k'],
@@ -409,7 +409,7 @@ void describe('pins.sh fetch', () => {
         {
           env: {
             ...process.env,
-            PATH: `${dir}:${process.env.PATH}`,
+            PATH: `${dir}:${process.env['PATH']}`,
             PINS_FILE: join(dir, 'pins.txt'),
           },
           encoding: 'utf8',
@@ -460,7 +460,8 @@ void describe('pins.sh github-output', () => {
   })
 
   void it('fails, writing nothing, when either file has no version', () => {
-    for (const [files, message] of [
+    /** @type {[Record<string, string>, RegExp][]} */
+    const cases = [
       [{ 'package.json': PACKAGE }, NO_CHANNEL],
       [{ 'rust-toolchain.toml': '[toolchain]\n', 'package.json': PACKAGE }, NO_CHANNEL],
       [{ 'rust-toolchain.toml': RUST_TOOLCHAIN }, NO_FLOOR],
@@ -472,11 +473,12 @@ void describe('pins.sh github-output', () => {
         },
         NO_FLOOR,
       ],
-    ]) {
+    ]
+    for (const [files, message] of cases) {
       inPinsDir(files, (pinsFile, out) => {
         assert.throws(
           () => githubOutput(pinsFile, out),
-          (e) => message.test(e.stderr.toString()),
+          (/** @type {{ stderr: Buffer }} */ e) => message.test(e.stderr.toString()),
         )
         assert.equal(readFileSync(out, 'utf8'), '')
       })

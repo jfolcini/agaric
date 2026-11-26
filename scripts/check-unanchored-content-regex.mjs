@@ -234,6 +234,8 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
 const BASELINE_FILE = path.join(ROOT, 'scripts', 'content-regex-baseline.json')
@@ -319,7 +321,7 @@ function makeLineLookup(src) {
     let hi = starts.length - 1
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= idx) lo = mid
+      if (/** @type {number} */ (starts[mid]) <= idx) lo = mid
       else hi = mid - 1
     }
     return lo + 1
@@ -347,13 +349,14 @@ function markerLinesFromComments(ast) {
   for (const comment of ast.comments ?? []) {
     if (comment.type !== 'CommentLine') continue
     const m = /^\s*content-regex-allow\s*:\s*(.*)$/.exec(comment.value)
-    if (m && m[1].trim().length > 0) out.add(comment.loc.start.line)
+    if (m && (m[1] ?? '').trim().length > 0) out.add(comment.loc.start.line)
   }
   return out
 }
 
 // ─── AST layer ────────────────────────────────────────────────────────
 
+/** @type {typeof import('@babel/core') | null} */
 let babelCache = null
 
 /**
@@ -366,7 +369,7 @@ function loadBabel() {
     const require = createRequire(import.meta.url)
     babelCache = require('@babel/core')
   }
-  return babelCache
+  return /** @type {typeof import('@babel/core')} */ (babelCache)
 }
 
 /**
@@ -391,7 +394,7 @@ function parseSource(code, filename) {
       },
     })
   } catch (err) {
-    throw new Error(`cannot parse ${filename}: ${err.message}`, { cause: err })
+    throw new Error(`cannot parse ${filename}: ${errorMessage(err)}`, { cause: err })
   }
 }
 
@@ -1039,8 +1042,9 @@ function scanUnanchoredSurgery(ast, code) {
       // A getter's return value IS the property read: `get re() { … }` plus
       // `x.re` is the same hop as `const re = …` plus `re`. `kind` is only
       // set on object/class methods; on plain functions it is undefined.
-      if (p.node.kind === 'get') {
-        const name = p.node.computed ? null : keyName(p.node.key)
+      const method = /** @type {{ kind?: string, computed?: boolean, key?: unknown }} */ (p.node)
+      if (method.kind === 'get') {
+        const name = method.computed ? null : keyName(method.key)
         if (name) addEdge(`ret:${uid(p.node)}`, `prop:${name}`)
       }
     },
@@ -1071,12 +1075,13 @@ function scanUnanchoredSurgery(ast, code) {
       added.add(id)
     }
     if (added.size === 0) return
-    for (const reader of readers.get(slot) ?? []) queue.push({ at: reader, ids: added })
+    for (const reader of readers.get(slot) ?? [])
+      queue.push({ at: reader, ids: added, seed: false })
     for (const to of edges.get(slot) ?? []) pushSlot(to, added)
   }
 
   while (queue.length > 0) {
-    const item = queue.pop()
+    const item = /** @type {(typeof queue)[number]} */ (queue.pop())
     for (const target of targetsOf(item.at)) {
       if (typeof target === 'object' && target.sink) {
         for (const id of item.ids) {
@@ -1376,7 +1381,7 @@ function analyzeOrExit(baseline) {
   try {
     return analyze({ root: ROOT, srcDir: SRC_DIR, baseline })
   } catch (err) {
-    console.error(`ERROR: ${err.message}`)
+    console.error(`ERROR: ${errorMessage(err)}`)
     console.error('')
     console.error('Every file under src/ must parse for this guard to mean anything; refusing to')
     console.error('report "clean" over a file it could not read.')
@@ -1415,7 +1420,7 @@ function runGuard() {
   try {
     baseline = readBaseline()
   } catch (err) {
-    console.error(`ERROR: ${err.message}`)
+    console.error(`ERROR: ${errorMessage(err)}`)
     process.exit(2)
   }
   const problems = validateBaseline(baseline)

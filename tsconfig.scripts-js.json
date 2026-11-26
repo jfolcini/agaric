@@ -1,0 +1,11 @@
+{
+  "//": "Type-checks scripts/**/*.mjs, the repo's guards and tooling, which no project read before: when the .ts scripts were first brought under tsc, that review found 6 real type errors (#3905), and the .mjs ones had the same gap. Strict like every project except `noImplicitAny`: an unannotated JS parameter is `any`, as JS has it, so a type is written only where inference falls short (JSDoc), and the rest of strict checks what the code does with its values. A separate project so the .ts scripts keep `noImplicitAny`.",
+  "extends": "./tsconfig.scripts.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./.tsbuildinfo/tsconfig.scripts-js.tsbuildinfo",
+    "allowJs": true,
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["scripts/**/*.mjs"]
+}

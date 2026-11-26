@@ -119,6 +119,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const WORKFLOWS_DIR = join(import.meta.dirname, '..', '.github', 'workflows')
 
 const HOUR_MS = 3600 * 1000
@@ -187,6 +189,36 @@ const HOUR_MS = 3600 * 1000
  * under two nominal periods, so a check that never fires within two cycles is
  * impossible to configure here by accident.
  */
+/**
+ * @typedef {{
+ *   workflow: string,
+ *   periodHours?: number,
+ *   maxAgeHours?: number,
+ *   event?: string,
+ *   branch?: string,
+ *   selfExcluded?: boolean,
+ *   why: string,
+ * }} WatchedEntry
+ */
+
+/**
+ * @typedef {{
+ *   databaseId?: number | string,
+ *   status?: string,
+ *   conclusion?: string | null,
+ *   createdAt?: string,
+ *   url?: string,
+ * }} WorkflowRun
+ * @typedef {{ runs: WorkflowRun[], workflow: string, excludeRunId?: number | string | undefined }} RunSelection
+ * @typedef {RunSelection & {
+ *   nowMs: number,
+ *   maxAgeHours?: number | undefined,
+ *   scheduleState?: { state?: string, error?: string } | undefined,
+ *   event?: string | undefined,
+ * }} ClassifyArgs
+ */
+
+/** @type {readonly Readonly<WatchedEntry>[]} */
 export const WATCHED = Object.freeze([
   Object.freeze({
     workflow: 'branch-protection-assert.yml',
@@ -301,6 +333,8 @@ export function runStartedAt(run, workflow) {
  * caller reading only the run id would have taken corrupt data for a quiet
  * week. Every reader of this selection now refuses the same input, which is
  * the posture the rest of this file takes: unknown is not green.
+ *
+ * @param {RunSelection} selection
  */
 function orderedRuns({ runs, workflow, excludeRunId }) {
   if (!Array.isArray(runs)) {
@@ -333,6 +367,8 @@ function orderedRuns({ runs, workflow, excludeRunId }) {
  * A payload that is not an array of runs THROWS (in `orderedRuns`) rather
  * than classifying: `Date.parse('nonsense')` is NaN and every `NaN > limit`
  * is false, so anything swallowed here reads as fresh and healthy.
+ *
+ * @param {ClassifyArgs} args
  */
 export function classifyWorkflow({
   runs,
@@ -437,8 +473,10 @@ export function classifyWorkflow({
   }
 
   if (event === 'schedule') {
-    const ageHours = (nowMs - considered[0].startedAtMs) / HOUR_MS
-    if (ageHours > maxAgeHours) {
+    const ageHours =
+      (nowMs - /** @type {{ startedAtMs: number }} */ (considered[0]).startedAtMs) / HOUR_MS
+    // A scheduled entry always carries a window; only the push-watched entry omits it.
+    if (ageHours > /** @type {number} */ (maxAgeHours)) {
       return `stale (newest scheduled run started ${formatAge(ageHours)} ago; window is ${maxAgeHours}h)`
     }
   }
@@ -482,6 +520,8 @@ export function classifyWorkflow({
  * holds on it, so "the JSON was not a run list" would arrive as a quiet week
  * (#4440 review). `orderedRuns` throws on that input for every caller — this
  * function no longer has a return path for data it could not read.
+ *
+ * @param {RunSelection} selection
  */
 export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
   return judgedRun(orderedRuns({ runs, workflow, excludeRunId }))?.databaseId ?? null
@@ -854,6 +894,10 @@ function watchedEntry(name) {
  * `gh` exiting non-zero (rate limit, auth, API 5xx), output that is not JSON —
  * propagates as a throw. There is no fallback value, because every possible
  * fallback would be a claim about health that this process cannot substantiate.
+ *
+ * @param {string} repo
+ * @param {string} workflow
+ * @param {{ event?: string, branch?: string | undefined }} [options]
  */
 export function fetchWorkflowRuns(repo, workflow, { event = 'schedule', branch } = {}) {
   let raw
@@ -878,14 +922,14 @@ export function fetchWorkflowRuns(repo, workflow, { event = 'schedule', branch }
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
     )
   } catch (err) {
-    throw new Error(`${workflow}: \`gh run list\` failed (${err.message.split('\n')[0]})`, {
+    throw new Error(`${workflow}: \`gh run list\` failed (${errorMessage(err).split('\n')[0]})`, {
       cause: err,
     })
   }
   try {
     return JSON.parse(raw)
   } catch (err) {
-    throw new Error(`${workflow}: \`gh run list\` did not return JSON (${err.message})`, {
+    throw new Error(`${workflow}: \`gh run list\` did not return JSON (${errorMessage(err)})`, {
       cause: err,
     })
   }
@@ -932,7 +976,7 @@ export function fetchWorkflowState(repo, workflow) {
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
     )
   } catch (err) {
-    return { error: `\`gh api\` failed (${err.message.split('\n')[0]})` }
+    return { error: `\`gh api\` failed (${errorMessage(err).split('\n')[0]})` }
   }
   const state = raw.trim()
   if (state.length === 0) {
@@ -1028,7 +1072,7 @@ export function main(argv = process.argv.slice(2)) {
     runsByWorkflow = JSON.parse(readFileSync(args.runsJsonFile, 'utf8'))
     statesByWorkflow = JSON.parse(readFileSync(args.statesJsonFile, 'utf8'))
   } else {
-    const repo = args.repo ?? process.env.GITHUB_REPOSITORY
+    const repo = args.repo ?? process.env['GITHUB_REPOSITORY']
     if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required outside fixture mode')
     runsByWorkflow = {}
     statesByWorkflow = {}
@@ -1074,7 +1118,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`check-workflow-liveness: ${err.message}`)
+    console.error(`check-workflow-liveness: ${errorMessage(err)}`)
     process.exit(1)
   }
 }

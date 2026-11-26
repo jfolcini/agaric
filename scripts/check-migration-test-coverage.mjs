@@ -171,7 +171,7 @@ export function listMigrations(dir = MIGRATIONS_DIR) {
     if (m === null) malformed.push(name)
     else numbers.push(m[1])
   }
-  return { numbers: numbers.toSorted(), malformed }
+  return { numbers: numbers.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)), malformed }
 }
 
 /**

@@ -51,6 +51,8 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 export const DEFAULT_WORKFLOW = '.github/workflows/scheduled-deep-checks.yml'
 export const DEFAULT_MANIFEST_DIR = 'src-tauri'
 export const SMOKE_JOB = 'bench-smoke'
@@ -100,8 +102,8 @@ export function parseTopLevelEnv(workflowText, key) {
     if (line.trim().length === 0) continue
     // A column-0 non-space line ends the top-level `env:` mapping.
     if (/^\S/.test(line)) break
-    const m = pattern.exec(line)
-    if (m) return m[1].replace(/^['"]|['"]$/g, '')
+    const value = pattern.exec(line)?.[1]
+    if (value !== undefined) return value.replace(/^['"]|['"]$/g, '')
   }
   return null
 }
@@ -176,6 +178,7 @@ const ASSIGNMENT = /^\s*(?:export|declare|local|readonly|typeset)?\s*([A-Za-z_][
  */
 export function consumingText(jobLines) {
   const out = []
+  /** @type {string | null} */
   let heredocTerm = null
   let messageContinues = false
   for (const raw of jobLines) {
@@ -211,7 +214,7 @@ export function consumingText(jobLines) {
     const wf = WORKFLOW_COMMAND.exec(line)
     if (wf) line = line.slice(0, wf.index)
 
-    if (opener) heredocTerm = opener[1] ?? opener[2] ?? opener[3]
+    if (opener) heredocTerm = opener[1] ?? opener[2] ?? opener[3] ?? null
     out.push(line)
   }
   return out
@@ -253,7 +256,9 @@ export function benchUniverse(manifestDir) {
       maxBuffer: 64 * 1024 * 1024,
     })
   } catch (err) {
-    throw new Error(`\`cargo metadata\` failed in ${manifestDir}: ${err.message}`, { cause: err })
+    throw new Error(`\`cargo metadata\` failed in ${manifestDir}: ${errorMessage(err)}`, {
+      cause: err,
+    })
   }
   const meta = JSON.parse(out)
   const pkg = (meta.packages ?? []).find((p) => p.name === 'agaric')
@@ -608,7 +613,7 @@ function runSelfTest() {
     if (problems.length === 0) ok(`the real workflow covers all ${real.length} real bench targets`)
     else fail('the real workflow covers all real bench targets', problems.join(' | '))
   } catch (err) {
-    fail('the real workflow covers all real bench targets', err.message)
+    fail('the real workflow covers all real bench targets', errorMessage(err))
   }
 
   if (failures.length > 0) {
@@ -630,7 +635,7 @@ if (isMainModule) {
     try {
       main()
     } catch (err) {
-      console.error(`check-bench-lane-coverage: ${err.message}`)
+      console.error(`check-bench-lane-coverage: ${errorMessage(err)}`)
       process.exit(1)
     }
   }

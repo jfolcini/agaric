@@ -114,7 +114,8 @@ function adb(args, { allowFail = false } = {}) {
     // through this wrapper (including the one `resolveSerial` makes before
     // `SERIAL` is even set — `adb()` degrades to plain `adb <args>` while
     // `SERIAL` is null), so catching it once here covers every call site.
-    if (err.code === 'ENOENT') {
+    const failure = /** @type {NodeJS.ErrnoException & { stderr?: string }} */ (err)
+    if (failure.code === 'ENOENT') {
       fail(
         "'adb' is not on PATH",
         '  install the Android SDK platform-tools and add them to PATH, then re-run\n' +
@@ -122,7 +123,9 @@ function adb(args, { allowFail = false } = {}) {
       )
     }
     if (allowFail) return ''
-    throw new Error(`adb ${full.join(' ')} failed: ${err.stderr || err.message}`, { cause: err })
+    throw new Error(`adb ${full.join(' ')} failed: ${failure.stderr || failure.message}`, {
+      cause: err,
+    })
   }
 }
 
@@ -155,6 +158,7 @@ function removeDump() {
 // enough to stop it without ever unwinding the recursion.
 let failing = false
 
+/** @returns {never} */
 function fail(message, detail) {
   if (failing) process.exit(1)
   failing = true
@@ -346,7 +350,9 @@ function dumpNodes() {
   for (const raw of xml.matchAll(/<node\b[^>]*>/g)) {
     const tag = raw[0]
     const attr = (name) => tag.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? ''
-    const b = tag.match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/)
+    const b = /** @type {[string, string, string, string, string] | null} */ (
+      tag.match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/)
+    )
     nodes.push({
       cls: attr('class'),
       desc: attr('content-desc'),
@@ -607,7 +613,7 @@ function argValue(argv, flag) {
 async function main() {
   const argv = process.argv.slice(2)
   const apk = argValue(argv, '--apk')
-  const serialArg = argValue(argv, '--serial') ?? process.env.ANDROID_SERIAL ?? null
+  const serialArg = argValue(argv, '--serial') ?? process.env['ANDROID_SERIAL'] ?? null
   PKG = argValue(argv, '--pkg') ?? PKG
 
   SERIAL = resolveSerial(serialArg)

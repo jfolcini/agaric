@@ -126,6 +126,8 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const SCRIPTS_DIR = import.meta.dirname
 const REPO_ROOT = join(SCRIPTS_DIR, '..')
 
@@ -158,6 +160,8 @@ export const CANARY_CONFIG = JSON.stringify({
 
 export class UnverifiableError extends Error {}
 
+/** @typedef {{ diagnostics?: unknown[], number_of_files?: number, number_of_rules?: number }} OxlintReport */
+
 const broken = (message) => ({ severity: 'broken', message })
 const unverifiable = (message) => ({ severity: 'unverifiable', message })
 
@@ -177,11 +181,11 @@ export function parseReport(text) {
   try {
     parsed = JSON.parse(text)
   } catch (err) {
-    const head = text.trim().split('\n')[0].slice(0, 200)
+    const head = (text.trim().split('\n')[0] ?? '').slice(0, 200)
     return {
       report: null,
       reason:
-        `the report is not JSON (${err.message}). First line: ${JSON.stringify(head)}. ` +
+        `the report is not JSON (${errorMessage(err)}). First line: ${JSON.stringify(head)}. ` +
         'Every known oxlint failure mode — missing tsgolint binary, unknown flag, rejected ' +
         'config, absent path — prints a bare error line like this INSTEAD of a report, and ' +
         'exits 1 exactly as a successful findings run does',
@@ -385,7 +389,7 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
     mkdirSync(parent, { recursive: true })
     dir = mkdtempSync(join(parent, 'canary-'))
   } catch (err) {
-    throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
+    throw new UnverifiableError(`could not create the canary fixture: ${errorMessage(err)}`)
   }
   // Note 3: the fixture WRITE lives inside the same try/finally as the run.
   // It used to sit in the block above, so a write that threw (ENOSPC, EACCES)
@@ -397,7 +401,7 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
       writeFileSync(fixture, CANARY_SOURCE, 'utf8')
       writeFileSync(join(dir, 'oxlintrc.json'), CANARY_CONFIG, 'utf8')
     } catch (err) {
-      throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
+      throw new UnverifiableError(`could not create the canary fixture: ${errorMessage(err)}`)
     }
     const canary = parseReport(
       run({
@@ -516,7 +520,8 @@ export function defaultRunOxlint({ binary, cwd, args, maxBuffer = OXLINT_PROBE_M
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer,
     })
-  } catch (err) {
+  } catch (caught) {
+    const err = /** @type {NodeJS.ErrnoException & { stdout?: unknown }} */ (caught)
     // #4461 note 2: a maxBuffer overflow must be diagnosed as what it is, not
     // guessed at from its aftermath. On overflow `execFileSync` throws with a
     // TRUNCATED but non-empty `err.stdout` — exactly the shape the "a
@@ -539,7 +544,9 @@ export function defaultRunOxlint({ binary, cwd, args, maxBuffer = OXLINT_PROBE_M
     // A findings run exits non-zero; its stdout is still the report. Only a
     // total absence of stdout is a real failure to run.
     if (typeof err.stdout === 'string' && err.stdout.trim() !== '') return err.stdout
-    throw new UnverifiableError(`a probe invocation produced no output at all: ${err.message}`)
+    throw new UnverifiableError(
+      `a probe invocation produced no output at all: ${errorMessage(err)}`,
+    )
   }
 }
 
@@ -586,6 +593,7 @@ export function checkCanary(canaryResult) {
  * the way there.
  */
 export function collectProblems({ exitCode, reportText, probe }) {
+  /** @type {{ severity: string, message: string }[] & { report?: OxlintReport }} */
   const problems = []
   if (!ALLOWED_EXIT_CODES.includes(exitCode)) {
     problems.push(
@@ -639,7 +647,7 @@ export function runGuard({ exitCode, reportPath, probe = runProbes }) {
   } catch (err) {
     return {
       code: EXIT_BROKEN,
-      problems: [broken(`the lane wrote no report at ${reportPath}: ${err.message}`)],
+      problems: [broken(`the lane wrote no report at ${reportPath}: ${errorMessage(err)}`)],
     }
   }
   const problems = collectProblems({ exitCode, reportText, probe })
@@ -721,6 +729,7 @@ export function takeValue(argv, i) {
 }
 
 export function parseArgs(argv) {
+  /** @type {{ report: string | null, exitCode: number | null, summary: boolean, unknown: string[] }} */
   const args = { report: null, exitCode: null, summary: false, unknown: [] }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--summary') args.summary = true
@@ -756,7 +765,7 @@ export function main(argv) {
     try {
       console.log(renderSummary(args.report == null ? '' : readFileSync(args.report, 'utf8')))
     } catch (err) {
-      console.log(`## Type-aware lint\n\n_Summary renderer failed: ${err?.message}._\n`)
+      console.log(`## Type-aware lint\n\n_Summary renderer failed: ${errorMessage(err)}._\n`)
     }
     return EXIT_CLEAN
   }
@@ -779,10 +788,12 @@ export function main(argv) {
     reportPath: args.report,
   })
   if (code === EXIT_CLEAN) {
-    const total = (report.diagnostics ?? []).length
+    // `runGuard` returns a clean verdict only with the parsed report attached.
+    const clean = /** @type {OxlintReport} */ (report)
+    const total = (clean.diagnostics ?? []).length
     console.log(
       `OK  type-aware lane is live: oxlint exited ${args.exitCode}, linted ` +
-        `${report.number_of_files} file(s) against ${report.number_of_rules} rule(s) — more than ` +
+        `${clean.number_of_files} file(s) against ${clean.number_of_rules} rule(s) — more than ` +
         'a plain run of this config registers, so `--type-aware` really was in effect — reported ' +
         `${total} finding(s), and the generated canary fixture still trips ${CANARY_RULE}`,
     )

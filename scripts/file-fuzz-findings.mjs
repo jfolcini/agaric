@@ -238,7 +238,8 @@ export function reproducersFor({ artifacts, log }, prefixes) {
     const m = /(?:Test unit|artifact_prefix).*?([\w-]*(?:crash|timeout|leak|oom)-[0-9a-f]+)/i.exec(
       line,
     )
-    if (m) fromLog.add(m[1])
+    const id = m?.[1]
+    if (id !== undefined) fromLog.add(id)
   }
   return [...fromLog].toSorted()
 }
@@ -399,12 +400,15 @@ export function parseKnownDetails(body) {
  * actually left the block. `knownById` carries a retained finding's details
  * forward, since this run saw nothing to describe it with.
  *
- * @param {{ id: string }[]} current
+ * @param {{ id: string, detail?: string }[]} current
  * @param {Set<string>} known
- * @param {Map<string, { id: string, detail: string }>} knownById
+ * @param {Map<string, { id: string, detail?: string }>} knownById
  */
 export function diffFindings(current, known, knownById) {
-  const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
+  const byId = new Map([
+    ...knownById,
+    ...current.map((f) => /** @type {[string, { id: string, detail?: string }]} */ ([f.id, f])),
+  ])
   const currentIds = new Set(current.map((f) => f.id))
   // Absent from `current` does not always mean settled — see `buildFindings` on
   // a cancelled run — so the clear/close branch gates on `allTargetsClean`.
@@ -467,6 +471,13 @@ export function buildStatusSummary(results) {
   return lines
 }
 
+/** @typedef {{ target: string, status: string, log: string, artifacts: string[] }} TargetResult */
+
+/**
+ * @param {{ all: string[], newOnes: string[], resolvedOnes: string[],
+ *   byId?: Map<string, { id: string, detail?: string }>, results?: TargetResult[],
+ *   runUrl?: string }} input
+ */
 export function buildIssueBody({
   all,
   newOnes,
@@ -548,6 +559,10 @@ export function buildIssueBody({
   )
 }
 
+/**
+ * @param {{ newOnes: string[], byId?: Map<string, { id: string, detail?: string }>,
+ *   results?: TargetResult[], runUrl?: string }} input
+ */
 export function buildNewFindingComment({ newOnes, byId, results = [], runUrl }) {
   const lines = []
   lines.push(...buildStatusSummary(results))
@@ -570,7 +585,13 @@ function ghJson(args) {
   return JSON.parse(out)
 }
 
-/** Finds the single tracking issue by exact title, preferring an OPEN match over a CLOSED one (so a triaged-and-closed issue gets reopened rather than duplicated). */
+/** @typedef {{ number: number, state: string, body: string }} TrackingIssue */
+
+/**
+ * Finds the single tracking issue by exact title, preferring an OPEN match over a CLOSED one (so a triaged-and-closed issue gets reopened rather than duplicated).
+ * @param {string} repo
+ * @returns {TrackingIssue | null}
+ */
 function findTrackingIssue(repo) {
   const results = ghJson([
     'issue',
@@ -817,7 +838,7 @@ function assertLaneInputs(args, results) {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
-  const repo = args.repo ?? process.env.GITHUB_REPOSITORY
+  const repo = args.repo ?? process.env['GITHUB_REPOSITORY']
   const runUrl = args.runUrl ?? defaultRunUrl()
 
   const results = parseTargetResults(args.resultDir)
@@ -834,6 +855,7 @@ export function main(argv = process.argv.slice(2)) {
   // `gh issue list` lookup so the diff/file/update logic can be exercised
   // against sample data without touching real GitHub state. The real
   // (non-test) path always goes through `gh issue list`.
+  /** @type {TrackingIssue | null} */
   let existingIssue = null
   if (args.knownBodyFile !== undefined) {
     const body = existsSync(args.knownBodyFile) ? readFileSync(args.knownBodyFile, 'utf8') : ''
@@ -978,7 +1000,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`file-fuzz-findings: ${err.message}`)
+    console.error(`file-fuzz-findings: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(1)
   }
 }

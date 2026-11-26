@@ -40,6 +40,8 @@ const CONFIG_PATH = join(import.meta.dirname, '..', 'prek.toml')
 const CONFIG = 'prek.toml' // what the error messages name
 
 const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
+/** @param {number} n */
+const lineAt = (n) => lines[n] ?? ''
 // `hooks = [` is in here because a `[[repos]]` stanza can open its hooks as a
 // MULTI-LINE array; without it the walk-up stops on that line and reports a
 // spurious violation naming the first entry.
@@ -106,8 +108,8 @@ for (let i = 0; i < lines.length; i++) {
   // Both demonstrated on a scratch tree before and after: bare + `"id"` +
   // `'id'` reported "2/170 hooks" green, and now reports 3 with the
   // unexplained one named.
-  if (lines[i].trimStart().startsWith('#')) continue
-  const ids = [...lines[i].matchAll(/\b['"]?id['"]?\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map(
+  if (lineAt(i).trimStart().startsWith('#')) continue
+  const ids = [...lineAt(i).matchAll(/\b['"]?id['"]?\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map(
     (m) => m[1] ?? m[2],
   )
   if (ids.length === 0) continue
@@ -132,11 +134,11 @@ for (let i = 0; i < lines.length; i++) {
   }
   // Walk up past the stanza headers, then over the contiguous comment block.
   let j = i
-  while (j > 0 && SKIP.test(lines[j - 1].trim())) j--
+  while (j > 0 && SKIP.test(lineAt(j - 1).trim())) j--
   let hasWhy = false
-  while (j > 0 && /^\s*#/.test(lines[j - 1])) {
+  while (j > 0 && /^\s*#/.test(lineAt(j - 1))) {
     j--
-    if (/^\s*# WHY:/.test(lines[j])) hasWhy = true
+    if (/^\s*# WHY:/.test(lineAt(j))) hasWhy = true
   }
   if (!hasWhy) {
     for (const id of ids) {

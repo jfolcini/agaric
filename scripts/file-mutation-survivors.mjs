@@ -332,6 +332,10 @@ export const MAX_TITLE_CHARS = 256
 // naming the reason before falling back. A cap that reverts to a constant
 // without saying so is the bug, not the fix.
 const REPO_ROOT = resolve(import.meta.dirname, '..')
+
+/** @param {unknown} err */
+const asError = (err) => (err instanceof Error ? err : new Error(String(err)))
+
 const MUTANTS_TOML_PATH = resolve(REPO_ROOT, 'src-tauri/.cargo/mutants.toml')
 const STRYKER_MODULES_PATH = resolve(REPO_ROOT, 'stryker.modules.mjs')
 
@@ -437,14 +441,14 @@ async function deriveAreaUniverse() {
     }
     frontend = MODULE_NAMES.length
   } catch (err) {
-    warnDerivationFailed(`could not import ${STRYKER_MODULES_PATH}: ${err.message}`)
+    warnDerivationFailed(`could not import ${STRYKER_MODULES_PATH}: ${asError(err).message}`)
     return null
   }
   let rust
   try {
     rust = await countRustAreaFiles()
   } catch (err) {
-    warnDerivationFailed(`could not enumerate the rust lane's area files: ${err.message}`)
+    warnDerivationFailed(`could not enumerate the rust lane's area files: ${asError(err).message}`)
     return null
   }
   if (!isUsableCount(frontend)) {
@@ -794,7 +798,7 @@ function rustKeys(ids, root) {
   for (const id of ids) {
     const m = /^\[rust\] (.+?):(\d+):\d+: (.+)$/.exec(id)
     if (!m) continue
-    const [, file, line, description] = m
+    const [, file = '', line = '', description = ''] = m
     if (!sources.has(file)) {
       const path = join(root, file)
       sources.set(file, existsSync(path) ? readFileSync(path, 'utf8').split('\n') : [])
@@ -818,13 +822,14 @@ export function acceptedLinesFor(text, { repoRoot = REPO_ROOT, rustRoot = RUST_R
     .filter((l) => l.startsWith('[frontend] ') || l.startsWith('[rust] '))
   for (const id of ids) {
     const fe = /^\[frontend\] [^:]+: (.+?):(\d+):(\d+) \[([^\]]+)\]( \(NoCoverage\))?$/.exec(id)
+    /** @type {string | undefined} */
     let key
     if (fe) {
-      const path = resolve(repoRoot, fe[1])
+      const path = resolve(repoRoot, /** @type {string} */ (fe[1]))
       if (existsSync(path))
         key = frontendKey(
-          fe[1],
-          fe[4],
+          /** @type {string} */ (fe[1]),
+          /** @type {string} */ (fe[4]),
           readFileSync(path, 'utf8').split('\n'),
           Number(fe[2]),
           Number(fe[3]),
@@ -944,7 +949,7 @@ export function survivorArea(id) {
   const rust = /^\[rust\]\s+([^\s:]+):/.exec(id)
   if (rust) return `rust: ${rust[1]}`
   const frontend = /^\[frontend\]\s+([^:]+):/.exec(id)
-  if (frontend) return `frontend: ${frontend[1].trim()}`
+  if (frontend) return `frontend: ${(frontend[1] ?? '').trim()}`
   const lane = /^\[([a-z]+)\]/.exec(id)
   return lane ? `${lane[1]}: (unparsed)` : '(unparsed)'
 }
@@ -1106,6 +1111,9 @@ function renderChildBlock(childLinks) {
  * not be told to the reader the same way. The close writes the child BODY
  * first and says which kind it is — that used to be a close comment, and the
  * CI job no longer comments.
+ *
+ * @param {{ groups: { area: string, members: string[] }[], newOnes?: string[],
+ *   knownChildren?: Map<string, number>, maxChildren?: number, accepted?: string[] }} opts
  */
 export function decideChildActions({
   groups,
@@ -1165,6 +1173,10 @@ export function decideChildActions({
  * "Survivors (N)" heading over both told every reader the second story. The
  * parent cannot repeat the split as a list (#3245 forbids any finding appearing
  * twice in that body); it carries the split as counts in its area table.
+ *
+ * @param {{ area: string, members: string[], firstSeen?: Map<string, string>,
+ *   parentNumber?: number | undefined, parentTitle?: string | undefined, accepted?: string[],
+ *   runUrl?: string | undefined }} opts
  */
 export function buildChildBody({
   area,
@@ -1308,6 +1320,10 @@ export function buildChildBody({
  * `resolvedOnes` is NOT part of `all` (it is the complement), so it
  * duplicates nothing; it stays as the one presentational section, and is the
  * section dropped first when the #3257 length clamp bites.
+ *
+ * @param {{ all: string[], resolvedOnes: string[], runUrl?: string | undefined,
+ *   firstSeen?: Map<string, string>, today?: string, newOnes?: string[],
+ *   childLinks?: Map<string, number> }} opts
  */
 export function buildIssueBody({
   all,
@@ -1902,7 +1918,7 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
   applyLane(args)
-  const repo = args.repo ?? process.env.GITHUB_REPOSITORY
+  const repo = args.repo ?? process.env['GITHUB_REPOSITORY']
   const runUrl = args.runUrl ?? defaultRunUrl()
 
   // #3364 — a MISSING lane input is a hard error, not an empty one; see
@@ -1994,7 +2010,9 @@ export function main(argv = process.argv.slice(2)) {
   // stale-open state the parent close exists to prevent.
   const suppressedChildLinks = frontendComplete
     ? []
-    : childActions.filter((a) => a.action === 'close').map((a) => [a.area, a.number])
+    : childActions
+        .filter((a) => a.action === 'close')
+        .map((a) => /** @type {[string, number]} */ ([a.area, a.number]))
   const childWork = gatedChildActions.filter((a) => a.action !== 'sync')
 
   // An open issue with nothing left to track is itself a reason to act: the
@@ -2421,12 +2439,12 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     const body = buildIssueBody({ all: ids, resolvedOnes: [], today: '2026-07-31' })
     const bodyRustFirst =
       body.indexOf('| rust: agaric-store/src/op.rs |') < body.indexOf('| frontend: glob-validate |')
-    if (groups[0].members.length === 5 && bodyRustFirst)
+    if (groups[0]?.members.length === 5 && bodyRustFirst)
       ok('the worst area is ranked first in the body (#3350)')
     else
       fail(
         'the worst area is ranked first in the body (#3350)',
-        `first=${groups[0].area} body=${bodyRustFirst}`,
+        `first=${groups[0]?.area} body=${bodyRustFirst}`,
       )
   }
 
@@ -2453,7 +2471,7 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     if (
       body.length <= MAX_BODY_CHARS &&
       body.includes('Where the findings are') &&
-      !body.includes(resolvedOnes[0]) &&
+      !body.includes(/** @type {string} */ (resolvedOnes[0])) &&
       parseKnownSurvivors(body).size === 200
     )
       ok('the clamp drops the resolved list before the area table (#3350)')
@@ -2552,6 +2570,7 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
     writeFileSync(missed, '')
     const absent = join(root, 'nope')
 
+    /** @param {string[]} argv @returns {Error | null} */
     const runQuiet = (argv) => {
       const realLog = console.log
       console.log = () => {}
@@ -2559,13 +2578,14 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         main(argv)
         return null
       } catch (err) {
-        return err
+        return asError(err)
       } finally {
         console.log = realLog
       }
     }
     const base = ['--dry-run', '--known-body-file', join(root, 'no-such-body.md')]
 
+    /** @type {[string, string[], RegExp][]} */
     const cases = [
       [
         'an ABSENT frontend dir fails --require-input (#3364)',
@@ -2620,6 +2640,7 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
     // The complement: real data must still pass, or the guard is just a
     // permanent red lane. An EMPTY missed.txt is real data (cargo-mutants
     // writes one when nothing survived) — only an ABSENT one is "no data".
+    /** @type {[string, string[]][]} */
     const okCases = [
       [
         'a populated frontend dir passes --require-input',
@@ -2915,11 +2936,12 @@ function selfTestChildPlanning({ check, survivor }) {
   //      of updates/closes is not a runaway.
   {
     const groups = groupByArea([survivor(1), rust(10)])
+    /** @type {Error | null} */
     let threw = null
     try {
       decideChildActions({ groups, newOnes: [], knownChildren: new Map(), maxChildren: 1 })
     } catch (err) {
-      threw = err
+      threw = asError(err)
     }
     check(threw !== null, 'the child cap throws rather than opening the batch', 'no throw')
     const manyCloses = decideChildActions({
@@ -2943,11 +2965,12 @@ function selfTestChildPlanning({ check, survivor }) {
       'a child title is derived from the area verbatim (the tier-2 dedup key)',
       childIssueTitle(FE),
     )
+    /** @type {Error | null} */
     let threw = null
     try {
       childIssueTitle('x'.repeat(MAX_TITLE_CHARS))
     } catch (err) {
-      threw = err
+      threw = asError(err)
     }
     check(threw !== null, 'an over-long child title throws instead of 422ing `gh`', 'no throw')
   }
@@ -3104,6 +3127,11 @@ function selfTestChildGh({ check }) {
   // `[[module, [[line, column, mutator], …]], …]`, one entry per report file —
   // and FEWER entries than EXPECTED_FRONTEND_REPORTS is what makes a frontend
   // run incomplete, which is the only route to `suppressedChildLinks`.
+  /**
+   * @param {{ missedLines?: string[], body: string, list?: object[], state?: string,
+   *   lane?: string, reports?: [string, [number, number, string][]][],
+   *   acceptedArgs?: string[] }} opts
+   */
   const drive = ({
     missedLines = [],
     body,
@@ -3142,10 +3170,11 @@ function selfTestChildGh({ check }) {
     writeFileSync(stateFixture, state, 'utf8')
     writeFileSync(counter, '100', 'utf8')
     writeFileSync(log, '', 'utf8')
-    const prevPath = process.env.PATH
+    const prevPath = process.env['PATH']
     const prevLog = console.log
-    process.env.PATH = `${dir}:${prevPath}`
+    process.env['PATH'] = `${dir}:${prevPath}`
     console.log = () => {}
+    /** @type {Error | null} */
     let threw = null
     try {
       main([
@@ -3162,10 +3191,10 @@ function selfTestChildGh({ check }) {
         'https://example/run',
       ])
     } catch (err) {
-      threw = err
+      threw = asError(err)
     } finally {
       console.log = prevLog
-      process.env.PATH = prevPath
+      process.env['PATH'] = prevPath
     }
     const calls = readFileSync(log, 'utf8')
       .split('\n')
@@ -3392,9 +3421,9 @@ function selfTestChildGh({ check }) {
     writeFileSync(missed, [opId.replace('[rust] ', ''), 'a/b.rs:1:1: replace x with y'].join('\n'))
     writeFileSync(knownBody, parentWith([opId], new Map([[OP, 101]])), 'utf8')
     writeFileSync(log, '', 'utf8')
-    const prevPath = process.env.PATH
+    const prevPath = process.env['PATH']
     const prevLog = console.log
-    process.env.PATH = `${dir}:${prevPath}`
+    process.env['PATH'] = `${dir}:${prevPath}`
     console.log = () => {}
     try {
       main([
@@ -3409,7 +3438,7 @@ function selfTestChildGh({ check }) {
       ])
     } finally {
       console.log = prevLog
-      process.env.PATH = prevPath
+      process.env['PATH'] = prevPath
     }
     const calls = readFileSync(log, 'utf8')
       .split('\n')
@@ -3599,16 +3628,21 @@ function writeStrykerFixture(module_, report) {
   return root
 }
 
-/** Runs `main(argv)` capturing stdout, so a fixture can assert on what it said. */
+/**
+ * Runs `main(argv)` capturing stdout, so a fixture can assert on what it said.
+ * @param {string[]} argv
+ * @returns {{ out: string, err: Error | null }}
+ */
 function captureMain(argv) {
   const realLog = console.log
+  /** @type {string[]} */
   const out = []
   console.log = (...parts) => out.push(parts.join(' '))
   try {
     main(argv)
     return { out: out.join('\n'), err: null }
   } catch (err) {
-    return { out: out.join('\n'), err }
+    return { out: out.join('\n'), err: asError(err) }
   } finally {
     console.log = realLog
   }
@@ -3707,10 +3741,10 @@ function selfTestNoCoverage({ ok, fail }) {
       (_, i) => `[frontend] tree-utils: src/lib/tree-utils.ts:${i + 1}:1 [ConditionalExpression]`,
     )
     const groups = groupByArea([...bigSurvivorArea, NC_ID])
-    if (groups[0].area === 'frontend: date-utils' && groups[0].noCoverage.length === 1)
+    if (groups[0]?.area === 'frontend: date-utils' && groups[0].noCoverage.length === 1)
       ok('an area with no-coverage outranks a larger survivor-only area (#3788)')
     else
-      fail('an area with no-coverage outranks a larger survivor-only area (#3788)', groups[0].area)
+      fail('an area with no-coverage outranks a larger survivor-only area (#3788)', groups[0]?.area)
   }
 }
 
@@ -3912,19 +3946,21 @@ function selfTestBodyCap({ ok, fail }) {
   // ── the PARENT stays fail-closed: it throws, it does not truncate state ──
   {
     const all = Array.from({ length: 900 }, (_, i) => rust(i)).toSorted()
+    /** @type {Error | null} */
     let threw = null
+    /** @type {string | null} */
     let body = null
     try {
       body = buildIssueBody({ all, resolvedOnes: [], runUrl: RUN, today: '2026-08-17' })
     } catch (err) {
-      threw = err
+      threw = asError(err)
     }
     if (threw && /\d+ over the 60000-char cap/.test(threw.message))
       ok('over-cap PARENT body throws with the overshoot rather than truncating state (#4032)')
     else
       fail(
         'over-cap PARENT body throws with the overshoot rather than truncating state (#4032)',
-        threw ? threw.message : `no throw; body=${body.length} chars`,
+        threw ? threw.message : `no throw; body=${body?.length} chars`,
       )
   }
 }
@@ -3960,6 +3996,7 @@ function selfTestAcceptedGaps({ ok, fail }) {
   })
   // The fixture's report with `shift` lines inserted above everything, and
   // line 86's text replaced when `edit` is given.
+  /** @param {{ shift?: number, edit?: string }} [opts] */
   const fixtureDir = ({ shift = 0, edit } = {}) => {
     const lines = [...FIXTURE_LINES]
     if (edit) lines[85] = edit
@@ -3977,6 +4014,7 @@ function selfTestAcceptedGaps({ ok, fail }) {
     })
   }
   let n = 0
+  /** @param {{ accepted: string, tracked?: string[], dir: string }} opts */
   const run = ({ accepted, tracked, dir }) => {
     const file = (name, text) => {
       const path = join(scratch, `${n++}-${name}`)
@@ -4072,7 +4110,7 @@ function selfTestAcceptedGaps({ ok, fail }) {
   //      accepting the first leaves the second reporting.
   {
     const lines = [...FIXTURE_LINES]
-    lines[89] = lines[85]
+    lines[89] = /** @type {string} */ (lines[85])
     writeFileSync(join(repoRoot, FIXTURE_FILE), `${lines.join('\n')}\n`)
     const twice = acceptedFor(id(86, 7))
     const dir = writeStrykerFixture('date-utils', {
@@ -4175,7 +4213,10 @@ async function selfTestDefaultMaxChildren({ ok, fail }) {
     }
     rustCount = files.size
   } catch (err) {
-    fail('DEFAULT_MAX_CHILDREN can be independently verified against the real config', err.message)
+    fail(
+      'DEFAULT_MAX_CHILDREN can be independently verified against the real config',
+      asError(err).message,
+    )
     return
   }
   const expected = frontendCount + rustCount
@@ -4280,19 +4321,21 @@ async function runSelfTest() {
   //    set the following week, so it never self-heals).
   {
     const all = Array.from({ length: 800 }, (_, i) => survivor(i))
+    /** @type {Error | null} */
     let threw = null
+    /** @type {string | null} */
     let body = null
     try {
       body = buildIssueBody({ all, resolvedOnes: [], runUrl: 'https://example/run' })
     } catch (err) {
-      threw = err
+      threw = asError(err)
     }
     if (threw && /outgrew a single issue body/.test(threw.message))
       ok('oversized state block fails with an actionable error, not a raw 422 (#3257)')
     else
       fail(
         'oversized state block fails with an actionable error, not a raw 422 (#3257)',
-        threw ? threw.message : `no throw; body=${body.length} chars`,
+        threw ? threw.message : `no throw; body=${body?.length} chars`,
       )
   }
 
@@ -4309,7 +4352,7 @@ async function runSelfTest() {
       body.includes(MARKER_START) &&
       body.includes(MARKER_END) &&
       reparsed.size === 200 &&
-      !body.includes(resolvedOnes[0])
+      !body.includes(/** @type {string} */ (resolvedOnes[0]))
     )
       ok('clamp drops the presentational section and keeps the state block whole (#3257)')
     else
@@ -4381,7 +4424,7 @@ if (isMainModule) {
     try {
       main()
     } catch (err) {
-      console.error(`file-mutation-survivors: ${err.message}`)
+      console.error(`file-mutation-survivors: ${asError(err).message}`)
       process.exit(1)
     }
   }

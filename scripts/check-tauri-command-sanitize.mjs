@@ -95,7 +95,7 @@ function* iterCommandFns(src) {
     /#\[tauri::command\][^\n]*\n(?:\s*#\[[^\]]*\][^\n]*\n)*\s*pub\s+(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(([\s\S]*?)\)\s*->\s*([^{]+?)\s*\{/g
   let m = re.exec(src)
   while (m !== null) {
-    const [matched, name, , returnType] = m
+    const [matched = '', name = '', , returnType = ''] = m
     const openIdx = m.index + matched.length - 1
     const closeIdx = findMatchingBrace(src, openIdx)
     if (closeIdx !== null) {
@@ -166,8 +166,10 @@ function callsSanitize(body) {
  * `sanitize_internal_error(e)` in a match arm (rule 4, below). A bare mention
  * in a comment no longer satisfies the check.
  */
-const ALLOWLIST = new Set([])
+/** @type {Set<string>} */
+const ALLOWLIST = new Set()
 
+/** @type {{ path: string, name: string, lineno: number }[]} */
 const offenders = []
 for (const path of walkRustFiles(COMMANDS_DIR)) {
   const src = readFileSync(path, 'utf8')

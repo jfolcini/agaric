@@ -136,6 +136,8 @@ import {
   tokenize,
 } from './lib/js-scanner.mjs'
 
+/** @import { Token } from './lib/js-scanner.mjs' */
+
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
 const TYPES_DIR = path.join(SRC_DIR, 'types')
@@ -229,7 +231,7 @@ const AMBIENT_BLOCK_LEAD = new Set(['module', 'global', 'namespace'])
  * identifier on the SAME LINE immediately before `declare`, which no
  * statement-position `declare` ever has.
  *
- * @param {{kind: string, value?: string, start: number, end: number, propertyName?: boolean}[]} tokens
+ * @param {Token[]} tokens
  * @param {number} i index of the `declare` token in `tokens`
  * @param {string} src
  */
@@ -240,7 +242,7 @@ function isStatementStart(tokens, i, src) {
     return true
   }
   if (prev.kind === 'ident' && prev.value === 'export' && prev.propertyName !== true) return true
-  return src.slice(prev.end, tokens[i].start).includes('\n')
+  return src.slice(prev.end, /** @type {Token} */ (tokens[i]).start).includes('\n')
 }
 
 /**
@@ -275,13 +277,12 @@ function isStatementStart(tokens, i, src) {
  * fail-closed: anything other than an immediately-adjacent `{` means "no
  * body", not "keep looking".
  *
- * @param {{kind: string, value?: string, start: number, end: number, propertyName?: boolean}[]} tokens
+ * @param {Token[]} tokens
  * @param {string} src
  */
 function findAmbientRanges(tokens, src) {
   const ranges = []
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i]
+  for (const [i, tok] of tokens.entries()) {
     if (tok.kind !== 'ident' || tok.value !== 'declare' || tok.propertyName === true) continue
     if (!isStatementStart(tokens, i, src)) continue
     const next = tokens[i + 1]
@@ -307,13 +308,13 @@ function findAmbientRanges(tokens, src) {
     // add a branch whose only reachable effect is to turn one unreachable
     // no-op into a different unreachable no-op.
     let j = i + 2
-    if (next.value === 'module' && tokens[j] && tokens[j].kind === 'string') {
+    if (next.value === 'module' && tokens[j]?.kind === 'string') {
       j++
-    } else if (tokens[j] && tokens[j].kind === 'ident') {
+    } else if (tokens[j]?.kind === 'ident') {
       j++
       while (
         tokens[j]?.kind === 'punct' &&
-        tokens[j].value === '.' &&
+        tokens[j]?.value === '.' &&
         tokens[j + 1]?.kind === 'ident'
       ) {
         j += 2
@@ -418,8 +419,7 @@ export function analyzeSource(rawSrc) {
 
     const lineOf = (offset) => src.slice(0, offset).split('\n').length
 
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i]
+    for (const [i, tok] of tokens.entries()) {
       if (tok.kind !== 'ident' || tok.value !== 'export' || tok.propertyName === true) continue
       if (isAmbient(tok.start)) continue
 
@@ -511,7 +511,7 @@ function runGuard() {
     console.error('never see:')
     console.error('')
     for (const f of offenders) {
-      for (const d of details.get(f)) console.error(`  ${f}  ${d}`)
+      for (const d of details.get(f) ?? []) console.error(`  ${f}  ${d}`)
     }
     console.error('')
     console.error('Move the runtime value out of src/types/ into the tier it actually belongs to')
@@ -740,8 +740,8 @@ function runSelfTest() {
 
     if (
       offenders.includes(rel('declareModuleMixed.ts')) &&
-      details.get(rel('declareModuleMixed.ts')).length === 1 &&
-      details.get(rel('declareModuleMixed.ts'))[0].startsWith('line 4:')
+      details.get(rel('declareModuleMixed.ts'))?.length === 1 &&
+      details.get(rel('declareModuleMixed.ts'))?.[0]?.startsWith('line 4:')
     ) {
       ok(
         'a file-scope runtime export is still caught even in a file that also has an ambient declare-module block (narrows, does not weaken)',
@@ -782,8 +782,8 @@ function runSelfTest() {
 
     if (
       offenders.includes(rel('declareNamespaceMixed.ts')) &&
-      details.get(rel('declareNamespaceMixed.ts')).length === 1 &&
-      details.get(rel('declareNamespaceMixed.ts'))[0].startsWith('line 4:')
+      details.get(rel('declareNamespaceMixed.ts'))?.length === 1 &&
+      details.get(rel('declareNamespaceMixed.ts'))?.[0]?.startsWith('line 4:')
     ) {
       ok(
         'a file-scope runtime export is still caught even in a file that also has an ambient declare-namespace block (widening excludes the block, not the file) (#4265)',
@@ -797,7 +797,7 @@ function runSelfTest() {
 
     if (
       offenders.includes(rel('declareIdentThenNamespace.ts')) &&
-      details.get(rel('declareIdentThenNamespace.ts'))[0].startsWith('line 3:')
+      details.get(rel('declareIdentThenNamespace.ts'))?.[0]?.startsWith('line 3:')
     ) {
       ok(
         'a bare `declare` IDENTIFIER on the previous line does not make the following `namespace` block ambient — the IIFE-emitting leak is still flagged (#4269)',

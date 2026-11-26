@@ -66,7 +66,7 @@ export function scanLogcat(text, pid) {
 }
 
 function resolveAdb() {
-  const home = process.env.ANDROID_HOME
+  const home = process.env['ANDROID_HOME']
   const sdkAdb = home ? join(home, 'platform-tools', 'adb') : ''
   return sdkAdb && existsSync(sdkAdb) ? sdkAdb : 'adb'
 }

@@ -232,7 +232,7 @@ function mergeBaseline(existing, scope, counts) {
 function driftedEntries(baseline, counts) {
   return [...counts.keys()]
     .toSorted()
-    .filter((rel) => baseline.has(rel) && counts.get(rel) < baseline.get(rel))
+    .filter((rel) => baseline.has(rel) && (counts.get(rel) ?? 0) < (baseline.get(rel) ?? 0))
     .map(
       (rel) =>
         `${rel}: baseline records ${baseline.get(rel)} site(s), the tree has ${counts.get(rel)}`,
@@ -496,8 +496,12 @@ function main(argv, overrides = {}) {
   try {
     src = openFileSource(argv, process.env, { repoRoot: REPO_ROOT, extraFlags: SOURCE_FLAGS })
   } catch (error) {
-    if (!error.isUsageError && !error.isAmbiguousSource) throw error
-    err(`check-dynamic-sql: invocation error: ${error.message}`)
+    const failure =
+      /** @type {{ isUsageError?: boolean, isAmbiguousSource?: boolean, message?: string }} */ (
+        error
+      )
+    if (!failure.isUsageError && !failure.isAmbiguousSource) throw error
+    err(`check-dynamic-sql: invocation error: ${failure.message}`)
     return 2
   }
   if (argv.includes('--print-source')) {
@@ -509,7 +513,9 @@ function main(argv, overrides = {}) {
   } catch (error) {
     // Fail closed: an unreadable index would otherwise answer "absent" for
     // every path and report the whole baseline as orphaned, or nothing.
-    err(`check-dynamic-sql: invocation error: ${error.message}`)
+    err(
+      `check-dynamic-sql: invocation error: ${error instanceof Error ? error.message : String(error)}`,
+    )
     return 2
   }
 }
@@ -812,7 +818,7 @@ function baselineSelfTest(failures) {
       ['src-tauri/src/b.rs', 2],
     ]),
   )
-  if (drift.length !== 1 || !drift[0].includes(a)) {
+  if (drift.length !== 1 || !drift[0]?.includes(a)) {
     failures.push(`downward drift not reported exactly once: ${JSON.stringify(drift)}`)
   }
   if (driftedEntries(new Map([[a, 5]]), new Map([[a, 9]])).length > 0) {
@@ -849,7 +855,7 @@ function baselineSelfTest(failures) {
   const healthy = 'src-tauri/agaric-engine/src/block_ops.rs'
   const orphaned = new Map([
     [healthy, 1], // deliberately stale, and IN scope: must be re-anchored
-    ...REMEDY_FIXTURES.map(([rel]) => [rel, 7]),
+    ...REMEDY_FIXTURES.map(([rel]) => /** @type {[string, number]} */ ([rel, 7])),
   ])
   const flagged = orphanEntries(orphaned)
   if (flagged.length !== REMEDY_FIXTURES.length) {

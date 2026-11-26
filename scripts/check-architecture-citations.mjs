@@ -127,7 +127,9 @@ function check() {
       repoRoot: REPO_ROOT,
     })
   } catch (err) {
-    process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
+    process.stderr.write(
+      `check-architecture-citations: invocation error: ${err instanceof Error ? err.message : String(err)}\n`,
+    )
     return 2
   }
   // Diagnostic: answer "which copy would you judge right now?" without
@@ -141,7 +143,9 @@ function check() {
   try {
     entries = listTrackedEntries(REPO_ROOT, { env: GIT_ENV })
   } catch (err) {
-    process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
+    process.stderr.write(
+      `check-architecture-citations: invocation error: ${err instanceof Error ? err.message : String(err)}\n`,
+    )
     return 2
   }
   if (entries === null) {
@@ -158,7 +162,9 @@ function check() {
       env: GIT_ENV,
     })
   } catch (err) {
-    process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
+    process.stderr.write(
+      `check-architecture-citations: invocation error: ${err instanceof Error ? err.message : String(err)}\n`,
+    )
     return 2
   }
   const hits = findHits(targets, bodies)

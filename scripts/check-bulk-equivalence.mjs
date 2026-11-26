@@ -310,7 +310,7 @@ export function attrsBefore(structural, at) {
   let i = at
   // Step back over the signature's qualifiers: `pub(crate) async unsafe fn`.
   for (;;) {
-    while (i > 0 && /\s/.test(structural[i - 1])) i -= 1
+    while (i > 0 && /\s/.test(structural.charAt(i - 1))) i -= 1
     if (i > 0 && structural[i - 1] === ')') {
       const open = matchBackwards(structural, i - 1, '(', ')')
       if (open === -1) break
@@ -318,7 +318,7 @@ export function attrsBefore(structural, at) {
       continue
     }
     const end = i
-    while (i > 0 && /[A-Za-z0-9_]/.test(structural[i - 1])) i -= 1
+    while (i > 0 && /[A-Za-z0-9_]/.test(structural.charAt(i - 1))) i -= 1
     const word = structural.slice(i, end)
     if (word.length > 0 && FN_QUALIFIERS.has(word)) continue
     i = end
@@ -326,7 +326,7 @@ export function attrsBefore(structural, at) {
   }
   const attrs = []
   for (;;) {
-    while (i > 0 && /\s/.test(structural[i - 1])) i -= 1
+    while (i > 0 && /\s/.test(structural.charAt(i - 1))) i -= 1
     if (i === 0 || structural[i - 1] !== ']') break
     const open = matchBackwards(structural, i - 1, '[', ']')
     if (open <= 0 || structural[open - 1] !== '#') break

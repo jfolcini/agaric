@@ -55,7 +55,7 @@ function runWrapper(failuresBeforeSuccess, args = [], unused = []) {
 
     const result = spawnSync('bash', [SCRIPT_PATH, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, PATH: `${dir}:${process.env['PATH'] ?? ''}` },
     })
     return {
       status: result.status,

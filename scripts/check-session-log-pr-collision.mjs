@@ -321,6 +321,8 @@
 import { readFileSync, realpathSync, writeSync } from 'node:fs'
 import process from 'node:process'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 export const LOG_DIR = 'docs/session-log'
 // `[^/\n]+` rather than `[^/]+`: a JS character class DOES match `\n`, and a
 // git path may legally contain one. A path carrying an embedded newline
@@ -449,11 +451,22 @@ export function sessionNumberOf(path) {
 function isUsableFileEntry(f) {
   if (typeof f === 'string') return true
   if (f === null || typeof f !== 'object') return false
-  if (typeof f.path !== 'string') return false
+  const entry = /** @type {{ path?: unknown, previousPath?: unknown }} */ (f)
+  if (typeof entry.path !== 'string') return false
   return (
-    f.previousPath === undefined || f.previousPath === null || typeof f.previousPath === 'string'
+    entry.previousPath === undefined ||
+    entry.previousPath === null ||
+    typeof entry.previousPath === 'string'
   )
 }
+
+/**
+ * @typedef {{
+ *   number: number,
+ *   files: (string | { path: string, previousPath?: unknown })[],
+ *   changedFiles: number,
+ * }} OpenPr
+ */
 
 /**
  * The changed files of one `gh pr list --json number,files` entry,
@@ -461,7 +474,7 @@ function isUsableFileEntry(f) {
  * workflow's REST re-fetch supplied GitHub's own `previous_filename` for a
  * renamed entry (#4431 review note 1).
  *
- * @param {{files?: unknown[]}} pr
+ * @param {{files?: OpenPr['files']}} pr
  */
 function fileEntriesOf(pr) {
   return (pr?.files ?? []).map((f) =>
@@ -531,7 +544,7 @@ function shapeProblem(prs) {
  * what still catches that — the backstop the workflow's enhancement can
  * fall through to, not something the enhancement makes obsolete.
  *
- * @param {{number:number, files:unknown[], changedFiles:number}[]} prs
+ * @param {OpenPr[]} prs
  */
 function truncatedFilesPrs(prs) {
   return prs.filter((pr) => pr.changedFiles > pr.files.length)
@@ -582,8 +595,12 @@ function indexMergedPaths(mergedPaths) {
   for (const path of paths) {
     const n = sessionNumberOf(path)
     if (n === null) continue
-    if (!byNumber.has(n)) byNumber.set(n, [])
-    byNumber.get(n).push(path)
+    let sameNumber = byNumber.get(n)
+    if (!sameNumber) {
+      sameNumber = []
+      byNumber.set(n, sameNumber)
+    }
+    sameNumber.push(path)
   }
   return { paths, byNumber }
 }
@@ -625,7 +642,7 @@ function indexMergedPaths(mergedPaths) {
  * on the merge target (`isSameNumberRename()` below, #4431 review note 1) —
  * that is a file MOVING, not a number being claimed.
  *
- * @param {{number:number, files:unknown[]}[]} prs
+ * @param {OpenPr[]} prs
  * @param {Set<string>} mergedPathSet
  */
 function claimsByNumber(prs, mergedPathSet) {
@@ -637,10 +654,17 @@ function claimsByNumber(prs, mergedPathSet) {
       if (n === null) continue
       if (mergedPathSet.has(file)) continue
       if (isSameNumberRename(n, previousPath, mergedPathSet)) continue
-      if (!byNumberThenFile.has(n)) byNumberThenFile.set(n, new Map())
-      const byFile = byNumberThenFile.get(n)
-      if (!byFile.has(file)) byFile.set(file, [])
-      byFile.get(file).push(Number(pr.number))
+      let byFile = byNumberThenFile.get(n)
+      if (!byFile) {
+        byFile = new Map()
+        byNumberThenFile.set(n, byFile)
+      }
+      let carriers = byFile.get(file)
+      if (!carriers) {
+        carriers = []
+        byFile.set(file, carriers)
+      }
+      carriers.push(Number(pr.number))
     }
   }
   /** @type {Map<number, {pr:number, prs:number[], file:string}[]>} */
@@ -650,7 +674,7 @@ function claimsByNumber(prs, mergedPathSet) {
       n,
       [...byFile.entries()].map(([file, prNumbers]) => {
         const carriers = [...new Set(prNumbers)].toSorted((a, b) => a - b)
-        return { pr: carriers[0], prs: carriers, file }
+        return { pr: /** @type {number} */ (carriers[0]), prs: carriers, file }
       }),
     )
   }
@@ -951,9 +975,10 @@ function rankedCollisionAssignment(collision, claims, mergedNums, alloc) {
  *
  * @param {{prs: unknown, selfPr?: number|null, mergedPaths?: string[], prLimit?: number|null}} opts
  */
-export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }) {
-  const problem = shapeProblem(prs)
+export function analyze({ prs: rawPrs, selfPr = null, mergedPaths = [], prLimit = null }) {
+  const problem = shapeProblem(rawPrs)
   if (problem) return cannotVerify(`malformed open-PR payload: ${problem}`)
+  const prs = /** @type {OpenPr[]} */ (rawPrs)
 
   // `prLimit` is the INTENDED cap, and the caller fetches `prLimit + 1` (see
   // this file's header, point 2, #4431 review note 4) precisely so a genuine
@@ -1025,9 +1050,10 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   // on every other open PR until it lands, and that PR fails closed on its
   // own run of this same job anyway.
   const truncated = truncatedFilesPrs(prs)
+  /** @param {{ number: unknown }} pr */
   const isSelf = (pr) => selfPr !== null && Number(pr.number) === Number(selfPr)
   if (truncated.some(isSelf)) {
-    const self = truncated.find(isSelf)
+    const self = /** @type {OpenPr} */ (truncated.find(isSelf))
     return cannotVerify(
       `this PR's own changed-file list (#${self.number}: ${self.files.length}/${self.changedFiles} ` +
         "files) is truncated by gh's 100-file cap — a session-log claim of its own past that " +
@@ -1262,7 +1288,9 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
 // CLI
 // ---------------------------------------------------------------------------
 
+/** @param {string[]} argv */
 function parseArgs(argv) {
+  /** @type {{ prs: string | null, selfPr: number | null, mergedPaths: string | null, prLimit: number | null }} */
   const args = { prs: null, selfPr: null, mergedPaths: null, prLimit: null }
   for (let i = 0; i < argv.length; i++) {
     const take = () => {
@@ -1270,7 +1298,8 @@ function parseArgs(argv) {
       if (v === undefined) throw new Error(`${argv[i - 1]} needs a value`)
       return v
     }
-    switch (argv[i]) {
+    // `i < argv.length` bounds the index.
+    switch (/** @type {string} */ (argv[i])) {
       case '--prs': {
         args.prs = take()
         break
@@ -1328,7 +1357,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    emitErr(`check-session-log-pr-collision: ${err.message}`)
+    emitErr(`check-session-log-pr-collision: ${errorMessage(err)}`)
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 
@@ -1337,7 +1366,7 @@ function main(argv) {
     prs = JSON.parse(readFileSync(args.prs, 'utf8'))
   } catch (err) {
     emitErr(
-      `::error::check-session-log-pr-collision: could not read/parse --prs ${args.prs}: ${err.message}`,
+      `::error::check-session-log-pr-collision: could not read/parse --prs ${args.prs}: ${errorMessage(err)}`,
     )
     emitErr(
       'Treated as UNVERIFIED, not as "no open PRs": an unreadable payload must never read as safety this check did not actually check (#3933).',
@@ -1350,7 +1379,7 @@ function main(argv) {
     mergedPaths = readMergedPaths(args.mergedPaths)
   } catch (err) {
     emitErr(
-      `::error::check-session-log-pr-collision: could not read --merged-paths ${args.mergedPaths}: ${err.message}`,
+      `::error::check-session-log-pr-collision: could not read --merged-paths ${args.mergedPaths}: ${errorMessage(err)}`,
     )
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
@@ -1732,7 +1761,7 @@ function mainGuarded(argv) {
     main(argv)
   } catch (err) {
     emitErr(
-      `::error::check-session-log-pr-collision: unexpected internal failure — ${err?.stack ?? err}`,
+      `::error::check-session-log-pr-collision: unexpected internal failure — ${(err instanceof Error ? err.stack : undefined) ?? String(err)}`,
     )
     emitErr('A crash is a failure to verify, never a finding: this run checked nothing (#4431).')
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)

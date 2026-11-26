@@ -130,7 +130,7 @@ export function scanTree(root) {
       out.push(`${relative(root, file)}:${line}`)
     }
   }
-  return out.toSorted()
+  return out.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
 // CLI: only run the filesystem scan when invoked directly (not on import).

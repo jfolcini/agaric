@@ -120,6 +120,7 @@ function main() {
     return args.gate ? 1 : 0 // under --gate a usage error must not pass the job having evaluated nothing
   }
 
+  /** @type {number | null} */
   let pct = null
   if (args.lcov) pct = lineCoverageFromLcov(args.lcov)
   else if (args.summary) pct = lineCoverageFromSummary(args.summary)

@@ -201,8 +201,12 @@ function main(argv, { crateRoots = CRATE_ROOTS, err = write(process.stderr) } = 
       extraFlags: ['--self-test', '--print-source', '--synthetic-tree'],
     })
   } catch (error) {
-    if (!error.isUsageError && !error.isAmbiguousSource) throw error
-    err(`check-raw-tx: invocation error: ${error.message}`)
+    const failure =
+      /** @type {{ isUsageError?: boolean, isAmbiguousSource?: boolean, message?: string }} */ (
+        error
+      )
+    if (!failure.isUsageError && !failure.isAmbiguousSource) throw error
+    err(`check-raw-tx: invocation error: ${failure.message}`)
     return 2
   }
   if (argv.includes('--print-source')) {
@@ -241,7 +245,7 @@ function main(argv, { crateRoots = CRATE_ROOTS, err = write(process.stderr) } = 
   } catch (error) {
     // Fail closed: an index that could not be read answers "absent" for
     // every path, which would exit 0 having read nothing.
-    err(`check-raw-tx: invocation error: ${error.message}`)
+    err(`check-raw-tx: invocation error: ${error instanceof Error ? error.message : String(error)}`)
     return 2
   }
 

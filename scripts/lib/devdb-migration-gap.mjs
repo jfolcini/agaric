@@ -112,9 +112,9 @@ function readEnvDatabaseUrl(envFile) {
       if (/\bDATABASE_URL\b/.test(line)) mentioned = true
       continue
     }
-    let v = m[1].trim()
+    let v = (m[1] ?? '').trim()
     if (v.startsWith('"') || v.startsWith("'")) {
-      const end = v.indexOf(v[0], 1)
+      const end = v.indexOf(v.charAt(0), 1)
       v = end === -1 ? v.slice(1) : v.slice(1, end)
     } else {
       // dotenvy starts a comment only at a "#" PRECEDED BY WHITESPACE in an
@@ -288,7 +288,7 @@ function compare(applied, expected, migrationsDir) {
 // `.env` (dotenvy never overrides a set variable), and "dev.db", sqlx-cli's own
 // default, applies when neither names one.
 function main(DatabaseSync, srcTauri, migrationsDir) {
-  let val = process.env.DATABASE_URL
+  let val = process.env['DATABASE_URL']
   if (!val) {
     const envFile = join(srcTauri, '.env')
     if (isFile(envFile)) {
@@ -331,8 +331,9 @@ function main(DatabaseSync, srcTauri, migrationsDir) {
     applied = readApplied(DatabaseSync, dbFile)
   } catch (err) {
     // An unreadable, truncated or non-sqlite file: not evidence of a gap.
-    if (err?.code !== 'ERR_SQLITE_ERROR') throw err
-    say(`could not inspect dev.db (${dbFile}): ${err.message}`)
+    const failure = /** @type {{ code?: string, message?: string }} */ (err)
+    if (failure?.code !== 'ERR_SQLITE_ERROR') throw err
+    say(`could not inspect dev.db (${dbFile}): ${failure.message}`)
     return 2
   }
   if (applied === null) {
@@ -355,7 +356,8 @@ try {
   // A permission or OS error reading .env, migrations/ or a migration file,
   // or anything else unexpected: say so plainly and exit 2, so the caller
   // warns instead of hard-blocking a push nothing is wrong with.
-  say(`could not inspect dev.db: ${err?.name}: ${err?.message}`)
+  const failure = /** @type {{ name?: string, message?: string } | null | undefined} */ (err)
+  say(`could not inspect dev.db: ${failure?.name}: ${failure?.message}`)
   code = 2
 }
 process.stdout.write(lines.map((line) => `${line}\n`).join(''))

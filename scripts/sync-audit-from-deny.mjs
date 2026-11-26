@@ -158,6 +158,7 @@ function main() {
 
   const stale = []
   for (const [relPath, text] of Object.entries(outputs)) {
+    /** @type {string | null} */
     let existing = null
     try {
       existing = readFileSync(resolve(REPO_ROOT, relPath), 'utf8')

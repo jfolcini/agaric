@@ -328,7 +328,7 @@ void test('the orphan sweep reads the baseline in one cat-file call, not one per
         `#!/bin/sh\necho "$1" >> '${log}'\nexec '${realGit}' "$@"\n`,
       )
       chmodSync(join(shimDir, 'git'), 0o755)
-      const r = run(['--cached', RS], { PATH: `${shimDir}:${process.env.PATH}` })
+      const r = run(['--cached', RS], { PATH: `${shimDir}:${process.env['PATH']}` })
       // The entries are present and in scope, so only the sweep reads them.
       assert.equal(r.status, 0, r.stderr)
       const catFiles = readFileSync(log, 'utf8')

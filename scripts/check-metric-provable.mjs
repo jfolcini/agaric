@@ -375,7 +375,7 @@ function makeLineLookup(src) {
     let hi = starts.length - 1
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= idx) lo = mid
+      if ((starts[mid] ?? 0) <= idx) lo = mid
       else hi = mid - 1
     }
     return lo + 1
@@ -639,6 +639,7 @@ export function functionSpans(stripped) {
 }
 
 function innermostSpan(spans, idx) {
+  /** @type {{start: number, end: number} | null} */
   let best = null
   for (const s of spans) {
     if (idx < s.start || idx >= s.end) continue
@@ -838,7 +839,7 @@ export function markersAbove(rawLines, line) {
   const found = {}
   const take = (text) => {
     const m = MARKER_RE.exec(text)
-    if (m) found[m[1]] = m[2].trim()
+    if (m) found[m[1]] = (m[2] ?? '').trim()
   }
   take(rawLines[line - 1] ?? '')
   for (let i = line - 2; i >= 0; i -= 1) {
@@ -953,6 +954,8 @@ function isZeroLiteral(text) {
 // shape that reads the metric before and after and can therefore always fail.
 
 /** @typedef {{kind: 'zero'} | {kind: 'literal', value: bigint, text: string} | {kind: 'dynamic', text: string}} Seed */
+/** @typedef {{mentions: (text: string) => boolean, seed: Seed, isWitness: (text: string) => boolean, isProvenPredicate: (text: string) => boolean}} AssertCtx */
+/** @typedef {Map<string, {raw: string, stripped: string, testRegions: {start: number, end: number}[], whole: boolean}>} ParsedTree */
 
 /** @type {Seed} */
 export const ZERO_SEED = { kind: 'zero' }
@@ -979,7 +982,7 @@ export function literalValue(text) {
   const t = text.trim()
   if (INT_MAX_RE.test(t)) return INT_MAX_VALUE
   const m = INT_LITERAL_RE.exec(t)
-  return m ? BigInt(m[1].replaceAll('_', '')) : null
+  return m ? BigInt(/** @type {string} */ (m[1]).replaceAll('_', '')) : null
 }
 
 /**
@@ -1145,7 +1148,7 @@ function findComparison(expr) {
  */
 function isFiringEquality(args, ne, mentions, isWitness, seed = ZERO_SEED) {
   if (args.length < 2) return false
-  const [a, b] = args
+  const [a = '', b = ''] = args
   const aHit = mentions(a)
   const bHit = mentions(b)
   if (!aHit && !bHit) return false
@@ -1202,12 +1205,12 @@ export function isFiringAssertion(macro, args, mentions, ctx = {}) {
 
   if (eq || ne) return isFiringEquality(args, ne, mentions, isWitness, seed)
 
-  const expr = args[0]
+  const expr = /** @type {string} */ (args[0]) // `args.length === 0` returned above
   if (isProvenPredicate(expr)) return true
   if (!mentions(expr)) return false
   const at = findComparison(expr)
   if (at === -1) return false
-  const op = /^(?:>=|<=|==|!=)/.exec(expr.slice(at))?.[0] ?? expr[at]
+  const op = /^(?:>=|<=|==|!=)/.exec(expr.slice(at))?.[0] ?? /** @type {string} */ (expr[at])
   const lhs = expr.slice(0, at)
   const rhs = expr.slice(at + op.length)
   const metricOnLeft = mentions(lhs)
@@ -1368,10 +1371,11 @@ export function findFiringAssertions(stripped, testRegions, tokens, seed = ZERO_
     return /^[A-Za-z_]\w*$/.test(t) ? t : null
   }
 
-  /** @type {Map<{start:number,end:number}|null, object>} */
+  /** @type {Map<{start:number,end:number}|null, AssertCtx>} */
   const ctxCache = new Map()
   const ctxFor = (span) => {
-    if (ctxCache.has(span)) return ctxCache.get(span)
+    const cached = ctxCache.get(span)
+    if (cached) return cached
     const body = span ? stripped.slice(span.start, span.end) : ''
     const aliases = aliasesIn(body, namesMetric)
     // `(?<![.\w:])` because an alias is a LOCAL BINDING and is never reached
@@ -1385,6 +1389,7 @@ export function findFiringAssertions(stripped, testRegions, tokens, seed = ZERO_
     const mentions = (text) => namesMetric(text) || (aliasRe ? aliasRe.test(text) : false)
     const witnesses = witnessesIn(body, mentions)
     const predicates = firingPredicatesIn(body, mentions, seed)
+    /** @type {AssertCtx} */
     const ctx = {
       mentions,
       seed,
@@ -1494,7 +1499,7 @@ export function releasePanicsAbort(cargoToml) {
   // every line end, which would close the lazy section body immediately.
   const section = /^\[profile\.release\][^\n]*$([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(cargoToml)
   if (!section) return false
-  return /^\s*panic\s*=\s*"abort"\s*$/m.test(section[1])
+  return /^\s*panic\s*=\s*"abort"\s*$/m.test(section[1] ?? '')
 }
 
 // ─── analysis ─────────────────────────────────────────────────────────
@@ -1508,6 +1513,7 @@ export function releasePanicsAbort(cargoToml) {
  * @param {string[]} files
  */
 function parseTree(root, files) {
+  /** @type {ParsedTree} */
   const parsed = new Map()
   for (const rel of files) {
     const raw = readFileSync(path.join(root, rel), 'utf8')
@@ -1520,17 +1526,27 @@ function parseTree(root, files) {
 }
 
 /**
+ * @param {ParsedTree} parsed
+ * @param {string} rel
+ */
+function parsedEntry(parsed, rel) {
+  const entry = parsed.get(rel)
+  if (!entry) throw new Error(`internal: ${rel} was not parsed`)
+  return entry
+}
+
+/**
  * The metric surface of the tree, in both registration patterns, sorted by
  * id. See the header comment for what does and does not count.
  *
  * @param {string[]} files
- * @param {Map<string, {raw: string, whole: boolean}>} parsed
+ * @param {ParsedTree} parsed
  */
 function enumerateMetrics(files, parsed) {
   const metrics = []
   const structHint = new RegExp(`\\bstruct\\s+${METRIC_STRUCT_NAME}\\b`)
   for (const rel of files) {
-    const { raw, stripped, whole } = parsed.get(rel)
+    const { raw, stripped, whole } = parsedEntry(parsed, rel)
     if (whole) continue
     if (!structHint.test(stripped)) continue
     /** @type {Map<string, Map<string, Seed>>} */
@@ -1543,7 +1559,7 @@ function enumerateMetrics(files, parsed) {
         // it. A gauge seeded non-zero (`fts_last_optimize_ms` → `now_ms`,
         // `cached_op_log_count` → `u64::MAX`) is above zero from birth, so a
         // `> 0` assertion on it is not evidence of anything.
-        seed: seedsByStruct.get(f.struct).get(f.name) ?? ZERO_SEED,
+        seed: seedsByStruct.get(f.struct)?.get(f.name) ?? ZERO_SEED,
         // The owning struct is carried as its own field, not just folded into
         // `id`, because evidence attribution needs it when two structs share
         // a field name (#3439 item 1 — see `ambiguousFieldNames`).
@@ -1557,7 +1573,7 @@ function enumerateMetrics(files, parsed) {
     }
   }
   for (const rel of files) {
-    const { raw, whole } = parsed.get(rel)
+    const { raw, whole } = parsedEntry(parsed, rel)
     if (whole) continue
     for (const g of enumerateGlobalMetrics(raw)) {
       metrics.push({
@@ -1655,7 +1671,7 @@ function ambiguousFieldNames(metrics) {
   for (const m of metrics) {
     if (m.kind !== 'struct-field') continue
     const set = owners.get(m.name) ?? new Set()
-    set.add(m.struct)
+    set.add(/** @type {string} */ (m.struct)) // a struct-field metric always has its struct
     owners.set(m.name, set)
   }
   return new Set([...owners].filter(([, s]) => s.size > 1).map(([name]) => name))
@@ -1757,7 +1773,8 @@ export function analyze({ root }) {
       metric.kind === 'global-static' ? externalMutatorCallers(metric, files, parsed) : []
     const hasEmit =
       metric.kind === 'struct-field' ? productionWrites.length > 0 : externalCallers.length > 0
-    const siteOf = (w) => `${w.file}:${makeLineLookup(parsed.get(w.file).stripped)(w.index)}`
+    const siteOf = (w) =>
+      `${w.file}:${makeLineLookup(parsedEntry(parsed, w.file).stripped)(w.index)}`
 
     metric.evidence = {
       firingTests,
@@ -1797,7 +1814,7 @@ export function analyze({ root }) {
     }
     if (panicAbort && hasEmit && metric.kind === 'struct-field') {
       const allPanicGated = productionWrites.every((w) =>
-        enclosingBlockHeads(parsed.get(w.file).stripped, w.index).some(isPanicGateHead),
+        enclosingBlockHeads(parsedEntry(parsed, w.file).stripped, w.index).some(isPanicGateHead),
       )
       if (allPanicGated) {
         record(
@@ -1834,7 +1851,7 @@ function writeBaseline(root, entries) {
  * Structural + "must carry a reason" validation. Returns a list of
  * problems; a non-empty list is a hard error (exit 2), never a warning.
  *
- * @param {unknown[]} baseline
+ * @param {({metric?: unknown, rule?: unknown, reason?: unknown} | null)[]} baseline
  * @returns {string[]}
  */
 export function validateBaseline(baseline) {
@@ -1950,7 +1967,9 @@ function runGuard(root) {
   try {
     baseline = readBaseline(root)
   } catch (err) {
-    console.error(`ERROR: could not read ${BASELINE_REL}: ${err.message}`)
+    console.error(
+      `ERROR: could not read ${BASELINE_REL}: ${err instanceof Error ? err.message : String(err)}`,
+    )
     process.exit(2)
   }
   const problems = validateBaseline(baseline)
@@ -2271,12 +2290,14 @@ function runSelfTest() {
       '}',
     ].join('\n')
     const seeds = defaultSeeds(src, 'QueueMetrics')
+    const seven = seeds.get('seven')
     expect(
       '`impl Default` is parsed field-by-field, path-qualified types included',
       seeds.get('plain')?.kind === 'zero' &&
         seeds.get('stamped')?.kind === 'dynamic' &&
         seeds.get('sentinel')?.kind === 'literal' &&
-        seeds.get('seven')?.value === 7n,
+        seven?.kind === 'literal' &&
+        seven.value === 7n,
       JSON.stringify([...seeds].map(([k, v]) => `${k}=${v.kind}`)),
     )
     expect(
@@ -2535,6 +2556,7 @@ function runSelfTest() {
  */
 function runFixtureSelfTest(tmp, expect) {
   let n = 0
+  /** @param {{metricsFile: string, extra?: Record<string, string>, cargo?: string, baseline?: unknown}} fixture */
   const build = ({ metricsFile, extra = {}, cargo, baseline }) => {
     const root = path.join(tmp, `fx${(n += 1)}`)
     mkdirSync(path.dirname(path.join(root, METRICS_FILE_REL)), { recursive: true })

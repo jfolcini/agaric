@@ -288,7 +288,7 @@ function makeLineLookup(src) {
     let hi = starts.length - 1
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= idx) lo = mid
+      if ((starts[mid] ?? 0) <= idx) lo = mid
       else hi = mid - 1
     }
     return lo + 1

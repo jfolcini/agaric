@@ -62,7 +62,7 @@ const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')
 /** @type {Set<string>} */
 const expected = new Set()
 for (const m of bindingsSrc.matchAll(/__TAURI_INVOKE\("([a-z][a-z0-9_]*)"/g)) {
-  expected.add(m[1])
+  if (m[1] !== undefined) expected.add(m[1])
 }
 if (expected.size === 0) {
   console.error(
@@ -110,8 +110,8 @@ for (const file of domainFiles) {
     )
     process.exit(2)
   }
-  for (const m of blockMatch[1].matchAll(/^ {2}([a-z][a-z0-9_]*):\s/gm)) {
-    mocked.add(m[1])
+  for (const m of (blockMatch[1] ?? '').matchAll(/^ {2}([a-z][a-z0-9_]*):\s/gm)) {
+    if (m[1] !== undefined) mocked.add(m[1])
   }
 }
 if (mocked.size === 0) {

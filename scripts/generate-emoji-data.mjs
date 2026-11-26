@@ -22,7 +22,10 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 
 const require = createRequire(import.meta.url)
-/** @type {Array<Record<string, unknown>>} */
+/** @typedef {{ group?: unknown, hexcode: string, emoji: string, tags?: string[], skins?: { tone?: number, emoji: string }[] }} EmojiRecord */
+/** @typedef {{ c: string, n: string, k?: string[], s?: true }} TrimmedEmoji */
+
+/** @type {EmojiRecord[]} */
 const data = require('emojibase-data/en/data.json')
 /** @type {Record<string, string | string[]>} */
 const shortcodes = require('emojibase-data/en/shortcodes/emojibase.json')
@@ -75,6 +78,7 @@ function shortcodesFor(hexcode) {
   return (Array.isArray(raw) ? raw : [raw]).map(clean).filter(Boolean)
 }
 
+/** @type {Set<string>} */
 const usedNames = new Set()
 
 /** Pick a unique canonical name: the first free shortcode, else suffix it. */
@@ -94,6 +98,7 @@ function uniqueName(codes, hexcode) {
 }
 
 /** group index -> array of trimmed entries */
+/** @type {Map<number, TrimmedEmoji[]>} */
 const buckets = new Map(GROUP_ORDER.map((g) => [g, []]))
 
 for (const e of data) {
@@ -108,6 +113,7 @@ for (const e of data) {
     ...codes.filter((c) => !/[a-z]/.test(c)),
   ]
   const name = uniqueName(ordered, e.hexcode)
+  /** @type {string[]} */
   const keywords = []
   const seen = new Set([name])
   for (const kw of [...codes.filter((c) => c !== name), ...(e.tags ?? []).map(clean)]) {
@@ -116,15 +122,16 @@ for (const e of data) {
     keywords.push(kw)
     if (keywords.length >= MAX_KEYWORDS) break
   }
+  /** @type {TrimmedEmoji} */
   const entry = { c: e.emoji, n: name }
   if (keywords.length > 0) entry.k = keywords
   if (isTonable(e)) entry.s = true
-  buckets.get(group).push(entry)
+  buckets.get(group)?.push(entry)
 }
 
 const groups = GROUP_ORDER.filter((g) => (buckets.get(g)?.length ?? 0) > 0).map((g) => ({
   group: GROUP_NAMES[g],
-  emoji: buckets.get(g),
+  emoji: buckets.get(g) ?? [],
 }))
 
 const total = groups.reduce((sum, g) => sum + g.emoji.length, 0)

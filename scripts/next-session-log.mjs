@@ -61,7 +61,9 @@ function openPrLogs() {
       gh(`repos/{owner}/{repo}/pulls/${n}/files?per_page=100`),
     )
   } catch (err) {
-    console.error(`next-session-log: open PRs not counted (gh api failed: ${err.message})`)
+    console.error(
+      `next-session-log: open PRs not counted (gh api failed: ${err instanceof Error ? err.message : String(err)})`,
+    )
     return []
   }
 }
@@ -116,7 +118,7 @@ if (isMainModule) {
   try {
     process.exitCode = main(process.argv.slice(2))
   } catch (err) {
-    console.error(`next-session-log: ${err.message}`)
+    console.error(`next-session-log: ${err instanceof Error ? err.message : String(err)}`)
     process.exitCode = 1
   }
 }

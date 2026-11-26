@@ -46,7 +46,7 @@ function withRepo(prLogs, fn) {
         : `*"pulls?state=open"*) echo 7 ;; *"pulls/7/files"*) printf '%s\\n' ${prLogs.join(' ')} ;;`
     writeFileSync(join(bin, 'gh'), `#!/bin/sh\ncase "$*" in ${stub} *) exit 3 ;; esac\n`)
     chmodSync(join(bin, 'gh'), 0o755)
-    const env = scrubbedGitEnv(root, { PATH: `${bin}:${process.env.PATH}` })
+    const env = scrubbedGitEnv(root, { PATH: `${bin}:${process.env['PATH']}` })
     const git = initScratchRepo(dir, env)
     mkdirSync(join(dir, LOG), { recursive: true })
     const write = (n, slug) =>

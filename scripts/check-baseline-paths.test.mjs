@@ -52,6 +52,15 @@ function dataBody(kind) {
 // The guard judges the tree that contains it, so each fixture gets its own
 // copy. `edit` runs before `git add`, `afterAdd` after it, so a test can make
 // the index and the disk disagree. `track: false` leaves the repo with an empty index.
+/**
+ * @param {{
+ *   edit?: (fx: { write: (rel: string, body: string | Buffer) => void, remove: (rel: string) => void }) => void,
+ *   afterAdd?: (fx: { write: (rel: string, body: string | Buffer) => void, remove: (rel: string) => void }) => void,
+ *   git?: boolean,
+ *   track?: boolean,
+ * }} opts
+ * @param {(run: (...args: string[]) => import('node:child_process').SpawnSyncReturns<string>) => void} fn
+ */
 function withGuardRepo(
   { edit = () => {}, afterAdd = () => {}, git: useGit = true, track = true },
   fn,

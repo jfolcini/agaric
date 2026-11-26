@@ -112,7 +112,7 @@ function makeLineLookup(src) {
     let hi = starts.length - 1
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= idx) lo = mid
+      if ((starts[mid] ?? 0) <= idx) lo = mid
       else hi = mid - 1
     }
     return lo + 1
@@ -304,7 +304,7 @@ function lookupFieldType(bodyText, fieldName) {
   const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re = new RegExp(`(?:^|[\\n;{])[ \\t]*${escaped}\\??[ \\t]*:[ \\t]*([^\\n;]+)`)
   const m = re.exec(bodyText)
-  return m ? m[1].trim() : null
+  return m?.[1]?.trim() ?? null
 }
 
 // ─── persist() call discovery ─────────────────────────────────────────
@@ -384,12 +384,13 @@ function classifyPersistedShape(stripped, optionsProps, stateType) {
   const interfaceBody = stateType ? findTypeOrInterfaceBody(stripped, stateType) : null
 
   const fields = fieldProps.map((fp) => {
+    /** @type {string | null} */
     let fieldName = null
     if (fp.shorthand) {
       fieldName = fp.key
     } else if (paramName) {
       const m = new RegExp(`^${paramName}\\.([A-Za-z_$][\\w$]*)$`).exec(fp.valueText)
-      if (m) fieldName = m[1]
+      if (m) fieldName = m[1] ?? null
     }
     if (!fieldName) {
       return {
@@ -437,8 +438,8 @@ function allowMarkerLines(src) {
   const lines = src.split('\n')
   const out = new Set()
   for (let i = 0; i < lines.length; i++) {
-    const m = /\/\/\s*persist-hooks-allow\s*:\s*(.*)$/.exec(lines[i])
-    if (m && m[1].trim().length > 0) out.add(i + 1)
+    const m = /\/\/\s*persist-hooks-allow\s*:\s*(.*)$/.exec(lines[i] ?? '')
+    if (m && (m[1] ?? '').trim().length > 0) out.add(i + 1)
   }
   return out
 }

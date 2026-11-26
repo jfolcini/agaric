@@ -46,6 +46,10 @@ function issueBody(tracked) {
 }
 
 /** Runs the reporter in --dry-run against a stubbed issue; returns its stdout. */
+/**
+ * @param {import('node:test').TestContext} t
+ * @param {{ needs: unknown, tracked?: string[], scope?: string }} fixture
+ */
 function report(t, { needs, tracked, scope }) {
   const dir = mkdtempSync(join(tmpdir(), 'file-scheduled-failures-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -118,6 +122,7 @@ void test('without a scope every lane is judged, as on the weekly run', (t) => {
 void test('a scope naming a job the run does not carry is an error', (t) => {
   assert.throws(
     () => report(t, { needs: nightlyNeeds(), tracked: [], scope: 'select-lanes,full-sweet' }),
-    (err) => err.status === 1 && /--scope names full-sweet/.test(String(err.stderr)),
+    (/** @type {{ status?: number, stderr?: unknown }} */ err) =>
+      err.status === 1 && /--scope names full-sweet/.test(String(err.stderr)),
   )
 })

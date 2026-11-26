@@ -67,6 +67,7 @@ function report(title, drift, [wantLabel, haveLabel], fix) {
   for (const line of fix) console.error(line)
 }
 
+/** @param {string[]} argv */
 function main([mainRoot, worktree, ...rest]) {
   if (mainRoot === undefined || worktree === undefined || rest.length > 0) {
     console.error('usage: node scripts/node-modules-drift.mjs <main checkout> <worktree>')
@@ -79,7 +80,9 @@ function main([mainRoot, worktree, ...rest]) {
     installed = readPackages(join(mainRoot, 'node_modules/.package-lock.json'))
     worktreeLock = readPackages(join(worktree, 'package-lock.json'))
   } catch (err) {
-    console.error(`Cannot tell whether ${mainRoot}/node_modules is current: ${err.message}`)
+    console.error(
+      `Cannot tell whether ${mainRoot}/node_modules is current: ${err instanceof Error ? err.message : String(err)}`,
+    )
     console.error(npmCi)
     return 1
   }

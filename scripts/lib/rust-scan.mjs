@@ -383,6 +383,8 @@ function matchingCloseLine(lines, braceLine) {
  * judged as flags.
  *
  * @param {string[]} argv the guard's own arguments, without node and script.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{ repoRoot: string, extraFlags?: string[] }} opts
  * @throws whatever `resolveSource` throws for a bad flag or a foreign index.
  */
 export function openFileSource(argv, env, { repoRoot, extraFlags = [] }) {
