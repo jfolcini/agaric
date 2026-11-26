@@ -211,10 +211,12 @@ fi
 # ── the last completed CI run on main ──────────────────────────────
 # One page, newest first: `--paginate` would walk every run the repo has. A full
 # page, because each push to main cancels the run before it, so a busy day buries
-# the last finished run under more than ten cancelled ones.
-if ! raw=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BASE_REF&event=push&status=completed&per_page=100" 2>/dev/null) \
+# the last finished run under more than ten cancelled ones. No `status=completed`
+# in the query: GitHub's status-filtered listing has left a finished run out for
+# most of an hour, so the jq picks the completed runs instead.
+if ! raw=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BASE_REF&event=push&per_page=100" 2>/dev/null) \
   || ! run=$(jq -c '[.workflow_runs[]? | select(.status == "completed" and .conclusion != "cancelled")] | first // empty' <<<"$raw" 2>/dev/null); then
-  fail "$BASE_REF CI: the completed ci.yml runs could not be read"
+  fail "$BASE_REF CI: the ci.yml runs could not be read"
 elif [ -z "$run" ]; then
   fail "$BASE_REF CI: no completed, non-cancelled ci.yml push run found"
 else
