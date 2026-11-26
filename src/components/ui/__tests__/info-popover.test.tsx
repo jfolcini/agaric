@@ -81,6 +81,29 @@ describe('InfoPopover', () => {
     expect(onRowClick).not.toHaveBeenCalled()
   })
 
+  it('opens with Enter or Space without the key reaching a row around it', async () => {
+    const user = userEvent.setup()
+    const onRowKeyDown = vi.fn()
+    render(
+      // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- stands in for an agenda row that opens its task on Enter or Space
+      <div onKeyDown={onRowKeyDown}>
+        <InfoPopover content="Should stay at zero.">Missed writes</InfoPopover>
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Missed writes' })
+
+    for (const key of ['{Enter}', ' ']) {
+      trigger.focus()
+      await user.keyboard(key)
+      expect(await screen.findByRole('dialog', { name: 'Missed writes' })).toHaveTextContent(
+        'Should stay at zero.',
+      )
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    }
+    expect(onRowKeyDown).not.toHaveBeenCalled()
+  })
+
   it('closes on Escape without the Escape reaching a list around it', async () => {
     const user = userEvent.setup()
     const onListKeyDown = vi.fn()

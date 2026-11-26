@@ -58,11 +58,11 @@ export function RecentPagesGroup({
               <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             )}
             <span className="flex-1 truncate">{page.title}</span>
-            {/*  Phase 4 — inline bookmark-toggle button.
-                Mouse-only for v1 (the mobile affordance lives in
-                the long-press action menu of Phase 5). Stops
+            {/*  Phase 4 — inline bookmark-toggle button. Stops
                 propagation so the row's onSelect does not
-                also fire and navigate the user away. */}
+                also fire and navigate the user away. On touch it sits
+                far enough from the list's edge, which clips, for its
+                whole 44 px hit area to take taps. */}
             <button
               type="button"
               onClick={(e) => {
@@ -75,10 +75,8 @@ export function RecentPagesGroup({
                 e.stopPropagation()
               }}
               className={cn(
-                'rounded p-0.5 text-muted-foreground hover:bg-muted/60 focus-ring-visible',
-                isBookmarked
-                  ? 'opacity-100'
-                  : 'opacity-0 group-hover:opacity-100 focus:opacity-100',
+                'touch-hit-area rounded p-0.5 text-muted-foreground hover:bg-muted/60 focus-ring-visible [@media(pointer:coarse)]:mr-1.5',
+                !isBookmarked && 'hover-reveal',
               )}
               aria-label={
                 isBookmarked

@@ -97,16 +97,13 @@ describe('PageTreeItem', () => {
       expect(screen.queryByRole('button', { name: /^Delete / })).not.toBeInTheDocument()
     })
 
-    it('delete button has focus-visible:opacity-100 for keyboard discoverability', () => {
+    it('the delete button is a hover-reveal control', () => {
       const onDelete = vi.fn()
       const node = makeLeaf('Deletable', 'Deletable', 'P1')
       render(<PageTreeItem node={node} {...defaultProps} onDelete={onDelete} />)
 
       const btn = screen.getByRole('button', { name: /Delete Deletable/ })
-      expect(btn.className).toContain('opacity-0')
-      expect(btn.className).toContain('group-hover:opacity-100')
-      expect(btn.className).toContain('focus-visible:opacity-100')
-      expect(btn.className).toContain('[@media(pointer:coarse)]:opacity-100')
+      expect(btn).toHaveClass('hover-reveal')
     })
   })
 

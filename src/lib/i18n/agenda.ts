@@ -123,7 +123,8 @@ export const agenda: Record<string, string> = {
   // row. Keep an arrow pointing in your reading direction.
   'agenda.breadcrumbArrow': '\u2192',
 
-  // Translators: Tooltip of the small "blocked" icon on a task that waits for another task;
+  // Translators: The name of the small "blocked" icon on a task that waits for another task, and
+  // the text a tap on it opens;
   // {{title}} = the text of the task it waits for. The last string is a warning toast (brief
   // pop-up message) when you complete a task whose dependencies may still be open.
   'dependency.blockedBy': 'Blocked by: {{title}}',

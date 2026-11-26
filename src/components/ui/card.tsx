@@ -8,10 +8,11 @@ const cardVariants = cva(
   {
     variants: {
       variant: {
-        // A card that only groups settings drops its box on a phone: inside the
-        // view's 16 px gutter a second inset leaves its text on its own edge.
+        // A card that only groups settings drops its box on a phone (`md`, the
+        // phone layout's width): inside the view's 16 px gutter a second inset
+        // leaves its text on its own edge.
         section:
-          'max-sm:rounded-none max-sm:border-0 max-sm:bg-transparent max-sm:py-0 max-sm:shadow-none max-sm:*:px-0',
+          'max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:py-0 max-md:shadow-none max-md:*:px-0',
         // A card that is one item of a list keeps its box at every width.
         item: '',
       },

@@ -12,17 +12,19 @@
  *   counters).
  * - `icon`: an ⓘ button beside a label or control, named by `ariaLabel`. It is
  *   the cue everywhere else, including beside a disabled control, where it
- *   stays enabled so the reason can still be opened.
+ *   stays enabled so the reason can still be opened. `icon` swaps the ⓘ for a
+ *   glyph that already marks the state (a dependency's link).
  *
  * Both get a 44 px hit area under a coarse pointer. The popover is named by its
  * trigger, so a screen reader hears what it explains. A press on the trigger or
- * inside the popover, and the Escape that closes it, stay out of a selectable
- * row or list around it (History): React bubbles a portal's events to the
+ * inside the popover, the Enter or Space that opens it, and the Escape that
+ * closes it, stay out of a selectable row or list around it (History, an agenda
+ * row that opens its task on Enter): React bubbles a portal's events to the
  * trigger's ancestors. Radix closes on Escape from its own document listener.
  */
 
 import { cva } from 'class-variance-authority'
-import { Info } from 'lucide-react'
+import { Info, type LucideIcon } from 'lucide-react'
 import { useId } from 'react'
 import type * as React from 'react'
 
@@ -55,12 +57,15 @@ export type InfoPopoverProps = InfoPopoverBaseProps &
         variant: 'icon'
         /** What the ⓘ explains, through `t()`. */
         ariaLabel: string
+        /** The glyph in place of the ⓘ. */
+        icon?: LucideIcon
       }
   )
 
 function InfoPopover(props: InfoPopoverProps): React.ReactElement {
   const triggerId = useId()
   const variant = props.variant ?? 'label'
+  const Icon = (props.variant === 'icon' && props.icon) || Info
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -72,9 +77,12 @@ function InfoPopover(props: InfoPopoverProps): React.ReactElement {
           className={triggerVariants({ variant })}
           {...(props.variant === 'icon' ? { 'aria-label': props.ariaLabel } : {})}
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+          }}
         >
           {props.variant === 'icon' ? (
-            <Info className="size-4" aria-hidden="true" />
+            <Icon className="size-4" aria-hidden="true" />
           ) : (
             props.children
           )}
