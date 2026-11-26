@@ -112,7 +112,10 @@ pub struct PageSourceReport {
 ///   past `MAX_BLOCK_DEPTH`; or the save would append more ops than one undo
 ///   reverts. A refusal at a block of the buffer starts with its line,
 ///   `line N: ` (#5160 X3).
-#[instrument(skip(pool, device_id, materializer, source, base_source), err)]
+#[instrument(
+    skip(pool, device_id, materializer, source, base_source),
+    err(level = "info")
+)]
 pub async fn apply_page_source_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -151,7 +154,10 @@ pub async fn apply_page_source_inner(
 ///
 /// As [`create_page_in_space_inner`](crate::commands::create_page_in_space_inner)
 /// and [`apply_page_source_inner`].
-#[instrument(skip(pool, device_id, materializer, source, line_ids), err)]
+#[instrument(
+    skip(pool, device_id, materializer, source, line_ids),
+    err(level = "info")
+)]
 pub async fn create_page_from_source_inner(
     pool: &SqlitePool,
     device_id: &str,

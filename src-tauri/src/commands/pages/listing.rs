@@ -77,7 +77,7 @@ pub struct PageSubtreeResponse {
 /// index makes the query O(log n + k) at any scale. Liveness is enforced
 /// solely by `deleted_at IS NULL`; the former `is_conflict` /
 /// conflict-copy exclusion was dropped in migration 0058.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn get_page_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -246,7 +246,7 @@ pub struct PageHeading {
 /// generous while keeping the dynamic placeholder count safely under the
 /// limit. Oversized input is rejected up-front with
 /// [`AppError::Validation`]`("tag_ids.too_many")` before any SQL is built.
-#[instrument(skip(pool, tag_ids), err)]
+#[instrument(skip(pool, tag_ids), err(level = "info"))]
 pub async fn list_all_pages_in_space_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -324,7 +324,7 @@ pub async fn list_all_pages_in_space(
 /// property is set to `'true'`.  Used by the graph view to flag
 /// template pages with a visual marker; no pagination, no clamp —
 /// templates are a small, bounded set by convention.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_template_page_ids_in_space_inner(
     pool: &SqlitePool,
     space_id: &str,
@@ -411,7 +411,7 @@ pub struct PageSubtree {
 /// `buildFlatTree` which groups by `parent_id`, so the global order is
 /// not load-bearing, but keyset-style ordering keeps the truncation
 /// boundary deterministic when the cap fires.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn load_page_subtree_inner(
     pool: &SqlitePool,
     root_block_id: &str,

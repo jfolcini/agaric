@@ -164,7 +164,7 @@ fn group_by_artefact(divergences: &[Divergence]) -> Vec<ArtefactDivergences> {
 /// `app_data_dir` is where attachment files live, `None` where there are none
 /// to look at. `today` is the date the projected-agenda rebuild is pinned to;
 /// the wrapper passes the local clock, tests pass a constant.
-#[instrument(skip(pool, engines), err)]
+#[instrument(skip(pool, engines), err(level = "info"))]
 pub async fn compute_reconciliation_report_inner(
     pool: &SqlitePool,
     engines: &LoroState,
@@ -190,7 +190,7 @@ pub async fn compute_reconciliation_report_inner(
 /// run or shed by a full queue, or an inbound-sync rebuild waiting out its
 /// debounce leaves a cache behind its base tables for a moment, and reporting
 /// that moment names a divergence a second run would not reproduce.
-#[instrument(skip(pool, materializer), err)]
+#[instrument(skip(pool, materializer), err(level = "info"))]
 pub async fn settled_reconciliation_report(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -237,7 +237,7 @@ pub async fn compute_reconciliation_report(
 /// title keys) run here on the writer; everything else goes through the
 /// background queue, page ids first since the page caches read them, and the
 /// report waits for it to drain.
-#[instrument(skip(write_pool, read_pool, materializer), err)]
+#[instrument(skip(write_pool, read_pool, materializer), err(level = "info"))]
 pub async fn rebuild_derived_state_inner(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,

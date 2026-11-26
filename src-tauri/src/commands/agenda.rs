@@ -29,7 +29,7 @@ use super::*;
 /// - [`AppError::Validation`] — `dates.len()` >
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
-#[instrument(skip(pool, dates), err)]
+#[instrument(skip(pool, dates), err(level = "info"))]
 pub async fn count_agenda_batch_by_source_inner(
     pool: &SqlitePool,
     dates: Vec<String>,
@@ -442,7 +442,7 @@ fn cached_rows_to_projected_page(
 /// clock) call [`list_projected_agenda_on_the_fly`] directly — that also
 /// bypasses the cache check, since the cache itself is rebuilt from
 /// `chrono::Local::now()` and has the same drift problem.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_projected_agenda_inner(
     pool: &SqlitePool,
     start_date: String,
@@ -1106,7 +1106,7 @@ pub async fn list_projected_agenda(
 /// keyset packed by [`Cursor::for_projected_agenda`], so one cursor serves
 /// both. Dates and `limit` are validated as [`list_projected_agenda_inner`]
 /// validates them.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn agenda_range_inner(
     pool: &SqlitePool,
     start_date: String,
@@ -1256,7 +1256,7 @@ fn merge_agenda_halves(
 ///
 /// `scope` restricts the result set to blocks whose owning page carries
 /// `space = ?space_id`.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool), err(level = "info"))]
 pub async fn list_undated_tasks_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
