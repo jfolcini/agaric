@@ -167,13 +167,12 @@ export function PageBrowserHeader({
     VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => (
       <PopoverMenuItem
         key={view}
-        className="flex items-center gap-2"
         onClick={() => {
           close()
           setView(view)
         }}
       >
-        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        <Icon aria-hidden="true" />
         {t(labelKey)}
       </PopoverMenuItem>
     ))

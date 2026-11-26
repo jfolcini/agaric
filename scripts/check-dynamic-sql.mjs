@@ -43,6 +43,7 @@ import { spawnSync } from 'node:child_process'
 import { readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
 import { describeSource, gitEnv } from './lib/guard-file-source.mjs'
 import {
   CRATE_ROOTS,
@@ -513,9 +514,7 @@ function main(argv, overrides = {}) {
   } catch (error) {
     // Fail closed: an unreadable index would otherwise answer "absent" for
     // every path and report the whole baseline as orphaned, or nothing.
-    err(
-      `check-dynamic-sql: invocation error: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    err(`check-dynamic-sql: invocation error: ${errorMessage(error)}`)
     return 2
   }
 }

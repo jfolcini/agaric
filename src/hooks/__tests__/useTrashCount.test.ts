@@ -34,7 +34,7 @@ describe('useTrashCount', () => {
     // plain `number`) so the badge stays accurate regardless of trash size.
     stubInvoke({ count_trash: () => 137 })
 
-    const { result } = renderHook(() => useTrashCount())
+    const { result } = renderHook(() => useTrashCount('journal'))
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
@@ -66,7 +66,7 @@ describe('useTrashCount', () => {
       },
     })
 
-    const { result } = renderHook(() => useTrashCount())
+    const { result } = renderHook(() => useTrashCount('journal'))
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
@@ -84,7 +84,7 @@ describe('useTrashCount', () => {
   it('sends an active SpaceScope carrying the current space id', async () => {
     stubInvoke({ count_trash: () => 3 })
 
-    renderHook(() => useTrashCount())
+    renderHook(() => useTrashCount('journal'))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
@@ -102,7 +102,7 @@ describe('useTrashCount', () => {
     useSpaceStore.setState({ currentSpaceId: null })
     stubInvoke({ count_trash: () => 99 })
 
-    const { result } = renderHook(() => useTrashCount())
+    const { result } = renderHook(() => useTrashCount('journal'))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })

@@ -9,8 +9,9 @@
  * exercised in browser dev / Playwright.
  *
  * Contract under test:
- *  - unmodeled `plugin:*` commands THROW (mirroring the runtime rejection)
- *    and log a structured warning;
+ *  - unmodeled `plugin:*` commands THROW (mirroring the runtime rejection);
+ *    an unknown plugin logs a structured warning, one rejected by design
+ *    does not;
  *  - modeled `plugin:*` commands (PLUGIN_HANDLERS) resolve without warning;
  *  - unknown NON-plugin commands keep the warn-and-return-`null` drift
  *    signal (FE-H-13, asserted in `handlers-drift.test.ts`).
@@ -20,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from '@/lib/logger'
 import { dispatch, PLUGIN_HANDLERS } from '@/lib/tauri-mock/handlers'
+import { MOCK_APP_VERSION } from '@/lib/tauri-mock/seed'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -52,14 +54,24 @@ describe('dispatch — unmodeled plugin:* commands reject (#760)', () => {
     expect(() => dispatch(cmd, {})).toThrow(`plugin ${pluginName} not found`)
   })
 
-  it('logs a structured warning naming the rejected command', () => {
+  it('warns of drift for a plugin it does not know, naming the command', () => {
     const warned = vi.mocked(logger.warn)
-    expect(() => dispatch('plugin:autostart|is_enabled', {})).toThrow()
+    expect(() => dispatch('plugin:bogus|run', {})).toThrow('plugin bogus not found')
     expect(warned).toHaveBeenCalledWith(
       'TauriMock',
       'unmodeled plugin command — rejecting like the real runtime',
-      { command: 'plugin:autostart|is_enabled' },
+      { command: 'plugin:bogus|run' },
     )
+  })
+
+  it.each([
+    'plugin:autostart|is_enabled',
+    'plugin:notification|is_permission_granted',
+    'plugin:updater|check',
+    'plugin:process|restart',
+  ])('rejects %s by design, without a drift warning', (cmd) => {
+    expect(() => dispatch(cmd, {})).toThrow()
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 
   it('a plugin command with no | separator still rejects with the full name', () => {
@@ -94,6 +106,11 @@ describe('dispatch — modeled plugin:* commands resolve (#760)', () => {
     'plugin:global-shortcut|unregister',
   ])('%s resolves null without warning', (cmd) => {
     expect(dispatch(cmd, {})).toBeNull()
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
+  })
+
+  it('plugin:app|version answers the mock app version, as getVersion() does on a build', () => {
+    expect(dispatch('plugin:app|version', {})).toBe(MOCK_APP_VERSION)
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
   })
 

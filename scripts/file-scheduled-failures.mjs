@@ -105,6 +105,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 // Stable titles: the ONLY thing the find-or-file logic matches on. Never
 // rename an existing issue with one of these titles — the script would stop
 // finding it and would file a duplicate.
@@ -231,10 +233,9 @@ export function parseNeeds(text) {
   try {
     parsed = JSON.parse(text)
   } catch (err) {
-    throw new Error(
-      `the \`needs\` payload is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
-      { cause: err },
-    )
+    throw new Error(`the \`needs\` payload is not valid JSON (${errorMessage(err)})`, {
+      cause: err,
+    })
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('the `needs` payload is not a JSON object keyed by job id')
@@ -1449,7 +1450,7 @@ if (isMainModule) {
   try {
     main()
   } catch (err) {
-    console.error(`file-scheduled-failures: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(`file-scheduled-failures: ${errorMessage(err)}`)
     process.exit(1)
   }
 }

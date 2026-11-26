@@ -21,6 +21,8 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { errorMessage } from './lib/error-message.mjs'
+
 const ROOT = resolve(import.meta.dirname, '..')
 const CONTEXT = 'https://openvex.dev/ns/v0.2.0'
 const AUTHOR = 'Agaric maintainers'
@@ -173,8 +175,7 @@ export async function osvFetch(id, { fetchImpl = fetch, attempts = 4, delayMs = 
     try {
       res = await fetchImpl(`https://api.osv.dev/v1/vulns/${id}`)
     } catch (e) {
-      if (attempt >= attempts)
-        throw new Error(`OSV ${id}: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
+      if (attempt >= attempts) throw new Error(`OSV ${id}: ${errorMessage(e)}`, { cause: e })
     }
     if (res?.ok) return res.json()
     if (res && res.status !== 429 && res.status < 500)
