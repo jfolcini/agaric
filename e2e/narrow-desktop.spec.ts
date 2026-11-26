@@ -1,8 +1,9 @@
 /**
  * E2E — a desktop in a narrow 1024 px window, sidebar expanded (#7040 C2).
  *
- * At this width Settings' content column is 200 px narrower than on a wider
- * window, so a row laid out for the wide column must wrap rather than squeeze.
+ * At this width the content column is 200 px narrower than on a wider window,
+ * so a row laid out for the wide column must wrap or shed a word rather than
+ * squeeze.
  */
 
 import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
@@ -40,4 +41,18 @@ test('Settings › Properties keeps the select options box usable @settings', as
   const box = await page.getByRole('textbox', { name: 'Options, comma-separated' }).boundingBox()
   // 12rem, the floor the row wraps at.
   expect(box?.width).toBeGreaterThanOrEqual(192)
+})
+
+test("Journal › Week's date chip shows its whole text beside an icon-only Search @journal", async ({
+  page,
+}) => {
+  await page.getByRole('tab', { name: 'Weekly view' }).click()
+
+  // The top bar's Search drops its word below 1280 px; the name stays.
+  await expect(page.getByTestId('header-search-button')).toHaveAccessibleName('Search')
+
+  const date = page.getByTestId('date-display')
+  await expect(date).toBeVisible()
+  const fit = await date.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+  expect(fit.scroll).toBeLessThanOrEqual(fit.client)
 })
