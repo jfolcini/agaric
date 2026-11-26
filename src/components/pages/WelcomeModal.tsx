@@ -275,18 +275,18 @@ export function WelcomeModal() {
   )
 
   const importButton = (
-    <Button key="import" variant="ghost" size="sm" onClick={() => openSettingsTab('data')}>
+    <Button key="import" variant="outline" size="sm" onClick={() => openSettingsTab('data')}>
       {t('welcome.importNotes')}
     </Button>
   )
   const pairButton = (
-    <Button key="pair" variant="ghost" size="sm" onClick={() => openSettingsTab('sync')}>
+    <Button key="pair" variant="outline" size="sm" onClick={() => openSettingsTab('sync')}>
       {t(touch ? 'welcome.pairComputer' : 'welcome.pairDevice')}
     </Button>
   )
   // The primaries, then the secondary actions, then the tips (#7040). On a phone, pairing with the
-  // computer the notes already live on comes before import. The ghost buttons' labels line up with
-  // the column's edge.
+  // computer the notes already live on comes before import. They are outlined so they read as
+  // actions, not labels.
   const body = (
     <>
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -302,7 +302,7 @@ export function WelcomeModal() {
           {t('welcome.createSamplePages')}
         </Button>
       </div>
-      <div className="-ml-3 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         {touch ? [pairButton, importButton] : [importButton, pairButton]}
       </div>
       {featureList}

@@ -535,7 +535,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Récentes',
   'palette.modeTags': 'Étiquettes',
   'palette.modeHelp': 'Aide',
-  'palette.modeHint': '> commandes · # étiquettes · ? aide · [[ lien',
+  'palette.modeHint': '> commandes · # étiquettes · ? aide · [[\u00A0lien',
   'palette.modeBackHint': 'Cliquez sur la puce pour revenir à la recherche',
   'palette.tagsTitle': 'Étiquettes',
   'palette.tagsWelcomeEmpty':

@@ -527,7 +527,7 @@ export const references: Record<string, string> = {
   'palette.recentCommandsTitle': 'Recentes',
   'palette.modeTags': 'Etiquetas',
   'palette.modeHelp': 'Ajuda',
-  'palette.modeHint': '> comandos · # etiquetas · ? ajuda · [[ vínculo',
+  'palette.modeHint': '> comandos · # etiquetas · ? ajuda · [[\u00A0vínculo',
   'palette.modeBackHint': 'Clique no chip para voltar à pesquisa',
   'palette.tagsTitle': 'Etiquetas',
   'palette.tagsWelcomeEmpty': 'Digite para filtrar etiquetas. Enter abre a etiqueta na pesquisa.',
