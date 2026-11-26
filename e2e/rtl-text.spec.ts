@@ -434,6 +434,40 @@ test.describe('a right-to-left block content follows its direction (#7040) @edit
     })
   })
 
+  test("an embedded block's content follows its own direction", async ({ page }) => {
+    const sources = await seedBlocks(page, 'RTL embed source', {
+      arabic: `1. ${ARABIC}`,
+      english: 'An English line',
+    })
+    const ids = await seedBlocks(page, 'RTL embeds', {
+      arabic: `{{embed ((${sources.arabic}))}}`,
+      english: `{{embed ((${sources.english}))}}`,
+    })
+    await open(page, 'RTL embeds')
+    // The element holding each row's text, so the red is its direction.
+    const rowText = (host: Locator, text: string) =>
+      host.locator('[data-testid="embed-tree"]').getByText(text, { exact: true })
+    for (const where of ['blocks', 'page'] as const) {
+      if (where === 'page') await toPageMode(page)
+      const host = (id: string) =>
+        where === 'page' ? page.locator(`[data-page-block-id="${id}"]`) : row(page, id)
+      const arabic = rowText(host(ids.arabic), ARABIC)
+      expect(await direction(arabic), `${where}: the Arabic row`).toBe('rtl')
+      // Its list marker takes the room right of the text.
+      const room = await arabic.evaluate((item) => {
+        const list = item.closest(':is(ol, ul)') as Element
+        const range = document.createRange()
+        range.selectNodeContents(item)
+        return list.getBoundingClientRect().right - range.getBoundingClientRect().right
+      })
+      expect(room, `${where}: the marker's room`).toBeGreaterThan(8)
+      expect(
+        await direction(rowText(host(ids.english), 'An English line')),
+        `${where}: the English row`,
+      ).toBe('ltr')
+    }
+  })
+
   test("an Arabic table's handles sit at its start and end, and Alt+Shift+ArrowLeft moves a column left", async ({
     page,
   }) => {
@@ -516,6 +550,22 @@ test.describe('a right-to-left block content follows its direction (#7040) @edit
     await page.keyboard.type('X')
     await expect(pageBlockContent(page, ids.above).locator('strong')).toHaveText('מודגש')
     await expect(pageBlockContent(page, ids.above)).toContainText('X')
+  })
+
+  test('in page mode the arrows step over an emoji beside a marker whole', async ({ page }) => {
+    const ids = await seedBlocks(page, 'RTL emoji', { text: 'שלום **בולד**😀 סוף' })
+    await open(page, 'RTL emoji')
+    await toPageMode(page)
+    await pageBlockContent(page, ids.text).locator('p').click()
+    await caretHome(page)
+    const seen: number[] = []
+    for (let i = 0; i < 16; i++) {
+      await page.keyboard.press('ArrowLeft')
+      seen.push((await caretAt(page)).offset)
+    }
+    // The emoji is the two code units at 9 and 10: no caret between them.
+    expect(seen, 'the caret never splits the emoji').not.toContain(10)
+    expect(seen, 'the caret walked past it').toContain(11)
   })
 
   for (const [what, text, mode] of [

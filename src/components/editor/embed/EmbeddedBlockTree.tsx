@@ -263,7 +263,7 @@ function EmbeddedRow({
     // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- a passive surface while unlocked, as `StaticBlock`'s row is: the click mounts the editor, and keyboard users reach the content through the inner chips
     <div
       className={cn(
-        'embed-row flex w-full min-h-[1.5rem] items-start rounded-md text-left text-sm',
+        'embed-row flex w-full min-h-[1.5rem] items-start rounded-md text-start text-sm',
         editable && 'cursor-text hover:bg-accent/50',
       )}
       data-embed-editable={editable ? 'true' : undefined}
@@ -321,7 +321,8 @@ function EmbeddedRowBody({
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="px-3 py-1">
+        {/* Its text and marker take its own direction, as `StaticBlock`'s do (#7040). */}
+        <div dir="auto" className="px-3 py-1">
           {task === null && !showsListMarker && (
             <span className="embed-row-marker" aria-hidden="true" />
           )}

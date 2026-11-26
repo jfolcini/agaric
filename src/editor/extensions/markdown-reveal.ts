@@ -321,10 +321,19 @@ function stepInRtlText(view: EditorView, dir: 1 | -1): boolean {
   const node = dir > 0 ? $head.nodeAfter : $head.nodeBefore
   const widgetHere = markdownRevealPluginKey.getState(view.state)?.find($head.pos, $head.pos)
   if ((node === null || node.isText) && !widgetHere?.length) return false
-  const target = $head.pos + dir * (node !== null && !node.isText ? node.nodeSize : 1)
+  const target = $head.pos + dir * (node?.isText === false ? node.nodeSize : graphemeAt(node, dir))
   if (target < $head.start() || target > $head.end()) return false
   view.dispatch(view.state.tr.setSelection(TextSelection.create(doc, target)).scrollIntoView())
   return true
+}
+
+/**
+ * The code units of the character a step in `dir` crosses: an emoji, or a
+ * letter with its marks, is crossed whole, never split.
+ */
+function graphemeAt(text: PMNode | null, dir: 1 | -1): number {
+  const segments = [...new Intl.Segmenter().segment(text?.text ?? '')]
+  return (dir > 0 ? segments[0] : segments.at(-1))?.segment.length ?? 1
 }
 
 /** Where a click at a position with markers puts the caret. */
