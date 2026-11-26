@@ -102,6 +102,7 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { foldEnd, headingLevel, outlineOf } from '@/lib/section-fold'
 import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
@@ -329,6 +330,9 @@ export function BlockTree({
     expandAncestors,
     visibleBlocks: collapseFilteredVisible,
     hasChildrenSet,
+    foldableSet,
+    foldedSiblings,
+    foldedMove,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
@@ -384,7 +388,7 @@ export function BlockTree({
     revealIndex,
   } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
   useFindReveal({
-    blocksById,
+    blocks,
     collapsedIds,
     visible: uncappedZoomedVisible,
     expandBlock,
@@ -960,6 +964,7 @@ export function BlockTree({
     reorder,
     moveToParent,
     moveBlocks,
+    foldedSiblings,
     scrollContainerRef,
   })
 
@@ -1026,15 +1031,15 @@ export function BlockTree({
   // save-time parser in `useBlockFlush` commits the `key:: value` line to the
   // property system (stripping it from the content) when the block flushes.
   // The default no-op `propertySelect` thunk stays wired via `onPropertySelect`.
-  // beforeCollapse — rescue focus (flush + clear) when the collapsing subtree
-  // contains the focused block.
+  // beforeCollapse — rescue focus (flush + clear) when what the block folds
+  // (its subtree, a heading's section) holds the focused block.
   dispatch.on('beforeCollapse', (blockId: string) => {
-    if (focusedBlockId) {
-      const descendants = getDragDescendants(blocks, blockId)
-      if (descendants.has(focusedBlockId)) {
-        handleFlush()
-        setFocused(null)
-      }
+    if (!focusedBlockId) return
+    const index = blocks.findIndex((b) => b.id === blockId)
+    const focused = blocks.findIndex((b) => b.id === focusedBlockId)
+    if (index !== -1 && focused > index && focused < foldEnd(outlineOf(blocks), index)) {
+      handleFlush()
+      setFocused(null)
     }
   })
 
@@ -1057,6 +1062,24 @@ export function BlockTree({
         logger.warn('BlockTree', 'Failed to delete draft on discard', { blockId }, err)
       })
   }, [])
+
+  const isFoldedHeading = useCallback(
+    (id: string) => collapsedIds.has(id) && headingLevel(blocksById.get(id)?.content) !== null,
+    [collapsedIds, blocksById],
+  )
+
+  // #7040 — a move steps over a folded heading and its section, and a folded
+  // heading's move carries its section, as their drags do (`foldedMove`).
+  const moveOver = useCallback(
+    async (id: string, direction: -1 | 1): Promise<boolean> => {
+      const move = foldedMove(id, direction)
+      if (move === 'stay') return false
+      if (move === null) return direction < 0 ? moveUp(id) : moveDown(id)
+      await moveBlocks(move.ids, move.parentId, move.index)
+      return true
+    },
+    [foldedMove, moveUp, moveDown, moveBlocks],
+  )
 
   // ── Keyboard handlers hook ─────────────────────────────────────────
   const {
@@ -1147,13 +1170,26 @@ export function BlockTree({
     mergeInto,
     indent,
     dedent,
-    moveUp,
-    moveDown,
+    moveUp: useCallback((id: string) => moveOver(id, -1), [moveOver]),
+    moveDown: useCallback((id: string) => moveOver(id, 1), [moveOver]),
     createBelow,
+    // #7040 — Enter at a folded heading's end opens its section: under one with
+    // children the new block is the first of them, so none of them moves under it.
+    firstChildOnEnter: useCallback(
+      (id: string) => isFoldedHeading(id) && hasChildrenSet.has(id),
+      [isFoldedHeading, hasChildrenSet],
+    ),
     preserveEmptyBlockIds,
     discardDraft: handleDiscardDraft,
     t,
   })
+
+  // #7040 — Enter on a folded heading unfolds its section, so the block Enter
+  // makes is the section's first line, not hidden in it.
+  const handleEnter = useCallback(() => {
+    if (focusedBlockId !== null && isFoldedHeading(focusedBlockId)) expandBlock(focusedBlockId)
+    return handleEnterSave()
+  }, [focusedBlockId, isFoldedHeading, expandBlock, handleEnterSave])
 
   // ── Multi-selection handler (Ctrl+Click / Shift+Click) ──────────────
   const handleSelect = useCallback(
@@ -1244,7 +1280,7 @@ export function BlockTree({
           onMoveDown: handleMoveDown,
           onFlush: handleFlush,
           onMergeWithPrev: handleMergeWithPrev,
-          onEnterSave: handleEnterSave,
+          onEnterSave: handleEnter,
           onEscapeSave: handleEscapeSave,
           onToggleTodo: handleToggleFocusedTodo,
           onToggleCollapse: handleToggleFocusedCollapse,
@@ -1333,7 +1369,7 @@ export function BlockTree({
   useBlockTreeKeyboardShortcuts({
     focusedBlockId,
     pageStore,
-    hasChildrenSet,
+    foldableSet,
     selectAllIds,
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
     // (`zoomedVisible` == `collapsedVisible` at root view), so it matches what
@@ -1664,7 +1700,7 @@ export function BlockTree({
                       viewport={viewport}
                       rovingEditor={rovingEditor}
                       onContainerPointerDown={handleContainerPointerDown}
-                      hasChildrenSet={hasChildrenSet}
+                      foldableSet={foldableSet}
                       collapsedIds={collapsedIds}
                       hiddenMountCount={hiddenMountCount}
                       onExpandMount={expandMountLimit}

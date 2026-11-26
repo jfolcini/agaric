@@ -85,7 +85,7 @@ function makeStableBase() {
       activeBlockId: null,
     } as never,
     onContainerPointerDown: noop,
-    hasChildrenSet: new Set<string>(),
+    foldableSet: new Set<string>(),
     collapsedIds: new Set<string>(),
     hiddenMountCount: 0,
     onExpandMount: noop,

@@ -1659,7 +1659,19 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     })
 
     expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
-    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1', false)
+    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+  })
+
+  it('creates the block first under the focused one where firstChildOnEnter says so (#7040)', async () => {
+    const params = { ...makeDefaultParams(), firstChildOnEnter: (id: string) => id === 'B' }
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1', true)
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
   })
 
@@ -1758,7 +1770,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       })
 
       expect(params.createBelow).toHaveBeenCalledTimes(2)
-      expect(params.createBelow).toHaveBeenLastCalledWith('NEW_1', '', 'NEW_2')
+      expect(params.createBelow).toHaveBeenLastCalledWith('NEW_1', '', 'NEW_2', false)
       expect(params.setFocused).toHaveBeenLastCalledWith('NEW_2')
       expect(mockedLoggerWarn).not.toHaveBeenCalled()
       await act(async () => {
@@ -1899,7 +1911,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     })
 
     expect(params.handleFlush).toHaveBeenCalled()
-    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1', false)
   })
 
   // Store contract (#730 family): splitOff() RESOLVES false on failure — it
@@ -2092,7 +2104,7 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1', false)
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
     expect(mockedSetListStyle).toHaveBeenCalledTimes(1)
     expect(mockedSetListStyle).toHaveBeenCalledWith('NEW_1', 'ordered')
@@ -2121,7 +2133,7 @@ describe('useBlockActionOrchestration listStyle continuation (#4552 slice 3)', (
       await result.current.handleEnterSave()
     })
 
-    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1')
+    expect(params.createBelow).toHaveBeenCalledWith('B', '', 'NEW_1', false)
     expect(mockedSetListStyle).not.toHaveBeenCalled()
     expect(mockedClearListStyle).not.toHaveBeenCalled()
   })

@@ -286,7 +286,8 @@ function buildMoveGroup(ctx: MenuGroupContext): MenuItem[] {
 
 /**
  * Group 3: Collapse/Expand (only if hasChildren) + Zoom in. Collapse only makes
- * sense for a block with children, but Zoom works on any block — including
+ * sense for a block with something to fold (children, or a heading's section,
+ * #7040), but Zoom works on any block — including
  * leaves — so it is NOT gated on `hasChildren` (2026-06-20, mirroring the
  * removed any-block zoom bullet). Zoom is now the only path to focus a single
  * block, so it must stay reachable for leaves too.

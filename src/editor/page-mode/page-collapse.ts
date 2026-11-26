@@ -1,6 +1,7 @@
 /**
  * Page mode's collapse (#5691): a collapsed block hides the deeper blocks that
- * follow it, as block mode's tree hides its children. Which blocks are
+ * follow it, as block mode's tree hides its children, and a collapsed heading
+ * its section too (`section-fold.ts`, #7040). Which blocks are
  * collapsed is block mode's own layout, per page and device
  * (`loadCollapsedIds`, `saveCollapsedIds`), so both modes show the same; it is
  * no part of the document, so no save and no undo touches it.
@@ -9,7 +10,8 @@
  * hides until the caret leaves, without that being saved, as block mode shows
  * the block it focuses (#4002). A split of a collapsed block (Enter, a paste
  * of blocks) puts the blocks it makes after what the collapsed block hides
- * (`keepHidden`), as block mode's new blocks go after its children.
+ * (`keepHidden`), as block mode's new blocks go after its children; a split of
+ * a collapsed heading expands it instead, so the new block opens its section.
  *
  * Each block with blocks under it carries a node decoration saying whether it
  * is collapsed, which its node view draws as its chevron (`foldIn`), and each
@@ -41,10 +43,18 @@ import {
   firstTokenPos,
   PAGE_BLOCK,
   startOf,
-  subtreeEnd,
 } from '@/editor/page-mode/page-document'
 import { blockIdOf } from '@/editor/token-ids'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import {
+  canFold,
+  carriedEnd as carriedEndOf,
+  foldEnd,
+  foldsOver,
+  hiddenRows,
+  type Outline,
+  stepOver,
+} from '@/lib/section-fold'
 
 /** A block with blocks under it: collapsed, or not. */
 export type Fold = 'collapsed' | 'expanded'
@@ -66,6 +76,9 @@ interface CollapseState {
 
 export const pageCollapseKey = new PluginKey<CollapseState>('pageCollapse')
 
+/** The meta that expands the block it names, whether it is revealed for the caret or not. */
+const EXPAND = 'pageCollapseExpand'
+
 // A block's id is null only inside the transaction that made the block, until
 // the id rules mint one (`page-block-ids.ts`); as an id it matches nothing.
 const idOf = (node: PMNode): string => blockIdOf(node) as string
@@ -76,18 +89,28 @@ function caretIndex(state: EditorState): number | null {
   return $head.depth < 1 ? null : $head.index(0)
 }
 
-/** The blocks of `collapsed` that hold the block at `index`, however far up. */
-function collapsedAbove(doc: PMNode, index: number, collapsed: ReadonlySet<string>): Set<string> {
-  const above = new Set<string>()
-  let depth = depthOf(doc.child(index))
-  // The first block need not be at depth 0 until the id rules' fix is in.
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const node = doc.child(i)
-    if (depthOf(node) >= depth) continue
-    depth = depthOf(node)
-    if (collapsed.has(idOf(node))) above.add(idOf(node))
+/** The level of the heading block `node` opens with; null for any other block. */
+function headingLevelOf(node: PMNode): number | null {
+  const first = node.firstChild
+  return first?.type.name === 'heading' ? (first.attrs['level'] as number) : null
+}
+
+/** The document's blocks as an outline (`section-fold.ts`). */
+function outlineOf(doc: PMNode): Outline {
+  return {
+    length: doc.childCount,
+    depth: (index) => depthOf(doc.child(index)),
+    level: (index) => headingLevelOf(doc.child(index)),
   }
-  return above
+}
+
+/** The blocks of `collapsed` whose folds hold the block at `index`. */
+function collapsedAbove(doc: PMNode, index: number, collapsed: ReadonlySet<string>): Set<string> {
+  const folded: number[] = []
+  doc.forEach((node, _pos, i) => {
+    if (i < index && collapsed.has(idOf(node))) folded.push(i)
+  })
+  return new Set(foldsOver(outlineOf(doc), index, folded).map((i) => idOf(doc.child(i))))
 }
 
 /** What `collapsed`, less `revealed`, hides of `doc`, and each block's chevron. */
@@ -96,24 +119,23 @@ function layout(
   collapsed: ReadonlySet<string>,
   revealed: ReadonlySet<string>,
 ): Pick<CollapseState, 'hidden' | 'decorations'> {
+  const outline = outlineOf(doc)
+  const folded = (index: number): boolean => {
+    const id = idOf(doc.child(index))
+    return collapsed.has(id) && !revealed.has(id) && canFold(outline, index)
+  }
+  const hiddenAt = hiddenRows(outline, folded)
   const hidden = new Set<string>()
   const decorations: Decoration[] = []
-  // The depth of the collapsed block hiding the blocks after it; none hides at Infinity.
-  let hiding = Infinity
   doc.forEach((node, pos, index) => {
-    const depth = depthOf(node)
-    const id = idOf(node)
     const end = pos + node.nodeSize
-    if (depth <= hiding) hiding = Infinity
-    if (hiding !== Infinity) {
-      hidden.add(id)
+    if (hiddenAt[index]) {
+      hidden.add(idOf(node))
       decorations.push(Decoration.node(pos, end, { class: HIDDEN_CLASS }))
     }
-    const next = index + 1 < doc.childCount ? doc.child(index + 1) : null
-    if (next === null || depthOf(next) <= depth) return
-    const fold: Fold = collapsed.has(id) && !revealed.has(id) ? 'collapsed' : 'expanded'
+    if (!canFold(outline, index)) return
+    const fold: Fold = folded(index) ? 'collapsed' : 'expanded'
     decorations.push(Decoration.node(pos, end, {}, { pageFold: fold }))
-    if (fold === 'collapsed' && hiding === Infinity) hiding = depth
   })
   return { hidden, decorations: DecorationSet.create(doc, decorations) }
 }
@@ -140,12 +162,29 @@ export function isHiddenAt(state: EditorState, pos: number): boolean {
   return hidden !== undefined && $pos.depth >= 1 && hidden.has(idOf($pos.node(1)))
 }
 
-/** The fold of the block at `index`: none for a block with no blocks under it. */
+/** The fold of the block at `index`: none for a block with nothing to fold. */
 export function foldAt(state: EditorState, index: number): Fold | null {
   const { doc } = state
-  const next = index + 1 < doc.childCount ? doc.child(index + 1) : null
-  if (next === null || depthOf(next) <= depthOf(doc.child(index))) return null
+  if (!canFold(outlineOf(doc), index)) return null
   return isCollapsed(state, idOf(doc.child(index))) ? 'collapsed' : 'expanded'
+}
+
+/**
+ * The index just past what a drag of the block at `index` of `doc` carries: the
+ * blocks under it, and a collapsed heading's section (#7040).
+ */
+export function carriedEnd(state: EditorState, index: number, doc: PMNode = state.doc): number {
+  return carriedEndOf(outlineOf(doc), index, isCollapsed(state, idOf(doc.child(index))))
+}
+
+/** `stepOver` for the block at `index` of `doc`, with what each block carries. */
+export function moveStep(
+  state: EditorState,
+  doc: PMNode,
+  index: number,
+  direction: -1 | 1,
+): { end: number; to: number | null } {
+  return stepOver(outlineOf(doc), (i) => carriedEnd(state, i, doc), index, direction)
 }
 
 /** The fold of block `id`, for its block menu. */
@@ -175,7 +214,7 @@ export function toggleFold(id: string): Command {
       const tr = state.tr.setMeta(pageCollapseKey, id)
       // A caret under the block shows it (the reveal): the block is expanded. None is past every block.
       const caret = caretIndex(state) ?? state.doc.childCount
-      if (caret > index && caret < subtreeEnd(state.doc, index)) {
+      if (caret > index && caret < foldEnd(outlineOf(state.doc), index)) {
         const start = firstTokenPos(state.doc.child(index), startOf(state.doc, index))
         tr.setSelection(TextSelection.near(tr.doc.resolve(start)))
       }
@@ -205,7 +244,8 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   const index = caretIndex(before)
   if (index === null || foldAt(before, index) !== 'collapsed') return null
   const { doc } = after
-  const head = blockIndex(doc, idOf(before.doc.child(index)))
+  const id = idOf(before.doc.child(index))
+  const head = blockIndex(doc, id)
   const first = blockIndex(doc, idOf(before.doc.child(index + 1)))
   if (head === null || first === null) return null
   const depth = depthOf(doc.child(head))
@@ -213,6 +253,17 @@ function keepHidden(before: EditorState, after: EditorState): Transaction | null
   let made = head + 1
   while (made < first && depthOf(doc.child(made)) > depth) made += 1
   if (made === first) return null
+  if (headingLevelOf(before.doc.child(index)) !== null) {
+    const tr = after.tr.setMeta(EXPAND, id)
+    // Under a heading with blocks under it the new blocks go first among them,
+    // taking none of them as theirs.
+    if (depthOf(doc.child(first)) > depth) {
+      for (let i = made; i < first; i += 1) {
+        tr.setNodeAttribute(startOf(doc, i), 'depth', depthOf(doc.child(i)) + 1)
+      }
+    }
+    return tr
+  }
   let past = first
   while (past < doc.childCount && depthOf(doc.child(past)) > depth) past += 1
   const from = startOf(doc, made)
@@ -253,6 +304,7 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
           },
           apply: (tr, value, _old, state) => {
             const toggled = tr.getMeta(pageCollapseKey) as string | undefined
+            const expanded = tr.getMeta(EXPAND) as string | undefined
             let { collapsed } = value
             if (toggled !== undefined) {
               collapsed =
@@ -260,7 +312,11 @@ export const PageCollapse = Extension.create<PageCollapseOptions>({
                   ? withoutId(collapsed, toggled)
                   : withId(collapsed, toggled)
             }
-            const reshaped = toggled !== undefined || (tr.docChanged && changesBlocks(tr, type))
+            if (expanded !== undefined) collapsed = withoutId(collapsed, expanded)
+            const reshaped =
+              toggled !== undefined ||
+              expanded !== undefined ||
+              (tr.docChanged && changesBlocks(tr, type))
             const caret = caretIndex(state)
             const revealed = caret === null ? NONE : collapsedAbove(state.doc, caret, collapsed)
             if (reshaped || !sameIds(revealed, value.revealed)) {

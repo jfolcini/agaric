@@ -278,7 +278,17 @@ export interface UseBlockActionOrchestrationParams {
   dedent: (id: string) => Promise<boolean>
   moveUp: (id: string) => Promise<boolean>
   moveDown: (id: string) => Promise<boolean>
-  createBelow: (afterBlockId: string, content: string, blockId: string) => Promise<string | null>
+  createBelow: (
+    afterBlockId: string,
+    content: string,
+    blockId: string,
+    firstChild?: boolean,
+  ) => Promise<string | null>
+  /**
+   * Whether Enter at the end of `blockId` creates the first of the blocks under
+   * it (a folded heading's, #7040) instead of the block after them.
+   */
+  firstChildOnEnter?: ((blockId: string) => boolean) | undefined
   /**
    * #4729 — ids BlockTree's leaked-empty-block cleanup must skip exactly once.
    *
@@ -342,6 +352,7 @@ export function useBlockActionOrchestration({
   moveUp,
   moveDown,
   createBelow,
+  firstChildOnEnter,
   preserveEmptyBlockIds,
   discardDraft,
   t,
@@ -1096,7 +1107,8 @@ export function useBlockActionOrchestration({
         }
         return
       }
-      const created = createBelow(focusedBlockId, '', createdId)
+      const firstChild = firstChildOnEnter?.(focusedBlockId) === true
+      const created = createBelow(focusedBlockId, '', createdId, firstChild)
       focusCreated()
       const focusedAt = performance.now()
       const createdOk = (await created) !== null
@@ -1116,6 +1128,7 @@ export function useBlockActionOrchestration({
     focusedBlockId,
     handleFlush,
     createBelow,
+    firstChildOnEnter,
     splitOff,
     setFocused,
     preserveEmptyBlockIds,

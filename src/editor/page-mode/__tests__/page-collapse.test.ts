@@ -25,7 +25,7 @@ import {
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { canMerge, mergeBlock } from '@/editor/page-mode/page-block-actions'
+import { canMerge, dropBlock, mergeBlock, moveBlocks } from '@/editor/page-mode/page-block-actions'
 import {
   foldIn,
   foldOf,
@@ -397,6 +397,125 @@ describe('collapse', () => {
     expect(pageCollapseKey.getState(ed.state)?.hidden).toBe(before)
     expect(hidden(ed)).toEqual([B, C, D])
     expect(rowsOf(ed.state.doc)[0]).toEqual([A, 0, 'a and more'])
+  })
+})
+
+describe('heading sections (#7040)', () => {
+  const ROWS: Row[] = [
+    [A, 0, '## One'],
+    [B, 0, 'b'],
+    [C, 1, 'c'],
+    [D, 0, '## Two'],
+    [E, 0, 'e'],
+  ]
+
+  it('a collapsed heading hides its section up to the next heading of its level', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    expect(foldOf(ed.state, A)).toBe('expanded')
+    expect(toggle(ed, A)).toBe(true)
+    expect(hidden(ed)).toEqual([B, C])
+  })
+
+  it('a heading right before its peer folds nothing', () => {
+    const ed = build([
+      [A, 0, '## One'],
+      [B, 0, '## Two'],
+      [C, 0, 'c'],
+    ])
+    expect(foldOf(ed.state, A)).toBeNull()
+    expect(toggle(ed, A)).toBe(false)
+  })
+
+  it('shows the caret’s block in a collapsed heading’s section until the caret leaves', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    toggle(ed, A)
+    caret(ed, 1, 0)
+    expect(hidden(ed)).toEqual([])
+    caret(ed, 4, 0)
+    expect(hidden(ed)).toEqual([B, C])
+  })
+
+  it('Enter at the end of a collapsed heading expands it, and the new block opens its section', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    toggle(ed, A)
+    caret(ed, 0, 3)
+
+    press(ed, 'Enter')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, '## One'],
+      [NEW_1, 0, ''],
+      [B, 0, 'b'],
+      [C, 1, 'c'],
+      [D, 0, '## Two'],
+      [E, 0, 'e'],
+    ])
+    expect(caretBlock(ed)).toBe(1)
+    expect(foldOf(ed.state, A)).toBe('expanded')
+    caret(ed, 5, 0)
+    expect(hidden(ed)).toEqual([])
+  })
+
+  it('Enter at the end of a collapsed heading with blocks under it makes the new block the first of them', () => {
+    const ed = build([
+      [A, 0, '## One'],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+      [D, 0, '## Two'],
+    ])
+    caret(ed, 3, 0)
+    toggle(ed, A)
+    caret(ed, 0, 3)
+
+    press(ed, 'Enter')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, '## One'],
+      [NEW_1, 1, ''],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+      [D, 0, '## Two'],
+    ])
+    expect(caretBlock(ed)).toBe(1)
+    expect(foldOf(ed.state, A)).toBe('expanded')
+  })
+
+  it('a move steps over a collapsed heading and its section; a collapsed one carries its own', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    toggle(ed, A)
+    toggle(ed, D)
+
+    expect(moveBlocks([D], -1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([D, E, A, B, C])
+    expect(moveBlocks([D], 1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, B, C, D, E])
+  })
+
+  it('a selected block a collapsed heading among the selection carries moves only with it', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 0)
+    toggle(ed, D)
+
+    expect(moveBlocks([D, E], -1)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, D, E, B, C])
+  })
+
+  it('a collapsed heading’s drag carries its section; an expanded one’s moves its own line', () => {
+    const ed = build(ROWS)
+    caret(ed, 4, 0)
+    expect(dropBlock(A, 5, 0)(ed.state, ed.view.dispatch)).toBe(true)
+    expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([B, C, D, E, A])
+    ed.destroy()
+
+    const folded = build(ROWS)
+    caret(folded, 4, 0)
+    toggle(folded, A)
+    expect(dropBlock(A, 5, 0)(folded.state, folded.view.dispatch)).toBe(true)
+    expect(rowsOf(folded.state.doc).map(([id]) => id)).toEqual([D, E, A, B, C])
   })
 })
 
