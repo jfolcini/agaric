@@ -119,7 +119,7 @@ export function DeviceManagement(): React.ReactElement {
       const sorted = [...peerList].toSorted(comparePeers)
       setPeers(sorted)
       // #1076: mirror the backend peer list into the shared sync store so
-      // the StatusPanel Sync panel and the sidebar status dot reflect the
+      // the StatusPanel Sync panel and the sidebar's Sync row reflect the
       // actual paired devices (they read `useSyncStore.peers`).
       useSyncStore.getState().setPeers(sorted.map(mapPeerRefToInfo))
     },

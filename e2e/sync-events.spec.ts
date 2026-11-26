@@ -59,8 +59,8 @@ test.describe('background sync events (#2683, #6870) @sync', () => {
   })
 
   test('a failed background sync shows on the Sync button, not in a toast', async ({ page }) => {
-    const dot = syncButton(page).getByTestId('sync-button-status-dot')
-    await expect(dot).toHaveAttribute('data-sync-state', 'idle')
+    const state = syncButton(page).getByTestId('sync-state')
+    await expect(state).toHaveAttribute('data-sync-state', 'idle')
 
     await emitMockEvent(page, 'sync:error', {
       type: 'error',
@@ -68,7 +68,7 @@ test.describe('background sync events (#2683, #6870) @sync', () => {
       message: 'Connection refused',
     })
 
-    await expect(dot).toHaveAttribute('data-sync-state', 'error')
+    await expect(state).toHaveAttribute('data-sync-state', 'error')
     await expectNoToast(page)
   })
 })

@@ -87,7 +87,7 @@ test.describe('Search @editor @pages @journal @search', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Search', exact: true })
       .click()
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Search' })).toBeVisible()
 
     // Type a query matching seed data and submit
     const input = page.getByPlaceholder('Search blocks...')

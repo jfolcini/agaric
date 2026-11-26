@@ -27,14 +27,14 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 
 ## What the user sees
 
-- **Sidebar Sync icon** (footer), with the status dot. On a phone, where the sidebar is a drawer, the button that opens the drawer carries the same dot once a device is paired, with any state but idle as its description (#6870):
-  - Green: idle.
-  - Spinning + amber: syncing now.
-  - Red, with an alert glyph and the error in the tooltip: last attempt failed. A toast says so only when you pressed Sync (#6870).
-  - Grey, with *Waiting for Pixel 8, last synced 2h ago* in the tooltip: the other device is away. It neither announces itself on the network nor answers, and has not synced with this device lately; nothing failed, so there is no toast (#6523). A device that has only just left still reads as a failed sync until its last announcement on the network goes stale, a few minutes later.
-  - Yellow, with *No devices paired* in the tooltip: nothing to sync with yet.
-  - Strikethrough WiFi: offline.
-- **"Last synced N ago"** in the Sync icon's tooltip, with the state. After a restart it is the last sync stored with the paired devices, not *Never synced* until the next one (#6523). While waiting for an away device, the waiting line takes its place, with that device's own last sync.
+- **Sidebar Sync row** (footer, above Settings), with the sync state in words beside its label; in the desktop icon rail it folds to an icon and the state moves to the tooltip (#7040 P11). On a phone, where the sidebar is a drawer, the button that opens the drawer carries a status dot once a device is paired, with any state but idle as its description (#6870):
+  - *Last synced 5m ago*, green dot: idle.
+  - *Syncing...*, spinning glyph, amber dot: syncing now.
+  - *Failed* in red, with an alert glyph and the error in the tooltip, red dot: last attempt failed. A toast says so only when you pressed Sync (#6870).
+  - *Waiting for Pixel 8, last synced 2h ago*, grey dot: the other device is away. It neither announces itself on the network nor answers, and has not synced with this device lately; nothing failed, so there is no toast (#6523). A device that has only just left still reads as a failed sync until its last announcement on the network goes stale, a few minutes later.
+  - *No devices paired*: nothing to sync with yet.
+  - *Offline*, strikethrough WiFi, grey dot: offline.
+- **"Last synced N ago"** in the Sync row while idle, and in its tooltip under the state. After a restart it is the last sync stored with the paired devices, not *Never synced* until the next one (#6523). While waiting for an away device, the waiting line takes its place, with that device's own last sync.
 - **Settings › Sync & devices**, at the top (below any sync changes that could not be applied) once a device is paired: the overall sync state, the last successful sync, and the peer count; while waiting, the device waited for. To retry, use the device list's *Sync all* or a device's *Sync now*.
 - **Different versions of Agaric** do not sync. Both devices say why in the Sync & devices card and on the Sync button, and in a toast when you press Sync, and which one to update: *Pixel 8 runs an older version of Agaric. Update Agaric on Pixel 8, then sync again.* On Android the toast links the releases page when the phone is the one to update. Paired with a device on a release from before #6523, the older device says to update both when the newer one dials it, and shows the newer device's English sentence telling it to update itself when it dials; the newer device names the older one when dialled, and says the sync could not start and, if that repeats, to check that both run the same version when it dials the older one, which ends the sync without answering. A device on the same version that quits or drops off the network at that moment gets the same sentence, which is why it only suggests the check (#5728, #6523).
 - **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in. While it shows, the row offers *Cancel sync* (#5739).

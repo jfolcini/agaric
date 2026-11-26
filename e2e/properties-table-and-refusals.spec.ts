@@ -197,7 +197,7 @@ test.describe('Page Properties table @editor', () => {
   /** Reopen Quick Notes and expand its table, which mounts collapsed. */
   async function reopenTable(page: Page, count: number): Promise<void> {
     await reopenPage(page, 'Quick Notes')
-    await page.getByRole('button', { name: `Properties (${count})`, exact: true }).click()
+    await page.getByRole('button', { name: `Properties ${count}`, exact: true }).click()
   }
 
   test('add from a definition, create a definition, edit and delete each survive reopening', async ({
@@ -210,7 +210,7 @@ test.describe('Page Properties table @editor', () => {
     const reviewer = page.getByRole('textbox', { name: 'reviewer value', exact: true })
     await reviewer.fill('Ana')
     await reviewer.press('Enter')
-    await expect(page.getByRole('button', { name: 'Properties (1)', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Properties 1', exact: true })).toBeVisible()
     await expect.poll(() => storedProperties(page, QUICK_NOTES)).toEqual({ reviewer: 'Ana' })
 
     await reopenTable(page, 1)
@@ -226,7 +226,7 @@ test.describe('Page Properties table @editor', () => {
     const budget = page.getByRole('textbox', { name: 'budget value', exact: true })
     await budget.fill('1200')
     await budget.press('Enter')
-    await expect(page.getByRole('button', { name: 'Properties (2)', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Properties 2', exact: true })).toBeVisible()
     await expect
       .poll(() => storedProperties(page, QUICK_NOTES))
       .toEqual({ reviewer: 'Ana', budget: '1200' })

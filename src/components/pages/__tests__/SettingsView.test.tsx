@@ -169,13 +169,12 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  // ── breadcrumb naming the active tab ──────────────────────
-  // The app header already names the view and the rail marks the active tab,
-  // so the view repeats neither.
-  it('renders no heading or breadcrumb of its own', () => {
+  // ── title, and no breadcrumb naming the active tab ────────
+  // The rail marks the active tab, so the view does not repeat it.
+  it('titles its column with its own h1 and no breadcrumb (S3, #7040)', () => {
     render(<SettingsView />)
 
-    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(t('sidebar.settings'))
     expect(screen.queryByRole('navigation', { name: t('sidebar.settings') })).toBeNull()
     expect(screen.getByRole('tab', { name: t('settings.tabGeneral') })).toHaveAttribute(
       'aria-selected',

@@ -32,6 +32,7 @@ vi.mock('lucide-react', () => ({
 }))
 
 import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
+import { formatCompactDate } from '@/lib/date-utils'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -50,7 +51,7 @@ describe('BuiltinDateFields', () => {
     )
 
     expect(screen.getByText('Due')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('2026-06-15')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(formatCompactDate('2026-06-15'))).toBeInTheDocument()
   })
 
   it('renders scheduled date when provided', () => {
@@ -65,7 +66,7 @@ describe('BuiltinDateFields', () => {
     )
 
     expect(screen.getByText('Scheduled')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('2026-07-01')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(formatCompactDate('2026-07-01'))).toBeInTheDocument()
   })
 
   it('renders both dates when both are provided', () => {
@@ -174,10 +175,10 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const dueInput = screen.getByDisplayValue('2026-06-15')
+    const dueInput = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     expect(dueInput).toHaveAttribute('type', 'text')
 
-    const schedInput = screen.getByDisplayValue('2026-07-01')
+    const schedInput = screen.getByDisplayValue(formatCompactDate('2026-07-01'))
     expect(schedInput).toHaveAttribute('type', 'text')
   })
 
@@ -194,7 +195,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.type(input, 'tomorrow')
     await user.tab()
@@ -218,7 +219,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.type(input, '2025-04-15')
     await user.tab()
@@ -238,7 +239,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.type(input, 'today')
 
@@ -266,7 +267,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.type(input, 'not a date')
     await user.tab()
@@ -286,7 +287,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.type(input, 'not a date')
     await user.tab()
@@ -309,7 +310,7 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const input = screen.getByDisplayValue('2026-06-15')
+    const input = screen.getByDisplayValue(formatCompactDate('2026-06-15'))
     await user.clear(input)
     await user.tab()
 
@@ -327,13 +328,13 @@ describe('BuiltinDateFields', () => {
       />,
     )
 
-    const dueBadge = screen.getByText('Due').closest('[data-slot="badge"]') as HTMLElement
-    expect(dueBadge.querySelector('svg')).toBeInTheDocument()
+    const dueLabel = screen.getByText('Due').closest('[data-slot="property-label"]') as HTMLElement
+    expect(dueLabel.querySelector('svg')).toBeInTheDocument()
 
-    const scheduledBadge = screen
+    const scheduledLabel = screen
       .getByText('Scheduled')
-      .closest('[data-slot="badge"]') as HTMLElement
-    expect(scheduledBadge.querySelector('svg')).toBeInTheDocument()
+      .closest('[data-slot="property-label"]') as HTMLElement
+    expect(scheduledLabel.querySelector('svg')).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

@@ -33,7 +33,7 @@ test.describe('Sync UI @sync', () => {
       await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
       // Navigate to Settings and open the Sync & devices tab
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
-      await expect(page.locator('header').getByText('Settings')).toBeVisible()
+      await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
       await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
       await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
     })

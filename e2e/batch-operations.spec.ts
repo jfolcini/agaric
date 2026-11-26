@@ -177,14 +177,14 @@ test.describe('Batch block operations @editor', () => {
     for (const box of await boxes.all()) await expect(box).toHaveAttribute('data-slot', 'checkbox')
   })
 
-  test("the cursor's focus ring wraps the block's text, not the gutter", async ({ page }) => {
+  test("the cursor's focus ring wraps the block's row, not the gutter", async ({ page }) => {
     await selectSecondAndThird(page)
     // The last Ctrl+Click leaves the cursor on its row.
     const cursor = page.locator('li[data-block-id]:focus')
     await expect(cursor).toHaveCount(1)
     const { ringLefts, handleRight } = await cursor.evaluate((li) => {
       const ringed = [li, ...li.querySelectorAll('*')].filter((el) =>
-        /0px 0px 0px 3px(?! inset)/.test(getComputedStyle(el).boxShadow),
+        /0px 0px 0px 3px/.test(getComputedStyle(el).boxShadow),
       )
       const handle = li.querySelector('[data-testid="drag-handle"]') as HTMLElement
       return {

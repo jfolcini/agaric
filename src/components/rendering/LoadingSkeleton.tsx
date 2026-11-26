@@ -1,9 +1,9 @@
 /**
  * LoadingSkeleton -- reusable skeleton loading placeholder.
  *
- * Renders N skeleton rows inside a `space-y-2` wrapper.
- * Used across list views (PageBrowser, TagList, etc.)
- * to show a consistent loading state.
+ * Renders N skeleton rows inside a `space-y-2` wrapper. The `list-row` variant
+ * draws the list it stands in for instead: one card (`listCardVariants`) of
+ * rows split by the list's dividers, each holding a text bar.
  *
  * Per docs/UX.md, loading containers should expose `role="status"` and
  * `aria-busy="true"` so assistive tech announces the loading state.
@@ -14,6 +14,7 @@
 
 import { useTranslation } from 'react-i18next'
 
+import { listCardVariants, listRowVariants } from '@/components/ui/list-item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
@@ -28,7 +29,7 @@ const VARIANT_HEIGHT: Record<LoadingSkeletonVariant, string> = {
   text: 'h-4',
   heading: 'h-6',
   button: 'h-9',
-  'list-row': 'h-11',
+  'list-row': 'h-4',
 }
 
 interface LoadingSkeletonProps extends React.ComponentProps<'div'> {
@@ -72,9 +73,22 @@ export function LoadingSkeleton({
   const wrapperA11y = loading
     ? { 'aria-busy': true as const, role: 'status', 'aria-label': ariaLabel ?? t('common.loading') }
     : {}
+  const rows = Array.from({ length: count })
+  if (variant === 'list-row') {
+    return (
+      <div className={listCardVariants({ className })} {...wrapperA11y} {...rest}>
+        {rows.map((_, i) => (
+          // oxlint-disable-next-line react/no-array-index-key -- static placeholder rows with no underlying data; index is the only available key
+          <div key={i} className={listRowVariants({ interactive: false })}>
+            <Skeleton className={cn(heightClass, 'w-1/2 rounded')} />
+          </div>
+        ))}
+      </div>
+    )
+  }
   return (
     <div className={cn('space-y-2', className)} {...wrapperA11y} {...rest}>
-      {Array.from({ length: count }).map((_, i) => (
+      {rows.map((_, i) => (
         // oxlint-disable-next-line react/no-array-index-key -- static placeholder grid of `count` identical, non-reorderable skeletons with no underlying data; index is the only available key
         <Skeleton key={i} className={cn(heightClass, 'w-full rounded-lg')} />
       ))}

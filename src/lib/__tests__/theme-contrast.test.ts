@@ -440,21 +440,26 @@ const THEME_PAIRS = [
   { pair: 'muted text on secondary', fg: 'muted-foreground', bg: 'secondary', min: AA_NORMAL },
   // `Badge`'s `metadata` tone: a type label or a count in a list's card (#7040).
   { pair: 'type label on a list card', fg: 'muted-foreground', bg: 'card', min: AA_NORMAL },
+  // A callout's label and icon on its tinted fill (#7040).
+  { pair: 'callout info label', fg: 'alert-info-foreground', bg: 'alert-info', min: AA_NORMAL },
+  {
+    pair: 'callout warning label',
+    fg: 'alert-warning-foreground',
+    bg: 'alert-warning',
+    min: AA_NORMAL,
+  },
+  { pair: 'callout tip label', fg: 'alert-tip-foreground', bg: 'alert-tip', min: AA_NORMAL },
+  { pair: 'callout error label', fg: 'alert-error-foreground', bg: 'alert-error', min: AA_NORMAL },
+  { pair: 'callout note label', fg: 'alert-note-foreground', bg: 'alert-note', min: AA_NORMAL },
   { pair: 'code keyword', fg: 'alert-error-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code built-in', fg: 'alert-warning-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code name / quote', fg: 'alert-tip-foreground', bg: 'muted', min: AA_NORMAL },
   { pair: 'code section', fg: 'alert-info-foreground', bg: 'muted', min: AA_NORMAL },
   // The check glyph on a completed task's filled box (#6528).
   { pair: 'DONE check mark', fg: 'task-done-foreground', bg: 'task-done', min: NON_TEXT },
-  // The sidebar Sync button's status dot (#6528).
-  { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'sidebar', min: NON_TEXT },
-  { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'sidebar', min: NON_TEXT },
-  {
-    pair: 'sync dot, no devices paired',
-    fg: 'status-pending-foreground',
-    bg: 'sidebar',
-    min: NON_TEXT,
-  },
+  // The sync dot on the phone header's drawer button (#6528, #6870).
+  { pair: 'sync dot, idle', fg: 'sync-idle', bg: 'background', min: NON_TEXT },
+  { pair: 'sync dot, syncing', fg: 'sync-active', bg: 'background', min: NON_TEXT },
 ] as const
 
 const CASES = [false, true].flatMap((highContrast) =>

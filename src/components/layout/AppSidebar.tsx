@@ -4,10 +4,10 @@
  * #5269 — a header (branding + collapse toggle, space switcher, New page),
  * the daily surfaces (`SIDEBAR_NAV_ITEMS`), a lower group of Graph, Templates
  * and Trash (`SIDEBAR_LOWER_NAV_ITEMS`, #7040 D2) above Bookmarks, and a footer
- * row with the Sync and Settings icons. The other views open from the Pages
+ * with the Sync and Settings rows (#7040 P11). The other views open from the Pages
  * header or Settings. `CollapseButton` is a
  * sidebar-internal helper and lives alongside the JSX it supports;
- * `syncDotClass` is shared with the phone's drawer button in App.tsx.
+ * `syncDotClass` colours the dot on the phone header's drawer button (App.tsx).
  *
  * Subscription split (design-system perf review tier-3 #19):
  * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`
@@ -59,16 +59,9 @@ import type { View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 
-/**
- * Compute the CSS class for the sync status dot colour.
- *
- * Distinguish "offline" (network problem, nothing the user can do)
- * from "no peers" (pairing problem, the user needs to add a device). Offline
- * wins over no-peers because peer state is meaningless without a network.
- */
-export function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
+/** The colour of the sync dot on the phone header's drawer button, shown once a device is paired. */
+export function syncDotClass(syncState: SyncState): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
-  if (!hasPeers) return 'bg-status-pending-foreground'
   switch (syncState) {
     case 'idle': {
       return 'bg-sync-idle'
@@ -100,6 +93,27 @@ function lastSyncedLine(
   return lastSyncedAt
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
     : t('sidebar.lastSyncedNever')
+}
+
+/**
+ * The Sync row's state in words (#7040 P11), in the dot's order: offline, then a running
+ * sync, then no peers, then a failure; otherwise when it last synced, or whom it waits for.
+ */
+function syncStateWords(
+  t: TFunction,
+  state: {
+    isOnline: boolean
+    syncing: boolean
+    hasPeers: boolean
+    failed: boolean
+    lastSynced: string
+  },
+): string {
+  if (!state.isOnline) return t('sidebar.offline')
+  if (state.syncing) return t('sidebar.syncing')
+  if (!state.hasPeers) return t('sync.noPeersTitle')
+  if (state.failed) return t('sidebar.syncStateFailed')
+  return state.lastSynced
 }
 
 const LAST_SYNCED_ID = 'sidebar-last-synced'
@@ -172,6 +186,13 @@ function AppSidebarInner({
     : syncSettled && !hasPeers
       ? t('sync.noPeersTitle')
       : null
+  const syncStateWord = syncStateWords(t, {
+    isOnline,
+    syncing: syncing || syncState === 'syncing',
+    hasPeers,
+    failed: syncFailed,
+    lastSynced: lastSyncedLabel,
+  })
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
@@ -351,38 +372,39 @@ function AppSidebarInner({
         </FeatureErrorBoundary>
       </SidebarContent>
       <SidebarFooter>
-        {/* One row of icons; it stacks in the 48px rail. The sync state is
-            the icon (spinner, offline, error) plus the dot; the error or "no
-            devices paired" line and the "last synced" line live in the
-            tooltip and the button's description. Hover paints the nav rows'
-            lighter fill, so it never matches the active Settings pill. */}
-        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
-          <IconButton
-            variant="ghost"
-            size="icon-sm"
-            className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
-            ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
-            aria-describedby={
-              syncStatusLabel === null ? LAST_SYNCED_ID : `${SYNC_STATUS_ID} ${LAST_SYNCED_ID}`
-            }
-            tooltip={
-              <div className="flex flex-col gap-0.5">
-                <span>
-                  {!isOnline
-                    ? t('sidebar.offline')
-                    : syncing
-                      ? t('sidebar.syncing')
-                      : (syncStatusLabel ?? t('sidebar.syncTooltip'))}
-                </span>
-                <span className="opacity-90">{lastSyncedLabel}</span>
-              </div>
-            }
-            // `aria-disabled`, not `disabled`: a disabled button takes no hover
-            // or focus, so the offline / syncing tooltip could never show.
-            aria-disabled={syncUnavailable}
-            onClick={syncUnavailable ? undefined : () => void onSyncClick()}
-          >
-            <span className="relative inline-flex">
+        {/* #7040 P11 — Sync and Settings are rows like the nav rows above, and the sync row
+            names its state in words. In the 48px rail they fold to icons. The tooltip and the
+            button's description carry the error or "no devices paired" line and the "last
+            synced" line. */}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              // `aria-disabled`, not `disabled`, and still hoverable: a disabled button takes
+              // no hover or focus, so the offline / syncing tooltip could never show.
+              className="aria-disabled:pointer-events-auto aria-disabled:cursor-default"
+              aria-label={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
+              aria-describedby={
+                syncStatusLabel === null ? LAST_SYNCED_ID : `${SYNC_STATUS_ID} ${LAST_SYNCED_ID}`
+              }
+              tooltip={{
+                // Shown beside the expanded rows too, where it adds the "last synced" line.
+                hidden: isMobile,
+                children: (
+                  <div className="flex flex-col gap-0.5">
+                    <span>
+                      {!isOnline
+                        ? t('sidebar.offline')
+                        : syncing
+                          ? t('sidebar.syncing')
+                          : (syncStatusLabel ?? t('sidebar.syncTooltip'))}
+                    </span>
+                    <span className="opacity-90">{lastSyncedLabel}</span>
+                  </div>
+                ),
+              }}
+              aria-disabled={syncUnavailable}
+              onClick={syncUnavailable ? undefined : () => void onSyncClick()}
+            >
               {!isOnline ? (
                 <WifiOff className="text-muted-foreground" />
               ) : syncFailed ? (
@@ -390,44 +412,35 @@ function AppSidebarInner({
               ) : (
                 <RefreshCw className={syncing ? 'animate-spin' : ''} />
               )}
+              <span>{t('sidebar.sync')}</span>
               <span
                 className={cn(
-                  'sync-button-status-dot absolute -top-1 -right-1 h-2 w-2 rounded-full',
-                  syncDotClass(syncState, hasPeers),
+                  'ml-auto text-xs',
+                  syncFailed ? 'text-destructive' : 'text-muted-foreground',
                 )}
-                data-testid="sync-button-status-dot"
+                data-testid="sync-state"
                 data-sync-state={syncState}
-                aria-hidden="true"
-              />
-            </span>
-          </IconButton>
-          {syncStatusLabel !== null && (
-            <span id={SYNC_STATUS_ID} className="sr-only">
-              {syncStatusLabel}
-            </span>
-          )}
-          <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">
-            {lastSyncedLabel}
-          </span>
-          <IconButton
-            variant="ghost"
-            size="icon-sm"
-            className={cn(
-              'hover:bg-sidebar-accent/50',
-              currentView === SETTINGS_NAV_ITEM.id &&
-                'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent',
+              >
+                {syncStateWord}
+              </span>
+            </SidebarMenuButton>
+            {syncStatusLabel !== null && (
+              <span id={SYNC_STATUS_ID} className="sr-only">
+                {syncStatusLabel}
+              </span>
             )}
-            ariaLabel={t(SETTINGS_NAV_ITEM.labelKey)}
-            tooltip={t(SETTINGS_NAV_ITEM.labelKey)}
-            aria-current={currentView === SETTINGS_NAV_ITEM.id ? 'page' : undefined}
-            onClick={() => {
-              onSelectView(SETTINGS_NAV_ITEM.id)
-              dismissOnMobile()
-            }}
-          >
-            <SETTINGS_NAV_ITEM.icon />
-          </IconButton>
-        </div>
+            <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">
+              {lastSyncedLabel}
+            </span>
+          </SidebarMenuItem>
+          {renderMenuButton(
+            SETTINGS_NAV_ITEM.id,
+            SETTINGS_NAV_ITEM.icon,
+            t(SETTINGS_NAV_ITEM.labelKey),
+            currentView === SETTINGS_NAV_ITEM.id,
+            () => onSelectView(SETTINGS_NAV_ITEM.id),
+          )}
+        </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
@@ -439,7 +452,7 @@ function AppSidebarInner({
  * top-level render (see design-system-perf-review-2026-05-09.md item 10).
  * Wrapping with `React.memo` collapses parent-driven rerenders to the
  * subset where a prop identity actually changed; intra-sidebar state
- * (sync dot colour) re-renders on its own subscriptions
+ * (the sync row's state) re-renders on its own subscriptions
  * through `SpaceSwitcher` and `useSidebar()`. Mirrors the
  * `BlockListItem` Inner/memo pattern used elsewhere in the tree.
  */

@@ -44,6 +44,7 @@ export const common: Record<string, string> = {
   'sidebar.offline': 'Hors ligne',
   'sidebar.syncTooltip': 'Synchroniser tous les appareils',
   'sidebar.syncing': 'Synchronisation...',
+  'sidebar.syncStateFailed': 'Échec',
   'bookmarks.title': 'Favoris',
   'bookmarks.emptyHint': 'Ajoutez une page aux favoris pour la garder ici.',
   'bookmarks.remove': 'Retirer {{title}} des favoris',

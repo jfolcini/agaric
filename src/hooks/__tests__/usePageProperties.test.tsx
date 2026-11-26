@@ -138,6 +138,6 @@ describe('page header properties (#5445)', () => {
       expect(screen.getByTestId('is-template')).toHaveTextContent('true')
     })
     expect(callsOf('get_properties')).toBe(2)
-    expect(screen.getByRole('button', { name: /\(1\)/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Properties 1' })).toBeInTheDocument()
   })
 })

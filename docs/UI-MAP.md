@@ -46,7 +46,7 @@ App
 │   ├── AppSidebar               (collapsible left rail)
 │   ├── NoPeersPairing           (lazy NoPeersDialog → PairingDialog, sync-empty fallback)
 │   └── SidebarInset
-│       ├── Header bar           (view-specific controls)
+│       ├── Header bar           (view-specific controls; the view's name on a phone only)
 │       ├── TabBar               (hoisted; 2+ tabs, not on a touch phone)
 │       ├── QuickAccessBar       (recents strip; not on a phone or with 2+ tabs)
 │       ├── ViewHeaderOutletSlot (sticky page header outlet)
@@ -111,7 +111,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 ## Navigation chrome
 
-- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Agenda / Pages / Search / Tags, a lower group of Graph / Templates / Trash with the trash count, then Bookmarks, reordered by drag or Space + arrow keys and kept in that order by each page's synced `bookmark` property), footer (one row of icons: Sync, with the status dot and the last-synced time in its tooltip, and Settings). Open/closed state persists in a cookie; width in localStorage.
+- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Agenda / Pages / Search / Tags, a lower group of Graph / Templates / Trash with the trash count, then Bookmarks, reordered by drag or Space + arrow keys and kept in that order by each page's synced `bookmark` property), footer (Sync and Settings as labelled rows, as tall as the nav rows; the Sync row names its state in words — no devices paired, syncing, failed, offline, or the last-synced time — and its tooltip adds the error and the last-synced time; in the icon rail both fold to icons). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
 - **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts`; rebindable entries are user-customisable in Settings → Keyboard, while structural bindings and picker triggers are not. See [Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) for the current catalogs.
 - **Search surfaces**: three distinct entry points (mirrors README § Search):

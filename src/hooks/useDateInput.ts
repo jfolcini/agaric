@@ -12,10 +12,13 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { formatCompactDate } from '@/lib/date-utils'
 import { parseDate } from '@/lib/parse-date'
 
 /** Delay (ms) before NL date parsing fires while typing. */
 const NL_PARSE_DEBOUNCE_MS = 300
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 export interface UseDateInputOptions {
   /** Initial value for the date input (e.g. from a prop). Synced on change. */
@@ -27,6 +30,11 @@ export interface UseDateInputOptions {
 export interface UseDateInputReturn {
   /** Current controlled value of the text input. */
   dateInput: string
+  /**
+   * What the input shows: `dateInput`, except that an ISO date at rest reads as the date
+   * chips do ("Nov 25"); focus shows the ISO date again for editing. Pair with `handleFocus`.
+   */
+  inputValue: string
   /** State setter — useful for resetting or programmatic changes. */
   setDateInput: React.Dispatch<React.SetStateAction<string>>
   /** Live ISO preview while typing, or null if unparseable / empty. */
@@ -45,6 +53,8 @@ export interface UseDateInputReturn {
   handleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   /** onBlur handler — parses input, calls onSave, updates state. */
   handleBlur: () => void
+  /** onFocus handler — `inputValue` shows the editable ISO date while focused. */
+  handleFocus: () => void
 }
 
 export function useDateInput({
@@ -55,6 +65,7 @@ export function useDateInput({
   const [datePreview, setDatePreview] = useState<string | null>(null)
   const [dateError, setDateError] = useState(false)
   const [isParsing, setIsParsing] = useState(false)
+  const [focused, setFocused] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const cancelPendingParse = useCallback(() => {
@@ -93,7 +104,7 @@ export function useDateInput({
         setDatePreview(null)
         return
       }
-      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      if (ISO_DATE.test(trimmed)) {
         // ISO is synchronous and reliable
         setDatePreview(trimmed)
         return
@@ -112,7 +123,10 @@ export function useDateInput({
     [cancelPendingParse],
   )
 
+  const handleFocus = useCallback(() => setFocused(true), [])
+
   const handleBlur = useCallback(() => {
+    setFocused(false)
     cancelPendingParse()
     const trimmed = dateInput.trim()
     setDatePreview(null)
@@ -121,7 +135,7 @@ export function useDateInput({
       onSave?.('')
       return
     }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    if (ISO_DATE.test(trimmed)) {
       onSave?.(trimmed)
       return
     }
@@ -136,11 +150,13 @@ export function useDateInput({
 
   return {
     dateInput,
+    inputValue: !focused && ISO_DATE.test(dateInput) ? formatCompactDate(dateInput) : dateInput,
     setDateInput,
     datePreview,
     dateError,
     isParsing,
     handleChange,
     handleBlur,
+    handleFocus,
   }
 }

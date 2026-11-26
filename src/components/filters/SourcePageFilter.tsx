@@ -119,7 +119,9 @@ export function SourcePageFilter({
         <Button
           variant="ghost"
           className={cn(
-            'source-page-filter-trigger h-7 w-7 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
+            // As tall as the linked references' other controls, on a touch screen
+            // too; the rest of its 44 px target is invisible.
+            'source-page-filter-trigger size-7 p-0 [@media(pointer:coarse)]:size-9 touch-hit-area',
             buttonColor,
           )}
           aria-label={t('sourceFilter.filterLabel')}

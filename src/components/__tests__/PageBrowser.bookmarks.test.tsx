@@ -53,6 +53,9 @@ vi.mock('@tanstack/react-virtual', () =>
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** The Pages section header, not the view's h1 of the same name. */
+const PAGES_SECTION = { ignore: 'script, style, h1' }
+
 /**
  * Serve `list_pages_with_metadata` for EVERY fetch a test triggers, keyed on
  * the command name.
@@ -188,7 +191,7 @@ describe('PageBrowser', () => {
 
       // Starred header now visible.
       expect(await screen.findByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       // Cherry is now first in the page-only grid.
       titles = within(screen.getByRole('grid'))
@@ -276,7 +279,7 @@ describe('PageBrowser', () => {
       // namespaced pages are present. Starred renders the starred-and-
       // namespaced page (full title); Pages renders the namespace tree.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       // Namespace tree shape intact under Pages.
       expect(screen.getByText('work')).toBeInTheDocument()
       // Both leaves still reachable inside the tree.
@@ -310,7 +313,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Apple')
 
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages', PAGES_SECTION)).not.toBeInTheDocument()
     })
 
     it('single-page vault renders flat with no headers', async () => {
@@ -321,7 +324,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Solo')
 
       expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
-      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages', PAGES_SECTION)).not.toBeInTheDocument()
     })
 
     it('search narrows both groups; emptied group hides its header', async () => {
@@ -338,7 +341,7 @@ describe('PageBrowser', () => {
 
       // Both headers visible at start.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       // Search for "Other" → starred group becomes empty, only the
       // "Pages" header remains.
@@ -346,7 +349,7 @@ describe('PageBrowser', () => {
       await user.type(searchInput, 'Other')
 
       expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       expect(screen.queryByText('StarredApple')).not.toBeInTheDocument()
     })
 
@@ -460,7 +463,7 @@ describe('PageBrowser', () => {
 
       // Both group headers must render.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
@@ -506,7 +509,7 @@ describe('PageBrowser', () => {
       // Starred section renders the starred flat page.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
       // Pages section renders the namespace tree.
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       expect(screen.getByText('work')).toBeInTheDocument()
       // The flat starred page lives inside the Starred section group.
       const starredGroup = container.querySelector(
@@ -528,7 +531,7 @@ describe('PageBrowser', () => {
 
       // Pages section renders both an `Inbox` flat row and a `work`
       // namespace root, sorted together alphabetically.
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       // Walk each rendered page row in DOM order — `Inbox` (option) +
       // `work` (tree-page wrapper). Alphabetical => Inbox before work.
       const pageRows = Array.from(
@@ -552,7 +555,7 @@ describe('PageBrowser', () => {
       await screen.findByText('Inbox')
 
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       // The starred copy renders the FULL title `work/foo`.
       expect(screen.getByText('work/foo')).toBeInTheDocument()
@@ -586,7 +589,7 @@ describe('PageBrowser', () => {
       // Starred section gone — both copies refreshed via the
       // `useStarredPages` hook subscription.
       await waitFor(() => expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument())
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       // The tree-leaf copy is still visible.
       expect(screen.getByText('foo')).toBeInTheDocument()
     })
@@ -604,14 +607,14 @@ describe('PageBrowser', () => {
 
       // Both sections render initially.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       const search = screen.getByPlaceholderText('Search pages...')
       await user.type(search, 'StarredApple')
 
       // Starred-only — Pages header hidden.
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages', PAGES_SECTION)).not.toBeInTheDocument()
     })
 
     it('filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
@@ -630,7 +633,7 @@ describe('PageBrowser', () => {
 
       // Pages-only — Starred header hidden.
       expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
       expect(screen.getByText('work')).toBeInTheDocument()
     })
 
@@ -702,7 +705,7 @@ describe('PageBrowser', () => {
       })
 
       expect(screen.queryByText('Bookmarks')).not.toBeInTheDocument()
-      expect(screen.queryByText('Pages')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pages', PAGES_SECTION)).not.toBeInTheDocument()
       // The viewport's section presence flags reflect "neither".
       const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')
       expect(viewport?.getAttribute('data-has-starred')).toBe('false')
@@ -722,7 +725,7 @@ describe('PageBrowser', () => {
       // Both sections render under Starred (the starred-and-
       // namespaced page) and Pages (the namespace tree).
       expect(screen.getByText('Bookmarks')).toBeInTheDocument()
-      expect(screen.getByText('Pages')).toBeInTheDocument()
+      expect(screen.getByText('Pages', PAGES_SECTION)).toBeInTheDocument()
 
       // DOM is settled by the synchronous getByText assertions above;
       // wrapping axe() in waitFor() retries the (slow) audit each tick

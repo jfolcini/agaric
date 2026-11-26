@@ -20,6 +20,7 @@ import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { DatetimeInput } from '@/components/properties/DatetimeInput'
+import { PropertyFieldLabel } from '@/components/properties/PropertyField'
 import { BooleanEditor } from '@/components/properties/PropertyRowEditor/BooleanEditor'
 import { DateEditor } from '@/components/properties/PropertyRowEditor/DateEditor'
 import { ListEditor } from '@/components/properties/PropertyRowEditor/ListEditor'
@@ -36,7 +37,6 @@ import {
 } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { UnfitValueMark } from '@/components/properties/UnfitValueMark'
 import { useRefTitle } from '@/components/properties/useRefTitle'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { isCanonicalDatetime } from '@/lib/datetime-value'
@@ -100,9 +100,7 @@ export function PropertyRowEditor({
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
-      <Badge tone="outline" className="shrink-0 font-mono text-xs">
-        {formatPropertyName(prop.key)}
-      </Badge>
+      <PropertyFieldLabel label={formatPropertyName(prop.key)} />
       <div className="flex-1">
         {listDef ? (
           <ListEditor

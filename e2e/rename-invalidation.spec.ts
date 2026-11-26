@@ -235,7 +235,7 @@ test.describe('Rename and create invalidation @pages', () => {
 
     await openPage(page, 'Ref holder')
     // The empty page opens its first block's editor, whose toolbar has a Properties button too.
-    await page.getByRole('button', { name: /^Properties \(/ }).click()
+    await page.getByRole('button', { name: /^Properties \d/ }).click()
     const value = page.getByRole('button', { name: 'renamedref value', exact: true })
     await expect(value).toHaveText('Ref target')
 

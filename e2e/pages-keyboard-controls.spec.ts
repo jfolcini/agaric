@@ -197,7 +197,7 @@ test.describe('Pages keyboard affordances at rest @pages', () => {
     await page.keyboard.press('ArrowUp')
     await expect.poll(() => bar(first)).toBe('""')
 
-    await page.getByTestId('header-label').click()
+    await page.getByRole('heading', { level: 1, name: 'Pages' }).click()
     await expect.poll(() => bar(first)).toBe('none')
   })
 

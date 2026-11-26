@@ -34,24 +34,31 @@ test.describe('desktop chrome @mobile', () => {
     expect((await box(page.getByTestId('space-top-stripe'))).h).toBe(2)
   })
 
-  test('the sidebar footer is one row: Sync beside Settings', async ({ page }) => {
+  test('the sidebar footer holds Sync and Settings as rows, under the nav rows (#7040 P11)', async ({
+    page,
+  }) => {
     await waitForBoot(page)
     const footer = page.locator('[data-sidebar="footer"]')
+    const nav = await box(
+      page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Pages', exact: true }),
+    )
     const sync = await box(footer.getByRole('button', { name: 'Sync', exact: true }))
     const settings = await box(footer.getByRole('button', { name: 'Settings', exact: true }))
-    expect(settings.y).toBe(sync.y)
-    expect(settings.x).toBeGreaterThan(sync.x)
-    expect((await box(footer)).h).toBeLessThanOrEqual(sync.h + 16)
+    expect(settings.x).toBe(sync.x)
+    expect(settings.y).toBeGreaterThan(sync.y)
+    expect([sync.h, settings.h, sync.x]).toEqual([nav.h, nav.h, nav.x])
   })
 
-  test('Settings names itself once, as the header h1', async ({ page }) => {
+  test('Settings names itself once, as its in-content h1', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Settings')
     await expect(page.getByTestId('settings-tab-rail')).toBeVisible()
     const h1 = page.getByRole('heading', { level: 1 })
     await expect(h1).toHaveCount(1)
     await expect(h1).toHaveText('Settings')
-    await expect(page.locator('main').getByText('Settings', { exact: true })).toHaveCount(1)
+    await expect(
+      page.locator('main').getByText('Settings', { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1)
   })
 })
 
