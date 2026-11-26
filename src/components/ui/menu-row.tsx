@@ -25,12 +25,8 @@ const menuRowVariants = cva(
         true: 'bg-accent font-medium',
         false: '',
       },
-      disabled: {
-        true: 'opacity-50 cursor-not-allowed',
-        false: '',
-      },
     },
-    defaultVariants: { indent: 0, active: false, disabled: false },
+    defaultVariants: { indent: 0, active: false },
   },
 )
 

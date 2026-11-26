@@ -78,6 +78,9 @@ test.describe('Page ⋮ menu sections on a phone @pages @mobile', () => {
     await expect(activeSheet(page)).toBeVisible()
     await expectSectionsAndDeleteLast(page)
     const menu = pageMenu(page)
+    // A menu row's icon grows to 20 px on a coarse pointer, as an icon button's does.
+    const icon = menu.getByRole('menuitem', { name: 'Add alias' }).locator('svg')
+    expect(await icon.evaluate((el) => `${el.clientWidth}x${el.clientHeight}`)).toBe('20x20')
 
     await menu.getByRole('menuitem', { name: 'Export', exact: true }).tap()
     await expect(menu.getByRole('menuitem', { name: 'Add alias' })).toHaveCount(0)

@@ -2416,6 +2416,16 @@ describe('BlockContextMenu opening focus', () => {
     expect(screen.getAllByRole('menuitem').at(-1)).toHaveFocus()
   })
 
+  it('a modifier pressed first still lets ArrowDown enter at the first row', () => {
+    fireEvent.pointerDown(document.body)
+    renderMenu()
+    const menu = screen.getByRole('menu')
+    fireEvent.keyDown(menu, { key: 'Shift', shiftKey: true })
+    expect(menu).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(screen.getAllByRole('menuitem')[0]).toHaveFocus()
+  })
+
   it('a keyboard opening focuses the first row', () => {
     fireEvent.pointerDown(document.body)
     fireEvent.keyDown(document.body, { key: 'F10', shiftKey: true })

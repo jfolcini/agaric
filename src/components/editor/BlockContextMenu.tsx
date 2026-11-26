@@ -1079,9 +1079,8 @@ export function BlockContextMenu({
       handleCloseWithFocus()
       return
     }
-    const entering = !rowsEntered.current
-    rowsEntered.current = true
-    if (entering && ENTRY_KEYS.has(e.key)) {
+    if (!rowsEntered.current && ENTRY_KEYS.has(e.key)) {
+      rowsEntered.current = true
       e.preventDefault()
       const index = e.key === 'ArrowUp' || e.key === 'End' ? visibleItems.length - 1 : 0
       setFocusedIndex(index)
