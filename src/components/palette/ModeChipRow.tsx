@@ -7,6 +7,7 @@ import { ArrowLeftRight } from 'lucide-react'
 import type React from 'react'
 import type { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import type { PaletteMode } from '@/stores/useCommandPaletteStore'
 
@@ -60,24 +61,27 @@ export function ModeChipRow({
   // Only the search-mode hint surfaces the prefix vocabulary —
   // other modes don't benefit from showing it.
   const hint = mode === 'search' ? t('palette.modeHint') : t('palette.modeBackHint')
+  // A ghost button: at rest the mode reads as a label, not as a second action beside the input
+  // (#7040). Its padding lines its icon up with the input's search icon.
   return (
     <div
-      className="flex items-center justify-between border-b py-1.5 pr-10 pl-3 text-xs"
+      className="flex items-center justify-between border-b py-1 pr-10 pl-0.5 text-xs"
       data-testid="palette-mode-row"
     >
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="xs"
         onClick={toggleMode}
-        className="inline-flex items-center gap-1 rounded border border-border bg-muted/30 px-2 py-0.5 font-medium text-muted-foreground hover:bg-muted/60 focus-ring-visible"
+        className="text-muted-foreground"
         aria-label={t('palette.modeChipLabel', { mode: label })}
         data-testid="palette-mode-chip"
       >
         {/* `ArrowLeftRight` reads as a bidirectional
             toggle. `ChevronRight` previously implied a one-way
             drill-in, which is the wrong affordance signal. */}
-        <ArrowLeftRight className="h-3 w-3" aria-hidden="true" />
+        <ArrowLeftRight aria-hidden="true" />
         {label}
-      </button>
+      </Button>
       {/* drop `aria-hidden` so SR users can discover the
           prefix shortcuts. The hint is short and informational, so it
           lives in the visible header rather than a tooltip. */}

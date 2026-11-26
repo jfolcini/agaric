@@ -77,6 +77,16 @@ test.describe('phone touch targets @mobile', () => {
     expect(await glyph(pageActions)).toBe('20x20')
   })
 
+  // #7040 — the search sheet's palette mode chip, a ghost `Button` now, not a bare chip.
+  test("the palette's mode chip", async ({ page }) => {
+    await waitForBoot(page)
+    await page.getByTestId('search-sheet-trigger').click()
+    const sheet = page.getByTestId('search-sheet')
+    await sheet.evaluate((el) => Promise.all(el.getAnimations().map((slide) => slide.finished)))
+    await page.getByTestId('search-sheet-segment-all-pages').click()
+    await expect44(page.getByTestId('palette-mode-chip'), 'palette mode chip')
+  })
+
   test('the Tags and Templates name inputs', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')

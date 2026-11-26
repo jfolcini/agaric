@@ -191,6 +191,26 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument()
   })
 
+  // #7040 — the brand, then the two primaries, then the secondary actions, then the tips.
+  it('opens on the logo and title, then the primaries, the secondary actions and the tips', () => {
+    render(<WelcomeModal />)
+
+    const modal = screen.getByTestId('welcome-modal')
+    const logo = modal.querySelector('img[src="/agaric.svg"]')
+    expect(logo).not.toBeNull()
+    const follows = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(logo as Node, screen.getByText('Welcome to Agaric'))).toBe(true)
+    const actions = screen
+      .getAllByRole('button')
+      .filter((button) => !button.matches('[data-slot$="-close"]'))
+      .map((button) => button.textContent)
+    expect(actions).toEqual(['Get started', 'Create sample pages', 'Import notes', 'Pair a device'])
+    expect(
+      follows(screen.getByRole('button', { name: 'Pair a device' }), screen.getByRole('list')),
+    ).toBe(true)
+  })
+
   // Enter on open must trigger the primary action, not "Create sample pages".
   it('opens with focus on the primary Get started button', () => {
     render(<WelcomeModal />)
@@ -815,12 +835,19 @@ describe('WelcomeModal', () => {
       expect(text).not.toMatch(/Press|Ctrl|key combination|Highlight/)
     })
 
-    it('leads with pairing with a computer, and still offers import', () => {
+    it('puts pairing with a computer before import, after the primaries', () => {
       render(<WelcomeModal />)
 
-      const buttons = screen.getAllByRole('button')
-      expect(buttons[0]).toHaveAccessibleName('Pair with your computer')
-      expect(screen.getByRole('button', { name: 'Import notes' })).toBeInTheDocument()
+      const actions = screen
+        .getAllByRole('button')
+        .filter((button) => !button.matches('[data-slot$="-close"]'))
+        .map((button) => button.textContent)
+      expect(actions).toEqual([
+        'Get started',
+        'Create sample pages',
+        'Pair with your computer',
+        'Import notes',
+      ])
     })
   })
 

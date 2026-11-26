@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import { SEED_IDS } from '../src/lib/tauri-mock/seed'
 import { blockRow } from './domain'
 import {
+  activeSuggestionList,
   expect,
   focusBlockById,
   ipc,
@@ -94,6 +95,24 @@ test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
     await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
     const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
     expect((await tagNames(page)).get(id as string)).toBe('work')
+  })
+
+  // #7040 — Create comes last, so Enter on a partial name takes the tag it starts.
+  test('Enter on #wor links the existing tag work and makes no new one', async ({ page }) => {
+    const editor = await focusBlockById(page, GS1)
+    await editor.press('End')
+    await page.keyboard.type(' #wor', { delay: 30 })
+    const options = activeSuggestionList(page).getByRole('option')
+    await expect(options).toHaveText(['work', /^Create/])
+    await page.keyboard.press('Enter')
+    await expect(editor.getByTestId('tag-ref-chip')).toHaveText('work')
+    await saveBlock(page)
+
+    await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
+    const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
+    const names = await tagNames(page)
+    expect(names.get(id as string)).toBe('work')
+    expect([...names.values()]).not.toContain('wor')
   })
 
   test('a #name made a tag after the page reopened shows as the tag (#6953)', async ({ page }) => {

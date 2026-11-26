@@ -71,7 +71,6 @@ import { SearchModeGroups } from '@/components/palette/SearchModeGroups'
 import { TagsModeBody } from '@/components/palette/TagsModeBody'
 import {
   Command,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -107,6 +106,7 @@ import {
   useRecentPagesStore,
 } from '@/stores/recent-pages'
 import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/stores/recent-searches'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -475,10 +475,24 @@ export function PaletteBody({
   // so it doubles as the live query there too.
   const liveQuery = linkMode ? linkQuery : trimmedQuery
 
+  // A block row names only its page, so the resolve cache, preloaded with every page title in the
+  // space, titles a group no page row seeded.
+  const blockPageTitles = useResolveStore(
+    useShallow((s) =>
+      Object.fromEntries(
+        blocks.flatMap((b): [string, string][] =>
+          b.page_id != null && s.isResolved(b.page_id)
+            ? [[b.page_id, s.resolveTitle(b.page_id)]]
+            : [],
+        ),
+      ),
+    ),
+  )
+
   // Merge → group → blended FTS+fuzzy ranking → cap.
   const groups = useMemo(
-    () => mergeAndRankGroups(pages, blocks, liveQuery),
-    [pages, blocks, liveQuery],
+    () => mergeAndRankGroups(pages, blocks, liveQuery, blockPageTitles),
+    [pages, blocks, liveQuery, blockPageTitles],
   )
 
   // Recent pages — empty-state list when no query. #1149 — sourced from the
@@ -863,11 +877,15 @@ export function PaletteBody({
     (query.length === 0 || (loading && groups.length === 0)) &&
     filteredRecentSearches.length > 0
   const showNoLinkMatch = linkMode && groups.length === 0 && linkQuery.length > 0
-  // Distinguish "welcome state" (cold open, no query, no
-  // recents) from "no results for query" (user typed something, got
-  // Nothing). lumped both into one blank panel.
-  const showWelcomeEmpty =
-    mode === 'search' && query.length === 0 && !showRecents && !showRecentSearches && !linkMode
+  // A cold open with nothing recent lists the Navigate commands on a desktop. The placeholder and
+  // the mode row's hint say what to type, so no third hint sits above them (#7040).
+  const showNavigateCommands =
+    !phoneLayout &&
+    mode === 'search' &&
+    query.length === 0 &&
+    !showRecents &&
+    !showRecentSearches &&
+    !linkMode
   const showNoResults =
     mode === 'search' &&
     !linkMode &&
@@ -967,12 +985,6 @@ export function PaletteBody({
           {t('palette.noResults', { query: trimmedQuery })}
         </output>
       )}
-      {showWelcomeEmpty && !phoneLayout && (
-        // Above the list for the same reason, with the Navigate commands below it.
-        <p className="px-3 py-3 text-sm text-muted-foreground" data-testid="palette-welcome-empty">
-          {t('palette.welcomeEmpty')}
-        </p>
-      )}
       <CommandList
         className="max-h-[60dvh]"
         onClickCapture={handleListClickCapture}
@@ -1003,14 +1015,9 @@ export function PaletteBody({
                 t={t}
               />
             )}
-            {showWelcomeEmpty &&
-              (phoneLayout ? (
-                <CommandEmpty data-testid="palette-welcome-empty">
-                  {t('palette.welcomeEmpty')}
-                </CommandEmpty>
-              ) : (
-                <CommandsModeBody navigateOnly onEscalate={escalate} onClose={onClose} t={t} />
-              ))}
+            {showNavigateCommands && (
+              <CommandsModeBody navigateOnly onEscalate={escalate} onClose={onClose} t={t} />
+            )}
             {showNoResults && (
               // Obsidian's quick switcher offers the query as a new page; the
               // New page dialog every new-page entry point opens takes it from here.

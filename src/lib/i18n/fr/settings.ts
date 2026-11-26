@@ -105,6 +105,8 @@ export const settings: Record<string, string> = {
   'settings.quickCapture.saveFailed':
     'Impossible d’enregistrer le raccourci. Il est peut-être en conflit avec une autre application.',
   'quickCapture.dialogTitle': 'Capture rapide',
+  'quickCapture.descriptionShortcut':
+    'Appuyez sur <keys/> depuis n’importe où pour ajouter une ligne au journal du jour.',
   'quickCapture.descriptionTouch': 'Notez une ligne\u00A0; elle ira dans le journal du jour.',
   'quickCapture.captureInputLabel': 'Contenu de la capture rapide',
   'quickCapture.placeholder': 'À quoi pensez-vous\u00A0?',

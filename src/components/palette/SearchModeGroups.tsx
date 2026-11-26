@@ -8,8 +8,10 @@ import type React from 'react'
 import type { useTranslation } from 'react-i18next'
 
 import type { PaletteGroup } from '@/components/palette/types'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { CommandGroup, CommandItem } from '@/components/ui/command'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { displayPageTitle } from '@/lib/date-utils'
 
 /**
@@ -33,6 +35,7 @@ export function SearchModeGroups({
   onEscalateToMore: () => void
   t: ReturnType<typeof useTranslation>['t']
 }): React.ReactElement {
+  const richCallbacks = useRichContentCallbacks()
   return (
     <>
       {groups.map((group) => (
@@ -79,7 +82,13 @@ export function SearchModeGroups({
                 {block.snippet != null && block.snippet.length > 0 ? (
                   <SnippetHighlight snippet={block.snippet} className="truncate" />
                 ) : (
-                  <span className="truncate">{block.content ?? ''}</span>
+                  <span className="truncate">
+                    {renderRichContent(block.content ?? '', {
+                      inline: true,
+                      interactive: false,
+                      ...richCallbacks,
+                    })}
+                  </span>
                 )}
               </CommandItem>
             ))}
