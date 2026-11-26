@@ -4,7 +4,7 @@
  * `App.tsx` mounts exactly one of the two.
  *
  * Opens the palette through the store `useAppKeyboardShortcuts` opens it with,
- * so the click and the keystroke can never diverge. Below `lg` the word drops
+ * so the click and the keystroke can never diverge. Below `xl` the word drops
  * and the button is the magnifier alone; the accessible name stays.
  */
 
@@ -30,14 +30,14 @@ export function HeaderSearchButton(): React.ReactElement {
         <Button
           variant="ghost"
           size="sm"
-          className="shrink-0 text-muted-foreground max-lg:min-w-8 max-lg:px-0 [@media(pointer:coarse)]:min-w-11"
+          className="shrink-0 text-muted-foreground max-xl:min-w-8 max-xl:px-0 [@media(pointer:coarse)]:min-w-11"
           aria-label={label}
           aria-keyshortcuts={toAriaKeyshortcuts(paletteKeys)}
           data-testid="header-search-button"
           onClick={() => useCommandPaletteStore.getState().open$()}
         >
           <Search aria-hidden="true" />
-          <span className="max-lg:hidden">{label}</span>
+          <span className="max-xl:hidden">{label}</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent>
