@@ -50,9 +50,9 @@ import { useAdoptFolder } from '@/components/settings/useAdoptFolder'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
+import { SettingRow } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
+import { ToggleRow } from '@/components/ui/toggle-row'
 import { MIRROR_HELD_EVENT, MIRROR_INGESTED_EVENT } from '@/hooks/useMirrorIngestEvents'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
@@ -297,52 +297,37 @@ export function MirrorSection(): React.ReactElement | null {
 
         {!on && <AdoptFolderRow adopt={adopt} disabled={pending !== null} />}
 
-        <SettingRow
+        <ToggleRow
+          id={readBackId}
           label={t('data.mirrorReadBackLabel')}
           description={t('data.mirrorReadBackDesc')}
-          controlId={readBackId}
-        >
-          <Switch
-            id={readBackId}
-            aria-describedby={settingDescriptionId(readBackId)}
-            checked={status.read_back}
-            disabled={pending !== null}
-            onCheckedChange={onReadBackChange}
-          />
-        </SettingRow>
+          checked={status.read_back}
+          disabled={pending !== null}
+          onCheckedChange={onReadBackChange}
+        />
 
-        <SettingRow
+        <ToggleRow
+          ref={askMassChangeSwitch}
+          id={askMassChangeId}
           label={t('data.mirrorAskMassChangeLabel')}
           description={t('data.mirrorAskMassChangeDesc')}
-          controlId={askMassChangeId}
-        >
-          <Switch
-            ref={askMassChangeSwitch}
-            id={askMassChangeId}
-            aria-describedby={settingDescriptionId(askMassChangeId)}
-            checked={status.ask_mass_change}
-            disabled={pending !== null}
-            onCheckedChange={(checked) => {
-              void setAskMassChange(checked)
-            }}
-          />
-        </SettingRow>
+          checked={status.ask_mass_change}
+          disabled={pending !== null}
+          onCheckedChange={(checked) => {
+            void setAskMassChange(checked)
+          }}
+        />
 
-        <SettingRow
+        <ToggleRow
+          id={copyFilesId}
           label={t('data.mirrorCopyFilesLabel')}
           description={t('data.mirrorCopyFilesDesc')}
-          controlId={copyFilesId}
-        >
-          <Switch
-            id={copyFilesId}
-            aria-describedby={settingDescriptionId(copyFilesId)}
-            checked={status.copy_files}
-            disabled={pending !== null}
-            onCheckedChange={(checked) => {
-              void setCopyFiles(checked)
-            }}
-          />
-        </SettingRow>
+          checked={status.copy_files}
+          disabled={pending !== null}
+          onCheckedChange={(checked) => {
+            void setCopyFiles(checked)
+          }}
+        />
 
         {spaces.length > 1 && (
           <div className="space-y-2">
@@ -352,16 +337,15 @@ export function MirrorSection(): React.ReactElement | null {
             <ul aria-labelledby={spacesHeadingId} className="space-y-2">
               {spaces.map((space) => (
                 <li key={space.id}>
-                  <SettingRow label={space.name} controlId={`mirror-space-${space.id}`}>
-                    <Switch
-                      id={`mirror-space-${space.id}`}
-                      checked={!status.unmirrored_spaces.includes(space.id)}
-                      disabled={pending !== null}
-                      onCheckedChange={(mirrored) => {
-                        void setSpaceMirrored(space.id, mirrored)
-                      }}
-                    />
-                  </SettingRow>
+                  <ToggleRow
+                    id={`mirror-space-${space.id}`}
+                    label={space.name}
+                    checked={!status.unmirrored_spaces.includes(space.id)}
+                    disabled={pending !== null}
+                    onCheckedChange={(mirrored) => {
+                      void setSpaceMirrored(space.id, mirrored)
+                    }}
+                  />
                 </li>
               ))}
             </ul>

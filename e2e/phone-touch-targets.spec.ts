@@ -87,12 +87,17 @@ test.describe('phone touch targets @mobile', () => {
     await expect44(page.getByTestId('palette-mode-chip'), 'palette mode chip')
   })
 
-  test('the Tags and Templates name inputs', async ({ page }) => {
+  // An input is a button's 36 px and cannot carry a hit area, so it trades 8 px
+  // of tap height to line up with the button beside it (#7165).
+  test('the Tags and Templates name inputs are as tall as their buttons', async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')
-    await expect44(page.getByRole('textbox', { name: 'New tag name' }), 'New tag name')
+    const tagName = page.getByRole('textbox', { name: 'New tag name' })
+    expect((await tagName.boundingBox())?.height).toBe(36)
+    expect((await page.getByRole('button', { name: 'Add tag' }).boundingBox())?.height).toBe(36)
     await navigateToView(page, 'Templates')
-    await expect44(page.getByRole('textbox', { name: 'New template name' }), 'New template name')
+    const templateName = page.getByRole('textbox', { name: 'New template name' })
+    expect((await templateName.boundingBox())?.height).toBe(36)
   })
 
   test("Advanced query's NOT toggle", async ({ page }) => {

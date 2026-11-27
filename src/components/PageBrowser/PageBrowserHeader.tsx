@@ -187,7 +187,7 @@ export function PageBrowserHeader({
     <Button
       variant={captureButtonShown ? 'outline' : 'default'}
       // On a phone it pairs with the sort button: the same box, glyph and fill.
-      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target) coarse:[&_svg]:size-5')}
+      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:[&_svg]:size-5')}
       aria-label={t('pageBrowser.newPage')}
       onClick={() => openNewPageDialog()}
     >
@@ -237,7 +237,7 @@ export function PageBrowserHeader({
                     // page beside it; the chevron goes with the label.
                     className={
                       isMobile
-                        ? 'w-9 justify-center bg-background px-0 dark:bg-input/30 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
+                        ? 'w-9 justify-center bg-background px-0 dark:bg-input/30 [&>svg:last-child]:hidden'
                         : 'w-auto min-w-[7rem]'
                     }
                     aria-label={t('pageBrowser.sortLabel')}

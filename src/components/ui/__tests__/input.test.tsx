@@ -188,11 +188,12 @@ describe('Input', () => {
 
   // -- Touch-friendly sizing (AGENTS.md mandatory) ----------------------------
 
-  it('declares coarse-pointer touch-target class', () => {
+  it('is one button high on every pointer', () => {
     render(<Input aria-label="Field" />)
 
     const el = screen.getByRole('textbox', { name: 'Field' })
-    expect(el.className).toContain('coarse:h-(--touch-target)')
+    expect(el.className).toContain('h-9')
+    expect(el.className).not.toContain('coarse:h-')
   })
 
   // Bumps font-size to `text-base` on coarse pointers so iOS
