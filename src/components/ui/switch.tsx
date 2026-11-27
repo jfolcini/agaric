@@ -15,10 +15,12 @@ const Switch = ({
       'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors',
       'focus-ring-visible',
       'disabled:cursor-not-allowed disabled:opacity-50',
-      // `bg-input` (L 0.93) under a white thumb on a white page read as no
-      // control at all; the muted-foreground tint keeps the off track visible.
-      'data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/40',
-      'coarse:h-7 coarse:w-12',
+      // On is the brand coral in every theme; off a neutral grey that, unlike
+      // `bg-input`, still shows on a white page. The dark themes' lighter grey
+      // takes a fainter tint, or the coral would not clear 3:1 against it.
+      'data-[state=checked]:bg-brand data-[state=unchecked]:bg-muted-foreground/40 dark:data-[state=unchecked]:bg-muted-foreground/12',
+      // Compact beside 36 px controls; the 44 px target is invisible.
+      'coarse:h-6 coarse:w-11 touch-hit-area',
       className,
     )}
     {...props}
@@ -26,10 +28,11 @@ const Switch = ({
     <SwitchPrimitive.Thumb
       data-slot="switch-thumb"
       className={cn(
-        // Light on the off track in dark too, where the page colour read as a hole (#7040).
-        'pointer-events-none block size-4 rounded-full bg-background dark:data-[state=unchecked]:bg-foreground shadow-(--shadow-resting) ring-0 transition-transform',
+        // White in every theme and state, as on iOS and Android: only the track
+        // says on or off. A theme token would turn dark with a dark theme.
+        'pointer-events-none block size-4 rounded-full bg-white shadow-(--shadow-resting) ring-0 transition-transform',
         'data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5',
-        'coarse:size-6 coarse:data-[state=checked]:translate-x-5',
+        'coarse:size-5 coarse:data-[state=checked]:translate-x-5',
       )}
     />
   </SwitchPrimitive.Root>

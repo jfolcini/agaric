@@ -154,9 +154,9 @@ export function SearchSheet(): React.ReactElement | null {
           onValueChange={handleSegmentChange}
           aria-label={t('searchSheet.title')}
           // Stretch the two segments edge-to-edge for thumb-friendly
-          // touch targets; ToggleGroup defaults to inline-flex with
-          // content-sized children.
-          className="w-full"
+          // touch targets. `grow-0`: the phone group grows to fill a row, and
+          // in this column that grew it down the sheet, under the palette.
+          className="w-full grow-0"
         >
           <ToggleGroupItem
             value="in-page"

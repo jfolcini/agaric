@@ -414,23 +414,22 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       {/* The row's frame: the checkbox, the text and the chips under it. It
             draws the editing box while the block is edited and the cursor
             row's ring; a selected block shows only its checked selection
-            checkbox. The ring shows on `:focus`
-            rather than `:focus-visible`: Chromium does not count a Ctrl chord
-            as keyboard use, so after a click into a block, Ctrl+Space and
-            Ctrl+Arrow would move an unmarked cursor. Both inset: on a
-            phone the frame starts at the column's edge, which cuts off a ring
-            drawn outside it. */}
+            checkbox. The ring shows on `:focus` once a key was pressed
+            (`key-led`, `src/lib/input-modality.ts`), never after a Ctrl+Click
+            or on a touch device without a keyboard; not `:focus-visible`:
+            Chromium does not count a Ctrl chord as keyboard use, so after a
+            click into a block, Ctrl+Space and Ctrl+Arrow would move an
+            unmarked cursor. Both inset: on a phone the frame starts at the
+            column's edge, which cuts off a ring drawn outside it. */}
       <div
         className={cn(
-          'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset group-focus/row:ring-[3px] group-focus/row:ring-ring',
+          'flex flex-1 min-w-0 items-start gap-(--block-gap) rounded-md ring-inset key-led:group-focus/row:ring-[3px] key-led:group-focus/row:ring-ring',
           isFocused && 'block-editing',
-          // On a phone, at every depth, the frame moves right and, unless its
-          // chevron sits at the row end, reaches into the pane's right padding
-          // by the same amount, its content where it was: a top-level frame
-          // hangs to the screen's edge on the left and stops at the padding on
-          // the right, and this evens the two insets.
+          // On a phone, at every depth, the frame moves right, its content
+          // where it was: a top-level frame would hang to the screen's edge on
+          // the left. On the right it stops at the pane's padding, as far from
+          // the scrollbar, which overlays that padding, as from the left edge.
           isTouchDevice && isPhone && 'ml-2 [&>:first-child]:-ml-2',
-          isTouchDevice && isPhone && !(hasChildren && chevronAtRowEnd) && '-mr-2',
         )}
         data-testid="block-frame"
       >

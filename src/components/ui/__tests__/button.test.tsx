@@ -88,19 +88,31 @@ describe('Button', () => {
     expect(btn.className).toContain('touch-hit-area')
   })
 
-  it('icon size includes coarse pointer size override', () => {
-    const btn = renderButton('icon')
-    expect(btn.className).toContain('coarse:size-(--touch-target)')
-  })
+  // A framed icon button is 36 px on a coarse pointer like the text buttons,
+  // its 44 px target invisible; a frameless one keeps a 44 px box.
+  it.each(['icon', 'icon-xs', 'icon-sm'] as const)(
+    'a framed %s button is 36 px on a coarse pointer with a hit area',
+    (size) => {
+      const btn = renderButton(size)
+      expect(btn.className).toContain('touch-hit-area')
+      expect(btn.className).not.toContain('coarse:size-(--touch-target)')
+      if (size !== 'icon') expect(btn.className).toContain('coarse:size-9')
+    },
+  )
 
-  it('icon-xs size includes coarse pointer size override', () => {
-    const btn = renderButton('icon-xs')
+  it.each(
+    (['ghost', 'link'] as const).flatMap((variant) =>
+      (['icon', 'icon-xs', 'icon-sm'] as const).map((size) => [variant, size] as const),
+    ),
+  )('a %s %s button keeps a 44 px box on a coarse pointer', (variant, size) => {
+    render(
+      <Button variant={variant} size={size}>
+        Frameless
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Frameless' })
     expect(btn.className).toContain('coarse:size-(--touch-target)')
-  })
-
-  it('icon-sm size includes coarse pointer size override', () => {
-    const btn = renderButton('icon-sm')
-    expect(btn.className).toContain('coarse:size-(--touch-target)')
+    expect(btn.className).not.toContain('coarse:size-9')
   })
 
   // -- active-press scale (#1012) ---------------------------------------------

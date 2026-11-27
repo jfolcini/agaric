@@ -5,16 +5,11 @@
  *  - Renders with controlled `checked` true/false (and `aria-checked` mirrors)
  *  - Calls `onCheckedChange` on click
  *  - Keyboard: Space toggles when focused
- *  - Coarse-pointer touch sizing classes (h-7 / w-12 — see caveat below)
+ *  - Coarse-pointer sizing: a compact track with an invisible 44 px hit area
  *  - Focus-visible ring classes are present
  *  - a11y: `axe(container)` clean
  *
- * Caveat: the Switch primitive's coarse-pointer height is `h-7` (28 px),
- * Not the 44 px minimum referenced in. The width is `w-12` (48 px)
- * which does meet the threshold. We assert the classes that are actually
- * present in the implementation rather than a hypothetical 44 px target —
- * if the design system later raises the height, the assertion can be
- * tightened.
+ * The rendered sizes and colours are measured in `e2e/control-heights.spec.ts`.
  */
 
 import { render, screen } from '@testing-library/react'
@@ -101,14 +96,12 @@ describe('Switch', () => {
 
   // -- Coarse-pointer touch sizing --------------------------------------------
 
-  it('declares coarse-pointer sizing classes (h-7 / w-12)', () => {
+  it('declares a compact coarse-pointer track with a 44 px hit area', () => {
     render(<Switch checked={false} onCheckedChange={() => {}} aria-label="Toggle feature" />)
 
     const sw = screen.getByRole('switch', { name: 'Toggle feature' })
-    // Width = 48 px on coarse, meeting the 44 px minimum.
-    expect(sw.className).toContain('coarse:w-12')
-    // Height = 28 px on coarse — see file-level caveat.
-    expect(sw.className).toContain('coarse:h-7')
+    expect(sw.className).toContain('coarse:h-6')
+    expect(sw.className).toContain('touch-hit-area')
   })
 
   // -- Focus-visible ring -----------------------------------------------------

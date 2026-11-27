@@ -28,3 +28,11 @@ export const OVERLAY_SCRIM_CLASS =
 // overflow, so without it a focused first or last field loses the top or
 // bottom of its 3px focus ring.
 export const DIALOG_BODY_VIEWPORT_CLASS = 'px-6 py-1 [&>div]:!block'
+
+// A toast is not the scrim: dismissing one leaves an open modal, and what was
+// typed in it, where they were (#7165). For a modal's `onInteractOutside`.
+export function keepOpenOnToast(event: Event): void {
+  if (event.target instanceof Element && event.target.closest('[data-sonner-toaster]')) {
+    event.preventDefault()
+  }
+}

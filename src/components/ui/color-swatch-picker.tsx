@@ -215,7 +215,7 @@ function CustomColor({
         <span
           aria-hidden
           data-testid="custom-color-preview"
-          className="size-9 shrink-0 rounded-md border coarse:size-(--touch-target)"
+          className="size-9 shrink-0 rounded-md border"
           style={{ backgroundColor: draft }}
         />
         <Input

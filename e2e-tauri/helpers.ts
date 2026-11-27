@@ -77,8 +77,8 @@
 //     tests read: the sidebar's `button[aria-label="Sync"]` and its
 //     `aria-disabled` while a sync runs
 //     (AppSidebar.tsx), `[data-testid="due-panel"]`, `.done-panel`,
-//     the Due panel's Overdue `[role="tab"]` and the `[role="tabpanel"]` it
-//     controls, `.page-browser-item-title`, `[aria-label="Page title"]`, the
+//     the Due panel's Overdue tab `[data-testid="due-panel-tab-overdue"]`
+//     and its `aria-selected`, `.page-browser-item-title`, `[aria-label="Page title"]`, the
 //     `[role="tablist"][aria-label="Editor tabs"]` of TabBar.tsx and its
 //     `[role="tab"]` buttons (Ctrl+T opens one), `[aria-label="Search blocks"]`,
 //     `[data-testid="search-results-count"]` reading "No results",

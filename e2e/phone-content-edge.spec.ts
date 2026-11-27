@@ -150,19 +150,29 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
     await expect.poll(async () => (await today.boundingBox())?.x, 'Today band left edge').toBe(0)
   })
 
-  test("a focused task's editing frame keeps the same inset on both sides", async ({ page }) => {
+  // The scrollbar overlays the scroller's right edge, so the right inset counts from the bar.
+  test("a focused task's editing frame sits as far from the scrollbar as from the left edge", async ({
+    page,
+  }) => {
     await expect(block(page, 'Buy groceries')).toBeVisible()
     await focusBlock(page, 2)
     const row = page.locator('[data-testid="sortable-block"]', { hasText: 'Buy groceries' }).first()
     const frame = row.getByTestId('block-frame')
     await expect(frame).toHaveClass(/block-editing/)
 
-    const { left, right } = await frame.evaluate((el) => {
+    // The bar shows while the pointer is over the scroller.
+    await page.locator('[data-slot="main-content"]').hover()
+    const scrollbar = page.locator(
+      '[data-slot="main-content"] > [data-slot="scroll-area-scrollbar"]',
+    )
+    await expect(scrollbar).toBeVisible()
+    const barLeft = await scrollbar.evaluate((el) => el.getBoundingClientRect().left)
+    const { left, right } = await frame.evaluate((el, bar) => {
       const r = el.getBoundingClientRect()
-      return { left: Math.round(r.left), right: Math.round(window.innerWidth - r.right) }
-    })
+      return { left: r.left, right: bar - r.right }
+    }, barLeft)
     expect(left).toBeGreaterThan(0)
-    expect(left).toBe(right)
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
     // The checkbox stays on the gutter while its frame moves.
     const checkboxLeft = await row
       .locator('.task-checkbox')

@@ -46,6 +46,19 @@ vi.mock('@/hooks/useGraphSimulation', () => ({
   },
 }))
 
+// Set to make the filter bar throw on render, as a crash inside it would.
+let filterBarCrashes = false
+vi.mock('@/components/graph/GraphFilterBar', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/graph/GraphFilterBar')>()
+  return {
+    ...actual,
+    GraphFilterBar: (props: Parameters<typeof actual.GraphFilterBar>[0]) => {
+      if (filterBarCrashes) throw new Error('filter bar crashed')
+      return actual.GraphFilterBar(props)
+    },
+  }
+})
+
 const mockedInvoke = vi.mocked(invoke)
 
 // Chain: hub — a — b — c.  hub also links `solo`-free; `island` is isolated.
@@ -83,6 +96,7 @@ beforeEach(() => {
   clearGraphCache()
   localStorage.clear()
   templateIds = []
+  filterBarCrashes = false
   captured = { nodes: [], edges: [] }
   // b1 — GraphView's page/template fetches are required-active; seed an
   // active space so `fetchGraphData` dispatches instead of short-circuiting
@@ -122,6 +136,15 @@ describe('GraphView local-graph mode (#1429)', () => {
     expect(screen.getByTestId('local-graph-toggle')).toBeInTheDocument()
     // Default: every page is shown (no local filtering until toggled).
     expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'c', 'hub', 'island'])
+  })
+
+  it('keeps the toggle when the filter bar crashes (#7165)', async () => {
+    filterBarCrashes = true
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderGraph()
+    expect(screen.queryByTestId('graph-filter-bar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-graph-toggle')).toBeEnabled()
+    consoleError.mockRestore()
   })
 
   it('disables the toggle when the active tab has no page open', async () => {

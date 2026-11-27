@@ -5,7 +5,11 @@ import type * as React from 'react'
 import { useEffect, useSyncExternalStore } from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
-import { DIALOG_BODY_VIEWPORT_CLASS, OVERLAY_SCRIM_CLASS } from '@/components/ui/dialog-shared'
+import {
+  DIALOG_BODY_VIEWPORT_CLASS,
+  keepOpenOnToast,
+  OVERLAY_SCRIM_CLASS,
+} from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 
@@ -130,12 +134,8 @@ const SheetContent = ({
           'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
         className,
       )}
-      // A toast is not the scrim: dismissing one leaves the sheet, and a failed
-      // Quick capture's text, where they were (#7165).
       onInteractOutside={(event) => {
-        if (event.target instanceof Element && event.target.closest('[data-sonner-toaster]')) {
-          event.preventDefault()
-        }
+        keepOpenOnToast(event)
         onInteractOutside?.(event)
       }}
       {...props}

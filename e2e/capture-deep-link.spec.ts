@@ -1,6 +1,13 @@
 import type { Page } from '@playwright/test'
 
-import { emitMockEvent, expect, navigateToView, test, waitForBoot } from './helpers'
+import {
+  clearConsoleErrors,
+  emitMockEvent,
+  expect,
+  navigateToView,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E — `agaric://capture?text=…` opens Quick Capture holding the text (#6555).
@@ -54,5 +61,38 @@ test.describe('capture deep link (#6555) @journal @boot', () => {
     await expect(page.getByText("Captured to today's journal")).toBeVisible()
     await reopenJournal(page)
     await expect(page.getByText('Captured on launch', { exact: true })).toBeVisible()
+  })
+})
+
+test.describe('a toast over an open dialog (#7165) @journal', () => {
+  test('its close button dismisses the toast and leaves the dialog open @mock-only', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await page.evaluate(() =>
+      (
+        window as unknown as { __injectMockError: (cmd: string, msg: string) => void }
+      ).__injectMockError('quick_capture_block', 'disk full'),
+    )
+    await emitMockEvent(page, 'deeplink:capture', { kind: 'prefill', text: 'Will fail' })
+    await dialog(page).getByRole('button', { name: 'Capture', exact: true }).click()
+    const failure = page.locator('[data-sonner-toast]', { hasText: "Couldn't save quick capture" })
+    await expect(failure).toBeVisible()
+    clearConsoleErrors(page)
+
+    // A press where the button is drawn, once the toast has slid in: under a
+    // modal the body takes no pointer events.
+    await failure.evaluate((el) =>
+      Promise.all(el.getAnimations({ subtree: true }).map((slide) => slide.finished)),
+    )
+    const close = await failure.locator('[data-close-button]').boundingBox()
+    expect(close).not.toBeNull()
+    await page.mouse.click(
+      (close?.x ?? 0) + (close?.width ?? 0) / 2,
+      (close?.y ?? 0) + (close?.height ?? 0) / 2,
+    )
+    await expect(failure).toBeHidden()
+    await expect(dialog(page)).toBeVisible()
+    await expect(field(page)).toHaveValue('Will fail')
   })
 })

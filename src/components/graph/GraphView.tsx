@@ -551,38 +551,44 @@ export function GraphView(): React.ReactElement {
     <GraphShell>
       {/* A plain bar above the canvas, so it covers none of the graph (#7040).
           Wrapped in FeatureErrorBoundary so a crash in the filter bar doesn't
-          blank the entire GraphView (UX Tier 3). */}
-      <div data-testid="graph-tag-filter">
-        <FeatureErrorBoundary name="GraphFilterBar">
-          <GraphFilterBar
-            filters={filters}
-            onFiltersChange={setFilters}
-            allTags={tags}
-            totalCount={nodes.length}
-            filteredCount={filteredNodes.length}
-            /* #2298 — the notice says "Showing N of M links", so N must be
-               the edge count that survives client-side dimension filtering
-               (`filteredEdges`), not the raw fetched set: with a status/
-               priority/has-* filter active, `edges.length` would overstate
-               what is on screen. Mirrors `filteredCount` above, which also
-               reports the post-filter (but pre-local-mode) count. */
-            edgesShown={filteredEdges.length}
-            edgesTotal={edgesTotal}
-            edgesTruncated={edgesTruncated}
-            trailing={
-              // #1429 — per-page local-graph toggle + hop-depth control.
-              <LocalGraphControl
-                active={localMode}
-                onToggle={setLocalMode}
-                hops={localHops}
-                onHopsChange={setLocalHops}
-                seedLabel={localSeedLabel}
-                originLabel={walkedFromSeed ? seedLabel : null}
-                onReturnToOrigin={() => setSelectedPageId(null)}
-              />
-            }
-          />
-        </FeatureErrorBoundary>
+          blank the entire GraphView (UX Tier 3). The local-graph control sits
+          outside it, so the crash leaves it. */}
+      <div
+        // The control ends the bar's actions row, or a row of its own once the
+        // two do not fit side by side (a phone).
+        className="flex flex-wrap items-end justify-end gap-1.5 coarse:gap-y-4"
+        data-testid="graph-tag-filter"
+      >
+        <div className="min-w-0 flex-1 basis-80">
+          <FeatureErrorBoundary name="GraphFilterBar">
+            <GraphFilterBar
+              filters={filters}
+              onFiltersChange={setFilters}
+              allTags={tags}
+              totalCount={nodes.length}
+              filteredCount={filteredNodes.length}
+              /* #2298 — the notice says "Showing N of M links", so N must be
+                 the edge count that survives client-side dimension filtering
+                 (`filteredEdges`), not the raw fetched set: with a status/
+                 priority/has-* filter active, `edges.length` would overstate
+                 what is on screen. Mirrors `filteredCount` above, which also
+                 reports the post-filter (but pre-local-mode) count. */
+              edgesShown={filteredEdges.length}
+              edgesTotal={edgesTotal}
+              edgesTruncated={edgesTruncated}
+            />
+          </FeatureErrorBoundary>
+        </div>
+        {/* #1429 — per-page local-graph toggle + hop-depth control. */}
+        <LocalGraphControl
+          active={localMode}
+          onToggle={setLocalMode}
+          hops={localHops}
+          onHopsChange={setLocalHops}
+          seedLabel={localSeedLabel}
+          originLabel={walkedFromSeed ? seedLabel : null}
+          onReturnToOrigin={() => setSelectedPageId(null)}
+        />
       </div>
       <div
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"

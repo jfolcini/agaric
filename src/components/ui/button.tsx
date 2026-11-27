@@ -38,12 +38,22 @@ const buttonVariants = cva(
         default: 'h-9 gap-1.5 px-4 py-2 touch-hit-area',
         sm: 'h-8 gap-1.5 rounded-md px-3 coarse:h-9 coarse:text-sm touch-hit-area',
         xs: 'h-7 gap-1 rounded-md px-2.5 text-xs [:where(&)_svg]:size-3 coarse:h-9 coarse:px-3 coarse:text-sm coarse:[:where(&)_svg]:size-4 touch-hit-area',
-        // An icon button's touch box grows to 44 px, and its glyph to 20 px with it.
-        icon: 'size-9 coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
-        'icon-xs': 'size-6 rounded-md coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
-        'icon-sm': 'size-8 coarse:size-(--touch-target) coarse:[:where(&)_svg]:size-5',
+        // On a coarse pointer an icon button is 36 px like the rest, with a
+        // 20 px glyph and its 44 px target invisible (`touch-hit-area`).
+        icon: 'size-9 coarse:[:where(&)_svg]:size-5 touch-hit-area',
+        'icon-xs': 'size-6 rounded-md coarse:size-9 coarse:[:where(&)_svg]:size-5 touch-hit-area',
+        'icon-sm': 'size-8 coarse:size-9 coarse:[:where(&)_svg]:size-5 touch-hit-area',
       },
     },
+    compoundVariants: [
+      // A frameless icon paints nothing at rest, so its 44 px box shows only as
+      // the hover fill, and the phone's header and toolbars are laid out on it.
+      {
+        variant: ['ghost', 'link'],
+        size: ['icon', 'icon-xs', 'icon-sm'],
+        class: 'coarse:size-(--touch-target)',
+      },
+    ],
     defaultVariants: {
       variant: 'default',
       size: 'default',

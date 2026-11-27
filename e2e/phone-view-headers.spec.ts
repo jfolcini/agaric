@@ -121,7 +121,9 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
 
     expect(await scrollMainToEnd(page)).toBeGreaterThan(0)
     const bar = await barBottom(page)
-    await expect.poll(async () => Math.round((await rect(search)).top - bar)).toBeLessThan(16)
+    // The row is as tall as its 44 px ghost ⋮; the 36 px search is centred in it.
+    const more = header.getByRole('button', { name: 'More Pages options', exact: true })
+    await expect.poll(async () => Math.round((await rect(more)).top - bar)).toBeLessThan(16)
     expect((await rect(search)).top).toBeGreaterThanOrEqual(bar)
     // The filter chips are content, not header: they scroll under the pinned row.
     expect((await rect(page.getByTestId('page-browser-filter-row'))).bottom).toBeLessThanOrEqual(

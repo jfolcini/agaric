@@ -804,7 +804,7 @@ function App() {
              */}
             {/* The hairline is the header's own (each is a centred column), so it runs
                 the column's width, not the window's. */}
-            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-3" />
+            <ViewHeaderOutletSlot className="px-4 md:px-6 pt-3 [&>*]:border-b [&>*]:border-border/40 [&>*]:pb-2" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
