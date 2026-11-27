@@ -643,6 +643,22 @@ describe('useDuePanelData', () => {
     expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
+  it('a step between later pages reads the open tasks no second time', async () => {
+    const { rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+      initialProps: { date: '2026-04-20' },
+    })
+    await waitFor(() => expect(mockedQueryByProperty).toHaveBeenCalledTimes(1))
+
+    rerender({ date: '2026-04-21' })
+    await waitFor(() =>
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026-04-21' }),
+        expect.anything(),
+      ),
+    )
+    expect(mockedQueryByProperty).toHaveBeenCalledTimes(1)
+  })
+
   it('open tasks batchResolve includes page ids and content ULIDs (B-55)', async () => {
     const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
     mockedQueryByProperty.mockResolvedValue({
@@ -680,7 +696,7 @@ describe('useDuePanelData', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         'useDuePanelData',
         'open tasks fetch failed',
-        { date: '2026-04-15' },
+        undefined,
         fetchErr,
       )
     })
