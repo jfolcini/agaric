@@ -212,7 +212,7 @@
   --brand-foreground: oklch(0.985 0.004 70);
   --border: oklch(0.91 0.008 70);
   --input: oklch(0.91 0.008 70);
-  /* Ink, like every theme's ring: its primary. 16.6:1 on --background. */
+  /* Ink, like every theme's ring: its primary. 16.8:1 on --background. */
   --ring: var(--primary);
   /* Ink, the parent's own color: red is the capture button (#5332), so only
    * the alternate themes give icons a palette color. */
@@ -423,7 +423,7 @@
    * --input keeps the stronger value so field outlines stay findable. */
   --border: oklch(0.28 0.007 70);
   --input: oklch(0.3 0.007 70);
-  /* 11.8:1 on --background. */
+  /* 12.1:1 on --background. */
   --ring: var(--primary);
   --graph-journal: oklch(0.72 0.12 305);
   /* A mid tone at 0.2 opacity all but vanishes on a dark ground, so edges sit

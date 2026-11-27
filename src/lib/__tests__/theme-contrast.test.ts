@@ -245,22 +245,22 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 11.82,
   },
   {
-    // index.css :root --ring: "4.2:1 on --background"
-    name: 'light :root — --ring on --background ≈4.21:1',
+    // index.css :root --ring is var(--primary): "16.8:1 on --background"
+    name: 'light :root — --ring (its --primary) on --background ≈16.83:1',
     selector: ':root',
-    fg: 'ring',
+    fg: 'primary',
     bg: 'background',
     min: NON_TEXT,
-    documented: 4.21,
+    documented: 16.83,
   },
   {
-    // index.css .dark --ring: "7.4:1 on --background"
-    name: 'dark .dark — --ring on --background ≈7.44:1',
+    // index.css .dark --ring is var(--primary): "12.1:1 on --background"
+    name: 'dark .dark — --ring (its --primary) on --background ≈12.06:1',
     selector: '.dark',
-    fg: 'ring',
+    fg: 'primary',
     bg: 'background',
     min: NON_TEXT,
-    documented: 7.44,
+    documented: 12.06,
   },
   {
     // index.css .theme-solarized-dark: 0.69 "clears 4.5:1 on every surface it sits on" (#6160)
@@ -480,11 +480,11 @@ describe('focus ring, chips, hover surfaces and graph nodes clear WCAG in every 
   it('the high-contrast reader finds the overrides, not the base theme', () => {
     // Without this, a parser that found nothing would re-measure the base
     // theme under every "(high contrast)" label and pass.
-    expect(readOklch(HIGH_CONTRAST_ROOT, 'ring')).not.toEqual(
-      readOklch(themeBlock(':root'), 'ring'),
+    expect(readOklch(HIGH_CONTRAST_ROOT, 'status-active')).not.toEqual(
+      readOklch(themeBlock(':root'), 'status-active'),
     )
-    expect(readOklch(HIGH_CONTRAST_DARK, 'ring')).not.toEqual(
-      readOklch(themeBlock('.dark'), 'ring'),
+    expect(readOklch(HIGH_CONTRAST_DARK, 'status-active')).not.toEqual(
+      readOklch(themeBlock('.dark'), 'status-active'),
     )
   })
 
@@ -621,6 +621,14 @@ describe('colour roles stay distinguishable in every theme (#7040)', () => {
     const [, chromaB, hueB] = signature(theme, highContrast, b)
     const huedA = chromaA > NO_HUE
     const huedB = chromaB > NO_HUE
+    if (!huedA && !huedB && (a === 'focus ring' || b === 'focus ring')) {
+      // An ink ring (the default themes, #7155) is told from a neutral chip by
+      // lightness, as brand is from destructive.
+      const [lightA] = signature(theme, highContrast, a)
+      const [lightB] = signature(theme, highContrast, b)
+      expect(Math.abs(lightA - lightB)).toBeGreaterThanOrEqual(MIN_LIGHTNESS_GAP - 1e-9)
+      return
+    }
     // Two neutrals have nothing to tell them apart by colour.
     expect(huedA || huedB, 'one of them carries a hue').toBe(true)
     if (huedA && huedB) expect(hueGap(hueA, hueB)).toBeGreaterThanOrEqual(MIN_HUE_GAP)
