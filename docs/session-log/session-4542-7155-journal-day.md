@@ -16,7 +16,7 @@ Round 2 of the UI review (#7155): decision D3, and decision D4 with the revised 
   - The old "Properties" tab was a custom-date-property source filter, not the day's properties. It went with the "Hide future scheduled" toggle, the state groups, the Overdue / Upcoming / Scheduled-earlier sections and their components.
   - Settings › Tasks & reminders › Deadline warning fed only those sections, so it is deleted too: the component, preference, i18n keys, spec and its `REAL_BACKEND_SPECS` entry.
   - Today reads every open task through `query_by_property`, paged. No new IPC.
-- **Not yet shared:** Properties… opens a local `DayPropertiesDialog` over the old `PagePropertyTable`. #7161 changes that table's API, so whichever merges second moves the day onto the shared surface.
+- **One properties surface.** After #7161 merged, Properties… opens the shared `PagePropertyTable` dialog (a sheet on a phone). It mounts once first opened, because it reads the page's properties as it mounts and Week and Stream mount a day page per day. Focus returns to the day's ⋮.
 
 **Tests**
 
@@ -30,3 +30,6 @@ Round 2 of the UI review (#7155): decision D3, and decision D4 with the revised 
 - The reviewer found that cancelled tasks still showed on a day's own list, and that the bridge spec `agenda-advanced.spec.ts` still drove the deleted filter pills; it fixed both. It also added the week-start test, after a `weekStartsOn` mutant survived.
 - Every new test was shown red by builder or reviewer. The reviewer ran 367 `@journal` and settings mock tests, and 28 bridge tests on a built bridge.
 - **Scale:** the panel no longer virtualizes. On the mock, 500 open tasks take about a second to mount, and every property change re-reads them all. Left to the follow-up.
+- **After review:**
+  - CI and a local run of every mobile and journal mock spec found three old specs pinning the previous Day header: the Blocks/Page switch ending the row, a phone menu without Properties…, and one unscoped tabpanel now that the task panel has tabs. They were updated.
+  - The review bot noticed that with Group: Page the keyboard list stayed in date order while the rows were drawn grouped. A test showed ArrowDown then Enter opening another page's task; the list is now built in drawn order.
