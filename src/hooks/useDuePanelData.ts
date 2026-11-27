@@ -1,9 +1,8 @@
 /**
  * useDuePanelData — data fetching hook for DuePanel.
  *
- * Encapsulates the data fetches (blocks, overdue, scheduled earlier, upcoming,
- * projected)
- * and their state management. Returns fetched data, loading states,
+ * Encapsulates the data fetches (the day's agenda rows, the open tasks,
+ * projected) and their state management. Returns fetched data, loading states,
  * page titles, and a loadMore function.
  *
  * Extracted from DuePanel.tsx for testability (#651-R6).
@@ -12,20 +11,13 @@
  * other paginated panels (HistoryView / HistoryPanel / DonePanel each drive a
  * single cursor list), this hook is a
  * multi-source coordinator, not a thin cursor wrapper:
- *  - It runs distinct fetches (main due blocks, overdue, scheduled earlier,
- *    upcoming, projected agenda), merging all of their parent-title resolutions into a
+ *  - It runs distinct fetches (the day's agenda rows, the open tasks,
+ *    projected agenda), merging all of their parent-title resolutions into a
  *    single shared `pageTitles` map.
- *  - The main list is post-filtered client-side (`applySourceFilter` drops
- *    `property:`-source and empty-content rows per page), so its
- *    `totalCount` is the accumulated POST-filter count — not the backend's
- *    `total_count` that `usePaginatedQuery` exposes. Routing it through the
- *    hook would silently desync the header count from the rendered rows.
  *  - `projected` uses a module-level 30s TTL cache keyed by space+date, and
- *    `overdue` / `upcoming` are single bounded queries, none of which are
- *    cursor-paginated.
+ *    the open tasks are read to the end, so neither is a cursor list.
  * Forcing only the main-blocks sub-fetch through the hook would fracture this
- * coordinated state into a hybrid that is harder to reason about, not easier,
- * and would regress the post-filter count. The hook already carries its own
+ * coordinated state into a hybrid that is harder to reason about. The hook already carries its own
  * request-id stale-guard (#1531). Left as-is by design.
  */
 
@@ -38,10 +30,8 @@ import { useToday } from '@/hooks/useToday'
 import { unwrap } from '@/lib/app-error'
 import type { ActiveProjectedAgendaEntry, BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
-import { formatDate } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { listBlocksLimit, listProjectedAgendaLimit, paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { resolveTitles } from '@/stores/resolve-titles'
@@ -78,33 +68,10 @@ export function clearProjectedCache(): void {
 }
 
 // ── Pure helpers ───────────────────────────────────────────
-// Factored out of doFetch/fetchBlocks to keep oxlint eslint/complexity
-// bounded. Each helper is side-effect-free and independently testable.
 
-/**
- * Apply the `property:` source filter (excludes blocks whose due_date or
- * scheduled_date matches the current agenda date) and drop blocks with
- * empty or whitespace-only content. Other sourceFilter values pass through
- * unchanged except for that second pass.
- *
- * The DONE exclusion (#5074 — `DonePanel` owns DONE, so a task both due and
- * completed today must not render on both) is NOT here: it is pushed into
- * SQL via `excludeTodoStates`. A client-side drop runs AFTER the backend's
- * 50-row page cap, so a page that is entirely DONE returns nothing, the
- * panel renders `null`, and `LoadMoreButton` goes with it — stranding every
- * page behind it. That is #738 sub-2's starvation, which the overdue /
- * upcoming fetches fixed the same way.
- */
-export function applySourceFilter(
-  items: BlockRow[],
-  date: string,
-  sourceFilter: string | null,
-): BlockRow[] {
-  const afterSource =
-    sourceFilter === 'property:'
-      ? items.filter((b) => b.due_date !== date && b.scheduled_date !== date)
-      : items
-  return afterSource.filter((b) => b.content?.trim())
+/** Drops blocks with empty or whitespace-only content. */
+function nonEmpty(items: BlockRow[]): BlockRow[] {
+  return items.filter((b) => b.content?.trim())
 }
 
 /**
@@ -118,18 +85,16 @@ export function collectResolveIds(blocks: BlockRow[]): string[] {
 }
 
 /**
- * Thin wrapper around `listBlocks` that encodes the agenda-specific
- * calling convention: `property:` collapses to a null source, and the
- * optional `cursor` arg is only included when defined.
+ * The day's agenda rows: every source (due, scheduled, a date property), open
+ * or without a state. DONE (#5074, `DonePanel` owns it) and CANCELLED leave in
+ * SQL, not by a client-side drop after the 50-row page cap, which would strand
+ * every page behind one that is all closed (#738).
  *
- * #2248 — `listBlocks` requires an active space; there is no cross-space
- * listing. With no active space, resolve to an empty page rather than
- * invoking (which would throw in `requireActiveScope`). This covers both
- * agenda call sites (the paginating fetchBlocks loop and the main effect).
+ * #2248 — `listBlocks` requires an active space; with none, resolve to an
+ * empty page rather than throw in `requireActiveScope`.
  */
 function listBlocksForAgenda(
   date: string,
-  sourceFilter: string | null,
   cursor: string | undefined,
   limit: number,
   spaceId: string | null,
@@ -142,7 +107,6 @@ function listBlocksForAgenda(
       total_count: null,
     })
   }
-  const effectiveSource = sourceFilter === 'property:' ? null : sourceFilter
   return commands
     .listBlocks(
       {
@@ -151,11 +115,8 @@ function listBlocksForAgenda(
         tagId: null,
         date,
         dateRange: null,
-        source: effectiveSource,
-        // #5074 — DONE belongs to `DonePanel`. Excluded in SQL so completed
-        // tasks never occupy a slot in the bounded page (see
-        // `applySourceFilter`).
-        excludeTodoStates: ['DONE'],
+        source: null,
+        excludeTodoStates: ['DONE', 'CANCELLED'],
         cursor: cursor ?? null,
         limit: listBlocksLimit(limit),
       },
@@ -165,7 +126,7 @@ function listBlocksForAgenda(
 }
 
 /**
- * Shared tail of the four "fetch → filter → resolve → merge titles" effects
+ * Shared tail of the "fetch → filter → resolve → merge titles" effects
  * in this hook: resolves `ids` and, unless `isStale()` after the await,
  * merges the titles into the shared map.
  */
@@ -183,7 +144,6 @@ export async function resolveAndMergeTitles(
 
 export interface UseDuePanelDataOptions {
   date: string
-  sourceFilter: string | null
   /**
    * Page id of the journal day whose own note is rendered above this
    * panel. Agenda items that live ON that page are filtered out so a
@@ -195,26 +155,57 @@ export interface UseDuePanelDataOptions {
 }
 
 export interface UseDuePanelDataReturn {
+  /** The day's agenda rows, every source, paginated by `loadMore`. */
   blocks: BlockRow[]
   loading: boolean
-  nextCursor: string | null
   hasMore: boolean
-  totalCount: number
   pageTitles: Map<string, string>
   projectedEntries: ActiveProjectedAgendaEntry[]
   projectedLoading: boolean
-  overdueBlocks: BlockRow[]
-  /** Today's open tasks scheduled before today whose due date has not passed. */
-  scheduledEarlierBlocks: BlockRow[]
-  upcomingBlocks: BlockRow[]
-  isToday: boolean
-  warningDays: number
+  /** On today's page and later ones: every open task (TODO, DOING), dated or not. */
+  openTasks: BlockRow[]
+  openTasksLoading: boolean
+  /** The page is today's or a later one's, which list every open task under tabs. */
+  fromToday: boolean
   loadMore: () => void
+}
+
+const OPEN_TASK_STATES = ['TODO', 'DOING']
+
+/** Every open task in the space, read page by page to the end. */
+async function listOpenTasks(spaceId: string, isStale: () => boolean): Promise<BlockRow[]> {
+  const scope = requireActiveScope(spaceId)
+  const items: BlockRow[] = []
+  let cursor: string | null = null
+  do {
+    const resp: PageResponse<BlockRow> = unwrap(
+      await commands.queryByProperty(
+        {
+          key: 'todo_state',
+          valueText: null,
+          valueDate: null,
+          operator: null,
+          cursor,
+          limit: paginationLimit(200),
+          excludeParentId: null,
+          contentNonEmpty: true,
+          blockType: null,
+          valueTextIn: OPEN_TASK_STATES,
+          valueDateRange: null,
+          excludeTodoStates: null,
+        },
+        scope,
+      ),
+    )
+    if (isStale()) return items
+    items.push(...resp.items)
+    cursor = resp.next_cursor
+  } while (cursor != null)
+  return items
 }
 
 export function useDuePanelData({
   date,
-  sourceFilter,
   excludePageId,
 }: UseDuePanelDataOptions): UseDuePanelDataReturn {
   const { t } = useTranslation()
@@ -224,307 +215,66 @@ export function useDuePanelData({
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
-  // Mirror `blocks` into a ref so `fetchBlocks` can compute
-  // the merged paginated list (`prev + new items`) without keeping
-  // `blocks` in its deps array. Updated on every commit — by a
-  // dependency-array-less layout effect, not during render — to stay in sync
-  // with the latest committed state.
+  // `fetchBlocks` appends to the committed list without `blocks` in its deps.
   const blocksRef = useRef<BlockRow[]>(blocks)
   useLayoutEffect(() => {
     blocksRef.current = blocks
   })
   // #1531 — request token guarding `fetchBlocks` (loadMore) against a
-  // date/source/space/invalidation change that lands mid-pagination. The main
-  // fetch effect bumps it; `fetchBlocks` captures it at call time and discards
-  // its result (and skips the title merge) if it no longer matches, so a stale
-  // loadMore can't repopulate the just-cleared list with old-date blocks.
+  // response for a date or space the panel has since left.
   const requestIdRef = useRef(0)
   const [projectedEntries, setProjectedEntries] = useState<ActiveProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
-  // #738 sub-3 — track the previous `invalidationKey` so the projected
-  // cache is cleared ONLY when a property event actually fires (the key
-  // changes), not on every effect re-run. The projected effect's deps
-  // include `date` + `currentSpaceId`, so without this guard a plain
-  // date navigation (after any prior property event) wiped the whole
-  // 30s-TTL cache for the rest of the session, defeating.
   const prevInvalidationKeyRef = useRef(invalidationKey)
-  const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
-  const [scheduledEarlierBlocks, setScheduledEarlierBlocks] = useState<BlockRow[]>([])
-  const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
-
-  const warningDays = useMemo(() => readPreference(PREFERENCES.deadlineWarningDays), [])
+  const [openTasks, setOpenTasks] = useState<BlockRow[]>([])
+  const [openTasksLoading, setOpenTasksLoading] = useState(false)
 
   const todayStr = useToday()
-  const isToday = date === todayStr
+  const fromToday = date >= todayStr
 
-  // Fetch overdue blocks when showing today
   useEffect(() => {
-    if (!isToday) {
-      // oxlint-disable-next-line react/set-state-in-effect -- drops the overdue list when the panel leaves today; its rows only ever arrive from the `queryByProperty` IPC below; see #4407
-      setOverdueBlocks([])
+    if (!fromToday || currentSpaceId == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- drops the open tasks when the panel moves to a past day; its rows only ever arrive from the `queryByProperty` IPC below; see #4407
+      setOpenTasks([])
+      setOpenTasksLoading(false)
       return
     }
-    // #5415 — no active space: nothing to list, never dispatch.
     const spaceId = currentSpaceId
-    if (spaceId == null) return
-    const scope = requireActiveScope(spaceId)
     let stale = false
-
-    async function fetchOverdue() {
-      try {
-        // #738 sub-2 — push the date, DONE-exclusion, and content
-        // filters into SQL so completed tasks and empty-content rows no
-        // longer occupy the bounded fetch window and starve genuinely
-        // overdue TODOs (the DonePanel pushes `contentNonEmpty` the same
-        // way). The half-open `['0001-01-01', date)` window returns only
-        // blocks whose `due_date` precedes `date`; `excludeTodoStates`
-        // drops `DONE` rows at the DB layer (NULL-state rows survive);
-        // `contentNonEmpty` drops empty/whitespace-only content.
-        // The 200-row cap matches `PageRequest::new`'s `MAX_PAGE_SIZE`
-        // (the silent clamp the previous `limit: 500` was hitting);
-        // workspaces with more than 200 distinct overdue items would
-        // need cursor pagination, which the Due panel doesn't surface.
-        const resp = unwrap(
-          await commands.queryByProperty(
-            {
-              key: 'due_date',
-              valueText: null,
-              valueDate: null,
-              operator: null,
-              cursor: null,
-              limit: paginationLimit(200),
-              excludeParentId: null,
-              contentNonEmpty: true,
-              blockType: null,
-              valueTextIn: null,
-              valueDateRange: ['0001-01-01', date],
-              excludeTodoStates: ['DONE'],
-            },
-            scope,
-          ),
-        )
+    setOpenTasksLoading(true)
+    listOpenTasks(spaceId, () => stale)
+      .then(async (tasks) => {
         if (stale) return
-
-        // Defence-in-depth: the SQL push-down above already excludes
-        // DONE / empty-content / on-or-after-`date` rows, but the
-        // client predicate is retained so the visible set is correct
-        // even if a stale backend ignores the new knob.
-        const overdue = resp.items.filter(
-          (b) => b.due_date && b.due_date < date && b.todo_state !== 'DONE' && b.content?.trim(),
-        )
-        setOverdueBlocks(overdue)
-
-        if (overdue.length > 0) {
-          await resolveAndMergeTitles(
-            collectResolveIds(overdue),
-            currentSpaceId,
-            () => stale,
-            setPageTitles,
-          )
-        }
-      } catch (err) {
-        // Log overdue fetch failure to match the main/projected pattern.
-        logger.warn('useDuePanelData', 'overdue fetch failed', { date }, err)
-        if (!stale) setOverdueBlocks([])
-      }
-    }
-
-    void fetchOverdue()
+        setOpenTasks(tasks)
+        await resolveAndMergeTitles(collectResolveIds(tasks), spaceId, () => stale, setPageTitles)
+      })
+      .catch((err: unknown) => {
+        logger.warn('useDuePanelData', 'open tasks fetch failed', { date }, err)
+        if (!stale) setOpenTasks([])
+      })
+      .finally(() => {
+        if (!stale) setOpenTasksLoading(false)
+      })
     return () => {
       stale = true
     }
-  }, [isToday, date, invalidationKey, currentSpaceId])
+  }, [fromToday, date, invalidationKey, currentSpaceId])
 
-  // #7040 — open tasks scheduled before today and due after every window the
-  // panel lists: what the journal's old Unfinished tasks section listed beyond
-  // Overdue, today's due list and Upcoming, so no task shows twice.
-  useEffect(() => {
-    if (!isToday) {
-      // oxlint-disable-next-line react/set-state-in-effect -- drops the list when the panel leaves today; its rows only ever arrive from the `listUnfinishedTasks` IPC below; see #4407
-      setScheduledEarlierBlocks([])
-      return
-    }
-    const spaceId = currentSpaceId
-    if (spaceId == null) return
-    const scope = requireActiveScope(spaceId)
-    const lastListedDue = new Date(`${date}T00:00:00`)
-    lastListedDue.setDate(lastListedDue.getDate() + Math.max(warningDays, 0))
-    const lastListedDueStr = formatDate(lastListedDue)
-    let stale = false
-
-    async function fetchScheduledEarlier() {
-      try {
-        // Every page of the TODO and DOING rows whose due or scheduled date
-        // precedes `date`: an old backlog can hold more than one page.
-        const items: BlockRow[] = []
-        let cursor: string | null = null
-        do {
-          const resp: PageResponse<BlockRow> = unwrap(
-            await commands.listUnfinishedTasks(
-              date,
-              ['TODO', 'DOING'],
-              cursor,
-              paginationLimit(200),
-              scope,
-            ),
-          )
-          if (stale) return
-          items.push(...resp.items)
-          cursor = resp.next_cursor
-        } while (cursor != null)
-        const rows = items.filter(
-          (b) =>
-            b.scheduled_date != null &&
-            b.scheduled_date < date &&
-            !(b.due_date != null && b.due_date <= lastListedDueStr) &&
-            b.content?.trim(),
-        )
-        setScheduledEarlierBlocks(rows)
-        if (rows.length > 0) {
-          await resolveAndMergeTitles(
-            collectResolveIds(rows),
-            currentSpaceId,
-            () => stale,
-            setPageTitles,
-          )
-        }
-      } catch (err) {
-        logger.warn('useDuePanelData', 'scheduled-earlier fetch failed', { date }, err)
-        if (!stale) setScheduledEarlierBlocks([])
-      }
-    }
-
-    void fetchScheduledEarlier()
-    return () => {
-      stale = true
-    }
-  }, [isToday, date, warningDays, invalidationKey, currentSpaceId])
-
-  // Fetch upcoming blocks (deadline approaching within warningDays)
-  useEffect(() => {
-    if (!isToday || warningDays <= 0) {
-      // oxlint-disable-next-line react/set-state-in-effect -- drops the deadline-warning list when the panel leaves today or the warning window is off; its rows only come from IPC; see #4407
-      setUpcomingBlocks([])
-      return
-    }
-    // #5415 — no active space: nothing to list, never dispatch.
-    const spaceId = currentSpaceId
-    if (spaceId == null) return
-    const scope = requireActiveScope(spaceId)
-    let stale = false
-
-    async function fetchUpcoming() {
-      try {
-        // Filter: due_date is between tomorrow and today + warningDays
-        const tomorrow = new Date()
-        tomorrow.setDate(tomorrow.getDate() + 1)
-        const tomorrowStr = formatDate(tomorrow)
-
-        const endDate = new Date()
-        endDate.setDate(endDate.getDate() + warningDays)
-        const endStr = formatDate(endDate)
-
-        // limit-clamp-followup — push the date filter into SQL via
-        // `valueDateRange`.  `valueDateRange` is half-open `[start,
-        // endExclusive)`, so we advance `endStr` by one day to keep
-        // the inclusive last date in the result set (mirrors the
-        // pattern in `agenda-filters.queryPropertyDateDimension`).
-        // Limit reduced to 200 (the actual cap of `query_by_property`
-        // via `PageRequest::new`); workspaces with more than 200
-        // upcoming items in the warning window would need cursor
-        // pagination, which the Due panel doesn't surface.
-        const endExclusiveDate = new Date(`${endStr}T00:00:00`)
-        endExclusiveDate.setDate(endExclusiveDate.getDate() + 1)
-        const endExclusive = formatDate(endExclusiveDate)
-        const resp = unwrap(
-          await commands.queryByProperty(
-            {
-              key: 'due_date',
-              valueText: null,
-              valueDate: null,
-              operator: null,
-              cursor: null,
-              limit: paginationLimit(200),
-              excludeParentId: null,
-              contentNonEmpty: true,
-              blockType: null,
-              valueTextIn: null,
-              valueDateRange: [tomorrowStr, endExclusive],
-              excludeTodoStates: ['DONE'],
-            },
-            scope,
-          ),
-        )
-        if (stale) return
-
-        const upcoming = resp.items.filter(
-          (b) =>
-            b.due_date &&
-            b.due_date >= tomorrowStr &&
-            b.due_date <= endStr &&
-            b.todo_state !== 'DONE' &&
-            b.content?.trim(),
-        )
-        setUpcomingBlocks(upcoming)
-
-        // Resolve parent titles
-        if (upcoming.length > 0) {
-          await resolveAndMergeTitles(
-            collectResolveIds(upcoming),
-            currentSpaceId,
-            () => stale,
-            setPageTitles,
-          )
-        }
-      } catch (err) {
-        // Log upcoming fetch failure to match the main/projected pattern.
-        logger.warn('useDuePanelData', 'upcoming fetch failed', { date, warningDays }, err)
-        if (!stale) setUpcomingBlocks([])
-      }
-    }
-
-    void fetchUpcoming()
-    return () => {
-      stale = true
-    }
-  }, [isToday, date, warningDays, invalidationKey, currentSpaceId])
-
-  // Fetch blocks due on the given date.
-  // `blocks` / `totalCount` / `pageTitles` are no longer in
-  // the deps array; mutable state is read via functional setters
-  // (`setTotalCount(prev => …)`, `setPageTitles(prev => …)`) and via
-  // `blocksRef` for the paginated merge. Reduces callback churn and
-  // closes the latent stale-closure footgun if a future maintainer
-  // Dropped one of the deps. byte-equivalent map ordering is
-  // preserved: `new Map(prev)` clones existing entries in insertion
-  // order, the loop appends resolved entries in iteration order.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
-      // #1531 — capture the active request token. If the date/source/space/
-      // invalidation changes while this loadMore is in flight, the main effect
-      // bumps `requestIdRef`, so we drop this stale result instead of appending
-      // old-date blocks onto the just-cleared list.
       const myReqId = requestIdRef.current
       setLoading(true)
       try {
-        // #2248 — `listBlocksForAgenda` returns an empty page when there is
-        // no active space (no cross-space listing).
-        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId)
+        const resp = await listBlocksForAgenda(date, cursor, 50, currentSpaceId)
         if (myReqId !== requestIdRef.current) return
-        const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
-        const newBlocks = cursor ? [...blocksRef.current, ...nonEmptyItems] : nonEmptyItems
+        const items = nonEmpty(resp.items)
+        const newBlocks = cursor ? [...blocksRef.current, ...items] : items
         setBlocks(newBlocks)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount((prev) => (cursor ? prev + nonEmptyItems.length : nonEmptyItems.length))
-
-        const uniqueParentIds = [
-          ...new Set(newBlocks.map((b) => b.page_id).filter((id): id is string => id != null)),
-        ]
         await resolveAndMergeTitles(
-          uniqueParentIds,
+          collectResolveIds(items),
           currentSpaceId,
           () => myReqId !== requestIdRef.current,
           setPageTitles,
@@ -532,47 +282,32 @@ export function useDuePanelData({
       } catch (err) {
         logger.warn('useDuePanelData', 'fetchBlocks failed', { date }, err)
       } finally {
-        // Only the request that still owns the token clears the shared loading
-        // flag — a stale loadMore must not unset the loading state the newer
-        // fetch set.
         if (myReqId === requestIdRef.current) setLoading(false)
       }
     },
-    [date, sourceFilter, currentSpaceId],
+    [date, currentSpaceId],
   )
 
-  // Fetch on mount and when date or sourceFilter changes
   useEffect(() => {
-    // #1531 — invalidate any in-flight `fetchBlocks` (loadMore) so its result
-    // can't repopulate the list we're about to clear with stale-date blocks.
     requestIdRef.current += 1
-    // oxlint-disable-next-line react/set-state-in-effect -- marks the agenda refetch in flight as date, source filter or space changes, alongside the token bump that voids stale pages; see #4407
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the agenda refetch in flight as date or space changes, alongside the token bump that voids stale pages; see #4407
     setLoading(true)
     setBlocks([])
     setNextCursor(null)
     setHasMore(false)
-    setTotalCount(0)
     setPageTitles(new Map())
 
     let cancelled = false
     const doFetch = async () => {
       try {
-        // #2248 — `listBlocksForAgenda` returns an empty page when there is
-        // no active space (no cross-space listing).
-        const resp = await listBlocksForAgenda(date, sourceFilter, undefined, 50, currentSpaceId)
+        const resp = await listBlocksForAgenda(date, undefined, 50, currentSpaceId)
         if (cancelled) return
-        const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
-        setBlocks(nonEmptyItems)
+        const items = nonEmpty(resp.items)
+        setBlocks(items)
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
-        setTotalCount(nonEmptyItems.length)
-
-        // Resolve parent page titles + inline ULID refs (B-53). The initial
-        // fetch already wipes pageTitles above, so merge here rather than
-        // replacing again after the await. This preserves titles resolved by
-        // the parallel overdue / upcoming / projected effects.
         await resolveAndMergeTitles(
-          collectResolveIds(nonEmptyItems),
+          collectResolveIds(items),
           currentSpaceId,
           () => cancelled,
           setPageTitles,
@@ -587,7 +322,7 @@ export function useDuePanelData({
     return () => {
       cancelled = true
     }
-  }, [date, sourceFilter, invalidationKey, currentSpaceId])
+  }, [date, invalidationKey, currentSpaceId])
 
   // Fetch projected agenda entries with caching.
   // Phase 4 — cache key includes the active space so two
@@ -684,40 +419,17 @@ export function useDuePanelData({
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
-      // `fetchBlocks` catches and logs its own failure; never rejects.
       void fetchBlocks(nextCursor)
     }
   }, [nextCursor, fetchBlocks])
 
-  // UX live-review #7 — exclude agenda items that live on the journal
-  // day's own page. The query layer (`listBlocks` agenda mode /
-  // `query_by_property`) has no `excludeParentId` knob, so we scrub the
-  // fetched lists here. Every downstream computation in DuePanel (the
-  // "N Agenda" header count, per-source counts, grouping, projected
-  // dedup, keyboard-nav flat list) derives from these returned arrays,
-  // so a single filter keeps the count and the rendered rows consistent.
-  // When `excludePageId` is undefined (e.g. a past day with no page),
-  // the lists pass through unchanged.
   const filteredBlocks = useMemo(
     () => (excludePageId ? blocks.filter((b) => b.page_id !== excludePageId) : blocks),
     [blocks, excludePageId],
   )
-  const filteredOverdueBlocks = useMemo(
-    () =>
-      excludePageId ? overdueBlocks.filter((b) => b.page_id !== excludePageId) : overdueBlocks,
-    [overdueBlocks, excludePageId],
-  )
-  const filteredScheduledEarlierBlocks = useMemo(
-    () =>
-      excludePageId
-        ? scheduledEarlierBlocks.filter((b) => b.page_id !== excludePageId)
-        : scheduledEarlierBlocks,
-    [scheduledEarlierBlocks, excludePageId],
-  )
-  const filteredUpcomingBlocks = useMemo(
-    () =>
-      excludePageId ? upcomingBlocks.filter((b) => b.page_id !== excludePageId) : upcomingBlocks,
-    [upcomingBlocks, excludePageId],
+  const filteredOpenTasks = useMemo(
+    () => (excludePageId ? openTasks.filter((b) => b.page_id !== excludePageId) : openTasks),
+    [openTasks, excludePageId],
   )
   const filteredProjectedEntries = useMemo(
     () =>
@@ -730,17 +442,13 @@ export function useDuePanelData({
   return {
     blocks: filteredBlocks,
     loading,
-    nextCursor,
     hasMore,
-    totalCount,
     pageTitles,
     projectedEntries: filteredProjectedEntries,
     projectedLoading,
-    overdueBlocks: filteredOverdueBlocks,
-    scheduledEarlierBlocks: filteredScheduledEarlierBlocks,
-    upcomingBlocks: filteredUpcomingBlocks,
-    isToday,
-    warningDays,
+    openTasks: filteredOpenTasks,
+    openTasksLoading,
+    fromToday,
     loadMore,
   }
 }

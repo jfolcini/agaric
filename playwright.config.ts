@@ -183,7 +183,6 @@ const REAL_BACKEND_SPECS = [
   'search-shown-text-6277.spec.ts',
   'search-toggles.spec.ts',
   'search-view-mobile.spec.ts',
-  'settings-tasks-reminders.spec.ts',
   'slash-command-properties.spec.ts',
   'slash-commands-happy-paths.spec.ts',
   'smoke.spec.ts',

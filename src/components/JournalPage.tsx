@@ -201,8 +201,9 @@ export function JournalPage({
           shell header renders `<JournalControls />` instead of a label for
           journal mode. Agenda mode skips it: `AgendaView` renders the title
           inside its `ViewHeader`, above the sticky filter/sort bar, so it is
-          the only `<h1>` there. */}
-      {mode !== 'agenda' && (
+          the only `<h1>` there. Once loaded, the day view's title row is the
+          day's own (`DayHeader`), with its actions. */}
+      {mode !== 'agenda' && (dailyEntry == null || loading) && (
         <FeaturePageHeader
           title={dailyEntry?.displayDate ?? t('sidebar.journal')}
           className="journal-page-header"

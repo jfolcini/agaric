@@ -43,10 +43,6 @@ vi.mock('@/hooks/usePhoneLayout', () => ({ usePhoneLayout: vi.fn(() => false) })
 
 // Mock child components to isolate SettingsView logic
 
-vi.mock('@/components/agenda/DeadlineWarningSection', () => ({
-  DeadlineWarningSection: () => <div data-testid="deadline-warning-section">Deadline Warning</div>,
-}))
-
 vi.mock('@/components/properties/PropertyDefinitionsList', () => ({
   PropertyDefinitionsList: () => (
     <div data-testid="property-definitions-list">Property Definitions</div>
@@ -435,7 +431,7 @@ describe('SettingsView', () => {
     })
   })
 
-  it('Tasks & reminders tab holds the deadline warning and the reminders', async () => {
+  it('Tasks & reminders tab holds the reminders', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
@@ -443,7 +439,6 @@ describe('SettingsView', () => {
     await user.click(notificationsTab)
     expect(notificationsTab).toHaveAttribute('aria-selected', 'true')
     const panel = within(screen.getByTestId('settings-panel-notifications'))
-    expect(panel.getByTestId('deadline-warning-section')).toBeInTheDocument()
     expect(panel.getByTestId('notifications-enabled-switch')).toBeInTheDocument()
   })
 
@@ -512,7 +507,6 @@ describe('SettingsView', () => {
     expect(panel.getByLabelText(t('settings.languageLabel'))).toBeInTheDocument()
     expect(panel.getByLabelText(t('settings.weekStartLabel'))).toBeInTheDocument()
     expect(panel.getByLabelText(t('settings.journalDateFormatLabel'))).toBeInTheDocument()
-    expect(screen.queryByTestId('deadline-warning-section')).not.toBeInTheDocument()
   })
 
   it('Properties tab shows property definitions', async () => {

@@ -151,6 +151,7 @@ vi.mock('@/components/ui/button', () => ({
 
 import { DaySection } from '@/components/journal/DaySection'
 import type { DayEntry } from '@/lib/date-utils'
+import { t } from '@/lib/i18n'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 import { useJournalStore } from '@/stores/journal'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -206,12 +207,13 @@ describe('DaySection', () => {
   })
 
   // 2. Hides heading when hideHeading=true
-  it('hides heading when hideHeading=true', () => {
+  it('with hideHeading, names the day as the view’s title, not as a list day', () => {
     const entry = makeDayEntry({ displayDate: 'Sun, Jun 15, 2025' })
 
     render(<DaySection entry={entry} mode="daily" hideHeading onAddBlock={noop} />)
 
-    expect(screen.queryByText('Sun, Jun 15, 2025')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Sun, Jun 15, 2025')
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
   })
 
   // 3. Shows "(Today)" badge for today's date
@@ -835,8 +837,14 @@ describe('DaySection', () => {
       expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
     })
 
-    it('renders star + delete in the daily-mode (hideHeading) header when entry.pageId is set', () => {
-      const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
+    // #7155 R6 — the daily title row carries the bookmark; the delete is in its menu.
+    it('puts the daily-mode bookmark on the title row and the delete in its Page actions menu', async () => {
+      const user = userEvent.setup()
+      const entry = makeDayEntry({
+        pageId: 'PAGE_1',
+        dateStr: '2025-06-15',
+        displayDate: 'Sun, Jun 15, 2025',
+      })
 
       render(
         <DaySection
@@ -849,7 +857,12 @@ describe('DaySection', () => {
       )
 
       expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /delete page/i })).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
+      await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
+
+      expect(await screen.findByText('Delete the note for Sun, Jun 15, 2025?')).toBeInTheDocument()
     })
 
     it('does NOT render star/delete when entry.pageId is null (auto-create placeholder)', () => {

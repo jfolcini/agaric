@@ -168,7 +168,6 @@
   "e2e/settings-general.spec.ts": 3,
   "e2e/settings-help.spec.ts": 7,
   "e2e/settings-phone.spec.ts": 13,
-  "e2e/settings-tasks-reminders.spec.ts": 5,
   "e2e/settings.spec.ts": 33,
   "e2e/shortcut-labels.spec.ts": 7,
   "e2e/sidebar-resize.spec.ts": 3,

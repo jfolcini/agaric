@@ -149,7 +149,7 @@ describe('page mode footer: Edit as Markdown', () => {
     const { pageId } = seedPage(['today'], '2026-10-28')
     const { container } = render(
       <PageBlockStoreProvider pageId={pageId}>
-        <DayPageEditor pageId={pageId} onAddBlock={() => {}} />
+        <DayPageEditor pageId={pageId} displayDate="Wed, Oct 28, 2026" onAddBlock={() => {}} />
       </PageBlockStoreProvider>,
     )
     await editorIn(container)

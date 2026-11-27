@@ -1,6 +1,5 @@
 /**
- * NotificationsTab — the Tasks & reminders tab: the Agenda's deadline warning
- * and the OS reminders for due tasks.
+ * NotificationsTab — the Tasks & reminders tab: the OS reminders for due tasks.
  *
  * Reminders (#4554): the desktop backend fires one OS notification per open
  * task on its due date, at the reminder time chosen here, while the app is
@@ -26,7 +25,6 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -127,11 +125,6 @@ export function NotificationsTab(): React.ReactElement {
 
   return (
     <div className="notifications-tab space-y-6">
-      <Card>
-        <CardContent>
-          <DeadlineWarningSection />
-        </CardContent>
-      </Card>
       <Card>
         <CardHeader>
           <CardDescription>{t('notifications.description')}</CardDescription>

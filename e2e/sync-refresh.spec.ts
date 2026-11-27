@@ -91,14 +91,17 @@ test.describe('task panels after a peer completes a task (#5256) @sync', () => {
   })
 
   test('an overdue task the peer marks DONE leaves Overdue', async ({ page }) => {
-    const section = page.getByTestId('due-panel').locator('.overdue-section')
-    await expect(section.getByText('Submit report')).toBeVisible()
+    const duePanel = page.getByTestId('due-panel')
+    const overdueTab = duePanel.getByRole('tab', { name: /^Overdue/ })
+    await overdueTab.click()
+    await expect(overdueTab).toHaveAttribute('aria-selected', 'true')
+    const row = duePanel.getByTestId('due-panel-item').filter({ hasText: 'Submit report' })
+    await expect(row).toBeVisible()
 
     await peerWrite(page, 'set_todo_state', { blockId: BLOCK_OVERDUE_1, state: 'DONE' })
     await peerSyncComplete(page, [PAGE_PROJECTS], 1)
 
-    // It was the only overdue task, so the section goes with it.
-    await expect(section).toHaveCount(0)
+    await expect(row).toHaveCount(0)
   })
 })
 

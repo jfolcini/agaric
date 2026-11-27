@@ -93,10 +93,9 @@ test.describe('journal on a desktop @journal', () => {
   }) => {
     await waitForBoot(page)
     const due = page.getByTestId('due-panel')
-    const dueHeader = page.getByTestId('due-panel-header')
-    await expect(dueHeader).toHaveText(/^Due \d+ · Scheduled \d+$/)
-    await expect(countOf(dueHeader)).toHaveText([/^\d+$/, /^\d+$/])
-    const overdue = due.locator('.overdue-section h2')
+    // #7155 R7 — the Due panel's counts are on today's tabs, not its header.
+    await expect(page.getByTestId('due-panel-header')).toHaveText('Tasks')
+    const overdue = due.getByRole('tab', { name: /^Overdue/ })
     await expect(overdue).toHaveText(/^Overdue \d+$/)
     await expect(countOf(overdue)).toHaveText(/^\d+$/)
     const done = page.locator('.done-panel-header')
@@ -104,13 +103,36 @@ test.describe('journal on a desktop @journal', () => {
     await expect(countOf(done)).toHaveText(/^\d+$/)
   })
 
-  test('the Due panel’s switch label is the size of its segments', async ({ page }) => {
+  // #7155 R6 — the Day view's title row works like a page's.
+  test('the day’s title row holds its switch, bookmark and menu, the toolbar beneath it', async ({
+    page,
+  }) => {
     await waitForBoot(page)
-    const filters = page.getByTestId('due-panel-filters')
-    const fontSize = (l: Locator) => l.evaluate((el) => getComputedStyle(el).fontSize)
-    expect(await fontSize(filters.getByText('Hide future scheduled'))).toBe(
-      await fontSize(filters.getByRole('radio').first()),
+    const header = page.locator('.journal-page-header')
+    const title = header.getByRole('heading', { level: 1 })
+    await expect(title).toBeVisible()
+    await expect(header.getByRole('radiogroup', { name: 'Editing mode' })).toBeVisible()
+    await expect(header.getByRole('button', { name: 'Bookmark this page' })).toBeVisible()
+    const menu = header.getByRole('button', { name: 'Page actions' })
+    await expect(page.getByRole('button', { name: 'Delete page', exact: true })).toHaveCount(0)
+    const titleBox = await title.boundingBox()
+    const menuBox = await menu.boundingBox()
+    expect(Math.abs((menuBox?.y ?? 0) - (titleBox?.y ?? 0)), 'one row').toBeLessThan(
+      titleBox?.height ?? 0,
     )
+
+    await page.locator('[data-testid="block-static"]').first().click()
+    const bar = page.getByTestId('formatting-toolbar')
+    await expect(bar).toBeVisible()
+    const headerBox = await header.boundingBox()
+    expect((await bar.boundingBox())?.y, 'toolbar beneath the title row').toBeGreaterThanOrEqual(
+      (headerBox?.y ?? 0) + (headerBox?.height ?? 0),
+    )
+
+    await page.keyboard.press('Escape')
+    await menu.click()
+    await expect(page.getByRole('menuitem', { name: 'Properties…' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Delete page' })).toBeVisible()
   })
 
   test('a week’s empty day keeps its + beside its date', async ({ page }) => {

@@ -5,6 +5,7 @@
  */
 
 export const pages: Record<string, string> = {
+  'journal.dayProperties': 'Eigenschaften…',
   'journal.today': 'Heute',
   'journal.dayTab': 'Tag',
   'journal.weekTab': 'Woche',
