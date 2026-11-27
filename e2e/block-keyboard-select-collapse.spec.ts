@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, selectedCheckboxes, test, waitForBoot } from './helpers'
 
 /**
  * E2E for Shift+Arrow range selection when an ANCESTOR COLLAPSES (#976
@@ -44,9 +44,7 @@ test.describe('Keyboard range selection across an ancestor collapse (#922) @edit
       els.map((el) => el.getAttribute('data-block-id') ?? ''),
     )
     const gs2 = ids[1] as string
-    const childById = page.locator(
-      `[data-testid="sortable-block"][data-block-id="${gs2}"] [data-testid="block-frame"]`,
-    )
+    const childById = page.locator(`[data-testid="sortable-block"][data-block-id="${gs2}"]`)
 
     // 1. Indent GS_2 (index 1) under GS_1 (index 0) so GS_1 becomes a parent
     //    with one child. GS_2 is now nested.
@@ -64,7 +62,7 @@ test.describe('Keyboard range selection across an ancestor collapse (#922) @edit
     //    selection includes the nested child GS_2.
     await page.keyboard.press('Escape')
     await expect(page.locator('[data-testid="block-editor"]')).not.toBeVisible()
-    await expect(childById).toHaveClass(/block-selected/)
+    await expect(selectedCheckboxes(childById)).toHaveCount(1)
     await expect(batchToolbar).toHaveCount(0)
 
     await page.keyboard.press('Shift+ArrowDown')

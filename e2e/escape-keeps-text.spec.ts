@@ -1,4 +1,12 @@
-import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  reopenPage,
+  selectedCheckboxes,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * #5160 D17 — Escape keeps the typed text, leaves editing and selects the
@@ -24,8 +32,8 @@ test.describe('Escape keeps the text (#5160 D17) @editor', () => {
     const row = page.locator(
       `[data-testid="sortable-block"][data-block-id="${blockId}"] [data-testid="block-static"]`,
     )
-    const frame = page.locator(
-      `[data-testid="sortable-block"][data-block-id="${blockId}"] [data-testid="block-frame"]`,
+    const selected = selectedCheckboxes(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`),
     )
 
     const editor = await focusBlock(page, 0)
@@ -34,13 +42,13 @@ test.describe('Escape keeps the text (#5160 D17) @editor', () => {
     await page.keyboard.press('Escape')
 
     await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
-    await expect(frame).toHaveClass(/block-selected/)
+    await expect(selected).toHaveCount(1)
     // One selected block brings no batch bar (#6547).
     await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
     await expect(row).toHaveText(EDITED)
 
     await page.keyboard.press('Escape')
-    await expect(frame).not.toHaveClass(/block-selected/)
+    await expect(selected).toHaveCount(0)
 
     await reopenPage(page, PAGE)
     await expect(row).toHaveText(EDITED)

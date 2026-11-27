@@ -5272,26 +5272,6 @@ describe('SortableBlock selection re-render isolation (#1018)', () => {
     expect(rowCommits).toBe(commitsAfterMount)
   })
 
-  // The highlight covers the whole row, its checkbox and chips, like the
-  // editing box and the cursor ring on the same frame (#7040).
-  it('draws the multi-select highlight on the row frame', () => {
-    const row = (isSelected: boolean) => (
-      <TestBlockActionsOverride actions={{}}>
-        <SortableBlock
-          blockId="ROW_A"
-          content="row a"
-          isFocused={false}
-          isSelected={isSelected}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>
-    )
-    const { rerender } = render(row(true))
-    expect(screen.getByTestId('block-frame')).toHaveClass('block-selected')
-    rerender(row(false))
-    expect(screen.getByTestId('block-frame')).not.toHaveClass('block-selected')
-  })
-
   it('exposes a referentially-stable view to a row: toggling others does not change this row’s props', () => {
     // The row's own visual selection arrives via the `isSelected` prop, not a
     // store subscription. Re-rendering with the SAME isSelected after an
