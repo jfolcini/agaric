@@ -45,19 +45,19 @@
   <screenshots>
     <screenshot type="default">
       <caption>Today's journal page with notes, links and tasks</caption>
-      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/journal.png</image>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/0.27.0/packaging/flathub/screenshots/journal.png</image>
     </screenshot>
     <screenshot>
       <caption>A page of nested blocks linking to other pages</caption>
-      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/page.png</image>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/0.27.0/packaging/flathub/screenshots/page.png</image>
     </screenshot>
     <screenshot>
       <caption>The agenda gathers the open tasks of every page</caption>
-      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/agenda.png</image>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/0.27.0/packaging/flathub/screenshots/agenda.png</image>
     </screenshot>
     <screenshot>
       <caption>The graph of links between pages</caption>
-      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/graph.png</image>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/0.27.0/packaging/flathub/screenshots/graph.png</image>
     </screenshot>
   </screenshots>
 
@@ -66,6 +66,7 @@
     scripts/bump-version.sh adds one per release.
   -->
   <releases>
+    <release version="0.27.0" date="2026-11-27"/>
     <release version="0.26.0" date="2026-11-19"/>
     <release version="0.25.0" date="2026-11-17"/>
     <release version="0.24.0" date="2026-11-14"/>
