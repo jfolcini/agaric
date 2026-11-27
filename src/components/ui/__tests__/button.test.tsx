@@ -100,19 +100,20 @@ describe('Button', () => {
     },
   )
 
-  it.each(['icon', 'icon-xs', 'icon-sm'] as const)(
-    'a ghost %s button keeps a 44 px box on a coarse pointer',
-    (size) => {
-      render(
-        <Button variant="ghost" size={size}>
-          Ghost
-        </Button>,
-      )
-      const btn = screen.getByRole('button', { name: 'Ghost' })
-      expect(btn.className).toContain('coarse:size-(--touch-target)')
-      expect(btn.className).not.toContain('coarse:size-9')
-    },
-  )
+  it.each(
+    (['ghost', 'link'] as const).flatMap((variant) =>
+      (['icon', 'icon-xs', 'icon-sm'] as const).map((size) => [variant, size] as const),
+    ),
+  )('a %s %s button keeps a 44 px box on a coarse pointer', (variant, size) => {
+    render(
+      <Button variant={variant} size={size}>
+        Frameless
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Frameless' })
+    expect(btn.className).toContain('coarse:size-(--touch-target)')
+    expect(btn.className).not.toContain('coarse:size-9')
+  })
 
   // -- active-press scale (#1012) ---------------------------------------------
 

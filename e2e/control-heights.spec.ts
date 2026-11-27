@@ -25,16 +25,16 @@ async function height(el: Locator): Promise<number> {
   return Math.round(box.height)
 }
 
-/** The colour a token resolves to, as `getComputedStyle` writes a background. */
-function tokenColor(page: Page, token: string): Promise<string> {
-  return page.evaluate((t) => {
+/** The colour a CSS colour value resolves to, as `getComputedStyle` writes a background. */
+function resolvedColor(page: Page, value: string): Promise<string> {
+  return page.evaluate((v) => {
     const probe = document.createElement('div')
-    probe.style.backgroundColor = `var(${t})`
+    probe.style.backgroundColor = v
     document.body.append(probe)
     const color = getComputedStyle(probe).backgroundColor
     probe.remove()
     return color
-  }, token)
+  }, value)
 }
 
 for (const profile of PROFILES) {
@@ -117,15 +117,6 @@ for (const profile of PROFILES) {
       const track = () => sw.evaluate((el) => getComputedStyle(el).backgroundColor)
       // The muted grey at 40 % in light, 12 % in the dark themes, where 40 % of
       // their lighter grey left the coral under 3:1 against it.
-      const offGrey = (percent: number) =>
-        page.evaluate((p) => {
-          const probe = document.createElement('div')
-          probe.style.backgroundColor = `color-mix(in oklab, var(--muted-foreground) ${p}%, transparent)`
-          document.body.append(probe)
-          const color = getComputedStyle(probe).backgroundColor
-          probe.remove()
-          return color
-        }, percent)
       const thumb = () =>
         sw
           .locator('[data-slot="switch-thumb"]')
@@ -135,11 +126,12 @@ for (const profile of PROFILES) {
         await page.evaluate((on) => document.documentElement.classList.toggle('dark', on), dark)
         const theme = dark ? 'dark' : 'light'
         await expect(sw).toHaveAttribute('aria-checked', 'false')
-        expect(await track(), `${theme} off track`).toBe(await offGrey(dark ? 12 : 40))
+        const offGrey = `color-mix(in oklab, var(--muted-foreground) ${dark ? 12 : 40}%, transparent)`
+        expect(await track(), `${theme} off track`).toBe(await resolvedColor(page, offGrey))
         expect(await thumb(), `${theme} thumb on the off track`).toBe(white)
         await sw.click()
         await expect(sw).toHaveAttribute('aria-checked', 'true')
-        expect(await track(), `${theme} on track`).toBe(await tokenColor(page, '--brand'))
+        expect(await track(), `${theme} on track`).toBe(await resolvedColor(page, 'var(--brand)'))
         expect(await thumb(), `${theme} thumb on the on track`).toBe(white)
         await sw.click()
       }
