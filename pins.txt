@@ -45,7 +45,7 @@ version cargo-deny    0.21.0   taiki:cargo-deny
 version cargo-machete 0.10.1   taiki:cargo-machete
 version cargo-audit   0.23.0   taiki:cargo-audit
 version cargo-mutants 27.1.0   taiki:cargo-mutants
-version cargo-auditable 0.7.7  taiki:cargo-auditable
+version cargo-auditable 0.7.8  taiki:cargo-auditable
 version just          1.59.0   crate:just
 version sqlx-cli      0.9.1    lock:sqlx
 version tauri-driver  2.1.0    crate:tauri-driver
