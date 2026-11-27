@@ -20,6 +20,9 @@
  * when an update exists). Mobile builds replace the button with one that opens
  * the releases page, since the Tauri updater plugin is desktop-only, and show
  * the status only when Android's daily check found a newer release (#6546).
+ * A desktop copy a package manager or store installed has no updater
+ * (`useSelfUpdateDisabled`), so the row drops the button and the status and
+ * says where its updates come from instead.
  */
 
 import type { TFunction } from 'i18next'
@@ -32,7 +35,7 @@ import { ShowWelcomeTourRow } from '@/components/settings/ShowWelcomeTourRow'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
-import { checkForUpdatesNow, useUpdateStatus } from '@/hooks/useUpdateCheck'
+import { checkForUpdatesNow, useSelfUpdateDisabled, useUpdateStatus } from '@/hooks/useUpdateCheck'
 import { RELEASES_URL } from '@/lib/config'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { openUrl } from '@/lib/open-url'
@@ -75,6 +78,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
   const { t } = useTranslation()
   const [checking, setChecking] = useState(false)
   const updateStatus = useUpdateStatus()
+  const selfUpdateDisabled = useSelfUpdateDisabled()
   const mobile = isMobilePlatform()
 
   const handleCheckNow = useCallback(async () => {
@@ -94,6 +98,11 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
     lastCheckedAt != null
       ? t('help.updateLastCheckedLabel', { ago: formatRelativeTime(lastCheckedAt, t) })
       : null
+  const updateDescription = mobile
+    ? t('help.updateMobileHint')
+    : selfUpdateDisabled
+      ? t('help.updatePackageManagedHint')
+      : t('help.updateDescription')
 
   return (
     <div className="space-y-6">
@@ -112,49 +121,48 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
           <DebugModeRow />
           <ShowWelcomeTourRow />
           <div className="space-y-1">
-            <SettingRow
-              label={t('help.updateTitle')}
-              description={mobile ? t('help.updateMobileHint') : t('help.updateDescription')}
-            >
+            <SettingRow label={t('help.updateTitle')} description={updateDescription}>
               {mobile ? (
                 <Button variant="outline" size="sm" onClick={() => void openUrl(RELEASES_URL)}>
                   {t('help.updateOpenReleasesButton')}
                 </Button>
               ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleCheckNow()}
-                  disabled={busy}
-                  aria-label={t('help.updateCheckNowButton')}
-                >
-                  {busy ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
-                </Button>
+                !selfUpdateDisabled && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleCheckNow()}
+                    disabled={busy}
+                    aria-label={t('help.updateCheckNowButton')}
+                  >
+                    {busy ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
+                  </Button>
+                )
               )}
             </SettingRow>
-            {mobile ? (
-              updateStatus.status === 'available' && (
-                <output className="block text-sm text-muted-foreground">{statusLabel}</output>
-              )
-            ) : (
-              <>
-                {/* Persistent status — `<output>` is an implicit polite live
-                    region (role="status"), so a boot check completing (or
-                    failing) while Settings is open is announced, not silent. */}
-                <output
-                  className={
-                    isError
-                      ? 'block text-sm text-destructive'
-                      : 'block text-sm text-muted-foreground'
-                  }
-                >
-                  {statusLabel}
-                </output>
-                {lastCheckedLabel != null && (
-                  <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+            {mobile
+              ? updateStatus.status === 'available' && (
+                  <output className="block text-sm text-muted-foreground">{statusLabel}</output>
+                )
+              : !selfUpdateDisabled && (
+                  <>
+                    {/* Persistent status — `<output>` is an implicit polite live
+                        region (role="status"), so a boot check completing (or
+                        failing) while Settings is open is announced, not silent. */}
+                    <output
+                      className={
+                        isError
+                          ? 'block text-sm text-destructive'
+                          : 'block text-sm text-muted-foreground'
+                      }
+                    >
+                      {statusLabel}
+                    </output>
+                    {lastCheckedLabel != null && (
+                      <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+                    )}
+                  </>
                 )}
-              </>
-            )}
           </div>
         </CardContent>
       </Card>

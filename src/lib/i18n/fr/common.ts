@@ -666,6 +666,8 @@ export const common: Record<string, string> = {
   'help.updateMobileHint':
     'Agaric ne se met pas à jour tout seul sur Android. Une fois par jour, il recherche une version plus récente et vous prévient\u00A0; installez l’APK le plus récent depuis la page des versions GitHub d’Agaric.',
   'help.updateOpenReleasesButton': 'Ouvrir la page des versions',
+  'help.updatePackageManagedHint':
+    'Agaric est mis à jour par la boutique d’applications ou le gestionnaire de paquets qui a servi à l’installer.',
   'spaceSwitcher.shortcutHint': 'Astuce\u00A0: Alt+1–9 pour changer d’espace',
   'spaceSwitcher.createAnotherHint': 'Créer un autre espace…',
   'findInPage.toolbarLabel': 'Rechercher dans la page',

@@ -414,9 +414,9 @@ macro_rules! agaric_commands {
             // cursor-paginated page of blocks. Structural-only (no full-text
             // / grouping / aggregation yet).
             $crate::commands::advanced_query::run_advanced_query,
-            // Flathub no-self-update requirement (#2974) — lets the
-            // frontend boot-time update check skip itself under Flatpak.
-            $crate::commands::is_flatpak,
+            // Whether a package manager or store installed this copy, so the
+            // frontend's update check stands down (#2974).
+            $crate::commands::self_update_disabled,
         ]
     };
 }
@@ -692,25 +692,46 @@ fn enable_mock_capture_devices_under_e2e_sandbox(app: &tauri::App) {
     }
 }
 
-/// Detect whether this process is running inside a Flatpak sandbox.
+/// Whether the bundled updater stays off because a package manager or store
+/// installed this copy.
 ///
-/// Flatpak's runtime bind-mounts `/.flatpak-info` (an INI file
-/// describing the sandboxed app) into every sandboxed process's mount
-/// namespace; its mere existence is the cheap, stable "am I sandboxed?"
-/// signal (no need to parse the file or round-trip through the
-/// `org.freedesktop.portal.Flatpak` D-Bus service for a yes/no check).
+/// Such a copy is updated by that tool, and the bundled updater would install a
+/// GitHub build over files the tool owns: Tauri's updater picks `dpkg`, `rpm` or
+/// the AppImage installer from the bundle type compiled into the binary. The
+/// `tauri_plugin_updater` registration guard in [`run`] and the
+/// `self_update_disabled` command (`src-tauri/src/commands/mod.rs`) both call
+/// this, so the two cannot drift.
 ///
-/// Flathub requires apps NOT to self-update — updates must flow through
-/// Flathub's own repo/CI/repo-update mechanism, since a bundled
-/// self-updater bypasses Flatpak's sandboxing/permission review and
-/// would try to replace files under the read-only `/app` tree. This
-/// helper backs two call sites that both need to honor that rule: the
-/// `tauri_plugin_updater` registration guard in [`run`] (skips wiring
-/// the plugin up at all under Flatpak) and the `is_flatpak` Tauri
-/// command (`src-tauri/src/commands/mod.rs`) the frontend boot-time
-/// update check consults before firing.
-fn running_under_flatpak() -> bool {
-    std::path::Path::new("/.flatpak-info").exists()
+/// - Flatpak bind-mounts `/.flatpak-info` into every sandboxed process.
+/// - snapd sets `SNAP` for every snap.
+/// - Distribution packages that repackage the release `.deb` (the AUR's
+///   `agaric-bin`) install the marker `/usr/share/agaric/no-self-update`.
+/// - Windows installs Microsoft Store (MSIX) packages under
+///   `C:\Program Files\WindowsApps\<PackageFullName>\`.
+fn self_update_disabled() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new("/.flatpak-info").exists()
+            || std::env::var_os("SNAP").is_some()
+            || std::path::Path::new("/usr/share/agaric/no-self-update").exists()
+    }
+    #[cfg(windows)]
+    {
+        std::env::current_exe().is_ok_and(|exe| is_windows_apps_path(&exe.to_string_lossy()))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        false
+    }
+}
+
+/// Whether `path` passes through a `WindowsApps` directory, the root Windows
+/// installs MSIX packages under. It splits on both separators so the tests run
+/// on every host.
+#[cfg(any(windows, test))]
+fn is_windows_apps_path(path: &str) -> bool {
+    path.split(['\\', '/'])
+        .any(|part| part.eq_ignore_ascii_case("WindowsApps"))
 }
 
 // ---------------------------------------------------------------------------
@@ -3054,21 +3075,12 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
     // newer sideloaded APK, not through Tauri's updater, so
     // gate registration behind `not(mobile)`.
     //
-    // Flathub-packaged builds get an ADDITIONAL runtime guard on top of
-    // `not(mobile)`: Flathub requires apps NOT to self-update (updates
-    // must flow through Flathub's own repo/CI review, not a bundled
-    // updater phoning home to GitHub Releases and rewriting files under
-    // the read-only `/app` tree). The Flatpak manifest
-    // (`packaging/flathub/io.github.jfolcini.Agaric.yml`) repackages the
-    // same compiled `.deb` used by the AppImage/deb build rather than
-    // recompiling in-sandbox, so this can't be a build-time `cfg` flag —
-    // it has to be a runtime check. `running_under_flatpak()` detects the
-    // sandbox via `/.flatpak-info` (present in every Flatpak-sandboxed
-    // process); when it's set, skip registering the plugin entirely so
-    // there is no self-updater surface at all inside the sandbox.
+    // A copy a package manager or store installed registers no updater at
+    // all (`self_update_disabled`). The check runs at runtime because the
+    // AUR package ships the release `.deb`'s binary unchanged.
     #[cfg(not(mobile))]
     {
-        if !running_under_flatpak() {
+        if !self_update_disabled() {
             tauri_builder = tauri_builder.plugin(tauri_plugin_updater::Builder::new().build());
         }
     }
@@ -5260,5 +5272,42 @@ mod capture_permission_tests {
                 "{kind:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod self_update_tests {
+    use super::is_windows_apps_path;
+
+    #[test]
+    fn a_microsoft_store_install_path_disables_self_update() {
+        assert!(is_windows_apps_path(
+            r"C:\Program Files\WindowsApps\Agaric_1.0.0.0_x64__8wekyb3d8bbwe\agaric.exe"
+        ));
+    }
+
+    #[test]
+    fn the_windows_apps_component_matches_in_any_case() {
+        assert!(is_windows_apps_path(
+            r"c:\program files\WINDOWSAPPS\Agaric_1.0.0.0_x64__8wekyb3d8bbwe\agaric.exe"
+        ));
+    }
+
+    #[test]
+    fn an_installer_path_keeps_self_update() {
+        assert!(!is_windows_apps_path(r"C:\Program Files\Agaric\agaric.exe"));
+        assert!(!is_windows_apps_path(
+            r"C:\Users\me\AppData\Local\Agaric\agaric.exe"
+        ));
+    }
+
+    #[test]
+    fn windows_apps_inside_a_longer_name_keeps_self_update() {
+        assert!(!is_windows_apps_path(
+            r"C:\Users\me\MyWindowsApps\Agaric\agaric.exe"
+        ));
+        assert!(!is_windows_apps_path(
+            r"D:\WindowsAppsBackup\Agaric\agaric.exe"
+        ));
     }
 }

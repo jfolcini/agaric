@@ -14,8 +14,9 @@ import {
 
 /**
  * Settings › Help (#5741): the debug-mode switch, the welcome-tour reset and
- * the manual update check, each driven from the About tab and judged by what
- * the user then sees. All three are frontend state the mock can show failing.
+ * the manual update check (absent on a copy a package manager installed), each
+ * driven from the About tab and judged by what the user then sees. All are
+ * frontend state the mock can show failing.
  */
 
 async function openAbout(page: Page): Promise<void> {
@@ -122,6 +123,28 @@ test.describe('Settings › Help @settings', () => {
     await expect
       .poll(() => page.evaluate(() => window.localStorage.getItem('agaric-onboarding-done')))
       .toBe('true')
+  })
+
+  test('a copy a package manager installed says where updates come from, and offers no check', async ({
+    page,
+  }) => {
+    // The backend answers from the install itself (`self_update_disabled` in
+    // src-tauri/src/lib.rs); the spec answers as a Snap or Store copy would.
+    await page.evaluate(() => {
+      const internals = (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> })
+        .__TAURI_INTERNALS__
+      const original = internals['invoke'] as (c: string, a?: unknown, o?: unknown) => unknown
+      internals['invoke'] = (cmd: string, args?: unknown, opts?: unknown) =>
+        cmd === 'self_update_disabled' ? Promise.resolve(true) : original(cmd, args, opts)
+    })
+    await openAbout(page)
+    const panel = page.getByTestId('settings-panel-help')
+
+    await expect(
+      panel.getByText('Updates come from the store or package manager you installed Agaric from.'),
+    ).toBeVisible()
+    await expect(panel.getByRole('button', { name: 'Check for updates now' })).toHaveCount(0)
+    await expect(panel.getByRole('status')).toHaveCount(0)
   })
 
   test('Check for updates now reports up to date, then an available release', async ({ page }) => {

@@ -16,11 +16,12 @@
  *  - Periodic re-check: visibilitychange to visible fires another check
  *  - Periodic re-check: unmount clears the interval + removes listeners
  *  - Periodic re-check: mobile still performs zero checks
- *  - Flatpak gate: registers nothing (no check, no interval, no listeners)
- *    when `commands.isFlatpak()` resolves `{ data: true }`
- *  - Flatpak gate: an `isFlatpak()` rejection is swallowed and treated as
- *    non-Flatpak — the effect proceeds normally
- *  - Mobile bails out before the Flatpak IPC gate is ever reached
+ *  - Self-update gate: registers nothing (no check, no interval, no listeners)
+ *    when `commands.selfUpdateDisabled()` resolves `{ data: true }`
+ *  - Self-update gate: a `selfUpdateDisabled()` rejection is swallowed and
+ *    treated as self-update allowed — the effect proceeds normally
+ *  - Mobile bails out before the self-update IPC gate is ever reached
+ *  - `useSelfUpdateDisabled` reports the command's answer
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -29,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   checkForUpdatesNow,
   LAST_UPDATE_CHECK_STORAGE_KEY,
+  useSelfUpdateDisabled,
   useUpdateCheck,
   useUpdateStatus,
 } from '@/hooks/useUpdateCheck'
@@ -55,18 +57,17 @@ vi.mock('@tauri-apps/api/app', () => ({
   getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }))
 
-const { mockIsFlatpak, mockFlushAllDrafts, mockCheckLatestRelease, mockOpenUrl } = vi.hoisted(
-  () => ({
-    mockIsFlatpak: vi.fn(),
+const { mockSelfUpdateDisabled, mockFlushAllDrafts, mockCheckLatestRelease, mockOpenUrl } =
+  vi.hoisted(() => ({
+    mockSelfUpdateDisabled: vi.fn(),
     mockFlushAllDrafts: vi.fn(),
     mockCheckLatestRelease: vi.fn(),
     mockOpenUrl: vi.fn(),
-  }),
-)
+  }))
 
 vi.mock('@/lib/bindings', () => ({
   commands: {
-    isFlatpak: (...args: unknown[]) => mockIsFlatpak(...args),
+    selfUpdateDisabled: (...args: unknown[]) => mockSelfUpdateDisabled(...args),
     flushAllDrafts: (...args: unknown[]) => mockFlushAllDrafts(...args),
     checkLatestRelease: (...args: unknown[]) => mockCheckLatestRelease(...args),
   },
@@ -142,15 +143,15 @@ function setUserAgent(ua: string) {
 }
 
 /**
- * Flush the two chained `await`s inside the `isRunningUnderFlatpak()` gate
- * (an IPC round-trip: `commands.isFlatpak()` then the `cancelled` check) via
+ * Flush the two chained `await`s inside the `isSelfUpdateDisabled()` gate
+ * (an IPC round-trip: `commands.selfUpdateDisabled()` then the `cancelled` check) via
  * a real macrotask boundary. More reliable than counting `await
  * Promise.resolve()` calls by hand, since the microtask queue is always
  * fully drained before a `setTimeout` callback runs. Only usable with real
  * timers — the fake-timer tests use `vi.waitFor`/`vi.advanceTimersByTimeAsync`
  * instead.
  */
-async function flushFlatpakGate(): Promise<void> {
+async function flushSelfUpdateGate(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
@@ -164,8 +165,8 @@ beforeEach(() => {
   mockRelaunch.mockReset()
   mockGetVersion.mockReset()
   mockGetVersion.mockResolvedValue('0.9.1')
-  mockIsFlatpak.mockReset()
-  mockIsFlatpak.mockResolvedValue({ status: 'ok', data: false })
+  mockSelfUpdateDisabled.mockReset()
+  mockSelfUpdateDisabled.mockResolvedValue({ status: 'ok', data: false })
   mockCheckLatestRelease.mockReset()
   mockOpenUrl.mockReset()
   vi.mocked(logger.warn).mockReset()
@@ -188,16 +189,16 @@ describe('useUpdateCheck — boot effect', () => {
     await Promise.resolve()
     expect(mockCheck).not.toHaveBeenCalled()
     expect(mockCheckLatestRelease).not.toHaveBeenCalled()
-    // The mobile early-return happens before the Flatpak IPC gate, so the
+    // The mobile early-return happens before the self-update IPC gate, so the
     // backend should never even be asked.
-    expect(mockIsFlatpak).not.toHaveBeenCalled()
+    expect(mockSelfUpdateDisabled).not.toHaveBeenCalled()
   })
 
   it('honours the 24-h debounce when LS has a recent timestamp', async () => {
     const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1 h ago
     localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, recent)
     renderHook(() => useUpdateCheck())
-    await flushFlatpakGate()
+    await flushSelfUpdateGate()
     expect(mockCheck).not.toHaveBeenCalled()
   })
 
@@ -369,7 +370,7 @@ describe('useUpdateCheck — periodic re-check', () => {
 
     renderHook(() => useUpdateCheck())
 
-    // The initial check only fires once the Flatpak IPC gate resolves;
+    // The initial check only fires once the self-update IPC gate resolves;
     // `vi.waitFor` polls the assertion while also advancing the fake
     // clock, so it settles regardless of the exact microtask depth.
     await act(async () => {
@@ -481,23 +482,24 @@ describe('useUpdateCheck — periodic re-check', () => {
 
     expect(mockCheck).not.toHaveBeenCalled()
     expect(mockCheckLatestRelease).not.toHaveBeenCalled()
-    // Mobile bails out before the Flatpak IPC gate is ever reached.
-    expect(mockIsFlatpak).not.toHaveBeenCalled()
+    // Mobile bails out before the self-update IPC gate is ever reached.
+    expect(mockSelfUpdateDisabled).not.toHaveBeenCalled()
   })
 
-  it('registers nothing when the Flatpak IPC gate reports true', async () => {
-    mockIsFlatpak.mockResolvedValueOnce({ status: 'ok', data: true })
+  it('registers nothing when the self-update IPC gate reports true', async () => {
+    mockSelfUpdateDisabled.mockResolvedValueOnce({ status: 'ok', data: true })
     mockCheck.mockResolvedValue(null)
     const addDocumentListenerSpy = vi.spyOn(document, 'addEventListener')
     const addWindowListenerSpy = vi.spyOn(window, 'addEventListener')
 
     renderHook(() => useUpdateCheck())
 
-    // Let the gate resolve; since it reports Flatpak, the effect bails
-    // out before firing the initial check or registering anything.
+    // Let the gate resolve; since a package manager owns updates, the effect
+    // bails out before firing the initial check or registering anything.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
+    expect(mockSelfUpdateDisabled).toHaveBeenCalledOnce()
     expect(mockCheck).not.toHaveBeenCalled()
 
     // Advancing a full day fires nothing — no interval was registered.
@@ -525,12 +527,11 @@ describe('useUpdateCheck — periodic re-check', () => {
     addWindowListenerSpy.mockRestore()
   })
 
-  it('proceeds normally (initial check + interval registered) when the Flatpak IPC gate rejects', async () => {
-    // Belt-and-suspenders default: an IPC failure must NOT silently
-    // disable auto-update for the overwhelming majority of (non-Flatpak)
-    // desktop users — `isRunningUnderFlatpak` swallows the error and
-    // treats it as "not Flatpak".
-    mockIsFlatpak.mockRejectedValueOnce(new Error('IPC unavailable'))
+  it('proceeds normally (initial check + interval registered) when the self-update IPC gate rejects', async () => {
+    // An IPC failure must not turn updates off for an install that has no
+    // other source of them: `isSelfUpdateDisabled` swallows the error and
+    // treats it as self-update allowed.
+    mockSelfUpdateDisabled.mockRejectedValueOnce(new Error('IPC unavailable'))
     mockCheck.mockResolvedValue(null)
 
     renderHook(() => useUpdateCheck())
@@ -543,6 +544,28 @@ describe('useUpdateCheck — periodic re-check', () => {
       await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
     })
     expect(mockCheck).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('useSelfUpdateDisabled', () => {
+  it('reports true once the backend says a package manager owns updates', async () => {
+    mockSelfUpdateDisabled.mockResolvedValueOnce({ status: 'ok', data: true })
+    const { result } = renderHook(() => useSelfUpdateDisabled())
+
+    await waitFor(() => expect(result.current).toBe(true))
+  })
+
+  it('reports false when the backend says self-update is allowed', async () => {
+    const { result } = renderHook(() => useSelfUpdateDisabled())
+
+    await waitFor(() => expect(result.current).toBe(false))
+  })
+
+  it('reports false when the command rejects', async () => {
+    mockSelfUpdateDisabled.mockRejectedValueOnce(new Error('IPC unavailable'))
+    const { result } = renderHook(() => useSelfUpdateDisabled())
+
+    await waitFor(() => expect(result.current).toBe(false))
   })
 })
 
@@ -705,9 +728,9 @@ describe('Android release check (#6546)', () => {
       availableVersion: '0.10.0',
     })
     expect(localStorage.getItem(LAST_UPDATE_CHECK_STORAGE_KEY)).not.toBeNull()
-    // The desktop updater and its Flatpak gate are never touched.
+    // The desktop updater and its self-update gate are never touched.
     expect(mockCheck).not.toHaveBeenCalled()
-    expect(mockIsFlatpak).not.toHaveBeenCalled()
+    expect(mockSelfUpdateDisabled).not.toHaveBeenCalled()
   })
 
   it('records up-to-date and shows nothing when no newer release exists', async () => {

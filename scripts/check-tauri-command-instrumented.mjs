@@ -87,8 +87,8 @@ const ALLOWLIST = new Map([
     'reads a process-global bool the JNI callback writes; no state, no I/O, nothing fallible (#4035)',
   ],
   [
-    'mod.rs:is_flatpak',
-    'trivial /.flatpak-info exists() check; no fallible work worth a span (#2974)',
+    'mod.rs:self_update_disabled',
+    'a few exists()/env checks; nothing fallible worth a span (#2974)',
   ],
   ['speech.rs:get_speech_status', 'returns a cfg-picked constant (#5745)'],
 

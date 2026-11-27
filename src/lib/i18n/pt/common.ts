@@ -657,6 +657,8 @@ export const common: Record<string, string> = {
   'help.updateMobileHint':
     'O Agaric não se atualiza sozinho no Android. Uma vez por dia, ele procura uma versão mais nova e avisa você; instale o APK mais recente pela página de versões do Agaric no GitHub.',
   'help.updateOpenReleasesButton': 'Abrir página de versões',
+  'help.updatePackageManagedHint':
+    'O Agaric é atualizado pela loja de aplicativos ou pelo gerenciador de pacotes usado para instalá-lo.',
   'spaceSwitcher.shortcutHint': 'Dica: Alt+1–9 para trocar de espaço',
   'spaceSwitcher.createAnotherHint': 'Criar outro espaço…',
   'findInPage.toolbarLabel': 'Localizar na página',
