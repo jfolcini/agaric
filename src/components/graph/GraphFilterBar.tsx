@@ -206,8 +206,6 @@ export interface GraphFilterBarProps {
   edgesTotal?: number | undefined
   /** True when the backend edge cap fired and `edgesShown < edgesTotal` (#2298). */
   edgesTruncated?: boolean | undefined
-  /** The view's own controls, after the filter count. */
-  trailing?: React.ReactNode
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +550,6 @@ export function GraphFilterBar({
   edgesShown,
   edgesTotal,
   edgesTruncated,
-  trailing,
 }: GraphFilterBarProps): React.ReactElement {
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -691,36 +688,38 @@ export function GraphFilterBar({
             {t('graph.filter.clearAll')}
           </Button>
         }
+        // Only with a notice to show: FilterBar renders the slot whenever it is given.
         trailing={
-          <>
-            {showingCount && (
-              <span
-                className="text-xs text-muted-foreground"
-                aria-live="polite"
-                aria-atomic="true"
-                data-testid="graph-filter-count"
-              >
-                {t('graph.filter.showingCount', { filtered: filteredCount, total: totalCount })}
-              </span>
-            )}
+          showingCount || showEdgesTruncated ? (
+            <>
+              {showingCount && (
+                <span
+                  className="text-xs text-muted-foreground"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  data-testid="graph-filter-count"
+                >
+                  {t('graph.filter.showingCount', { filtered: filteredCount, total: totalCount })}
+                </span>
+              )}
 
-            {showEdgesTruncated && (
-              <span
-                className="text-xs text-muted-foreground italic"
-                aria-live="polite"
-                aria-atomic="true"
-                data-testid="graph-edges-truncated"
-              >
-                {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}{' '}
-                {/* #3314 finding 3 — the same edge cap that truncates the edge
+              {showEdgesTruncated && (
+                <span
+                  className="text-xs text-muted-foreground italic"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  data-testid="graph-edges-truncated"
+                >
+                  {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}{' '}
+                  {/* #3314 finding 3 — the same edge cap that truncates the edge
                     list also makes per-node backlink counts (and the "Has
                     backlinks" filter) unreliable; say so in the same notice
                     rather than letting the dimension silently misbehave. */}
-                {t('graph.filter.backlinksUnavailableTruncated')}
-              </span>
-            )}
-            {trailing}
-          </>
+                  {t('graph.filter.backlinksUnavailableTruncated')}
+                </span>
+              )}
+            </>
+          ) : undefined
         }
       />
     </fieldset>

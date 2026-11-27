@@ -384,6 +384,23 @@ describe('GraphFilterBar', () => {
     )
   })
 
+  it('leaves the actions row without a trailing group when no notice shows (#7165)', () => {
+    const filters: GraphFilter[] = [{ type: 'status', values: ['TODO'] }]
+    render(
+      <GraphFilterBar
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        totalCount={10}
+        filteredCount={10}
+      />,
+    )
+
+    // Add filter and Clear all only: no empty group pushed to the row's end.
+    const actions = document.querySelector('[data-slot="filter-bar-actions"]') as HTMLElement
+    expect(actions.children).toHaveLength(2)
+  })
+
   it('hides filter count when counts are equal (no filters active)', () => {
     render(
       <GraphFilterBar
