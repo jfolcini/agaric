@@ -16,7 +16,7 @@
  *  12. A11y audit passes (axe)
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -1516,6 +1516,59 @@ describe('DuePanel', () => {
       } finally {
         localStorage.removeItem('week-start-preference')
       }
+    })
+
+    it('Group: Page keeps the keyboard cursor and Enter on the same row', async () => {
+      mockedQueryByProperty.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'B1',
+            content: 'Beta first',
+            page_id: 'P_B',
+            due_date: '2026-11-20',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'A1',
+            content: 'Alpha first',
+            page_id: 'P_A',
+            due_date: '2026-11-21',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'B2',
+            content: 'Beta second',
+            page_id: 'P_B',
+            due_date: '2026-11-22',
+            todo_state: 'TODO',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'P_A', title: 'Alpha page', block_type: 'page', deleted: false },
+        { id: 'P_B', title: 'Beta page', block_type: 'page', deleted: false },
+      ])
+      const onNavigateToPage = vi.fn()
+      const user = userEvent.setup()
+      render(<DuePanel date={TODAY} onNavigateToPage={onNavigateToPage} />)
+      await findRows(3)
+      await user.click(screen.getByTestId('due-panel-group'))
+      await user.click(await screen.findByRole('button', { name: t('agenda.groupPage') }))
+      await waitFor(() => {
+        expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
+      })
+
+      // The second row on screen is Beta second, under Beta page.
+      const list = document.querySelector('.due-panel-content') as HTMLElement
+      fireEvent.keyDown(list, { key: 'ArrowDown' })
+      fireEvent.keyDown(list, { key: 'Enter' })
+
+      expect(onNavigateToPage).toHaveBeenCalledWith('P_B', 'Beta page', 'B2')
+      localStorage.removeItem('agaric:duePanel:groupBy')
     })
 
     it('Group: Page puts each page’s tasks under its heading, and the choice is kept', async () => {

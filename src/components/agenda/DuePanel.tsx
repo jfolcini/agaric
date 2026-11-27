@@ -170,9 +170,15 @@ export function DuePanel({
     [showsToday, uniqueProjected],
   )
 
+  // In the order the rows are drawn, so the keyboard cursor and Enter name the same row.
   const flatItems = useMemo(
-    () => [...sections.flatMap((s) => s.rows), ...listedProjected.map((e) => e.block)],
-    [sections, listedProjected],
+    () => [
+      ...sections.flatMap((s) =>
+        groupBy === 'page' ? groupByPage(s.rows).flatMap((g) => g.rows) : s.rows,
+      ),
+      ...listedProjected.map((e) => e.block),
+    ],
+    [sections, listedProjected, groupBy],
   )
 
   const {
