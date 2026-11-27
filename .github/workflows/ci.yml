@@ -385,6 +385,20 @@ jobs:
       - name: Apply platform-baseline overrides (minSdk 30, jvmTarget 17)
         run: bash scripts/patch-android-build.sh
 
+      - name: Restore Gradle's downloaded modules
+        # Maven Central's 429s outlast the retries in GRADLE_OPTS (run
+        # 46034458617); from a warm cache Gradle downloads nothing, and
+        # dependency verification still checks every cached artifact.
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/modules-2.lock
+            !~/.gradle/caches/modules-2/gc.properties
+          key: gradle-modules-${{ hashFiles('src-tauri/gen/android/gradle/verification-metadata.xml') }}
+          restore-keys: gradle-modules-
+
       - name: Build Android APK (x86_64 debug)
         id: android-debug
         run: |
@@ -392,6 +406,16 @@ jobs:
           npm run tauri -- android build --target x86_64 --debug 2>&1 | tee "$RUNNER_TEMP/android-debug.log"
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ steps.pins.outputs.android_ndk }}
+
+      - name: Save Gradle's downloaded modules
+        if: github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            !~/.gradle/caches/modules-2/modules-2.lock
+            !~/.gradle/caches/modules-2/gc.properties
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Regenerate Gradle verification metadata (verification failed)
         # A Tauri, plugin or Android toolchain bump changes the Gradle
