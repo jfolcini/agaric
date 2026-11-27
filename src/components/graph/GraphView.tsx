@@ -552,7 +552,7 @@ export function GraphView(): React.ReactElement {
       {/* A plain bar above the canvas, so it covers none of the graph (#7040).
           Wrapped in FeatureErrorBoundary so a crash in the filter bar doesn't
           blank the entire GraphView (UX Tier 3). */}
-      <div className="flex flex-wrap items-center gap-1.5" data-testid="graph-tag-filter">
+      <div data-testid="graph-tag-filter">
         <FeatureErrorBoundary name="GraphFilterBar">
           <GraphFilterBar
             filters={filters}
@@ -569,18 +569,20 @@ export function GraphView(): React.ReactElement {
             edgesShown={filteredEdges.length}
             edgesTotal={edgesTotal}
             edgesTruncated={edgesTruncated}
+            trailing={
+              // #1429 — per-page local-graph toggle + hop-depth control.
+              <LocalGraphControl
+                active={localMode}
+                onToggle={setLocalMode}
+                hops={localHops}
+                onHopsChange={setLocalHops}
+                seedLabel={localSeedLabel}
+                originLabel={walkedFromSeed ? seedLabel : null}
+                onReturnToOrigin={() => setSelectedPageId(null)}
+              />
+            }
           />
         </FeatureErrorBoundary>
-        {/* #1429 — per-page local-graph toggle + hop-depth control. */}
-        <LocalGraphControl
-          active={localMode}
-          onToggle={setLocalMode}
-          hops={localHops}
-          onHopsChange={setLocalHops}
-          seedLabel={localSeedLabel}
-          originLabel={walkedFromSeed ? seedLabel : null}
-          onReturnToOrigin={() => setSelectedPageId(null)}
-        />
       </div>
       <div
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
