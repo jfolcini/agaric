@@ -2,6 +2,7 @@
 
 import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
 import { DIALOG_BODY_VIEWPORT_CLASS, OVERLAY_SCRIM_CLASS } from '@/components/ui/dialog-shared'
@@ -60,6 +61,36 @@ const SheetOverlay = ({
 
 SheetOverlay.displayName = 'SheetOverlay'
 
+// A count, not a flag: one sheet stacked on another, or one opening while
+// another plays its exit, must not clear the other's mark.
+let openBottomSheets = 0
+const bottomSheetListeners = new Set<() => void>()
+
+function subscribeBottomSheets(listener: () => void): () => void {
+  bottomSheetListeners.add(listener)
+  return () => bottomSheetListeners.delete(listener)
+}
+
+function changeOpenBottomSheets(delta: number): void {
+  openBottomSheets += delta
+  for (const listener of bottomSheetListeners) listener()
+}
+
+/** Whether a bottom sheet is on screen, open or playing its exit. */
+function useBottomSheetOpen(): boolean {
+  return useSyncExternalStore(subscribeBottomSheets, () => openBottomSheets > 0)
+}
+
+// Rendered inside the Content, which Radix mounts only while the sheet is open
+// or exiting, so its lifetime is the sheet's time on screen.
+function BottomSheetMark(): null {
+  useEffect(() => {
+    changeOpenBottomSheets(1)
+    return () => changeOpenBottomSheets(-1)
+  }, [])
+  return null
+}
+
 /**
  * No grab handle on a bottom sheet: the scrim, Escape, Back and the close
  * button close it, and a bar that only some gestures used was chrome the
@@ -100,6 +131,7 @@ const SheetContent = ({
       )}
       {...props}
     >
+      {side === 'bottom' && <BottomSheetMark />}
       {children}
       {showCloseButton && (
         <SheetPrimitive.Close
@@ -221,4 +253,5 @@ export {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
+  useBottomSheetOpen,
 }
