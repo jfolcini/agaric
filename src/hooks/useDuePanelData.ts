@@ -86,9 +86,9 @@ export function collectResolveIds(blocks: BlockRow[]): string[] {
 
 /**
  * The day's agenda rows: every source (due, scheduled, a date property), open
- * or without a state. The DONE exclusion (#5074, `DonePanel` owns DONE) is in
- * SQL, not a client-side drop after the 50-row page cap, which would strand
- * every page behind one that is all DONE (#738).
+ * or without a state. DONE (#5074, `DonePanel` owns it) and CANCELLED leave in
+ * SQL, not by a client-side drop after the 50-row page cap, which would strand
+ * every page behind one that is all closed (#738).
  *
  * #2248 — `listBlocks` requires an active space; with none, resolve to an
  * empty page rather than throw in `requireActiveScope`.
@@ -116,7 +116,7 @@ function listBlocksForAgenda(
         date,
         dateRange: null,
         source: null,
-        excludeTodoStates: ['DONE'],
+        excludeTodoStates: ['DONE', 'CANCELLED'],
         cursor: cursor ?? null,
         limit: listBlocksLimit(limit),
       },

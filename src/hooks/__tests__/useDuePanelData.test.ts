@@ -456,7 +456,7 @@ describe('useDuePanelData', () => {
   // handler that HONOURS `excludeTodoStates` — the same knob the backend
   // reads. A canned response would answer the same rows however the hook
   // asked, and would still be green with the filter removed entirely.
-  it('drops DONE blocks from the fetched list and the count (#5074)', async () => {
+  it('drops DONE and CANCELLED blocks from the fetched list (#5074)', async () => {
     seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'still open', due_date: '2025-06-15' }),
       makeBlock({
@@ -468,7 +468,7 @@ describe('useDuePanelData', () => {
       makeBlock({
         id: 'B3',
         todo_state: 'CANCELLED',
-        content: 'not completed, stays',
+        content: 'cancelled, closed too',
         due_date: '2025-06-15',
       }),
     ])
@@ -476,9 +476,9 @@ describe('useDuePanelData', () => {
     const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15' }))
 
     await waitFor(() => {
-      expect(result.current.blocks).toHaveLength(2)
+      expect(result.current.blocks).toHaveLength(1)
     })
-    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1', 'B3'])
+    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1'])
   })
 
   it('re-fetches blocks when invalidationKey changes (B-50/F-39)', async () => {

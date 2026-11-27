@@ -210,13 +210,9 @@ describe('DuePanel', () => {
     expect(screen.queryByRole('heading')).not.toBeInTheDocument()
   })
 
-  // #738 sub-1 — a CANCELLED block was counted in the header but matched
-  // no group, so it was hidden from the list: the header said "3" while
-  // the list showed 2. The CANCELLED group is now rendered so the header
-  // count and the visible rows agree. #5074 removes DONE from the other
-  // end — filtered out of the fetched blocks, so it leaves the header
-  // count too and the two stay in agreement.
-  it('lists a CANCELLED block and leaves the DONE one to DonePanel (#738)', async () => {
+  // The panel lists open tasks (#7155 D4): DONE is DonePanel's (#5074) and
+  // CANCELLED is closed, both left out in SQL.
+  it('lists the open block and leaves the DONE and CANCELLED ones out', async () => {
     seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'todo block', due_date: DATE }),
       makeBlock({ id: 'B2', todo_state: 'DONE', content: 'done block', due_date: DATE }),
@@ -225,10 +221,9 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    // The TODO and the CANCELLED block are listed; the DONE one is
-    // DonePanel's (#5074).
-    await findRows(2)
-    expect(screen.getByText('cancelled block')).toBeInTheDocument()
+    await findRows(1)
+    expect(screen.getByText('todo block')).toBeInTheDocument()
+    expect(screen.queryByText('cancelled block')).not.toBeInTheDocument()
   })
 
   // #5074 — Agenda and Completed must never show the same block, and the
@@ -1488,6 +1483,39 @@ describe('DuePanel', () => {
       ])
       // A row's age still counts from the real today (the 25th), not the page's date.
       expect(screen.getByText(`(${t('duePanel.daysOverdue', { count: 3 })})`)).toBeInTheDocument()
+    })
+
+    it('ends This week where the week-start setting ends the week', async () => {
+      const sunday = makeBlock({
+        id: 'SUN',
+        content: 'Sunday task',
+        todo_state: 'TODO',
+        due_date: '2026-11-29',
+      })
+      mockedQueryByProperty.mockResolvedValue({
+        items: [sunday],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      const tabNames = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
+
+      // Monday-start weeks (the default) end on Sunday the 29th.
+      const { unmount } = render(<DuePanel date={TODAY} />)
+      await findRows(1)
+      expect(tabNames()).toContain('This week 1')
+      unmount()
+
+      // Sunday-start weeks end on Saturday the 28th, so the 29th is later.
+      localStorage.setItem('week-start-preference', '0')
+      try {
+        render(<DuePanel date={TODAY} />)
+        await findRows(1)
+        expect(tabNames()).toContain('Later 1')
+      } finally {
+        localStorage.removeItem('week-start-preference')
+      }
     })
 
     it('Group: Page puts each page’s tasks under its heading, and the choice is kept', async () => {
