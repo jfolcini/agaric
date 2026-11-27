@@ -31,11 +31,13 @@ One batched follow-up for the non-blocking notes left on the merged round 3 PRs,
 
 **Flakes**
 
-- None. Today's runs (291) hold no job that failed and then passed on a rerun. Three failures, none a flake: `advanced-query-group.spec.ts` on the bridge on main at `ddefca5`, already root-caused and fixed by `a3bdd95`; eight Due-panel bridge specs on `claude/7155-journal-day` at `30589269`, that branch's own bug, fixed by its next commits (`0cf9690e`, `0cf1e4ce`); e2e-tauri on #7171 (`settings-desktop-integration` "Delete page" and `sync-two-device` "an overdue task … leaves Overdue (#5256)"), which fail every time: #7162 moved the day's Delete page into the Page actions menu and Overdue under a tab, and those two e2e-tauri specs were not updated. Not fixed here; reported.
+- None. Today's runs (291) hold no job that failed and then passed on a rerun. Three failures, none a flake: `advanced-query-group.spec.ts` on the bridge on main at `ddefca5`, already root-caused and fixed by `a3bdd95`; eight Due-panel bridge specs on `claude/7155-journal-day` at `30589269`, that branch's own bug, fixed by its next commits (`0cf9690e`, `0cf1e4ce`); e2e-tauri on #7171, which fails every time the lane runs: #7162 moved the journal day's Delete page into its Page actions menu and Overdue under a Due-panel tab, and two smoke specs still used the old UI.
+- Fixed here at the orchestrator's request: `settings-desktop-integration.e2e.ts` opens the day's Page actions and picks Delete page from the menu; `sync-two-device.e2e.ts` "an overdue task the peer marks DONE leaves Overdue (#5256)" selects the Overdue tab (`due-panel-tab-overdue`) and reads the Due panel while it is selected. Each asserts what it did.
 
-**#7173**
+**Item 7, after #7173 (merged as `58e23a4`, merged into this branch)**
 
-- Not merged at the time of writing, so item 7 was skipped.
+- `button.test.tsx` covers the `link` variant beside `ghost` in the compound variant that keeps a frameless icon button 44 px on touch; red for the three `link` sizes with `link` dropped from the variant. `items.test.ts` says its 44 px comes from the toolbar's buttons being ghost.
+- #7173 bot notes: `control-heights.spec.ts`'s probe takes any CSS colour (`resolvedColor`) and the off-track grey uses it instead of repeating it; `switch.test.tsx`'s header loses one of its two blank lines.
 
 **Verification**
 
