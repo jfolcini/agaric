@@ -101,6 +101,7 @@ export const history: Record<string, string> = {
   'trash.purgeSelectedButton': 'Ausgewählte endgültig löschen',
   'trash.emptyTrashButton': 'Papierkorb leeren',
   'trash.restoreAllHeaderButton': 'Alle wiederherstellen',
+  'trash.moreMenu': 'Weitere Optionen für den Papierkorb',
   'trash.emptyTrashTitle': 'Papierkorb leeren?',
   'trash.emptyTrashDescription_one':
     '{{count}} Element endgültig löschen? Das kann nicht rückgängig gemacht werden.',

@@ -174,6 +174,7 @@ export const history: Record<string, string> = {
   // put every item back where it was.
   'trash.emptyTrashButton': 'Empty trash',
   'trash.restoreAllHeaderButton': 'Restore all',
+  'trash.moreMenu': 'More Trash options',
 
   // Translators: "Empty trash" confirmation dialog: title and body. {{count}} = items. The
   // "Paginated" body is used when only part of the trash is listed yet ("loaded" = listed on screen

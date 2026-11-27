@@ -149,6 +149,8 @@ test.describe('the view shell at 1440 px @pages @journal @settings @graph @searc
     await expect(action).toBeVisible()
     const button = await box(action, 'Restore all')
     expect(Math.abs(h1.y + h1.height / 2 - (button.y + button.height / 2))).toBeLessThanOrEqual(1)
+    await expect(row.getByTestId('trash-empty-trash-btn')).toBeVisible()
+    await expect(page.getByTestId('trash-more')).toHaveCount(0)
   })
 })
 
@@ -191,4 +193,37 @@ test.describe('the view shell on a phone @mobile @pages @settings @graph @search
       expect(room, 'room above the content').toBeLessThanOrEqual(0.5)
     })
   }
+
+  // The hidden title would leave Restore all and Empty trash alone on a row of
+  // their own, so a phone keeps them in a ⋮ menu at the end of the filter row.
+  test("Trash's actions sit in a ⋮ menu on the filter row", async ({ page }) => {
+    await waitForBoot(page)
+    await ipc(page, 'delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    await openView(page, 'Trash')
+    await expect(page.getByTestId('trash-item')).toHaveCount(1)
+    await expect(page.getByTestId('trash-restore-all-btn')).toHaveCount(0)
+    await expect(page.getByTestId('trash-empty-trash-btn')).toHaveCount(0)
+
+    const more = page.getByRole('button', { name: 'More Trash options', exact: true })
+    const filter = await box(page.getByTestId('trash-filter-input'), 'filter')
+    const kebab = await box(more, '⋮')
+    expect(
+      Math.abs(filter.y + filter.height / 2 - (kebab.y + kebab.height / 2)),
+    ).toBeLessThanOrEqual(1)
+    expect(kebab.x, '⋮ after the filter').toBeGreaterThanOrEqual(filter.x + filter.width)
+
+    for (const [item, title] of [
+      ['Restore all', 'Restore all items?'],
+      ['Empty trash', 'Empty trash?'],
+    ] as const) {
+      await more.click()
+      await page.getByTestId('trash-more-menu').getByRole('button', { name: item }).click()
+      // A phone shows the confirm dialog as a sheet.
+      const dialog = page.getByRole('dialog', { name: title })
+      await expect(dialog).toBeVisible()
+      await dialog.getByRole('button', { name: 'No', exact: true }).click()
+      await expect(dialog).toHaveCount(0)
+    }
+    await expect(page.getByTestId('trash-item')).toHaveCount(1)
+  })
 })

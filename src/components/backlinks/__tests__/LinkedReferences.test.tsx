@@ -109,10 +109,14 @@ vi.mock('@/components/BacklinkFilterBuilder', () => ({
     // pre-filter total twice.
     totalCount: number
     filteredCount: number
+    filters: unknown[]
+    afterAddFilter?: React.ReactNode
   }) => (
     <div data-testid="backlink-filter-builder">
       Advanced Filters
       <span data-testid="mock-filter-counts">{`${props.filteredCount}/${props.totalCount}`}</span>
+      <span data-testid="mock-filter-length">{props.filters.length}</span>
+      <span data-testid="mock-after-add-filter">{props.afterAddFilter}</span>
       <button
         type="button"
         data-testid="mock-add-filter"
@@ -1242,8 +1246,9 @@ describe('LinkedReferences', () => {
   // Filter integration tests (#543 / #544)
   // ---------------------------------------------------------------------------
 
-  // 25. SourcePageFilter renders inside the header row (not below it)
-  it('renders source page filter inside the header row', async () => {
+  // 25. SourcePageFilter sits in the filter bar after Add filter; the header
+  // line keeps only its collapse toggle (#7165 U11).
+  it('renders the source page filter in the filter bar, not the header line', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1258,21 +1263,11 @@ describe('LinkedReferences', () => {
 
     await screen.findByText('Page One (1)')
 
-    // Header button and SourcePageFilter trigger must be siblings inside the
-    // outer header row — i.e. the filter is lifted up into the header, not
-    // rendered in its own row below.
+    expect(screen.getByTestId('mock-after-add-filter')).toContainElement(
+      screen.getByTestId('source-page-filter'),
+    )
     const headerButton = container.querySelector('.linked-references-header')
-    expect(headerButton).toBeInTheDocument()
-    const headerRow = headerButton?.parentElement
-    expect(headerRow).toBeInTheDocument()
-
-    const filterTrigger = screen.getByTestId('source-page-filter-trigger')
-    // The mocked SourcePageFilter wraps its trigger in a `data-testid=
-    // "source-page-filter"` div. That wrapper is the direct sibling we
-    // care about.
-    const filterWrapper = screen.getByTestId('source-page-filter')
-    expect(filterWrapper.parentElement).toBe(headerRow)
-    expect(headerRow).toContainElement(filterTrigger)
+    expect(headerButton?.parentElement).toBe(screen.getByTestId('linked-references'))
   })
 
   // 26. BacklinkFilterBuilder is visible whenever the panel is
@@ -1445,7 +1440,7 @@ describe('LinkedReferences', () => {
     }
     mockInvokeWith(resp)
 
-    const { rerender, container } = renderLinkedReferences({ targetId: 'PAGE_A' })
+    const { rerender } = renderLinkedReferences({ targetId: 'PAGE_A' })
 
     await screen.findByText('Page One (1)')
 
@@ -1455,9 +1450,8 @@ describe('LinkedReferences', () => {
     // Apply an advanced filter via the always-visible builder.
     await user.click(screen.getByTestId('mock-add-filter'))
 
-    await waitFor(() => {
-      expect(container.querySelector('.linked-references-filter-count')).not.toBeNull()
-    })
+    expect(screen.getByTestId('mock-filter-length')).toHaveTextContent('1')
+    expect(screen.getByTestId('source-page-filter-trigger')).toHaveTextContent('1 included')
 
     // Now rerender with a different targetId — filters should reset.
     mockedInvoke.mockClear()
@@ -1469,10 +1463,10 @@ describe('LinkedReferences', () => {
       </TooltipProvider>,
     )
 
-    // The applied-filters badge disappears once filters reset.
     await waitFor(() => {
-      expect(container.querySelector('.linked-references-filter-count')).toBeNull()
+      expect(screen.getByTestId('mock-filter-length')).toHaveTextContent('0')
     })
+    expect(screen.getByTestId('source-page-filter-trigger')).toHaveTextContent('0 included')
     // BacklinkFilterBuilder remains visible (always-on now). Awaited to let the
     // PAGE_B refetch settle (useInfiniteQuery loads asynchronously) — the
     // builder lives inside ListViewState, hidden only during the load window.
@@ -1480,28 +1474,10 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Active-filter count badge on Advanced filters trigger
+  // The header line carries no filter-count badge: the chips show the filters
   // ---------------------------------------------------------------------------
 
-  it('does not render filter count badge when no filters are active', async () => {
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockInvokeWith(resp)
-
-    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
-
-    await screen.findByText('Page One (1)')
-
-    expect(container.querySelector('.linked-references-filter-count')).toBeNull()
-  })
-
-  it('renders filter count badge with active filter count', async () => {
+  it('shows no filter count badge on the header, with filters applied too', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
@@ -1516,51 +1492,11 @@ describe('LinkedReferences', () => {
     const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
+    await user.click(screen.getByTestId('mock-add-filter'))
+    expect(screen.getByTestId('mock-filter-length')).toHaveTextContent('1')
 
-    // No badge initially
     expect(container.querySelector('.linked-references-filter-count')).toBeNull()
-
-    // Add a filter via the always-visible builder.
-    await user.click(screen.getByTestId('mock-add-filter'))
-
-    // Badge should now be visible with the count "1"
-    const badge = await waitFor(() => {
-      const el = container.querySelector('.linked-references-filter-count')
-      if (!el) throw new Error('badge not found yet')
-      return el
-    })
-    expect(badge).toHaveTextContent('1')
-  })
-
-  it('hides filter count badge after filters are cleared', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockInvokeWith(resp)
-
-    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
-
-    await screen.findByText('Page One (1)')
-
-    // Add a filter via the always-visible builder.
-    await user.click(screen.getByTestId('mock-add-filter'))
-
-    await waitFor(() => {
-      expect(container.querySelector('.linked-references-filter-count')).not.toBeNull()
-    })
-
-    // Clear filters via the mock
-    await user.click(screen.getByTestId('mock-clear-filters'))
-
-    await waitFor(() => {
-      expect(container.querySelector('.linked-references-filter-count')).toBeNull()
-    })
+    expect(screen.queryByLabelText(/filters? applied/)).toBeNull()
   })
 
   // ---------------------------------------------------------------------------
@@ -1903,48 +1839,6 @@ describe('LinkedReferences', () => {
     const headerEl = container.querySelector('.linked-references-header')
     expect(headerEl).toBeInTheDocument()
     expect(headerEl).not.toHaveClass('flex-1')
-  })
-
-  // ---------------------------------------------------------------------------
-  // Filter affordance must stay inline with header on narrow viewports
-  // ---------------------------------------------------------------------------
-
-  // Conservative preventive styling: outer row is flex-nowrap with min-w-0
-  // and the header button carries min-w-0 so the inline SourcePageFilter
-  // trigger stays beside the title even when space is tight.
-  it('outer header row and children carry flex-nowrap / min-w-0', async () => {
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockInvokeWith(resp)
-
-    const { container } = renderLinkedReferences({ targetId: 'PAGE1' })
-
-    await screen.findByText('Page One (1)')
-
-    // Outer row wrapper is the direct parent of the CollapsiblePanelHeader
-    // button. It must be flex, nowrap, and allow its children to shrink below
-    // their intrinsic size so the inline source-page filter stays beside the
-    // header.
-    const headerButton = container.querySelector('.linked-references-header')
-    expect(headerButton).toBeInTheDocument()
-    const outerRow = headerButton?.parentElement
-    expect(outerRow).toBeInTheDocument()
-    expect(outerRow).toHaveClass('flex', 'flex-nowrap', 'items-center', 'gap-1', 'min-w-0')
-
-    // The header button itself must allow flex shrinking.
-    expect(headerButton).toHaveClass('min-w-0')
-    // But still render full-width as a click target.
-    expect(headerButton).toHaveClass('w-full')
-
-    // The lifted SourcePageFilter trigger lives in the header row.
-    const sourcePageFilter = screen.getByTestId('source-page-filter')
-    expect(sourcePageFilter.parentElement).toBe(outerRow)
   })
 
   // ---------------------------------------------------------------------------

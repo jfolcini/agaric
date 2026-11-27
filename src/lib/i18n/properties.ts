@@ -720,6 +720,9 @@ export const properties: Record<string, string> = {
   // Translators: Linked references section of a page: filter icon button opening a list of the
   // pages the references come from (search box, empty text, "Clear all" button).
   'sourceFilter.filterLabel': 'Filter by source page',
+  'sourceFilter.buttonLabel': 'Source pages',
+  'sourceFilter.buttonLabelCount_one': 'Source pages · {{count}}',
+  'sourceFilter.buttonLabelCount_other': 'Source pages · {{count}}',
   'sourceFilter.searchPlaceholder': 'Search pages...',
   'sourceFilter.searchLabel': 'Search source pages',
   'sourceFilter.noPagesFound': 'No pages found',

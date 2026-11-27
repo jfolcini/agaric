@@ -101,6 +101,7 @@ export const history: Record<string, string> = {
   'trash.purgeSelectedButton': 'Eliminar selección definitivamente',
   'trash.emptyTrashButton': 'Vaciar papelera',
   'trash.restoreAllHeaderButton': 'Restaurar todo',
+  'trash.moreMenu': 'Más opciones de la papelera',
   'trash.emptyTrashTitle': '¿Vaciar la papelera?',
   'trash.emptyTrashDescription_one':
     '¿Eliminar definitivamente {{count}} elemento? No se puede deshacer.',

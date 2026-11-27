@@ -99,6 +99,7 @@ export const history: Record<string, string> = {
   'trash.purgeSelectedButton': 'Excluir selecionados permanentemente',
   'trash.emptyTrashButton': 'Esvaziar lixeira',
   'trash.restoreAllHeaderButton': 'Restaurar tudo',
+  'trash.moreMenu': 'Mais opções da lixeira',
   'trash.emptyTrashTitle': 'Esvaziar lixeira?',
   'trash.emptyTrashDescription_one':
     'Excluir permanentemente {{count}} item? Isso não pode ser desfeito.',

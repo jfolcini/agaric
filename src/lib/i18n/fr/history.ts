@@ -101,6 +101,7 @@ export const history: Record<string, string> = {
   'trash.purgeSelectedButton': 'Supprimer définitivement la sélection',
   'trash.emptyTrashButton': 'Vider la corbeille',
   'trash.restoreAllHeaderButton': 'Tout restaurer',
+  'trash.moreMenu': 'Plus d’options pour la corbeille',
   'trash.emptyTrashTitle': 'Vider la corbeille\u00A0?',
   'trash.emptyTrashDescription_one':
     'Supprimer définitivement {{count}} élément\u00A0? Cette action est irréversible.',
