@@ -29,7 +29,9 @@ test('group by a property key and by a date bucket from the picker @search', asy
   await navigateToView(page, 'Advanced query')
   const groupBy = page.getByRole('combobox', { name: 'Group by' })
   await groupBy.click()
-  await expect(page.getByRole('option')).toHaveText([
+  // Scoped to the picker: an open Select hides the page from assistive tech, but the results'
+  // live region stays exposed, so results that land after the picker opens add their options.
+  await expect(page.locator('[data-slot="select-content"]').getByRole('option')).toHaveText([
     'None',
     'Tag',
     'Page',
