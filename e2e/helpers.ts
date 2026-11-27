@@ -545,8 +545,9 @@ export function activePopover(page: Page): Locator {
 }
 
 /**
- * Open the Pages-view "Add filter" popover and return its content locator,
- * guaranteeing it is visible before the caller interacts with it.
+ * Open the Pages-view "Add filter" popover (a bottom sheet on a phone, #7101)
+ * and return its content locator, guaranteeing it is visible before the caller
+ * interacts with it.
  *
  * Why a helper: a bare `getByRole('Add filter').click()` is racy under the
  * pre-push load — the click can land a frame before Radix wires the trigger,
@@ -558,7 +559,7 @@ export function activePopover(page: Page): Locator {
  */
 export async function openAddFilter(page: Page): Promise<Locator> {
   const trigger = page.getByRole('button', { name: 'Add filter' })
-  const pop = activePopover(page)
+  const pop = activePopover(page).or(activeSheet(page))
   await trigger.click()
   try {
     await expect(pop).toBeVisible({ timeout: 5000 })

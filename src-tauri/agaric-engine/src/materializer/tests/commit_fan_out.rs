@@ -235,3 +235,175 @@ async fn a_background_task_waits_out_a_busy_writer() {
     );
     mat.shutdown();
 }
+
+#[derive(Clone, Default)]
+struct LogBuf(StdArc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+    type Writer = LogBuf;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl LogBuf {
+    /// Capture this thread's `warn` and above; the current-thread test
+    /// runtime runs the spawned shed persists on it too.
+    fn capture_warnings(&self) -> tracing::subscriber::DefaultGuard {
+        use tracing_subscriber::layer::SubscriberExt;
+        tracing::subscriber::set_default(
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new("warn"))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(self.clone())
+                        .with_ansi(false),
+                ),
+        )
+    }
+
+    fn lines_with(&self, needle: &str) -> Vec<String> {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .filter(|line| line.contains(needle))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// A burst of sheds warns once, and the next enqueue under the pressure
+/// threshold ends the episode with one line carrying the count. The shed
+/// persists stay off the warn log: the summary covers them.
+#[tokio::test]
+async fn a_shed_burst_warns_once_and_summarises_its_count() {
+    let (pool, _dir) = test_pool().await;
+    let log = LogBuf::default();
+    let _guard = log.capture_warnings();
+    let mat = Materializer::new(pool.clone());
+
+    mat.force_shed_after(0);
+    let records = [
+        create_record(FIRST),
+        create_record(SECOND),
+        due_date_record(FIRST),
+        due_date_record(SECOND),
+    ];
+    let ops: Vec<CommitOp<'_>> = records.iter().map(unhinted).collect();
+    mat.dispatch_commit(&ops);
+    for _ in 0..2 {
+        let outcome = mat
+            .try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .unwrap();
+        assert_eq!(outcome, BackgroundEnqueueOutcome::Shed, "the fixture sheds");
+    }
+    mat.wait_for_pending_shed_persists().await;
+    mat.force_shed_after(-1);
+    let outcome = mat
+        .try_enqueue_background(MaterializeTask::RebuildTagsCache)
+        .unwrap();
+    assert_eq!(
+        outcome,
+        BackgroundEnqueueOutcome::Enqueued,
+        "the hook is off"
+    );
+
+    assert_eq!(
+        log.lines_with("background queue full, dropping task").len(),
+        1,
+        "one warn when the shedding starts"
+    );
+    let summary = log.lines_with("background queue shedding ended");
+    assert_eq!(summary.len(), 1, "one summary when it ends");
+    assert!(
+        summary[0].contains("shed=13"),
+        "the summary counts the shed tasks, the commit's eleven and two singles: {summary:?}"
+    );
+    assert_eq!(
+        log.lines_with("persisted failed background task to retry queue"),
+        Vec::<String>::new(),
+        "a shed's persist is not a warn"
+    );
+    assert_eq!(
+        mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed),
+        13,
+        "the drop counter still counts every shed task"
+    );
+    mat.shutdown();
+}
+
+/// Pressure warns once per episode: once on crossing the threshold, not on
+/// every enqueue above it, and again only after the queue has dropped back
+/// under it.
+#[tokio::test]
+async fn background_pressure_warns_once_per_episode() {
+    let (pool, _dir) = test_pool().await;
+    let log = LogBuf::default();
+    let _guard = log.capture_warnings();
+    let mat = Materializer::new(pool.clone());
+    let past_threshold =
+        BACKGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR + 10;
+    let fill = || {
+        for _ in 0..past_threshold {
+            mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+                .unwrap();
+        }
+    };
+
+    fill();
+    assert_eq!(
+        log.lines_with("background queue pressure").len(),
+        1,
+        "one warn for ten enqueues past the threshold"
+    );
+    mat.flush_background().await.unwrap();
+    fill();
+    assert_eq!(
+        log.lines_with("background queue pressure").len(),
+        2,
+        "a drained queue that fills again is a new episode"
+    );
+    mat.shutdown();
+}
+
+/// The foreground queue follows the same rule as the background one.
+#[tokio::test]
+async fn foreground_pressure_warns_once_per_episode() {
+    let (pool, _dir) = test_pool().await;
+    let log = LogBuf::default();
+    let _guard = log.capture_warnings();
+    let mat = Materializer::new(pool.clone());
+    let past_threshold =
+        FOREGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR + 10;
+    let fill = async || {
+        for _ in 0..past_threshold {
+            mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(Vec::new())))
+                .await
+                .unwrap();
+        }
+    };
+
+    fill().await;
+    assert_eq!(
+        log.lines_with("foreground queue pressure").len(),
+        1,
+        "one warn for ten enqueues past the threshold"
+    );
+    mat.flush_foreground().await.unwrap();
+    fill().await;
+    assert_eq!(
+        log.lines_with("foreground queue pressure").len(),
+        2,
+        "a drained queue that fills again is a new episode"
+    );
+    mat.shutdown();
+}

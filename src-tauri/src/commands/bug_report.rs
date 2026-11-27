@@ -289,6 +289,7 @@ const STABLE_MESSAGES: &[&str] = &[
     // materializer — queue lifecycle.
     "Materializer::set_app_data_dir called twice — ignoring later set",
     "background queue full, dropping task",
+    "background queue shedding ended",
     "boot-time retry queue sweep failed",
     "periodic retry queue sweep failed",
     "materializer retry queue sweep",
