@@ -154,6 +154,17 @@ describe('HelpTab', () => {
     )
   })
 
+  it('shows no check button or status until it knows whether this copy updates itself', () => {
+    mockUseSelfUpdateDisabled.mockReturnValue(undefined)
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    expect(screen.getByText(t('help.updateTitle'))).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: t('help.updateCheckNowButton') }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   // #5345 — each action sits in one setting row with the title and description it acts on.
   it('pairs each button with its title and description in a setting row', () => {
     render(<HelpTab onReportBugClick={vi.fn()} />)

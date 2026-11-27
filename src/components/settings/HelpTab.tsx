@@ -22,7 +22,8 @@
  * the status only when Android's daily check found a newer release (#6546).
  * A desktop copy a package manager or store installed has no updater
  * (`useSelfUpdateDisabled`), so the row drops the button and the status and
- * says where its updates come from instead.
+ * says where its updates come from instead; until that answer arrives the row
+ * shows neither.
  */
 
 import type { TFunction } from 'i18next'
@@ -80,6 +81,9 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
   const updateStatus = useUpdateStatus()
   const selfUpdateDisabled = useSelfUpdateDisabled()
   const mobile = isMobilePlatform()
+  // Undefined until the IPC answers: a package-managed copy would flash the
+  // button and status before hiding them.
+  const showsUpdater = selfUpdateDisabled === false
 
   const handleCheckNow = useCallback(async () => {
     setChecking(true)
@@ -127,7 +131,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
                   {t('help.updateOpenReleasesButton')}
                 </Button>
               ) : (
-                !selfUpdateDisabled && (
+                showsUpdater && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -144,7 +148,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
               ? updateStatus.status === 'available' && (
                   <output className="block text-sm text-muted-foreground">{statusLabel}</output>
                 )
-              : !selfUpdateDisabled && (
+              : showsUpdater && (
                   <>
                     {/* Persistent status — `<output>` is an implicit polite live
                         region (role="status"), so a boot check completing (or

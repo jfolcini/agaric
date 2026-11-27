@@ -703,7 +703,9 @@ fn enable_mock_capture_devices_under_e2e_sandbox(app: &tauri::App) {
 /// this, so the two cannot drift.
 ///
 /// - Flatpak bind-mounts `/.flatpak-info` into every sandboxed process.
-/// - snapd sets `SNAP` for every snap.
+/// - snapd sets `SNAP_NAME` to the running snap's name. Only ours counts: a
+///   process started from another snap (a terminal in the VS Code snap)
+///   inherits that snap's variables.
 /// - Distribution packages that repackage the release `.deb` (the AUR's
 ///   `agaric-bin`) install the marker `/usr/share/agaric/no-self-update`.
 /// - Windows installs Microsoft Store (MSIX) packages under
@@ -712,7 +714,7 @@ fn self_update_disabled() -> bool {
     #[cfg(target_os = "linux")]
     {
         std::path::Path::new("/.flatpak-info").exists()
-            || std::env::var_os("SNAP").is_some()
+            || is_agaric_snap(std::env::var_os("SNAP_NAME").as_deref())
             || std::path::Path::new("/usr/share/agaric/no-self-update").exists()
     }
     #[cfg(windows)]
@@ -723,6 +725,12 @@ fn self_update_disabled() -> bool {
     {
         false
     }
+}
+
+/// Whether `snap_name`, the `SNAP_NAME` snapd sets, names this app's snap.
+#[cfg(any(target_os = "linux", test))]
+fn is_agaric_snap(snap_name: Option<&std::ffi::OsStr>) -> bool {
+    snap_name.is_some_and(|name| name == "agaric")
 }
 
 /// Whether `path` passes through a `WindowsApps` directory, the root Windows
@@ -5277,7 +5285,19 @@ mod capture_permission_tests {
 
 #[cfg(test)]
 mod self_update_tests {
-    use super::is_windows_apps_path;
+    use super::{is_agaric_snap, is_windows_apps_path};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn the_agaric_snap_disables_self_update() {
+        assert!(is_agaric_snap(Some(OsStr::new("agaric"))));
+    }
+
+    #[test]
+    fn a_copy_started_from_another_snap_keeps_self_update() {
+        assert!(!is_agaric_snap(Some(OsStr::new("code"))));
+        assert!(!is_agaric_snap(None));
+    }
 
     #[test]
     fn a_microsoft_store_install_path_disables_self_update() {

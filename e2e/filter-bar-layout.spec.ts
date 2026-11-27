@@ -167,6 +167,46 @@ for (const phone of [false, true]) {
       await expect(actions.locator('.source-page-filter-trigger')).toHaveText('Source pages · 1')
     })
 
+    test("References: each control takes the taps on its own face, not a neighbour's hit area", async ({
+      page,
+    }) => {
+      await (phone ? openPageMobile : openPage)(page, 'Getting Started')
+      const references = page.getByTestId('linked-references')
+      const controls = [
+        references.locator('.linked-references-header button'),
+        ...(await references.getByRole('radio').all()),
+        references.getByRole('button', { name: 'Add filter', exact: true }),
+        references.getByRole('button', { name: 'Source pages' }),
+        references.getByRole('combobox', { name: 'Sort by' }),
+        references.getByTestId('backlink-sort-direction'),
+      ]
+      await references
+        .getByRole('button', { name: 'Add filter', exact: true })
+        .evaluate((el) => el.scrollIntoView({ block: 'center' }))
+      for (const control of controls) {
+        // The centre and 2 px inside each edge must hit the control itself.
+        const misses = await control.evaluate((el) => {
+          const r = el.getBoundingClientRect()
+          const cx = r.left + r.width / 2
+          const cy = r.top + r.height / 2
+          const points: [number, number][] = [
+            [cx, cy],
+            [r.left + 2, cy],
+            [r.right - 2, cy],
+            [cx, r.top + 2],
+            [cx, r.bottom - 2],
+          ]
+          return points
+            .filter(([x, y]) => {
+              const hit = document.elementFromPoint(x, y)
+              return hit !== el && !el.contains(hit)
+            })
+            .map(([x, y]) => `${Math.round(x)},${Math.round(y)}`)
+        })
+        expect(misses, await control.evaluate((el) => el.outerHTML.slice(0, 80))).toEqual([])
+      }
+    })
+
     test('Advanced query: Add filter shows the funnel', async ({ page }) => {
       await navigateToView(page, 'Advanced query')
       const addFilter = page.getByRole('button', { name: 'Add filter', exact: true }).first()
