@@ -52,11 +52,15 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   }
 })
 
-// The page's properties surface is tested on its own; here it names the page it shows.
+// The page's properties surface (its dialog, or sheet on a phone) is tested on its own;
+// here it opens as a dialog that names the page it shows.
 vi.mock('@/components/pages/PagePropertyTable', () => ({
-  PagePropertyTable: (props: { pageId: string }) => (
-    <div data-testid="page-property-table" data-page-id={props.pageId} />
-  ),
+  PagePropertyTable: (props: { pageId: string; open: boolean }) =>
+    props.open ? (
+      <dialog open aria-label="Properties">
+        <div data-testid="page-property-table" data-page-id={props.pageId} />
+      </dialog>
+    ) : null,
 }))
 
 import { makeBlock } from '@/__tests__/fixtures'

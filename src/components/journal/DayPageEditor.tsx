@@ -24,7 +24,6 @@ import { EditModeItem } from '@/components/pages/EditModeItem'
 import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { Button } from '@/components/ui/button'
-import { DialogBody } from '@/components/ui/dialog'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { menuRowVariants } from '@/components/ui/menu-row'
@@ -33,7 +32,6 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { ModeSwap } from '@/editor/page-mode/ModeSwap'
 import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { useEditModeShortcut, usePageMode } from '@/editor/page-mode/use-page-mode'
@@ -82,40 +80,13 @@ export function DayHeader({
   )
 }
 
-/** The day page's properties, in a dialog (a sheet on a phone). */
-function DayPropertiesDialog({
-  pageId,
-  displayDate,
-  open,
-  onOpenChange,
-}: {
-  pageId: string
-  displayDate: string
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}): React.ReactElement {
-  const { t } = useTranslation()
-  const parts = useDialogOrSheet('dialog')
-  const { Root, Content, Header, Title, Description } = parts
-  const table = <PagePropertyTable pageId={pageId} forceExpanded={open} />
-  return (
-    <Root open={open} onOpenChange={onOpenChange}>
-      <Content data-testid="day-properties-dialog">
-        <Header>
-          <Title>{t('pageProperty.propertiesButton')}</Title>
-          <Description>{displayDate}</Description>
-        </Header>
-        {parts.isMobile ? table : <DialogBody>{table}</DialogBody>}
-      </Content>
-    </Root>
-  )
-}
-
 /** Desktop's *Page actions* menu for the day. */
 function DayActionsMenu({
+  triggerRef,
   onOpenProperties,
   onDeleteRequest,
 }: {
+  triggerRef: React.Ref<HTMLButtonElement>
   onOpenProperties: () => void
   onDeleteRequest?: (() => void) | undefined
 }): React.ReactElement {
@@ -127,7 +98,7 @@ function DayActionsMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={label}>
+            <Button ref={triggerRef} variant="ghost" size="icon-sm" aria-label={label}>
               <MoreVertical />
             </Button>
           </PopoverTrigger>
@@ -194,6 +165,15 @@ export function DayPageEditor({
   const onPhone = isTouch && phoneLayout
   const [menuOpen, setMenuOpen] = useState(false)
   const [propertiesOpen, setPropertiesOpen] = useState(false)
+  // Mounted once first opened: the table reads the page's properties as it mounts, and
+  // the Week and Stream views mount a day page per day.
+  const [propertiesUsed, setPropertiesUsed] = useState(false)
+  const openProperties = useCallback(() => {
+    setPropertiesUsed(true)
+    setPropertiesOpen(true)
+  }, [])
+  // Focus goes back to the ⋮ when the properties close: the menu row that opened them is gone.
+  const pageActionsRef = useRef<HTMLButtonElement>(null)
   // A phone menu row's action waits for the menu to close, when Radix hands
   // focus back to its trigger: a dialog returns focus to what held it as it
   // opened, and until then the menu's focus trap holds it on the row.
@@ -246,7 +226,8 @@ export function DayPageEditor({
         kebab={
           onPhone ? undefined : (
             <DayActionsMenu
-              onOpenProperties={() => setPropertiesOpen(true)}
+              triggerRef={pageActionsRef}
+              onOpenProperties={openProperties}
               onDeleteRequest={onDeleteRequest}
             />
           )
@@ -267,7 +248,12 @@ export function DayPageEditor({
               }}
               trigger={
                 <SheetTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t('pageHeader.pageActions')}>
+                  <Button
+                    ref={pageActionsRef}
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('pageHeader.pageActions')}
+                  >
                     <MoreVertical />
                   </Button>
                 </SheetTrigger>
@@ -288,7 +274,7 @@ export function DayPageEditor({
                   type="button"
                   role="menuitem"
                   className={menuRowVariants()}
-                  onClick={() => closeMenuThen(() => setPropertiesOpen(true))}
+                  onClick={() => closeMenuThen(openProperties)}
                 >
                   <Settings2 aria-hidden="true" />
                   {t('journal.dayProperties')}
@@ -309,12 +295,14 @@ export function DayPageEditor({
           </div>
         </div>
       )}
-      <DayPropertiesDialog
-        pageId={pageId}
-        displayDate={displayDate}
-        open={propertiesOpen}
-        onOpenChange={setPropertiesOpen}
-      />
+      {propertiesUsed && (
+        <PagePropertyTable
+          pageId={pageId}
+          open={propertiesOpen}
+          onOpenChange={setPropertiesOpen}
+          returnFocusRef={pageActionsRef}
+        />
+      )}
       <ModeSwap
         pageId={pageId}
         pageMode={pageMode.wanted}
