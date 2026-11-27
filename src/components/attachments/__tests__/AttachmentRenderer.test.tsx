@@ -1067,6 +1067,14 @@ describe('AttachmentRenderer', () => {
     expect(caption.getAttribute('placeholder')).toBe('Add a caption…')
   })
 
+  it('rings the caption input on keyboard focus, as every field does (#7155)', async () => {
+    render(<AttachmentRenderer {...baseProps} imageCaption="" attachments={[makeAttachment()]} />)
+    await screen.findByRole('img')
+    const caption = screen.getByTestId('image-caption-input')
+    expect(caption).toHaveClass('focus-ring-visible')
+    expect(caption.className).not.toMatch(/outline-none/)
+  })
+
   it('persists image_caption on blur and reports the change to the parent', async () => {
     const onImageCaptionChange = vi.fn()
     render(
