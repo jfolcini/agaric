@@ -359,9 +359,7 @@ export function LinkedReferences({
           segment just checked — dropping keyboard focus to <body>, and leaving
           no way back to "All" from an empty result. */}
       {expanded && (
-        // Spaced as the row below is: the segments' 44 px touch targets would
-        // otherwise reach into the header's collapse toggle.
-        <div className="mt-1 px-2 coarse:mt-2">
+        <div className="mt-1 px-2">
           <KindToggle kind={kind} onKindChange={setKind} />
         </div>
       )}
