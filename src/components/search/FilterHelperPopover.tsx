@@ -26,7 +26,7 @@
  * dropped, so out-of-order IPC replies can never paint old suggestions.
  */
 
-import { ChevronDown, Plus } from 'lucide-react'
+import { Filter } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -263,9 +263,8 @@ export function FilterHelperPopover({
           // before the click.
           onMouseDown={(e) => e.preventDefault()}
         >
-          <Plus aria-hidden="true" />
+          <Filter aria-hidden="true" />
           {t('search.addFilter')}
-          <ChevronDown aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent

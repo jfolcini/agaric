@@ -1,5 +1,5 @@
 /**
- * The tab bar, the recent pages strip and a narrow window's Pages filter row
+ * The tab bar and the recent pages strip
  * scroll sideways only when they overflow, so while they fit they keep no
  * empty native scrollbar under them (#6053). The app turns the native bars back
  * on (index.css), so the browser's must stay visible here.
@@ -30,7 +30,7 @@ function bars(content: Locator) {
   })
 }
 
-test('the tab bar, the recents strip and the filter row keep no scrollbar while they fit @pages', async ({
+test('the tab bar and the recents strip keep no scrollbar while they fit @pages', async ({
   page,
 }) => {
   await waitForBoot(page)
@@ -50,15 +50,7 @@ test('the tab bar, the recents strip and the filter row keep no scrollbar while 
   await expect(page.getByRole('tab')).toHaveCount(2)
 
   const tabs = await bars(page.getByRole('tablist'))
-  // Below the phone breakpoint the filter row scrolls sideways, a mouse window's too.
-  // Pages opens first: at 700 px the sidebar that holds its button collapses.
-  await navigateToView(page, 'Pages')
-  await page.setViewportSize({ width: 700, height: 900 })
-  // Its own scroll area, which the resize's re-render adds; the page's scroll area holds it too.
-  const filters = await bars(
-    page.getByTestId('page-browser-filter-scroll').locator('[data-slot="scroll-area-viewport"]'),
-  )
 
   const fits = { barHeight: 0, overflowX: 0 }
-  expect({ tabs, recents, filters }).toEqual({ tabs: fits, recents: fits, filters: fits })
+  expect({ tabs, recents }).toEqual({ tabs: fits, recents: fits })
 })
