@@ -8,8 +8,12 @@ InstallModes:
   - interactive
   - silent
 UpgradeBehavior: install
-# The installer's uninstall key is named after the product.
+# The installer registers itself under its product name and the publisher Tauri
+# derives from the bundle identifier, not under the names in the locale file.
 ProductCode: Agaric
+AppsAndFeaturesEntries:
+  - Publisher: agaric
+    ProductCode: Agaric
 ReleaseDate: 2026-11-06
 Installers:
   - Architecture: x64
