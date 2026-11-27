@@ -18,13 +18,12 @@
  * with one action that opens the releases page. Nothing is downloaded. Any
  * other mobile platform checks nothing.
  *
- * Flatpak builds are also skipped: Flathub requires apps NOT to
- * self-update (updates flow through Flathub's own repo/CI instead), so
- * the boot effect asks the backend's `is_flatpak` command (the renderer
- * can't stat `/.flatpak-info` itself) before firing and bails out when
- * it reports `true`. This mirrors — and is belt-and-suspenders with —
- * the Rust-side guard in `src-tauri/src/lib.rs` that already skips
- * *registering* `tauri_plugin_updater` under Flatpak in the first place.
+ * A copy a package manager or store installed (Flatpak, Snap, an AUR
+ * package, the Microsoft Store) is updated by that tool, and the backend
+ * registers no updater plugin there. The boot effect asks the backend's
+ * `self_update_disabled` command before firing and does nothing when it
+ * reports `true`; Settings → Help reads the same answer through
+ * `useSelfUpdateDisabled`.
  *
  * The 24-hour debounce uses `localStorage` (`agaric:last-update-check`)
  * so it survives page reloads. The exported `checkForUpdatesNow()`
@@ -47,6 +46,7 @@
 // gap. The plugin-updater import stays lazy because (a) it's only used
 // in two flows that may never fire (mobile / debounced) and (b) it's
 // the larger of the two chunks.
+import { useQuery } from '@tanstack/react-query'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { useEffect, useSyncExternalStore } from 'react'
 
@@ -66,6 +66,7 @@ import {
   removePreference,
   writePreference,
 } from '@/lib/preferences'
+import { queryClient } from '@/lib/query-client'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
 export const LAST_UPDATE_CHECK_STORAGE_KEY = PREFERENCES.lastUpdateCheck.key
@@ -178,27 +179,38 @@ async function resolveCurrentVersion(): Promise<string | undefined> {
 }
 
 /**
- * True iff this process is running inside a Flatpak sandbox, per the
- * backend's `is_flatpak` command (`src-tauri/src/commands/mod.rs`). The
- * renderer can't stat `/.flatpak-info` itself, so this is a thin IPC
- * wrapper around the Rust-side check (which itself backs the
- * `tauri_plugin_updater` registration guard in `src-tauri/src/lib.rs` —
- * see that guard's comment for the Flathub no-self-update rationale).
+ * True iff a package manager or store installed this copy, per the backend's
+ * `self_update_disabled` command (`src-tauri/src/commands/mod.rs`), the same
+ * predicate that keeps `tauri_plugin_updater` unregistered there.
  *
- * Defaults to `false` (i.e. "not Flatpak, proceed with the boot check")
- * on any IPC failure — a plain browser/dev session or a transient IPC
- * error shouldn't silently disable auto-update for the overwhelming
- * majority (AppImage/.deb) of desktop users; only an actual Flatpak
- * sandbox should suppress it.
+ * Defaults to `false` on any IPC failure: a transient error must not turn
+ * updates off for an install that has no other source of them.
  */
-async function isRunningUnderFlatpak(): Promise<boolean> {
+async function isSelfUpdateDisabled(): Promise<boolean> {
   try {
-    const result = await commands.isFlatpak()
+    const result = await commands.selfUpdateDisabled()
     return result.status === 'ok' && result.data
   } catch (err) {
-    logger.warn('updater', 'is_flatpak check failed; assuming non-Flatpak', undefined, err)
+    logger.warn(
+      'updater',
+      'self_update_disabled check failed; assuming self-update',
+      undefined,
+      err,
+    )
     return false
   }
+}
+
+/**
+ * Whether a package manager or store owns updates for this copy (see
+ * `isSelfUpdateDisabled`); `undefined` until the backend answers.
+ */
+export function useSelfUpdateDisabled(): boolean | undefined {
+  const { data } = useQuery(
+    { queryKey: ['selfUpdateDisabled'], queryFn: isSelfUpdateDisabled },
+    queryClient,
+  )
+  return data
 }
 
 /** True iff the last successful check was less than 24 h ago. */
@@ -325,7 +337,7 @@ async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
       lastCheckedAt: new Date().toISOString(),
     })
     if (silentOnNoUpdate) {
-      // Desktop builds always register the updater; only the browser has none.
+      // A desktop build that reaches this check registers the updater; only the browser has none.
       if (isPluginUnavailable(err)) logger.debug('updater', 'no updater plugin; boot check skipped')
       else logger.warn('updater', 'Update check failed (silent boot path)', undefined, err)
     } else {
@@ -428,10 +440,10 @@ export async function checkForUpdatesNow(): Promise<void> {
 
 /**
  * Empty-deps boot effect. Skips entirely (registers nothing) when the backend
- * reports we're running inside a Flatpak sandbox (Flathub's no-self-update
- * requirement — see `isRunningUnderFlatpak`) or on a mobile platform other
- * than Android. On Android it runs `attemptAndroidReleaseCheck` at boot and
- * each time the app comes back to the front.
+ * reports that a package manager or store owns updates for this copy (see
+ * `isSelfUpdateDisabled`) or on a mobile platform other than Android. On
+ * Android it runs `attemptAndroidReleaseCheck` at boot and each time the app
+ * comes back to the front.
  *
  * Otherwise, in addition to firing an initial `runUpdateCheck` in
  * silent mode, this registers a 24 h `setInterval` re-check plus
@@ -474,12 +486,12 @@ export function useUpdateCheck(): void {
       attemptCheck()
     }
 
-    // The Flatpak check is an IPC round-trip, so wiring up (initial check +
+    // The self-update check is an IPC round-trip, so wiring up (initial check +
     // interval + listeners) happens once the backend answers; `cancelled`
     // guards against an unmount during that await.
     let cancelled = false
     void (async () => {
-      if (await isRunningUnderFlatpak()) return
+      if (await isSelfUpdateDisabled()) return
       if (cancelled) return
       attemptCheck()
       intervalId = setInterval(attemptCheck, ONE_DAY_MS)

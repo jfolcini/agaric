@@ -1414,27 +1414,19 @@ pub async fn get_block_history(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: report whether this process is running inside a
-/// Flatpak sandbox.
+/// Tauri command: whether the bundled updater is off because a package
+/// manager or store installed this copy, so updates come from that tool.
 ///
-/// Flathub requires apps NOT to self-update (updates must flow through
-/// Flathub's own repo/CI, not a bundled updater reaching out to GitHub
-/// Releases). The frontend boot-time update check
-/// (`src/hooks/useUpdateCheck.ts`) calls this once on mount and skips
-/// firing when it returns `true` — mirroring the Rust-side guard in
-/// [`crate::run`] that already skips *registering*
-/// `tauri_plugin_updater` under Flatpak in the first place, so this is
-/// belt-and-suspenders for the (mobile-excluded) desktop boot path.
-///
-/// Delegates to `crate::running_under_flatpak`, the same
-/// `/.flatpak-info`-existence check the plugin-registration guard
-/// uses, so the two can't drift. Infallible in practice (a filesystem
-/// `exists()` check), but returns `Result<bool, AppError>` to match
-/// this module's command convention (see module doc comment).
+/// Delegates to `crate::self_update_disabled`, which also decides whether
+/// [`crate::run`] registers `tauri_plugin_updater`, so the two cannot drift.
+/// When it returns `true` the frontend skips its boot-time update check
+/// (`src/hooks/useUpdateCheck.ts`) and Settings › Help shows no check
+/// button. Infallible, but returns `Result<bool, AppError>` to match this
+/// module's command convention (see module doc comment).
 #[tauri::command]
 #[specta::specta]
-pub fn is_flatpak() -> Result<bool, AppError> {
-    Ok(crate::running_under_flatpak())
+pub fn self_update_disabled() -> Result<bool, AppError> {
+    Ok(crate::self_update_disabled())
 }
 
 // ---------------------------------------------------------------------------

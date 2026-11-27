@@ -64,11 +64,11 @@ beforeEach(() => {
   stubInvoke(mockedInvoke, {
     flush_all_drafts: () => ({ flushed: 0 }),
     get_property_def: () => null,
-    is_flatpak: () => false,
     list_projected_agenda: () => emptyPage,
     list_spaces: () => [],
     list_unfinished_tasks: () => emptyPage,
     query_by_property: () => emptyPage,
+    self_update_disabled: () => false,
   })
 })
 

@@ -147,7 +147,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-24.04
+          # The oldest Ubuntu LTS in standard support: the bundles need the
+          # build machine's glibc or newer, and AppImageHub tests the AppImage
+          # on this release (packaging/appimagehub/README.md).
+          - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           # Explicit version pins (`windows-2025-vs2026` GA mid-2026,
           # `macos-15` GA late 2025) instead of `*-latest` aliases —
@@ -213,41 +216,20 @@ jobs:
       - name: Prepare apt (free dpkg lock, bound downloads)
         # Linux-only: this composite action shells out to `sudo`/`apt`, which
         # don't exist on the windows-2025-vs2026 / macos-15 matrix legs.
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies (Linux)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
         # .github/actions/apt-install/action.yml.
         #
-        # CONFIRMED on a noble host (2026-08-27), not inferred from the
-        # package description: `dpkg -S /usr/bin/dbus-run-session` answers
-        # `dbus-daemon: /usr/bin/dbus-run-session` on ubuntu 24.04, the same
-        # release the runner image uses. Review of #4424 suspected the
-        # binary had moved to `dbus-bin` in the noble source split; it has
-        # not. `dbus-bin` exists (1.14.10-4ubuntu4.1) but does not own it.
-        #
-        # `dbus-run-session` lives here, in `dbus-daemon` (pinned below), NOT
-        # in `dbus-x11`. Verified against the noble package index and this
-        # runner's own image: `dbus-x11` ships only `dbus-launch`
-        # (`/usr/bin/dbus-launch`) and reaches `dbus-run-session` only
-        # transitively, via `Depends: dbus-bin (= …), dbus-daemon (= …)`.
-        # Pin `dbus-daemon` directly so the guarantee is the package that
-        # actually contains the binary, not a dependency edge of a package
-        # we'd otherwise pull in for no reason (nothing here uses
-        # `dbus-launch`).
-        #
-        # This is defence against runner-image drift, not a fix for a live
-        # failure: ubuntu-24.04's published image manifest already lists the
-        # `dbus` metapackage, which itself `Depends: dbus-daemon (= …)`, so
-        # `command -v dbus-run-session` was already succeeding before this
-        # line existed and the smoke step's fallback branch was almost
-        # certainly never taken. Explicitly pinning `dbus-daemon` stops that
-        # from being an unstated assumption about what the image happens to
-        # ship today.
+        # `dbus` is pinned for the smoke boot's `dbus-run-session`, which
+        # jammy ships in `dbus` itself (noble moved it to `dbus-daemon`, a
+        # package jammy does not have), so the boot does not rest on what
+        # the runner image happens to include.
         #
         # The gstreamer1.0-* packages are what `bundleMediaFramework` copies
         # into the AppImage for camera and microphone capture (#5718).
@@ -267,7 +249,7 @@ jobs:
             gstreamer1.0-gl
             pkg-config
             xvfb
-            dbus-daemon
+            dbus
 
       - name: Setup Node.js
         # No package-manager cache on a publishing lane (#3573). The
@@ -346,7 +328,7 @@ jobs:
           fi
 
       - name: Seed the AppImage tools (sha256-checked)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         uses: ./.github/actions/tauri-appimage-tools
 
       - name: Build Tauri app
@@ -377,16 +359,13 @@ jobs:
           # #808 enables updater artifacts, sign them in a separate
           # minimal step (`cargo tauri signer sign`) whose env holds ONLY
           # the key — never re-add the key here.
-          # macOS code signing + notarization is intentionally NOT wired.
-          # The maintainer has opted out of Apple Developer Program membership
-          # (paid, recurring) for this open-source project. With no APPLE_*
-          # env vars exposed, `tauri-action` skips the codesign + notarytool
-          # path entirely and produces unsigned .dmg / .app bundles.
-          # Gatekeeper will warn on first install ("Apple could not verify
-          # this app is free of malware"); users bypass via right-click →
-          # Open the first time, or via `xattr -dr com.apple.quarantine
-          # /Applications/Agaric.app`. See BUILD.md → "macOS unsigned
-          # bundles" for the user-facing install instructions.
+          # macOS bundles get an ad-hoc signature only (`bundle.macOS` in
+          # tauri.conf.json; why: BUILD.md § Signing posture). The maintainer
+          # has opted out of Apple Developer Program membership (paid,
+          # recurring), so there is no Developer ID and no notarization. Keep
+          # every APPLE_* variable out of this env: without them the bundler
+          # imports no certificate, signs with the "-" identity, and skips
+          # notarization with a warning.
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Agaric ${{ github.ref_name }}'
@@ -439,7 +418,7 @@ jobs:
       # Every step below has to use the triple-prefixed path or it sees an
       # empty bundle directory and fails.
       - name: Snapshot pre-fix AppImage size
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         id: prefix_size
         env:
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
@@ -458,7 +437,7 @@ jobs:
           echo "path=${appimages[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Fix AppImage icon symlinks and repack
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           FIX_APPIMAGE_STRICT: '1'
         run: |
@@ -473,7 +452,7 @@ jobs:
       # build that could not reach its first window. The boot check is the
       # separate step below.
       - name: Verify repacked AppImage (icon + size only)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           PRE_FIX_SIZE: ${{ steps.prefix_size.outputs.size }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
@@ -533,7 +512,7 @@ jobs:
 
       - name: Verify the AppImage bundles the capture plugins
         # #5718: without them the AppImage finds no camera or microphone.
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
         run: bash scripts/check-appimage-media-plugins.sh "$BUNDLE_DIR/Agaric.AppDir"
@@ -562,7 +541,7 @@ jobs:
       # whether the WebView initialises headlessly there needs its own spike
       # before a release is gated on it (#4080 records this).
       - name: Smoke-boot the repacked AppImage (Xvfb)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
           # CEILING, not a sleep: the step polls and exits as soon as the
@@ -615,11 +594,10 @@ jobs:
             export AGARIC_E2E_SANDBOX=1
             mkdir -p "$AGARIC_DATA_DIR"
 
-            # ubuntu-24.04 runners have no libfuse2, so the AppImage cannot
-            # self-mount. Extract-and-run still exercises the real AppRun, the
-            # bundled libraries and the real binary — it does NOT cover the
-            # squashfs mount path, which is the one launch failure this step
-            # cannot see.
+            # Extract-and-run, so the boot needs no FUSE on the runner. It
+            # still exercises the real AppRun, the bundled libraries and the
+            # real binary — it does NOT cover the squashfs mount path, which
+            # is the one launch failure this step cannot see.
             export APPIMAGE_EXTRACT_AND_RUN=1
 
             # #4418 — POLL for the boot artifact instead of sleeping the whole
@@ -1183,7 +1161,7 @@ jobs:
 
 
       - name: Replace AppImage on draft release with repacked build
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
@@ -1269,7 +1247,7 @@ jobs:
           cargo tauri --version
 
       - name: Sign updater payload (Linux AppImage)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -1284,7 +1262,7 @@ jobs:
           test -f "${appimages[0]}.sig"
 
       - name: Upload Linux updater signature
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
@@ -1304,7 +1282,7 @@ jobs:
       # the AppImage fails with InvalidUpdaterFormat). Sign both here, next to
       # the AppImage signing, so all three Linux updater payloads carry a `.sig`.
       - name: Sign updater payload (Linux .deb)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -1319,7 +1297,7 @@ jobs:
           test -f "${debs[0]}.sig"
 
       - name: Upload Linux .deb updater signature
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/deb
@@ -1332,7 +1310,7 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
       - name: Sign updater payload (Linux .rpm)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -1347,7 +1325,7 @@ jobs:
           test -f "${rpms[0]}.sig"
 
       - name: Upload Linux .rpm updater signature
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/rpm
@@ -1535,7 +1513,7 @@ jobs:
       # Linux-only for now (uses GNU `strings` + `grep -E`); cross-platform
       # promotion via TruffleHog is a follow-up.
       - name: Build-time secret scan (Linux)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         shell: bash
         run: |
           set -euo pipefail
@@ -1598,7 +1576,7 @@ jobs:
 
       - name: Attest desktop bundles (Linux)
         id: attest_linux
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -1650,7 +1628,7 @@ jobs:
       # provenance dimension. `gh attestation verify` keeps working via the
       # Sigstore log; both uploads are purely additive.
       - name: Upload SLSA attestation bundle to release (Linux)
-        if: matrix.platform == 'ubuntu-24.04' && steps.attest_linux.outputs.bundle-path != ''
+        if: matrix.platform == 'ubuntu-22.04' && steps.attest_linux.outputs.bundle-path != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pull the action output into env: rather than inlining the
@@ -1666,7 +1644,7 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       - name: Upload in-toto provenance to release (Linux)
-        if: matrix.platform == 'ubuntu-24.04' && steps.attest_linux.outputs.bundle-path != ''
+        if: matrix.platform == 'ubuntu-22.04' && steps.attest_linux.outputs.bundle-path != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE_SRC: ${{ steps.attest_linux.outputs.bundle-path }}

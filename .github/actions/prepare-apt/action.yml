@@ -60,6 +60,16 @@ runs:
         # Repair any half-finished dpkg state a killed background job left behind.
         sudo dpkg --configure -a || true
 
+        # Some runner images list packages.microsoft.com, which answered 403
+        # ("no longer signed") and so failed every `apt-get update` there,
+        # Playwright's install-deps included. No job installs from it.
+        for src in /etc/apt/sources.list.d/*; do
+          if [ -f "${src}" ] && grep -q 'packages\.microsoft\.com' "${src}"; then
+            echo "dropping apt source ${src} (packages.microsoft.com)"
+            sudo rm -f "${src}"
+          fi
+        done
+
         # ── #4115's Azure mirror rewrite lived here; #4163 REMOVED it ───────
         #
         # It ran `sed 's|https\?://archive\.ubuntu\.com/ubuntu|http://azure.

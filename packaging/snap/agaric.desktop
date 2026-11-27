@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Agaric
+Comment=Local-first outliner and personal knowledge base
+Exec=agaric %u
+Icon=/usr/share/icons/hicolor/256x256/apps/agaric.png
+Terminal=false
+Categories=Office;
+Keywords=outliner;notes;journal;markdown;
+MimeType=x-scheme-handler/agaric;
+StartupWMClass=agaric

@@ -23,9 +23,8 @@ runs:
       #     proxies on Linux. It pins `libwebkit2gtk-4.1-0`, whose
       #     dependencies provide every shared library the binaries link.
       #   - xvfb — a virtual display so the WebKitWebView can render headless.
-      #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
-      #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the lane's run
-      #     step (#4444).
+      #   - dbus-daemon — owns `dbus-run-session` on noble (`dpkg -S
+      #     /usr/bin/dbus-run-session`), for the lane's run step (#4444).
       #   - openbox — a window manager, so the app window gets focus (#5457).
       #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
       #     `editor-durability.e2e.ts` can play an audio attachment (#5733).

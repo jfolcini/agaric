@@ -95,7 +95,8 @@ jobs:
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
-    runs-on: ubuntu-24.04
+    # release.yml's Linux runner, so a PR sees what the release build will.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,7 +110,9 @@ jobs:
           # GStreamer plugins are what the AppImage bundles for capture — matching
           # release.yml's apt list so both workflows produce identical bundles.
           bundle-deps: 'true'
-          rust-shared-key: rust-release
+          # rust-cache's key does not name the runner image, so a key built on
+          # another Ubuntu release would restore objects linked against its glibc.
+          rust-shared-key: rust-release-jammy
 
       - name: Read pins.txt
         id: pins

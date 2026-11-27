@@ -25,11 +25,15 @@
 #                    Tauri CLI tag package-lock.json resolves; any difference
 #                    is stale
 #   rust-nightly     today's nightly; flagged once the pin is 28 days old
+#   docker:<namespace>/<repo>@<tag-prefix>   newest `<tag-prefix><date>` tag on
+#                    Docker Hub, pinned as `<date>@<digest>`
 # Every pin names an upstream (scripts/pins.test.mjs). Left floating on
 # purpose: runner images, apt and brew packages; the Android platform and
 # emulator system image, which follow the app's target and test SDK levels
-# (`platforms;android-<N>`, `api-level`), not a release line; and the Gradle
-# files `cargo tauri android init` generates.
+# (`platforms;android-<N>`, `api-level`), not a release line; the Gradle
+# files `cargo tauri android init` generates; and the snaps publish-snap.yml's
+# build installs (snapcraft, LXD, the base and the GNOME and Mesa content
+# snaps), which the Snap Store serves by channel, with no digest to pin.
 # Platforms: linux-x86_64 linux-aarch64 darwin-x86_64 darwin-arm64 windows-x86_64
 
 # --- Hook and CI tools (taiki-e/install-action in CI, setup-hooks.sh locally) ---
@@ -100,6 +104,10 @@ asset   syft linux-x86_64    ad92bd3ec1b94a3df01d4d0aec199afa9c42b72e86da436ff5f
 asset   syft darwin-arm64    38afbcc03a9d9afac2d7572432fd2c435e051e03930582ea90f4710ffb515224 https://github.com/anchore/syft/releases/download/v{version}/syft_{version}_darwin_arm64.tar.gz
 asset   syft windows-x86_64  0a10e03ffd124c304fd7e7491262dba2e5f68eb12378b106d7525146675b2e3a https://github.com/anchore/syft/releases/download/v{version}/syft_{version}_windows_amd64.zip
 
+# The Microsoft Store Developer CLI that publish-msstore.yml submits with.
+version msstore-cli   0.4.4    github:microsoft/msstore-cli@v
+asset   msstore-cli windows-x86_64  d288a324541dc68244a683eb5b6445e9239bb47d1e6acf5cca4d1476017f1447 https://github.com/microsoft/msstore-cli/releases/download/v{version}/MSStoreCLI-win-x64.zip
+
 # tauri-bundler's AppImage tools. The first two versions are fixed by the
 # Tauri CLI (`prepare_tools` in tauri-bundler's linux/appimage/linuxdeploy.rs);
 # the plugin's only release line besides the rolling `continuous` is tagged.
@@ -109,6 +117,10 @@ version linuxdeploy   07333c6  tauri-bundler:linuxdeploy
 asset   linuxdeploy linux-x86_64  36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62 https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-{version}/linuxdeploy-x86_64.AppImage
 version linuxdeploy-plugin-appimage 1-alpha-20250213-1 github:linuxdeploy/linuxdeploy-plugin-appimage
 asset   linuxdeploy-plugin-appimage linux-x86_64  992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/{version}/linuxdeploy-plugin-appimage-x86_64.AppImage
+
+# --- Store publishing ---
+# The container publish-aur.yml runs makepkg in, pulled by digest.
+version archlinux-base-devel 20261108.0.623074@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239 docker:library/archlinux@base-devel-
 
 # --- Toolchains whose installers take no hash (exact version is the pin) ---
 version temurin       17.0.21+100000002   temurin:17

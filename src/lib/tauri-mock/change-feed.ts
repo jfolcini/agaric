@@ -45,6 +45,7 @@ const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
   'preview_set_property_on_tagged_blocks',
   'preview_mirror_adoption',
   'check_latest_release',
+  'self_update_disabled',
 ])
 
 /** True when the snake_case IPC `command` has no persistent effect. */

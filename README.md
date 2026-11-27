@@ -104,7 +104,7 @@ The data folder holds `notes.db`, the attachments, the snapshots and the log:
 | Windows | `%APPDATA%\com.agaric.app\` |
 | Android | `/data/data/com.agaric.app/`, private to the app |
 
-**What leaves your device.** No telemetry and no analytics. Besides sync with your paired devices, the app asks GitHub at start, at most once a day, whether a newer release exists (on Android it only announces it), and a web link in your notes is fetched from its own site for a preview when you paste or hover it (Settings › Editor turns the hover fetch off).
+**What leaves your device.** No telemetry and no analytics. Besides sync with your paired devices, the app asks GitHub at start, at most once a day, whether a newer release exists (on Android it only announces it), and a web link in your notes is fetched from its own site for a preview when you paste or hover it (Settings › Editor turns the hover fetch off). The [privacy policy](PRIVACY.md) has the full list.
 
 ## Install
 
@@ -112,14 +112,14 @@ Download the installer for your system from [**GitHub Releases**](https://github
 
 | System | Needs | File |
 | --- | --- | --- |
-| **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 24.04, Debian 13, Fedora 40) and `libwebkit2gtk-4.1` | `.deb`, `.rpm` or `.AppImage` |
+| **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 22.04, Debian 12, Fedora 37) and `libwebkit2gtk-4.1`, which the `.AppImage` carries itself | `.deb`, `.rpm` or `.AppImage` |
 | **Windows** (x64) | Windows 10 or 11, 64-bit. The installer fetches WebView2 when it is missing | `-setup.exe` or `.msi` |
 | **macOS** | macOS 13 Ventura or later, with Safari's updates installed (Agaric draws with the system's WebKit, which they update), Apple Silicon or Intel | `.dmg` (`aarch64` or `x64`) |
 | **Android** | Android 11 (API 30) or later, 64-bit ARM (`arm64-v8a`) only | `.apk` |
 
 The desktop app updates itself from GitHub Releases. Agaric is in no app store or package repository yet: a winget manifest is written but not submitted ([packaging/winget](packaging/winget/README.md)), and Flathub is not submitted either ([packaging/flathub](packaging/flathub/README.md)).
 
-Desktop installers are **not code-signed** ([docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the system warns on first launch:
+Desktop installers carry **no developer signature** ([docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the system warns on first launch:
 
 - **macOS (Gatekeeper):** try to open the app once, then open *System Settings* → *Privacy & Security*, scroll to *Security*, click *Open Anyway*, and click *Open* when the warning returns ([Apple's steps](https://support.apple.com/en-us/102445)). Or clear the quarantine flag: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
 - **Windows (SmartScreen):** click *More info* → *Run anyway*.

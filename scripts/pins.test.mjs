@@ -233,6 +233,28 @@ void describe('upstream readers', () => {
     })
   })
 
+  void it('docker reads the newest dated tag with its digest, ignoring other tags', async () => {
+    const http = fakeHttp({
+      'repositories/archlinux/tags': {
+        results: [
+          { name: 'base-devel', digest: 'sha256:new', last_updated: '2026-11-23T00:00:00Z' },
+          { name: 'base-devel-20261108.0.9', digest: 'sha256:old', last_updated: '2026-11-10' },
+          {
+            name: 'base-devel-20261122.0.10',
+            digest: 'sha256:new',
+            last_updated: '2026-11-23T00:00:00Z',
+          },
+          { name: 'base-20261129.0.11', digest: 'sha256:base', last_updated: '2026-11-30' },
+        ],
+      },
+    })
+    assert.deepEqual(await UPSTREAMS.docker('library/archlinux@base-devel-', http), {
+      version: '20261122.0.10@sha256:new',
+      publishedAt: '2026-11-23T00:00:00Z',
+    })
+    await assert.rejects(UPSTREAMS.docker('library/archlinux@multilib-', http), /no multilib-/)
+  })
+
   void it('lock reads the highest version of the crate in Cargo.lock', () => {
     const cargoLock = 'name = "sqlx"\nversion = "0.8.6"\n\nname = "sqlx"\nversion = "0.9.0"\n'
     assert.equal(UPSTREAMS.lock('sqlx', null, { cargoLock }).version, '0.9.0')

@@ -121,7 +121,6 @@ beforeEach(() => {
     get_batch_properties: () => ({}),
     get_journal_page_by_date: () => null,
     get_property_def: () => null,
-    is_flatpak: () => false,
     list_all_pages_in_space: () => [],
     list_all_tags_in_space: () => [],
     list_attachments_batch: () => ({}),
@@ -142,6 +141,7 @@ beforeEach(() => {
     count_trash: () => 0,
     load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
     query_by_property: () => emptyPage,
+    self_update_disabled: () => false,
   })
 })
 

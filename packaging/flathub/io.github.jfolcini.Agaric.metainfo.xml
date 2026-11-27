@@ -39,18 +39,36 @@
   </developer>
 
   <!--
-    Placeholder: the image is the repository's banner, not a screenshot of
-    the app, and Flathub rejects it (packaging/flathub/README.md, step 1).
+    Flathub takes images from a tag or a commit, never a branch, so
+    scripts/bump-version.sh points these at each release's tag.
   -->
   <screenshots>
     <screenshot type="default">
-      <caption>Agaric main window</caption>
-      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/docs/social-preview.png</image>
+      <caption>Today's journal page with notes, links and tasks</caption>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/journal.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A page of nested blocks linking to other pages</caption>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/page.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The agenda gathers the open tasks of every page</caption>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/agenda.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The graph of links between pages</caption>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/packaging/flathub/screenshots/graph.png</image>
     </screenshot>
   </screenshots>
 
-  <!-- Flathub shows the most recent <release> as the app's version. -->
+  <!--
+    Flathub shows the most recent <release> as the app's version;
+    scripts/bump-version.sh adds one per release.
+  -->
   <releases>
+    <release version="0.26.0" date="2026-11-19"/>
+    <release version="0.25.0" date="2026-11-17"/>
+    <release version="0.24.0" date="2026-11-14"/>
     <release version="0.23.0" date="2026-11-06"/>
   </releases>
 

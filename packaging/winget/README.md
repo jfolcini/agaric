@@ -4,7 +4,7 @@ The three files are the [multi-file manifest](https://github.com/microsoft/winge
 
 `scripts/gen-winget-manifest.sh <version>` rewrites the version, installer URL, SHA-256 and release date from the published GitHub Release. Everything else is edited here by hand.
 
-The installer registers itself in *Apps & features* as `Agaric` by the publisher `agaric` (Tauri derives it from the bundle identifier), which is why the installer file carries `ProductCode` and `AppsAndFeaturesEntries`. Setting `bundle.publisher` in `tauri.conf.json` would change that and these two with it.
+The installer registers itself in *Apps & features* as `Agaric` by the publisher `agaric` (Tauri derives it from the bundle identifier), which is why the installer file carries `ProductCode` and `AppsAndFeaturesEntries`. `bundle.publisher` stays unset on purpose: the NSIS installer remembers a custom install folder under `HKCU\Software\<publisher>\Agaric`, so a new publisher would make an in-app update of such an install land a second copy in the default folder. The Microsoft Store's MSIX takes its publisher from Partner Center, not from this value.
 
 ## Submitting
 

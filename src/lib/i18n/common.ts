@@ -1206,6 +1206,10 @@ export const common: Record<string, string> = {
   'help.updateMobileHint':
     "Agaric does not update itself on Android. Once a day it looks for a newer version and tells you; install the newest APK from Agaric's GitHub releases page.",
   'help.updateOpenReleasesButton': 'Open releases page',
+  // Translators: on a desktop copy installed from an app store or a Linux package manager
+  // (Microsoft Store, Snap Store, Flathub, AUR), replaces the description and the check button.
+  'help.updatePackageManagedHint':
+    'Updates come from the store or package manager you installed Agaric from.',
 
   // Translators: SpaceSwitcher (Sidebar dropdown of spaces): tooltip tip, keep "Alt+1–9"; and a
   // dropdown item shown when the user has only one space, which opens Settings › Spaces.

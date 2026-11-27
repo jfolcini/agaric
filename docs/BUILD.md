@@ -314,6 +314,7 @@ Bundles land under `src-tauri/target/release/bundle/`. The exact filenames carry
 **Minimum OS versions.** The README's Install table states them; keep the two in step.
 
 - **macOS 13 Ventura**, set as `bundle.macOS.minimumSystemVersion` in `tauri.conf.json`, which Tauri writes as `LSMinimumSystemVersion` (so macOS refuses to open the app on an older system) and as `MACOSX_DEPLOYMENT_TARGET` for the build. The floor is the system WebKit's: the app's CSS (Tailwind 4: `@property`, `color-mix()`) and regex lookbehind need Safari 16.4, and pdf.js 6 reads the `Iterator` global and calls `Promise.withResolvers` as it loads, which needs Safari 18.4. Safari 18 runs on macOS 13 and later; Monterey stops at Safari 17. The Rust targets allow older systems (`x86_64-apple-darwin` 10.12, `aarch64-apple-darwin` 11).
+- **Linux: glibc 2.35**, Ubuntu 22.04's, because `release.yml` builds the Linux bundles on `ubuntu-22.04` (and `ci.yml`'s `build` job, so a PR sees the same) and a binary needs the glibc it was built against or newer. It is the oldest Ubuntu LTS in standard support, which is where [AppImageHub](../packaging/appimagehub/README.md) tests the AppImage; a newer runner raises the floor for every user. The `.deb` and `.rpm` also need the distribution's WebKitGTK 4.1 at 2.40 or newer, the version wry builds against; the AppImage carries its own. Ubuntu 22.04, Debian 12 and Fedora 37 are the oldest releases with both.
 - **Windows 10**, 64-bit. Rust's tier-1 `x86_64-pc-windows-msvc` target supports Windows 10 and later only, and the WebView2 runtime supports Windows 10 and 11. Tauri's installers have no OS-version setting, so nothing refuses an older system at install time. WebView2 updates itself, so the web features set no separate floor there.
 
 **AppImage icon fix (Linux):** the AppImage bundle's icon mapping is brittle. After `cargo tauri build`, run `scripts/fix-appimage-icons.sh` to repair `.DirIcon` so file managers display the icon. Set `FIX_APPIMAGE_STRICT=1` to fail the build on a missing icon (CI does this).
@@ -361,6 +362,8 @@ Useful flags (see `scripts/release.sh --help`):
 
 - **winget:** run `scripts/gen-winget-manifest.sh <version>`, commit `packaging/winget/`, and submit it ([`packaging/winget/README.md`](../packaging/winget/README.md)).
 - **Flathub:** nothing until the app is accepted there ([`packaging/flathub/README.md`](../packaging/flathub/README.md)); from then on, add the `<release>` to the MetaInfo file in the pre-release PR, and in `flathub/io.github.jfolcini.Agaric` point the manifest at the new tag and commit and regenerate `cargo-sources.json` and `node-sources.json`.
+- **Microsoft Store:** nothing once it is set up ([Microsoft Store](#microsoft-store)).
+- **Snap Store, AUR:** nothing once they are set up ([Snap Store](#snap-store), [AUR](#aur)).
 
 ### What `release.yml` does on tag push
 
@@ -401,6 +404,106 @@ git push --no-verify origin <version>         # starts the workflow again
 This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval. `git verify-tag` checks only the signature locally; the script also asks GitHub whether the tag object is verified (`release_require_verified_tag`) and this manual path skips that, so confirm the tag shows Verified on GitHub.
 
 The `gh release delete` line deletes a leftover draft only: a failed run that got as far as `build-and-release` created one for the tag up front, and the next run would reuse it.
+
+### Microsoft Store
+
+`.github/workflows/publish-msstore.yml` turns each published release's `.msi` into an MSIX and submits it to the Store. No certificate of ours is involved: the Store signs an MSIX after certification, while an MSI or EXE submission would need our own Authenticode signature. Installed from the Store, the app runs from `C:\Program Files\WindowsApps\…`, turns its own updater off, and the Store updates it.
+
+**When it runs.** After every successful `release.yml` run, whose last job publishes the release. It cannot listen for `release: published`, because that job publishes with `GITHUB_TOKEN`, whose events start no workflow. By hand, *Actions › Publish to Microsoft Store › Run workflow* with a tag builds and validates the MSIX, uploads it as the run's `msix` artifact, and submits it only with *submit* ticked. Until the variables and secrets below exist, a release's run stops at a notice and a manual run builds with a placeholder identity.
+
+**Each release:**
+
+1. Downloads `Agaric_<version>_x64_en-US.msi` from the release and checks it with `gh attestation verify` against the provenance `release.yml` recorded when it built that tag.
+2. Unpacks `agaric.exe` and the `agaric-mcp` bridge from it with an administrative install (`msiexec /a`), which only copies the files out: no registry, shortcuts or custom actions.
+3. Writes the manifest from [`packaging/msstore/AppxManifest.xml`](../packaging/msstore/AppxManifest.xml) and the logos from `src-tauri/icons/icon.png` (`scripts/msstore-stage.sh`), indexes the logos with MakePri and packs with MakeAppx, which validates the manifest and the files it names. Both come with the Windows SDK on the runner image. The package version is the tag's `x.y.z.0`.
+4. Submits with the [Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/overview), pinned in `pins.txt`. `msstore publish` deletes any draft submission, copies a new one from the last published submission (listing, screenshots, age rating), puts the package in it and commits it to certification.
+
+So edit the listing between releases and submit it from Partner Center, or the next release's run discards the draft. A release that lands while the previous submission is still in certification fails to submit; once certification is through, run the workflow by hand with that tag and *submit*. The Windows App Certification Kit does not run here: the runner image does not list it, and it installs the package, which only a signed package allows. The Store's certification runs its tests on every submission.
+
+**One-time setup:**
+
+1. **Version.** The Store refuses a package version whose first field is 0 ([package version numbering](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements#package-version-numbering)), so a `0.x.y` release cannot go to the Store, by hand or by the workflow, which builds it with a warning and refuses to submit it.
+2. **Account.** Open a free individual developer account at [storedeveloper.microsoft.com](https://storedeveloper.microsoft.com); it asks for an identity check.
+3. **Name.** In Partner Center, *Apps and games › New product › MSIX or PWA app*, reserve **Agaric**, the manifest's `DisplayName`. A reservation lapses after three months without a submission.
+4. **Identity.** Copy the app's *Product management › Product identity* values into repository variables (*Settings › Secrets and variables › Actions › Variables*):
+
+   | Variable | Partner Center value |
+   | --- | --- |
+   | `MSSTORE_IDENTITY_NAME` | Package/Identity/Name |
+   | `MSSTORE_PUBLISHER` | Package/Identity/Publisher, the whole `CN=…` |
+   | `MSSTORE_PUBLISHER_DISPLAY_NAME` | Package/Properties/PublisherDisplayName |
+   | `MSSTORE_PRODUCT_ID` | Store ID |
+
+5. **Submission API.** In Partner Center, *Account settings › User management › Microsoft Entra applications*: associate or create a Microsoft Entra tenant, add an Entra application with the **Manager** role, and create a client secret for it. Store them as repository secrets: `MSSTORE_TENANT_ID` (the tenant ID), `MSSTORE_CLIENT_ID` (the application ID), `MSSTORE_CLIENT_SECRET`, and `MSSTORE_SELLER_ID` (the Seller ID under *Account settings*). A client secret expires; once it has, submissions fail until a new one is stored.
+6. **First submission, by hand.** The CLI only updates an app whose first submission went through Partner Center. Run the workflow by hand with the release's tag, download the `msix` artifact, and in a new submission fill in:
+   - *Pricing and availability*: free.
+   - *Properties*: the category, and the privacy policy URL `https://github.com/jfolcini/agaric/blob/main/PRIVACY.md`.
+   - *Age ratings*: the IARC questionnaire.
+   - *Packages*: the `.msix`.
+   - *Store listings*, English (United States): a description and at least one screenshot. Each language the manifest's `Resources` lists needs its own listing.
+   - *Submission options*: why the package declares the restricted capability `runFullTrust`: Agaric is a desktop app that runs as an ordinary Win32 process, with a local database and a LAN sync server.
+
+   Submit it and wait until it is published. From the next release on, the workflow submits by itself.
+
+**Check on a Windows PC** ([#6515](https://github.com/jfolcini/agaric/issues/6515)):
+
+- Install from the Store and start Agaric from Start: the window opens, and the taskbar and Start icons sit on no coloured plate.
+- The updater stays off, and a Store update arrives.
+- **The data folder.** A packaged app's new files under AppData go to its private copy, `%LOCALAPPDATA%\Packages\<package family name>\LocalCache\Roaming\com.agaric.app`, which uninstalling it deletes; files already there are read and written in place (Windows 10 1903 and later, the manifest's minimum). So the Store build opens the `notes.db` an NSIS install left in `%APPDATA%\com.agaric.app`, but what it creates (attachments, the database's `-wal` and `-shm` while it runs) only it sees. Check that someone moving from the NSIS install finds their notes, and that the move means uninstalling the NSIS build afterwards, not alternating between the two. The `unvirtualizedResources` restricted capability would turn the redirection off, but Microsoft reserves it for certain games from Microsoft and its partners, so the package does not ask for it.
+- LAN sync pairs and syncs with no firewall prompt, also after a Store update (the manifest's firewall rule).
+- An `agaric://` link opens the app, and a voice note asks for the microphone.
+- *Agent access*: the MCP config the app copies names `agaric-mcp.exe` inside the versioned `WindowsApps` folder, which moves with every Store update.
+- On a Windows 10 PC without the WebView2 Runtime: the MSI and NSIS installers fetch it, an MSIX cannot.
+
+### Snap Store
+
+`packaging/snap/snapcraft.yaml` makes the release's `.deb` into a strictly confined core24 snap, with WebKitGTK and GTK from the GNOME extension's content snap. `.github/workflows/publish-snap.yml` builds it with LXD (`snapcore/action-build`), keeps the `.snap` as the run's `snap` artifact, and releases it to `stable`. The app turns its own updater off in a snap (`SNAP` is set), so the store's refreshes are its only updates.
+
+**When it runs.** After every successful `release.yml` run, whose last job publishes the release. It cannot listen for `release: published`, because that job publishes with `GITHUB_TOKEN`, whose events start no workflow. By hand, `gh workflow run publish-snap.yml -f tag=<version>` builds the snap of a published release, and releases it only with `-f publish=true`. Until the secret below exists, a release's run stops at a notice and a manual run builds only.
+
+One-time setup:
+
+1. Create an Ubuntu One account and sign in to the [Snapcraft dashboard](https://dashboard.snapcraft.io/) with it.
+2. Register the name: `sudo snap install snapcraft --classic`, then `snapcraft login` and `snapcraft register agaric`. The store can hold a name for manual review; the dashboard shows when it is yours.
+3. Export credentials that can only upload this snap and release it to `stable`, and store them as the repository secret `SNAPCRAFT_STORE_CREDENTIALS`:
+
+   ```bash
+   snapcraft export-login --snaps=agaric --channels=stable \
+     --acls package_access,package_push,package_update,package_release creds.txt
+   gh secret set SNAPCRAFT_STORE_CREDENTIALS < creds.txt && rm creds.txt
+   ```
+
+4. Publish the current release: `gh workflow run publish-snap.yml -f tag=<version> -f publish=true`. The store holds this first upload for a manual review, because the snap declares a `dbus` slot.
+5. In the forum's [store-requests](https://forum.snapcraft.io/c/store-requests/19) category, ask in one topic for:
+   - the snap declaration for the `dbus` slot `single-instance` (session-bus name `com.agaric.app.SingleInstance`), and auto-connection of the snap's own `single-instance-plug` to it. `tauri-plugin-single-instance` owns that name so that a second launch, an `agaric://` link included, reaches the running window instead of opening a second pool on the same database;
+   - auto-connection of `camera` (scanning a pairing QR code) and `audio-record` (voice notes), which snapd leaves unconnected. Until then a user runs `sudo snap connect agaric:camera` and `sudo snap connect agaric:audio-record`.
+
+   Once the declaration is granted, run step 4 again.
+
+From then on every release reaches `stable` with no step of yours. **The credentials expire** a year after `export-login` unless `--expires` gave another date (`snapcraft whoami` prints it when they are in `SNAPCRAFT_STORE_CREDENTIALS`). After that the release's *Publish snap* run fails at the upload and that release is not in the store: repeat step 3, then re-run the failed job.
+
+None of this has run in an installed snap yet. To check a build-only run's artifact, install it with `sudo snap install --dangerous`, connect the plugs above, and try a second launch (the first window should take focus), an `agaric://` link, pairing and syncing over the LAN, a QR scan, a voice note, a due-task notification, and launch at login, which `autostart:` hands to snapd. Two differences from the `.deb` are known. The data folder is `~/snap/agaric/current/.local/share/com.agaric.app`, so moving from the `.deb` or the AppImage means moving `~/.local/share/com.agaric.app` there before the first launch; a copy would leave two installs with one sync identity. And the MCP agent config names the bridge inside the snap's revision folder, which changes with every refresh.
+
+### AUR
+
+`packaging/aur/agaric-bin/` is the `agaric-bin` package. Its PKGBUILD installs the release's `.deb` as it is, the app's licence, and the empty file `/usr/share/agaric/no-self-update`, which keeps the app's updater off so that pacman alone updates it; `LICENSE` is the 0BSD licence the AUR asks of package sources. `.github/workflows/publish-aur.yml` sets the PKGBUILD's `pkgver` and `sha256sums` to the release, builds the package and writes `.SRCINFO` with makepkg in the `archlinux-base-devel` container `pins.txt` pins, and pushes `PKGBUILD`, `.SRCINFO` and `LICENSE` to `ssh://aur@aur.archlinux.org/agaric-bin.git`, accepting only the AUR host key pinned in the workflow.
+
+**When it runs.** As the snap's does: after every successful `release.yml` run, or by hand with `gh workflow run publish-aur.yml -f tag=<version>`, which builds the package and pushes it only with `-f publish=true`. Until the secret below exists, a release's run stops at a notice and a manual run builds only.
+
+One-time setup:
+
+1. Create an account at [aur.archlinux.org](https://aur.archlinux.org/register).
+2. Make a key for the workflow alone, add its public half under *My Account → SSH Public Key*, and store the private half as the repository secret `AUR_SSH_PRIVATE_KEY`:
+
+   ```bash
+   ssh-keygen -t ed25519 -N '' -C 'agaric publish-aur' -f aur-agaric
+   cat aur-agaric.pub          # paste into My Account
+   gh secret set AUR_SSH_PRIVATE_KEY < aur-agaric && rm aur-agaric aur-agaric.pub
+   ```
+
+3. Create the package from the current release: `gh workflow run publish-aur.yml -f tag=<version> -f publish=true`. The first push creates `agaric-bin` with your account as its maintainer; the AUR refuses it if someone else already holds the name.
+
+From then on every release is pushed with no step of yours. The key does not expire; once it is removed from the account, the push fails with `Permission denied (publickey)`. If the AUR ever changes its host key, the push fails host-key verification: check the new key's fingerprint against the list on [aur.archlinux.org](https://aur.archlinux.org) before replacing the pinned line. The AUR leaves automated updates the maintainer's responsibility: when the app links a new library, add its package to `depends` (`namcap -i` on the built package names a missing one).
 
 ## Android release signing
 
@@ -452,7 +555,9 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 ## Signing posture
 
 - **Updater signing**: active. `bundle.createUpdaterArtifacts` stays unset in `tauri.conf.json`; instead `release.yml` signs each platform's updater payload with `cargo tauri signer sign` in a dedicated step whose env holds only the `TAURI_SIGNING_PRIVATE_KEY` secret, then re-verifies every `.sig` with `minisign` against the `plugins.updater.pubkey` pinned in `tauri.conf.json` before stitching `latest.json` (#2971) — so a rotated-but-unsynced key reddens the release instead of silently breaking auto-update on installed clients. Key-rotation procedure (cadence, revocation, user notification): [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
-- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (*System Settings* → *Privacy & Security* → *Open Anyway*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
+- **macOS**: an ad-hoc signature only (`bundle.macOS.signingIdentity: "-"`), which needs no Apple account; Apple Silicon refuses an unsigned download as damaged, and an ad-hoc one should get the ordinary *Open Anyway* prompt instead (not yet checked on a Mac, #6514). No Developer ID and no notarization: the maintainer declined the Apple Developer Program. `bundle.macOS.hardenedRuntime` is `false` because the hardened runtime only matters for notarization, and under it the microphone (voice notes) and camera (QR pairing) need entitlements the app does not declare. Gatekeeper still warns on first launch (*System Settings* → *Privacy & Security* → *Open Anyway*).
+- **Windows**: not signed; signing through SignPath OSS was declined (#147). SmartScreen warns on first launch (*More info* → *Run anyway*).
+- User-facing install steps for both live in the [README § Install](../README.md#install).
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 
 ## sqlx compile-time queries

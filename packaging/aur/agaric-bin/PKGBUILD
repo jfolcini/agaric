@@ -1,0 +1,28 @@
+# Maintainer: Javier Folcini <46893563+jfolcini at users dot noreply dot github dot com>
+#
+# Generated from packaging/aur/agaric-bin/ in https://github.com/jfolcini/agaric:
+# its publish-aur.yml workflow sets pkgver and sha256sums for each release and
+# pushes the result here. Send changes there.
+
+pkgname=agaric-bin
+_pkgname=agaric
+pkgver=0.26.0
+pkgrel=1
+pkgdesc='Local-first outliner and personal knowledge base'
+arch=('x86_64')
+url='https://github.com/jfolcini/agaric'
+license=('GPL-3.0-or-later')
+depends=('cairo' 'dbus' 'gdk-pixbuf2' 'glib2' 'glibc' 'gtk3' 'hicolor-icon-theme' 'libgcc' 'libsoup3' 'webkit2gtk-4.1')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+options=('!strip' '!debug')
+source=("$_pkgname-$pkgver.deb::$url/releases/download/$pkgver/Agaric_${pkgver}_amd64.deb"
+        "$_pkgname-$pkgver-LICENSE::https://raw.githubusercontent.com/jfolcini/agaric/$pkgver/LICENSE")
+sha256sums=('a9a1f130e5c4595e6f64fcd53745d6a8baf0cefa9ff49f9945499a7136d3648e' '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986')
+
+package() {
+  bsdtar -xf data.tar.* -C "$pkgdir"
+  install -Dm644 "$_pkgname-$pkgver-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # The app keeps its own updater off while this file exists: pacman updates it.
+  install -Dm644 /dev/null "$pkgdir/usr/share/agaric/no-self-update"
+}

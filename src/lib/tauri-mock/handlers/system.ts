@@ -104,10 +104,9 @@ export const systemHandlers = {
     descendant_fanout_dropped: 0,
   }),
 
-  // #2974 — Flathub no-self-update guard. The mock represents a plain
-  // desktop dev boot (AppImage/.deb-equivalent), never a Flatpak
-  // sandbox, so the boot-time update check should proceed unimpeded.
-  is_flatpak: () => false,
+  // #2974 — the mock is a copy no package manager or store installed, so the
+  // boot-time update check proceeds.
+  self_update_disabled: () => false,
 
   // Android's check for a newer release (#6546): none, unless a spec with an Android user
   // agent names one in `localStorage['__mockNewerRelease']`.
@@ -276,7 +275,7 @@ export const systemHandlers = {
   | 'ingest_otel_spans'
   | 'set_trace_sampling'
   | 'get_status'
-  | 'is_flatpak'
+  | 'self_update_disabled'
   | 'check_latest_release'
   | 'get_recovery_status'
   | 'log_frontend'

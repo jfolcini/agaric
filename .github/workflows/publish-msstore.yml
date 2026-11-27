@@ -1,0 +1,233 @@
+name: Publish to Microsoft Store
+
+# Repackages a published release's .msi as an MSIX and submits it to the
+# Microsoft Store (docs/BUILD.md § Microsoft Store). The Store signs an MSIX
+# after certification, so no certificate of ours is involved.
+#
+# Trigger: release.yml publishes the release with GITHUB_TOKEN, and events that
+# token causes start no workflow, so `release: published` never fires here. A
+# Release run concludes `success` only after its last job, publish-release, has
+# published the release, so this runs on that. A manual run packages any
+# published tag, and submits it only when asked.
+#
+# Until the Partner Center variables and secrets exist, the automatic run stops
+# at a notice, and a manual run builds with a placeholder identity.
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- fires on Release, which only a maintainer's tag push starts; it checks out the default branch, never the triggering run's code
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to package, e.g. 0.26.0
+        required: true
+        type: string
+      submit:
+        description: Submit it to the Store (otherwise build and validate only)
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One submission at a time: a second would replace the first's draft.
+concurrency:
+  group: publish-msstore
+  cancel-in-progress: false
+
+jobs:
+  msix:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2025-vs2026
+    # Unpacking, packing and the upload take minutes; the rest is headroom.
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out; read the release and download its .msi
+      attestations: read # gh attestation verify
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Decide what to build and whether to submit
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SUBMIT: ${{ inputs.submit }}
+          MSSTORE_IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
+          MSSTORE_PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
+          MSSTORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
+          MSSTORE_PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+          HAS_MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID != '' }}
+          HAS_MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID != '' }}
+          HAS_MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID != '' }}
+          HAS_MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET != '' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in MSSTORE_IDENTITY_NAME MSSTORE_PUBLISHER MSSTORE_PUBLISHER_DISPLAY_NAME MSSTORE_PRODUCT_ID; do
+            [ -n "${!name}" ] || missing+=("variable $name")
+          done
+          for name in MSSTORE_TENANT_ID MSSTORE_SELLER_ID MSSTORE_CLIENT_ID MSSTORE_CLIENT_SECRET; do
+            has="HAS_$name"
+            [ "${!has}" = true ] || missing+=("secret $name")
+          done
+          list="$(printf '%s, ' "${missing[@]}")"
+
+          if [ "$EVENT" = workflow_run ]; then
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "::notice title=Microsoft Store not set up::Nothing built or submitted. Missing: ${list%, }. See docs/BUILD.md § Microsoft Store."
+              echo "build=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            tag="$RUN_TAG" submit=true
+          else
+            tag="$INPUT_TAG" submit="$INPUT_SUBMIT"
+            if [ "$submit" = true ] && [ "${#missing[@]}" -gt 0 ]; then
+              echo "::warning title=Not submitted::Missing: ${list%, }. Building and validating only; see docs/BUILD.md § Microsoft Store."
+              submit=false
+            fi
+          fi
+
+          if ! [[ "$tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::'$tag' is not a release tag (x.y.z or vx.y.z)."
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          # The Store refuses a package version whose first field is 0 (App
+          # package requirements, "Package version numbering").
+          if [ "${BASH_REMATCH[1]}" = 0 ]; then
+            if [ "$submit" = true ]; then
+              echo "::error::The Store refuses version $version.0: a package version cannot start with 0. See docs/BUILD.md § Microsoft Store."
+              exit 1
+            fi
+            echo "::warning::The Store would refuse version $version.0: a package version cannot start with 0."
+          fi
+
+          identity="$MSSTORE_IDENTITY_NAME" publisher="$MSSTORE_PUBLISHER" display="$MSSTORE_PUBLISHER_DISPLAY_NAME"
+          if [ -z "$identity" ] || [ -z "$publisher" ] || [ -z "$display" ]; then
+            echo "::notice title=Placeholder identity::The Partner Center identity variables are not all set, so this MSIX carries a placeholder identity the Store would refuse."
+            identity=Agaric.Placeholder publisher=CN=Placeholder display=Placeholder
+          fi
+          {
+            echo "build=true"
+            echo "submit=$submit"
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "identity=$identity"
+            echo "publisher=$publisher"
+            echo "display=$display"
+          } >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.decide.outputs.build == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Download the release's .msi and check its build provenance
+        if: steps.decide.outputs.build == 'true'
+        id: msi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.decide.outputs.tag }}
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/msi"
+          name="Agaric_${VERSION}_x64_en-US.msi"
+          gh release download "$TAG" --repo "$REPO" --pattern "$name" --dir "$dir"
+          # The provenance attestation release.yml made when it built this tag.
+          gh attestation verify "$dir/$name" --repo "$REPO" \
+            --signer-workflow "$REPO/.github/workflows/release.yml" --source-ref "refs/tags/$TAG"
+          echo "path=$dir/$name" >>"$GITHUB_OUTPUT"
+
+      - name: Write the manifest and the visual assets
+        if: steps.decide.outputs.build == 'true'
+        env:
+          MSIX_IDENTITY_NAME: ${{ steps.decide.outputs.identity }}
+          MSIX_PUBLISHER: ${{ steps.decide.outputs.publisher }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ steps.decide.outputs.display }}
+          MSIX_VERSION: ${{ steps.decide.outputs.version }}.0
+        run: bash scripts/msstore-stage.sh "$RUNNER_TEMP/msix-package"
+
+      - name: Add the app's files from the .msi and pack the MSIX
+        if: steps.decide.outputs.build == 'true'
+        id: pack
+        shell: pwsh
+        env:
+          MSI: ${{ steps.msi.outputs.path }}
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $msi = [IO.Path]::GetFullPath($env:MSI)
+          $pkg = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\msix-package")
+          $admin = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\msi-admin")
+          $log = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\msi-admin.log")
+
+          # An administrative install only unpacks the files, in the layout of
+          # the MSI's Directory table: no registry, shortcuts or custom actions.
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$admin`" /l*v `"$log`""
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "msiexec /a exited with $($p.ExitCode)" }
+          $exe = @(Get-ChildItem $admin -Recurse -File -Filter agaric.exe)
+          if ($exe.Count -ne 1) { throw "expected one agaric.exe in the .msi, found $($exe.Count)" }
+          $app = $exe[0].DirectoryName
+          if (-not (Test-Path "$app\agaric-mcp.exe")) { throw "agaric-mcp.exe is not beside agaric.exe in the .msi" }
+          Copy-Item "$app\*" $pkg -Recurse
+
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $sdk = Get-ChildItem $kits -Directory | Where-Object { Test-Path "$($_.FullName)\x64\makeappx.exe" } |
+            Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          if (-not $sdk) { throw "no Windows SDK with makeappx.exe under $kits" }
+          $tools = "$($sdk.FullName)\x64"
+
+          # resources.pri lets Windows find the scale and target-size variants
+          # of the logos the manifest names. createconfig's <packaging> section
+          # splits variants into resource packs for a bundle; this is one package.
+          $cfg = "$env:RUNNER_TEMP\priconfig.xml"
+          & "$tools\makepri.exe" createconfig /cf $cfg /dq lang-en-US /pv 10.0.0 /o
+          [xml]$config = Get-Content -Raw $cfg
+          $packaging = $config.resources.packaging
+          if ($packaging) { [void]$config.resources.RemoveChild($packaging) }
+          $config.Save($cfg)
+          & "$tools\makepri.exe" new /pr $pkg /cf $cfg /mn "$pkg\AppxManifest.xml" /of "$pkg\resources.pri" /o
+
+          # MakeAppx validates the manifest against its schema and checks the
+          # files it names before it packs.
+          $out = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\msix"
+          $msix = "$($out.FullName)\Agaric_$($env:VERSION).0_x64.msix"
+          & "$tools\makeappx.exe" pack /d $pkg /p $msix /o
+          Add-Content $env:GITHUB_OUTPUT "path=$msix"
+
+      - name: Upload the MSIX
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msix
+          path: ${{ steps.pack.outputs.path }}
+          if-no-files-found: error
+
+      - name: Submit to the Microsoft Store
+        if: steps.decide.outputs.submit == 'true'
+        env:
+          MSIX: ${{ steps.pack.outputs.path }}
+          PRODUCT_ID: ${{ vars.MSSTORE_PRODUCT_ID }}
+          TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/msstore-cli"
+          mkdir -p "$dir"
+          bash scripts/pins.sh fetch msstore-cli windows-x86_64 "$dir/msstore.zip"
+          7z x -y -o"$dir" "$dir/msstore.zip" '-x!*.pdb' >/dev/null
+          msstore="$dir/msstore.exe"
+          # Input from /dev/null: a prompt the flags left open fails instead of hanging.
+          "$msstore" reconfigure --tenantId "$TENANT_ID" --sellerId "$SELLER_ID" \
+            --clientId "$CLIENT_ID" --clientSecret "$CLIENT_SECRET" </dev/null
+          # Replaces any draft with a new submission copied from the last
+          # published one, uploads the package to it and commits it.
+          "$msstore" publish "$MSIX" --appId "$PRODUCT_ID" </dev/null

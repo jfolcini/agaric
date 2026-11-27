@@ -1,0 +1,117 @@
+name: Publish snap
+
+# Builds the Snap Store package (`packaging/snap/`) from a published release's
+# `.deb` and releases it to the store's stable channel (docs/BUILD.md § Snap
+# Store).
+#
+# Trigger: release.yml publishes the release with GITHUB_TOKEN, and events that
+# token causes start no workflow, so `release: published` never fires here. A
+# Release run concludes `success` only after its last job, publish-release, has
+# published the release, so this runs on that. A manual run builds any
+# published tag, and uploads it only when asked.
+#
+# Until SNAPCRAFT_STORE_CREDENTIALS exists, the automatic run stops at a notice,
+# and a manual run builds without uploading.
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- fires on Release, which only a maintainer's tag push starts; it checks out the default branch, never the triggering run's code
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to package, e.g. 0.26.0
+        required: true
+        type: string
+      publish:
+        description: Release it to the Snap Store's stable channel (otherwise build only)
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  snap:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    # LXD setup, the GNOME SDK snap and the pack; a guess until a dispatch run
+    # measures it.
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out
+    steps:
+      - name: Decide what to build and whether to publish
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          HAS_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_run ]; then
+            if [ "$HAS_CREDENTIALS" != true ]; then
+              echo "::notice title=Snap Store not set up::Nothing built or released. Missing: secret SNAPCRAFT_STORE_CREDENTIALS. See docs/BUILD.md § Snap Store."
+              echo "build=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            tag="$RUN_TAG" publish=true
+          else
+            tag="$INPUT_TAG" publish="$INPUT_PUBLISH"
+            if [ "$publish" = true ] && [ "$HAS_CREDENTIALS" != true ]; then
+              echo "::warning title=Not released::Missing: secret SNAPCRAFT_STORE_CREDENTIALS. Building only; see docs/BUILD.md § Snap Store."
+              publish=false
+            fi
+          fi
+          # The `.deb`'s name carries the tag, which scripts/release.sh writes
+          # without a `v`.
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$tag' is not a release tag (x.y.z)."
+            exit 1
+          fi
+          {
+            echo "build=true"
+            echo "publish=$publish"
+            echo "tag=$tag"
+          } >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.decide.outputs.build == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Download the release's .deb
+        if: steps.decide.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/$REPO/releases/download/$TAG/Agaric_${TAG}_amd64.deb"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o packaging/snap/agaric.deb "$url" \
+            || { echo "::error::Could not download $url. Is release $TAG published?"; exit 1; }
+
+      - name: Build the snap
+        id: build
+        if: steps.decide.outputs.build == 'true'
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
+        with:
+          path: packaging/snap
+
+      - name: Upload the snap
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snap
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+      - name: Release to the stable channel
+        if: steps.decide.outputs.publish == 'true'
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable

@@ -37,7 +37,7 @@ The sandbox does take a few things away. Check them in step 5, and mention them 
 
 - **Launch at login** writes its autostart entry inside the sandbox, where the desktop session never looks.
 - **The QR scanner** used during pairing needs a camera, and the manifest doesn't grant one.
-- **Self-update** is off under Flatpak (`running_under_flatpak` in `src-tauri/src/lib.rs`), which is exactly what Flathub wants.
+- **Self-update** is off under Flatpak (`self_update_disabled` in `src-tauri/src/lib.rs`), which is exactly what Flathub wants.
 - **Coming from the `.deb` or the AppImage:** move `~/.local/share/com.agaric.app` to the path above before the first launch. Copying instead of moving leaves two installs sharing one sync identity.
 
 ## Submitting

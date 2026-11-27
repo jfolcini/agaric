@@ -6,6 +6,7 @@
  *  - Debug mode and the welcome tour follow it and persist (#5629)
  *  - Updates card renders on desktop with the "Check for updates now" button
  *  - Updates card on mobile says updates are manual and opens the releases page (#6538)
+ *  - Updates card on a package-managed desktop copy says where updates come from, with no button
  *  - axe(container) audit clean on both UAs
  */
 
@@ -24,14 +25,18 @@ import { PREFERENCES, readPreference, type UpdateStatusValue } from '@/lib/prefe
 // reach into the Tauri updater plugin from inside a unit test, and the
 // persisted status is fed in directly via `useUpdateStatus` so each card
 // state can be rendered deterministically.
-const { mockCheckForUpdatesNow, mockUseUpdateStatus } = vi.hoisted(() => ({
-  mockCheckForUpdatesNow: vi.fn(async () => undefined),
-  mockUseUpdateStatus: vi.fn<() => UpdateStatusValue>(),
-}))
+const { mockCheckForUpdatesNow, mockUseUpdateStatus, mockUseSelfUpdateDisabled } = vi.hoisted(
+  () => ({
+    mockCheckForUpdatesNow: vi.fn(async () => undefined),
+    mockUseUpdateStatus: vi.fn<() => UpdateStatusValue>(),
+    mockUseSelfUpdateDisabled: vi.fn<() => boolean | undefined>(),
+  }),
+)
 
 vi.mock('@/hooks/useUpdateCheck', () => ({
   checkForUpdatesNow: mockCheckForUpdatesNow,
   useUpdateStatus: () => mockUseUpdateStatus(),
+  useSelfUpdateDisabled: () => mockUseSelfUpdateDisabled(),
 }))
 
 const { mockOpenUrl } = vi.hoisted(() => ({ mockOpenUrl: vi.fn(async () => true) }))
@@ -60,6 +65,8 @@ beforeEach(() => {
   mockOpenUrl.mockClear()
   mockUseUpdateStatus.mockReset()
   mockUseUpdateStatus.mockReturnValue({ status: 'idle' })
+  mockUseSelfUpdateDisabled.mockReset()
+  mockUseSelfUpdateDisabled.mockReturnValue(false)
 })
 
 afterEach(() => {
@@ -123,6 +130,28 @@ describe('HelpTab', () => {
     expect(screen.getByRole('button', { name: t('help.updateCheckNowButton') })).toBeInTheDocument()
     // Last-checked label defaults to "Never checked" when LS is empty.
     expect(screen.getByText(t('help.updateLastCheckedNever'))).toBeInTheDocument()
+    expect(screen.queryByText(t('help.updatePackageManagedHint'))).not.toBeInTheDocument()
+  })
+
+  it('on a copy a package manager installed, says where updates come from and offers no check', async () => {
+    mockUseSelfUpdateDisabled.mockReturnValue(true)
+    mockUseUpdateStatus.mockReturnValue({ status: 'error', error: 'plugin not found' })
+    const { container } = render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    const updateRow = screen.getByText(t('help.updateTitle')).closest('[data-slot="setting-row"]')
+    expect(updateRow).toHaveTextContent(t('help.updatePackageManagedHint'))
+    expect(updateRow).not.toHaveTextContent(t('help.updateDescription'))
+    expect(
+      screen.queryByRole('button', { name: t('help.updateCheckNowButton') }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 
   // #5345 — each action sits in one setting row with the title and description it acts on.

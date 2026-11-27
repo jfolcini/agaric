@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Productivity",
     "icon": [
       "icons/16x16.png",
       "icons/24x24.png",
@@ -52,7 +53,9 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false
     },
     "linux": {
       "appimage": {
