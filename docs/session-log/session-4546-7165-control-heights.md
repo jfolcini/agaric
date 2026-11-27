@@ -15,7 +15,7 @@ Round 3 of the UI review, lane B. A first attempt was lost before it pushed. Thi
 - `Switch` on touch is 24 × 44 px with `touch-hit-area`; on desktop it stays 20 × 36 px. The on track is `bg-brand` and the off track stays `bg-muted-foreground/40`. The thumb is white in every theme and state. A theme token would turn dark under a dark theme.
 - Premise check: the Tasks & reminders and bug-report switches were already centred by `ToggleRow`'s `items-center`. But each sat 2 px high, because an `inline-flex` switch in a block wrapper leaves room for a descender under it. `ToggleRow` renders the switch `flex`.
 - `MirrorSection`'s four switch rows used a bare `SettingRow`, which stacks into a column below `sm`. They now go through `ToggleRow`, which gains an optional `description` and a `ref` for the mass-change focus return.
-- `ToggleGroup` on a phone filled its row with `flex grow`. In a flex column that also stretched it down: 367 px in the search sheet's All pages mode. It now uses `w-full` with `flex-1` items. Its heights were already 36 px on touch at every size. On desktop the default and `sm` sizes match the buttons beside them (32 px, 28 px), so they were left alone.
+- `ToggleGroup` on a phone filled its row with `flex grow`. In a flex column that also stretched it down: 367 px in the search sheet's All pages mode. It keeps `grow` and adds `max-h-fit`, which stops the stretch down a column and does nothing in a row. Lane C's reviewer tested this in place of the brief's `w-full` idea, which would shrink a row's siblings. Its heights were already 36 px on touch at every size. On desktop the default and `sm` sizes match the buttons beside them (32 px, 28 px), so they were left alone.
 
 **Contrast** (WCAG, OKLCH tokens from `src/index.css`; off track = `--muted-foreground` at 40 % over the surface)
 
@@ -40,7 +40,7 @@ Round 3 of the UI review, lane B. A first attempt was lost before it pushed. Thi
   - `bg-primary`: a dark track for `--brand`;
   - the old thumb: not white;
   - `inline-flex` in `ToggleRow`: off centre by 2 px;
-  - `flex grow`: 367 for 36;
+  - dropping `max-h-fit`: 367 for 36;
   - the 44 px New page: 44 for 36.
 - `e2e/table-handles.spec.ts`: the handles' 44 px boxes became 36 px boxes with a 44 px `::before` hit area. The row handle overhangs the screen's edge, so a tap probe can't reach its left side. Making the outline icon buttons 44 px again turned it red.
 - Updated vitest class assertions (old → new):

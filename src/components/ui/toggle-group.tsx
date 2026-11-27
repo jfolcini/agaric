@@ -85,8 +85,8 @@ function ToggleGroup({
       data-slot="toggle-group"
       className={cn(
         toggleGroupVariants({ size }),
-        // Width only: `grow` also stretched it down a flex column.
-        spans && 'w-full [&>[data-slot=toggle-group-item]]:flex-1',
+        // `max-h-fit`: in a flex column `grow` would stretch it down, not across.
+        spans && 'flex grow max-h-fit [&>[data-slot=toggle-group-item]]:flex-1',
         className,
       )}
       onKeyDown={(event) => {
