@@ -263,7 +263,7 @@ export function HistoryItemCore({
           >
             {(() => {
               const IconComponent = opIcon(entry.op_type)
-              return <IconComponent className="h-3 w-3 mr-1" />
+              return <IconComponent className="h-3 w-3" />
             })()}
             {opTypeLabel(entry.op_type, t)}
           </Badge>

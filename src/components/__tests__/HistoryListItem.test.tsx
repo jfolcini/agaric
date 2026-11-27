@@ -713,7 +713,7 @@ describe('HistoryListItem', () => {
       const badge = screen.getByTestId('history-type-badge')
       const svg = badge.querySelector('svg')
       expect(svg).toBeInTheDocument()
-      expect(svg).toHaveClass('h-3', 'w-3', 'mr-1')
+      expect(svg).toHaveClass('h-3', 'w-3')
     })
 
     it.each([
@@ -741,7 +741,7 @@ describe('HistoryListItem', () => {
       const badge = screen.getByTestId('history-type-badge')
       const svg = badge.querySelector('svg')
       expect(svg).toBeInTheDocument()
-      expect(svg).toHaveClass('h-3', 'w-3', 'mr-1')
+      expect(svg).toHaveClass('h-3', 'w-3')
     })
   })
 

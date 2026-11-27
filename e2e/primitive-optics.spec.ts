@@ -102,6 +102,16 @@ test.describe('Shared primitives on a dark desktop @pages @editor', () => {
     await expect(badge).toBeVisible()
     const chip = await leadingIconInset(badge)
     expect(chip.inset).toBe(chip.border + chip.padding - 2)
+    // Its label sits the badge's gap from the icon (#7160), no margin on top.
+    const iconToLabel = await badge.evaluate((node) => {
+      const icon = node.querySelector('svg')?.getBoundingClientRect()
+      const text = [...node.childNodes].find((n) => n.nodeType === Node.TEXT_NODE)
+      if (icon === undefined || text === undefined) throw new Error('no icon or label')
+      const range = document.createRange()
+      range.selectNodeContents(text)
+      return range.getBoundingClientRect().left - icon.right
+    })
+    expect(iconToLabel).toBe(parseFloat(await badge.evaluate((n) => getComputedStyle(n).columnGap)))
   })
 
   test("a menu's shortcut hints are muted text, not keycaps", async ({ page }) => {
