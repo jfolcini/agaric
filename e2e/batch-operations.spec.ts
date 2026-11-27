@@ -175,6 +175,25 @@ test.describe('Batch block operations @editor', () => {
     for (const box of await boxes.all()) await expect(box).toHaveAttribute('data-slot', 'checkbox')
   })
 
+  test('a selected row puts its grip left of its checkbox and moves no text', async ({ page }) => {
+    const row = page.locator('[data-testid="sortable-block"]').nth(1)
+    const rect = (testId: string) =>
+      row.getByTestId(testId).evaluate((el) => el.getBoundingClientRect())
+    const restingHandle = await rect('drag-handle')
+    const restingText = await rect('block-static')
+
+    await selectSecondAndThird(page)
+    const handle = await rect('drag-handle')
+    const checkbox = await rect('block-select-checkbox')
+    const text = await rect('block-static')
+
+    expect(text.left).toBe(restingText.left)
+    expect(handle.right).toBeLessThanOrEqual(checkbox.left)
+    expect(checkbox.right).toBeLessThanOrEqual(text.left)
+    // At rest the grip sits beside the text, in the slot the checkbox takes.
+    expect(restingHandle.right).toBeCloseTo(checkbox.right, 0)
+  })
+
   test("the cursor's focus ring wraps the block's row, not the gutter", async ({ page }) => {
     await selectSecondAndThird(page)
     // The last Ctrl+Click leaves the cursor on its row.

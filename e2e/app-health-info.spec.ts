@@ -54,6 +54,23 @@ test.describe('App health counter explanations on a phone @settings', () => {
   })
 })
 
+test.describe('One App health explanation open at a time on a phone @settings', () => {
+  test.use(PHONE)
+
+  test('tapping a second label closes the first explanation @settings', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateMobile(page, 'Settings')
+    await openSettingsTab(page, 'App health')
+
+    await fingerTap(page, counterLabel(page))
+    await expect(page.getByRole('dialog', { name: LABEL })).toBeVisible()
+    await fingerTap(page, page.getByRole('button', { name: 'Ops processed', exact: true }))
+
+    await expect(page.getByRole('dialog', { name: 'Ops processed' })).toBeVisible()
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+  })
+})
+
 test.describe('App health counter explanations on desktop @settings', () => {
   test('the keyboard opens the explanation and Escape closes it @settings', async ({ page }) => {
     await waitForBoot(page)

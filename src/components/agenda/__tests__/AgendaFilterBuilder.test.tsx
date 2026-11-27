@@ -78,6 +78,17 @@ beforeEach(() => {
 })
 
 describe('AgendaFilterBuilder', () => {
+  // An icon that labels a button sits inside it, not beside it (#7155 R8).
+  it('draws its funnel inside the Add filter button, with no standalone icon', () => {
+    const { container } = renderBuilder()
+
+    const addButton = screen.getByRole('button', { name: t('agendaFilter.addFilter') })
+    expect(addButton.querySelectorAll('svg')).toHaveLength(1)
+    for (const icon of container.querySelectorAll('svg')) {
+      expect(icon.closest('button')).not.toBeNull()
+    }
+  })
+
   // -----------------------------------------------------------------------
   // 1. Empty state
   // -----------------------------------------------------------------------

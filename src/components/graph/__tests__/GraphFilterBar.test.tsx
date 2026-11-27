@@ -127,20 +127,18 @@ describe('GraphFilterBar', () => {
     )
   })
 
-  // Visible "Filters" text label adjacent to the icon so sighted touch
-  // users recognize the bar as a filter UI. Hidden on mobile (`hidden sm:inline`)
-  // to preserve the icon-only treatment on coarse-pointer devices.
-  it('renders a visible "Filters" text label adjacent to the icon', () => {
+  // An icon that labels a button sits inside it, not beside it (#7155 R8).
+  it('draws its funnel inside the Add filter button, with no standalone icon or label', () => {
     const { container } = render(
       <GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />,
     )
 
-    const label = screen.getByText(t('graph.filter.label'))
-    expect(label).toBeInTheDocument()
-    // Hidden on mobile, visible from `sm:` breakpoint up.
-    expect(label).toHaveClass('hidden', 'sm:inline')
-    // The accessible name on the fieldset (via legend.sr-only) is unchanged.
-    expect(container.querySelector('legend.sr-only')).toHaveTextContent(t('graph.filter.addFilter'))
+    const addButton = screen.getByRole('button', { name: t('graph.filter.addFilter') })
+    expect(addButton.querySelectorAll('svg')).toHaveLength(1)
+    for (const icon of container.querySelectorAll('svg')) {
+      expect(icon.closest('button')).not.toBeNull()
+    }
+    expect(screen.queryByText('Filters')).not.toBeInTheDocument()
   })
 
   it('renders a pill for each active filter', () => {

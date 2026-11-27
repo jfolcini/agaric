@@ -1030,15 +1030,15 @@
  * parent's text. A coarse pointer has no lane, and block mode there adds no
  * shift per task (`--block-tree-task-shift`): a phone's narrow column cannot
  * spare it once per nested task. The column keeps room for what hangs
- * (`--block-room`, `outline-column`): the lane, and the selection checkbox
- * left of it. */
+ * (`--block-room`, `outline-column`): the lane, and the grip left of it while
+ * the selection checkbox takes the lane. */
 :root {
   --block-lane: calc(var(--agaric-font-size, 1rem) + 0.5rem);
   --block-checkbox: calc(var(--agaric-font-size, 1rem) + 0.25rem);
   --block-gap: 0.25rem;
   --block-inset: 0.75rem;
   --block-hang: calc(var(--block-lane) + var(--block-gap) + var(--block-inset));
-  --block-room: calc(var(--block-hang) + 1rem);
+  --block-room: calc(var(--block-hang) + var(--block-lane));
   /* How far before the edge the checkbox's box (`BlockInlineControls`) starts. */
   --block-controls-lead: var(--block-inset);
   --block-task-shift: calc(
