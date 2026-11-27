@@ -575,7 +575,7 @@ describe('BlockListItem — isFocused prop', () => {
   // rest, with the ring gated in CSS on keyboard focus being in the list. jsdom
   // cannot evaluate that gate (`:focus-visible` / `:has()` against the Tailwind
   // stylesheet), so these pin the class contract; the gate itself was checked in
-  // a real browser. `block-selected` is editor multi-selection, not the cursor.
+  // a real browser.
   it('applies the list-cursor recipe, not an inline ring, when isFocused is true', () => {
     render(
       <ul>
@@ -586,7 +586,6 @@ describe('BlockListItem — isFocused prop', () => {
     const li = screen.getByRole('listitem')
     expect(li.className).toContain('list-cursor')
     expect(li.className).not.toContain('ring-2')
-    expect(li.className).not.toContain('block-selected')
   })
 
   it('does not apply the list-cursor recipe when isFocused is false', () => {

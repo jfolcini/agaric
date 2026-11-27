@@ -17,7 +17,7 @@
  * the affordance they opened.
  */
 
-import { Plus } from 'lucide-react'
+import { Filter } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -388,7 +388,7 @@ export function AddFilterPopover({
           aria-expanded={open}
           aria-label={t('pageBrowser.filter.addFilter')}
         >
-          <Plus aria-hidden="true" />
+          <Filter aria-hidden="true" />
           {t('pageBrowser.filter.addFilter')}
         </Button>
       </PopoverTrigger>

@@ -1,4 +1,4 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { expect, openPage, selectedCheckboxes, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for keyboard multi-block selection (#922, finding 1).
@@ -16,8 +16,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *   PAGE_GETTING_STARTED ("Getting Started") -- 5 child blocks GS_1..GS_5.
  *
  * Selection mechanics (mirrors batch-operations.spec.ts):
- *   - Selected blocks get the `block-selected` utility on their row's
- *     [data-testid="block-frame"].
+ *   - A selected block shows its checked selection checkbox.
  *   - Batch toolbar (`.batch-toolbar`, testid `batch-toolbar`) shows from two
  *     selected blocks (#6547), with the count.
  *   - Entry into block-select mode: Ctrl+Click a static block selects it
@@ -40,21 +39,21 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     // Enter block-select mode: Ctrl+Click the first block to select it WITHOUT
     // opening its editor. This is the anchor for keyboard range extension.
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
-    const firstFrame = blocks.nth(0).getByTestId('block-frame')
+    const firstSelected = selectedCheckboxes(blocks.nth(0))
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(firstFrame).toHaveClass(/block-selected/)
+    await expect(firstSelected).toHaveCount(1)
     await expect(batchToolbar).toHaveCount(0)
 
     // Press Shift+ArrowDown twice — extend the selection down by two blocks.
     await page.keyboard.press('Shift+ArrowDown')
     await page.keyboard.press('Shift+ArrowDown')
 
-    // The first three blocks now carry the selection highlight.
+    // The first three blocks now show their checked checkbox.
     for (let i = 0; i < 3; i++) {
-      await expect(blocks.nth(i).getByTestId('block-frame')).toHaveClass(/block-selected/)
+      await expect(selectedCheckboxes(blocks.nth(i))).toHaveCount(1)
     }
     // Block 4 stays unselected (the range stopped at 3).
-    await expect(blocks.nth(3).getByTestId('block-frame')).not.toHaveClass(/block-selected/)
+    await expect(selectedCheckboxes(blocks.nth(3))).toHaveCount(0)
 
     // The batch toolbar reflects the keyboard-built selection count.
     await expect(batchToolbar).toBeVisible()
@@ -67,9 +66,9 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     const batchToolbar = page.getByTestId('batch-toolbar')
 
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
-    const firstFrame = blocks.nth(0).getByTestId('block-frame')
+    const firstSelected = selectedCheckboxes(blocks.nth(0))
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(firstFrame).toHaveClass(/block-selected/)
+    await expect(firstSelected).toHaveCount(1)
 
     // Grow down to three blocks…
     await page.keyboard.press('Shift+ArrowDown')
@@ -79,8 +78,8 @@ test.describe('Keyboard block multi-selection (#922) @editor', () => {
     // …then Shift+ArrowUp shrinks back toward the anchor (block 1).
     await page.keyboard.press('Shift+ArrowUp')
     await expect(batchToolbar).toContainText('2')
-    await expect(blocks.nth(0).getByTestId('block-frame')).toHaveClass(/block-selected/)
-    await expect(blocks.nth(1).getByTestId('block-frame')).toHaveClass(/block-selected/)
-    await expect(blocks.nth(2).getByTestId('block-frame')).not.toHaveClass(/block-selected/)
+    await expect(selectedCheckboxes(blocks.nth(0))).toHaveCount(1)
+    await expect(selectedCheckboxes(blocks.nth(1))).toHaveCount(1)
+    await expect(selectedCheckboxes(blocks.nth(2))).toHaveCount(0)
   })
 })

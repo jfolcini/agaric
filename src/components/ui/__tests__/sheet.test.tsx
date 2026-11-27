@@ -4,6 +4,7 @@
  * Validates:
  *  - displayName is set on all exported components
  *  - ref forwarding for styled sub-components (Header, Footer)
+ *  - useBottomSheetOpen follows open bottom sheets, stacked ones included
  */
 
 import { render, screen } from '@testing-library/react'
@@ -22,6 +23,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
+  useBottomSheetOpen,
 } from '@/components/ui/sheet'
 
 const BOTTOM_CAP = 'max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))]'
@@ -314,5 +316,62 @@ describe('SheetBody', () => {
     expect(body.getAttribute('aria-label')).toBe('Body region')
     expect(body.getAttribute('aria-describedby')).toBe('body-desc')
     expect(body.getAttribute('data-custom')).toBe('x')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// useBottomSheetOpen
+// ---------------------------------------------------------------------------
+
+describe('useBottomSheetOpen', () => {
+  function Probe(): React.ReactElement {
+    return <output data-testid="probe">{String(useBottomSheetOpen())}</output>
+  }
+
+  function Sheets({
+    a,
+    b,
+    side = 'bottom',
+  }: {
+    a: boolean
+    b: boolean
+    side?: 'bottom' | 'right'
+  }): React.ReactElement {
+    return (
+      <>
+        <Probe />
+        <Sheet open={a}>
+          <SheetContent side={side}>
+            <SheetTitle>A</SheetTitle>
+            <SheetDescription>A</SheetDescription>
+          </SheetContent>
+        </Sheet>
+        <Sheet open={b}>
+          <SheetContent side="bottom">
+            <SheetTitle>B</SheetTitle>
+            <SheetDescription>B</SheetDescription>
+          </SheetContent>
+        </Sheet>
+      </>
+    )
+  }
+
+  const probe = () => screen.getByTestId('probe').textContent
+
+  it('stays true until the last of two stacked bottom sheets closes', () => {
+    const { rerender } = render(<Sheets a={false} b={false} />)
+    expect(probe()).toBe('false')
+    rerender(<Sheets a b={false} />)
+    expect(probe()).toBe('true')
+    rerender(<Sheets a b />)
+    rerender(<Sheets a={false} b />)
+    expect(probe()).toBe('true')
+    rerender(<Sheets a={false} b={false} />)
+    expect(probe()).toBe('false')
+  })
+
+  it('ignores a side sheet', () => {
+    render(<Sheets a b={false} side="right" />)
+    expect(probe()).toBe('false')
   })
 })

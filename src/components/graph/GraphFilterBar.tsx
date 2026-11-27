@@ -17,7 +17,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
+import { FilterBar } from '@/components/filters/FilterBar'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -39,7 +39,6 @@ import {
 } from '@/lib/graph-filters'
 import { logger } from '@/lib/logger'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
-import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
 /**
@@ -207,6 +206,8 @@ export interface GraphFilterBarProps {
   edgesTotal?: number | undefined
   /** True when the backend edge cap fired and `edgesShown < edgesTotal` (#2298). */
   edgesTruncated?: boolean | undefined
+  /** The view's own controls, after the filter count. */
+  trailing?: React.ReactNode
 }
 
 // ---------------------------------------------------------------------------
@@ -551,6 +552,7 @@ export function GraphFilterBar({
   edgesShown,
   edgesTotal,
   edgesTruncated,
+  trailing,
 }: GraphFilterBarProps): React.ReactElement {
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -625,7 +627,7 @@ export function GraphFilterBar({
 
   return (
     <fieldset
-      className="graph-filter-bar flex flex-wrap items-center gap-1.5"
+      className="graph-filter-bar m-0 min-w-0 border-0 p-0"
       aria-label={t('graph.filter.addFilter')}
       data-testid="graph-filter-bar"
     >
@@ -634,98 +636,93 @@ export function GraphFilterBar({
         {t('graph.filter.filtersApplied', { count: filters.length })}
       </div>
 
-      {filters.map((filter, i) => {
-        const label = filterLabel(filter, t)
-        return (
-          <FilterPill
-            key={`${filter.type}-${getGraphFilterKey(filter)}`}
-            label={label}
-            removeAriaLabel={t('graph.filter.removeFilter', { label })}
-            onRemove={() => handleRemove(i)}
-          />
-        )
-      })}
-
-      {!hasFilters && (
-        <Badge tone="outline" className="text-xs text-muted-foreground">
-          {t('graph.filter.noFilters')}
-        </Badge>
-      )}
-
-      <Popover
-        open={popoverOpen}
-        onOpenChange={setPopoverOpen}
-        sheetTitle={t('graph.filter.addFilterPopoverLabel')}
-      >
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="xs"
-            aria-label={t('graph.filter.addFilter')}
-            aria-expanded={popoverOpen}
+      <FilterBar
+        hasChips={hasFilters}
+        chips={filters.map((filter, i) => {
+          const label = filterLabel(filter, t)
+          return (
+            <FilterPill
+              key={`${filter.type}-${getGraphFilterKey(filter)}`}
+              label={label}
+              removeAriaLabel={t('graph.filter.removeFilter', { label })}
+              onRemove={() => handleRemove(i)}
+            />
+          )
+        })}
+        addFilter={
+          <Popover
+            open={popoverOpen}
+            onOpenChange={setPopoverOpen}
+            sheetTitle={t('graph.filter.addFilterPopoverLabel')}
           >
-            <Filter className="h-3 w-3" aria-hidden="true" />
-            {t('graph.filter.addFilter')}
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                aria-label={t('graph.filter.addFilter')}
+                aria-expanded={popoverOpen}
+              >
+                <Filter className="h-3 w-3" aria-hidden="true" />
+                {t('graph.filter.addFilter')}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-72 max-w-[calc(100vw-2rem)] p-3"
+              align="start"
+              aria-label={t('graph.filter.addFilterPopoverLabel')}
+            >
+              <AddFilterForm
+                allTags={allTags}
+                existingFilters={filters}
+                onApply={handleAdd}
+                onCancel={() => setPopoverOpen(false)}
+              />
+            </PopoverContent>
+          </Popover>
+        }
+        clearAll={
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={handleClearAll}
+            aria-label={t('graph.filter.clearAll')}
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            {t('graph.filter.clearAll')}
           </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          className="w-72 max-w-[calc(100vw-2rem)] p-3"
-          align="start"
-          aria-label={t('graph.filter.addFilterPopoverLabel')}
-        >
-          <AddFilterForm
-            allTags={allTags}
-            existingFilters={filters}
-            onApply={handleAdd}
-            onCancel={() => setPopoverOpen(false)}
-          />
-        </PopoverContent>
-      </Popover>
+        }
+        trailing={
+          <>
+            {showingCount && (
+              <span
+                className="text-xs text-muted-foreground"
+                aria-live="polite"
+                aria-atomic="true"
+                data-testid="graph-filter-count"
+              >
+                {t('graph.filter.showingCount', { filtered: filteredCount, total: totalCount })}
+              </span>
+            )}
 
-      {hasFilters && (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={handleClearAll}
-          aria-label={t('graph.filter.clearAll')}
-        >
-          <X className="h-3 w-3" aria-hidden="true" />
-          {t('graph.filter.clearAll')}
-        </Button>
-      )}
-
-      {showingCount && (
-        <span
-          className="ml-auto text-xs text-muted-foreground"
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="graph-filter-count"
-        >
-          {t('graph.filter.showingCount', { filtered: filteredCount, total: totalCount })}
-        </span>
-      )}
-
-      {showEdgesTruncated && (
-        <span
-          className={cn(
-            'text-xs text-muted-foreground italic',
-            // Right-align the notice when it is the only trailing item;
-            // when the "showing N of M pages" count is present it owns the
-            // `ml-auto` and this notice trails it.
-            !showingCount && 'ml-auto',
-          )}
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="graph-edges-truncated"
-        >
-          {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}{' '}
-          {/* #3314 finding 3 — the same edge cap that truncates the edge
-              list also makes per-node backlink counts (and the "Has
-              backlinks" filter) unreliable; say so in the same notice
-              rather than letting the dimension silently misbehave. */}
-          {t('graph.filter.backlinksUnavailableTruncated')}
-        </span>
-      )}
+            {showEdgesTruncated && (
+              <span
+                className="text-xs text-muted-foreground italic"
+                aria-live="polite"
+                aria-atomic="true"
+                data-testid="graph-edges-truncated"
+              >
+                {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}{' '}
+                {/* #3314 finding 3 — the same edge cap that truncates the edge
+                    list also makes per-node backlink counts (and the "Has
+                    backlinks" filter) unreliable; say so in the same notice
+                    rather than letting the dimension silently misbehave. */}
+                {t('graph.filter.backlinksUnavailableTruncated')}
+              </span>
+            )}
+            {trailing}
+          </>
+        }
+      />
     </fieldset>
   )
 }

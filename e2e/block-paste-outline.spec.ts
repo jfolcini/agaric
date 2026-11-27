@@ -9,6 +9,7 @@ import {
   openPage,
   readClipboard,
   reopenPage,
+  selectedCheckboxes,
   test,
   waitForBoot,
 } from './helpers'
@@ -182,10 +183,8 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @edi
     await blurEditors(page)
     await ctrlSelectById(page, gs1)
     // One selected block brings no batch bar (#6547); the row shows the selection.
-    await expect(page.locator('.block-selected')).toHaveCount(1)
-    await expect(page.locator(`[data-block-id="${gs1}"] [data-testid="block-frame"]`)).toHaveClass(
-      /block-selected/,
-    )
+    await expect(selectedCheckboxes(page)).toHaveCount(1)
+    await expect(selectedCheckboxes(page.locator(`[data-block-id="${gs1}"]`))).toHaveCount(1)
     await page.keyboard.press('Control+c')
     await expect.poll(() => readClipboard(page)).toContain(GS1_TEXT)
     // Two plain blocks in the Document dialect (#6190), a blank line between them.
