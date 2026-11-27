@@ -361,6 +361,57 @@ Useful flags (see `scripts/release.sh --help`):
 
 - **winget:** run `scripts/gen-winget-manifest.sh <version>`, commit `packaging/winget/`, and submit it ([`packaging/winget/README.md`](../packaging/winget/README.md)).
 - **Flathub:** nothing until the app is accepted there ([`packaging/flathub/README.md`](../packaging/flathub/README.md)); from then on, add the `<release>` to the MetaInfo file in the pre-release PR, and in `flathub/io.github.jfolcini.Agaric` point the manifest at the new tag and commit and regenerate `cargo-sources.json` and `node-sources.json`.
+- **Microsoft Store:** nothing once it is set up ([Microsoft Store](#microsoft-store)).
+
+### Microsoft Store
+
+`.github/workflows/publish-msstore.yml` turns each published release's `.msi` into an MSIX and submits it to the Store. No certificate of ours is involved: the Store signs an MSIX after certification, while an MSI or EXE submission would need our own Authenticode signature. Installed from the Store, the app runs from `C:\Program Files\WindowsApps\…`, turns its own updater off, and the Store updates it.
+
+**When it runs.** After every successful `release.yml` run, whose last job publishes the release. It cannot listen for `release: published`, because that job publishes with `GITHUB_TOKEN`, whose events start no workflow. By hand, *Actions › Publish to Microsoft Store › Run workflow* with a tag builds and validates the MSIX, uploads it as the run's `msix` artifact, and submits it only with *submit* ticked. Until the variables and secrets below exist, a release's run stops at a notice and a manual run builds with a placeholder identity.
+
+**Each release:**
+
+1. Downloads `Agaric_<version>_x64_en-US.msi` from the release and checks it with `gh attestation verify` against the provenance `release.yml` recorded when it built that tag.
+2. Unpacks `agaric.exe` and the `agaric-mcp` bridge from it with an administrative install (`msiexec /a`), which only copies the files out: no registry, shortcuts or custom actions.
+3. Writes the manifest from [`packaging/msstore/AppxManifest.xml`](../packaging/msstore/AppxManifest.xml) and the logos from `src-tauri/icons/icon.png` (`scripts/msstore-stage.sh`), indexes the logos with MakePri and packs with MakeAppx, which validates the manifest and the files it names. Both come with the Windows SDK on the runner image. The package version is the tag's `x.y.z.0`.
+4. Submits with the [Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/overview), pinned in `pins.txt`. `msstore publish` deletes any draft submission, copies a new one from the last published submission (listing, screenshots, age rating), puts the package in it and commits it to certification.
+
+So edit the listing between releases and submit it from Partner Center, or the next release's run discards the draft. A release that lands while the previous submission is still in certification fails to submit; once certification is through, run the workflow by hand with that tag and *submit*. The Windows App Certification Kit does not run here: the runner image does not list it, and it installs the package, which only a signed package allows. The Store's certification runs its tests on every submission.
+
+**One-time setup:**
+
+1. **Version.** The Store refuses a package version whose first field is 0 ([package version numbering](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/app-package-requirements#package-version-numbering)), so a `0.x.y` release cannot go to the Store, by hand or by the workflow, which builds it with a warning and refuses to submit it.
+2. **Account.** Open a free individual developer account at [storedeveloper.microsoft.com](https://storedeveloper.microsoft.com); it asks for an identity check.
+3. **Name.** In Partner Center, *Apps and games › New product › MSIX or PWA app*, reserve **Agaric**, the manifest's `DisplayName`. A reservation lapses after three months without a submission.
+4. **Identity.** Copy the app's *Product management › Product identity* values into repository variables (*Settings › Secrets and variables › Actions › Variables*):
+
+   | Variable | Partner Center value |
+   | --- | --- |
+   | `MSSTORE_IDENTITY_NAME` | Package/Identity/Name |
+   | `MSSTORE_PUBLISHER` | Package/Identity/Publisher, the whole `CN=…` |
+   | `MSSTORE_PUBLISHER_DISPLAY_NAME` | Package/Properties/PublisherDisplayName |
+   | `MSSTORE_PRODUCT_ID` | Store ID |
+
+5. **Submission API.** In Partner Center, *Account settings › User management › Microsoft Entra applications*: associate or create a Microsoft Entra tenant, add an Entra application with the **Manager** role, and create a client secret for it. Store them as repository secrets: `MSSTORE_TENANT_ID` (the tenant ID), `MSSTORE_CLIENT_ID` (the application ID), `MSSTORE_CLIENT_SECRET`, and `MSSTORE_SELLER_ID` (the Seller ID under *Account settings*). A client secret expires; once it has, submissions fail until a new one is stored.
+6. **First submission, by hand.** The CLI only updates an app whose first submission went through Partner Center. Run the workflow by hand with the release's tag, download the `msix` artifact, and in a new submission fill in:
+   - *Pricing and availability*: free.
+   - *Properties*: the category, and the privacy policy URL `https://github.com/jfolcini/agaric/blob/main/PRIVACY.md`.
+   - *Age ratings*: the IARC questionnaire.
+   - *Packages*: the `.msix`.
+   - *Store listings*, English (United States): a description and at least one screenshot. Each language the manifest's `Resources` lists needs its own listing.
+   - *Submission options*: why the package declares the restricted capability `runFullTrust`: Agaric is a desktop app that runs as an ordinary Win32 process, with a local database and a LAN sync server.
+
+   Submit it and wait until it is published. From the next release on, the workflow submits by itself.
+
+**Check on a Windows PC** ([#6515](https://github.com/jfolcini/agaric/issues/6515)):
+
+- Install from the Store and start Agaric from Start: the window opens, and the taskbar and Start icons sit on no coloured plate.
+- The updater stays off, and a Store update arrives.
+- **The data folder.** A packaged app's new files under AppData go to its private copy, `%LOCALAPPDATA%\Packages\<package family name>\LocalCache\Roaming\com.agaric.app`, which uninstalling it deletes; files already there are read and written in place (Windows 10 1903 and later, the manifest's minimum). So the Store build opens the `notes.db` an NSIS install left in `%APPDATA%\com.agaric.app`, but what it creates (attachments, the database's `-wal` and `-shm` while it runs) only it sees. Check that someone moving from the NSIS install finds their notes, and that the move means uninstalling the NSIS build afterwards, not alternating between the two. The `unvirtualizedResources` restricted capability would turn the redirection off, but Microsoft reserves it for certain games from Microsoft and its partners, so the package does not ask for it.
+- LAN sync pairs and syncs with no firewall prompt, also after a Store update (the manifest's firewall rule).
+- An `agaric://` link opens the app, and a voice note asks for the microphone.
+- *Agent access*: the MCP config the app copies names `agaric-mcp.exe` inside the versioned `WindowsApps` folder, which moves with every Store update.
+- On a Windows 10 PC without the WebView2 Runtime: the MSI and NSIS installers fetch it, an MSIX cannot.
 
 ### What `release.yml` does on tag push
 

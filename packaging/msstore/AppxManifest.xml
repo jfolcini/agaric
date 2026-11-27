@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Microsoft Store MSIX's package manifest (docs/BUILD.md § Microsoft Store).
+  stage.sh replaces each MSIX_* placeholder with the environment variable of
+  that name, XML-escaped; publish-msstore.yml sets them from the release tag
+  and the repository's Partner Center variables.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop2="http://schemas.microsoft.com/appx/manifest/desktop/windows10/2"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop2 rescap">
+
+  <Identity
+    Name="@MSIX_IDENTITY_NAME@"
+    Publisher="@MSIX_PUBLISHER@"
+    Version="@MSIX_VERSION@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <!-- The name reserved in Partner Center, character for character. -->
+    <DisplayName>Agaric</DisplayName>
+    <PublisherDisplayName>@MSIX_PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <!-- Every language listed here needs its own Store listing in Partner Center. -->
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <!-- WebView2 sets no Windows 10 floor. 1903 is the first build that opens
+       files already in AppData in place instead of copying them on write, so
+       the Store build keeps writing the notes.db an NSIS install left there. -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <!-- A full-trust app runs as the user and needs only runFullTrust. The rest
+       say what it uses: the Store page lists them, and microphone and webcam
+       give it its own switch on Windows' privacy pages from install. -->
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="Agaric" Executable="agaric.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Agaric"
+        Description="Notes in an outline, for one person and their own devices"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- Starts agaric.exe with the link as its argument, as the MSI's
+             registry entry does, for the deep-link plugin to read. -->
+        <uap3:Extension Category="windows.protocol">
+          <uap3:Protocol Name="agaric" Parameters="&quot;%1&quot;" />
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <!-- LAN sync listens on UDP (QUIC and mDNS). A rule the firewall prompt
+       creates names the exe's path, which moves with every Store update. -->
+  <Extensions>
+    <desktop2:Extension Category="windows.firewallRules">
+      <desktop2:FirewallRules Executable="agaric.exe">
+        <desktop2:Rule Direction="in" IPProtocol="UDP" Profile="private" />
+      </desktop2:FirewallRules>
+    </desktop2:Extension>
+  </Extensions>
+</Package>
