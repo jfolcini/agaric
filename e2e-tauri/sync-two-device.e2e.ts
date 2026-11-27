@@ -142,7 +142,7 @@ const NEWER_PAGE = 'peer newer page'
 const TAG = 'marigold'
 const DUE_PANEL = '[data-testid="due-panel"]'
 const DONE_PANEL = '.done-panel'
-const OVERDUE = '[data-testid="due-panel"] .overdue-section'
+const OVERDUE_TAB = '[role="tab"]*=Overdue'
 const TITLE = '[aria-label="Page title"]'
 const TAB_LIST = '[role="tablist"][aria-label="Editor tabs"]'
 const SEARCH_INPUT = '[aria-label="Search blocks"]'
@@ -516,6 +516,26 @@ async function waitInFreshView(
 /** The DOM text of `selector`, or '' when it is not rendered; read whether or not it is visible. */
 function textOf(selector: string): Promise<string> {
   return browser.execute((sel: string) => document.querySelector(sel)?.textContent ?? '', selector)
+}
+
+/**
+ * The DOM text of the Due panel's Overdue tab, or '' when the panel lists no
+ * task and so does not render. Today's panel opens on All, so this selects the
+ * tab first, by its name ("Overdue <count>"); a tab switch re-reads nothing.
+ */
+async function overdueTabText(): Promise<string> {
+  // A find under a parent that is gone throws rather than finding nothing.
+  if (!(await $(DUE_PANEL).isExisting())) return ''
+  const tab = $(DUE_PANEL).$(OVERDUE_TAB)
+  if (!(await tab.isExisting())) return ''
+  if ((await tab.getAttribute('aria-selected')) !== 'true') {
+    await tab.click()
+    await browser.waitUntil(async () => (await tab.getAttribute('aria-selected')) === 'true', {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: "the Due panel's Overdue tab never became selected",
+    })
+  }
+  return textOf(`[role="tabpanel"][id="${await tab.getAttribute('aria-controls')}"]`)
 }
 
 /** The local date `offsetDays` from today, as the app's views compute it. */
@@ -1235,7 +1255,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       })
       await waitInFreshView(
         () => openJournalMode('daily'),
-        async () => (await textOf(OVERDUE)).includes(LATE_TASK),
+        async () => (await overdueTabText()).includes(LATE_TASK),
         "Overdue never listed the peer's overdue task",
       )
 
@@ -1244,7 +1264,7 @@ describe('Agaric real-backend two-device sync (#5365) @sync @editor @pages @sett
       await waitInOpenView(
         async () =>
           (await textOf(DONE_PANEL)).includes(LATE_TASK) &&
-          !(await textOf(OVERDUE)).includes(LATE_TASK),
+          !(await overdueTabText()).includes(LATE_TASK),
         () => 'the open journal still lists the done task under Overdue',
       )
     })

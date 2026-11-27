@@ -172,9 +172,13 @@ describe('Agaric real-backend Settings rows that reach the OS (#5741) @settings 
     await waitForToast('Set as journal template')
 
     // 2. Today's page was auto-created at boot, before the template existed:
-    //    delete it so Quick Capture is the one to create the day.
+    //    delete it, from the day's Page actions menu, so Quick Capture is the
+    //    one to create the day.
     await navigateTo('Journal')
-    const deletePage = $('button[aria-label="Delete page"]')
+    const dayActions = $('button[aria-label="Page actions"]')
+    await dayActions.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await dayActions.click()
+    const deletePage = $('[role="menuitem"]*=Delete page')
     await deletePage.waitForClickable({ timeout: ACTION_TIMEOUT })
     await deletePage.click()
     const confirm = $('[role="alertdialog"]').$('button*=Delete page')
