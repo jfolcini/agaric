@@ -131,11 +131,11 @@ describe('SearchInput', () => {
     expect(last).toBe('ab')
   })
 
-  it('clear button respects 44px touch target via coarse: classes', () => {
+  it('clear button takes its 44px touch target as a hit area inside the field', () => {
     render(<SearchInput value="x" onChange={() => {}} placeholder="Search" />)
     const clear = screen.getByTestId('search-input-clear')
-    expect(clear.className).toContain('coarse:h-(--touch-target)')
-    expect(clear.className).toContain('coarse:w-(--touch-target)')
+    expect(clear.className).toContain('touch-hit-area')
+    expect(clear.className).not.toContain('coarse:h-(--touch-target)')
   })
 
   it('has no a11y violations when the clear button is visible', async () => {

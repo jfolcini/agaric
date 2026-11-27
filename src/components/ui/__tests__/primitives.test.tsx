@@ -546,10 +546,10 @@ describe('Input', () => {
     expect(screen.getByTestId('test-input').tagName).toBe('INPUT')
   })
 
-  it('includes coarse pointer touch-target class', () => {
+  it('keeps its 36 px height on a coarse pointer', () => {
     render(<Input data-testid="test-input" />)
     const el = screen.getByTestId('test-input')
-    expect(el.className).toContain('coarse:h-(--touch-target)')
+    expect(el.className).not.toContain('coarse:h-')
   })
 
   it('includes focus-visible ring classes', () => {
