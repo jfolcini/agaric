@@ -43,12 +43,17 @@ async function expectChipsAboveAddFilter(bar: Locator): Promise<void> {
   }
 }
 
-/** The view's trailing controls end the actions row, at its inline end. */
+/**
+ * The view's trailing controls end the actions row at the bar's inline end, or
+ * a row of their own below it once they do not fit beside it.
+ */
 async function expectTrailingAtEnd(bar: Locator, trailing: Locator): Promise<void> {
+  const end = await bar.boundingBox()
   const row = await bar.locator('[data-slot="filter-bar-actions"]').boundingBox()
   const box = await trailing.boundingBox()
-  if (!row || !box) throw new Error('no box')
-  expect(Math.abs(row.x + row.width - (box.x + box.width))).toBeLessThanOrEqual(1)
+  if (!end || !row || !box) throw new Error('no box')
+  expect(Math.abs(end.x + end.width - (box.x + box.width))).toBeLessThanOrEqual(1)
+  expect(box.y + box.height / 2).toBeGreaterThanOrEqual(row.y)
 }
 
 interface View {
@@ -60,11 +65,12 @@ interface View {
 
 const VIEWS: View[] = [
   {
-    // The default "Exclude journal" chip.
+    // The default "Exclude journal" chip. Focus on this page sits beside the
+    // bar, outside its error boundary.
     name: 'Graph',
     open: async (page) => {
       await navigateToView(page, 'Graph')
-      return page.getByTestId('graph-filter-bar')
+      return page.getByTestId('graph-tag-filter')
     },
     trailing: (bar) => bar.getByTestId('local-graph-control'),
   },

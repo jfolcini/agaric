@@ -24,7 +24,7 @@ import { computeOverflow, OVERFLOW_TRIGGER_WIDTH_PX } from '@/hooks/useToolbarOv
 const editor = {} as Editor
 const noop = () => {}
 
-/** A coarse-pointer toolbar button (`icon-xs` is 44 px there). */
+/** A coarse-pointer toolbar button: a ghost `icon-xs`, whose box is 44 px there. */
 const BUTTON_PX = 44
 /** A group separator: a 1 px rule with `mx-0.5` either side. */
 const SEPARATOR_PX = 5

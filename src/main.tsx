@@ -17,6 +17,7 @@ import { resolveLocale } from '@/lib/i18n/locales'
 // order here does not matter — every module that resolves a string imports
 // it too, so its body has run before any of them evaluate.
 import { setLocale } from '@/lib/i18n/set-locale'
+import { syncPointerAttribute } from '@/lib/input-modality'
 import { logFrontend } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { setLogBackendSink } from '@/lib/logger-transport'
@@ -89,6 +90,7 @@ async function main() {
 
   // Before the first paint, so the `coarse` CSS variant agrees with `useIsTouch`.
   syncTouchAttribute()
+  syncPointerAttribute()
 
   // When running in a regular browser (not Tauri webview), activate IPC mocks
   // so the UI renders for visual development/debugging.

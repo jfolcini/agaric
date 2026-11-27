@@ -205,7 +205,8 @@ test.describe('Batch block operations @editor', () => {
 
   test("the cursor's focus ring wraps the block's row, not the gutter", async ({ page }) => {
     await selectSecondAndThird(page)
-    // The last Ctrl+Click leaves the cursor on its row.
+    // The last Ctrl+Click leaves the cursor on its row; a key rings it.
+    await page.keyboard.press('Control+ArrowUp')
     const cursor = page.locator('li[data-block-id]:focus')
     await expect(cursor).toHaveCount(1)
     const { ringLefts, handleRight } = await cursor.evaluate((li) => {
@@ -258,8 +259,8 @@ async function openShapesPage(page: Page, phone: boolean): Promise<void> {
 }
 
 /**
- * Select every shape; the last Ctrl+Click leaves the keyboard cursor's ring on
- * the plain row, so the shapes above it show the selection alone. Each draws no
+ * Select every shape; the last Ctrl+Click leaves the keyboard cursor on the
+ * plain row, so the shapes above it show the selection alone. Each draws no
  * ring, shadow or tint, and its checked checkbox centres on its first line.
  */
 async function expectCheckboxOnlySelection(page: Page): Promise<void> {
@@ -370,5 +371,68 @@ test.describe('A selected block shows its checkbox alone on a phone @editor @mob
     expect(chevron).not.toBeNull()
     // The chevron starts past the checkbox's whole tap box, not inside it.
     expect(chevron?.x ?? 0).toBeGreaterThanOrEqual((slot?.x ?? 0) + (slot?.width ?? 0))
+    // And ends at the block's first glyph, as it does with no checkbox.
+    const glyphLeft = await text.evaluate((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      let first = walker.nextNode()
+      while (first && !first.textContent?.trim()) first = walker.nextNode()
+      const glyph = document.createRange()
+      glyph.setStart(first as Node, 0)
+      glyph.setEnd(first as Node, 1)
+      return glyph.getBoundingClientRect().left
+    })
+    const icon = await nested.getByTestId('collapse-toggle').first().locator('svg').boundingBox()
+    expect(Math.abs((icon?.x ?? 0) + (icon?.width ?? 0) - glyphLeft)).toBeLessThanOrEqual(1)
+  })
+
+  test('the batch bar paints over the rows scrolled under it', async ({ page }) => {
+    await waitForBoot(page)
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Long selection',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
+    for (let i = 0; i < 30; i++) {
+      const row = await ipc<{ id: string }>(page, 'create_block', {
+        blockType: 'content',
+        content: `## Heading ${i}`,
+        parentId: pageId,
+        index: null,
+        scope,
+      })
+      // A child gives each row its chevron, which sits above the row's text.
+      await ipc(page, 'create_block', {
+        blockType: 'content',
+        content: `Child ${i}`,
+        parentId: row.id,
+        index: null,
+        scope,
+      })
+    }
+    await openPageMobile(page, 'Long selection')
+    for (const index of [0, 1]) {
+      const text = page.getByTestId('block-static').nth(index)
+      const box = await text.boundingBox()
+      await text.click({ modifiers: ['Control'], position: { x: (box?.width ?? 0) - 4, y: 4 } })
+    }
+    const bar = page.getByTestId('batch-toolbar')
+    await expect(bar).toBeVisible()
+
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, 600))
+    await expect(page.getByText('Heading 0', { exact: true })).not.toBeInViewport()
+    const buttons = bar.getByRole('button')
+    await expect(buttons.first()).toBeVisible()
+    for (const button of await buttons.all()) {
+      const name = await button.textContent()
+      const hit = await button.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2))
+      })
+      expect(hit, name ?? '').toBe(true)
+    }
+    // Opaque: the rows under it do not read through.
+    const background = await bar.evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(background).not.toMatch(/rgba|\//)
   })
 })

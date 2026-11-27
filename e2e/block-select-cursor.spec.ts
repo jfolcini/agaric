@@ -1,6 +1,14 @@
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
-import { expect, focusBlockById, openPage, reopenPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  openPage,
+  openPageMobile,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * The block-select cursor (#5734): keyboard focus kept apart from the selection,
@@ -122,5 +130,60 @@ test.describe('Block-select cursor (#5734) @editor', () => {
     await page.keyboard.press('Control+Space')
     await expect(selectBox(page, GS1)).toHaveCount(0)
     await expect(announcer(page)).toHaveText('Selection cleared')
+  })
+})
+
+/** The 3px ring the cursor row draws round its frame, or `none`. */
+const ring = (page: Page, id: string) => row(page, id).getByTestId('block-frame')
+
+test.describe('The cursor ring marks keyboard use only (#7165) @editor', () => {
+  test('no ring after Ctrl+Click; a key rings the cursor', async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, PAGE)
+    await row(page, GS2)
+      .getByTestId('block-static')
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
+    await expect(row(page, GS2)).toBeFocused()
+    await expect(ring(page, GS2)).toHaveCSS('box-shadow', 'none')
+
+    await page.keyboard.press('ArrowDown')
+    await expect(ring(page, GS2)).toHaveCSS('box-shadow', /0px 0px 0px 3px/)
+
+    await page.keyboard.press('Control+ArrowDown')
+    await expectCursorOn(page, GS3, GS2)
+    await page.keyboard.press('Shift+ArrowUp')
+    await expect(page.locator('li[data-block-id]:focus').getByTestId('block-frame')).toHaveCSS(
+      'box-shadow',
+      /0px 0px 0px 3px/,
+    )
+  })
+})
+
+const pixel = devices['Pixel 7']
+
+test.describe('The cursor ring on a phone (#7165) @editor @mobile', () => {
+  test.use({
+    viewport: pixel.viewport,
+    hasTouch: pixel.hasTouch,
+    isMobile: pixel.isMobile,
+    deviceScaleFactor: pixel.deviceScaleFactor,
+    userAgent: pixel.userAgent,
+  })
+
+  test('a phone without a keyboard draws no ring', async ({ page }) => {
+    // Chromium reports a keyboard layout even when emulating a phone; a bare phone has none.
+    await page.addInitScript(() =>
+      Object.defineProperty(Navigator.prototype, 'keyboard', { get: () => undefined }),
+    )
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+    await row(page, GS2)
+      .getByTestId('block-static')
+      .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
+    await expect(row(page, GS2)).toBeFocused()
+    await expect(page.locator('html')).not.toHaveAttribute('data-keyboard')
+    // As if the last input were a key, which a phone without a keyboard never sends.
+    await page.evaluate(() => document.documentElement.removeAttribute('data-pointer'))
+    await expect(ring(page, GS2)).toHaveCSS('box-shadow', 'none')
   })
 })

@@ -9,7 +9,6 @@
  *  - Focus-visible ring classes are present
  *  - a11y: `axe(container)` clean
  *
- *
  * The rendered sizes and colours are measured in `e2e/control-heights.spec.ts`.
  */
 
