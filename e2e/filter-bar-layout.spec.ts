@@ -173,7 +173,7 @@ for (const phone of [false, true]) {
       await (phone ? openPageMobile : openPage)(page, 'Getting Started')
       const references = page.getByTestId('linked-references')
       const controls = [
-        references.locator('.linked-references-header button'),
+        references.locator('button.linked-references-header'),
         ...(await references.getByRole('radio').all()),
         references.getByRole('button', { name: 'Add filter', exact: true }),
         references.getByRole('button', { name: 'Source pages' }),
