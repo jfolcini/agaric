@@ -41,7 +41,7 @@ With *Local network, with an internet fallback* on, on both devices (Settings �
 
 ### Checking for updates
 
-At most once a day, and whenever you press *Check for updates now* (Settings › About), the desktop app asks GitHub whether a newer release exists, and downloads it from GitHub if you choose to install it. The Android app asks the same question at most once a day and only tells you; you install the new version yourself. The Flatpak build does not check, because Flathub delivers its updates.
+At most once a day, and whenever you press *Check for updates now* (Settings › About), the desktop app asks GitHub whether a newer release exists, and downloads it from GitHub if you choose to install it. The Android app asks the same question at most once a day and only tells you; you install the new version yourself. A copy installed from Flathub, the Snap Store, the Microsoft Store or the AUR does not check, because that store or package manager delivers its updates.
 
 The request contains no notes and no identifier. Like any download, it shows GitHub your IP address and the time.
 
