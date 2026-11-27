@@ -32,12 +32,17 @@ One batched follow-up for the non-blocking notes left on the merged round 3 PRs,
 **Flakes**
 
 - None. Today's runs (291) hold no job that failed and then passed on a rerun. Three failures, none a flake: `advanced-query-group.spec.ts` on the bridge on main at `ddefca5`, already root-caused and fixed by `a3bdd95`; eight Due-panel bridge specs on `claude/7155-journal-day` at `30589269`, that branch's own bug, fixed by its next commits (`0cf9690e`, `0cf1e4ce`); e2e-tauri on #7171, which fails every time the lane runs: #7162 moved the journal day's Delete page into its Page actions menu and Overdue under a Due-panel tab, and two smoke specs still used the old UI.
-- Fixed here at the orchestrator's request: `settings-desktop-integration.e2e.ts` opens the day's Page actions and picks Delete page from the menu; `sync-two-device.e2e.ts` "an overdue task the peer marks DONE leaves Overdue (#5256)" selects the Overdue tab (`due-panel-tab-overdue`) and reads the Due panel while it is selected. Each asserts what it did.
+- Fixed here at the orchestrator's request: `settings-desktop-integration.e2e.ts` opens the day's Page actions and picks Delete page from the menu; `sync-two-device.e2e.ts` "an overdue task the peer marks DONE leaves Overdue (#5256)" selects the Overdue tab (`due-panel-tab-overdue`) and reads the Due panel while it is selected; once the task is done it must be absent from the panel under any tab, since with nothing left to list the panel drops its tabs (the first draft required the tab still selected and failed there).
+- Run locally with `scripts/e2e-tauri-local.sh` on a debug build (`WDIO_SKIP_TAURI_BUILD=1`, after installing `webkit2gtk-driver`, `openbox`, `xdotool` and tauri-driver 2.1.0): the settings spec passes, and is red with the old selector (`button[aria-label="Delete page"]` still not clickable, as on #7171); in the sync spec the Overdue test passes, and with main's spec it is red ("Overdue never listed the peer's overdue task", as on #7171). "Settings shows this device's sync address" fails in this container with or without the change: its only interface is in 192.0.2.0/24, not a LAN range, so the app reports a loopback address and renders no address; it passed on #7171's CI run.
 
 **Item 7, after #7173 (merged as `58e23a4`, merged into this branch)**
 
 - `button.test.tsx` covers the `link` variant beside `ghost` in the compound variant that keeps a frameless icon button 44 px on touch; red for the three `link` sizes with `link` dropped from the variant. `items.test.ts` says its 44 px comes from the toolbar's buttons being ghost.
 - #7173 bot notes: `control-heights.spec.ts`'s probe takes any CSS colour (`resolvedColor`) and the off-track grey uses it instead of repeating it; `switch.test.tsx`'s header loses one of its two blank lines.
+
+**Custom colour swatch (orchestrator, from the round 3 screenshots)**
+
+- `CustomColor`'s preview swatch (`custom-color-preview`, `color-swatch-picker.tsx`) took `coarse:size-(--touch-target)`, 44 px beside a 36 px hex field since #7173; it is aria-hidden and not interactive, so it keeps `size-9`. `control-heights.spec.ts` "the custom colour swatch is as tall as its hex field" opens the tag colour sheet on both profiles; red on the phone with the class back (44 against 36).
 
 **Verification**
 
