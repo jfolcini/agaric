@@ -104,7 +104,7 @@ The data folder holds `notes.db`, the attachments, the snapshots and the log:
 | Windows | `%APPDATA%\com.agaric.app\` |
 | Android | `/data/data/com.agaric.app/`, private to the app |
 
-**What leaves your device.** No telemetry and no analytics. Besides sync with your paired devices, the app asks GitHub at start, at most once a day, whether a newer release exists (on Android it only announces it), and a web link in your notes is fetched from its own site for a preview when you paste or hover it (Settings › Editor turns the hover fetch off).
+**What leaves your device.** No telemetry and no analytics. Besides sync with your paired devices, the app asks GitHub at start, at most once a day, whether a newer release exists (on Android it only announces it), and a web link in your notes is fetched from its own site for a preview when you paste or hover it (Settings › Editor turns the hover fetch off). The [privacy policy](PRIVACY.md) has the full list.
 
 ## Install
 
