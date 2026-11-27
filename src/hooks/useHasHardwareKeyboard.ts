@@ -116,7 +116,8 @@ export function useHasHardwareKeyboard(): boolean {
 }
 
 /**
- * Test-only: reset the module-level latch + listener set. Tests that
+ * Test-only: reset the module-level latch, its listener set and the
+ * `<html data-keyboard>` it sets. Tests that
  * exercise the "first keydown flips the flag" path need a clean session
  * each run; expose a reset rather than coupling tests to module
  * internals.
@@ -124,4 +125,5 @@ export function useHasHardwareKeyboard(): boolean {
 export function _resetHardwareKeyboardLatchForTests(): void {
   sessionLatch = false
   latchListeners.clear()
+  document.documentElement.removeAttribute('data-keyboard')
 }
