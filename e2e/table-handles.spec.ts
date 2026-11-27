@@ -285,10 +285,18 @@ test.describe('table handles on a touch phone @editor @mobile', () => {
     const table = page.locator('[data-testid="block-editor"] table')
     await cell(table, 'b').tap()
 
+    // 36 px framed buttons, as everywhere on touch, with a 44 px hit area.
     for (const name of ['Row actions', 'Column actions', 'Add row', 'Add column']) {
-      const box = await page.getByRole('button', { name }).boundingBox()
-      expect(box?.width, name).toBe(44)
-      expect(box?.height, name).toBe(44)
+      const button = page.getByRole('button', { name })
+      const box = await button.boundingBox()
+      expect(box?.width, name).toBe(36)
+      expect(box?.height, name).toBe(36)
+      // The row handle overhangs the screen's edge, so measure the hit area itself.
+      const hitArea = await button.evaluate((n) => {
+        const before = getComputedStyle(n, '::before')
+        return [before.width, before.height]
+      })
+      expect(hitArea, `${name} hit area`).toEqual(['44px', '44px'])
     }
     // Finger drags, which the block row under the table must not take for its own swipe or drag.
     await fingerDrag(page, rowHandle(page), cell(table, 'a'))

@@ -46,9 +46,11 @@ export function ToggleRow({
       controlId={id}
       className="flex-row items-center gap-4 sm:flex-nowrap"
     >
+      {/* Block-level, so no line box hangs a descender under it off centre. */}
       <Switch
         ref={ref}
         id={id}
+        className="flex"
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
