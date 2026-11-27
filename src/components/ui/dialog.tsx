@@ -5,6 +5,7 @@ import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-but
 import {
   DIALOG_BODY_VIEWPORT_CLASS,
   DIALOG_CONTENT_BASE,
+  keepOpenOnToast,
   OVERLAY_SCRIM_CLASS,
 } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -49,6 +50,7 @@ const DialogContent = ({
   ref,
   className,
   children,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) => (
   <DialogPortal>
@@ -57,6 +59,10 @@ const DialogContent = ({
       ref={ref}
       data-slot="dialog-content"
       className={cn(DIALOG_CONTENT_BASE, className)}
+      onInteractOutside={(event) => {
+        keepOpenOnToast(event)
+        onInteractOutside?.(event)
+      }}
       {...props}
     >
       {children}

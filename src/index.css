@@ -2882,10 +2882,13 @@ mark[data-highlight-color='purple'] {
   }
 }
 
-/* Top toasts show only over a phone's open bottom sheet (`AppToaster`), whose
-   modal sets `pointer-events: none` on the body: without this they inherit it
-   and a tap falls through to the scrim, closing the sheet (#7165). */
-[data-sonner-toaster][data-y-position='top'] {
+/* An open modal sets `pointer-events: none` on the body: a toast over it would
+   inherit that, and a tap on it fall through to the scrim, closing the modal
+   (#7165). Top toasts show only over a phone's open bottom sheet (`AppToaster`);
+   a bottom toast takes taps only over a modal dialog, never over a phone's nav
+   drawer, whose items it would catch (`android-phone.spec.ts`). */
+[data-sonner-toaster][data-y-position='top'],
+body:has([data-slot='dialog-content'], [data-slot='alert-dialog-content']) [data-sonner-toaster] {
   pointer-events: auto;
 }
 

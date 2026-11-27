@@ -4,11 +4,13 @@
  * Validates:
  *  - displayName is set on all exported components
  *  - ref forwarding for styled sub-components (Header, Footer, Title, Description)
+ *  - a press in a toast leaves the dialog open; one elsewhere outside closes it
  */
 
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import * as React from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import {
@@ -195,6 +197,47 @@ describe('DialogBody attribute forwarding', () => {
 // ---------------------------------------------------------------------------
 // a11y
 // ---------------------------------------------------------------------------
+
+describe('DialogContent outside presses (#7165)', () => {
+  function Harness({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+    return (
+      <>
+        <ol data-sonner-toaster="">
+          <li>
+            <button type="button">Close toast</button>
+          </li>
+        </ol>
+        <button type="button">Elsewhere</button>
+        <Dialog open onOpenChange={onOpenChange}>
+          <DialogContent>
+            <DialogTitle>Title</DialogTitle>
+            <DialogDescription>Description</DialogDescription>
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
+
+  // A modal sets `pointer-events: none` on the body, which user-event honours.
+  const press = (name: string) =>
+    userEvent
+      .setup({ pointerEventsCheck: 0 })
+      .click(screen.getByRole('button', { name, hidden: true }))
+
+  it('stays open for a press in a toast', async () => {
+    const onOpenChange = vi.fn()
+    render(<Harness onOpenChange={onOpenChange} />)
+    await press('Close toast')
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('closes for a press elsewhere outside', async () => {
+    const onOpenChange = vi.fn()
+    render(<Harness onOpenChange={onOpenChange} />)
+    await press('Elsewhere')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+})
 
 describe('Dialog a11y', () => {
   it('has no accessibility violations', async () => {
