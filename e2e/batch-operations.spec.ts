@@ -1,6 +1,15 @@
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { SEED_IDS } from '../src/lib/tauri-mock/seed'
+import {
+  expect,
+  ipc,
+  openPage,
+  openPageMobile,
+  selectedCheckboxes,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for batch block operations.
@@ -18,7 +27,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *
  * Selection mechanics:
  *   - Ctrl+Click on a static block toggles it in/out of selection
- *   - Selected blocks get the `block-selected` utility on their row's [data-testid="block-frame"]
+ *   - A selected block shows its checked selection checkbox
  *   - Batch toolbar (`.batch-toolbar`) appears from two selected blocks (#6547)
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */
@@ -40,13 +49,13 @@ test.describe('Batch block operations @editor', () => {
   }) => {
     const blocks = page.locator('[data-testid="sortable-block"]')
     const firstStatic = blocks.nth(0).locator('[data-testid="block-static"]')
-    const firstFrame = blocks.nth(0).getByTestId('block-frame')
+    const firstSelected = selectedCheckboxes(blocks.nth(0))
     const secondStatic = blocks.nth(1).locator('[data-testid="block-static"]')
-    const secondFrame = blocks.nth(1).getByTestId('block-frame')
+    const secondSelected = selectedCheckboxes(blocks.nth(1))
 
-    // Initially, blocks should NOT have the selection highlight
-    await expect(firstFrame).not.toHaveClass(/block-selected/)
-    await expect(secondFrame).not.toHaveClass(/block-selected/)
+    // Initially, no block is selected
+    await expect(firstSelected).toHaveCount(0)
+    await expect(secondSelected).toHaveCount(0)
 
     // Ctrl+Click first block to toggle it into selection. Click a stable
     // non-interactive corner (the block's padding) rather than the element
@@ -54,12 +63,12 @@ test.describe('Batch block operations @editor', () => {
     // position shifts with font metrics, so a center click can land on an
     // inner `<a>`/chip (which swallows the selection toggle) on some platforms.
     await firstStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-    await expect(firstFrame).toHaveClass(/block-selected/)
+    await expect(firstSelected).toHaveCount(1)
 
     // Ctrl+Click second block to add it to selection
     await secondStatic.click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-    await expect(firstFrame).toHaveClass(/block-selected/)
-    await expect(secondFrame).toHaveClass(/block-selected/)
+    await expect(firstSelected).toHaveCount(1)
+    await expect(secondSelected).toHaveCount(1)
   })
 
   // =========================================================================
@@ -82,7 +91,7 @@ test.describe('Batch block operations @editor', () => {
       .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 
     // One selected block brings no toolbar (#6547)
-    await expect(blocks.nth(0).getByTestId('block-frame')).toHaveClass(/block-selected/)
+    await expect(selectedCheckboxes(blocks.nth(0))).toHaveCount(1)
     await expect(batchToolbar).toHaveCount(0)
 
     // Ctrl+Click second block — the toolbar appears with count 2
@@ -146,9 +155,9 @@ test.describe('Batch block operations @editor', () => {
     await expect(batchToolbar).toContainText(`${blockCount}`)
     await expect(batchToolbar).toContainText('selected')
 
-    // All static blocks should have the selection highlight indicator
+    // Every block shows its checked selection checkbox
     for (let i = 0; i < blockCount; i++) {
-      await expect(blocks.nth(i).getByTestId('block-frame')).toHaveClass(/block-selected/)
+      await expect(selectedCheckboxes(blocks.nth(i))).toHaveCount(1)
     }
   })
 
@@ -211,5 +220,121 @@ test.describe('Batch block operations @editor', () => {
     })
     expect(ringLefts).toHaveLength(1)
     expect(ringLefts[0]).toBeGreaterThanOrEqual(handleRight)
+  })
+})
+
+// =========================================================================
+// 6. A selected block is marked by its checkbox alone (#7165 U7)
+// =========================================================================
+
+const SHAPES_TITLE = 'Selection shapes'
+const SHAPES = ['# A heading', 'A paragraph', 'A task with chips', 'The cursor row'] as const
+
+/** A page of a heading, a paragraph and a task with priority and date chips, then a plain row. */
+async function openShapesPage(page: Page, phone: boolean): Promise<void> {
+  const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+  const pageId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: SHAPES_TITLE,
+    spaceId: SEED_IDS.SPACE_PERSONAL,
+  })
+  for (const content of SHAPES) {
+    const row = await ipc<{ id: string }>(page, 'create_block', {
+      blockType: 'content',
+      content,
+      parentId: pageId,
+      index: null,
+      scope,
+    })
+    if (content === 'A task with chips') {
+      await ipc(page, 'set_todo_state', { blockId: row.id, state: 'TODO' })
+      await ipc(page, 'set_priority', { blockId: row.id, level: '1' })
+      await ipc(page, 'set_due_date', { blockId: row.id, date: '2026-12-01' })
+    }
+  }
+  if (phone) await openPageMobile(page, SHAPES_TITLE)
+  else await openPage(page, SHAPES_TITLE)
+  await expect(page.getByTestId('sortable-block')).toHaveCount(SHAPES.length)
+}
+
+/**
+ * Select every shape; the last Ctrl+Click leaves the keyboard cursor's ring on
+ * the plain row, so the shapes above it show the selection alone. Each draws no
+ * ring, shadow or tint, and its checked checkbox centres on its first line.
+ */
+async function expectCheckboxOnlySelection(page: Page): Promise<void> {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const rows = page.getByTestId('sortable-block')
+  for (const row of await rows.all()) {
+    const text = row.getByTestId('block-static')
+    const box = await text.boundingBox()
+    expect(box).not.toBeNull()
+    // The row's right end: the left edge holds a nested row's chevron and the text links.
+    await text.click({ modifiers: ['Control'], position: { x: (box?.width ?? 0) - 4, y: 4 } })
+  }
+  await expect(selectedCheckboxes(page)).toHaveCount(SHAPES.length)
+
+  for (const index of [0, 1, 2]) {
+    const row = rows.nth(index)
+    await expect(row.getByTestId('block-select-checkbox')).toBeChecked()
+    const look = await row.evaluate((li) => {
+      const frame = li.querySelector('[data-testid="block-frame"]') as HTMLElement
+      const painted = [li, li.querySelector('[data-testid="swipe-content"]'), frame].map((el) => {
+        const style = getComputedStyle(el as Element)
+        return {
+          background: style.backgroundColor,
+          // Tailwind's unused ring and shadow slots compute as transparent zero layers.
+          shadow: style.boxShadow.replaceAll(/rgba\(0, 0, 0, 0\) 0px 0px 0px 0px(, )?/g, ''),
+        }
+      })
+      const checkbox = li.querySelector('[data-testid="block-select-checkbox"]') as HTMLElement
+      const walker = document.createTreeWalker(
+        li.querySelector('[data-testid="block-static"]') as HTMLElement,
+        NodeFilter.SHOW_TEXT,
+      )
+      let first = walker.nextNode()
+      while (first && !first.textContent?.trim()) first = walker.nextNode()
+      const glyph = document.createRange()
+      glyph.setStart(first as Node, 0)
+      glyph.setEnd(first as Node, 1)
+      const line = glyph.getBoundingClientRect()
+      const mark = checkbox.getBoundingClientRect()
+      return {
+        painted,
+        checkboxMiddle: mark.top + mark.height / 2,
+        lineMiddle: line.top + line.height / 2,
+      }
+    })
+    for (const layer of look.painted) {
+      expect(layer.background, SHAPES[index]).toBe('rgba(0, 0, 0, 0)')
+      expect(['', 'none'], SHAPES[index]).toContain(layer.shadow)
+    }
+    expect(Math.abs(look.checkboxMiddle - look.lineMiddle), SHAPES[index]).toBeLessThanOrEqual(2)
+  }
+}
+
+test.describe('A selected block shows its checkbox alone @editor', () => {
+  test('desktop: no wrap, the checkbox on the first line', async ({ page }) => {
+    await waitForBoot(page)
+    await openShapesPage(page, false)
+    await expectCheckboxOnlySelection(page)
+  })
+})
+
+const pixel = devices['Pixel 7']
+
+test.describe('A selected block shows its checkbox alone on a phone @editor @mobile', () => {
+  test.use({
+    viewport: pixel.viewport,
+    hasTouch: pixel.hasTouch,
+    isMobile: pixel.isMobile,
+    deviceScaleFactor: pixel.deviceScaleFactor,
+    userAgent: pixel.userAgent,
+  })
+
+  test('phone: no wrap, the checkbox on the first line', async ({ page }) => {
+    await waitForBoot(page)
+    await openShapesPage(page, true)
+    await expectCheckboxOnlySelection(page)
   })
 })

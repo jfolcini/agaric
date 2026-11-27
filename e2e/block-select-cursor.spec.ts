@@ -26,8 +26,8 @@ const selectBox = (page: Page, id: string) =>
   row(page, id).getByRole('checkbox', { name: 'Select block' })
 
 /**
- * The cursor row holds focus and rings its frame in 3px; the row it left does
- * not: it draws nothing, or the selection's 2px ring when it is selected.
+ * The cursor row holds focus and rings its frame in 3px; the row it left draws
+ * nothing, and shows its checked checkbox when it is selected (#7165).
  */
 async function expectCursorOn(
   page: Page,
@@ -38,12 +38,8 @@ async function expectCursorOn(
   await expect(row(page, id)).toBeFocused()
   const content = (blockId: string) => row(page, blockId).getByTestId('block-frame')
   await expect(content(id)).toHaveCSS('box-shadow', /0px 0px 0px 3px/)
-  if (previousSelected) {
-    await expect(content(previous)).toHaveCSS('box-shadow', /0px 0px 0px 2px/)
-    await expect(content(previous)).not.toHaveCSS('box-shadow', /0px 0px 0px 3px/)
-  } else {
-    await expect(content(previous)).toHaveCSS('box-shadow', 'none')
-  }
+  await expect(content(previous)).toHaveCSS('box-shadow', 'none')
+  if (previousSelected) await expect(selectBox(page, previous)).toBeChecked()
 }
 
 test.describe('Block-select cursor (#5734) @editor', () => {
