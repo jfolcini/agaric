@@ -48,3 +48,7 @@ Round 3 of the UI review, lane B. A first attempt was lost before it pushed. Thi
   - `input.test` and `primitives.test`: `coarse:h-(--touch-target)` → none;
   - `search-input.test`: `coarse:h/w-(--touch-target)` → `touch-hit-area`;
   - `switch.test`: `coarse:h-7` / `coarse:w-12` → `coarse:h-6` and `touch-hit-area`.
+- Two more specs pinned the old heights. Old → new:
+  - `phone-touch-targets` "the Tags and Templates name inputs": `expect44` on each input → each input and Add tag are 36 px tall. Red with the 44 px input: 44 for 36.
+  - `phone-view-headers` "Pages: … search pinned": `search.top - bar < 16` → `⋮.top - bar < 16`. The pinned row is as tall as its 44 px ghost ⋮, and the 36 px search is centred in it, 16 px below the bar.
+- Related e2e run: 130 specs that touch these controls (switch, radiogroup, search clear, 44 px probes, phone profiles). 676 passed; the two above failed and were updated, then 21 of 21 passed.
