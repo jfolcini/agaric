@@ -16,18 +16,20 @@ export interface ToggleRowProps {
   /** Label text for the row; also used as the Switch's accessible name. */
   label: string
   /** Muted helper paragraph rendered below the label. */
-  description: string
+  description?: string
   /** Current toggle state. */
   checked: boolean
   /** Called with the next state when the user toggles the Switch. */
   onCheckedChange: (checked: boolean) => void
   /** Disables the Switch (e.g. while a toggle round-trip is pending). */
   disabled?: boolean
+  ref?: React.Ref<HTMLButtonElement>
   /** Optional test id forwarded onto the Switch. */
   'data-testid'?: string
 }
 
 export function ToggleRow({
+  ref,
   id,
   label,
   description,
@@ -45,6 +47,7 @@ export function ToggleRow({
       className="flex-row items-center gap-4 sm:flex-nowrap"
     >
       <Switch
+        ref={ref}
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
