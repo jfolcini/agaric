@@ -309,5 +309,4 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Mês D, AAAA (ex.: junho 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/AAAA (ex.: 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (ex.: quarta, jun 17)',
-  'settings.valueClamped': 'Valor limitado a {{min}}–{{max}}',
 }

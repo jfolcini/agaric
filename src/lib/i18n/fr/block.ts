@@ -245,6 +245,5 @@ export const block: Record<string, string> = {
     'Les blocs sélectionnés seront supprimés de façon réversible. Vous pourrez les restaurer depuis la corbeille.',
   'blockContext.deleteConfirmAction': 'Oui, supprimer',
   'task.noneState': 'aucun',
-  'block.daysUnit': 'jours',
   'block.repeatStatus': 'Se répète {{value}}',
 }

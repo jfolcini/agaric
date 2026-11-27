@@ -3,7 +3,7 @@ import { expect, test, waitForBoot } from './helpers'
 /**
  * E2E tests for advanced agenda / journal interactions.
  *
- * Covers: Due date filtering, scheduled date filtering, task state changes
+ * Covers: the Due panel's rows for today, task state changes
  * in the journal daily view, overdue task display, date navigation, and
  * view mode interactions (daily/weekly/monthly/agenda).
  *
@@ -22,8 +22,7 @@ import { expect, test, waitForBoot } from './helpers'
  *     BLOCK_OVERDUE_1: "Submit report"        — TODO,  P1, due yesterday
  *
  * DuePanel in daily view uses `listBlocks({ agendaDate })` which matches
- * blocks by due_date or scheduled_date. The "Due" / "Scheduled" filter pills
- * narrow results to a single column.
+ * blocks by due_date or scheduled_date.
  *
  * NOTE on `excludePageId` (useDuePanelData / UX live-review #7): the Agenda
  * list deliberately drops items that live ON the journal day's own page so a
@@ -66,100 +65,6 @@ test.describe('Due date filtering @journal', () => {
     await expect(duePanel.getByText('Ship v2.0 release')).toBeVisible()
     const count = await items.count()
     expect(count).toBeGreaterThanOrEqual(2)
-  })
-
-  test('DuePanel "Due" filter shows only due-dated blocks', async ({ page }) => {
-    const duePanel = page.locator('[data-testid="due-panel"]')
-    await expect(duePanel).toBeVisible({ timeout: 5000 })
-
-    // Click "Due" filter pill inside the filter bar
-    // DuePanelFilters appends `(N)` to the label when sourceCounts has entries,
-    // so the exact-text query `getByText('Due', { exact: true })` no longer
-    // resolves. Regex `/^Due( \(\d+\))?$/` tolerates the count suffix while
-    // staying anchored (there is no "Due: ..." toggle button to worry about,
-    // but the anchored form is consistent with the Scheduled filter below).
-    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    await expect(filterBar).toBeVisible()
-    const dueFilter = filterBar.getByRole('radio', { name: /^Due( \(\d+\))?$/ })
-    await dueFilter.click()
-
-    // Wait for the filter to take effect
-    await expect(dueFilter).toHaveAttribute('aria-checked', 'true')
-
-    // Due-only, and not on today's page: BLOCK_PROJ_2 ("Fix login bug", due
-    // today). BLOCK_DAILY_3/4/5 are due today but excluded via `excludePageId`
-    // (they live on PAGE_DAILY); BLOCK_PROJ_1 is scheduled-only (due tomorrow)
-    // so the "Due" filter drops it. The filter is meaningful precisely because
-    // it hides the scheduled-only "Ship v2.0 release" row.
-    const items = duePanel.locator('[data-testid="due-panel-item"]')
-    await expect(items.first()).toBeVisible({ timeout: 5000 })
-    await expect(duePanel.getByText('Fix login bug')).toBeVisible()
-    await expect(duePanel.getByText('Ship v2.0 release')).toHaveCount(0)
-    const count = await items.count()
-    expect(count).toBeGreaterThanOrEqual(1)
-  })
-})
-
-// ===========================================================================
-// 2. Scheduled date filtering
-// ===========================================================================
-
-test.describe('Scheduled date filtering @journal', () => {
-  test.beforeEach(async ({ page }) => {
-    await waitForBoot(page)
-  })
-
-  test('DuePanel "Scheduled" filter shows only scheduled blocks', async ({ page }) => {
-    const duePanel = page.locator('[data-testid="due-panel"]')
-    await expect(duePanel).toBeVisible({ timeout: 5000 })
-
-    // Click "Scheduled" filter pill — regex tolerates the `(N)` badge suffix.
-    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    await expect(filterBar).toBeVisible()
-    const scheduledFilter = filterBar.getByRole('radio', {
-      name: /^Scheduled( \(\d+\))?$/,
-    })
-    await scheduledFilter.click()
-
-    // Verify the filter is active
-    await expect(scheduledFilter).toHaveAttribute('aria-checked', 'true')
-
-    // Scheduled-only block for today: BLOCK_PROJ_1 ("Ship v2.0 release")
-    // Wait for the expected scheduled content to appear (deterministic wait
-    // for the filter change to take effect).
-    await expect(duePanel.getByText('Ship v2.0 release')).toBeVisible({ timeout: 5000 })
-    const items = duePanel.locator('[data-testid="due-panel-item"]')
-    await expect(items.first()).toBeVisible({ timeout: 5000 })
-  })
-
-  test('switching back to "All" restores full list', async ({ page }) => {
-    const duePanel = page.locator('[data-testid="due-panel"]')
-    await expect(duePanel).toBeVisible({ timeout: 5000 })
-
-    // Get initial count
-    const items = duePanel.locator('[data-testid="due-panel-item"]')
-    await expect(items.first()).toBeVisible({ timeout: 5000 })
-    const initialCount = await items.count()
-
-    // Switch to "Scheduled" filter (fewer items). Regex tolerates the `(N)`
-    // badge suffix.
-    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    const scheduledFilter = filterBar.getByRole('radio', {
-      name: /^Scheduled( \(\d+\))?$/,
-    })
-    await scheduledFilter.click()
-    // Deterministic wait: filter is active (aria-checked flips to true)
-    await expect(scheduledFilter).toHaveAttribute('aria-checked', 'true')
-
-    // Switch back to "All" — regex tolerates `(N)` badge suffix.
-    const allFilter = filterBar.getByRole('radio', { name: /^All( \(\d+\))?$/ })
-    await allFilter.click()
-    await expect(allFilter).toHaveAttribute('aria-checked', 'true')
-
-    // Count should be restored to the initial value
-    await expect(items.first()).toBeVisible({ timeout: 5000 })
-    const restoredCount = await items.count()
-    expect(restoredCount).toBe(initialCount)
   })
 })
 

@@ -11,6 +11,9 @@ export const pages: Record<string, string> = {
   // also shown as "(Today)" after today's date heading.
   'journal.today': 'Today',
 
+  // Translators: Journal day's "Page actions" menu: opens the day page's properties in a dialog.
+  'journal.dayProperties': 'Properties…',
+
   // Translators: Journal header: the view-mode tabs (on narrow screens, items of a mode menu and the
   // word on its button). Must be short, the tabs sit side by side. Day / Week / Month show one day,
   // week or month; Stream is a continuous scroll of past days; Agenda is the task list, and also

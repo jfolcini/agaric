@@ -243,6 +243,5 @@ export const block: Record<string, string> = {
     'Die ausgewählten Blöcke werden in den Papierkorb verschoben. Von dort kannst du sie wiederherstellen.',
   'blockContext.deleteConfirmAction': 'Ja, löschen',
   'task.noneState': 'keinen Status',
-  'block.daysUnit': 'Tage',
   'block.repeatStatus': 'Wiederholt sich {{value}}',
 }
