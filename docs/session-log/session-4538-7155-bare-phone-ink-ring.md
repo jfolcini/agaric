@@ -40,3 +40,7 @@ Round 2 of the UI review (#7155).
   - it fixed the stale ring description in `docs/UX.md` and `breadcrumb.tsx`.
 - Rings that bypass the utility do not follow the bare-phone rule: the editor row ring, the list cursor's `:has` ring, PropertyChip, PageSourceEditor, PropertyDefinitionsList and the toast close button. A tapped button never matches `:focus-visible`, so none showed in the tour. Left until one does.
 - The review bot noticed that moving the prefers-contrast outline into `@layer base` let the image caption field's `outline-none` win, leaving it with no focus cue at all; in normal mode it had none before either. It now uses `focus-ring-visible`, with a class test shown red without it.
+- CI caught `theme-contrast.test.ts`, which no targeted run selects because it reads `index.css` from disk.
+  - It pinned the blue ring three ways. The documented ratios now measure the ring as the primary, and the `index.css` comments carry its real 16.8:1 and 12.1:1; they had copied the primary button's 16.6 and 11.8.
+  - The high-contrast probe reads `--status-active`, since high contrast no longer overrides the ring.
+  - The #7040 P3-vs-focus-ring pair lets an ink ring and a neutral chip differ by lightness (0.08, as brand and destructive do). It was shown red with the ring set to P3's ink.
