@@ -7,6 +7,7 @@ import {
   expect,
   focusBlockById,
   openPage,
+  outlastUndoGroup,
   readClipboard,
   reopenPage,
   replaceEditorText,
@@ -52,14 +53,13 @@ async function editBlock(page: Page, blockId: string, text: string): Promise<voi
 
 test.describe('Page actions menu @pages', () => {
   test('Undo twice then Redo walks two block edits back and forward', async ({ page }) => {
-    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
-    // fast-forward below keeps the two edits two entries.
-    await page.clock.install()
+    // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry, by the
+    // backend's clock: waiting the window out keeps the two edits two entries.
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
 
     await editBlock(page, GS_1, 'First edit')
-    await page.clock.fastForward(1000)
+    await outlastUndoGroup()
     await editBlock(page, GS_3, 'Second edit')
 
     await pageAction(page, /^Undo last page action/)

@@ -745,7 +745,6 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'Failed to save property',
   'pageProperty.deleteFailed': 'Failed to delete property',
   'pageProperty.addFailed': 'Failed to add property',
-  'pageProperty.toggleLabel': 'Toggle properties',
 
   // Translators: "Properties" chip in the tags row under the page title (followed by the count),
   // also the title of the dialog it opens, and that dialog's description; the "Add property" picker: button and its aria-label (also the picker's title

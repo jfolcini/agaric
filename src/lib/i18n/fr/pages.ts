@@ -421,7 +421,6 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'Impossible d’enregistrer la propriété',
   'pageProperty.deleteFailed': 'Impossible de supprimer la propriété',
   'pageProperty.addFailed': 'Impossible d’ajouter la propriété',
-  'pageProperty.toggleLabel': 'Afficher ou masquer les propriétés',
   'pageProperty.propertiesButton': 'Propriétés',
   'pageProperty.dialogDescription': 'Les propriétés de cette page.',
   'pageProperty.addPropertyLabel': 'Ajouter une propriété',

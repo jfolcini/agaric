@@ -103,7 +103,7 @@ export function LocalGraphControl({
               onHopsChange(Number(value) as LocalGraphHops)
             }}
             aria-label={t('graph.local.depthGroupLabel')}
-            className="ml-1 h-7"
+            size="sm"
             data-testid="local-graph-hops"
           >
             {LOCAL_GRAPH_HOP_OPTIONS.map((option) => (

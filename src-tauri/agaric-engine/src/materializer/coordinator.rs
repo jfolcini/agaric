@@ -11,7 +11,7 @@ use agaric_core::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU32;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -86,7 +86,7 @@ pub(super) struct InboundRebuildDebounce {
     /// burst collapses to exactly one fan-out without observing cache state.
     /// Production never reads this.
     #[cfg(test)]
-    pub(super) fanout_fires: std::sync::atomic::AtomicU64,
+    pub(super) fanout_fires: AtomicU64,
 }
 
 /// #2291: the mutable half of [`InboundRebuildDebounce`].
@@ -150,7 +150,7 @@ pub(super) struct PressureEpisodes {
     bg_pressured: AtomicBool,
     bg_shedding: AtomicBool,
     /// Tasks shed since the shed episode started.
-    bg_shed: std::sync::atomic::AtomicU64,
+    bg_shed: AtomicU64,
 }
 
 #[derive(Clone)]

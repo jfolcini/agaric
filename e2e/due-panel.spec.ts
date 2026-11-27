@@ -65,16 +65,28 @@ test('Group: Page heads each page’s tasks, kept across views, and a later page
   await refetchDuePanel(page)
 
   const panel = page.getByTestId('due-panel')
+  const offsite = panel.getByTestId('due-panel-item').filter({ hasText: 'Plan the offsite' })
+  const offsitePage = offsite.locator('.due-panel-breadcrumb')
+  await expect(offsitePage).toHaveText('→ Projects')
   await panel.getByTestId('due-panel-group').click()
   await page.getByRole('button', { name: 'Page', exact: true }).click()
   const groups = panel.getByTestId('due-panel-page-group')
   await expect(groups.first()).toBeVisible()
-  await expect(groups.filter({ hasText: 'Plan the offsite' }).getByRole('heading')).toHaveText(
-    'Projects',
-  )
-  await expect(groups.filter({ hasText: 'Call the plumber' }).getByRole('heading')).toHaveText(
-    'Meetings',
-  )
+  // Each page's heading, then its rows; a row does not name its page again (#7162).
+  const order = await panel
+    .locator('[data-testid="due-panel-page-group"], [data-testid="due-panel-item"]')
+    .evaluateAll((rows) =>
+      rows
+        .map((row) =>
+          row.matches('[data-testid="due-panel-page-group"]')
+            ? `# ${row.textContent}`
+            : (row.textContent?.match(/Plan the offsite|Call the plumber/)?.[0] ?? null),
+        )
+        .filter((label) => label !== null),
+    )
+  expect(order[order.indexOf('Plan the offsite') - 1]).toBe('# Projects')
+  expect(order[order.indexOf('Call the plumber') - 1]).toBe('# Meetings')
+  await expect(offsitePage).toBeHidden()
 
   // Kept per device, like the Agenda's grouping.
   await refetchDuePanel(page)
@@ -112,4 +124,28 @@ test('an overdue task reads "(3d overdue)" and a click opens it focused on its p
   )
   await expect(editor).toBeFocused()
   await expect(editor).toHaveText('Renew passport')
+})
+
+// Hundreds of open tasks are common: the panel mounts the rows in view, not all of them.
+test('with 500 open tasks the panel mounts only a window of rows @journal', async ({ page }) => {
+  await page.evaluate(() =>
+    (window as unknown as { __addMockAgendaItems: (n: number) => string[] }).__addMockAgendaItems(
+      500,
+    ),
+  )
+  await refetchDuePanel(page)
+  const panel = page.getByTestId('due-panel')
+  await expect(panel.getByRole('tab', { name: /^All \d+$/ })).toHaveAccessibleName(/^All 50\d$/)
+  await expect(panel.getByTestId('due-panel-item').first()).toBeVisible()
+  expect(await panel.getByTestId('due-panel-item').count()).toBeLessThan(50)
+  // The window follows a scroll: the first rows leave, later ones mount.
+  const row = (text: string) =>
+    panel.getByTestId('due-panel-item').filter({ has: page.getByText(text, { exact: true }) })
+  const first = row('Agenda load item 1')
+  await expect(first).toHaveCount(1)
+  await panel.locator('.due-panel-scroll').evaluate((el) => {
+    el.scrollTop = el.scrollHeight
+  })
+  await expect(row('Agenda load item 500')).toHaveCount(1)
+  await expect(first).toHaveCount(0)
 })

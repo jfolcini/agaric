@@ -330,20 +330,21 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     return section
   }
 
-  async function deleteTodayPage(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  /** The views that show a day's Delete page. */
+  type DayView = 'daily' | 'weekly' | 'stream'
+
+  async function deleteTodayPage(
+    user: ReturnType<typeof userEvent.setup>,
+    mode: DayView = 'daily',
+  ): Promise<void> {
     // The day view's delete is in its title row's Page actions menu (#7155 R6);
     // the multi-day views keep it on the day's heading.
     const day = within(todaySection())
-    const trigger = await waitFor(() => {
-      const found =
-        day.queryByRole('button', { name: t('pageHeader.pageActions') }) ??
-        day.queryByRole('button', { name: t('pageHeader.deletePage') })
-      expect(found).not.toBeNull()
-      return found as HTMLElement
-    })
-    await user.click(trigger)
-    if (trigger.getAttribute('aria-label') === t('pageHeader.pageActions')) {
+    if (mode === 'daily') {
+      await user.click(await day.findByRole('button', { name: t('pageHeader.pageActions') }))
       await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
+    } else {
+      await user.click(await day.findByRole('button', { name: t('pageHeader.deletePage') }))
     }
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
@@ -392,7 +393,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     await expectTodayEmpty('daily')
   })
 
-  it.each<JournalMode>(['daily', 'weekly', 'stream'])(
+  it.each<DayView>(['daily', 'weekly', 'stream'])(
     'empties a day whose page the %s view created this session',
     async (mode) => {
       const user = userEvent.setup()
@@ -409,7 +410,7 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
         await user.click(await within(day).findByRole('button', { name: t('agenda.day.addBlock') }))
       }
 
-      await deleteTodayPage(user)
+      await deleteTodayPage(user, mode)
 
       await expectTodayEmpty(mode)
     },

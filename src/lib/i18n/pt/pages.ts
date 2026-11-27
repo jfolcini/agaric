@@ -418,7 +418,6 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'Não foi possível salvar a propriedade',
   'pageProperty.deleteFailed': 'Não foi possível excluir a propriedade',
   'pageProperty.addFailed': 'Não foi possível adicionar a propriedade',
-  'pageProperty.toggleLabel': 'Mostrar ou ocultar propriedades',
   'pageProperty.propertiesButton': 'Propriedades',
   'pageProperty.dialogDescription': 'As propriedades desta página.',
   'pageProperty.addPropertyLabel': 'Adicionar propriedade',

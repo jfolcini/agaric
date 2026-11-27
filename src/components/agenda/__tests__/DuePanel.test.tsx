@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearProjectedCache } from '@/hooks/useDuePanelData'
 import { t } from '@/lib/i18n'
 
@@ -53,6 +54,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     },
   }
 })
+
+// jsdom has no scroll geometry, so the virtualizer would lay out no rows: the
+// mock lays out every one.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 vi.mock('@/components/RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
@@ -1641,14 +1646,23 @@ describe('DuePanel', () => {
       await waitFor(() => {
         expect(screen.getAllByTestId('due-panel-page-group')).toHaveLength(2)
       })
-      const groups = screen.getAllByTestId('due-panel-page-group')
-      expect(within(groups[0] as HTMLElement).getByRole('heading')).toHaveTextContent('Beta page')
-      expect(
-        within(groups[0] as HTMLElement)
-          .getAllByTestId('due-panel-item')
-          .map((r) => r.textContent),
-      ).toEqual([expect.stringContaining('Beta first'), expect.stringContaining('Beta second')])
-      expect(within(groups[1] as HTMLElement).getByRole('heading')).toHaveTextContent('Alpha page')
+      // Each page's heading row, then its rows, in order.
+      const rows = [
+        ...document.querySelectorAll(
+          '[data-testid="due-panel-page-group"], [data-testid="due-panel-item"]',
+        ),
+      ].map((row) =>
+        row.matches('[data-testid="due-panel-page-group"]')
+          ? `# ${row.textContent}`
+          : (row.textContent?.match(/\w+ (first|second)/)?.[0] ?? ''),
+      )
+      expect(rows).toEqual([
+        '# Beta page',
+        'Beta first',
+        'Beta second',
+        '# Alpha page',
+        'Alpha first',
+      ])
 
       unmount()
       render(<DuePanel date={TODAY} />)

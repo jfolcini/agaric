@@ -42,6 +42,8 @@ async function openGettingStarted(page: import('@playwright/test').Page) {
   // Violation under parallel load — flake, session 679).
   await page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }).first().click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
+  // The title shows before the blocks arrive: a count taken then reads 0.
+  await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
 }
 
 /**

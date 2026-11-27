@@ -67,7 +67,11 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
-import { DayPageEditor } from '@/components/journal/DayPageEditor'
+import { DayHeader, DayPageEditor } from '@/components/journal/DayPageEditor'
+import {
+  ViewHeaderOutletProvider,
+  ViewHeaderOutletSlot,
+} from '@/components/layout/ViewHeaderOutlet'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { t } from '@/lib/i18n'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
@@ -299,6 +303,40 @@ describe('DayPageEditor', () => {
         name: t('pageProperty.propertiesButton'),
       })
       expect(within(dialog).getByTestId('page-property-table')).toHaveAttribute('data-page-id', DAY)
+    })
+  })
+
+  describe('DayHeader', () => {
+    const renderHeader = (insideScroller: boolean) =>
+      render(
+        <ViewHeaderOutletProvider>
+          <ViewHeaderOutletSlot insideScroller={insideScroller} />
+          <main>
+            <DayHeader displayDate={DATE_TITLE} actions={<button type="button">Act</button>} />
+          </main>
+        </ViewHeaderOutletProvider>,
+      )
+    const heading = () => screen.getByRole('heading', { name: DATE_TITLE })
+
+    it('on desktop heads the view from its header slot, with the actions', async () => {
+      const { container } = renderHeader(false)
+      await waitFor(() => {
+        expect(screen.getByTestId('view-header-outlet')).toContainElement(heading())
+      })
+      expect(screen.getByRole('button', { name: 'Act' })).toBeInTheDocument()
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('on a phone stays with the day, the title alone', async () => {
+      const restore = asTouch(390)
+      try {
+        const { container } = renderHeader(true)
+        expect(screen.getByRole('main')).toContainElement(heading())
+        expect(screen.queryByRole('button', { name: 'Act' })).not.toBeInTheDocument()
+        expect(await axe(container)).toHaveNoViolations()
+      } finally {
+        restore()
+      }
     })
   })
 

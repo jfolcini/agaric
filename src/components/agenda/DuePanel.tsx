@@ -13,7 +13,7 @@
 import { endOfWeek } from 'date-fns'
 import { ChevronDown } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ChoiceList } from '@/components/agenda/AgendaSortGroupControls'
@@ -42,11 +42,13 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useToday } from '@/hooks/useToday'
+import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatDate } from '@/lib/date-utils'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
+import { cn } from '@/lib/utils'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -91,6 +93,11 @@ const GROUP_BY_OPTIONS = {
   source: 'DuePanel',
 }
 
+/** A run of rows under one heading: a tab's name on All, or a page's (Group: Page). */
+type PanelGroup =
+  | { kind: 'bucket'; key: string; bucket: TaskBucket; rows: BlockRow[] }
+  | { kind: 'page'; key: string; pageId: string | null; nested: boolean; rows: BlockRow[] }
+
 const DAY_MS = 1000 * 60 * 60 * 24
 
 function daysBetween(from: string, to: string): number {
@@ -104,6 +111,9 @@ export function DuePanel({
   onNavigateToPage,
   excludePageId,
 }: DuePanelProps): React.ReactElement | null {
+  // The React Compiler caches `virtualizer.getVirtualItems()` on the
+  // virtualizer's stable identity, so the rows never followed a scroll.
+  'use no memo'
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
   const [tab, setTab] = useState<Tab>('all')
@@ -171,15 +181,36 @@ export function DuePanel({
     [showsToday, uniqueProjected],
   )
 
+  // The headed runs the virtualizer windows as rows, a page's under its tab's
+  // name; `null` when the one list has no heading (one tab, or a past day).
+  const groups = useMemo((): PanelGroup[] | null => {
+    if (groupBy === 'none' && sections.every((s) => s.bucket === null)) return null
+    return sections.flatMap(({ bucket, rows }): PanelGroup[] => {
+      if (rows.length === 0) return []
+      const heading = (headed: BlockRow[]): PanelGroup[] =>
+        bucket === null ? [] : [{ kind: 'bucket', key: bucket, bucket, rows: headed }]
+      if (groupBy === 'none') return heading(rows)
+      return [
+        ...heading([]),
+        ...groupByPage(rows).map((g): PanelGroup => ({
+          kind: 'page',
+          key: `${bucket ?? ''}:${g.pageId ?? ''}`,
+          pageId: g.pageId,
+          nested: bucket !== null,
+          rows: g.rows,
+        })),
+      ]
+    })
+  }, [sections, groupBy])
+  const ungroupedRows = groups === null ? sections[0]?.rows : undefined
+
   // In the order the rows are drawn, so the keyboard cursor and Enter name the same row.
   const flatItems = useMemo(
     () => [
-      ...sections.flatMap((s) =>
-        groupBy === 'page' ? groupByPage(s.rows).flatMap((g) => g.rows) : s.rows,
-      ),
+      ...(groups === null ? (ungroupedRows ?? []) : groups.flatMap((g) => g.rows)),
       ...listedProjected.map((e) => e.block),
     ],
-    [sections, listedProjected, groupBy],
+    [groups, ungroupedRows, listedProjected],
   )
 
   const {
@@ -194,6 +225,20 @@ export function DuePanel({
     },
     { homeEnd: true, pageUpDown: true, resetKey: `${tab}|${date}` },
   )
+
+  // Hundreds of open tasks are common, so only the rows in view mount; the
+  // projected tail is short and renders after the window.
+  const scrollParentRef = useRef<HTMLDivElement>(null)
+  const { virtualRows, virtualizer } = useVirtualizedGroupedRows({
+    groups,
+    ungroupedItems: ungroupedRows,
+    getGroupKey: (g) => g.key,
+    getGroupItems: (g) => g.rows,
+    headerHeight: 32,
+    itemHeight: 44,
+    focusedIndex,
+    scrollParentRef,
+  })
 
   const anyLoading = loading || projectedLoading || openTasksLoading
   const allItems = [...blocks, ...openTasks, ...uniqueProjected] as unknown[]
@@ -218,14 +263,20 @@ export function DuePanel({
     return undefined
   }
 
-  let flatIndex = 0
-  const renderRow = (block: BlockRow) => {
-    const index = flatIndex++
+  const renderRow = (
+    block: BlockRow,
+    index: number,
+    inPageGroup: boolean,
+    virtual: { key: React.Key; index: number; style: React.CSSProperties },
+  ) => {
     const rowHandlers = getRowHandlers(block)
     const note = ageNote(block)
     return (
       <BlockListItem
-        key={block.id}
+        key={virtual.key}
+        liRef={virtualizer.measureElement}
+        dataIndex={virtual.index}
+        style={virtual.style}
         blockId={block.id}
         content={block.content}
         contentMaxLength={120}
@@ -241,7 +292,8 @@ export function DuePanel({
         breadcrumbArrow={t('duePanel.breadcrumbArrow')}
         className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
         contentClassName="due-panel-item-text"
-        breadcrumbClassName="due-panel-breadcrumb"
+        // Under its page's heading a row does not name the page again.
+        breadcrumbClassName={cn('due-panel-breadcrumb', inPageGroup && 'hidden')}
         testId="due-panel-item"
         onClick={rowHandlers.onClick}
         onKeyDown={rowHandlers.onKeyDown}
@@ -249,6 +301,9 @@ export function DuePanel({
       />
     )
   }
+
+  const pageHeading = (pageId: string | null): string =>
+    pageId ? (pageTitles.get(pageId) ?? t('duePanel.untitled')) : t('duePanel.untitled')
 
   const list = (
     // #1520 — roving tabindex: the focused row is the one tab stop, so the
@@ -264,41 +319,68 @@ export function DuePanel({
       {flatItems.length === 0 && !anyLoading && (
         <EmptyState compact message={t('duePanel.emptyTab')} />
       )}
-      {sections.map(
-        ({ bucket, rows }) =>
-          rows.length > 0 && (
-            <div key={bucket ?? 'rows'}>
-              {bucket !== null && (
-                <SectionGroupHeader
-                  asChild
-                  className={bucket === 'overdue' ? 'text-alert-error-foreground' : undefined}
-                >
-                  <h2>{t(BUCKET_LABEL_KEYS[bucket])}</h2>
-                </SectionGroupHeader>
-              )}
-              {groupBy === 'page' ? (
-                groupByPage(rows).map((group) => {
-                  const PageHeading = bucket === null ? 'h2' : 'h3'
-                  return (
-                    <div key={group.pageId ?? ''} data-testid="due-panel-page-group">
-                      <SectionGroupHeader asChild className="pl-4">
-                        <PageHeading>
-                          {group.pageId
-                            ? (pageTitles.get(group.pageId) ?? t('duePanel.untitled'))
-                            : t('duePanel.untitled')}
-                        </PageHeading>
-                      </SectionGroupHeader>
-                      <ul className="due-panel-blocks m-0 list-none p-0">
-                        {group.rows.map(renderRow)}
-                      </ul>
-                    </div>
-                  )
+      {virtualRows.length > 0 && (
+        <ScrollArea
+          viewportRef={scrollParentRef}
+          // The padding keeps the last row's chips their whole hit area, which
+          // reaches below the row: the viewport clips there.
+          viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pb-2"
+        >
+          <ul
+            className="due-panel-blocks relative m-0 list-none p-0"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const row = virtualRows[virtualRow.index]
+              if (!row) return null
+              // Placed by `top`, not a transform: a transformed row is a stacking
+              // context, and the row after it would cover the 44 px hit area a
+              // chip on this row's last line reaches below it with.
+              const style: React.CSSProperties = {
+                position: 'absolute',
+                top: virtualRow.start,
+                left: 0,
+                width: '100%',
+              }
+              if (row.kind === 'item') {
+                return renderRow(row.item, row.flatItemIndex, groupBy === 'page', {
+                  key: virtualRow.key,
+                  index: virtualRow.index,
+                  style,
                 })
-              ) : (
-                <ul className="due-panel-blocks m-0 list-none p-0">{rows.map(renderRow)}</ul>
-              )}
-            </div>
-          ),
+              }
+              const group = row.group
+              return (
+                <li
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={style}
+                  {...(group.kind === 'page' && { 'data-testid': 'due-panel-page-group' })}
+                >
+                  {group.kind === 'bucket' ? (
+                    <SectionGroupHeader
+                      asChild
+                      className={
+                        group.bucket === 'overdue' ? 'text-alert-error-foreground' : undefined
+                      }
+                    >
+                      <h2>{t(BUCKET_LABEL_KEYS[group.bucket])}</h2>
+                    </SectionGroupHeader>
+                  ) : (
+                    <SectionGroupHeader asChild className="pl-4">
+                      {group.nested ? (
+                        <h3>{pageHeading(group.pageId)}</h3>
+                      ) : (
+                        <h2>{pageHeading(group.pageId)}</h2>
+                      )}
+                    </SectionGroupHeader>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </ScrollArea>
       )}
       <ProjectedEntriesSection
         entries={listedProjected}

@@ -424,7 +424,6 @@ export const pages: Record<string, string> = {
   'pageProperty.saveFailed': 'Eigenschaft konnte nicht gespeichert werden',
   'pageProperty.deleteFailed': 'Eigenschaft konnte nicht gelöscht werden',
   'pageProperty.addFailed': 'Eigenschaft konnte nicht hinzugefügt werden',
-  'pageProperty.toggleLabel': 'Eigenschaften ein-/ausblenden',
   'pageProperty.propertiesButton': 'Eigenschaften',
   'pageProperty.dialogDescription': 'Die Eigenschaften dieser Seite.',
   'pageProperty.addPropertyLabel': 'Eigenschaft hinzufügen',
