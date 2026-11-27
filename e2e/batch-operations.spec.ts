@@ -337,4 +337,38 @@ test.describe('A selected block shows its checkbox alone on a phone @editor @mob
     await openShapesPage(page, true)
     await expectCheckboxOnlySelection(page)
   })
+
+  test("a nested row's chevron clears its selection checkbox", async ({ page }) => {
+    await waitForBoot(page)
+    const scope = { kind: 'active', space_id: SEED_IDS.SPACE_PERSONAL }
+    const pageId = await ipc<string>(page, 'create_page_in_space', {
+      parentId: null,
+      content: 'Nested selection',
+      spaceId: SEED_IDS.SPACE_PERSONAL,
+    })
+    let parentId = pageId
+    for (const content of ['Parent', 'Nested parent', 'Grandchild']) {
+      const row = await ipc<{ id: string }>(page, 'create_block', {
+        blockType: 'content',
+        content,
+        parentId,
+        index: null,
+        scope,
+      })
+      parentId = row.id
+    }
+    await openPageMobile(page, 'Nested selection')
+    const nested = page.getByTestId('sortable-block').filter({ hasText: 'Nested parent' }).first()
+    const text = nested.getByTestId('block-static').first()
+    const box = await text.boundingBox()
+    await text.click({ modifiers: ['Control'], position: { x: (box?.width ?? 0) - 4, y: 4 } })
+    await expect(selectedCheckboxes(nested)).toHaveCount(1)
+
+    const slot = await nested.locator('.touch-select-slot').first().boundingBox()
+    const chevron = await nested.getByTestId('collapse-toggle').first().boundingBox()
+    expect(slot).not.toBeNull()
+    expect(chevron).not.toBeNull()
+    // The chevron starts past the checkbox's whole tap box, not inside it.
+    expect(chevron?.x ?? 0).toBeGreaterThanOrEqual((slot?.x ?? 0) + (slot?.width ?? 0))
+  })
 })

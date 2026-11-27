@@ -397,9 +397,11 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       )}
 
       {/* ── Collapse chevron — out of flow, in the text box's inset just left
-            of the first glyph (`--block-hang`), on the first line ── */}
+            of the first glyph (`--block-hang`), on the first line. A touch
+            row's selection checkbox sits in flow before the text and moves it
+            right by its touch-target slot and the gap, so the chevron moves with it. ── */}
       {hasChildren && !chevronAtRowEnd && (
-        <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] flex min-h-block-line items-center">
+        <div className="pointer-events-none absolute top-0 z-10 left-[calc(var(--block-hang)-1rem)] [.touch-select-slot~&]:left-[calc(var(--block-hang)-1rem+var(--touch-target)+var(--block-gap))] flex min-h-block-line items-center">
           <BlockCollapseControl
             blockId={blockId}
             isCollapsed={isCollapsed}
