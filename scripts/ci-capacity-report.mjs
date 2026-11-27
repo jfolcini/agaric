@@ -137,7 +137,7 @@ export function parseCacheRestores(log) {
       sizeMb = undefined
       continue
     }
-    // setup-node logs no key on a miss; every cached setup-node job runs on ubuntu-24.04 (x64)
+    // setup-node logs no key on a miss; every cached setup-node job runs on a Linux x64 runner
     // and release.yml opts out of the cache, so the family is the Linux x64 one.
     if (line === 'npm cache is not found') {
       restores.push({ family: 'node-cache-Linux-x64-npm', outcome: 'miss', sizeMb: undefined })

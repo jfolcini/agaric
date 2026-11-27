@@ -112,7 +112,7 @@ Download the installer for your system from [**GitHub Releases**](https://github
 
 | System | Needs | File |
 | --- | --- | --- |
-| **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 24.04, Debian 13, Fedora 40) and `libwebkit2gtk-4.1` | `.deb`, `.rpm` or `.AppImage` |
+| **Linux** (x86-64) | A distribution at least as new as the one releases are built on (Ubuntu 22.04, Debian 12, Fedora 37) and `libwebkit2gtk-4.1`, which the `.AppImage` carries itself | `.deb`, `.rpm` or `.AppImage` |
 | **Windows** (x64) | Windows 10 or 11, 64-bit. The installer fetches WebView2 when it is missing | `-setup.exe` or `.msi` |
 | **macOS** | macOS 13 Ventura or later, with Safari's updates installed (Agaric draws with the system's WebKit, which they update), Apple Silicon or Intel | `.dmg` (`aarch64` or `x64`) |
 | **Android** | Android 11 (API 30) or later, 64-bit ARM (`arm64-v8a`) only | `.apk` |

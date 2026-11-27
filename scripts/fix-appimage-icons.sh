@@ -146,9 +146,11 @@ APPIMAGE_OUT="$APPIMAGE_DIR/Agaric_${VERSION}_amd64.AppImage"
 
 if [ -f "$APPIMAGE_TOOL" ]; then
   echo "Repacking AppImage with $APPIMAGE_TOOL ..."
-  # linuxdeploy-plugin-appimage acts as appimagetool when given --appdir
+  # linuxdeploy-plugin-appimage acts as appimagetool when given --appdir.
+  # Extract-and-run, so the tool needs no FUSE on the build machine.
   cd "$APPIMAGE_DIR"
-  ARCH=x86_64 OUTPUT="$APPIMAGE_OUT" "$APPIMAGE_TOOL" --appdir "$(basename "$APPDIR")" 2>&1
+  APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 OUTPUT="$APPIMAGE_OUT" \
+    "$APPIMAGE_TOOL" --appdir "$(basename "$APPDIR")" 2>&1
   echo "AppImage repacked: $APPIMAGE_OUT"
 else
   if [ "$STRICT_MODE" = "1" ]; then
