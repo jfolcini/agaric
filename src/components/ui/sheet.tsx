@@ -102,6 +102,7 @@ const SheetContent = ({
   children,
   side = 'right',
   showCloseButton = true,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
@@ -129,6 +130,14 @@ const SheetContent = ({
           'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-var(--phone-header-h)-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
         className,
       )}
+      // A toast is not the scrim: dismissing one leaves the sheet, and a failed
+      // Quick capture's text, where they were (#7165).
+      onInteractOutside={(event) => {
+        if (event.target instanceof Element && event.target.closest('[data-sonner-toaster]')) {
+          event.preventDefault()
+        }
+        onInteractOutside?.(event)
+      }}
       {...props}
     >
       {side === 'bottom' && <BottomSheetMark />}

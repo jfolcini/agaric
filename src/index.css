@@ -2878,6 +2878,13 @@ mark[data-highlight-color='purple'] {
   }
 }
 
+/* Top toasts show only over a phone's open bottom sheet (`AppToaster`), whose
+   modal sets `pointer-events: none` on the body: without this they inherit it
+   and a tap falls through to the scrim, closing the sheet (#7165). */
+[data-sonner-toaster][data-y-position='top'] {
+  pointer-events: auto;
+}
+
 /* A toast's close button is an icon button inside it, last on its row and
    centred on its text, not a badge on its corner. Sonner injects its sheet at
    run time, after this one, so these selectors outrank its own (the doubled

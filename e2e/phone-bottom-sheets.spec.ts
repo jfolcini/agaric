@@ -375,6 +375,10 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     expect(t.y + t.height).toBeLessThanOrEqual(sheetTop)
     expect(overlaps(t, await box(capture))).toBe(false)
     expect(overlaps(t, await box(cancel))).toBe(false)
+    // Dismissing the toast leaves the sheet and its text for the retry.
+    await failure.locator('[data-close-button]').tap()
+    await expect(failure).toBeHidden()
+    await expect(dialog.getByRole('textbox')).toHaveValue('Will fail')
     clearConsoleErrors(page)
 
     await cancel.tap()
