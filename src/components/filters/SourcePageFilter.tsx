@@ -3,8 +3,9 @@
  * in linked references.
  *
  * Renders a labelled button in the references' filter bar that opens a
- * popover with a searchable list of source pages. Click to include (green),
- * shift+click to exclude (red). The label counts the picked pages.
+ * popover with a searchable list of source pages. Click to include (a
+ * `primary` dot), shift+click to exclude (a `destructive` dot). The label
+ * counts the picked pages and takes the matching token's text colour.
  */
 
 import type React from 'react'

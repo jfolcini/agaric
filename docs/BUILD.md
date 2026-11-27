@@ -457,7 +457,7 @@ So edit the listing between releases and submit it from Partner Center, or the n
 
 ### Snap Store
 
-`packaging/snap/snapcraft.yaml` makes the release's `.deb` into a strictly confined core24 snap, with WebKitGTK and GTK from the GNOME extension's content snap. `.github/workflows/publish-snap.yml` builds it with LXD (`snapcore/action-build`), keeps the `.snap` as the run's `snap` artifact, and releases it to `stable`. The app turns its own updater off in a snap (`SNAP` is set), so the store's refreshes are its only updates.
+`packaging/snap/snapcraft.yaml` makes the release's `.deb` into a strictly confined core24 snap, with WebKitGTK and GTK from the GNOME extension's content snap. `.github/workflows/publish-snap.yml` builds it with LXD (`snapcore/action-build`), keeps the `.snap` as the run's `snap` artifact, and releases it to `stable`. The app turns its own updater off in its own snap (`SNAP_NAME` is `agaric`), so the store's refreshes are its only updates.
 
 **When it runs.** After every successful `release.yml` run, whose last job publishes the release. It cannot listen for `release: published`, because that job publishes with `GITHUB_TOKEN`, whose events start no workflow. By hand, `gh workflow run publish-snap.yml -f tag=<version>` builds the snap of a published release, and releases it only with `-f publish=true`. Until the secret below exists, a release's run stops at a notice and a manual run builds only.
 
