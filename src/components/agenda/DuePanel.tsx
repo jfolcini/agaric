@@ -147,11 +147,12 @@ export function DuePanel({
 
   const dayRows = useMemo(() => blocks.toSorted(byDateThenPriority(date)), [blocks, date])
 
-  // A projected occurrence of a block already listed is the same task.
+  // A projected occurrence of one of the day's own rows is that row. An open task
+  // dated another day is not: its next occurrence still lists on this day.
   const uniqueProjected = useMemo(() => {
-    const listed = new Set([...blocks, ...openTasks].map((b) => b.id))
+    const listed = new Set(blocks.map((b) => b.id))
     return projectedEntries.filter((e) => !listed.has(e.block.id))
-  }, [blocks, openTasks, projectedEntries])
+  }, [blocks, projectedEntries])
 
   /** The visible list's sections, in order: one per non-empty bucket on All. */
   const sections = useMemo((): { bucket: TaskBucket | null; rows: BlockRow[] }[] => {

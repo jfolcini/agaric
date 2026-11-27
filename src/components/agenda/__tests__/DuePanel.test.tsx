@@ -1485,6 +1485,32 @@ describe('DuePanel', () => {
       expect(screen.getByText(`(${t('duePanel.daysOverdue', { count: 3 })})`)).toBeInTheDocument()
     })
 
+    it('on a later page, lists a projected occurrence of an open task under Today', async () => {
+      // LATE repeats: its next occurrence falls on the 26th, while the task
+      // itself stays in the open tasks (Overdue from the 26th).
+      const late = makeBlock({
+        id: 'LATE',
+        content: 'Late task',
+        todo_state: 'TODO',
+        due_date: '2026-11-22',
+      })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [{ block: late, projected_date: '2026-11-26', source: 'due_date' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-11-26" />)
+
+      const entry = await screen.findByTestId('projected-entry')
+      expect(entry).toHaveTextContent('Late task')
+      expect(screen.getByRole('tab', { name: /^Today/ })).toHaveTextContent('Today 2')
+
+      await user.click(screen.getByRole('tab', { name: /^Today/ }))
+      expect(await screen.findByTestId('projected-entry')).toHaveTextContent('Late task')
+    })
+
     it('ends This week where the week-start setting ends the week', async () => {
       const sunday = makeBlock({
         id: 'SUN',
