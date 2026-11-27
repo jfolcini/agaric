@@ -147,7 +147,8 @@ function preloadSearchOverlays(): void {
  * A phone shows toasts at the bottom, in thumb reach and clear of the header
  * and the search field under it (#5931), on the floating capture button's
  * line and ending 0.5rem left of it (1rem from the edge, 3.5rem wide), so a
- * toast costs width instead of height. With the formatting toolbar pinned on
+ * toast costs width instead of height; with the button off screen it takes the
+ * full width (`index.css`). With the formatting toolbar pinned on
  * the soft keyboard the button hides and a toast sits 1rem above the toolbar
  * instead: the screen's foot is then the keyboard's top (#6790).
  */

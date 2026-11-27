@@ -11,8 +11,9 @@
  * text-foreground border-border`, #1004) so it stays legible on a selected
  * row whose own colour is `bg-accent text-accent-foreground`.
  *
- * `size`: `sm` for rows (menus, pickers, the palette), `md` for the help and
- * settings tables.
+ * `size`: `sm` for rows (pickers, the palette), `md` for the help and
+ * settings tables. `tone="muted"` drops the keycap for a menu's hint, which is
+ * secondary text beside the row's label.
  */
 
 import { cva, type VariantProps } from 'class-variance-authority'
@@ -29,8 +30,12 @@ const kbdVariants = cva(
         sm: 'px-1.5 py-0.5 text-xs',
         md: 'px-1.5 py-0.5 text-xs font-semibold shadow-(--shadow-resting)',
       },
+      tone: {
+        chip: '',
+        muted: 'border-transparent bg-transparent px-0 font-sans text-muted-foreground',
+      },
     },
-    defaultVariants: { size: 'sm' },
+    defaultVariants: { size: 'sm', tone: 'chip' },
   },
 )
 
@@ -64,11 +69,11 @@ export type KbdProps = Omit<React.ComponentProps<'kbd'>, 'children' | 'ref'> &
     keys: string
   }
 
-export function Kbd({ keys, size, className, ...props }: KbdProps): React.ReactElement {
+export function Kbd({ keys, size, tone, className, ...props }: KbdProps): React.ReactElement {
   const alternatives = keys.split(' / ').map(formatChord)
   if (alternatives.length === 1) {
     return (
-      <kbd className={cn(kbdVariants({ size }), className)} {...props}>
+      <kbd className={cn(kbdVariants({ size, tone }), className)} {...props}>
         {alternatives[0]}
       </kbd>
     )
@@ -79,7 +84,7 @@ export function Kbd({ keys, size, className, ...props }: KbdProps): React.ReactE
         // oxlint-disable-next-line react/no-array-index-key -- alternatives are positional and never reordered, and one can repeat (#1562)
         <Fragment key={i}>
           {i > 0 && <span className="font-normal text-muted-foreground">/</span>}
-          <kbd className={kbdVariants({ size })}>{alternative}</kbd>
+          <kbd className={cn(kbdVariants({ size, tone }))}>{alternative}</kbd>
         </Fragment>
       ))}
     </span>

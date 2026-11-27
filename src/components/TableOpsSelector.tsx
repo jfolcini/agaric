@@ -218,7 +218,7 @@ export function TableOpsSelector({
               <Icon className="h-4 w-4 shrink-0" />
               {t(op.labelKey)}
               {op.shortcutId !== undefined && keyboardHints && (
-                <Kbd keys={shortcutHint(op.shortcutId)} className="ml-auto" />
+                <Kbd keys={shortcutHint(op.shortcutId)} tone="muted" className="ml-auto" />
               )}
             </Button>
           </div>

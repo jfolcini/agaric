@@ -314,6 +314,15 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     }
   })
 
+  test('a toast takes the full width while the floating button hides', async ({ page }) => {
+    const toast = await toastOnSearch(page)
+    // A focused text field hides the button.
+    await page.getByPlaceholder('Search blocks...').focus()
+    await expect(page.getByTestId('quick-capture-fab')).toHaveAttribute('data-shown', 'false')
+    const GUTTER = 16
+    await expect.poll(async () => Math.round((await box(toast)).width)).toBe(390 - 2 * GUTTER)
+  })
+
   test("a toast's close button sits inside it, on its text's line", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expectToastCloseInside(await toastOnSearch(page))
