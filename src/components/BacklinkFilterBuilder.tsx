@@ -13,6 +13,7 @@ import type React from 'react'
 import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterBar } from '@/components/filters/FilterBar'
 import { FilterPillRow, type FilterWithKey } from '@/components/filters/FilterPillRow'
 import { FilterSortControls } from '@/components/filters/FilterSortControls'
 import { Button } from '@/components/ui/button'
@@ -196,27 +197,29 @@ export function BacklinkFilterBuilder({
         {t('backlink.filtersApplied', { count: filters.length })}
       </div>
 
-      {/* Filter pills + Add button row */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <FilterPillRow
-          filters={filters.map(ensureAddId)}
-          onRemove={handleRemoveFilter}
-          tagResolver={tagResolver}
-        />
-
-        <Button
-          ref={addFilterButtonRef}
-          variant="outline"
-          size="xs"
-          className="add-filter-button"
-          onClick={() => setShowAddRow(true)}
-          aria-label={t('backlink.addFilterLabel')}
-        >
-          <Filter className="h-3 w-3" />
-          {t('backlink.addFilterLabel')}
-        </Button>
-
-        {hasFilters && (
+      <FilterBar
+        hasChips={filters.length > 0}
+        chips={
+          <FilterPillRow
+            filters={filters.map(ensureAddId)}
+            onRemove={handleRemoveFilter}
+            tagResolver={tagResolver}
+          />
+        }
+        addFilter={
+          <Button
+            ref={addFilterButtonRef}
+            variant="outline"
+            size="xs"
+            className="add-filter-button"
+            onClick={() => setShowAddRow(true)}
+            aria-label={t('backlink.addFilterLabel')}
+          >
+            <Filter className="h-3 w-3" />
+            {t('backlink.addFilterLabel')}
+          </Button>
+        }
+        clearAll={
           <Button
             variant="ghost"
             size="xs"
@@ -227,15 +230,15 @@ export function BacklinkFilterBuilder({
             <X className="h-3 w-3" />
             {t('backlink.clearAllButton')}
           </Button>
-        )}
-
-        {/* Sort control */}
-        <FilterSortControls
-          sort={sort}
-          onSortChange={onSortChange}
-          loadProperties={loadSortProperties}
-        />
-      </div>
+        }
+        trailing={
+          <FilterSortControls
+            sort={sort}
+            onSortChange={onSortChange}
+            loadProperties={loadSortProperties}
+          />
+        }
+      />
 
       {/* Add filter row */}
       {showAddRow && (

@@ -118,10 +118,11 @@ describe('FilterHelperPopover — i18n', () => {
     // Literal, not t(): pins the label text instead of echoing the catalog.
     expect(trigger).toHaveTextContent(/^Add filter$/)
     expect(trigger).toHaveClass('h-7', 'gap-1', 'text-xs')
-    // Plus before the label, ChevronDown after it; both decorative.
+    // One decorative funnel before the label, as on every filter bar (#7165 U3).
     const icons = trigger.querySelectorAll('svg')
-    expect(icons).toHaveLength(2)
-    for (const icon of icons) expect(icon).toHaveAttribute('aria-hidden', 'true')
+    expect(icons).toHaveLength(1)
+    expect(icons[0]).toHaveClass('lucide-funnel')
+    expect(icons[0]).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('renders the tag-picker "Back" button via t()', async () => {

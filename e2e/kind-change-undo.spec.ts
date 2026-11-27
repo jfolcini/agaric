@@ -9,6 +9,7 @@ import {
   focusBlockById,
   ipc,
   saveBlock,
+  selectedCheckboxes,
   selectEditorRange,
   test,
   waitForBoot,
@@ -340,7 +341,7 @@ test.describe('one Ctrl+Z takes back a kind change with the kind it took off @ed
     } = await inBlockMode(page, 'Block batch todo undo')
     // The Escape that saved `delta` left it selected; a second clears the selection.
     await page.keyboard.press('Escape')
-    await expect(page.locator('.block-selected')).toHaveCount(0)
+    await expect(selectedCheckboxes(page)).toHaveCount(0)
     for (const id of [alpha, beta]) {
       await page
         .locator(`[data-testid="block-static"][data-block-id="${id}"]`)

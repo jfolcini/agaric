@@ -89,10 +89,7 @@ export function FilterSortControls({
   }
 
   return (
-    <fieldset
-      aria-label={t('backlink.sortGroupLabel')}
-      className="ml-auto flex min-w-0 items-center"
-    >
+    <fieldset aria-label={t('backlink.sortGroupLabel')} className="flex min-w-0 items-center">
       <Select value={sortFieldValue(current)} onValueChange={handleFieldChange}>
         <SelectTrigger
           size="sm"

@@ -2735,15 +2735,16 @@ mark[data-highlight-color='purple'] {
   min-height: calc(var(--block-first-line) + 0.5rem);
 }
 
+/* The same slot at a fixed height, for a control whose touch hit box is taller
+   than the line: the box overflows it evenly and stays centred on the line. */
+@utility h-block-line {
+  height: calc(var(--block-first-line) + 0.5rem);
+}
+
 /* The box around the block being edited: its row's frame (`SortableBlock`), or
    the row an unlocked embed edits. */
 @utility block-editing {
   @apply rounded-md ring-1 ring-inset ring-border bg-accent/[0.06] shadow-(--shadow-resting);
-}
-
-/* Explicit block selection (multi-select), on the row's frame (`SortableBlock`). */
-@utility block-selected {
-  @apply ring-2 ring-inset ring-ring bg-ring/15;
 }
 
 /* ── List rows ──────────────────────────────────────────────────────────

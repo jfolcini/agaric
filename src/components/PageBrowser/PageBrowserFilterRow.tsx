@@ -17,16 +17,14 @@ import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterBar } from '@/components/filters/FilterBar'
 import { PROPERTY_OP_CHIP } from '@/components/PageBrowser/add-filter/vocab'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { InfoPopover } from '@/components/ui/info-popover'
-import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
-import { cn } from '@/lib/utils'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */
@@ -373,17 +371,14 @@ export function PageBrowserFilterRow({
   showAdvancedFacets,
 }: PageBrowserFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
+  const hasChips = filters.length > 0
 
-  const row = (
-    <div
-      className={cn(
-        'page-browser-filter-row flex items-center gap-1.5',
-        isMobile ? 'w-max px-4 py-1' : 'flex-wrap',
-      )}
+  return (
+    <FilterBar
+      className="page-browser-filter-row"
       data-testid="page-browser-filter-row"
-    >
-      {filters.length > 0 && (
+      hasChips={hasChips}
+      chips={
         <ul
           aria-label={t('pageBrowser.filter.appliedFiltersLabel')}
           className="contents list-none m-0 p-0"
@@ -410,37 +405,28 @@ export function PageBrowserFilterRow({
             )
           })}
         </ul>
-      )}
-      <AddFilterPopover
-        onAddFilter={onAddFilter}
-        warnManyFilters={filters.length >= MAX_PAGE_FILTERS}
-        {...(hidePagesFacets !== undefined ? { hidePagesFacets } : {})}
-        {...(showAdvancedFacets !== undefined ? { showAdvancedFacets } : {})}
-      />
-      {onClearAll && filters.length > 0 && (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={onClearAll}
-          aria-label={t('pageBrowser.filter.clearAllLabel')}
-        >
-          <X className="h-3 w-3" aria-hidden="true" />
-          {t('pageBrowser.filter.clearAll')}
-        </Button>
-      )}
-    </div>
-  )
-  // A phone keeps the chips on one row that scrolls sideways, edge to edge.
-  return isMobile ? (
-    <ScrollArea
-      orientation="horizontal"
-      className="-mx-4"
-      viewportProps={SCROLL_ONLY_WHEN_WIDER}
-      data-testid="page-browser-filter-scroll"
-    >
-      {row}
-    </ScrollArea>
-  ) : (
-    row
+      }
+      addFilter={
+        <AddFilterPopover
+          onAddFilter={onAddFilter}
+          warnManyFilters={filters.length >= MAX_PAGE_FILTERS}
+          {...(hidePagesFacets !== undefined ? { hidePagesFacets } : {})}
+          {...(showAdvancedFacets !== undefined ? { showAdvancedFacets } : {})}
+        />
+      }
+      clearAll={
+        onClearAll && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onClearAll}
+            aria-label={t('pageBrowser.filter.clearAllLabel')}
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            {t('pageBrowser.filter.clearAll')}
+          </Button>
+        )
+      }
+    />
   )
 }

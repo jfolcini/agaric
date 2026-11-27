@@ -110,7 +110,7 @@ describe('GraphFilterBar', () => {
     render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
 
     expect(screen.getByRole('button', { name: t('graph.filter.addFilter') })).toBeInTheDocument()
-    expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     expect(
       screen.queryByRole('button', { name: t('graph.filter.clearAll') }),
     ).not.toBeInTheDocument()
@@ -712,8 +712,8 @@ describe('GraphFilterBar', () => {
       const onChange = vi.fn<(filters: GraphFilter[]) => void>()
       const { container } = render(<StatefulHarness onChange={onChange} />)
 
-      // Component should still render the empty-state badge — no crash.
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      // Component should still render, with no chips — no crash.
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
       // Hydration must not have dispatched a corrupt value upstream.
       await waitFor(() => {
         // Allow microtasks to settle; if no dispatch happened, callback
@@ -734,7 +734,7 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         expect(onChange).not.toHaveBeenCalled()
       })
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     })
 
     // #3791 — the persisted value is `unknown` fresh out of `JSON.parse`;
@@ -800,7 +800,7 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         expect(onChange).toHaveBeenCalledWith([])
       })
-      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
     })
 
     // #3889 — a wholly-corrupt value must not sit in storage re-warning on
@@ -832,7 +832,7 @@ describe('GraphFilterBar', () => {
       vi.mocked(logger.warn).mockClear()
       render(<StatefulHarness />)
       await waitFor(() => {
-        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+        expect(document.querySelector('[data-slot="filter-pill"]')).toBeNull()
       })
       expect(logger.warn).not.toHaveBeenCalled()
     })
@@ -936,7 +936,6 @@ describe('GraphFilterBar', () => {
         render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
 
         await waitFor(() => expect(pill()).not.toBeInTheDocument())
-        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
       })
 
       it('a removed default stays removed on the next mount', async () => {

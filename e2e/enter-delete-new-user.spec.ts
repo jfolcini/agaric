@@ -5,6 +5,7 @@ import {
   deleteBlockViaContextMenu,
   expect,
   navigateToView,
+  selectedCheckboxes,
   selectEditorRange,
   test,
   waitForBoot,
@@ -84,7 +85,7 @@ test.describe('Escape from a block @editor @journal', () => {
     await page.keyboard.press('Escape')
     await page.keyboard.press('Escape')
     await expect(rows(page)).toHaveText(['task', 'parent', 'child'])
-    await expect(page.locator('.block-selected')).toHaveCount(0)
+    await expect(selectedCheckboxes(page)).toHaveCount(0)
   })
 
   test('Escape selects the block without a bar, a shift or a hidden checkbox', async ({ page }) => {
@@ -96,7 +97,7 @@ test.describe('Escape from a block @editor @journal', () => {
       await row.locator('[data-testid="block-static"]').click()
       await expect(editor(page)).toBeFocused()
       await page.keyboard.press('Escape')
-      await expect(row.locator('.block-selected')).toHaveCount(1)
+      await expect(selectedCheckboxes(row)).toHaveCount(1)
 
       await expect(page.getByTestId('batch-toolbar')).toHaveCount(0)
       await expect(page.getByText('Delete').locator('visible=true')).toHaveCount(0)
