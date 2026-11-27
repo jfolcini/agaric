@@ -14,7 +14,7 @@
  */
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
-import { RotateCcw, Search, Trash2 } from 'lucide-react'
+import { MoreVertical, RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,8 +28,13 @@ import { TrashPurgeDialog } from '@/components/TrashView/TrashPurgeDialog'
 import { TrashRestoreAllDialog } from '@/components/TrashView/TrashRestoreAllDialog'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
+import { IconButton } from '@/components/ui/icon-button'
+import { MenuSheet } from '@/components/ui/menu-sheet'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SearchInput } from '@/components/ui/search-input'
+import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
@@ -169,6 +174,8 @@ export function TrashView(): React.ReactElement {
   const [confirmBatchRestore, setConfirmBatchRestore] = useState(false)
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false)
   const [confirmRestoreAll, setConfirmRestoreAll] = useState(false)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   // Sub-fix 8: prompt before restoring large batches (>5) so the user
   // doesn't unwind a long cascade with a misclick. Mirrors the existing
@@ -489,53 +496,97 @@ export function TrashView(): React.ReactElement {
       className="trash-view mx-auto w-full max-w-list space-y-4"
       aria-label={t('trash.regionLabel')}
     >
-      {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
-          + right-aligned action buttons. Restore-all / Empty-trash are
-          surfaced as `actions` only when the trash is non-empty so an
-          empty bin doesn't display destructive controls. */}
+      {/* `FeaturePageHeader` carries the `<h1>` landmark and, on desktop,
+          Restore all and Empty trash on its right. A phone hides the title,
+          so the two move into a ⋮ menu at the end of the filter row. An empty
+          bin shows neither. */}
       <FeaturePageHeader
         title={t('sidebar.trash')}
         className="trash-view-header"
-        {...(blocks.length > 0 && {
-          actions: (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setConfirmRestoreAll(true)}
-                data-testid="trash-restore-all-btn"
-              >
-                <RotateCcw />
-                {t('trash.restoreAllHeaderButton')}
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setConfirmEmptyTrash(true)}
-                data-testid="trash-empty-trash-btn"
-              >
-                <Trash2 />
-                {t('trash.emptyTrashButton')}
-              </Button>
-            </>
-          ),
-        })}
+        {...(blocks.length > 0 &&
+          !isMobile && {
+            actions: (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmRestoreAll(true)}
+                  data-testid="trash-restore-all-btn"
+                >
+                  <RotateCcw />
+                  {t('trash.restoreAllHeaderButton')}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setConfirmEmptyTrash(true)}
+                  data-testid="trash-empty-trash-btn"
+                >
+                  <Trash2 />
+                  {t('trash.emptyTrashButton')}
+                </Button>
+              </>
+            ),
+          })}
       />
 
       {/* Filter input — SearchInput already provides an inline ✕ clear button
  with proper touch-target + focus-ring + a11y per AGENTS.md. */}
       {blocks.length > 0 && (
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <SearchInput
-            placeholder={t('trash.filterPlaceholder')}
-            aria-label={t('trash.filterPlaceholder')}
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            className="pl-9"
-            data-testid="trash-filter-input"
-            clearAriaLabelKey="trash.searchClear"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <SearchInput
+              placeholder={t('trash.filterPlaceholder')}
+              aria-label={t('trash.filterPlaceholder')}
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              className="pl-9"
+              data-testid="trash-filter-input"
+              clearAriaLabelKey="trash.searchClear"
+            />
+          </div>
+          {isMobile && (
+            <MenuSheet
+              open={moreMenuOpen}
+              onOpenChange={setMoreMenuOpen}
+              title={t('trash.moreMenu')}
+              trigger={
+                <SheetTrigger asChild>
+                  <IconButton
+                    variant="ghost"
+                    className="coarse:size-(--touch-target)"
+                    tooltip={t('trash.moreMenu')}
+                    ariaLabel={t('trash.moreMenu')}
+                    data-testid="trash-more"
+                  >
+                    <MoreVertical />
+                  </IconButton>
+                </SheetTrigger>
+              }
+              data-testid="trash-more-menu"
+            >
+              <PopoverMenuItem
+                onClick={() => {
+                  setMoreMenuOpen(false)
+                  setConfirmRestoreAll(true)
+                }}
+              >
+                <RotateCcw aria-hidden="true" />
+                {t('trash.restoreAllHeaderButton')}
+              </PopoverMenuItem>
+              <PopoverMenuItem
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 active:text-destructive"
+                onClick={() => {
+                  setMoreMenuOpen(false)
+                  setConfirmEmptyTrash(true)
+                }}
+              >
+                <Trash2 aria-hidden="true" />
+                {t('trash.emptyTrashButton')}
+              </PopoverMenuItem>
+            </MenuSheet>
+          )}
         </div>
       )}
 

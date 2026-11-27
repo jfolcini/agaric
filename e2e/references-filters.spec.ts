@@ -66,7 +66,7 @@ test.describe('References filters @pages @search', () => {
     await expect(rows).toHaveText([/task D/, /task A/, /task B/])
     await expect(showing).toHaveText('Showing 3 of 5 backlinks')
 
-    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await references.getByRole('button', { name: 'Source pages' }).click()
     await activePopover(page)
       .getByRole('button', { name: /^Meetings/ })
       .click({ modifiers: ['Shift'] })
@@ -83,7 +83,7 @@ test.describe('References filters @pages @search', () => {
     await expect(rows).toHaveText([/task A/, /task B/, /task C/, /complement/])
     await expect(showing).toHaveCount(0)
 
-    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await references.getByRole('button', { name: 'Source pages' }).click()
     await activePopover(page).getByRole('button', { name: 'Clear all' }).click()
     await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
   })
@@ -96,14 +96,14 @@ test.describe('References filters @pages @search', () => {
     const rows = references.getByText(/Filter task [A-D]|complement the/)
     await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
 
-    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await references.getByRole('button', { name: 'Source pages' }).click()
     await activePopover(page)
       .getByRole('button', { name: /^Projects/ })
       .click()
     await page.keyboard.press('Escape')
     await expect(rows).toHaveText([/task A/, /task B/, /task C/])
 
-    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await references.getByRole('button', { name: 'Source pages' }).click()
     await activePopover(page).getByRole('button', { name: 'Clear all' }).click()
     await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
   })

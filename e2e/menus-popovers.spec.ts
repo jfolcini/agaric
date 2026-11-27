@@ -60,13 +60,13 @@ test.describe('TabBar tab switcher (#1171 surface 1) @pages @search @journal', (
 // 2. SourcePageFilter popover (linked-references source-page filter)
 // ===========================================================================
 //
-// SourcePageFilter (src/components/filters/SourcePageFilter.tsx) renders the
-// filter-icon trigger inside the LinkedReferences header
-// (LinkedReferences.tsx lines 315-325). It only appears when the page has
+// SourcePageFilter (src/components/filters/SourcePageFilter.tsx) renders its
+// trigger in the linked references' filter bar, after Add filter. It only
+// appears when the page has
 // backlinks (totalCount > 0). Seed data: "Quick Notes" QN_1 contains
 // [[PAGE_GETTING_STARTED]], so opening "Getting Started" yields one backlink
-// group → the filter trigger renders. Trigger aria-label is
-// "Filter by source page" (sourceFilter.filterLabel, properties.ts:157).
+// group → the filter trigger renders. The trigger is the filter bar's
+// "Source pages" button (sourceFilter.buttonLabel).
 
 test.describe('SourcePageFilter popover (#1171 surface 2) @pages @search @journal', () => {
   test('open → toggle a page → Escape closes and restores focus to the filter trigger', async ({
@@ -78,9 +78,7 @@ test.describe('SourcePageFilter popover (#1171 surface 2) @pages @search @journa
     const refs = page.getByTestId('linked-references')
     await expect(refs).toBeVisible()
 
-    // The trigger is a ghost icon button labelled "Filter by source page"
-    // (SourcePageFilter.tsx lines 121-130).
-    const trigger = refs.getByRole('button', { name: 'Filter by source page' })
+    const trigger = refs.getByRole('button', { name: 'Source pages' })
     await expect(trigger).toBeVisible()
     await trigger.click()
 
@@ -112,7 +110,7 @@ test.describe('SourcePageFilter popover (#1171 surface 2) @pages @search @journa
     await openPage(page, 'Getting Started')
 
     const refs = page.getByTestId('linked-references')
-    const trigger = refs.getByRole('button', { name: 'Filter by source page' })
+    const trigger = refs.getByRole('button', { name: 'Source pages' })
     await trigger.click()
     await expect(activePopover(page)).toBeVisible()
 

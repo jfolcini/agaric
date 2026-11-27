@@ -134,6 +134,39 @@ for (const phone of [false, true]) {
       })
     }
 
+    test('References: Source pages follows Add filter; the header line holds only its toggle', async ({
+      page,
+    }) => {
+      await (phone ? openPageMobile : openPage)(page, 'Getting Started')
+      const references = page.getByTestId('linked-references')
+      const actions = references.locator('[data-slot="filter-bar-actions"]')
+      await actions.scrollIntoViewIfNeeded()
+      await expect(actions.locator(':scope > button')).toHaveText(['Add filter', 'Source pages'])
+      const source = actions.getByRole('button', { name: 'Source pages' })
+      await expect(source.locator('svg')).toHaveCount(0)
+      const addFilterBox = await actions.getByRole('button', { name: 'Add filter' }).boundingBox()
+      const sourceBox = await source.boundingBox()
+      expect(sourceBox?.height).toBe(addFilterBox?.height)
+
+      const header = references.locator('.linked-references-header')
+      const onHeaderLine = await references.getByRole('button').evaluateAll(
+        (buttons, el) => {
+          const line = (el as Element).getBoundingClientRect()
+          return buttons.filter((b) => {
+            const r = b.getBoundingClientRect()
+            return r.bottom > line.top && r.top < line.bottom
+          }).length
+        },
+        await header.elementHandle(),
+      )
+      expect(onHeaderLine).toBe(1)
+
+      await source.click()
+      await page.locator('.source-page-filter-item').first().click()
+      // An open sheet hides the page from the accessibility tree, so not by role.
+      await expect(actions.locator('.source-page-filter-trigger')).toHaveText('Source pages · 1')
+    })
+
     test('Advanced query: Add filter shows the funnel', async ({ page }) => {
       await navigateToView(page, 'Advanced query')
       const addFilter = page.getByRole('button', { name: 'Add filter', exact: true }).first()

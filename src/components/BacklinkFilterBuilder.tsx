@@ -41,6 +41,8 @@ export interface BacklinkFilterBuilderProps {
   /** Passed to `FilterSortControls` as `loadProperties`. */
   loadSortProperties?: boolean
   tagResolver?: (id: string) => string
+  /** A control that sits right after Add filter (the source-page filter). */
+  afterAddFilter?: React.ReactNode
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +145,7 @@ export function BacklinkFilterBuilder({
   propertyKeys,
   loadSortProperties = true,
   tagResolver,
+  afterAddFilter,
 }: BacklinkFilterBuilderProps): React.ReactElement {
   const { t } = useTranslation()
   const [showAddRow, setShowAddRow] = useState(false)
@@ -207,17 +210,20 @@ export function BacklinkFilterBuilder({
           />
         }
         addFilter={
-          <Button
-            ref={addFilterButtonRef}
-            variant="outline"
-            size="xs"
-            className="add-filter-button"
-            onClick={() => setShowAddRow(true)}
-            aria-label={t('backlink.addFilterLabel')}
-          >
-            <Filter className="h-3 w-3" />
-            {t('backlink.addFilterLabel')}
-          </Button>
+          <>
+            <Button
+              ref={addFilterButtonRef}
+              variant="outline"
+              size="xs"
+              className="add-filter-button"
+              onClick={() => setShowAddRow(true)}
+              aria-label={t('backlink.addFilterLabel')}
+            >
+              <Filter className="h-3 w-3" />
+              {t('backlink.addFilterLabel')}
+            </Button>
+            {afterAddFilter}
+          </>
         }
         clearAll={
           <Button

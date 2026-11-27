@@ -67,7 +67,10 @@ describe('SourcePageFilter', () => {
       />,
     )
 
-    expect(screen.getByLabelText('Filter by source page')).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Source pages' })
+    expect(button).toHaveTextContent(/^Source pages$/)
+    // One funnel per filter bar, on Add filter.
+    expect(button.querySelector('svg')).toBeNull()
   })
 
   // 2. filter button is default color with no filters
@@ -81,11 +84,10 @@ describe('SourcePageFilter', () => {
       />,
     )
 
-    const button = screen.getByLabelText('Filter by source page')
-    expect(button.className).toContain('text-muted-foreground')
-    expect(button.className).not.toContain('text-green-600')
-    expect(button.className).not.toContain('text-red-600')
-    expect(button.className).not.toContain('text-yellow-600')
+    const button = screen.getByRole('button', { name: /^Source pages/ })
+    expect(button.className).not.toContain('text-primary')
+    expect(button.className).not.toContain('text-destructive')
+    expect(button.className).not.toContain('text-status-pending-foreground')
   })
 
   // 3. filter button is green with includes only
@@ -99,7 +101,8 @@ describe('SourcePageFilter', () => {
       />,
     )
 
-    const button = screen.getByLabelText('Filter by source page')
+    const button = screen.getByRole('button', { name: /^Source pages/ })
+    expect(button).toHaveTextContent('Source pages · 1')
     expect(button.className).toContain('text-primary')
   })
 
@@ -114,7 +117,8 @@ describe('SourcePageFilter', () => {
       />,
     )
 
-    const button = screen.getByLabelText('Filter by source page')
+    const button = screen.getByRole('button', { name: /^Source pages/ })
+    expect(button).toHaveTextContent('Source pages · 1')
     expect(button.className).toContain('text-destructive')
   })
 
@@ -129,7 +133,8 @@ describe('SourcePageFilter', () => {
       />,
     )
 
-    const button = screen.getByLabelText('Filter by source page')
+    const button = screen.getByRole('button', { name: /^Source pages/ })
+    expect(button).toHaveTextContent('Source pages · 2')
     expect(button.className).toContain('text-status-pending-foreground')
   })
 
@@ -298,24 +303,6 @@ describe('SourcePageFilter', () => {
     expect(items[1]).toHaveTextContent('(3)')
     expect(items[2]).toHaveTextContent('Untitled')
     expect(items[2]).toHaveTextContent('(1)')
-  })
-
-  // Touch-target sizing
-  it('trigger button has explicit desktop and coarse-pointer sizing classes', () => {
-    render(
-      <SourcePageFilter
-        sourcePages={samplePages}
-        included={[]}
-        excluded={[]}
-        onChange={onChange}
-      />,
-    )
-
-    const button = screen.getByLabelText('Filter by source page')
-    // 28 px on a fine pointer, 36 px on a coarse one with a 44 px target.
-    expect(button.className).toContain('size-7')
-    expect(button.className).toContain('coarse:size-9')
-    expect(button.className).toContain('touch-hit-area')
   })
 
   // 13. a11y audit

@@ -2,11 +2,11 @@
  * SourcePageFilter -- filter popup for including/excluding source pages
  * in linked references.
  *
- * Renders a filter icon button that opens a popover with a searchable list
- * of source pages. Click to include (green), shift+click to exclude (red).
+ * Renders a labelled button in the references' filter bar that opens a
+ * popover with a searchable list of source pages. Click to include (green),
+ * shift+click to exclude (red). The label counts the picked pages.
  */
 
-import { Filter } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -48,8 +48,9 @@ export function SourcePageFilter({
     if (hasIncludes && hasExcludes) return 'text-status-pending-foreground'
     if (hasIncludes) return 'text-primary'
     if (hasExcludes) return 'text-destructive'
-    return 'text-muted-foreground'
+    return undefined
   }, [hasIncludes, hasExcludes])
+  const pickedCount = included.length + excluded.length
 
   // Sort by blockCount descending, then filter by search
   const filteredPages = useMemo(() => {
@@ -117,16 +118,13 @@ export function SourcePageFilter({
     <Popover sheetTitle={t('sourceFilter.filterLabel')}>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
-          className={cn(
-            // As tall as the linked references' other controls, on a touch screen
-            // too; the rest of its 44 px target is invisible.
-            'source-page-filter-trigger size-7 p-0 coarse:size-9 touch-hit-area',
-            buttonColor,
-          )}
-          aria-label={t('sourceFilter.filterLabel')}
+          variant="outline"
+          size="xs"
+          className={cn('source-page-filter-trigger', buttonColor)}
         >
-          <Filter className="h-4 w-4" />
+          {pickedCount > 0
+            ? t('sourceFilter.buttonLabelCount', { count: pickedCount })
+            : t('sourceFilter.buttonLabel')}
         </Button>
       </PopoverTrigger>
       <MenuPopoverContent className="p-2" align="start">

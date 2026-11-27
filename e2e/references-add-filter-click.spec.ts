@@ -93,8 +93,8 @@ const CONTROLS: Control[] = [
     expectLanded: (_page, control) => expect(control).toBeChecked(),
   },
   {
-    name: 'Filter by source page',
-    locate: (page) => references(page).getByRole('button', { name: 'Filter by source page' }),
+    name: 'Source pages',
+    locate: (page) => references(page).getByRole('button', { name: 'Source pages' }),
     expectLanded: (page) =>
       expect(
         activePopover(page).getByRole('textbox', { name: 'Search source pages' }),

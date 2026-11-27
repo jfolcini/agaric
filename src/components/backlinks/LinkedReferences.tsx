@@ -17,7 +17,6 @@ import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { SourcePageFilter } from '@/components/filters/SourcePageFilter'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { Badge } from '@/components/ui/badge'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useBacklinkGroups } from '@/hooks/useBacklinkGroups'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
@@ -345,36 +344,14 @@ export function LinkedReferences({
       data-testid="linked-references"
       aria-label={t('references.panelLabel')}
     >
-      {/* Main header -- always visible, outside ListViewState, with inline source-page filter */}
-      <div className="flex flex-nowrap items-center gap-1 min-w-0">
-        <CollapsiblePanelHeader
-          isCollapsed={!expanded}
-          onToggle={toggleExpanded}
-          className="linked-references-header"
-        >
-          {headerLabel}
-        </CollapsiblePanelHeader>
-        {expanded && (totalCount > 0 || hasActiveFilters) && (
-          <SourcePageFilter
-            sourcePages={sourcePages}
-            included={sourcePageIncluded}
-            excluded={sourcePageExcluded}
-            onChange={(inc, exc) => {
-              setSourcePageIncluded(inc)
-              setSourcePageExcluded(exc)
-            }}
-          />
-        )}
-        {expanded && filters.length > 0 && (
-          <Badge
-            tone="metadata"
-            className="linked-references-filter-count"
-            aria-label={t('references.filtersAppliedAriaLabel', { count: filters.length })}
-          >
-            {t('references.filtersAppliedBadge', { count: filters.length })}
-          </Badge>
-        )}
-      </div>
+      {/* Main header -- always visible, outside ListViewState */}
+      <CollapsiblePanelHeader
+        isCollapsed={!expanded}
+        onToggle={toggleExpanded}
+        className="linked-references-header"
+      >
+        {headerLabel}
+      </CollapsiblePanelHeader>
 
       {/* The kind toggle sits OUTSIDE `ListViewState`, beside the header: that
           machine swaps its children for a skeleton on every key change and for
@@ -382,8 +359,8 @@ export function LinkedReferences({
           segment just checked — dropping keyboard focus to <body>, and leaving
           no way back to "All" from an empty result. */}
       {expanded && (
-        // Spaced as the row below is: on a phone the segments span the row, so
-        // their targets reach under the header's source-page filter.
+        // Spaced as the row below is: the segments' 44 px touch targets would
+        // otherwise reach into the header's collapse toggle.
         <div className="mt-1 px-2 coarse:mt-2">
           <KindToggle kind={kind} onKindChange={setKind} />
         </div>
@@ -411,6 +388,19 @@ export function LinkedReferences({
             propertyKeys={propertyKeys}
             loadSortProperties={filterBuilderTouched}
             tagResolver={resolveTagName}
+            afterAddFilter={
+              (totalCount > 0 || hasActiveFilters) && (
+                <SourcePageFilter
+                  sourcePages={sourcePages}
+                  included={sourcePageIncluded}
+                  excluded={sourcePageExcluded}
+                  onChange={(inc, exc) => {
+                    setSourcePageIncluded(inc)
+                    setSourcePageExcluded(exc)
+                  }}
+                />
+              )
+            }
           />
         </div>
       )}

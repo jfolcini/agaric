@@ -135,7 +135,7 @@ function referenceControls(page: Page): ReferenceControls {
   const refs = page.getByTestId('linked-references')
   return {
     kind: refs.getByRole('radiogroup', { name: 'Filter by link kind' }),
-    source: refs.getByRole('button', { name: 'Filter by source page' }),
+    source: refs.getByRole('button', { name: 'Source pages' }),
     addFilter: refs.getByRole('button', { name: 'Add filter' }),
     sortField: refs.getByRole('combobox', { name: 'Sort by' }),
     sortDirection: refs.getByTestId('backlink-sort-direction'),
