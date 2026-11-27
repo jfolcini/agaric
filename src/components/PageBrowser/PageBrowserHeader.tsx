@@ -186,7 +186,8 @@ export function PageBrowserHeader({
   const newPageButton = (
     <Button
       variant={captureButtonShown ? 'outline' : 'default'}
-      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target)')}
+      // On a phone it pairs with the sort button: the same box, glyph and fill.
+      className={cn(isMobile && 'ml-auto w-9 px-0 coarse:w-(--touch-target) coarse:[&_svg]:size-5')}
       aria-label={t('pageBrowser.newPage')}
       onClick={() => openNewPageDialog()}
     >
@@ -232,15 +233,18 @@ export function PageBrowserHeader({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <SelectTrigger
-                    // An icon button on a phone; the chevron goes with the label.
+                    // An icon button on a phone, filled like the outlined New
+                    // page beside it; the chevron goes with the label.
                     className={
                       isMobile
-                        ? 'w-9 justify-center px-0 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
+                        ? 'w-9 justify-center bg-background px-0 dark:bg-input/30 coarse:w-(--touch-target) [&>svg:last-child]:hidden'
                         : 'w-auto min-w-[7rem]'
                     }
                     aria-label={t('pageBrowser.sortLabel')}
                   >
-                    {isMobile && <ArrowUpDown aria-hidden="true" />}
+                    {isMobile && (
+                      <ArrowUpDown className="size-4 coarse:size-5" aria-hidden="true" />
+                    )}
                     <span className={cn(isMobile && 'sr-only')}>
                       <SelectValue />
                     </span>

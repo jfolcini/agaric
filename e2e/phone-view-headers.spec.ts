@@ -146,6 +146,28 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     await expect44(newPage, 'New page')
   })
 
+  // #7156: one pair, in both themes: the same glyph size and the same fill.
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`Pages: New page and sort draw one glyph size and one fill (${colorScheme})`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ colorScheme })
+      await navigateToView(page, 'Pages')
+      const header = page.locator('.page-browser-header')
+      const look = (control: Locator) =>
+        control.evaluate((el) => {
+          const glyph = el.querySelector('svg')?.getBoundingClientRect()
+          return {
+            glyph: [glyph?.width, glyph?.height],
+            fill: getComputedStyle(el).backgroundColor,
+          }
+        })
+      const newPage = await look(header.getByRole('button', { name: 'New page', exact: true }))
+      const sort = await look(header.getByRole('combobox', { name: 'Sort order' }))
+      expect(newPage).toEqual(sort)
+    })
+  }
+
   test('Agenda: no nested scroll box, the header scrolls away, the list stays windowed', async ({
     page,
   }) => {
