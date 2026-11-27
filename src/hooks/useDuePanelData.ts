@@ -250,7 +250,7 @@ export function useDuePanelData({
         await resolveAndMergeTitles(collectResolveIds(tasks), spaceId, () => stale, setPageTitles)
       })
       .catch((err: unknown) => {
-        logger.warn('useDuePanelData', 'open tasks fetch failed', undefined, err)
+        logger.warn('useDuePanelData', 'open tasks fetch failed', { date }, err)
         if (!stale) setOpenTasks([])
       })
       .finally(() => {
@@ -259,8 +259,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-    // Not `date`: the open tasks are the same on every page from today on.
-  }, [fromToday, invalidationKey, currentSpaceId])
+  }, [fromToday, date, invalidationKey, currentSpaceId])
 
   const fetchBlocks = useCallback(
     async (cursor?: string) => {

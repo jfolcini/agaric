@@ -22,9 +22,8 @@
  * row that opens its task on Enter): React bubbles a portal's events to the
  * trigger's ancestors. Radix closes on Escape from its own document listener.
  *
- * One is open at a time, app-wide: opening one closes the other. With a mouse
- * Radix would anyway, on the pointerdown outside; on touch it would not, as it
- * waits for the click, which the trigger stops.
+ * One is open at a time, app-wide: opening one closes the other. Radix would
+ * not, as the trigger's stopped click is not a press outside to it.
  */
 
 import { cva } from 'class-variance-authority'

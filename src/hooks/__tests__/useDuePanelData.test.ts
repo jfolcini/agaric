@@ -643,11 +643,23 @@ describe('useDuePanelData', () => {
     expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
-  it('a step between later pages reads the open tasks no second time', async () => {
-    const { rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
+  // A date step clears the shared titles (the day's own read starts over), so the
+  // open tasks must resolve theirs again: the panel stays mounted from one later
+  // page to the next.
+  it("keeps the open tasks' page titles across a step between later pages", async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'OPEN1', page_id: 'POPEN', todo_state: 'TODO', content: 'Open' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'POPEN', title: 'Open page', block_type: 'page', deleted: false },
+    ])
+    const { result, rerender } = renderHook(({ date }) => useDuePanelData({ date }), {
       initialProps: { date: '2026-04-20' },
     })
-    await waitFor(() => expect(mockedQueryByProperty).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(result.current.pageTitles.get('POPEN')).toBe('Open page'))
 
     rerender({ date: '2026-04-21' })
     await waitFor(() =>
@@ -656,7 +668,7 @@ describe('useDuePanelData', () => {
         expect.anything(),
       ),
     )
-    expect(mockedQueryByProperty).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(result.current.pageTitles.get('POPEN')).toBe('Open page'))
   })
 
   it('open tasks batchResolve includes page ids and content ULIDs (B-55)', async () => {
@@ -696,7 +708,7 @@ describe('useDuePanelData', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         'useDuePanelData',
         'open tasks fetch failed',
-        undefined,
+        { date: '2026-04-15' },
         fetchErr,
       )
     })

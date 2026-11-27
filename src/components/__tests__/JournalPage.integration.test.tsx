@@ -340,18 +340,12 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     // The day view's delete is in its title row's Page actions menu (#7155 R6);
     // the multi-day views keep it on the day's heading.
     const day = within(todaySection())
-    const onHeading = async () => {
+    if (mode === 'daily') {
+      await user.click(await day.findByRole('button', { name: t('pageHeader.pageActions') }))
+      await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
+    } else {
       await user.click(await day.findByRole('button', { name: t('pageHeader.deletePage') }))
     }
-    const openDelete: Record<DayView, () => Promise<void>> = {
-      daily: async () => {
-        await user.click(await day.findByRole('button', { name: t('pageHeader.pageActions') }))
-        await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.deletePage') }))
-      },
-      weekly: onHeading,
-      stream: onHeading,
-    }
-    await openDelete[mode]()
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
     // The mock sends no change feed: once the delete commits, send the `names`
