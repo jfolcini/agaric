@@ -1,7 +1,8 @@
 /**
  * FilterBar — the one filter-bar layout every view shares (#7165 U3): the
  * active chips on their own wrapping row, then one actions row of Add filter,
- * Clear all and the view's own trailing controls. Each view keeps its chips,
+ * Clear all and the view's own trailing controls, which end the row at the
+ * inline end. Each view keeps its chips,
  * actions and data flow; this only places them.
  */
 
@@ -15,7 +16,7 @@ export interface FilterBarProps {
   chips: React.ReactNode
   addFilter: React.ReactNode
   clearAll?: React.ReactNode
-  /** The view's own controls after Clear all (counts, view menus). */
+  /** The view's own controls, pushed to the end of the actions row. */
   trailing?: React.ReactNode
   className?: string
   'data-testid'?: string
@@ -47,7 +48,9 @@ export function FilterBar({
       <div className={ROW} data-slot="filter-bar-actions">
         {addFilter}
         {hasChips && clearAll}
-        {trailing}
+        {trailing !== undefined && (
+          <div className="ms-auto flex flex-wrap items-center gap-1.5">{trailing}</div>
+        )}
       </div>
     </div>
   )

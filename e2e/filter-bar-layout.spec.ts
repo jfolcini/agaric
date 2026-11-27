@@ -1,7 +1,7 @@
 /**
  * #7165 U3 — every filter bar has one layout, phone and desktop: the active
  * chips on their own row, above the actions row that starts with Add filter,
- * and Add filter shows the funnel.
+ * Add filter shows the funnel, and the view's trailing controls end the row.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -43,9 +43,19 @@ async function expectChipsAboveAddFilter(bar: Locator): Promise<void> {
   }
 }
 
+/** The view's trailing controls end the actions row, at its inline end. */
+async function expectTrailingAtEnd(bar: Locator, trailing: Locator): Promise<void> {
+  const row = await bar.locator('[data-slot="filter-bar-actions"]').boundingBox()
+  const box = await trailing.boundingBox()
+  if (!row || !box) throw new Error('no box')
+  expect(Math.abs(row.x + row.width - (box.x + box.width))).toBeLessThanOrEqual(1)
+}
+
 interface View {
   name: string
   open: (page: Page, phone: boolean) => Promise<Locator>
+  /** The view's trailing controls, when it has any. */
+  trailing?: (bar: Locator) => Locator
 }
 
 const VIEWS: View[] = [
@@ -56,6 +66,7 @@ const VIEWS: View[] = [
       await navigateToView(page, 'Graph')
       return page.getByTestId('graph-filter-bar')
     },
+    trailing: (bar) => bar.getByTestId('local-graph-control'),
   },
   {
     // The default "Exclude journal pages" chip.
@@ -72,6 +83,7 @@ const VIEWS: View[] = [
       await navigateToView(page, 'Agenda')
       return page.getByTestId('agenda-filter-builder')
     },
+    trailing: (bar) => bar.getByTestId('agenda-sort-group-controls'),
   },
   {
     name: 'Search',
@@ -94,6 +106,7 @@ const VIEWS: View[] = [
       await references.getByRole('button', { name: 'Apply filter' }).click()
       return references.locator('.backlink-filter-builder')
     },
+    trailing: (bar) => bar.getByRole('group', { name: 'Sort references' }),
   },
 ]
 
@@ -106,11 +119,12 @@ for (const phone of [false, true]) {
     })
 
     for (const view of VIEWS) {
-      test(`${view.name}: the chips sit above Add filter, which shows the funnel`, async ({
+      test(`${view.name}: the chips sit above Add filter, which shows the funnel; trailing controls end the row`, async ({
         page,
       }) => {
         const bar = await view.open(page, phone)
         await expectChipsAboveAddFilter(bar)
+        if (view.trailing) await expectTrailingAtEnd(bar, view.trailing(bar))
       })
     }
 

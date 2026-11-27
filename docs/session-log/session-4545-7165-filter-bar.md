@@ -25,3 +25,8 @@ Round 3 of the UI review (#7165, from the notes on #7155) chose one filter-bar l
   - `PageBrowserFilterRow.test.tsx`'s phone sideways-scroll block is deleted.
   - `strip-scrollbars.spec.ts` no longer checks the Pages filter scroller, which is gone.
   - `AgendaView.test.tsx`'s builder mock now renders `trailing`.
+
+**Review**
+
+- Trailing controls now end the actions row in every view: `FilterBar` wraps them in one `ms-auto` group. Before, Agenda's View menu sat right after Clear all, and Graph's Focus on this page reached the far end only when the "Showing N of M" count was there to carry `ml-auto`. The `ml-auto` copies in `GraphFilterBar` and `FilterSortControls` are gone. `e2e/filter-bar-layout.spec.ts` checks that Graph's, Agenda's and References' trailing controls end the row, on desktop and phone. It goes red for all six when `ms-auto` is removed.
+- Graph's "No filters applied" badge is gone, along with its i18n key. Without chips the bar shows only Add filter, so the badge said nothing new. The `GraphFilterBar.test.tsx` checks that used it as an empty-state marker now check that no chip renders.

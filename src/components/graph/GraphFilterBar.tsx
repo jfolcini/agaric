@@ -18,7 +18,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FilterBar } from '@/components/filters/FilterBar'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -40,7 +39,6 @@ import {
 } from '@/lib/graph-filters'
 import { logger } from '@/lib/logger'
 import { PRIORITY_LEVELS } from '@/lib/priority-levels'
-import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
 /**
@@ -695,14 +693,9 @@ export function GraphFilterBar({
         }
         trailing={
           <>
-            {!hasFilters && (
-              <Badge tone="outline" className="text-xs text-muted-foreground">
-                {t('graph.filter.noFilters')}
-              </Badge>
-            )}
             {showingCount && (
               <span
-                className="ml-auto text-xs text-muted-foreground"
+                className="text-xs text-muted-foreground"
                 aria-live="polite"
                 aria-atomic="true"
                 data-testid="graph-filter-count"
@@ -713,13 +706,7 @@ export function GraphFilterBar({
 
             {showEdgesTruncated && (
               <span
-                className={cn(
-                  'text-xs text-muted-foreground italic',
-                  // Right-align the notice when it is the only trailing item;
-                  // when the "showing N of M pages" count is present it owns the
-                  // `ml-auto` and this notice trails it.
-                  !showingCount && 'ml-auto',
-                )}
+                className="text-xs text-muted-foreground italic"
                 aria-live="polite"
                 aria-atomic="true"
                 data-testid="graph-edges-truncated"
