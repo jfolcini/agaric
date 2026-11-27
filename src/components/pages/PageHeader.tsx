@@ -698,6 +698,7 @@ export function PageHeader({
               pageId={pageId}
               open={propertiesOpen}
               onOpenChange={setPropertiesOpen}
+              returnFocusRef={kebab}
             />
           </FeatureErrorBoundary>
         </div>

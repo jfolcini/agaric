@@ -1308,14 +1308,6 @@ export async function readClipboard(page: Page): Promise<string> {
   })
 }
 
-/**
- * Navigate away and back to force `BlockTree` to re-fetch from the mock backend.
- *
- * Used in undo/redo flows. Block-level undo (`useUndoShortcuts`) calls
- * `undoPageOp` against the mock, which mutates the mock's in-memory state,
- * but the frontend's `BlockTree` doesn't auto-refresh on undo. Navigating to
- * Tags and back triggers a full re-render with the post-undo state.
- */
 /** The open page's properties dialog (a bottom sheet on a phone, #7155 R13). */
 export function pagePropertiesDialog(page: Page): Locator {
   return page.getByRole('dialog', { name: 'Properties', exact: true })
@@ -1342,6 +1334,14 @@ export async function closePageProperties(page: Page): Promise<void> {
   await expect(pagePropertiesDialog(page)).toHaveCount(0)
 }
 
+/**
+ * Navigate away and back to force `BlockTree` to re-fetch from the mock backend.
+ *
+ * Used in undo/redo flows. Block-level undo (`useUndoShortcuts`) calls
+ * `undoPageOp` against the mock, which mutates the mock's in-memory state,
+ * but the frontend's `BlockTree` doesn't auto-refresh on undo. Navigating to
+ * Tags and back triggers a full re-render with the post-undo state.
+ */
 export async function reopenPage(page: Page, title: string) {
   await page
     .locator('[data-slot="sidebar"]')

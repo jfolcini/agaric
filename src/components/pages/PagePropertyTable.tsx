@@ -8,7 +8,7 @@
  * from existing definitions or creating new definitions.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -48,9 +48,16 @@ interface PagePropertyTableProps {
   pageId: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Takes focus on close when what opened the dialog is gone, as a menu row is. */
+  returnFocusRef?: RefObject<HTMLElement | null> | undefined
 }
 
-export function PagePropertyTable({ pageId, open, onOpenChange }: PagePropertyTableProps) {
+export function PagePropertyTable({
+  pageId,
+  open,
+  onOpenChange,
+  returnFocusRef,
+}: PagePropertyTableProps) {
   const { t } = useTranslation()
   // The page is in the active space, whose definitions apply (#5841).
   const spaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -325,6 +332,8 @@ export function PagePropertyTable({ pageId, open, onOpenChange }: PagePropertyTa
       !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 
+  // No Radix trigger opens this, so Radix would drop focus on close: return it to the opener.
+  const openerRef = useRef<HTMLElement | null>(null)
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
   const Body = parts.isMobile ? SheetBody : DialogBody
@@ -332,7 +341,21 @@ export function PagePropertyTable({ pageId, open, onOpenChange }: PagePropertyTa
   return (
     <>
       <Root open={open} onOpenChange={onOpenChange}>
-        <Content className="page-property-table">
+        <Content
+          className="page-property-table"
+          // Focus the surface, not its first value: a phone's keyboard would cover the sheet,
+          // and a keystroke would land in that value.
+          onOpenAutoFocus={(event: Event) => {
+            event.preventDefault()
+            openerRef.current = document.activeElement as HTMLElement | null
+            ;(event.currentTarget as HTMLElement | null)?.focus()
+          }}
+          onCloseAutoFocus={(event: Event) => {
+            event.preventDefault()
+            const opener = openerRef.current
+            ;(opener?.isConnected ? opener : returnFocusRef?.current)?.focus()
+          }}
+        >
           <Header>
             <Title>{t('pageProperty.propertiesButton')}</Title>
             <Description>{t('pageProperty.dialogDescription')}</Description>

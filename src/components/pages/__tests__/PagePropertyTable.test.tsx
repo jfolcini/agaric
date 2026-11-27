@@ -235,6 +235,60 @@ describe('PagePropertyTable rendering', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  // A focused value would raise a phone's keyboard over the sheet.
+  it('focuses the dialog itself on open, then returns focus to what opened it', async () => {
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
+    const { rerender } = render(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />
+      </>,
+    )
+    const opener = screen.getByRole('button', { name: 'chip' })
+    opener.focus()
+
+    rerender(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open onOpenChange={noop} />
+      </>,
+    )
+    const dialog = await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    await within(dialog).findByLabelText(t('pageProperty.valueLabel', { key: 'status' }))
+    expect(dialog).toHaveFocus()
+
+    rerender(
+      <>
+        <button type="button">chip</button>
+        <PagePropertyTable pageId="PAGE_1" open={false} onOpenChange={noop} />
+      </>,
+    )
+    await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  // ⋮ › Properties… opens it from a menu row that is gone by the time it closes.
+  it('returns focus to returnFocusRef when what opened it is gone', async () => {
+    setupMock([], [])
+    const kebab = { current: null as HTMLButtonElement | null }
+    const Harness = ({ open, row }: { open: boolean; row: boolean }) => (
+      <>
+        <button type="button" ref={kebab}>
+          kebab
+        </button>
+        {row && <button type="button">row</button>}
+        <PagePropertyTable pageId="PAGE_1" open={open} onOpenChange={noop} returnFocusRef={kebab} />
+      </>
+    )
+    const { rerender } = render(<Harness open={false} row />)
+    screen.getByRole('button', { name: 'row' }).focus()
+    rerender(<Harness open row />)
+    await screen.findByRole('dialog', { name: t('pageProperty.propertiesButton') })
+    rerender(<Harness open row={false} />)
+
+    rerender(<Harness open={false} row={false} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'kebab' })).toHaveFocus())
+  })
+
   it('shows loading skeletons while data loads', async () => {
     // Never-resolving promises to simulate loading: both halves of the
     // parallel load stay pending.

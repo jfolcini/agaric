@@ -94,6 +94,8 @@ test.describe('page Properties chip on a phone @pages @mobile', () => {
 
     const sheet = await openPageProperties(page)
     await expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    // The sheet, not its first value, takes focus: a focused field raises the keyboard over it.
+    await expect(sheet).toBeFocused()
     const { width, height } = page.viewportSize() ?? { width: 0, height: 0 }
     await expect
       .poll(() =>
