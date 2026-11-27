@@ -243,6 +243,5 @@ export const block: Record<string, string> = {
     'Los bloques seleccionados se moverán a la papelera, desde donde se pueden restaurar.',
   'blockContext.deleteConfirmAction': 'Sí, eliminar',
   'task.noneState': 'ninguno',
-  'block.daysUnit': 'días',
   'block.repeatStatus': 'Se repite {{value}}',
 }

@@ -280,9 +280,6 @@ export const properties: Record<string, string> = {
   'propertiesView.mergeAction': 'Combinar con otra propiedad…',
   'propertiesView.copyAction': 'Copiar a otro espacio…',
   'propertiesView.deleteAction': 'Eliminar propiedad',
-  'propertiesView.deadlineWarning': 'Aviso de fecha límite',
-  'propertiesView.deadlineWarningDesc':
-    'Muestra las tareas que vencen dentro de este número de días en la lista Próximas de la agenda. 0 lo desactiva.',
   'propertiesView.builtIn': 'Predefinida',
   'propertiesView.definitionsIn': 'Definiciones en',
   'propertiesView.copyToSpaceMenuLabel': 'Espacios a los que copiar {{key}}',

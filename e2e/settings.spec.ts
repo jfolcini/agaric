@@ -116,13 +116,13 @@ test.describe('Settings panel @settings', () => {
   })
 
   // #2687 — Notifications tab was never opened by any spec. #5629 — it is
-  // Tasks & reminders now, and holds the deadline warning too.
+  // Tasks & reminders now.
   test('Tasks & reminders tab renders the enable toggle and gates the test-send button', async ({
     page,
   }) => {
     await page.getByRole('tab', { name: 'Tasks & reminders' }).click()
     await expect(page.locator('[data-testid="settings-panel-notifications"]')).toBeVisible()
-    await expect(page.getByRole('spinbutton', { name: 'Deadline warning' })).toBeVisible()
+    await expect(page.locator('#deadline-warning-days')).toHaveCount(0)
 
     const enabledSwitch = page.locator('[data-testid="notifications-enabled-switch"]')
     const sendTestButton = page.locator('[data-testid="notifications-send-test-button"]')

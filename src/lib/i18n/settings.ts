@@ -510,8 +510,4 @@ export const settings: Record<string, string> = {
   'settings.journalDateFormatLong': 'Month D, YYYY (e.g. June 17, 2026)',
   'settings.journalDateFormatSlash': 'DD/MM/YYYY (e.g. 17/06/2026)',
   'settings.journalDateFormatWeekday': 'Ddd, Mmm D (e.g. Wed, Jun 17)',
-
-  // Translators: Note under the "Deadline warning" number in Settings › Tasks & reminders when the
-  // value typed was out of range and was clamped; {{min}} and {{max}} are numbers (e.g. 0 and 90).
-  'settings.valueClamped': 'Value clamped to {{min}}–{{max}}',
 }

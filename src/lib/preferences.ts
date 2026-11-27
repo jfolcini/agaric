@@ -1050,24 +1050,6 @@ const INTERFACE_ZOOM_PREFERENCE: PreferenceDefinition<InterfaceZoom> = {
 }
 
 /**
- * `agaric:deadlineWarningDays` — overdue-warning lead time in days
- * (`src/components/agenda/DeadlineWarningSection.tsx`). Legacy on-disk
- * format is a bare integer (not JSON).
- */
-const DEADLINE_WARNING_DAYS_PREFERENCE: PreferenceDefinition<number> = {
-  key: 'agaric:deadlineWarningDays',
-  scope: 'device',
-  version: 1,
-  defaultValue: 0,
-  parse: (raw) => {
-    const n = Number.parseInt(raw, 10)
-    if (!Number.isFinite(n)) throw new Error('not a number')
-    return n
-  },
-  serialize: (value) => String(value),
-}
-
-/**
  * `agaric:last-update-check` — ISO timestamp of the last successful update
  * check (`src/hooks/useUpdateCheck.ts`). `null` = never checked.
  */
@@ -1586,7 +1568,6 @@ export const PREFERENCES = {
   customCss: CUSTOM_CSS_PREFERENCE,
   customCssEnabled: CUSTOM_CSS_ENABLED_PREFERENCE,
   interfaceZoom: INTERFACE_ZOOM_PREFERENCE,
-  deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,
   updateStatus: UPDATE_STATUS_PREFERENCE,
   settingsActiveTab: SETTINGS_ACTIVE_TAB_PREFERENCE,

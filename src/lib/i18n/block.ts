@@ -429,10 +429,6 @@ export const block: Record<string, string> = {
   // blockTree.setStateMessage when the selected blocks' task state is cleared.
   'task.noneState': 'none',
 
-  // Translators: Settings › Notifications: unit after the number field "warn N days before a
-  // deadline".
-  'block.daysUnit': 'days',
-
   // Translators: Repeat status of a recurring task; {{value}} = a repeat rule like "weekly".
   'block.repeatStatus': 'Repeats {{value}}',
 }
