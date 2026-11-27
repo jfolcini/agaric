@@ -230,15 +230,17 @@ test.describe('Reading width, desktop (#5332, #5354) @editor @mobile', () => {
       page,
     }) => {
       await setSidebar(page, sidebar)
-      const panel = page.getByRole('tabpanel')
-      // The day's Blocks | Page switch ends its row of actions.
+      // The journal's own panel: the day's task panel has tabs of its own.
+      const panel = page.locator('[role="tabpanel"][id^="journal-panel-"]')
+      // The day's title row ends with its ⋮, after Blocks | Page and the bookmark (#7155 R6).
       const modeSwitch = page.getByRole('radiogroup', { name: 'Editing mode' })
+      const dayActions = page.getByRole('button', { name: 'Page actions', exact: true })
 
       await page.getByRole('tab', { name: 'Daily view' }).click()
       await expect(modeSwitch).toBeVisible()
       expect((await box(panel)).width).toBe(READING_WIDTH)
       await expectCentredInPane(panel, 'daily column')
-      await expectEndsAtRightEdge(modeSwitch, panel, 'editing mode switch')
+      await expectEndsAtRightEdge(dayActions, panel, "the day's Page actions")
 
       await page.getByRole('tab', { name: 'Continuous stream view' }).click()
       const stream = page.getByTestId('journal-stream')
