@@ -33,6 +33,7 @@ import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { BootGate } from '@/components/pages/BootGate'
 import { useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useBottomSheetOpen } from '@/components/ui/sheet'
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { useAndroidBackButton } from '@/hooks/useAndroidBackButton'
@@ -151,18 +152,26 @@ function preloadSearchOverlays(): void {
  * full width (`index.css`). With the formatting toolbar pinned on
  * the soft keyboard the button hides and a toast sits 1rem above the toolbar
  * instead: the screen's foot is then the keyboard's top (#6790).
+ *
+ * While a bottom sheet is open the toasts move to the top, over the header the
+ * sheet's scrim already covers, full width: at the bottom they would lie on the
+ * sheet's own buttons, where a retry is tapped (#7165).
  */
 function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
   const phoneLayout = usePhoneLayout()
   const toolbarPinned = usePinnedToolbarShown()
-  const mobile = {
-    bottom: `calc(${toolbarPinned ? '5rem' : '1rem'} + var(--safe-area-bottom))`,
-    left: '1rem',
-    right: '5rem',
-  }
+  const bottomSheetOpen = useBottomSheetOpen()
+  const toTop = phoneLayout && bottomSheetOpen
+  const mobile = toTop
+    ? { top: 'calc(0.5rem + var(--safe-area-top))', left: '1rem', right: '1rem' }
+    : {
+        bottom: `calc(${toolbarPinned ? '5rem' : '1rem'} + var(--safe-area-bottom))`,
+        left: '1rem',
+        right: '5rem',
+      }
   return (
     <Toaster
-      position={phoneLayout ? 'bottom-left' : 'bottom-right'}
+      position={toTop ? 'top-left' : phoneLayout ? 'bottom-left' : 'bottom-right'}
       // `mobileOffset` applies up to sonner's own 600 px breakpoint, `offset`
       // above it: both, so the placement follows `usePhoneLayout` alone.
       {...(phoneLayout ? { offset: mobile, mobileOffset: mobile } : {})}

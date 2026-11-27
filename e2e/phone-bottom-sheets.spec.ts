@@ -5,7 +5,8 @@
  * page ⋮ menu are bottom-sheet lists. Each must sit on the bottom edge and span
  * the width, and a tall one stops at the header. Toasts sit at the bottom too,
  * beside the floating capture button and clear of the soft keyboard and the
- * field being typed in. The search sheet keeps one close button (#5930), and
+ * field being typed in; while a bottom sheet is open they move to the top, off
+ * its buttons (#7165). The search sheet keeps one close button (#5930), and
  * no sheet has a grab bar (#7040).
  *
  * A sheet's bottom is the viewport's: `SheetContent` anchors at `bottom-0` and
@@ -21,6 +22,7 @@ import {
   activePopover,
   activeSheet,
   centerOf,
+  clearConsoleErrors,
   emitMockEvent,
   expect,
   focusBlock,
@@ -383,6 +385,51 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
       })
       .toBe(true)
     expect(overlaps(await box(toast), await box(input))).toBe(false)
+  })
+
+  test('a toast raised while a sheet is open sits above it, then at the bottom once it closes', async ({
+    page,
+  }) => {
+    await navigateMobile(page, 'Search')
+    await page.evaluate(() =>
+      (
+        window as unknown as { __injectMockError: (cmd: string, msg: string) => void }
+      ).__injectMockError('quick_capture_block', 'disk full'),
+    )
+    await emitMockEvent(page, 'deeplink:capture', { kind: 'prefill', text: 'Will fail' })
+    const dialog = page.getByTestId('quick-capture-dialog')
+    const capture = dialog.getByRole('button', { name: 'Capture', exact: true })
+    const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
+    await capture.tap()
+    const failure = page.locator('[data-sonner-toast]', { hasText: "Couldn't save quick capture" })
+    await expect(failure).toBeVisible()
+    // The sheet stays open for a retry; its buttons stay clear to tap.
+    await expect(dialog).toBeVisible()
+    const sheetTop = (await box(activeSheet(page))).y
+    await expect.poll(async () => (await box(failure)).y).toBeLessThan(sheetTop)
+    const t = await box(failure)
+    expect(t.y + t.height).toBeLessThanOrEqual(sheetTop)
+    expect(overlaps(t, await box(capture))).toBe(false)
+    expect(overlaps(t, await box(cancel))).toBe(false)
+    // Dismissing the toast leaves the sheet and its text for the retry.
+    await failure.locator('[data-close-button]').tap()
+    await expect(failure).toBeHidden()
+    await expect(dialog.getByRole('textbox')).toHaveValue('Will fail')
+    clearConsoleErrors(page)
+
+    await cancel.tap()
+    await expect(dialog).toBeHidden()
+    await page.evaluate(() =>
+      (window as unknown as { __clearMockErrors: () => void }).__clearMockErrors(),
+    )
+    const toast = await toastOnSearch(page)
+    const fab = await box(page.getByTestId('quick-capture-fab'))
+    await expect
+      .poll(async () => {
+        const b = await box(toast)
+        return Math.round(b.y + b.height)
+      })
+      .toBe(Math.round(fab.y + fab.height))
   })
 })
 
