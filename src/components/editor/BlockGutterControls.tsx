@@ -222,7 +222,9 @@ export const BlockGutterControls = React.memo(
     // and only while a multi-selection is active.
     if (isTouch) {
       return selectCheckbox ? (
-        <div className="flex flex-col items-end gap-1">{selectCheckbox}</div>
+        <div className="touch-select-slot flex h-block-line flex-shrink-0 items-center">
+          {selectCheckbox}
+        </div>
       ) : (
         <></>
       )
