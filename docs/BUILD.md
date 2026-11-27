@@ -362,6 +362,47 @@ Useful flags (see `scripts/release.sh --help`):
 - **winget:** run `scripts/gen-winget-manifest.sh <version>`, commit `packaging/winget/`, and submit it ([`packaging/winget/README.md`](../packaging/winget/README.md)).
 - **Flathub:** nothing until the app is accepted there ([`packaging/flathub/README.md`](../packaging/flathub/README.md)); from then on, add the `<release>` to the MetaInfo file in the pre-release PR, and in `flathub/io.github.jfolcini.Agaric` point the manifest at the new tag and commit and regenerate `cargo-sources.json` and `node-sources.json`.
 - **Microsoft Store:** nothing once it is set up ([Microsoft Store](#microsoft-store)).
+- **Snap Store, AUR:** nothing once they are set up ([Snap Store](#snap-store), [AUR](#aur)).
+
+### What `release.yml` does on tag push
+
+1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests (it's the first job; the bump already happened locally).
+2. **`validate`** — same gate as CI (`prek run --all-files`).
+3. **`e2e-tauri`** — the real-backend WebdriverIO lane (`e2e-tauri-weekly.yml`) over every spec, beside the builds; a red run blocks `publish-release`.
+4. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
+5. **`android-launch-smoke`** — builds a release-profile x86_64 APK (`android-launch-smoke.yml`), launches it on an emulator and fails on a dead process or a crash in logcat, then runs `scripts/android-e2e-safe-area.mjs` and `scripts/android-e2e-persist.mjs` (a typed block survives `am force-stop`); the nightly lane runs the same workflow.
+6. **`android-build-and-release`** — the signed APK, built once the launch smoke is green. Without the keystore secret the job fails, so the release stays a draft.
+7. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus, per platform, SPDX + CycloneDX SBOMs and an OpenVEX document written from that SBOM (`.github/actions/syft-sbom`): see SECURITY.md § Mitigations, "SBOM and OpenVEX".
+8. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
+9. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
+
+### If a release tag fails at `verify-version`
+
+The manifests are out of sync with the tag. To recover:
+
+```bash
+git tag -d <bad-tag>                          # local
+git push --delete origin <bad-tag>            # remote
+scripts/release.sh <correct-version>          # re-cut cleanly
+```
+
+### If the tag's CI fails after the bump landed
+
+When `verify-version` passed but a later job failed (a red `validate` job, say), the bump commit is already on `main`, no release was published, and `scripts/release.sh` refuses with "already at `<version>` — nothing to release". Fix `main` in an ordinary PR, then move the tag onto it by hand:
+
+```bash
+git pull --ff-only
+git tag -d <version>                          # local
+git push --delete origin <version>            # remote
+git tag -s -m "Release <version>" <version>   # signed, on the fixed main
+git verify-tag <version>
+gh release view <version> --json isDraft -q .isDraft | grep -qx true && gh release delete <version> --yes
+git push --no-verify origin <version>         # starts the workflow again
+```
+
+This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval. `git verify-tag` checks only the signature locally; the script also asks GitHub whether the tag object is verified (`release_require_verified_tag`) and this manual path skips that, so confirm the tag shows Verified on GitHub.
+
+The `gh release delete` line deletes a leftover draft only: a failed run that got as far as `build-and-release` created one for the tag up front, and the next run would reuse it.
 
 ### Microsoft Store
 
@@ -413,45 +454,55 @@ So edit the listing between releases and submit it from Partner Center, or the n
 - *Agent access*: the MCP config the app copies names `agaric-mcp.exe` inside the versioned `WindowsApps` folder, which moves with every Store update.
 - On a Windows 10 PC without the WebView2 Runtime: the MSI and NSIS installers fetch it, an MSIX cannot.
 
-### What `release.yml` does on tag push
+### Snap Store
 
-1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests (it's the first job; the bump already happened locally).
-2. **`validate`** — same gate as CI (`prek run --all-files`).
-3. **`e2e-tauri`** — the real-backend WebdriverIO lane (`e2e-tauri-weekly.yml`) over every spec, beside the builds; a red run blocks `publish-release`.
-4. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
-5. **`android-launch-smoke`** — builds a release-profile x86_64 APK (`android-launch-smoke.yml`), launches it on an emulator and fails on a dead process or a crash in logcat, then runs `scripts/android-e2e-safe-area.mjs` and `scripts/android-e2e-persist.mjs` (a typed block survives `am force-stop`); the nightly lane runs the same workflow.
-6. **`android-build-and-release`** — the signed APK, built once the launch smoke is green. Without the keystore secret the job fails, so the release stays a draft.
-7. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus, per platform, SPDX + CycloneDX SBOMs and an OpenVEX document written from that SBOM (`.github/actions/syft-sbom`): see SECURITY.md § Mitigations, "SBOM and OpenVEX".
-8. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
-9. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
+`packaging/snap/snapcraft.yaml` makes the release's `.deb` into a strictly confined core24 snap, with WebKitGTK and GTK from the GNOME extension's content snap. `.github/workflows/publish-snap.yml` builds it with LXD (`snapcore/action-build`), keeps the `.snap` as the run's `snap` artifact, and releases it to `stable`. The app turns its own updater off in a snap (`SNAP` is set), so the store's refreshes are its only updates.
 
-### If a release tag fails at `verify-version`
+**When it runs.** After every successful `release.yml` run, whose last job publishes the release. It cannot listen for `release: published`, because that job publishes with `GITHUB_TOKEN`, whose events start no workflow. By hand, `gh workflow run publish-snap.yml -f tag=<version>` builds the snap of a published release, and releases it only with `-f publish=true`. Until the secret below exists, a release's run stops at a notice and a manual run builds only.
 
-The manifests are out of sync with the tag. To recover:
+One-time setup:
 
-```bash
-git tag -d <bad-tag>                          # local
-git push --delete origin <bad-tag>            # remote
-scripts/release.sh <correct-version>          # re-cut cleanly
-```
+1. Create an Ubuntu One account and sign in to the [Snapcraft dashboard](https://dashboard.snapcraft.io/) with it.
+2. Register the name: `sudo snap install snapcraft --classic`, then `snapcraft login` and `snapcraft register agaric`. The store can hold a name for manual review; the dashboard shows when it is yours.
+3. Export credentials that can only upload this snap and release it to `stable`, and store them as the repository secret `SNAPCRAFT_STORE_CREDENTIALS`:
 
-### If the tag's CI fails after the bump landed
+   ```bash
+   snapcraft export-login --snaps=agaric --channels=stable \
+     --acls package_access,package_push,package_update,package_release creds.txt
+   gh secret set SNAPCRAFT_STORE_CREDENTIALS < creds.txt && rm creds.txt
+   ```
 
-When `verify-version` passed but a later job failed (a red `validate` job, say), the bump commit is already on `main`, no release was published, and `scripts/release.sh` refuses with "already at `<version>` — nothing to release". Fix `main` in an ordinary PR, then move the tag onto it by hand:
+4. Publish the current release: `gh workflow run publish-snap.yml -f tag=<version> -f publish=true`. The store holds this first upload for a manual review, because the snap declares a `dbus` slot.
+5. In the forum's [store-requests](https://forum.snapcraft.io/c/store-requests/19) category, ask in one topic for:
+   - the snap declaration for the `dbus` slot `single-instance` (session-bus name `com.agaric.app.SingleInstance`), and auto-connection of the snap's own `single-instance-plug` to it. `tauri-plugin-single-instance` owns that name so that a second launch, an `agaric://` link included, reaches the running window instead of opening a second pool on the same database;
+   - auto-connection of `camera` (scanning a pairing QR code) and `audio-record` (voice notes), which snapd leaves unconnected. Until then a user runs `sudo snap connect agaric:camera` and `sudo snap connect agaric:audio-record`.
 
-```bash
-git pull --ff-only
-git tag -d <version>                          # local
-git push --delete origin <version>            # remote
-git tag -s -m "Release <version>" <version>   # signed, on the fixed main
-git verify-tag <version>
-gh release view <version> --json isDraft -q .isDraft | grep -qx true && gh release delete <version> --yes
-git push --no-verify origin <version>         # starts the workflow again
-```
+   Once the declaration is granted, run step 4 again.
 
-This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval. `git verify-tag` checks only the signature locally; the script also asks GitHub whether the tag object is verified (`release_require_verified_tag`) and this manual path skips that, so confirm the tag shows Verified on GitHub.
+From then on every release reaches `stable` with no step of yours. **The credentials expire** a year after `export-login` unless `--expires` gave another date (`snapcraft whoami` prints it when they are in `SNAPCRAFT_STORE_CREDENTIALS`). After that the release's *Publish snap* run fails at the upload and that release is not in the store: repeat step 3, then re-run the failed job.
 
-The `gh release delete` line deletes a leftover draft only: a failed run that got as far as `build-and-release` created one for the tag up front, and the next run would reuse it.
+None of this has run in an installed snap yet. To check a build-only run's artifact, install it with `sudo snap install --dangerous`, connect the plugs above, and try a second launch (the first window should take focus), an `agaric://` link, pairing and syncing over the LAN, a QR scan, a voice note, a due-task notification, and launch at login, which `autostart:` hands to snapd. Two differences from the `.deb` are known. The data folder is `~/snap/agaric/current/.local/share/com.agaric.app`, so moving from the `.deb` or the AppImage means moving `~/.local/share/com.agaric.app` there before the first launch; a copy would leave two installs with one sync identity. And the MCP agent config names the bridge inside the snap's revision folder, which changes with every refresh.
+
+### AUR
+
+`packaging/aur/agaric-bin/` is the `agaric-bin` package. Its PKGBUILD installs the release's `.deb` as it is, the app's licence, and the empty file `/usr/share/agaric/no-self-update`, which keeps the app's updater off so that pacman alone updates it; `LICENSE` is the 0BSD licence the AUR asks of package sources. `.github/workflows/publish-aur.yml` sets the PKGBUILD's `pkgver` and `sha256sums` to the release, builds the package and writes `.SRCINFO` with makepkg in the `archlinux-base-devel` container `pins.txt` pins, and pushes `PKGBUILD`, `.SRCINFO` and `LICENSE` to `ssh://aur@aur.archlinux.org/agaric-bin.git`, accepting only the AUR host key pinned in the workflow.
+
+**When it runs.** As the snap's does: after every successful `release.yml` run, or by hand with `gh workflow run publish-aur.yml -f tag=<version>`, which builds the package and pushes it only with `-f publish=true`. Until the secret below exists, a release's run stops at a notice and a manual run builds only.
+
+One-time setup:
+
+1. Create an account at [aur.archlinux.org](https://aur.archlinux.org/register).
+2. Make a key for the workflow alone, add its public half under *My Account → SSH Public Key*, and store the private half as the repository secret `AUR_SSH_PRIVATE_KEY`:
+
+   ```bash
+   ssh-keygen -t ed25519 -N '' -C 'agaric publish-aur' -f aur-agaric
+   cat aur-agaric.pub          # paste into My Account
+   gh secret set AUR_SSH_PRIVATE_KEY < aur-agaric && rm aur-agaric aur-agaric.pub
+   ```
+
+3. Create the package from the current release: `gh workflow run publish-aur.yml -f tag=<version> -f publish=true`. The first push creates `agaric-bin` with your account as its maintainer; the AUR refuses it if someone else already holds the name.
+
+From then on every release is pushed with no step of yours. The key does not expire; once it is removed from the account, the push fails with `Permission denied (publickey)`. If the AUR ever changes its host key, the push fails host-key verification: check the new key's fingerprint against the list on [aur.archlinux.org](https://aur.archlinux.org) before replacing the pinned line. The AUR leaves automated updates the maintainer's responsibility: when the app links a new library, add its package to `depends` (`namcap -i` on the built package names a missing one).
 
 ## Android release signing
 

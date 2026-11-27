@@ -206,6 +206,25 @@ export const UPSTREAMS = {
     if (found.length === 0) throw new Error(`no stable ${line}.x in repository2-3.xml`)
     return { version: found.at(-1) }
   },
+  // `library/archlinux@base-devel-`: the newest `base-devel-<date>` tag on
+  // Docker Hub, as `<date>@<digest>`. The date orders the pins; the digest is
+  // what `docker run` pulls.
+  async docker(arg, http) {
+    const [repo, prefix] = arg.split('@')
+    const [namespace, name] = repo.split('/')
+    const r = await http.json(
+      `https://hub.docker.com/v2/namespaces/${namespace}/repositories/${name}/tags?name=${prefix}&ordering=last_updated&page_size=100`,
+    )
+    const newest = r.results
+      .filter((t) => t.name.startsWith(prefix))
+      .toSorted((a, b) => compareVersions(a.name, b.name))
+      .at(-1)
+    if (!newest) throw new Error(`${repo}: no ${prefix}<version> tag`)
+    return {
+      version: `${newest.name.slice(prefix.length)}@${newest.digest}`,
+      publishedAt: newest.last_updated,
+    }
+  },
   async npm(name, http) {
     const r = await http.json(`https://registry.npmjs.org/${name}`)
     const version = r['dist-tags'].latest

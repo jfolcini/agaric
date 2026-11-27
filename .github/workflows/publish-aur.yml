@@ -1,0 +1,143 @@
+name: Publish AUR
+
+# Sets `packaging/aur/agaric-bin/PKGBUILD` to a published release, builds it
+# and writes its .SRCINFO in an Arch container, and pushes PKGBUILD, .SRCINFO
+# and LICENSE to the AUR's `agaric-bin`; the first push creates the package
+# (docs/BUILD.md § AUR).
+#
+# Trigger: release.yml publishes the release with GITHUB_TOKEN, and events that
+# token causes start no workflow, so `release: published` never fires here. A
+# Release run concludes `success` only after its last job, publish-release, has
+# published the release, so this runs on that. A manual run builds any
+# published tag, and pushes it only when asked.
+#
+# Until AUR_SSH_PRIVATE_KEY exists, the automatic run stops at a notice, and a
+# manual run builds without pushing.
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- fires on Release, which only a maintainer's tag push starts; it checks out the default branch, never the triggering run's code
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to package, e.g. 0.26.0
+        required: true
+        type: string
+      publish:
+        description: Push it to the AUR (otherwise build only)
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One push at a time: a second would be refused as a non-fast-forward.
+concurrency:
+  group: publish-aur
+  cancel-in-progress: false
+
+jobs:
+  aur:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    # The image pull, the .deb download and makepkg.
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out
+    steps:
+      - name: Decide what to build and whether to push
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          HAS_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_run ]; then
+            if [ "$HAS_KEY" != true ]; then
+              echo "::notice title=AUR not set up::Nothing built or pushed. Missing: secret AUR_SSH_PRIVATE_KEY. See docs/BUILD.md § AUR."
+              echo "build=false" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            tag="$RUN_TAG" publish=true
+          else
+            tag="$INPUT_TAG" publish="$INPUT_PUBLISH"
+            if [ "$publish" = true ] && [ "$HAS_KEY" != true ]; then
+              echo "::warning title=Not pushed::Missing: secret AUR_SSH_PRIVATE_KEY. Building only; see docs/BUILD.md § AUR."
+              publish=false
+            fi
+          fi
+          # The PKGBUILD's source URL is the tag, which scripts/release.sh
+          # writes without a `v`, and pkgver takes no other form.
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$tag' is not a release tag (x.y.z)."
+            exit 1
+          fi
+          {
+            echo "build=true"
+            echo "publish=$publish"
+            echo "tag=$tag"
+          } >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.decide.outputs.build == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Read pins.txt
+        id: pins
+        if: steps.decide.outputs.build == 'true'
+        run: bash scripts/pins.sh github-output
+
+      # makepkg refuses root, so it runs as a user with the runner's uid, which
+      # owns the checkout. `makepkg -g` computes the sums from the PKGBUILD's
+      # own source URLs, and the build checks them.
+      - name: Build the package and write .SRCINFO
+        if: steps.decide.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+          IMAGE: archlinux:base-devel-${{ steps.pins.outputs.archlinux_base_devel }}
+        run: |
+          set -euo pipefail
+          docker run --rm -i -e TAG -e HOST_UID="$(id -u)" \
+            -v "$PWD/packaging/aur/agaric-bin:/pkg" -w /pkg "$IMAGE" bash -euo pipefail -s <<'EOF'
+          useradd -m -u "$HOST_UID" builder
+          as_builder() { runuser -u builder -- env SRCDEST=/tmp/src BUILDDIR=/tmp/build PKGDEST=/tmp/out "$@"; }
+          install -d -o builder /tmp/src /tmp/build /tmp/out
+          as_builder sed -i -e "s/^pkgver=.*/pkgver=$TAG/" -e 's/^pkgrel=.*/pkgrel=1/' PKGBUILD
+          sums=$(as_builder makepkg -g | grep -oE '[0-9a-f]{64}' | sed "s/.*/'&'/" | paste -sd ' ')
+          as_builder sed -i "s/^sha256sums=.*/sha256sums=($sums)/" PKGBUILD
+          as_builder makepkg --nodeps --noconfirm
+          as_builder makepkg --printsrcinfo | as_builder tee .SRCINFO
+          EOF
+
+      - name: Push to the AUR
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          ssh_dir="$RUNNER_TEMP/aur-ssh"
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" >"$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+          # The AUR's Ed25519 host key: its fingerprint is the
+          # SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4 that
+          # https://aur.archlinux.org lists.
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' >"$ssh_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519"
+          aur="$RUNNER_TEMP/aur"
+          git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/agaric-bin.git "$aur"
+          cp packaging/aur/agaric-bin/{PKGBUILD,.SRCINFO,LICENSE} "$aur/"
+          cd "$aur"
+          git add PKGBUILD .SRCINFO LICENSE
+          if git diff --cached --quiet; then
+            echo "::notice title=AUR::agaric-bin on the AUR already matches $TAG; nothing pushed."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "Update to $TAG"
+          git push origin HEAD:master

@@ -1,0 +1,77 @@
+# The Snap Store package: the release's `.deb`, unpacked as it is, with a
+# desktop file of its own. `publish-snap.yml` saves that `.deb` here as
+# `agaric.deb` and builds, and the snap takes its version from the `.deb`.
+# Setup and the store requests it needs: docs/BUILD.md § Snap Store.
+name: agaric
+title: Agaric
+summary: Local-first outliner and personal knowledge base
+description: |
+  Agaric is a note-taking app for one person and their own devices. Notes are
+  blocks in an outline, the default view is a daily journal, and everything
+  lives in a local database that syncs directly between your devices over your
+  own network. There is no account, no server and no cloud copy.
+license: GPL-3.0-or-later
+website: https://github.com/jfolcini/agaric
+source-code: https://github.com/jfolcini/agaric
+issues: https://github.com/jfolcini/agaric/issues
+icon: usr/share/icons/hicolor/256x256/apps/agaric.png
+adopt-info: agaric
+base: core24
+grade: stable
+confinement: strict
+platforms:
+  amd64:
+
+apps:
+  agaric:
+    command: usr/bin/agaric
+    desktop: usr/share/applications/agaric.desktop
+    # Launch at login: the app writes `$HOME/.config/autostart/Agaric.desktop`,
+    # which in a snap is under ~/snap/agaric, where snapd looks for this name.
+    autostart: Agaric.desktop
+    # WebKitGTK 4.1 and GTK come from the gnome-46-2404 content snap, and Mesa
+    # from gpu-2404, both wired in by the extension.
+    extensions: [gnome]
+    plugs:
+      - network
+      - network-bind # LAN sync: mDNS discovery and the QUIC server
+      - audio-playback # audio attachments
+      - audio-record # voice notes
+      - camera # scanning a pairing QR code
+      - home
+      - desktop
+      - wayland
+      - x11
+      - opengl # GPU access
+      - single-instance-plug
+    slots:
+      - single-instance
+
+# tauri-plugin-single-instance: the first instance owns this session-bus name,
+# and a second launch (an `agaric://` link, say) hands it its arguments there.
+# The slot owns the name; the plug lets the second instance, confined as the
+# same snap, call it.
+slots:
+  single-instance:
+    interface: dbus
+    bus: session
+    name: com.agaric.app.SingleInstance
+plugs:
+  single-instance-plug:
+    interface: dbus
+    bus: session
+    name: com.agaric.app.SingleInstance
+
+parts:
+  agaric:
+    plugin: dump
+    source: agaric.deb
+    source-type: deb
+    override-pull: |
+      craftctl default
+      craftctl set version="$(dpkg-deb --field "$CRAFT_PROJECT_DIR/agaric.deb" Version)"
+    # The `.deb`'s desktop file has no `%u` to hand an `agaric://` link to
+    # the app, an empty `Categories=`, and a themed icon name.
+    override-build: |
+      craftctl default
+      install -Dm644 "$CRAFT_PROJECT_DIR/agaric.desktop" "$CRAFT_PART_INSTALL/usr/share/applications/agaric.desktop"
