@@ -84,7 +84,7 @@ export function Kbd({ keys, size, tone, className, ...props }: KbdProps): React.
         // oxlint-disable-next-line react/no-array-index-key -- alternatives are positional and never reordered, and one can repeat (#1562)
         <Fragment key={i}>
           {i > 0 && <span className="font-normal text-muted-foreground">/</span>}
-          <kbd className={cn(kbdVariants({ size, tone }))}>{alternative}</kbd>
+          <kbd className={kbdVariants({ size, tone })}>{alternative}</kbd>
         </Fragment>
       ))}
     </span>
