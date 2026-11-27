@@ -17,7 +17,7 @@ import {
  * `due_date`; today's Due panel and the week view's per-day count read
  * `agenda_cache`, which the real backend rebuilds in the background, so a date
  * that saved but never reached the agenda shows only on the bridge. A checkbox
- * changed in Edit as Markdown sets the task state the panel groups it by.
+ * changed in Edit as Markdown sets the task state the panel's row shows.
  *
  * The task lives on a page of its own: the journal's Due panel leaves out the
  * day's own blocks.
@@ -31,21 +31,19 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** The Due panel group header the task is listed under, or null when it is not listed. */
-function duePanelGroupOf(page: Page, blockId: string): Promise<string | null> {
-  return page.evaluate((id) => {
-    const rows = [
-      ...document.querySelectorAll('[data-testid="due-panel"] ul.due-panel-blocks > li'),
-    ].toSorted(
-      (a, b) => Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index')),
-    )
-    let group: string | null = null
-    for (const row of rows) {
-      if (row.classList.contains('due-panel-group-header-row')) group = row.textContent.trim()
-      else if (row.id === `block-item-${id}`) return group
-    }
-    return null
-  }, blockId)
+/** The Today tab's count in the Due panel, after showing that tab. */
+async function showTodayTab(page: Page): Promise<number> {
+  const tab = page.getByTestId('due-panel').getByRole('tab', { name: /^Today/ })
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  return Number(/\d+$/.exec((await tab.textContent()) ?? '')?.[0])
+}
+
+/** The task checkbox of block `id`'s row in the Due panel. */
+function duePanelMarker(page: Page, id: string) {
+  return page.locator(
+    `[data-testid="due-panel"] [id="block-item-${id}"] [data-testid="task-marker"]`,
+  )
 }
 
 /** Today's due count in the week view (`journal.agendaCountBadge`). */
@@ -60,7 +58,7 @@ async function weekDueCount(page: Page): Promise<number> {
   return n
 }
 
-test('/due today on a TODO lists it in the Due panel and the week count; a checkbox changed in Edit as Markdown regroups it @journal', async ({
+test('/due today on a TODO lists it in the Due panel and the week count; a checkbox changed in Edit as Markdown shows on its row @journal', async ({
   page,
 }) => {
   await waitForBoot(page)
@@ -80,6 +78,7 @@ test('/due today on a TODO lists it in the Due panel and the week count; a check
   await ipc(page, 'set_todo_state', { blockId: task.id, state: 'TODO' })
   await navigateToView(page, 'Journal')
   const before = await weekDueCount(page)
+  const todayBefore = await showTodayTab(page)
 
   await openPage(page, PAGE)
   await focusBlockById(page, task.id)
@@ -95,7 +94,8 @@ test('/due today on a TODO lists it in the Due panel and the week count; a check
   await page.keyboard.press('Escape')
 
   await navigateToView(page, 'Journal')
-  await expect.poll(() => duePanelGroupOf(page, task.id)).toBe('TODO')
+  expect(await showTodayTab(page)).toBe(todayBefore + 1)
+  await expect(duePanelMarker(page, task.id)).toHaveAttribute('aria-label', /^Task: TODO\./)
   expect(await weekDueCount(page)).toBe(before + 1)
 
   // The checkbox, written `- [ ]` in the page's Markdown, becomes `- [/]`.
@@ -116,7 +116,9 @@ test('/due today on a TODO lists it in the Due panel and the week count; a check
   await expect(editor).toBeHidden()
 
   await navigateToView(page, 'Journal')
-  await expect.poll(() => duePanelGroupOf(page, task.id)).toBe('DOING')
+  // Still open, so still today's.
+  expect(await showTodayTab(page)).toBe(todayBefore + 1)
+  await expect(duePanelMarker(page, task.id)).toHaveAttribute('aria-label', /^Task: DOING\./)
   await openPage(page, PAGE)
   await expect(
     page.locator(`[data-block-id="${task.id}"] [data-testid="task-marker"]`),
