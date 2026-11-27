@@ -160,6 +160,8 @@ beforeEach(() => {
     mockInvokeCommands({
       get_reminder_settings: () => ({ enabled: false, time: '09:00' }),
       list_quarantined_sync_slots: () => ({ slots: [], total: 0 }),
+      // The Help tab asks whether a package manager owns updates.
+      self_update_disabled: () => false,
     }),
   )
 })
@@ -479,7 +481,10 @@ describe('SettingsView', () => {
       artefacts: [],
     }
     vi.mocked(invoke).mockImplementation(
-      mockInvokeCommands({ compute_reconciliation_report: () => report }),
+      mockInvokeCommands({
+        compute_reconciliation_report: () => report,
+        self_update_disabled: () => false,
+      }),
     )
     const user = userEvent.setup()
     const listener = vi.fn()
