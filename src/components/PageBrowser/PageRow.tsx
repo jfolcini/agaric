@@ -390,7 +390,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         <NewTabTarget pageId={pageId} title={title}>
           <button
             type="button"
-            className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
+            className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:outline-offset-0"
             onClick={(e) => {
               if (touchSelect && selectionActive) onToggleMultiSelect(pageId, e)
               else onSelect(pageId, title)
@@ -482,7 +482,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           variant="ghost"
           size="icon-xs"
           aria-label={starred ? t('pageBrowser.removeBookmark') : t('pageBrowser.addBookmark')}
-          className="star-toggle shrink-0 touch-target hover-reveal focus-visible:ring-inset text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+          className="star-toggle shrink-0 touch-target hover-reveal focus-visible:-outline-offset-3 text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
           data-starred={starred}
           onClick={(e) => {
             e.stopPropagation()
@@ -495,7 +495,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           variant="ghost"
           size="icon-xs"
           aria-label={t('pageBrowser.deleteButton')}
-          className="shrink-0 touch-target hover-reveal focus-visible:ring-inset text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+          className="shrink-0 touch-target hover-reveal focus-visible:-outline-offset-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
           disabled={deleting}
           onClick={(e) => {
             e.stopPropagation()

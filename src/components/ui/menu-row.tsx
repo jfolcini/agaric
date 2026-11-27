@@ -13,7 +13,7 @@ import type * as React from 'react'
  * does not clip it. `indent` lines a submenu's icons up under its parent's label.
  */
 const menuRowVariants = cva(
-  'flex w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent active:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset coarse:min-h-(--touch-target) disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4 coarse:[:where(&)_svg]:size-5',
+  'flex w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent active:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground focus-ring-visible focus-visible:-outline-offset-3 coarse:min-h-(--touch-target) disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [:where(&)_svg]:size-4 coarse:[:where(&)_svg]:size-5',
   {
     variants: {
       indent: {

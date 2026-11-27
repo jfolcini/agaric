@@ -7,6 +7,8 @@
  * media query adds no specificity — so `outline-hidden` won and focus was left
  * with nothing but a half-alpha ring, while the `.ref-chip-anchor` sitting in
  * the linked-references panel beside it wore a permanent opaque 2px outline.
+ * The ring is an outline now (`focus-ring-visible`), so it is the one cue in
+ * both modes.
  *
  * Seed (`src/lib/tauri-mock/seed.ts`): "Getting Started" carries a
  * `[[Quick Notes]]` chip in its body, and its linked-references panel renders
@@ -26,27 +28,23 @@ function bodyChip(page: import('@playwright/test').Page): import('@playwright/te
   return page.getByTestId('block-tree').getByRole('link', { name: 'Quick Notes' })
 }
 
-/** The `ring-[3px]` layer of a `box-shadow`, whose spread names it. */
-const RING_LAYER = /([a-z]+\([^()]*\))\s+0px 0px 0px 3px/
-
 interface Paint {
   focusVisible: boolean
   outlineStyle: string
   outlineWidth: string
-  ring: string | null
+  outlineColor: string
 }
 
 async function paintOf(target: import('@playwright/test').Locator): Promise<Paint> {
-  return target.evaluate((el, ring) => {
+  return target.evaluate((el) => {
     const s = getComputedStyle(el)
-    const m = ring.exec(s.boxShadow)
     return {
       focusVisible: el.matches(':focus-visible'),
       outlineStyle: s.outlineStyle,
       outlineWidth: s.outlineWidth,
-      ring: m?.[1] ?? null,
+      outlineColor: s.outlineColor,
     }
-  }, RING_LAYER)
+  })
 }
 
 /**
@@ -97,16 +95,15 @@ test.describe('High-contrast focus on reference chips @editor @settings', () => 
     const permanent = await paintOf(anchor)
 
     expect(focused.focusVisible).toBe(true)
-    // The second, colour-independent cue: a box-shadow is dropped entirely
-    // under `forced-colors`, so the ring alone would leave these users nothing.
     expect(focused.outlineStyle).toBe('solid')
     // Strictly heavier than the anchor chip's permanent outline, not lighter.
     expect(focused.outlineWidth).toBe('3px')
     expect(permanent.outlineWidth).toBe('2px')
-    expect(permanent.ring).toBeNull()
-    // …and in the ring's own hue at full strength, so focus on the ANCHOR chip
-    // is more than 1px of its own `currentColor` away from no focus at all.
-    expect(focused.ring).toBe(await opaqueRing(page))
+    // …and in the ring's own colour at full strength, so focus on the ANCHOR chip
+    // is more than 1px of its own `currentColor` away from no focus at all. Polled:
+    // `transition-colors` fades the outline colour in.
+    const ring = await opaqueRing(page)
+    await expect.poll(async () => (await paintOf(chip)).outlineColor).toBe(ring)
   })
 
   /**
@@ -134,7 +131,7 @@ test.describe('High-contrast focus on reference chips @editor @settings', () => 
     expect(focused.outlineWidth).toBe('3px')
   })
 
-  test('the default-mode focus is the opaque ring alone, with no outline', async ({ page }) => {
+  test('the default-mode focus is the opaque ring', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const chip = bodyChip(page)
     await expect(chip).toBeVisible()
@@ -143,9 +140,10 @@ test.describe('High-contrast focus on reference chips @editor @settings', () => 
 
     const focused = await paintOf(chip)
     expect(focused.focusVisible).toBe(true)
-    expect(focused.outlineStyle).toBe('none')
+    expect(focused.outlineStyle).toBe('solid')
     // Opaque: at half alpha the ring was 2.6:1 against the page, under the
     // 3:1 non-text minimum (#5332).
-    expect(focused.ring).toBe(await opaqueRing(page))
+    const ring = await opaqueRing(page)
+    await expect.poll(async () => (await paintOf(chip)).outlineColor).toBe(ring)
   })
 })

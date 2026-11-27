@@ -103,7 +103,7 @@ const firstRow = (page: Page) =>
     .first()
     .evaluate((el) => ({
       focused: el === document.activeElement,
-      ring: el.matches(':focus-visible') && getComputedStyle(el).boxShadow.includes('3px'),
+      ring: el.matches(':focus-visible') && getComputedStyle(el).outlineStyle === 'solid',
     }))
 
 test.describe('Block menu opening focus @editor', () => {
