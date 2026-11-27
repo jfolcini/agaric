@@ -192,6 +192,43 @@ test.describe('block mode formatting toolbar, one per view (#6562) @editor @page
     })
   }
 
+  for (const where of ['page', "today's journal day"] as const) {
+    test(`on ${where}, the first block sits the bar's height under the header, and focusing it moves nothing`, async ({
+      page,
+    }) => {
+      if (where === 'page') {
+        await seedPage(page, 'Gap page', TEXTS)
+        await openPage(page, 'Gap page')
+        await expect(rows(page)).toHaveText(TEXTS)
+      } else {
+        await navigateToView(page, 'Journal')
+        await expect(page.locator('section.bg-accent\\/\\[0\\.08\\]')).toBeVisible()
+      }
+      // The header's last row, its hairline and the first row: the gap under the
+      // hairline is the bar's room and no more, and 8 px part the hairline from the row above it.
+      const gaps = () =>
+        page.evaluate(() => {
+          const header = document.querySelector('[data-testid="view-header-outlet"] > *')
+          const first = document.querySelector('[data-testid="sortable-block"]')
+          if (!header?.lastElementChild || !first) throw new Error('no header or row')
+          const hairline = header.getBoundingClientRect().bottom
+          return {
+            aboveHairline: Math.round(
+              hairline - header.lastElementChild.getBoundingClientRect().bottom,
+            ),
+            belowHairline: Math.round(first.getBoundingClientRect().top - hairline),
+          }
+        })
+      expect(await gaps()).toEqual({ aboveHairline: 9, belowHairline: 28 })
+
+      await rows(page).first().locator('[data-testid="block-static"]').click()
+      await expect(toolbar(page)).toBeVisible()
+      const strip = await toolbar(page).locator('xpath=..').boundingBox()
+      expect(strip?.height).toBe(28)
+      expect(await gaps()).toEqual({ aboveHairline: 9, belowHairline: 28 })
+    })
+  }
+
   test('the bar pins flush under the view header and stays mounted while the focus moves', async ({
     page,
   }) => {

@@ -319,8 +319,12 @@ function DaySectionInner({
       // `PageQuickActions variant="journal"` is `hoverReveal: false` (always
       // visible), so nothing depended on it.
       // Today's tint bleeds to the screen edge on a phone, so its text stays
-      // on the view's 16 px gutter (`App.tsx`) like every other view's.
-      className={cn(isToday && 'bg-accent/[0.08] -mx-4 px-4 py-2 md:-mx-3 md:px-3 md:rounded-lg')}
+      // on the view's 16 px gutter (`App.tsx`) like every other view's. On a
+      // desktop day the toolbar's room above already parts it from the header.
+      className={cn(
+        isToday && 'bg-accent/[0.08] -mx-4 px-4 py-2 md:-mx-3 md:px-3 md:rounded-lg',
+        isToday && hideHeading && 'md:pt-0',
+      )}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (

@@ -238,6 +238,42 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await expectSquareNoHandle(page)
   })
 
+  test('the scope toggle keeps one segment high and the results take the rest of the sheet', async ({
+    page,
+  }) => {
+    await navigateMobile(page, 'Pages')
+    await page.getByTestId('search-sheet-trigger').click()
+    await expect(page.getByTestId('command-palette-input')).toBeVisible()
+
+    const layout = () =>
+      page.getByTestId('search-sheet').evaluate((sheet) => {
+        const group = sheet.querySelector('[data-slot="toggle-group"]') as HTMLElement
+        const item = group.querySelector('[data-slot="toggle-group-item"]') as HTMLElement
+        const body = sheet.querySelector('[data-slot="sheet-body"]') as HTMLElement
+        const cs = getComputedStyle(group)
+        const frame = ['borderTopWidth', 'borderBottomWidth', 'paddingTop', 'paddingBottom']
+          .map((k) => parseFloat(cs[k as keyof CSSStyleDeclaration] as string))
+          .reduce((a, b) => a + b, 0)
+        const g = group.getBoundingClientRect()
+        const s = sheet.getBoundingClientRect()
+        const b = body.getBoundingClientRect()
+        return {
+          groupOverSegment: Math.round(g.height - item.getBoundingClientRect().height - frame),
+          gapToBody: Math.round(b.top - g.bottom),
+          bodyToSheetEnd: Math.round(
+            s.bottom - parseFloat(getComputedStyle(sheet).paddingBottom) - b.bottom,
+          ),
+        }
+      })
+    // All pages: a fixed-height sheet, which once stretched the toggle down to the palette.
+    // The body's -my-1 overhangs the sheet's padding by 4 px.
+    expect(await layout()).toEqual({ groupOverSegment: 0, gapToBody: 12, bodyToSheetEnd: -4 })
+
+    await page.getByTestId('search-sheet-segment-in-page').click()
+    await expect(page.getByTestId('search-sheet-in-page-empty')).toBeVisible()
+    expect((await layout()).groupOverSegment).toBe(0)
+  })
+
   // One of each kind: a MenuSheet, a plain Sheet, and a `useDialogOrSheet` dialog.
   test('each kind of bottom sheet is square, with no grab bar', async ({ page }) => {
     await openBlockMenu(page)
