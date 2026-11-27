@@ -20,7 +20,7 @@ Obsidian is ahead wherever files being the truth matters: other editors, any syn
 | Sync | Obsidian Sync: any network, through Obsidian's servers, end-to-end encrypted, with version history, selective sync and shared vaults. Or a third-party tool such as iCloud, Syncthing or git | Directly between your own paired devices on one local network. No account, no server, no subscription. Android syncs only in the foreground |
 | Phones | iOS and Android, from the stores, with widgets and, on iOS, a share sheet and quick capture | Android as a sideloaded APK. No iOS |
 | Extending it | A community plugin API and directory, themes, CSS snippets, a CLI and a URI scheme. Plugins are not sandboxed: they inherit the app's access | No plugins or scripting, so no third-party code runs in the app. A custom stylesheet, rebindable keys, `agaric://` links, and an MCP server |
-| Who makes it | A company with paying customers and independent security audits | One maintainer, pre-1.0, unsigned desktop installers |
+| Who makes it | A company with paying customers and independent security audits | One maintainer, pre-1.0, desktop installers without a developer signature |
 
 ## Feature by feature
 

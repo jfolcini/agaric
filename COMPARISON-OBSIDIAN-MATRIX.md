@@ -307,7 +307,7 @@
 | --- | --- | --- | --- |
 | Desktop | Windows, macOS (universal), Linux x86-64 and ARM64 | Linux x86-64, Windows x64, macOS x86-64 and aarch64 (`README.md`); no Linux ARM64 | Partial |
 | Packages | exe, dmg, AppImage, deb, Snap, Flatpak (community) | deb, rpm, AppImage, NSIS `-setup.exe`, MSI, dmg; a winget manifest and a Flathub manifest that builds from source are in the repository, neither submitted (#6660) | Done |
-| Code signing | Not checked (**unverified**) | **Unsigned** desktop bundles: Gatekeeper and SmartScreen warn (`README.md`) | Gap |
+| Code signing | Not checked (**unverified**) | Desktop bundles carry **no developer signature**: Gatekeeper and SmartScreen warn (`README.md`) | Gap |
 | Auto-update | Desktop in-app, with periodic installer updates; mobile through stores | Desktop in-app, minisign-verified (`tauri-plugin-updater` in `src-tauri/Cargo.toml`); on Android a newer release is announced once a day with a link to the releases page and installed by hand (#6546) | Partial |
 | Runtime | Electron | Tauri 2 with the system webview (WebKitGTK, WKWebView, WebView2) | Design choice |
 

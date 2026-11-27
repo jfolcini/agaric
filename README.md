@@ -119,7 +119,7 @@ Download the installer for your system from [**GitHub Releases**](https://github
 
 The desktop app updates itself from GitHub Releases. Agaric is in no app store or package repository yet: a winget manifest is written but not submitted ([packaging/winget](packaging/winget/README.md)), and Flathub is not submitted either ([packaging/flathub](packaging/flathub/README.md)).
 
-Desktop installers are **not code-signed** ([docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the system warns on first launch:
+Desktop installers carry **no developer signature** ([docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the system warns on first launch:
 
 - **macOS (Gatekeeper):** try to open the app once, then open *System Settings* → *Privacy & Security*, scroll to *Security*, click *Open Anyway*, and click *Open* when the warning returns ([Apple's steps](https://support.apple.com/en-us/102445)). Or clear the quarantine flag: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
 - **Windows (SmartScreen):** click *More info* → *Run anyway*.

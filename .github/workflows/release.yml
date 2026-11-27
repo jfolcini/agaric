@@ -377,16 +377,13 @@ jobs:
           # #808 enables updater artifacts, sign them in a separate
           # minimal step (`cargo tauri signer sign`) whose env holds ONLY
           # the key — never re-add the key here.
-          # macOS code signing + notarization is intentionally NOT wired.
-          # The maintainer has opted out of Apple Developer Program membership
-          # (paid, recurring) for this open-source project. With no APPLE_*
-          # env vars exposed, `tauri-action` skips the codesign + notarytool
-          # path entirely and produces unsigned .dmg / .app bundles.
-          # Gatekeeper will warn on first install ("Apple could not verify
-          # this app is free of malware"); users bypass via right-click →
-          # Open the first time, or via `xattr -dr com.apple.quarantine
-          # /Applications/Agaric.app`. See BUILD.md → "macOS unsigned
-          # bundles" for the user-facing install instructions.
+          # macOS bundles get an ad-hoc signature only (`bundle.macOS` in
+          # tauri.conf.json; why: BUILD.md § Signing posture). The maintainer
+          # has opted out of Apple Developer Program membership (paid,
+          # recurring), so there is no Developer ID and no notarization. Keep
+          # every APPLE_* variable out of this env: without them the bundler
+          # imports no certificate, signs with the "-" identity, and skips
+          # notarization with a warning.
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Agaric ${{ github.ref_name }}'

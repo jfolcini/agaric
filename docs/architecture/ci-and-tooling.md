@@ -87,10 +87,10 @@ Every remote `uses:` is SHA-pinned to a commit, not a tag — verified across th
 
 Every release asset (Linux `.deb` / `.AppImage`, Windows `.msi` / `.exe`, macOS `.dmg` / `.app.tar.gz`, Android `.apk`, and the updater tarballs) is attested by `actions/attest-build-provenance@v4` (SHA-pinned) and pushed to Sigstore plus the GitHub attestations API. End-user verification lives in [`../BUILD.md`](../BUILD.md). Detached `.sig` files (Tauri updater signatures) are intentionally **not** attested: they are verification metadata for the parent bundle, not standalone distributable artefacts.
 
-Frame the no-OS-signing posture honestly: **SLSA provenance does not substitute for OS-level code signing at the UX layer.** A SmartScreen warning on Windows still appears on first install; macOS Gatekeeper still quarantines a non-notarised `.app`. Provenance lets a sophisticated user verify origin; it does not change the first-launch experience. Two follow-on positions:
+Frame the no-developer-signature posture honestly: **SLSA provenance does not substitute for OS-level code signing at the UX layer.** A SmartScreen warning on Windows still appears on first install; macOS Gatekeeper still quarantines a non-notarised `.app`. Provenance lets a sophisticated user verify origin; it does not change the first-launch experience. Two positions:
 
-- **macOS notarisation — strict no-go for now.** Not adopting in the current cycle; unquarantine instructions in [`../BUILD.md`](../BUILD.md) remain the UX.
-- **Windows SignPath OSS — pending action.** Free for public OSS, integrates as one GHA step. Application queue runs multiple weeks.
+- **macOS: an ad-hoc signature, no notarisation.** The maintainer declined the Apple Developer Program; the first-launch steps in [`../BUILD.md`](../BUILD.md#signing-posture) § Signing posture remain the UX.
+- **Windows: unsigned.** Signing through SignPath OSS was declined (#147).
 
 The Tauri updater signing key — distinct from OS-level code signing — is the **root of trust for every auto-update**. See [`../../SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation" for cadence, procedure, revocation path, and the deferred Sigstore-keyless alternative.
 
@@ -154,4 +154,4 @@ Each row is a deliberate decision, the reason it is accepted today, and the trig
 
 Things this doc does not commit to yet — and the canonical location for tracking them — are:
 
-- CI/tooling backlog and longer-horizon items (transport changes, sync evolution, editor surface work) are tracked separately. Still-open follow-ups from the 2026-05-16 review wave include SignPath OSS, macOS notarisation, and the vitest forks-vs-threads benchmark. (The `SKIP_CI_VERIFY` reason-string guard has since shipped — see §Local↔CI parity.)
+- CI/tooling backlog and longer-horizon items (transport changes, sync evolution, editor surface work) are tracked separately. Still open from the 2026-05-16 review wave: the vitest forks-vs-threads benchmark. (The `SKIP_CI_VERIFY` reason-string guard has since shipped — see §Local↔CI parity.)

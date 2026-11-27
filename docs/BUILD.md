@@ -452,7 +452,9 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 ## Signing posture
 
 - **Updater signing**: active. `bundle.createUpdaterArtifacts` stays unset in `tauri.conf.json`; instead `release.yml` signs each platform's updater payload with `cargo tauri signer sign` in a dedicated step whose env holds only the `TAURI_SIGNING_PRIVATE_KEY` secret, then re-verifies every `.sig` with `minisign` against the `plugins.updater.pubkey` pinned in `tauri.conf.json` before stitching `latest.json` (#2971) — so a rotated-but-unsynced key reddens the release instead of silently breaking auto-update on installed clients. Key-rotation procedure (cadence, revocation, user notification): [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
-- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (*System Settings* → *Privacy & Security* → *Open Anyway*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
+- **macOS**: an ad-hoc signature only (`bundle.macOS.signingIdentity: "-"`), which needs no Apple account; Apple Silicon refuses an unsigned download as damaged, and an ad-hoc one should get the ordinary *Open Anyway* prompt instead (not yet checked on a Mac, #6514). No Developer ID and no notarization: the maintainer declined the Apple Developer Program. `bundle.macOS.hardenedRuntime` is `false` because the hardened runtime only matters for notarization, and under it the microphone (voice notes) and camera (QR pairing) need entitlements the app does not declare. Gatekeeper still warns on first launch (*System Settings* → *Privacy & Security* → *Open Anyway*).
+- **Windows**: not signed; signing through SignPath OSS was declined (#147). SmartScreen warns on first launch (*More info* → *Run anyway*).
+- User-facing install steps for both live in the [README § Install](../README.md#install).
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 
 ## sqlx compile-time queries
